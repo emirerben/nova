@@ -20,6 +20,7 @@ from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
+from app.config import settings
 from app.models import MediaAsset, MediaAssetAnalysis, MediaAssetSource, MediaSourceMoment
 from app.schemas.clip_understanding import _clean_text
 from app.schemas.media_collections import (
@@ -34,6 +35,10 @@ from app.services.media_collections import eligible_sources, members, owned_coll
 from app.services.media_library_ingest import lock_library_owner
 
 INDEX_VERSION = "source-intervals-v3"
+# A photo has no source time: it is offered as one still held for this long. The hold is part of
+# the image index spec, so changing it re-indexes every photo instead of leaving stale intervals.
+STILL_HOLD_S = 3.0
+STILL_INDEX_VERSION = "still-hold-v1"
 MAX_SOURCE_MOMENTS = 2000
 SOURCE_CHECK_BATCH_SIZE = 10
 WHOLE_SOURCE_CONTEXT_VERSION = "whole-source-context-v1"
@@ -57,11 +62,21 @@ def _number(value: Any) -> float | None:
 
 
 def _index_spec(kind: str) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            [INDEX_VERSION, facts._spec(kind, None), facts._spec(kind, "transcript")]
-        ).encode()
-    ).hexdigest()
+    parts = [INDEX_VERSION, facts._spec(kind, None), facts._spec(kind, "transcript")]
+    if kind == "image":
+        parts.append([STILL_INDEX_VERSION, STILL_HOLD_S])
+    return hashlib.sha256(json.dumps(parts).encode()).hexdigest()
+
+
+def stills_buildable() -> bool:
+    """Whether an idea may cite a photo: only if the project it becomes can be built.
+
+    A photo renders as a pinned still, which the device must have verified, and every prepared
+    story's export is checked against its sources. See `VERIFIES_STILL_PICTURES`.
+    """
+    from app.services.actual_export_verification import VERIFIES_STILL_PICTURES
+
+    return VERIFIES_STILL_PICTURES and "stillImages" in settings.phone_render_verified_features
 
 
 def _timed_word(raw: Any, duration: float) -> tuple[float, float, str] | None:
@@ -245,6 +260,38 @@ def _sampled_window(analysis: dict, duration: float) -> dict | None:
     }
 
 
+def still_interval(analysis: dict) -> dict | None:
+    """One held still for a photo, described by what its analysis actually recorded.
+
+    None when the analysis recorded nothing usable: such a photo cannot support an idea.
+    """
+    record = clip_record(analysis, kind="image")
+    details = [
+        f"{label}: {value}"
+        for label, value in (
+            ("Subject", record.subject),
+            ("Scene", record.summary),
+            ("Setting", record.setting),
+            ("Activity", record.activity),
+            ("Text in the photo", record.on_screen_text),
+        )
+        if value
+    ]
+    if not details:
+        return None
+    return {
+        "kind": "visual",
+        "start_s": 0.0,
+        "end_s": STILL_HOLD_S,
+        "text": _clean_text(
+            f"Still photo shown for {STILL_HOLD_S:g}s; no motion, sound or speech. "
+            + " ".join(details),
+            1200,
+        ),
+        "uncertain": True,
+    }
+
+
 def _valid_context_bounds(start: float, end: float, duration: Any) -> bool:
     duration = _number(duration)
     return (
@@ -343,6 +390,73 @@ def _record_index_outcome(asset, source, usable: bool) -> None:
     asset.metadata_json = metadata
 
 
+async def _index_still(db: AsyncSession, owner: uuid.UUID, asset, source) -> str:
+    """Index one photo as a single held-still moment: "indexed", "missing" or "unusable"."""
+    analysis = await asyncio.to_thread(
+        facts.get_media_asset_analysis,
+        asset_id=str(asset.id),
+        owner_id=str(owner),
+        source_id=str(source.id),
+        required_generation=source.object_generation,
+    )
+    if analysis is None:
+        return "missing"
+    interval = still_interval(analysis)
+    _record_index_outcome(asset, source, usable=interval is not None)
+    spec = _index_spec("image")
+    version = hashlib.sha256(
+        json.dumps([spec, analysis], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    current = await db.scalar(
+        select(MediaSourceMoment.id)
+        .where(
+            MediaSourceMoment.user_id == owner,
+            MediaSourceMoment.source_id == source.id,
+            MediaSourceMoment.fact_version == version,
+        )
+        .limit(1)
+    )
+    if current is not None:
+        return "indexed"
+    await db.execute(
+        delete(MediaSourceMoment).where(
+            MediaSourceMoment.user_id == owner, MediaSourceMoment.source_id == source.id
+        )
+    )
+    if interval is None:
+        return "unusable"
+    identity = json.dumps([str(source.id), version, interval], sort_keys=True)
+    db.add(
+        MediaSourceMoment(
+            id=uuid.uuid5(uuid.NAMESPACE_URL, identity),
+            user_id=owner,
+            asset_id=asset.id,
+            source_id=source.id,
+            fact_version=version,
+            **interval,
+            evidence_json={
+                "index_spec": spec,
+                "generation": source.object_generation,
+                "uploaded_sha256": source.uploaded_sha256,
+                "fact_version": version,
+                "time_basis": "still_hold",
+                "verification": "cached_analysis_only",
+                "media": "still",
+                "hold_s": STILL_HOLD_S,
+                "quality": {
+                    "source_visibility": "",
+                    "overlapping_unusable_spans": [],
+                    "verification": "cached_evidence_only",
+                },
+                "complete_timed_speech": True,
+                "intervals_truncated": False,
+                "analyzer_versions": [list(facts._spec("image", None))],
+            },
+        )
+    )
+    return "indexed"
+
+
 async def index_collection(
     db: AsyncSession, owner: uuid.UUID, identifier: uuid.UUID, body: CollectionIndexBody
 ) -> CollectionIndexOut:
@@ -360,8 +474,15 @@ async def index_collection(
             unavailable.append(member.asset_id)
             continue
         asset, source = pair
+        if asset.kind == "image":
+            outcome = await _index_still(db, owner, asset, source)
+            if outcome == "indexed":
+                indexed += 1
+            else:
+                (missing if outcome == "missing" else unusable_timing).append(asset.id)
+            continue
         if asset.kind != "video":
-            # A still image has no source interval. Do not invent a duration.
+            # Audio and other kinds have no picture to offer. Do not invent a duration.
             untimed.append(asset.id)
             continue
         duration = _number((asset.metadata_json or {}).get("duration_s"))
@@ -697,6 +818,7 @@ async def search_moments(
         sources = [source_id] if source_id in sources else []
     if not sources:
         return MomentSearchOut(revision=row.revision, moments=[], unavailable_asset_ids=unavailable)
+    current_specs = [_index_spec("video"), _index_spec("image")]
     coverage = (
         await db.execute(
             select(
@@ -707,11 +829,12 @@ async def search_moments(
                 MediaSourceMoment.start_s,
                 MediaSourceMoment.end_s,
                 MediaSourceMoment.evidence_json["context_contract"].astext,
+                MediaSourceMoment.evidence_json["media"].astext,
             )
             .where(
                 MediaSourceMoment.user_id == owner,
                 MediaSourceMoment.source_id.in_(sources),
-                MediaSourceMoment.evidence_json["index_spec"].astext == _index_spec("video"),
+                MediaSourceMoment.evidence_json["index_spec"].astext.in_(current_specs),
             )
             .distinct()
         )
@@ -726,21 +849,31 @@ async def search_moments(
         )
     ]
     indexed = {value[0] for value in coverage}
-    full_speech = {value[0] for value in coverage if value[1] == "true"}
+    # A photo has no speech to leave incomplete.
+    full_speech = {value[0] for value in coverage if value[1] == "true" or value[7] == "still"}
     capped_sources = {value[0] for value in coverage if value[2] == "true"}
+    # A photo the last index pass found nothing in will never be indexed: it does not hold
+    # back the rest of the event.
+    empty_photos = {
+        source.id
+        for asset, source in available.values()
+        if asset.kind == "image"
+        and (asset.metadata_json or {}).get(INDEX_OUTCOME_KEY, {}).get("source_id")
+        == str(source.id)
+    }
     unindexed = [
         member.asset_id
         for member in selected
-        if member.source_id in sources and member.source_id not in indexed
+        if member.source_id in sources
+        and member.source_id not in indexed
+        and member.source_id not in empty_photos
     ]
     retained_ids = (
         await _retained_timed_ids(db, owner, row, retained_story, available)
         if retained_story is not None and moment_ids is not None
         else []
     )
-    current_or_retained = MediaSourceMoment.evidence_json["index_spec"].astext == _index_spec(
-        "video"
-    )
+    current_or_retained = MediaSourceMoment.evidence_json["index_spec"].astext.in_(current_specs)
     if retained_ids:
         current_or_retained = or_(
             current_or_retained,

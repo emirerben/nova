@@ -63,7 +63,8 @@ def derive_item_state(signals: ItemSignals) -> DerivedState:
         failure recorded before reasons existed counts while the reconciler would still revive it.
     failed: gave up (revivals spent, or nothing usable); retrying is still allowed
         through the retry route but the server will not do it on its own.
-    excluded: can never be analysed or used (type, size, length, access).
+    excluded: can never be analysed or used (type, size, length, access, or a photo with nothing
+        usable in it).
     """
     failure = signals.metadata.get(facts.FAILURE_KEY)
     failure = failure if isinstance(failure, dict) else {}
@@ -102,7 +103,11 @@ def derive_item_state(signals: ItemSignals) -> DerivedState:
     if signals.transcript_status in _ACTIVE:
         return DerivedState("analyzing", attempts=attempts)
     outcome = signals.metadata.get(INDEX_OUTCOME_KEY)
-    if signals.kind == "video" and isinstance(outcome, dict) and outcome.get("outcome") == "none":
+    if isinstance(outcome, dict) and outcome.get("outcome") == "none":
+        # A video might still be fixed by another try. A photo's analysis already holds
+        # everything it ever will, so it is set aside instead of offered a retry.
+        if signals.kind == "image":
+            return DerivedState("excluded", "no_usable_moment")
         return DerivedState("failed", "no_usable_moment")
     return DerivedState("ready")
 

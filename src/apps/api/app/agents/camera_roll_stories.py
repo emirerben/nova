@@ -96,7 +96,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-26.1",
+        prompt_version="2026-10-26.2",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -146,6 +146,9 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "maximum_story_seconds": 60,
             "maximum_story_moments": 8,
         }
+        photos = sum(1 for candidate in input.candidates if candidate.media == "still")
+        if photos:
+            data["footage_summary"]["still_photos"] = photos
         return (
             'Return JSON {"stories": [{"title": "", "moment_ids": ["id"], '
             '"research_fact_ids": [], '
@@ -278,6 +281,19 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "but call it atmosphere rather than promising a guide with no useful information. "
             "Use closing_text null unless it adds a concrete new detail. Do not extend a weak "
             "idea with generic filler just to meet the suggested duration. "
+            + (
+                "Candidates with media still are single photographs, each held on screen for "
+                "its listed duration (start_s to end_s), motionless and silent; their text "
+                "describes the whole photo. A photo works as an establishing frame, a detail "
+                "or a pause between video moments, and an event with only photos can still "
+                "support an idea told in photos. Never claim motion, sound, speech or an "
+                "event happening from a photo, and never stretch its hold. Original sound "
+                "plays only under video moments. Say what the photo shows in its beat reason. "
+                "Unlike video, a photo carries no time of its own, so its timestamps are "
+                "only its hold. "
+                if photos
+                else ""
+            )
             + (
                 "This request adds ONE idea to an event that already has the ideas listed in "
                 "already_offered (their moment_ids use the same m references). This overrides "

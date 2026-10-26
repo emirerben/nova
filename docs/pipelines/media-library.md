@@ -249,6 +249,22 @@ Ideas are pinned to a collection revision, so a write that leaves an event's mem
 re-stamps that event's ideas (`carry_forward_stories`); only rows from the revision being left
 move. No migration: group and deletion live in `story_json`.
 
+Photos (KRI-944). `index_collection` turns a photo's image analysis into ONE still moment held
+for `STILL_HOLD_S` (3 s; `start_s=0`, `evidence.media="still"`, `time_basis="still_hold"`), stamped
+with the image index spec (the hold is part of it). A photo whose analysis recorded nothing usable
+gets no moment: `metadata_json.moment_index` marks it, the items route reports
+`excluded(no_usable_moment)`, and it never holds back the rest of its event. The story agent
+sees such a candidate as `media: "still"` and its prompt gains the stills guidance only then
+(video-only requests keep their exact payload). **Ideas may cite photos only while
+`media_moments.stills_buildable()`**: the phone writer already renders a pinned still beside video
+cuts (asset-lane, `stillImages`), but a prepared story's export is verified against its sources
+and `actual_export_verification` reads original videos only, so a photo story would stop at
+`CreatorRenderContractError`. `VERIFIES_STILL_PICTURES` stays false until the verifier gets a
+still branch; `tests/pipeline/test_photo_story_gate.py` pins that coupling. Until then photos are
+analysed and shown, never offered. The preparation step also needs one more piece before it can
+accept them: a library photo reaches the render only as a ready Visuals-pool row of the item
+(`POST /plan-items/{id}/assets` with `library_asset_id`), since thread attach rejects images.
+
 Stories support review, exact-interval replacement/order/removal, original/muted audio,
 rejection and selection. Selection prepares the common revisioned draft, with a server-owned
 story/collection/compiler binding. Separate expiring approval freezes the existing guided
