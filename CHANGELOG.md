@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.137.0] - 2026-10-26
+
+### Fixed
+- fix(clips): offer the photos when the resolver found nothing for a one-video picker (KRI-949) (#1849) <!-- release-pr: 1849 -->
+
 ## [0.81.136.0] - 2026-10-26
 
 ### Fixed
