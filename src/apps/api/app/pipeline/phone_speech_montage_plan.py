@@ -147,6 +147,16 @@ class PhoneSpeechSection(BaseModel):
         return self.duration_s
 
 
+@dataclass(frozen=True)
+class PhoneClipLabel:
+    """Confirmed words to draw on one clip (KRI-939): every cut of ``media_id``, or the
+    ``shot_index``-th picture cut, exactly as the contract's ``clip`` text names it."""
+
+    text: str
+    media_id: str | None = None
+    shot_index: int | None = None
+
+
 @dataclass
 class SpeechMontageReceipt:
     """What the compiler actually put on the timeline (never what a model claimed)."""
@@ -156,6 +166,9 @@ class SpeechMontageReceipt:
     cut_count: int = 0
     music: bool = False
     adjustments: list[str] = field(default_factory=list)
+    # The title / label TextElements the recipe draws, as variant-row JSON: the editor
+    # preview compiles text from the variant row, never from the pinned recipe.
+    text_rows: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         return {
@@ -249,6 +262,11 @@ def compile_phone_speech_montage_plan(
     *,
     music: PhoneMusicBed | None = None,
     target_lufs: float | None = None,
+    opening_title: str | None = None,
+    opening_title_hold_s: float | None = None,
+    clip_labels: Sequence[PhoneClipLabel] = (),
+    pinned_texts: Sequence[Any] | None = None,
+    pinned_font_family: str | None = None,
 ) -> tuple[EditRecipeV2, SpeechMontageReceipt]:
     """Compile ordered, grounded sections into a schema-v2 recipe plus its receipt.
 
@@ -256,6 +274,10 @@ def compile_phone_speech_montage_plan(
     speaker clip is never used as b-roll for its own speech section, and is
     left out of montage sections too (a cut of the person mid-sentence with the
     sound off reads as a glitch).
+
+    ``opening_title`` / ``clip_labels`` are the approved on-screen words (KRI-939): the
+    title from 0 s, each label on every cut of its clip. Before this the excerpt recipe
+    carried no text at all and the contract verifier refused it after approval.
     """
     if not sections:
         raise UnsupportedPhonePlan("the spoken-excerpt montage has no sections")
@@ -446,6 +468,16 @@ def compile_phone_speech_montage_plan(
     from app.services.phone_text_styling import register_generation_timeline
 
     register_generation_timeline(main)
+    recipe, _hold, receipt.text_rows = _with_confirmed_text(
+        recipe,
+        main,
+        duration=cursor,
+        opening_title=opening_title,
+        opening_title_hold_s=opening_title_hold_s,
+        clip_labels=clip_labels,
+        pinned_texts=pinned_texts,
+        pinned_font_family=pinned_font_family,
+    )
     return recipe, receipt
 
 
@@ -772,6 +804,185 @@ def implicit_picture_duration(
     return ImplicitLength(duration_s=max(1, want) / _FPS, adjustments=notes)
 
 
+_LABEL_Y = 0.78  # mirrors `phone_plan_repair._LABEL_Y`
+_LABEL_STACK_STEP_Y = 0.09  # mirrors `phone_plan_repair._STACK_STEP_Y`
+_LABEL_LAYER_PREFIX = "label-"
+
+
+def _opening_title_element(
+    opening_title: str,
+    *,
+    hold_s: float | None,
+    duration: float,
+    picture: Sequence[TimelineClip],
+    pinned_texts: Sequence[Any] | None,
+    pinned_font_family: str | None,
+) -> Any:
+    """The approved title as one TextElement from 0 s, stepped below a top corner pin."""
+    from app.pipeline.phone_narrated_plan import narrated_title_element  # noqa: PLC0415
+
+    hold = _DEFAULT_TITLE_HOLD_S if hold_s is None else float(hold_s)
+    title = narrated_title_element(
+        opening_title, end_s=hold, timeline_duration_s=duration, canvas=_STORY_CANVAS
+    )
+    if title is None or not pinned_texts:
+        return title
+    # KRI-526/527: the title steps below a top corner pin that shares its hold. The pins
+    # themselves are added by the job (`with_pinned_text_layers`), which resolves them
+    # against the same clips.
+    from app.pipeline.pinned_text import (  # noqa: PLC0415
+        resolve_pin_windows,
+        title_y_clear_of_pins,
+        top_pin_edge,
+    )
+
+    windows = resolve_pin_windows(
+        pinned_texts,
+        duration,
+        sorted(
+            (clip.timeline_start, clip.timeline_start + clip.source_duration / clip.rate)
+            for clip in picture
+        ),
+    )
+    moved = title_y_clear_of_pins(
+        float(title.y_frac or 0.15),
+        top_pin_edge(
+            windows,
+            float(title.start_s),
+            float(title.end_s),
+            font_family=pinned_font_family,
+        ),
+        text=title.text,
+        size_px=float(title.size_px or 120),
+        max_width_frac=float(title.max_width_frac or 0.9),
+        measure_row=title.model_dump(mode="json", exclude_none=True)
+        if any(
+            pin.heading_level is not None or pin.stack_id is not None or pin.size_px is not None
+            for pin in pinned_texts
+        )
+        else None,
+    )
+    return title.model_copy(update={"y_frac": moved})
+
+
+def _clip_label_elements(
+    labels: Sequence[PhoneClipLabel],
+    picture: Sequence[TimelineClip],
+    media_of: dict[str, str],
+    *,
+    font_family: str | None,
+) -> list[Any]:
+    """One label element per cut of each label's clip, windowed inside that cut.
+
+    The verifier wants the words inside EVERY cut of the clip (a label spanning a cut, or
+    only on the clip's first cut, is "in the wrong place"), so a clip met twice in the
+    montage is labelled twice. Two labels on one clip stack upwards instead of overlapping.
+    A label whose clip is not in the edit draws nothing: the verifier still refuses it.
+    """
+    from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
+    from app.services.phone_text_styling import generation_style_rows  # noqa: PLC0415
+
+    ordered = sorted(picture, key=lambda clip: clip.timeline_start)
+    rows: list[dict] = []
+    stacked: dict[str, int] = {}
+    for label in labels:
+        text = " ".join(label.text.split())
+        if not text:
+            continue
+        if label.shot_index is not None:
+            targets = ordered[label.shot_index : label.shot_index + 1]
+        else:
+            targets = [c for c in ordered if media_of.get(c.source_asset_id) == label.media_id]
+        for clip in targets:
+            level = stacked.get(clip.id, 0)
+            stacked[clip.id] = level + 1
+            end = clip.timeline_start + clip.source_duration / clip.rate + (clip.hold_duration or 0)
+            element = TextElement(
+                id=f"clip-label-{len(rows)}",
+                text=text,
+                start_s=round(clip.timeline_start, 4),
+                end_s=round(end, 4),
+                role="generative_intro",
+                position="custom",
+                x_frac=0.5,
+                y_frac=_LABEL_Y - _LABEL_STACK_STEP_Y * level,
+                font_family=font_family or "Fraunces",
+                size_px=64,
+                color="#FFF8F0",
+                stroke_width=0,
+                shadow_enabled=True,
+                shadow_style="standard",
+                effect="static",
+                alignment="center",
+                max_width_frac=0.84,
+            )
+            rows.append(element.model_dump(mode="json", exclude_none=True))
+    return [
+        TextElement.model_validate(row) for row in generation_style_rows(rows, canvas=_STORY_CANVAS)
+    ]
+
+
+def _with_confirmed_text(
+    recipe: EditRecipeV2,
+    picture: Sequence[TimelineClip],
+    *,
+    duration: float,
+    opening_title: str | None,
+    opening_title_hold_s: float | None,
+    clip_labels: Sequence[PhoneClipLabel] = (),
+    pinned_texts: Sequence[Any] | None = None,
+    pinned_font_family: str | None = None,
+) -> tuple[EditRecipeV2, float | None, list[dict[str, Any]]]:
+    """``recipe`` (no text yet) with the approved title and clip labels.
+
+    Returns ``(recipe, hold, rows)``: ``hold`` is how long the title is on screen (``None``
+    when there is no title) and ``rows`` the drawn elements as variant-row JSON. Shared by
+    both compilers in this module so the two kinds of camera-audio edit draw the same words
+    the same way.
+    """
+    from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
+        _compile_title_layers,
+        _with_text_layers,
+    )
+
+    title = (
+        _opening_title_element(
+            opening_title,
+            hold_s=opening_title_hold_s,
+            duration=duration,
+            picture=picture,
+            pinned_texts=pinned_texts,
+            pinned_font_family=pinned_font_family,
+        )
+        if opening_title
+        else None
+    )
+    media_of = {
+        asset.id: str(asset.media_id)
+        for asset in recipe.asset_manifest.assets
+        if getattr(asset, "media_id", None)
+    }
+    labels = _clip_label_elements(clip_labels, picture, media_of, font_family=pinned_font_family)
+    layers: list[Any] = []
+    if title is not None:
+        layers += _compile_title_layers([title], canvas=_STORY_CANVAS, timeline_duration_s=duration)
+    if labels:
+        layers += _compile_title_layers(
+            labels,
+            canvas=_STORY_CANVAS,
+            timeline_duration_s=duration,
+            layer_prefix=_LABEL_LAYER_PREFIX,
+        )
+    if not layers:
+        return recipe, None, []
+    hold = float(title.end_s) - float(title.start_s) if title is not None else None
+    rows = [
+        element.model_dump(mode="json", exclude_none=True)
+        for element in ([title] if title is not None else []) + labels
+    ]
+    return _with_text_layers(recipe, layers), hold, rows
+
+
 def compile_phone_voice_behind_footage_plan(
     voice: PhoneSourceBinding,
     voice_window: VoiceWindow,
@@ -956,64 +1167,17 @@ def compile_phone_voice_behind_footage_plan(
     from app.services.phone_text_styling import register_generation_timeline
 
     register_generation_timeline(footage)
-    if opening_title:
-        from app.pipeline.phone_narrated_plan import (  # noqa: PLC0415
-            _compile_title_layers,
-            _with_text_layers,
-            narrated_title_element,
-        )
-
-        hold = (
-            _DEFAULT_TITLE_HOLD_S if opening_title_hold_s is None else float(opening_title_hold_s)
-        )
-        title = narrated_title_element(
-            opening_title, end_s=hold, timeline_duration_s=duration, canvas=_STORY_CANVAS
-        )
-        if title is not None and pinned_texts:
-            # KRI-526/527: the title steps below a top corner pin that shares its hold. The
-            # pins themselves are added by the job (`with_pinned_text_layers`), which resolves
-            # them against the same clips.
-            from app.pipeline.pinned_text import (  # noqa: PLC0415
-                resolve_pin_windows,
-                title_y_clear_of_pins,
-                top_pin_edge,
-            )
-
-            windows = resolve_pin_windows(
-                pinned_texts,
-                duration,
-                sorted(
-                    (clip.timeline_start, clip.timeline_start + clip.source_duration / clip.rate)
-                    for clip in footage
-                ),
-            )
-            moved = title_y_clear_of_pins(
-                float(title.y_frac or 0.15),
-                top_pin_edge(
-                    windows,
-                    float(title.start_s),
-                    float(title.end_s),
-                    font_family=pinned_font_family,
-                ),
-                text=title.text,
-                size_px=float(title.size_px or 120),
-                max_width_frac=float(title.max_width_frac or 0.9),
-                measure_row=title.model_dump(mode="json", exclude_none=True)
-                if any(
-                    pin.heading_level is not None
-                    or pin.stack_id is not None
-                    or pin.size_px is not None
-                    for pin in pinned_texts
-                )
-                else None,
-            )
-            title = title.model_copy(update={"y_frac": moved})
-        if title is not None:
-            recipe = _with_text_layers(
-                recipe,
-                _compile_title_layers([title], canvas=_STORY_CANVAS, timeline_duration_s=duration),
-            )
-            receipt.title_hold_s = float(title.end_s) - float(title.start_s)
+    recipe, title_hold, _rows = _with_confirmed_text(
+        recipe,
+        footage,
+        duration=duration,
+        opening_title=opening_title,
+        opening_title_hold_s=opening_title_hold_s,
+        pinned_texts=pinned_texts,
+        pinned_font_family=pinned_font_family,
+    )
+    if title_hold is not None:
+        receipt.title_hold_s = title_hold
     return recipe, receipt
 
 
@@ -1036,6 +1200,7 @@ __all__ = [
     "MAIN_TRACK_ID",
     "MUSIC_TRACK_ID",
     "SPEECH_AUDIO_TRACK_ID",
+    "PhoneClipLabel",
     "PhoneSpeechSection",
     "SpeechMontageReceipt",
     "compile_phone_speech_montage_plan",

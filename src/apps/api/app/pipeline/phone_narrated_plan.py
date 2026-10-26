@@ -394,6 +394,7 @@ def _compile_title_layers(
     canvas: Canvas,
     timeline_duration_s: float,
     first_index: int = 0,
+    layer_prefix: str = TITLE_LAYER_PREFIX,
 ) -> list[Any]:
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.portable_text_layout import compile_text_overlay
@@ -405,7 +406,7 @@ def _compile_title_layers(
         return [
             compile_text_overlay(
                 overlay,
-                layer_id=f"{TITLE_LAYER_PREFIX}{first_index + index}",
+                layer_id=f"{layer_prefix}{first_index + index}",
                 canvas=canvas,
                 dissolve_seed=101 + (first_index + index) * 37,
             )[0]
