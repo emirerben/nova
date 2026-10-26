@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.136.0] - 2026-10-26
+
+### Fixed
+- fix(kria): blame the 120s edit cap, not the footage, for an over-long voiceover (KRI-953) (#1844) <!-- release-pr: 1844 -->
+
 ## [0.81.135.0] - 2026-10-26
 
 ### Changed
