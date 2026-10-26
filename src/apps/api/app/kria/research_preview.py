@@ -706,13 +706,7 @@ def load_inputs_sync(planned: Any, snapshot: Mapping[str, Any], *, turn_id: uuid
     from app.tasks.kria_runtime import _full_creator_request_sync  # noqa: PLC0415
 
     creator_id = snapshot.get("creator_id")
-    if (
-        not settings.brief_binding_for(creator_id)
-        or planned.brief_route is None
-        # KRI-721 readiness drafts are judged by their own assessment; they keep the
-        # render-time research path (see docs/pipelines/kria-agent-runtime.md).
-        or settings.approval_readiness_for(creator_id)
-    ):
+    if not settings.brief_binding_for(creator_id) or planned.brief_route is None:
         return None
     intent = planned.plan.intents[0]
     arguments = KRIA_TOOLS.get(intent.tool_name, intent.tool_version).arguments_model

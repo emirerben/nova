@@ -178,6 +178,22 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
 - **Request.** With the flag on, the Main Creator and the clip-intent planner
   read `render_brief_request(brief)`, and the approval dispatch passes it as
   `creator_request` instead of the draft summary.
+- **Approved hook wording (KRI-945).** Approving a generated wording ("Use this wording")
+  writes it into the one live `text`/`title` requirement's `literal`, marked
+  `facts.approved_copy = {target, text}` (`creative_copy_decisions.bind_approved_copy`, added
+  by the planner to the turn's updates and persisted in its brief version). Only a title ask
+  stated no later than the approving tap is filled, so "Start fresh" or a newer hook ask never
+  inherits old words. The marked literal is withdrawn when the fold stops approving it (revise,
+  skip, new footage) and replaced by a newer approval; words anyone else wrote are never
+  touched. Readiness then proves the hook with the literal check.
+- **Whole-video text the render draws (KRI-945).** A `global` literal missing from a draft's
+  texts is `met` when the draft renders on a phone route whose writer runs
+  `phone_plan_repair.repair_plan_for_contract` (unified, user-song and lip-sync montages;
+  `contract_text_drawn`) and the contract pins it with a role that repair always places. Not
+  for the spoken-excerpt, voice-behind-footage or voiceover writers, cloud renders, or an ask
+  with facts of its own (a position, a clip, a spoken-word cue): those keep "That exact text
+  isn't in this draft." `assess_readiness` takes `creator_id` to resolve the route; a caller
+  without it gets no such evidence (fail closed). Pins: `tests/kria/test_kri945_*`.
 - **Automatic simpler drafts.** The runtime planner removes only typed, unavailable
   optional text/SFX fields and recompiles the remaining strategy. At draft completion,
   exact compiler-removed text, unavailable native/Talking clip labels and typed
@@ -714,9 +730,13 @@ exactly that wording on exactly those clips.
   fails the job naming the explanation.
 - **Never speech.** Sourced text is `add_text` rows with `research` provenance, never caption
   cues, narration or voiceover inputs.
-- **Scope.** Unified phone montage only, and the non-readiness draft path (KRI-721 readiness
-  drafts keep render-time research). Guided proposals already research before their offer;
-  follow-up chat research already shows a draft first.
+- **Scope.** Unified phone montage only, on both draft paths. Since KRI-945 a KRI-721
+  readiness draft is researched too, and readiness judges the research requirement on the
+  result (`brief_checks._check_research`): `met` only when the pinned explanations were
+  researched for exactly that requirement, `unsupported` with the precise reason for a
+  research limit, `evidence_missing` when nothing was researched. The approval re-check reads
+  the same result from `BriefBinding.prepared_research`. Guided proposals already research
+  before their offer; follow-up chat research already shows a draft first.
 - **Kill switch.** `KRIA_RESEARCH_PREVIEW_ENABLED=false` + restart api + worker: nothing runs,
   no field is pinned, render-time research is unchanged.
 - **Proof.** `tests/evals/request_following/test_kri881_research_before_approval.py` (real
