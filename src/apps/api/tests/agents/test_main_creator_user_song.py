@@ -61,9 +61,11 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v96 (exact-timed small cards) adds the `timed_card` fact to the brief section: brief-on
 # hashes re-pinned; brief-off unchanged (the SMALL CARDS section renders only on a manifest
 # that advertises `timed_cards`, which these renders never do).
+# v97 (KRI-945) narrows the described-text exception to text on clips: clip-intents-on hashes
+# re-pinned; clip-intents-off unchanged (the exception renders only with clip intents).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "ede2c217739048f56446664b939109ae5def41be289b716ce8482d8028546f60",
-    (True, False): "cc7c6427ab34d031e6428fc804484ff65079c972be7c38a1e3a144d2b720ee23",
+    (True, True): "e9c869a7329692c08beddcf4b8f7a654c4ce9d0bdd2806714ed539ee00688abe",
+    (True, False): "08ca6790e63f9522dff8b85d4c84906c0b1e784b9fc21dc1f812d753dbc6fe9d",
     (False, True): "6957225979f0e8dd84bb6c7f4787fa7fb29c4d0939c8818b0c43768d5da16e6c",
     (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
 }
@@ -146,7 +148,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-26-v96"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-26-v97"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 
