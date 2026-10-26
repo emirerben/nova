@@ -14,6 +14,16 @@ from dataclasses import dataclass
 from typing import Any
 
 MAX_BEST_PARTS_DURATION_S = 120.0
+MAX_SPOKEN_BEST_PARTS_DURATION_S = 240.0
+
+
+def edit_cap_s(natural_owner: object) -> float:
+    """The longest edit the planner builds: a spoken source may run twice a footage edit."""
+    return (
+        MAX_SPOKEN_BEST_PARTS_DURATION_S
+        if natural_owner in {"voiceover", "take"}
+        else MAX_BEST_PARTS_DURATION_S
+    )
 MIN_INCLUDED_PART_S = 0.1
 
 

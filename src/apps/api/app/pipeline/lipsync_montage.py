@@ -31,7 +31,7 @@ Rules (all times are integer milliseconds of *song* time until the cuts are buil
 * Takes that cannot be placed are kept: short (``BROLL_HOLD_MS``), muted B-roll
   after the last sung take, within the song and the window cap. Takes in no cut
   at all ride along as unused media so the editor can still bring them in.
-* The window is capped at ``MAX_PROPOSAL_DURATION_S``, keeping the densest-
+* The window is capped at ``MAX_WINDOW_MS`` (120 s), keeping the densest-
   coverage stretch.
 * ``source_start = output_start + window_start - delta`` for every take cut.
 
@@ -76,7 +76,6 @@ from app.pipeline.unified_montage import (
 )
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
-    MAX_PROPOSAL_DURATION_S,
     EditProposalSnapshot,
     FastMontageCut,
     MediaRef,
@@ -106,7 +105,7 @@ DIP_MARGIN_MS = 100
 HOLE_CLOSE_MAX_MS = 600
 # No take is slid further than this to close holes: lips drift off the song by the slide.
 HOLE_CLOSE_SLIP_CAP_MS = 800
-MAX_WINDOW_MS = MAX_PROPOSAL_DURATION_S * 1000
+MAX_WINDOW_MS = 120 * 1000  # song-owned: not part of the 240 s spoken-edit cap
 MIN_TOTAL_MS = int(MIN_TOTAL_S * 1000)
 # Two candidate positions closer than this are the same position.
 _SAME_POSITION_MS = 50
@@ -1144,7 +1143,7 @@ def plan_lipsync_montage(
         "mode": "lipsync",
         "window_start_s": song_plan.window_start_s,
         "window_end_s": song_plan.window_end_s,
-        "capped_at_s": MAX_PROPOSAL_DURATION_S if trimmed else None,
+        "capped_at_s": MAX_WINDOW_MS / 1000 if trimmed else None,
         "placed": [
             {
                 "media_id": b.clip.media_id,
