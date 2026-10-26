@@ -56,11 +56,11 @@ from app.config import settings
 from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
 from app.kria import research_preview
-from app.kria.api_schemas import ChoiceSelectionIn, SubmitTurnBody
+from app.kria.api_schemas import ApprovalDecisionBody, ChoiceSelectionIn, SubmitTurnBody
 from app.kria.brief import CreativeBrief, load_latest_brief_sync
 from app.kria.drafts import KriaDraftDocument
 from app.kria.planner import PlannedKriaTurn
-from app.kria.runtime import submit_turn
+from app.kria.runtime import approval_fingerprint, decide_approval, submit_turn
 from app.models import (
     CreationThread,
     CreationThreadEvent,
@@ -374,6 +374,30 @@ def _ask(candidate: str, question: str, updates: list) -> dict[str, Any]:
     }
 
 
+async def _dismiss_card(chat: Chat) -> None:
+    """The creator closes the render card to keep talking (a pending card queues the chat)."""
+    with sync_session() as db:
+        approval = db.execute(
+            select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == chat.turn_ids[-1])
+        ).scalar_one_or_none()
+        if approval is None:
+            return
+        body = ApprovalDecisionBody(
+            expected_thread_revision=int(db.get(CreationThread, chat.thread_id).revision),
+            expected_draft_revision=approval.draft_revision,
+            expected_approval_fingerprint=approval_fingerprint(approval),
+        )
+    async with AsyncSessionLocal() as db:
+        await decide_approval(
+            db,
+            thread_id=chat.thread_id,
+            approval_id=approval.id,
+            creator_id=chat.user_id,
+            decision="deny",
+            body=body,
+        )
+
+
 def _propose(
     *,
     intents: list,
@@ -620,6 +644,7 @@ async def test_typed_facts_are_ready_only_where_the_writer_draws_them(
     expected: dict[str, Any],
 ) -> None:
     chat = await _approve_hook(monkeypatch, T3_PROD, speaking=speaking)
+    await _dismiss_card(chat)
     await chat.send(
         MESSAGES["t5"],
         {

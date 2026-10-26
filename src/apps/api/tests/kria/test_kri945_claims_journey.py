@@ -21,16 +21,11 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
 
 from app.agents._runtime import ModelInvocation
 from app.config import settings
-from app.database import AsyncSessionLocal, sync_session
 from app.database import engine as async_engine
 from app.kria import research_preview
-from app.kria.api_schemas import ApprovalDecisionBody
-from app.kria.runtime import approval_fingerprint, decide_approval
-from app.models import CreationThread, CreatorAgentApproval
 from app.services.creative_copy_decisions import APPROVED_COPY_FACT
 from tests._prod_profile import apply_prod_profile
 from tests.kria import test_kri945_global_text_journey as journey
@@ -45,6 +40,7 @@ from tests.kria.test_kri945_global_text_journey import (
     T3_ALIGNED,
     Chat,
     _ask,
+    _dismiss_card,
     _propose,
     _seed,
     _wire,
@@ -79,30 +75,6 @@ async def _approved(monkeypatch: pytest.MonkeyPatch, t1: dict[str, Any] = T1) ->
     await chat.send(MESSAGES["t2"], T2, option="revise")
     await chat.send(MESSAGES["t3"], T3_ALIGNED, option="approve")
     return chat
-
-
-async def _dismiss_card(chat: Chat) -> None:
-    """The creator closes the render card to keep talking (a pending card queues the chat)."""
-    with sync_session() as db:
-        approval = db.execute(
-            select(CreatorAgentApproval).where(CreatorAgentApproval.turn_id == chat.turn_ids[-1])
-        ).scalar_one_or_none()
-        if approval is None:
-            return
-        body = ApprovalDecisionBody(
-            expected_thread_revision=int(db.get(CreationThread, chat.thread_id).revision),
-            expected_draft_revision=approval.draft_revision,
-            expected_approval_fingerprint=approval_fingerprint(approval),
-        )
-    async with AsyncSessionLocal() as db:
-        await decide_approval(
-            db,
-            thread_id=chat.thread_id,
-            approval_id=approval.id,
-            creator_id=chat.user_id,
-            decision="deny",
-            body=body,
-        )
 
 
 def _title(chat: Chat) -> Any:
