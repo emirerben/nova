@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import CurrentUser, NativeClient
+from app.auth import CurrentUser, KriaClientProtocol, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.schemas.media_collections import (
@@ -34,6 +34,22 @@ def require_collections(native_client: NativeClient, user: CurrentUser):
         raise HTTPException(404, "Collection discovery is not enabled")
     if not native_client:
         raise HTTPException(403, "Collections are available in the iOS app")
+
+
+def _asks_open_questions(client_protocol: int | None) -> bool:
+    return (
+        client_protocol is not None
+        and client_protocol >= settings.open_questions_min_client_protocol
+    )
+
+
+def _for_client(value, client_protocol: int | None):
+    """Builds that predate the question UI never see the list (they could not answer it)."""
+    if not _asks_open_questions(client_protocol):
+        for story in getattr(value, "stories", [value]):
+            if story.content_plan is not None:
+                story.content_plan.open_questions = []
+    return value
 
 
 router = APIRouter(
@@ -146,11 +162,15 @@ async def saved_stories(
     user: CurrentUser,
     expected_revision: int = Query(ge=1),
     story_ids: list[uuid.UUID] | None = Query(default=None, max_length=20),
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import read_saved_stories
 
-    return await read_saved_stories(db, user.id, identifier, expected_revision, story_ids)
+    return _for_client(
+        await read_saved_stories(db, user.id, identifier, expected_revision, story_ids),
+        client_protocol,
+    )
 
 
 @router.post("/{identifier}/stories", response_model=CollectionStoriesOut)
@@ -158,11 +178,12 @@ async def stories(
     identifier: uuid.UUID,
     body: StoryGenerationBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import generate_stories
 
-    return await generate_stories(db, user.id, identifier, body)
+    return _for_client(await generate_stories(db, user.id, identifier, body), client_protocol)
 
 
 @router.patch("/{identifier}/stories/{story_id}", response_model=CollectionStoryOut)
@@ -171,11 +192,12 @@ async def correct_story(
     story_id: uuid.UUID,
     body: StoryCorrectionBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import correct_story as correct
 
-    return await correct(db, user.id, identifier, story_id, body)
+    return _for_client(await correct(db, user.id, identifier, story_id, body), client_protocol)
 
 
 @router.post("/{identifier}/stories/{story_id}/reject", response_model=CollectionStoryOut)
@@ -184,11 +206,12 @@ async def reject_story(
     story_id: uuid.UUID,
     body: StoryReviewBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import reject_story as reject
 
-    return await reject(db, user.id, identifier, story_id, body)
+    return _for_client(await reject(db, user.id, identifier, story_id, body), client_protocol)
 
 
 @router.post("/{identifier}/stories/{story_id}/expose", response_model=CollectionStoryOut)
@@ -197,11 +220,12 @@ async def expose_story(
     story_id: uuid.UUID,
     body: StoryReviewBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import expose_story as expose
 
-    return await expose(db, user.id, identifier, story_id, body)
+    return _for_client(await expose(db, user.id, identifier, story_id, body), client_protocol)
 
 
 @router.post("/{identifier}/stories/{story_id}/select")
@@ -210,12 +234,20 @@ async def select_story(
     story_id: uuid.UUID,
     body: StorySelectionBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import select_story as select
     from app.tasks.kria_runtime import run_kria_turn
 
-    accepted, publish = await select(db, user.id, identifier, story_id, body)
+    accepted, publish = await select(
+        db,
+        user.id,
+        identifier,
+        story_id,
+        body,
+        gate_open_questions=_asks_open_questions(client_protocol),
+    )
     if publish:
         try:
             run_kria_turn.delay(accepted.turn_id)

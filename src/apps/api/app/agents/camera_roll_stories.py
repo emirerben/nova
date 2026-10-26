@@ -3,7 +3,7 @@
 import json
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.media_moment_relevance import MomentRelevanceInput
@@ -30,6 +30,18 @@ class CameraRollStoriesOutput(BaseModel):
 
 class _ProposedContentPlan(StoryContentPlan):
     form: StoryForm
+
+    @field_validator("open_questions", mode="before")
+    @classmethod
+    def usable_questions(cls, value):
+        # Questions are optional extras: a blank, overlong or surplus one must never
+        # cost the creator the whole idea, and the model never sets answers or ids.
+        kept = []
+        for entry in value if isinstance(value, list) else []:
+            text = entry.get("question") if isinstance(entry, dict) else entry
+            if isinstance(text, str) and 0 < len(text.strip()) <= 140:
+                kept.append({"question": text.strip()})
+        return kept[:3]
 
 
 class _StoryProposal(BaseModel):
@@ -66,18 +78,11 @@ def _meets_form_evidence(story, source_stops):
     return facts >= need.research_facts and source_stops >= need.source_stops
 
 
-def _variety_expected(input):  # noqa: A002
-    # Footage from one source clip, or a researched run (whose ideas naturally share
-    # factual_story), may genuinely support a single form; only multi-clip, unresearched
-    # footage is expected to vary.
-    return not input.public_research and len({c.source for c in input.candidates}) > 1
-
-
 class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-25.1",
+        prompt_version="2026-10-25.3",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -124,7 +129,8 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             '"format": "text_story", "form": "guide|factual_story|atmosphere|review|performance", '
             '"audience": "", "angle": "", "why_it_works": "", '
             '"opening_text": "", "closing_text": null, "caption": "", '
-            '"beat_reasons": ["why this exact moment advances the idea"]}}]}. '
+            '"beat_reasons": ["why this exact moment advances the idea"], '
+            '"open_questions": ["short question only the creator can answer"]}}]}. '
             "Aim for three DISTINCT, worthwhile content ideas grounded in candidate evidence, "
             "the creator's query, and supplied public_research only. Explore different viewer "
             "takeaways, specific observations, footage subsets and editorial forms before "
@@ -144,7 +150,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "claim a form whose footage or research requirement is unmet: that idea is "
             "discarded. These forms are equally valid; a mood post needs no "
             "question, twist or invented narrative. When you return three ideas, use at least "
-            "two different forms unless the footage genuinely supports only one; three "
+            "two different forms unless the creator asked narrowly for one form; three "
             "rewordings of one form are not three options. Explain the actual value: what "
             "viewers learn, recognize, find funny or enjoy seeing. Name the intended audience in "
             "ordinary words. "
@@ -169,8 +175,12 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "a duration. The posting caption can add detail but cannot substitute for a clear "
             "on-screen premise. Do not invent quotes, "
             "verdicts, practical details or missing actions. If the idea needs the creator's "
-            "opinion or an unknown fact, explicitly name the question in why_it_works and keep "
-            "the proposed on-screen copy neutral until they answer. A guide can show the actual "
+            "opinion or a fact only they know, put it in content_plan.open_questions (at most "
+            "three, each under 100 characters, addressed to the creator, for example 'Which "
+            "café is this?') and keep the proposed on-screen copy neutral until they answer; "
+            "do not bury the question in why_it_works. Never ask what the footage already "
+            "shows or what public_research covers, and use an empty list when nothing is "
+            "unknown. A guide can show the actual "
             "journey and stops without inventing prices, opening hours or historical facts. "
             "Avoid brochure slogans such as 'Journey Through Time' and generic lists of objects. "
             "Use specific observations supported by THESE moments. A visible replica is a "
@@ -305,14 +315,12 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
                 for story in result.stories
                 if _meets_form_evidence(story, len({sources[v] for v in story.moment_ids}))
             ]
-            # A mislabelled idea is dropped on its own; three ideas that collapse into one
-            # form fail the whole response because dropping any would hide the variety miss.
-            if (
-                len(result.stories) == 3
-                and _variety_expected(input)
-                and len({story.content_plan.form for story in result.stories}) < 2
-            ):
-                raise ValueError("Three ideas must not share one editorial form")
+            # A mislabelled idea is dropped on its own. Three ideas that collapse into one
+            # form keep the first two: the prompt already allows two, and failing the whole
+            # response would leave a narrow request (which may legitimately repeat a form)
+            # with no ideas at all.
+            if len(result.stories) == 3 and len({s.content_plan.form for s in result.stories}) < 2:
+                result.stories = result.stories[:2]
             return result
         except ValueError as exc:
             raise SchemaError("Invalid camera-roll story response") from exc

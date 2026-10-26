@@ -199,12 +199,26 @@ Each idea carries an additive `content_plan.form` (`guide`, `factual_story`, `at
 `review`, `performance`). `FORM_EVIDENCE` in `schemas/media_collections.py` lists what a form
 needs: `guide` three distinct source clips, `factual_story` a selected research fact, the rest
 nothing. `CameraRollStoriesAgent.parse` requires a known form, drops an idea whose form lacks its
-evidence, and raises `SchemaError` when three surviving ideas share one form while variety is expected
-(2+ distinct source clips, no research). `STORY_IDEA_FORMS_ENABLED=false` turns all of this off
+evidence, and keeps the first two when three surviving ideas share one form. `STORY_IDEA_FORMS_ENABLED=false` turns all of this off
 (rollback lever; procedure in DECISIONS.md "Idea forms"). Saved stories from before the field have no `form` key; `StoryContentPlan`
 stays version 1 and omits a null form when serializing, so stored JSON, digests and approval
 bindings of those rows are byte-identical. A wording edit keeps the stored form (builds that
 predate the field send none back).
+
+An idea may carry up to three `content_plan.open_questions` (`id`, `question`, `answer`,
+`dismissed`): facts only the creator knows. The question text is server-owned. The creator
+answers or skips through the existing `PATCH .../stories/{id}` wording edit (a new story
+revision); `resolve_open_questions` merges only `answer`/`dismissed` by id, rejects unknown ids,
+and keeps the stored list when a build that predates the field sends none. `select_story`
+answers 409 `story_open_questions` while any question is neither answered nor skipped (replays
+of an already-accepted selection are not re-checked). Legacy rows have no key and build as
+before. `story_content_digest` and the research review prompt ignore the list, so answering
+never stales a research review. The card's length is `duration_s`, summed from the story's
+moments on every read. Only builds sending `X-Kria-Client-Protocol` >=
+`OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL` (22) are shown `open_questions` and held by the 409; older
+builds get the list stripped and no gate. `prepare_story_snapshot` strips `open_questions` from the
+prepared payload, so creator answers never leave the story row. `StoryContentPlan` is
+`extra="forbid"`: rolling back needs a tolerant reader first or the new keys stripped.
 
 Stories support review, exact-interval replacement/order/removal, original/muted audio,
 rejection and selection. Selection prepares the common revisioned draft, with a server-owned

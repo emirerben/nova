@@ -3007,10 +3007,21 @@ token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` an
 
 ---
 
-## [2026-10-25] Idea forms: drop mislabelled ideas, fail collapsed sets
+## [2026-10-25] Idea forms: drop mislabelled ideas, trim collapsed sets
 
-**Decision:** `content_plan.form` is validated server-side in `CameraRollStoriesAgent.parse`. An idea whose form lacks its evidence (guide < 3 distinct sources, factual_story without a selected fact) is dropped alone. Three surviving ideas with one form raise `SchemaError` only when variety is expected (2+ distinct source clips, no `public_research`); one clip or a researched run may legitimately share one form. `StoryContentPlan.version` stays 1; legacy = `form` absent.
-**Why:** A mislabelled idea is independently wrong and the others stay valid, so a subset is safe (the service already drops invalid ideas the same way). Trimming a collapsed set would pick one clone arbitrarily and hide that the model skipped variety, and the model has no retry (`max_attempts=1`), so the existing retry-later 503 is the honest outcome. Bumping `version` would make older iOS builds, which echo the plan back on wording edits, send a v2 plan without a form.
-**Revisit if:** the collapsed-set 503 rate is visible in prod agent_run outcomes, then prefer one bounded re-ask.
+**Decision:** `content_plan.form` is validated server-side in `CameraRollStoriesAgent.parse`. An idea whose form lacks its evidence (guide < 3 distinct sources, factual_story without a selected fact) is dropped alone. Three surviving ideas with one form keep the first two. `StoryContentPlan.version` stays 1; legacy = `form` absent.
+**Why:** A mislabelled idea is independently wrong and the others stay valid, so a subset is safe (the service already drops invalid ideas the same way). An earlier version raised `SchemaError` on a collapsed set, but a narrow request ("review my coffee shop visit") legitimately yields one form, and with no retry (`max_attempts=1`) that returned a 503 with no ideas. The prompt already allows two ideas, so trimming is the milder outcome. The old "unless the footage supports only one form" escape was dead code: atmosphere, review and performance need no evidence, so more than one form is always satisfiable.
+**Rollback note:** `StoryContentPlan` is `extra="forbid"`, so rows written with `form`/`open_questions` are not readable by code that predates those fields. Reverting needs a tolerant reader deployed first, or those keys stripped from `story_json`; legacy rows are unaffected.
+**Revisit if:** the 2-of-3 trim is frequent in prod agent_run outcomes, then prefer one bounded re-ask.
 
 **Rollback:** `STORY_IDEA_FORMS_ENABLED` (default `true`). `false` (Fly secret, api + worker, restart) = form neither required, validated nor stored on new ideas, and wording edits drop a stored form. An older API image cannot read stored `content_plan.form` (`extra="forbid"` => 500 on the saved-stories list), so before rolling the image back: flip the flag off, then strip stored forms with `UPDATE media_collection_stories SET story_json = story_json #- '{content_plan,form}'`. During a rolling deploy an old machine can 500 on a new row for minutes; ship the API before any iOS build that echoes `form`.
+
+---
+
+## [2026-10-25] Open questions: server-owned text, answer through the wording edit
+
+**Decision:** Unknowns live in `content_plan.open_questions`, not in `why_it_works` prose. Answer/skip state is written through the existing `correct_story` wording edit (a story revision), and `select_story` refuses with 409 `story_open_questions` until none is pending. The client may change only `answer`/`dismissed` of known ids; an omitted list keeps the stored one.
+**Why:** Prose cannot gate anything. A separate answers store would need its own revisioning and approval binding, while a wording edit already invalidates stale approvals. Letting a missing list overwrite the stored one would let a build that predates the field silently clear the gate. A malformed or surplus question is trimmed by the agent instead of failing the response, since the idea itself is still valid.
+**Client gate:** questions are emitted, and the 409 enforced, only for builds sending `X-Kria-Client-Protocol` >= `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL` (22, the first build that renders them). Older builds get ideas without `open_questions` and select without the gate, so they never hit a 409 they cannot explain. Kill switch: `…=999` (api) + restart.
+**Privacy:** answers stay in the story row. `prepare_story_snapshot` strips `open_questions` from the prepared payload, so they never reach approvals, runtime documents, or job rows.
+**Revisit if:** answers should regenerate the proposed copy (today the creator edits the wording; no model reads the answer).

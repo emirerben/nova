@@ -13,6 +13,13 @@ struct CameraRollMoment: Codable, Identifiable, Sendable {
     var evidenceScope: String? = nil
     enum CodingKeys: String, CodingKey { case id, generation, kind, text, uncertain; case assetID = "asset_id", sourceID = "source_id", start = "start_s", end = "end_s", evidenceScope = "evidence_scope" }
 }
+struct CameraRollOpenQuestion: Codable, Identifiable, Sendable {
+    let id: String
+    let question: String
+    var answer: String? = nil
+    var dismissed: Bool
+    var isResolved: Bool { answer != nil || dismissed }
+}
 struct CameraRollContentPlan: Codable, Sendable {
     let version: Int
     let format: String
@@ -24,7 +31,21 @@ struct CameraRollContentPlan: Codable, Sendable {
     var closingText: String?
     var caption: String
     let beatReasons: [String]
-    enum CodingKeys: String, CodingKey { case version, format, form, audience, angle, caption; case whyItWorks = "why_it_works", openingText = "opening_text", closingText = "closing_text", beatReasons = "beat_reasons" }
+    var openQuestions: [CameraRollOpenQuestion]? = nil
+    enum CodingKeys: String, CodingKey { case version, format, form, audience, angle, caption; case whyItWorks = "why_it_works", openingText = "opening_text", closingText = "closing_text", beatReasons = "beat_reasons", openQuestions = "open_questions" }
+    var unresolvedQuestions: [CameraRollOpenQuestion] { (openQuestions ?? []).filter { !$0.isResolved } }
+    /// A nil answer skips the question; the server keeps the question text itself.
+    func resolving(_ id: String, answer: String?) -> CameraRollContentPlan {
+        var revised = self
+        revised.openQuestions = openQuestions?.map { value in
+            guard value.id == id else { return value }
+            var changed = value
+            changed.answer = answer?.trimmingCharacters(in: .whitespacesAndNewlines)
+            changed.dismissed = answer == nil
+            return changed
+        }
+        return revised
+    }
     var formLabel: String? {
         switch form ?? "" {
         case "guide": "Guide"

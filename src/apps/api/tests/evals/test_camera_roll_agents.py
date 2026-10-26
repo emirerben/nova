@@ -600,21 +600,13 @@ def test_guide_and_factual_story_are_dropped_when_their_evidence_is_missing():
     assert _forms(researched, _form_story("factual_story", facts=("fact-0",))) == ["factual_story"]
 
 
-def test_three_ideas_cannot_be_one_form_reworded():
+def test_three_ideas_of_one_form_keep_two_instead_of_failing():
     value = _form_input()
     same = [_form_story("atmosphere", n=i) for i in range(3)]
-    with pytest.raises(SchemaError):
-        CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=same)), value)
+    assert _forms(value, *same) == ["atmosphere"] * 2
     assert _forms(value, *same[:2]) == ["atmosphere"] * 2
     mixed = [_form_story("atmosphere", n=0), _form_story("review", n=1), same[2]]
     assert _forms(value, *mixed) == ["atmosphere", "review", "atmosphere"]
-
-
-def test_one_form_is_allowed_when_footage_supports_only_one():
-    three = [_form_story("performance", n=i) for i in range(3)]
-    assert _forms(_form_input(sources=1), *three) == ["performance"] * 3
-    researched = [_form_story("factual_story", facts=("fact-0",), n=i) for i in range(3)]
-    assert _forms(_form_input(research=True), *researched) == ["factual_story"] * 3
 
 
 def test_forms_flag_off_neither_requires_validates_nor_stores_a_form(monkeypatch):
@@ -644,3 +636,26 @@ def test_pre_form_plan_loads_and_serializes_without_a_form_key():
     )
     plan = StoryContentPlan.model_validate(legacy)
     assert plan.form is None and plan.model_dump(mode="json") == legacy
+
+
+def test_open_questions_are_trimmed_and_never_cost_the_idea():
+    story = _form_story("review")
+    story["content_plan"]["open_questions"] = [
+        "Which café is this?",
+        {"question": "  Who filmed it?  ", "answer": "forged", "id": "x"},
+        "",
+        "q" * 141,
+        7,
+        "Third usable question?",
+        "Fourth is surplus?",
+    ]
+    parsed = CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), _form_input())
+    questions = parsed.stories[0].content_plan.open_questions
+    assert [(q.id, q.question, q.answer, q.dismissed) for q in questions] == [
+        ("q1", "Which café is this?", None, False),
+        ("q2", "Who filmed it?", None, False),
+        ("q3", "Third usable question?", None, False),
+    ]
+    story["content_plan"]["open_questions"] = "not a list"
+    parsed = CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), _form_input())
+    assert "open_questions" not in parsed.stories[0].content_plan.model_dump()

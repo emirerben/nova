@@ -10698,6 +10698,14 @@
             "title": "Format",
             "type": "string"
           },
+          "open_questions": {
+            "items": {
+              "$ref": "#/components/schemas/StoryOpenQuestion"
+            },
+            "maxItems": 3,
+            "title": "Open Questions",
+            "type": "array"
+          },
           "opening_text": {
             "maxLength": 100,
             "minLength": 1,
@@ -10831,6 +10839,41 @@
           "query"
         ],
         "title": "StoryGenerationBody",
+        "type": "object"
+      },
+      "StoryOpenQuestion": {
+        "additionalProperties": false,
+        "description": "An unknown the creator must answer or skip before the idea is built.",
+        "properties": {
+          "answer": {
+            "maxLength": 200,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Answer",
+            "type": "string"
+          },
+          "dismissed": {
+            "default": false,
+            "title": "Dismissed",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "maxLength": 8,
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 140,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "StoryOpenQuestion",
         "type": "object"
       },
       "StoryResearch": {
@@ -16255,6 +16298,16 @@
               "title": "Story Ids",
               "type": "array"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16299,6 +16352,16 @@
             "schema": {
               "format": "uuid",
               "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16369,6 +16432,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16435,6 +16508,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16505,6 +16588,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16571,6 +16664,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }

@@ -39,6 +39,9 @@ def without_rejected(evidence, rejected):
 
 
 def story_content_digest(title, content_plan, moment_ids):
+    # Answering an open question is not a wording change the research review must redo.
+    if content_plan and "open_questions" in content_plan:
+        content_plan = {k: v for k, v in content_plan.items() if k != "open_questions"}
     return hashlib.sha256(
         json.dumps([title, content_plan, moment_ids], sort_keys=True).encode()
     ).hexdigest()
@@ -103,7 +106,7 @@ class StoryResearchReviewAgent(Agent[StoryResearchReviewInput, StoryResearchRevi
                 {
                     "title": story.title,
                     "copy_and_reasoning": story.content_plan.model_dump(
-                        exclude={"beat_reasons", "form"}
+                        exclude={"beat_reasons", "form", "open_questions"}
                     ),
                     "selected_facts": (
                         [fact.model_dump() for fact in story.research.evidence.facts]

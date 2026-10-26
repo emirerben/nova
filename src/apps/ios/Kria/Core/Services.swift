@@ -1154,7 +1154,10 @@ enum KriaClientProtocolContract {
     /// The server stamps the key only for this protocol (and only with `TEXT_BEHIND_SUBJECT_PHONE_ENABLED` +
     /// `behindSubject` verified); an older build asked for it gets plain text, and 426 `client_update_required`
     /// for a pinned recipe that already carries the key, since it cannot decode it.
-    static let version = 21
+    /// 22: renders and answers a camera-roll idea's `open_questions`. The server holds "Use this idea"
+    /// behind them (409 `story_open_questions`) and sends the list only from this protocol; older builds
+    /// see no questions and are not gated.
+    static let version = 22
     static let header = "X-Kria-Client-Protocol"
 }
 

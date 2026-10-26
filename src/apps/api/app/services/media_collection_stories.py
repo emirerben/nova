@@ -334,6 +334,32 @@ async def owned_story(db, owner, identifier, story_id, body):
     return row, duplicate
 
 
+def resolve_open_questions(stored, sent):
+    """Only answer/skip state is client-writable; the questions themselves are server-owned.
+
+    Builds that predate the field echo no list back, which must not erase a pending
+    question and so reopen or bypass the gate."""
+    known = {value["id"] for value in stored}
+    if any(value.id not in known for value in sent):
+        raise HTTPException(422, "That question is not part of this idea")
+    by_id = {value.id: value for value in sent}
+    return [
+        {**value, "answer": by_id[value["id"]].answer, "dismissed": by_id[value["id"]].dismissed}
+        if value["id"] in by_id
+        else value
+        for value in stored
+    ]
+
+
+def unresolved_question_ids(row):
+    plan = row.story_json.get("content_plan") or {}
+    return [
+        value["id"]
+        for value in plan.get("open_questions", [])
+        if value.get("answer") is None and not value.get("dismissed")
+    ]
+
+
 async def correct_story(db, owner, identifier, story_id, body):
     row, duplicate = await owned_story(db, owner, identifier, story_id, body)
     digest = hashlib.sha256(body.model_dump_json().encode()).hexdigest()
@@ -353,10 +379,15 @@ async def correct_story(db, owner, identifier, story_id, body):
         # (including from builds that predate the field) cannot add, drop or change it.
         from app.config import settings
 
-        revised = body.content_plan.model_dump(mode="json", exclude={"form"})
-        form = (row.story_json.get("content_plan") or {}).get("form")
+        stored = row.story_json.get("content_plan") or {}
+        revised = body.content_plan.model_dump(mode="json", exclude={"form", "open_questions"})
+        form = stored.get("form")
         if form and settings.story_idea_forms_enabled:
             revised["form"] = form
+        if questions := resolve_open_questions(
+            stored.get("open_questions", []), body.content_plan.open_questions
+        ):
+            revised["open_questions"] = questions
         row.story_json = {**row.story_json, "content_plan": revised}
     elif body.moment_order is not None:
         known = {value["id"]: value for value in moments}
@@ -541,7 +572,7 @@ async def _recoverable_selection_hold(db, thread, item, turn, story):
     )
 
 
-async def select_story(db, owner, identifier, story_id, body):
+async def select_story(db, owner, identifier, story_id, body, gate_open_questions=True):
     from sqlalchemy import select
 
     from app.config import settings
@@ -639,6 +670,14 @@ async def select_story(db, owner, identifier, story_id, body):
         raise HTTPException(409, "Held selection was not found in this project")
     if story_out(row).rejected:
         raise HTTPException(409, "Choose another story; this version was rejected")
+    if gate_open_questions and unresolved_question_ids(row):
+        raise HTTPException(
+            409,
+            {
+                "code": "story_open_questions",
+                "message": "Answer or skip this idea's questions before building it",
+            },
+        )
     thread = await db.get(CreationThread, body.thread_id)
     if thread is None or thread.creator_id != owner:
         raise HTTPException(404, "Chat not found")

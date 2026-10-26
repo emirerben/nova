@@ -144,6 +144,22 @@ FORM_EVIDENCE: dict[StoryForm, FormEvidence] = {
 }
 
 
+class StoryOpenQuestion(BaseModel):
+    """An unknown the creator must answer or skip before the idea is built."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    id: str = Field(default="", max_length=8)
+    question: str = Field(min_length=1, max_length=140)
+    answer: str | None = Field(default=None, min_length=1, max_length=200)
+    dismissed: bool = False
+
+    @model_validator(mode="after")
+    def answered_or_skipped(self):
+        if self.answer is not None and self.dismissed:
+            raise ValueError("A question is either answered or skipped")
+        return self
+
+
 class StoryContentPlan(BaseModel):
     """Suggested creative wording, kept distinct from source-analysis descriptions."""
 
@@ -160,11 +176,18 @@ class StoryContentPlan(BaseModel):
         default="", max_length=300
     )
     beat_reasons: list[str] = Field(min_length=1, max_length=8)
+    open_questions: list[StoryOpenQuestion] = Field(
+        default_factory=list, max_length=3, exclude_if=lambda value: not value
+    )
 
     @model_validator(mode="after")
     def bounded_reasons(self):
         if any(not reason.strip() or len(reason) > 240 for reason in self.beat_reasons):
             raise ValueError("Each beat needs a short reason")
+        for position, question in enumerate(self.open_questions, 1):
+            question.id = question.id or f"q{position}"
+        if len({question.id for question in self.open_questions}) != len(self.open_questions):
+            raise ValueError("Open questions need distinct ids")
         return self
 
 
