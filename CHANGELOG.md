@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.143.0] - 2026-10-26
+
+### Changed
+- feat(api): camera-roll analysis converges + per-item state route (KRI-944) (#1842) <!-- release-pr: 1842 -->
+
 ## [0.81.142.0] - 2026-10-26
 
 ### Fixed
