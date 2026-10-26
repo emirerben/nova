@@ -11269,8 +11269,12 @@ def _narrated_alignment_receipts(
     if not live:
         return []
     kinds = {req.id: req.kind for req in live}
+    # KRI-963: the record holds no on-screen text, so a text ask is left to the finished-video
+    # review, which reads the title and text rows the variant really drew.
     receipts = build_receipts(
-        live, plan_facts_from_narrated_alignment(record), include_unchecked=bound
+        [req for req in live if req.kind != "text"],
+        plan_facts_from_narrated_alignment(record),
+        include_unchecked=bound,
     )
     rows = [
         {

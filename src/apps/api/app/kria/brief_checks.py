@@ -1907,6 +1907,27 @@ def _ending_clip_receipt_fact(receipt: object) -> EndingClipFact | None:
     )
 
 
+def _with_narrated_text_rows(variant: Mapping[str, Any]) -> Mapping[str, Any]:
+    """``variant`` with its phone Voiceover text rows as ordinary text lanes (KRI-963).
+
+    A phone Narrated render keeps the title it drew (and text placed at a spoken word, or
+    added in the editor) in ``narrated_title_text_elements``, the one store an editor Save
+    rewrites, never in ``text_elements``. A row the creator removed is not on screen.
+    """
+    rows = variant.get("narrated_title_text_elements")
+    if not isinstance(rows, list) or not rows:
+        return variant
+    current = variant.get("text_elements")
+    lanes = list(current) if isinstance(current, list) else []
+    shown = {row.get("id") for row in lanes if isinstance(row, Mapping)}
+    extra = [
+        row
+        for row in rows
+        if isinstance(row, Mapping) and not row.get("removed") and row.get("id") not in shown
+    ]
+    return {**variant, "text_elements": lanes + extra} if extra else variant
+
+
 def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFacts:
     """Facts off a rendered phone variant (KRI-537).
 
@@ -1918,7 +1939,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     """
     if not isinstance(variant, Mapping):
         return PlanFacts()
-    base = plan_facts_from_editor_payload(variant)
+    base = plan_facts_from_editor_payload(_with_narrated_text_rows(variant))
     changes = _phone_receipt_facts(
         variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
     )
