@@ -299,16 +299,17 @@ def build_choice_question(
 
 
 def _after_connector(reason: str) -> str:
-    """``reason`` as it reads after a connector word ("Maalesef ..."): a plain capitalised
-    first word loses its capital (Turkish I / İ aware). Acronyms, camel-case names, quotes,
-    digits and a name with a suffix ("Caro'nun") are the creator's words and stay as written."""
+    """``reason`` as it reads after a connector word ("Maalesef ...", "Unfortunately ..."): a
+    plain capitalised first word loses its capital (Turkish I / İ aware). Acronyms, camel-case
+    names, quotes, digits and a name with a suffix ("Caro'nun") are the creator's words and stay
+    as written."""
 
     end = 0
     while end < len(reason) and reason[end].isalnum():
         end += 1
     head, after = reason[:end], reason[end : end + 1]
     if (
-        len(head) < 2
+        (len(head) < 2 and head != "A")  # "A video ..." is an article; "I" stays
         or not head[0].isupper()
         or head[1:] != head[1:].lower()
         or after in ("'", "’")
@@ -350,7 +351,8 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
         only = options[0]
         return say(
             en=(
-                f"{candidate.intro} Unfortunately {candidate.reason} The most I can do is: "
+                f"{candidate.intro} Unfortunately {_after_connector(candidate.reason)} "
+                "The most I can do is: "
                 f'{only.label}. Reply "{only.label}" to go with that, or change your request.'
             ),
             tr=(
@@ -365,7 +367,10 @@ def choice_question_text(candidate: ConflictCandidate) -> str:
     else:
         lines = [
             say(
-                en=f"{candidate.intro} Unfortunately {candidate.reason} Which do you prefer?",
+                en=(
+                    f"{candidate.intro} Unfortunately {_after_connector(candidate.reason)} "
+                    "Which do you prefer?"
+                ),
                 tr=(
                     f"{candidate.intro} Maalesef {_after_connector(candidate.reason)} "
                     "Hangisini tercih edersin?"
@@ -3021,8 +3026,8 @@ def _source_coverage(
     elif "insufficient_media" in codes or "duration_out_of_bounds" in codes:
         reason = say(
             en=(
-                "Choose a hero clip with at least 3 seconds and usable supporting clips "
-                "so the hero can keep at least 60% of this edit."
+                "This edit needs a hero clip of at least 3 seconds plus usable supporting clips, "
+                "so the hero can keep at least 60% of the video."
             ),
             tr=(
                 "En az 3 saniyelik bir ana klip ve kullanılabilir destek klipleri seç; "
@@ -3058,8 +3063,8 @@ def _source_coverage(
     elif "source_count_limit" in codes:
         reason = say(
             en=(
-                f"Choose at most {source_limit} clips for this edit so the recipe can "
-                "include each one."
+                f"This edit can include at most {source_limit} clips. Choose fewer clips so "
+                "each one can be used."
             ),
             tr=f"Her biri kurguya girebilsin diye bu video için en fazla {source_limit} klip seç.",
         )
@@ -3081,19 +3086,45 @@ def _source_coverage(
         label = "Add longer footage"
     elif "cap_below_coverage" in codes:
         reason = say(
-            en="Choose fewer clips so each can appear for at least 0.1 seconds within 120 seconds.",
+            en=(
+                "There are too many clips for each to appear for at least 0.1 seconds within "
+                "120 seconds. Choose fewer clips."
+            ),
             tr="Her biri 120 saniye içinde en az 0,1 saniye görünebilsin diye daha az klip seç.",
         )
         label = "Choose fewer clips"
-    elif "source_below_minimum" in codes or "no_usable_sources" in codes:
+    elif "no_usable_sources" in codes:
+        # A selected clip id has no source row in the item's clip assignments (the clip was
+        # removed, replaced or never attached): nothing to do with clip length.
         reason = say(
-            en="Replace clips shorter than 0.1 seconds, or leave them out of this edit.",
-            tr="0,1 saniyeden kısa klipleri değiştir ya da bu videoya alma.",
+            en=(
+                "Some of the selected clips are no longer attached to this edit, so I can't "
+                "read their footage. Select your clips again, or add them back."
+            ),
+            tr=(
+                "Seçili kliplerden bazıları artık bu düzenlemeye bağlı değil, bu yüzden "
+                "çekimlerini okuyamıyorum. Klipleri yeniden seç ya da tekrar ekle."
+            ),
+        )
+        label = "Update the selected clips"
+    elif "source_below_minimum" in codes:
+        reason = say(
+            en=(
+                "Some of the selected clips are shorter than 0.1 seconds. Replace them, or "
+                "leave them out of this edit."
+            ),
+            tr=(
+                "Seçili kliplerden bazıları 0,1 saniyeden kısa. Onları değiştir ya da bu "
+                "videoya alma."
+            ),
         )
         label = "Update the selected clips"
     else:
         reason = say(
-            en="Add footage so the selected clips can provide at least 3 seconds without reuse.",
+            en=(
+                "The selected clips add up to less than 3 seconds without reuse. Add footage "
+                "so they reach at least 3 seconds."
+            ),
             tr="Seçili klipler tekrar olmadan en az 3 saniye sağlayabilsin diye çekim ekle.",
         )
         label = "Add longer footage"
