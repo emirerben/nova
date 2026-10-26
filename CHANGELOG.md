@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.141.0] - 2026-10-26
+
+### Changed
+- fix(kria): seat a listed middle order and judge every order row against the cut (KRI-941) (#1846) <!-- release-pr: 1846 -->
+
 ## [0.81.140.0] - 2026-10-26
 
 ### Changed
