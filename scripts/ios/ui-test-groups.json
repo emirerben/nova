@@ -163,7 +163,10 @@
       "KriaUITests/CameraRollCollectionUITests/testSelectAndMoveItemsBetweenEvents",
       "KriaUITests/CameraRollCollectionUITests/testEmptyCameraRollInvitesTheFirstChoice",
       "KriaUITests/CameraRollCollectionUITests/testAccessNoticesExplainLimitedAndRemovedAccess",
-      "KriaUITests/CameraRollCollectionUITests/testTastePanelOpensFromTheHeaderAndReturns"
+      "KriaUITests/CameraRollCollectionUITests/testTastePanelOpensFromTheHeaderAndReturns",
+      "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
+      "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection",
+      "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

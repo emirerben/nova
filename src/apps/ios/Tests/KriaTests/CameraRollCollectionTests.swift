@@ -88,9 +88,44 @@ final class CameraRollCollectionTests: XCTestCase {
         XCTAssertEqual(collection.group(for: "c"), "Evening")
     }
 
+    /// Ideas, renames and the server's members all point at an event by its key, so a key may only ever be given once.
+    func testAutomaticEventKeysDoNotMoveWhenANeighbourGoesOrArrives() throws {
+        let day = 24.0 * 3600
+        var collection = try CameraRollCollection(name: "Trip", identifiers: ["a", "b", "c"])
+        collection.record([metadata("a", seconds: 0), metadata("b", seconds: day), metadata("c", seconds: 2 * day)], sharesCaptureContext: true)
+        XCTAssertEqual(["a", "b", "c"].map(collection.group(for:)), ["Event 1", "Event 2", "Event 3"])
+
+        XCTAssertEqual(collection.remove(inGroup: "Event 1").map(\.id), ["a"])
+        XCTAssertEqual(["b", "c"].map(collection.group(for:)), ["Event 2", "Event 3"], "Deleting an event renumbers nobody")
+
+        try collection.select(["b", "c", "d", "e"])
+        collection.record([metadata("d", seconds: -day), metadata("e", seconds: day + 60)], sharesCaptureContext: true)
+        XCTAssertEqual(collection.group(for: "e"), "Event 2", "A late item joins the event it was shot in")
+        XCTAssertEqual(collection.group(for: "d"), "Event 4", "A new event never reuses a key that is in use")
+        XCTAssertEqual(["b", "c"].map(collection.group(for:)), ["Event 2", "Event 3"], "Earlier footage arriving later renumbers nobody")
+    }
+
+    func testUnpinnedFilesKeepTheirPositionalKeysWhenFirstRead() throws {
+        var collection = try CameraRollCollection(name: "Trip", identifiers: ["a", "b"])
+        collection.record([metadata("a", seconds: 0), metadata("b", seconds: 100_000)], sharesCaptureContext: true)
+        var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(collection)) as! [String: Any]
+        var entries = legacy["entries"] as! [[String: Any]]
+        for index in entries.indices { entries[index].removeValue(forKey: "correctedGroup") }
+        legacy["entries"] = entries
+        var resumed = try JSONDecoder().decode(CameraRollCollection.self, from: JSONSerialization.data(withJSONObject: legacy))
+        let before = ["a", "b"].map(resumed.group(for:))
+        resumed.pinAutomaticGroups()
+        XCTAssertEqual(before, ["Event 1", "Event 2"], "What the server already holds under those keys is what the phone keeps")
+        XCTAssertEqual(["a", "b"].map { resumed.entries.first(of: $0)?.correctedGroup }, ["Event 1", "Event 2"])
+    }
+
     private func metadata(_ id: String, seconds: Double?) -> CameraRollMetadata {
         CameraRollMetadata(id: id, kind: "video", duration: 10, width: 1920, height: 1080,
                            modifiedAt: nil,
                            capture: seconds.map { ClipCaptureRaw(captureTime: Date(timeIntervalSince1970: $0), latitude: nil, longitude: nil) })
     }
+}
+
+private extension Array where Element == CameraRollCollection.Entry {
+    func first(of id: String) -> CameraRollCollection.Entry? { first { $0.id == id } }
 }

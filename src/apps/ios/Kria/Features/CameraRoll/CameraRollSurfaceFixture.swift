@@ -7,6 +7,9 @@ import Foundation
 ///   `-collection-mixed-states`  every tile state in one event, plus an event that already has ideas (default)
 ///   `-collection-empty`         a creator who has chosen nothing yet
 ///   `-collection-access-notices` the limited-access and access-removed notices (Paper A6)
+///   `-collection-conflict`      saving the collection answers "this collection changed" until the creator opens the latest
+///   `-collection-cache-miss`    finding ideas answers "new analysis is unavailable", which is not an edit conflict
+///   `-collection-slow-group-delete` deleting an event takes the server 1.5 s, so Undo can be tapped while it is in flight
 /// `-camera-roll-collection` hosts the surface on its own; `-camera-roll-surface-fixture` swaps the fixture in under
 /// the real drawer (`-ui-testing-chat`).
 enum CameraRollSurfaceFixture {
@@ -113,11 +116,15 @@ private final class CameraRollSurfaceURLProtocol: URLProtocol, @unchecked Sendab
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     private static let server = CameraRollSurfaceFixtureServer()
     override func startLoading() {
-        let (status, body) = Self.server.respond(request)
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
-        client?.urlProtocolDidFinishLoading(self)
+        // A slow route applies its change when it answers, as a real server's would, so a request that overtook it
+        // would show up as a wrong final state.
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.server.delay(for: request)) { [self] in
+            let (status, body) = Self.server.respond(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: (try? JSONSerialization.data(withJSONObject: body)) ?? Data())
+            client?.urlProtocolDidFinishLoading(self)
+        }
     }
     override func stopLoading() {}
 }
@@ -132,6 +139,15 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
     private var revision = 1
     private var generated = 0
     private var taste: [String: Any] = ["revision": 0, "enabled": true, "memory_paused": false, "rules": [], "examples": []]
+
+    private static func has(_ flag: String) -> Bool { ProcessInfo.processInfo.arguments.contains(flag) }
+
+    func delay(for request: URLRequest) -> TimeInterval {
+        Self.has("-collection-slow-group-delete") && request.httpMethod == "DELETE" && request.url?.path.hasSuffix("/groups") == true ? 1.5 : 0
+    }
+
+    /// What another phone saved first: a renamed collection holding two of Sunday's items.
+    private static let latestName = "Updated outing"
 
     func respond(_ request: URLRequest) -> (Int, Any) {
         lock.lock(); defer { lock.unlock() }
@@ -160,11 +176,24 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
             retried.insert(item.assetIDString)
             return (200, CameraRollSurfaceFixture.assetJSON(item))
         }
+        if method == "GET", path.hasSuffix("/media-collections/\(CameraRollSurfaceFixture.collectionID.uuidString)") {
+            let members = CameraRollSurfaceFixture.items.filter { $0.group == CameraRollSurfaceFixture.sunday }.prefix(2).map {
+                ["asset_id": CameraRollSurfaceFixture.assetID($0.number), "source_id": CameraRollSurfaceFixture.sourceID($0.number), "group": $0.group]
+            }
+            return (200, ["id": CameraRollSurfaceFixture.collectionID.uuidString, "revision": 2, "name": Self.latestName, "members": members])
+        }
+        if method == "GET", path.contains("/media-assets/"),
+           let item = CameraRollSurfaceFixture.items.first(where: { path.lowercased().hasSuffix($0.assetIDString.lowercased()) }) {
+            return (200, CameraRollSurfaceFixture.assetJSON(item))
+        }
         if method == "GET", path.hasSuffix("/items") { return (200, ["revision": revision, "items": itemsSnapshot()]) }
         if method == "POST", path.hasSuffix("/index") {
             return (200, ["next_offset": NSNull(), "missing_analysis_asset_ids": [], "unavailable_asset_ids": [], "untimed_asset_ids": []])
         }
         if method == "PUT", path.contains("/media-collections/") {
+            if Self.has("-collection-conflict"), body["name"] as? String != Self.latestName {
+                return (409, ["detail": ["code": "collection_changed", "message": "This collection changed. Refresh before continuing."]])
+            }
             return (200, ["id": CameraRollSurfaceFixture.collectionID.uuidString, "revision": revision, "name": body["name"] ?? "My outing", "members": body["members"] ?? []])
         }
         if method == "DELETE", path.hasSuffix("/groups") {
@@ -195,6 +224,9 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
             return (200, ["revision": revision, "stories": live])
         }
         if method == "POST", path.hasSuffix("/stories") {
+            if Self.has("-collection-cache-miss") {
+                return (409, ["detail": ["code": "collection_analysis_unavailable", "message": "No eligible cached result; new model calls are disabled"]])
+            }
             let group = body["group"] as? String ?? CameraRollSurfaceFixture.saturday
             generated += 1
             let story = Self.story(index: 100 + generated, group: group, title: generated == 1 ? "The boat day, start to finish" : "Another angle on Bodrum", form: "atmosphere", assets: [4, 8])

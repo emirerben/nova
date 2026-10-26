@@ -123,14 +123,17 @@ struct CameraRollEvent: Identifiable {
 
     // MARK: Derived
 
-    var originals: MediaLibraryOriginals? {
-        let owner: String? = switch mode {
+    /// Whose originals the collection lives beside. Checked again after every await that binds uploads, so a
+    /// sign-out mid-call cannot attach another account's media.
+    private var currentOwner: String? {
+        switch mode {
         case .metadataOnly: Self.metadataOnlyOwner
         case .fixture: Self.fixtureOwner
         case .live: api.mediaLibraryOwner
         }
-        return owner.map { MediaLibraryOriginals(owner: $0) }
     }
+
+    var originals: MediaLibraryOriginals? { currentOwner.map { MediaLibraryOriginals(owner: $0) } }
 
     var thumbnailsDisabled: Bool { mode != .live }
     var canAdd: Bool { mode != .metadataOnly && collection.entries.count < CameraRollCollection.maximumCount }
@@ -168,6 +171,13 @@ struct CameraRollEvent: Identifiable {
         started = true
         restore()
         syncEngine()
+        // The model owns this work: the view's `.task` is cancelled when the creator opens a chat, and a resumed
+        // upload must carry on rather than sit retryable until they come back and tap Try again.
+        let launch = Task { await bootstrap() }
+        await launch.value
+    }
+
+    private func bootstrap() async {
         if mode == .live || mode == .metadataOnly { await refreshMetadata() }
         if let id = pollableCollectionID { engine.startPolling(collectionID: id) }
         async let tasteLoaded: Void = loadTaste()
@@ -372,7 +382,7 @@ struct CameraRollEvent: Identifiable {
             let owner = originals.owner
             let api = api
             await engine.upload(jobs, loop: .live(api: api, providers: providers), pollingCollectionID: pollableCollectionID) { [weak self] id, asset in
-                guard let self, api.mediaLibraryOwner == owner else { throw SourceAssetError.invalidBinding }
+                guard let self, currentOwner == owner else { throw SourceAssetError.invalidBinding }
                 collection.bind(asset, to: id)
                 persist()
                 return collection.entries
@@ -431,18 +441,23 @@ struct CameraRollEvent: Identifiable {
     // MARK: Ideas
 
     /// Reads each event's ideas from the server so the surface agrees with it after any membership change.
-    func refreshIdeas() async {
+    func refreshIdeas() async { await refreshIdeas(afterPendingMutations: true) }
+
+    /// `afterPendingMutations` waits for the deletes and restores already tapped, so the server answers with them
+    /// applied. A mutation's own failure path passes false: it runs inside that queue and would wait on itself.
+    private func refreshIdeas(afterPendingMutations: Bool) async {
         guard revision > 0 || mode == .fixture else { return }
         if mode != .fixture, !(await saveCollection(reportingFailureAs: nil)) { return }
-        var refreshed = board.storiesByGroup
-        for event in events {
-            if board.generating.contains(event.id) { continue }
-            if let stories = try? await api.savedCameraRollStories(id: collection.id, revision: revision, group: event.id) {
-                refreshed[event.id] = stories
-            }
+        if afterPendingMutations { await mutationChain?.value }
+        func ideaIDs(_ group: String) -> [UUID] { (board.storiesByGroup[group] ?? []).map(\.id) }
+        let asked = Dictionary(uniqueKeysWithValues: events.map { ($0.id, ideaIDs($0.id)) })
+        for event in events where !board.generating.contains(event.id) {
+            guard let stories = try? await api.savedCameraRollStories(id: collection.id, revision: revision, group: event.id) else { continue }
+            // A delete, Undo or new idea since the question was asked is newer than the answer, so it keeps its own result.
+            guard ideaIDs(event.id) == asked[event.id], !board.generating.contains(event.id) else { continue }
+            board.storiesByGroup[event.id] = stories
         }
-        for group in refreshed.keys where !events.contains(where: { $0.id == group }) { refreshed[group] = nil }
-        board.storiesByGroup = refreshed
+        for group in board.storiesByGroup.keys where !events.contains(where: { $0.id == group }) { board.storiesByGroup[group] = nil }
         cacheIdeas()
     }
 
@@ -491,7 +506,7 @@ struct CameraRollEvent: Identifiable {
         case let .deleteStory(id):
             enqueue { [self] in
                 do { _ = try await api.deleteCameraRollStory(collectionID: collection.id, storyID: id) }
-                catch { await refreshIdeas(); showError(error, summary: "Couldn't delete that idea.") }
+                catch { await refreshIdeas(afterPendingMutations: false); showError(error, summary: "Couldn't delete that idea.") }
             }
         case let .restoreStory(id):
             enqueue { [self] in
@@ -646,12 +661,6 @@ struct CameraRollEvent: Identifiable {
         }
     }
 
-    func remove(_ entry: CameraRollCollection.Entry) {
-        guard (try? collection.select(collection.entries.map(\.id).filter { $0 != entry.id })) != nil else { return }
-        providers.removeValue(forKey: entry.id)
-        syncEngine(); persist()
-    }
-
     // MARK: Conflicts
 
     func loadLatestCollection() async {
@@ -669,7 +678,7 @@ struct CameraRollEvent: Identifiable {
             for member in members {
                 try Task.checkCancellation()
                 let asset = try await api.savedMediaAsset(id: member.asset_id)
-                guard api.mediaLibraryOwner == originals.owner else { throw SourceAssetError.invalidBinding }
+                guard currentOwner == originals.owner else { throw SourceAssetError.invalidBinding }
                 let id = "saved:\(asset.id)"
                 rebuilt.bind(asset, to: id)
                 if !member.group.isEmpty { rebuilt.setGroup(member.group, for: id) }

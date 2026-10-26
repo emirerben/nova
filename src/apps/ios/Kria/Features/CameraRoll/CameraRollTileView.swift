@@ -17,6 +17,29 @@ extension CameraRollItemReason {
     }
 }
 
+/// The movement a tile may play. Reduce Motion plays none of it; every state still reads from its words and icons.
+enum CameraRollTileMotion {
+    enum Effect: Equatable { case shimmer, uploadRing, checkPop, shake }
+
+    static func allows(_ effect: Effect, reduceMotion: Bool, sceneActive: Bool = true) -> Bool {
+        guard !reduceMotion else { return false }
+        return effect == .shimmer ? sceneActive : true
+    }
+
+    /// What plays once when a tile's phase changes: the check pops on arriving at ready, the tile shakes on
+    /// arriving at "didn't finish".
+    static func onChange(from old: CameraRollItemPhase, to new: CameraRollItemPhase, reduceMotion: Bool) -> Effect? {
+        guard old != new else { return nil }
+        let effect: Effect
+        switch new {
+        case .ready: effect = .checkPop
+        case .needsRetry: effect = .shake
+        default: return nil
+        }
+        return allows(effect, reduceMotion: reduceMotion) ? effect : nil
+    }
+}
+
 /// How a tile behaves while the creator is moving items between events.
 enum CameraRollTileSelection: Equatable {
     case off
@@ -72,11 +95,13 @@ struct CameraRollTileView: View {
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .onTapGesture { if selection != .off { onToggle() } }
             .onChange(of: state.phase) { old, new in
-                if new == .ready, old != .ready, !reduceMotion {
+                switch CameraRollTileMotion.onChange(from: old, to: new, reduceMotion: reduceMotion) {
+                case .checkPop:
                     checkScale = 0.6
                     withAnimation(.spring(duration: 0.22, bounce: 0.35)) { checkScale = 1 }
+                case .shake: shakes += 1
+                default: break
                 }
-                if new == .needsRetry, old != .needsRetry, !reduceMotion { shakes += 1 }
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(accessibilityLabel(state))
@@ -117,7 +142,7 @@ struct CameraRollTileView: View {
         let ring = min(44, size.width * 0.4, size.height * 0.4)
         return ZStack {
             KriaColor.ink.opacity(0.38)
-            if !reduceMotion {
+            if CameraRollTileMotion.allows(.uploadRing, reduceMotion: reduceMotion) {
                 ZStack {
                     Circle().stroke(Color.white.opacity(0.35), lineWidth: 4)
                     Circle().trim(from: 0, to: max(0.04, progress))
@@ -237,7 +262,9 @@ struct CameraRollShimmer: View {
 
     private static let interval = 2.25
     private static let duration = 0.58
-    private var animates: Bool { !KriaMotion.isReduced(systemReduceMotion) && scenePhase == .active }
+    private var animates: Bool {
+        CameraRollTileMotion.allows(.shimmer, reduceMotion: KriaMotion.isReduced(systemReduceMotion), sceneActive: scenePhase == .active)
+    }
 
     var body: some View {
         GeometryReader { proxy in

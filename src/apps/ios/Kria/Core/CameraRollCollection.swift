@@ -86,6 +86,7 @@ struct CameraRollCollection: Codable, Sendable {
             }
         }
         if !sharesCaptureContext { clearCaptureContext() }
+        pinAutomaticGroups()
     }
 
     mutating func reconcileAccessibleIdentifiers(_ identifiers: Set<String>) {
@@ -114,10 +115,28 @@ struct CameraRollCollection: Codable, Sendable {
         groupMap()[identifier] ?? name
     }
 
-    /// Every entry's event in one pass. A creator's correction wins; otherwise a gap of more than four hours or
-    /// 25 km between capture times starts a new event, and an entry with no capture time joins the collection's name.
+    /// Every entry's event in one pass. A creator's correction (or an event pinned earlier) wins; otherwise a gap of
+    /// more than four hours or 25 km between capture times starts a new event, and an entry with no capture time
+    /// joins the collection's name.
     func groupMap() -> [String: String] {
+        let automatic = automaticKeys()
         var map: [String: String] = [:]
+        for entry in entries { map[entry.id] = entry.correctedGroup ?? automatic[entry.id] ?? name }
+        return map
+    }
+
+    /// Writes each automatic event into the entries that have no key yet. The server, the ideas and the creator's
+    /// renames all point at an event by its key, so a key must not move when a neighbouring event is deleted or
+    /// when later metadata reorders the capture times.
+    mutating func pinAutomaticGroups() {
+        for (id, key) in automaticKeys() {
+            if let index = entries.firstIndex(where: { $0.id == id }) { entries[index].correctedGroup = key }
+        }
+    }
+
+    /// Dated entries that still have no key, grouped by capture-time clusters. A cluster that already holds a
+    /// keyed entry keeps that key; a new cluster takes the next free "Event N", never a number that is in use.
+    private func automaticKeys() -> [String: String] {
         let dated = entries.compactMap { entry -> (String, ClipCaptureRaw)? in
             guard let capture = entry.metadata?.capture, capture.captureTime != nil else { return nil }
             return (entry.id, capture)
@@ -125,8 +144,8 @@ struct CameraRollCollection: Codable, Sendable {
             if $0.1.captureTime == $1.1.captureTime { return $0.0 < $1.0 }
             return $0.1.captureTime! < $1.1.captureTime!
         }
+        var clusters: [[String]] = []
         var last: ClipCaptureRaw?
-        var event = 0
         for (id, capture) in dated {
             let gap = last?.captureTime.map { capture.captureTime!.timeIntervalSince($0) } ?? .infinity
             var farApart = false
@@ -134,15 +153,28 @@ struct CameraRollCollection: Codable, Sendable {
                let lastLat = last?.latitude, let lastLon = last?.longitude {
                 farApart = CLLocation(latitude: lat, longitude: lon).distance(from: CLLocation(latitude: lastLat, longitude: lastLon)) > 25_000
             }
-            if gap > 4 * 3600 || farApart { event += 1 }
-            map[id] = "Event \(event)"
+            if gap > 4 * 3600 || farApart { clusters.append([]) }
+            clusters[clusters.count - 1].append(id)
             last = capture
         }
-        for entry in entries {
-            if let corrected = entry.correctedGroup { map[entry.id] = corrected }
-            else if map[entry.id] == nil { map[entry.id] = name }
+        var keyed: [String: String] = [:]
+        for entry in entries { if let key = entry.correctedGroup { keyed[entry.id] = key } }
+        var highest = keyed.values.compactMap(Self.eventNumber).max() ?? 0
+        var result: [String: String] = [:]
+        for cluster in clusters {
+            let counts = Dictionary(grouping: cluster.compactMap { keyed[$0] }, by: { $0 }).mapValues(\.count)
+            let key = counts.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key ?? {
+                highest += 1
+                return "Event \(highest)"
+            }()
+            for id in cluster where keyed[id] == nil { result[id] = key }
         }
-        return map
+        return result
+    }
+
+    private static func eventNumber(_ key: String) -> Int? {
+        guard key.hasPrefix("Event "), let number = Int(key.dropFirst(6)), number > 0 else { return nil }
+        return number
     }
 
     /// Entries are taken out of the collection whole so Undo can put the very same bindings back.
@@ -200,6 +232,7 @@ struct CameraRollCollection: Codable, Sendable {
         guard value.id == id, value.entries.count <= maximumCount,
               Set(value.entries.map(\.id)).count == value.entries.count else { throw SelectionError.invalidSnapshot }
         if !sharesCaptureContext { value.clearCaptureContext() }
+        value.pinAutomaticGroups()
         return value
     }
 }

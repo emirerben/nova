@@ -1358,7 +1358,9 @@
         "KriaTests/CameraRollCollectionTests/testBoundedSelectionAndUnselectedMetadata",
         "KriaTests/CameraRollCollectionTests/testTimeGroupsAndExplicitCorrectionSurviveMetadataRefresh",
         "KriaTests/CameraRollCollectionTests/testFiveHundredItemsSurviveResume",
+        "KriaTests/CameraRollCollectionTests/testAutomaticEventKeysDoNotMoveWhenANeighbourGoesOrArrives",
         "KriaUITests/CameraRollCollectionUITests/testEveryItemStateIsVisible",
+        "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas",
         "KriaUITests/CameraRollCollectionUITests/testDeletingAnIdeaCanBeUndone",
         "KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected"
       ],

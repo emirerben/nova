@@ -222,4 +222,68 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Kria can only see the 120 items you shared. Everything else stays private."].exists)
         attach("Limited and removed access", app.screenshot())
     }
+
+    // MARK: Collection changes
+
+    private func findIdeas(_ app: XCUIApplication, in group: String) {
+        let find = element(app, "camera-roll-find-ideas-\(group)")
+        XCTAssertTrue(find.waitForExistence(timeout: 10))
+        find.tap()
+        element(app, "camera-roll-find-ideas-go-\(group)").tap()
+    }
+
+    func testUnavailableAnalysisIsNotAnEditConflict() {
+        let app = launch(["-collection-mixed-states", "-collection-cache-miss"])
+        findIdeas(app, in: saturday)
+        let notice = element(app, "camera-roll-notice")
+        XCTAssertTrue(notice.waitForExistence(timeout: 10))
+        XCTAssertEqual(notice.label, "This footage needs analysis. Your collection is saved; new analysis is unavailable right now.")
+        XCTAssertFalse(element(app, "camera-roll-review-latest").exists, "Nothing changed elsewhere, so there is no latest collection to open")
+        XCTAssertTrue(element(app, "camera-roll-event-\(saturday)").exists, "The collection is untouched")
+    }
+
+    func testRealConflictCanOpenLatestWithoutLosingLocalCollection() {
+        let app = launch(["-collection-mixed-states", "-collection-conflict"])
+        findIdeas(app, in: saturday)
+        let latest = element(app, "camera-roll-review-latest")
+        XCTAssertTrue(latest.waitForExistence(timeout: 10), "A real conflict offers the latest collection")
+        attach("Conflict with Review latest", app.screenshot())
+        latest.tap()
+        app.buttons["Open latest collection"].tap()
+        let notice = element(app, "camera-roll-notice")
+        let opened = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Opened the latest collection. Your local changes are saved separately."), object: notice)
+        XCTAssertEqual(XCTWaiter.wait(for: [opened], timeout: 10), .completed)
+        XCTAssertTrue(element(app, "camera-roll-event-\(sunday)").waitForExistence(timeout: 5))
+        XCTAssertFalse(element(app, "camera-roll-event-\(saturday)").exists, "The other phone's collection replaces this one")
+        XCTAssertFalse(element(app, "camera-roll-review-latest").exists)
+        attach("Latest collection opened", app.screenshot())
+    }
+
+    /// Undo can arrive while the server is still deleting the event. The restore must land after the delete, or the
+    /// ideas are gone on the server while the phone still shows them.
+    func testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas() {
+        let app = launch(["-collection-mixed-states", "-collection-slow-group-delete"])
+        let menu = element(app, "camera-roll-event-menu-\(sunday)")
+        scrollTo(menu, in: app)
+        menu.tap()
+        app.buttons["Delete event"].tap()
+        element(app, "camera-roll-delete-event-confirm").tap()
+        XCTAssertTrue(app.staticTexts["Event deleted"].waitForExistence(timeout: 5))
+        element(app, "camera-roll-undo").tap()
+        XCTAssertTrue(element(app, "camera-roll-event-\(sunday)").waitForExistence(timeout: 5))
+        // The server finishes deleting 1.5 s in; then the restore runs. Reading its ideas back shows which won.
+        let editMenu = element(app, "camera-roll-event-menu-\(sunday)")
+        scrollTo(editMenu, in: app)
+        editMenu.tap()
+        app.buttons["Select and move items"].tap()
+        XCTAssertTrue(element(app, "camera-roll-edit-done").waitForExistence(timeout: 5))
+        element(app, "camera-roll-edit-done").tap()
+        // Undo already put the cards back on the phone, so let the delete, restore and read-back all finish first.
+        let settle = XCTestExpectation(description: "server settles"); settle.isInverted = true
+        _ = XCTWaiter.wait(for: [settle], timeout: 4)
+        let idea = element(app, "camera-roll-idea-\(guideIdea)")
+        scrollTo(idea, in: app)
+        XCTAssertTrue(idea.exists, "The restore ran after the delete, so the server still holds the ideas")
+        attach("Ideas after delete and Undo", app.screenshot())
+    }
 }
