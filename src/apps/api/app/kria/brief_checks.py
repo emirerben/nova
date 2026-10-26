@@ -37,6 +37,7 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.kria.clip_sound_toggle_ask import SoundTarget, SoundToggleAsk, requirement_sound_toggle
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.freeze_ask import (
     asks_freeze_frame,
@@ -623,6 +624,12 @@ class PlanFacts:
     # KRI-842: a finished phone montage Voiceover (`resolved_archetype == "voiceover"`), which
     # cannot play one clip's sound under or after the voice.
     voiceover_edit: bool = False
+    # KRI-942: a draft the phone montage writer will render (`defers_to_unified_montage`), the
+    # writer that turns clips' own sound on and off where the creator says; and the on/off
+    # asks judged against the recipe a finished phone render pinned (`variant[
+    # "clip_sound_toggles"]`, re-judged by the render-ready review). None = nothing claimed.
+    phone_montage: bool = False
+    clip_sound_toggles: Mapping[str, Any] | None = None
     # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): whether the edit can draw one
     # at all (None = not checked), and the cards as approval keeps them (a draft, repaired
     # against the manifest) or as the phone render placed them (`phone_timed_card_receipt`).
@@ -1944,6 +1951,9 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     receipt = variant.get("clip_sound")
     if isinstance(receipt, Mapping):
         changes["clip_sound"] = receipt  # KRI-842
+    toggles = variant.get("clip_sound_toggles")
+    if isinstance(toggles, Mapping):
+        changes["clip_sound_toggles"] = toggles  # KRI-942: the worker's own judgement
     if variant.get("resolved_archetype") == "voiceover":
         changes["voiceover_edit"] = True  # KRI-842
     changes.update(_unclear_word_facts(variant))
@@ -5675,6 +5685,231 @@ def _draft_clip_sound(
     )
 
 
+# KRI-942: clip sound turned on / off by clip, by seconds or around a spoken line (see
+# `kria.clip_sound_toggle_ask`). Judged on the recipe the phone renders, never the plan's claim.
+def _sound_toggle_needs_phone_montage() -> str:
+    return say(
+        en="Turning clip sound on or off by clip or by seconds works on a montage made on your "
+        "iPhone, not in this edit",
+        tr="Klip sesini klip ya da saniye bazında açıp kapatmak yalnızca iPhone'unda yapılan "
+        "montajda çalışıyor, bu düzenlemede değil",
+    )
+
+
+def _toggle_where(target: SoundTarget) -> tuple[str, str]:
+    """Where a part of an on/off ask applies, in plain words (EN, TR)."""
+    en: list[str] = []
+    tr: list[str] = []
+    if target.clip_position == "last":
+        en.append("the last clip")
+        tr.append("son klip")
+    elif target.clip_position == "first":
+        en.append("the first clip")
+        tr.append("ilk klip")
+    elif target.media_ref is not None:
+        en.append("that clip")
+        tr.append("o klip")
+    if target.has_window:
+        start = f"{target.from_s or 0:g}"
+        if target.to_s is not None:
+            en.append(f"{start}-{target.to_s:g} s")
+            tr.append(f"{start}-{target.to_s:g}. saniyeler")
+        else:
+            en.append(f"from {start} s")
+            tr.append(f"{start}. saniyeden itibaren")
+    if target.lines:
+        en.append(f'where "{target.lines[0]}" is said')
+        tr.append(f'"{target.lines[0]}" denen yer')
+    if not en:
+        return "the whole video", "tüm video"
+    return ", ".join(en), ", ".join(tr)
+
+
+def _toggle_summary(ask: SoundToggleAsk) -> str:
+    """ "Clip sound off except the last clip, where "Super excited!" is said", in the reply's
+    language."""
+    off = ask.state == "off"
+    head_en = "Clip sound off" if off else "Clip sound on"
+    head_tr = "Klip sesi kapalı" if off else "Klip sesi açık"
+    where_en, where_tr = _toggle_where(ask.target)
+    en = head_en if ask.target.whole_video else f"{head_en}: {where_en}"
+    tr = head_tr if ask.target.whole_video else f"{head_tr}: {where_tr}"
+    if ask.exceptions:
+        parts = [_toggle_where(part) for part in ask.exceptions]
+        en += " except " + "; ".join(p[0] for p in parts)
+        tr += ", şunlar hariç: " + "; ".join(p[1] for p in parts)
+    return say(en=en, tr=tr)
+
+
+def _toggle_seconds(windows: object) -> str:
+    rows = [w for w in windows or [] if isinstance(w, (list, tuple)) and len(w) == 2]
+    return ", ".join(f"{float(a):.1f}-{float(b):.1f} s" for a, b in rows)
+
+
+def _toggle_missed(ask: SoundToggleAsk, row: Mapping[str, Any]) -> str:
+    """Why the finished video doesn't (fully) play the sound as asked, plainly."""
+    code = row.get("reason_code")
+    line = row.get("line") or next((p.lines[0] for p in ask.exceptions if p.lines), None)
+    line = line or (ask.target.lines[0] if ask.target.lines else None)
+    if code == "line_not_found" and line:
+        return say(
+            en=f'I couldn\'t find "{line}" in that clip, so it plays like the rest',
+            tr=f'"{line}" sözünü o klipte bulamadım, o yüzden diğerleri gibi çalıyor',
+        )
+    if code == "line_ambiguous" and line:
+        return say(
+            en=f'"{line}" is said in more than one clip; tell me which clip you mean',
+            tr=f'"{line}" birden fazla klipte söyleniyor; hangi klibi kastettiğini söyle',
+        )
+    if code == "line_unknown":
+        return say(
+            en="I can't hear the speech in that clip yet",
+            tr="O klipteki konuşmayı henüz duyamıyorum",
+        )
+    if code == "line_not_in_edit" and line:
+        return say(
+            en=f'The part where "{line}" is said isn\'t in the edit',
+            tr=f'"{line}" denen kısım düzenlemede yok',
+        )
+    if code == "line_partly_in_edit" and line:
+        return say(
+            en=f'Only part of "{line}" is in the edit',
+            tr=f'"{line}" sözünün sadece bir kısmı düzenlemede',
+        )
+    reasons = {
+        "partial_unsupported": (
+            "I can't turn off just part of a clip on your iPhone yet, so a clip that is only "
+            "partly in that stretch keeps its sound",
+            "iPhone'unda bir klibin sadece bir kısmının sesini henüz kapatamıyorum, o yüzden o "
+            "aralıkta kısmen kalan klip sesini koruyor",
+        ),
+        "not_in_edit": (
+            "That clip isn't in this edit",
+            "O klip bu düzenlemede yok",
+        ),
+        "clip_mismatch": (
+            "That clip isn't in that spot in this edit",
+            "O klip bu düzenlemede o sırada değil",
+        ),
+        "window_past_end": (
+            "Those seconds are past the end of the video",
+            "O saniyeler videonun bitişinden sonra",
+        ),
+        "no_sound": (
+            "That clip has no sound of its own",
+            "O klibin kendi sesi yok",
+        ),
+        "contract_conflict": (
+            "That would change which clips keep their sound in the edit you approved; approve "
+            "the change and I'll rebuild it",
+            "Bu, onayladığın düzenlemede hangi kliplerin sesini koruduğunu değiştirirdi; "
+            "değişikliği onaylarsan yeniden hazırlarım",
+        ),
+        "render_refused": (
+            "Your iPhone couldn't build that, so those clips keep their sound",
+            "iPhone'un bunu hazırlayamadı, o yüzden o klipler seslerini koruyor",
+        ),
+        "overridden": (
+            "A later request changed this",
+            "Sonraki bir istek bunu değiştirdi",
+        ),
+    }
+    en, tr = reasons.get(
+        str(code),
+        (
+            "The finished video doesn't play the clip sound that way",
+            "Bitmiş video klip sesini bu şekilde çalmıyor",
+        ),
+    )
+    return say(en=en, tr=tr)
+
+
+def _check_sound_toggle(
+    req: BriefRequirement, ask: SoundToggleAsk, facts: PlanFacts
+) -> RequirementReceipt:
+    """Clip sound turned on / off where the creator said (KRI-942).
+
+    A finished phone render is judged from its on/off record: the asks re-judged against the
+    recipe the phone renders (`phone_clip_sound_toggle.rendered_toggle_receipt`, or the
+    worker's own record). A draft the phone montage writer will render says what it will do,
+    and "Couldn't" before approval for a clip that isn't there or a line no clip says. A
+    voiceover or Talking edit says plainly that this works on a montage. Elsewhere (a plan
+    record mid-render, an editor turn) nothing is claimed.
+    """
+    record = facts.clip_sound_toggles if isinstance(facts.clip_sound_toggles, Mapping) else None
+    row = next(
+        (
+            r
+            for r in (record or {}).get("rows") or []
+            if isinstance(r, Mapping) and r.get("requirement_id") == req.id
+        ),
+        None,
+    )
+    if row is not None:
+        status = str(row.get("status"))
+        if status == "met":
+            seconds = _toggle_seconds(
+                row.get("on_windows") if ask.state == "off" else row.get("off_windows")
+            )
+            summary = _toggle_summary(ask)
+            if ask.exceptions and seconds:
+                summary = say(en=f"{summary} ({seconds})", tr=f"{summary} ({seconds})")
+            return _receipt(req, "met", summary)
+        return _receipt(
+            req, "partial" if status == "partial" else "not_possible", _toggle_missed(ask, row)
+        )
+    if facts.voiceover_edit or facts.phone_narrated or facts.phone_talking:
+        return _receipt(req, "not_possible", _sound_toggle_needs_phone_montage())
+    if facts.editor or facts.rendered_output or facts.rendered_variant:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if facts.phone_montage:
+        return _draft_sound_toggle(req, ask, facts)
+    if facts.audio_strategy == "voiceover" or facts.edit_format in _SPEECH_FORMATS:
+        return _receipt(req, "not_possible", _sound_toggle_needs_phone_montage())
+    return _receipt(req, "partial", _NO_CHECKER)
+
+
+def _draft_sound_toggle(
+    req: BriefRequirement, ask: SoundToggleAsk, facts: PlanFacts
+) -> RequirementReceipt:
+    """What a phone montage draft will do with an on/off ask, before approval."""
+    from app.pipeline.clip_sound_toggle import _media_match  # noqa: PLC0415
+    from app.pipeline.phone_clip_sound import ground_trigger_line, video_media_ids  # noqa: PLC0415
+    from app.services.phone_rollout import phone_clip_sound_windows_supported  # noqa: PLC0415
+
+    snapshot = facts.media_snapshot
+    videos = video_media_ids(snapshot) or list(facts.clip_ids)
+    for part in (ask.target, *ask.exceptions):
+        media = _media_match(part.media_ref, videos) if part.media_ref is not None else None
+        if part.media_ref is not None and media is None:
+            return _receipt(
+                req, "not_possible", _toggle_missed(ask, {"reason_code": "not_in_edit"})
+            )
+        if not part.lines:
+            continue
+        pool = (
+            [media]
+            if media is not None
+            else (
+                [facts.last_clip_id]
+                if part.clip_position == "last" and facts.last_clip_id
+                else videos
+            )
+        )
+        found = [m for m in pool if ground_trigger_line(part.lines, m, snapshot).status == "found"]
+        if not found:
+            statuses = {ground_trigger_line(part.lines, m, snapshot).status for m in pool}
+            code = "line_unknown" if statuses <= {"unknown"} else "line_not_found"
+            row = {"reason_code": code, "line": part.lines[0]}
+            return _receipt(req, "not_possible", _toggle_missed(ask, row))
+    silences_part = (ask.state == "off" and (ask.target.has_window or ask.target.lines)) or (
+        ask.state == "on" and any(p.has_window or p.lines for p in ask.exceptions)
+    )
+    if silences_part and not phone_clip_sound_windows_supported():
+        return _receipt(req, "partial", _toggle_missed(ask, {"reason_code": "partial_unsupported"}))
+    return _receipt(req, "met", _toggle_summary(ask))
+
+
 def _bed_fix(facts: PlanFacts) -> tuple[str, str]:
     """How the creator lowers the footage bed on THIS edit (KRI-821), EN and TR.
 
@@ -8281,6 +8516,8 @@ def judged_at_render(req: BriefRequirement) -> bool:
         # KRI-689: a planned rate counts only when the finished timeline still plays it
         # (`_rendered_speeds`), and the review re-words it in the chat's language.
         or asks_clip_speed(req)
+        # KRI-942: clip sound on/off is read off the recipe the phone renders.
+        or requirement_sound_toggle(req) is not None
     )
 
 
@@ -9119,6 +9356,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if clip_sound is not None:
         # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
         return _check_narrated_clip_sound(req, clip_sound, facts)
+    sound_toggle = requirement_sound_toggle(req)
+    if sound_toggle is not None:
+        # KRI-942: "clip sound off except that last line": the recorded on/off facts own it.
+        return _check_sound_toggle(req, sound_toggle, facts)
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
         # (and any pauses it names); every other speech edit keeps its usual path.

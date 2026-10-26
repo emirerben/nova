@@ -268,6 +268,15 @@ class Settings(BaseSettings):
     # --app nova-video` + `fly machine restart <id>` (api + worker); rollback with
     # `=false` the same way.
     phone_timed_cards_enabled: bool = False
+    # KRI-942: lets a phone montage turn off PART of a clip's own sound ("no sound from 5 to
+    # 8 seconds", "keep only that line"). The worker then sends recipe `mute_windows`, which
+    # the engine ramps at each edge; `phone_rollout.phone_clip_sound_windows_supported()`
+    # also needs `visualBlocks` verified (the capability mute windows require). Whole-clip
+    # on/off (`source_audio_muted`, clip volume 0) never needs this flag. False (default):
+    # a part-of-a-clip "off" is not built and a part-of-a-clip "on" keeps that whole clip
+    # audible; the receipt says so. Apply: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=
+    # true --app nova-video` + restart api + worker; rollback with `=false` the same way.
+    phone_clip_sound_windows_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.

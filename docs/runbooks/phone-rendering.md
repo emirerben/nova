@@ -863,6 +863,46 @@ narrated Voiceover (`_run_phone_narrated_job`). Flag `PHONE_TIMED_CARDS_ENABLED`
   honours them; a face sampler on the montage clips is the follow-up), so face avoidance on
   these edits is not active until that lands.
 
+#### Clip sound on / off where the creator says (KRI-942, `PHONE_CLIP_SOUND_WINDOWS_ENABLED`)
+
+"Clip sound off except that last line", "mute the last clip", "only keep the sound on the
+butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit through
+`_run_phone_guided_job`, the unified montage included).
+
+- **Request**: the brief, not the strategy. The Main Creator / brief extractor record an
+  `audio` requirement with `facts.clip_sound` `"on"`/`"off"` plus where (`clip:<id>` scope or
+  `sound_media`, `sound_clip` first/last, `sound_from_s`/`sound_to_s`, `sound_line`) and
+  `sound_except` parts (`app/kria/clip_sound_toggle_ask.py`). The brief is cumulative, so a
+  correction turn keeps the ask; a turn whose updates touch no `audio` requirement also keeps the
+  draft's `montage_audio`/`voice_mode` (`app/kria/draft_sound_carry.py`), so the route holds.
+- **Build**: after the first compile, `phone_clip_sound_toggle.plan_toggle_lane` resolves the asks
+  on that recipe's clips (`app/pipeline/clip_sound_toggle.py`, pure): whole-video asks first,
+  then targeted ones, `sound_except` last inside an ask; "last" is the edit's last picture clip; a
+  line is grounded with `phone_clip_sound.ground_trigger_line` and padded 0.2 s; runs under
+  0.2 s are not built. A clip silent end to end gets `source_audio_muted` (clip volume 0, no
+  flag needed); part of a clip gets `source_audio_mute_spans` (source seconds) -> recipe
+  `mute_windows` (engine ramps 25 ms per edge) only while
+  `phone_rollout.phone_clip_sound_windows_supported()` = flag AND `visualBlocks` verified.
+  The strategy's `montage_audio.source_media_ids` is the base: only those clips start audible.
+  Candidates step down (spans -> whole clips -> base -> unchanged) on a compile / pilot / contract
+  camera-audio refusal, so a sound ask never fails the job.
+- **Receipt**: `variants[i].clip_sound_toggles` = `{version, rows: [{requirement_id, state,
+  status, reason_code, on_windows, off_windows, line, ...}], windows, degraded_clip_ids?}`;
+  the render-ready review re-judges the asks against the recipe pinned then
+  (`rendered_toggle_receipt`, editor Saves included) and `brief_checks._check_sound_toggle`
+  words it ("Clip sound off except the last clip, where "Super excited!" is said (17.0-17.9 s)").
+  Reasons: `partial_unsupported`, `line_not_found`, `line_ambiguous`, `line_unknown`,
+  `line_not_in_edit`, `line_partly_in_edit`, `not_in_edit`, `clip_mismatch`, `window_past_end`,
+  `no_sound`, `contract_conflict`, `render_refused`, `not_built`, `overridden`.
+- **Flag off** (default): whole-clip on/off works; a part-of-a-clip "off" is not built, a
+  part-of-a-clip "on" keeps that clip whole (the line is heard), and the draft and receipt say
+  so. Apply / rollback: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=true|false --app
+  nova-video` + restart api + worker. Tests: `tests/tasks/test_kri942_clip_sound_toggle.py`;
+  design, failure modes and native export evidence: `docs/reviews/kri-942-clip-sound-toggle.md`.
+- **Known gaps**: the in-app editor preview doesn't show part-of-a-clip mutes and an editor Save
+  drops them (the receipt then says so); the speech-excerpt route doesn't apply the asks (its
+  recipe is judged as it is).
+
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
 **Gate:** `app.services.phone_rollout.phone_subtitled_overlays_supported()` --
