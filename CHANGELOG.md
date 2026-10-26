@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.132.0] - 2026-10-26
+
+### Fixed
+- fix(kria): chat follow-ups never stick, run twice, or start alongside a turn (KRI-866) (#1785) <!-- release-pr: 1785 -->
+
 ## [0.81.131.0] - 2026-10-26
 
 ### Added
