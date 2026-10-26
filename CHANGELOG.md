@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.138.0] - 2026-10-26
+
+### Fixed
+- fix(kria): a failed clip vision check records its exception class (KRI-952) (#1851) <!-- release-pr: 1851 -->
+
 ## [0.81.137.0] - 2026-10-26
 
 ### Fixed
