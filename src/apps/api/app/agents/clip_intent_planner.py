@@ -382,9 +382,11 @@ def _repair_position(data: dict[str, Any]) -> None:
     "at the start" is ``first`` and "at the very end" is ``last``. A request to
     keep the listed order ("in this chapter order", "sequential", a list of the
     chapters) places nothing first or last: ``None``, the shape the model already
-    returns for it, which the story structure carries. Two placements packed into
-    one intent ("day first and night last") stay invalid: guessing one side would
-    silently drop the other, so the creator is asked.
+    returns for it. The order itself is the sequence of the order intents (one per
+    named subject, KRI-941), never ``position``: the sequence rule
+    (``clip_order_sequence``) reads only those intents, not ``story_structure``. Two
+    placements packed into one intent ("day first and night last") stay invalid:
+    guessing one side would silently drop the other, so the creator is asked.
     """
     position = data.get("position")
     if data.get("op") != "order" or position in (None, "first", "last"):
@@ -999,7 +1001,9 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # KRI-552: "cut my long pauses" / "cut the part where I restart" are speech cleanup,
         # never a caption (or any other) intent.
         # KRI-945: an intro, explanation or facts for the whole video is never a caption.
-        prompt_version="2026-10-26.1",
+        # KRI-941: "in this order: A, B, C" is one `order` intent per named subject, position
+        # null, in the stated order (the prompt said that and, further down, the opposite).
+        prompt_version="2026-10-26.2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

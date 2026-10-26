@@ -107,9 +107,16 @@ struct ProjectsDrawer: View {
             }
             if let openCollections {
                 Button(action: openCollections) {
-                    Label("Camera-roll collection", systemImage: "photo.stack")
-                        .font(KriaFont.body(15).weight(.medium)).frame(minHeight: 44).padding(.horizontal, 12)
-                }.accessibilityIdentifier("camera-roll-collection-open")
+                    HStack(spacing: 12) {
+                        Image(systemName: "photo.stack").font(.system(size: 18, weight: .regular)).frame(width: 22, height: 22)
+                        Text("Camera roll").font(KriaFont.body(15).weight(.medium))
+                        Spacer()
+                    }
+                    .frame(minHeight: 44).padding(.horizontal, 12).contentShape(Rectangle())
+                    .background(model.showsCameraRoll ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain).accessibilityIdentifier("camera-roll-collection-open")
+                .accessibilityAddTraits(model.showsCameraRoll ? .isSelected : [])
             }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Recent chats").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk).padding(.horizontal, 12)
@@ -125,10 +132,10 @@ struct ProjectsDrawer: View {
                         ForEach(model.projects) { project in
                             HStack(spacing: 0) {
                                 Button { model.selectProject(project); close() } label: {
-                                    ProjectDrawerRow(project: project, isSelected: project.id == model.selectedProject?.id)
+                                    ProjectDrawerRow(project: project, isSelected: !model.showsCameraRoll && project.id == model.selectedProject?.id)
                                 }.buttonStyle(.plain)
                                 ProjectActionsMenu(project: project)
-                            }.background(project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+                            }.background(!model.showsCameraRoll && project.id == model.selectedProject?.id ? KriaColor.selectionSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
                         }
                         if model.projectsNextCursor != nil {
                             // Reaching the end of the loaded chats fetches the next older page.

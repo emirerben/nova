@@ -249,6 +249,14 @@ Flow (flag on):
    ("Img_7833: clip 1") is transcript copy, so `song_order.model_text` gives every
    model a neutral sentence instead (KRI-614; the echo used to become a new
    `include` intent and a second question about the answer itself).
+   One answer about an attribute settles it under any of `group`/`include`/
+   `order`/`caption` (`_SAME_CLIPS_OPS`, exact attribute or identity only;
+   never `exclude` or `label`), so a re-plan that files the tapped "include:
+   the queue" as "order: the queue" no longer asks again (KRI-947). Rows about
+   the same attribute that offer the same clips are one picker row (the rest
+   ride `also_answers`, which the app ignores) and the question names each
+   moment once (KRI-951). Guard:
+   `tests/services/test_kri947_kri951_m2_picker_rows.py` (Don Julio walk-in M2).
 5. **Plan.** On confirm the intents travel `ProposalBrief.clip_intents` (chat
    `asset-{uuid}` ids translated to planner ids) into `EditProposalAgent` as
    alias-only constraints: group (creator's words as the chapter title), order

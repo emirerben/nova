@@ -486,6 +486,52 @@ async def record_feedback(db, owner, body):
     return {"id": str(row.id), "recorded": True, "requires_render_approval": True}
 
 
+def _delete_key(story_id):
+    return f"idea-delete:{story_id}"
+
+
+async def record_deleted_idea(db, owner, story):
+    """Deleting an idea is a `not_for_me` judgment on it, so `rejected_ideas` never re-offers it.
+
+    Written only where `rejected_ideas` would read it back: with personalization off nothing
+    is stored beyond the soft-deleted idea itself, which generation excludes on its own.
+    """
+    if not signals_enabled() or await active_version(db, owner) is None:
+        return
+    key = _delete_key(story.id)
+    if await db.scalar(
+        select(CreatorIdeaFeedback.id).where(
+            CreatorIdeaFeedback.user_id == owner, CreatorIdeaFeedback.client_event_id == key
+        )
+    ):
+        return
+    idea = {k: v for k, v in story.story_json.items() if k != "deleted_at"}
+    db.add(
+        CreatorIdeaFeedback(
+            user_id=owner,
+            story_id=story.id,
+            story_revision=story.revision,
+            client_event_id=key,
+            request_sha256=digest({"operation": "idea_delete", "story_id": str(story.id)}),
+            verdict="not_for_me",
+            reasons=[],
+            note="",
+            rewrite="",
+            proposal={"idea": idea, "moments": story.moments_json},
+        )
+    )
+
+
+async def forget_deleted_idea(db, owner, story_id):
+    """Undo of `record_deleted_idea`: a restored idea was never refused."""
+    await db.execute(
+        delete(CreatorIdeaFeedback).where(
+            CreatorIdeaFeedback.user_id == owner,
+            CreatorIdeaFeedback.client_event_id == _delete_key(story_id),
+        )
+    )
+
+
 async def confirm_idea_example(db, owner, feedback_id, body):
     """Explicit second tap: only an already-saved judgment can become an example."""
     user = await lock_owner(db, owner)
