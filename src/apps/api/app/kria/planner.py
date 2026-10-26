@@ -153,6 +153,7 @@ from app.services.clip_intent_planning import (
     kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
     shot_captions_safe,
+    whole_video_text_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import fold_clip_selections
@@ -3375,6 +3376,7 @@ async def _plan_creator_action(
             effective_brief, getattr(action.strategy, "shot_labels", None) or ()
         )
         kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
+        whole_video_texts = whole_video_text_asks(effective_brief)
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
         )
@@ -3414,6 +3416,8 @@ async def _plan_creator_action(
                 **({"brief_labels": brief_labels} if brief_labels else {}),
                 **({"kept_labels": kept_labels} if kept_labels else {}),
                 **({} if shot_captions else {"shot_captions": False}),
+                # KRI-945: a caption for the brief's researched text or title is never asked.
+                **({"whole_video_texts": whole_video_texts} if whole_video_texts else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
