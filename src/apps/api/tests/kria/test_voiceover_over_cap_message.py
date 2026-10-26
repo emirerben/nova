@@ -1,8 +1,9 @@
-"""A voiceover longer than the 120 s edit cap must not blame the footage.
+"""A voiceover longer than the edit cap must not blame the footage.
 
 Prod 2026-10-26: a 150 s voiceover over 164 s of footage was told "the footage can provide
 only 164 seconds without reuse. Add longer footage." The footage was long enough; the edit
-cap (120 s) was the limit.
+cap was the limit. The cap is now 240 s for a voiceover, so the same shape is pinned at
+250 s over 264 s of footage.
 """
 
 from app.services.choice_questions import _source_coverage
@@ -28,11 +29,11 @@ def _card(voiceover_s: float, footage_s: float):
 
 
 def test_voiceover_over_the_cap_is_not_blamed_on_footage() -> None:
-    _, card = _card(150.0, 164.0)
+    _, card = _card(250.0, 264.0)
 
     assert card is not None
-    assert "164" not in card.reason
-    assert "120" in card.reason
+    assert "264" not in card.reason
+    assert "240" in card.reason
     assert "shorter" in card.reason.lower()
 
 

@@ -362,7 +362,7 @@ class CreationMediaCapabilitiesOut(BaseModel):
 class CreationCapabilitiesOut(BaseModel):
     media_library: bool = False
     media_collections: bool = False
-    media_collection_cache_only: bool = True
+    media_collection_cache_only: bool = False
     # The feedback route accepts the `wrong_facts` reason. A build that does not see this
     # (an older server) must not offer the chip: the old route 422s the whole judgment.
     wrong_fact_feedback: bool = False

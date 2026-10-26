@@ -111,7 +111,8 @@ extension CameraRollStoriesUITests {
         XCTAssertTrue(forget.waitForExistence(timeout: 5))
         forget.tap()
         app.alerts.buttons["Forget"].tap()
-        XCTAssertTrue(app.staticTexts["Choose posts you like"].waitForExistence(timeout: 5))
+        // The kicker is drawn in capitals, and its accessibility label follows.
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Posts you like")).firstMatch.waitForExistence(timeout: 5))
         let proof = XCTAttachment(screenshot: app.screenshot())
         proof.name = "Editorial taste is explicit and can be forgotten"
         proof.lifetime = .keepAlways

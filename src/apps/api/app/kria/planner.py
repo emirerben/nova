@@ -119,12 +119,12 @@ from app.models import (
     Persona,
     PlanItem,
 )
+from app.pipeline.best_parts import edit_cap_s
 from app.pipeline.pinned_text import pin_range_grounded
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
-    MAX_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     PinnedText,
 )
@@ -157,7 +157,7 @@ from app.services.clip_intent_planning import (
     whole_video_text_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
-from app.services.clip_selection import fold_clip_selections
+from app.services.clip_selection import answered_rows, fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
     CreativeCopyState,
@@ -262,6 +262,16 @@ def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | No
         return MixedMediaTimingProfile.model_validate(raw)
     except ValueError:
         return None
+
+
+def _edit_cap_s(strategy: Mapping[str, Any]) -> float:
+    """The longest edit this strategy can be planned to: spoken sources run longer."""
+    from app.services.length_policy import natural_length_owner  # noqa: PLC0415
+
+    try:
+        return edit_cap_s(natural_length_owner(strategy))
+    except ValueError:
+        return edit_cap_s(None)
 
 
 def _enrich_best_parts_snapshot(
@@ -2750,9 +2760,10 @@ def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -
     plan = planned.plan
     title = _pin_key(str((wording.plan.choice_question or {}).get("candidate") or ""))
     words = [
-        _pin_key(str(category.get("creator_text") or ""))
+        _pin_key(str(row.get("creator_text") or ""))
         for category in (plan.clip_question or {}).get("categories") or []
         if isinstance(category, dict)
+        for row in answered_rows(category)  # KRI-951: and the rows joined behind it
     ]
     if (
         plan.mode != "respond"
@@ -4654,7 +4665,7 @@ async def _gate_unresolved_choices(
         enriched_snapshot,
         events,
         ChoiceCapability(
-            max_duration_s=float(MAX_PROPOSAL_DURATION_S),
+            max_duration_s=_edit_cap_s(strategy),
             creator_id=creator_id,
             voice_route=settings.voice_behind_footage_enabled,
             speech_occurrence=settings.speech_occurrence_question_enabled,
