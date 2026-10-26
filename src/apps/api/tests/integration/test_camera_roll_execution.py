@@ -174,7 +174,7 @@ _RECOVERABLE_CASES = {"held", "empty-caption", "whitespace-caption", "lost-telem
     ]
     + [
         pytest.param(f"open-questions:{how}", False, False, _ACCEPTED_CAPTION, True, None, id=how)
-        for how in ("question-answered", "question-skipped")
+        for how in ("question-answered", "question-skipped", "question-old-build")
     ],
 )
 async def test_selection_prepares_common_draft_then_explicit_approval_freezes_execution(
@@ -661,7 +661,9 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         "thread_id": str(thread_id),
         "expected_thread_revision": initial_revision,
     }
-    if question_mode:
+    # A build without the question card (no protocol header) has no way to answer, so the
+    # server must not gate it: it builds the idea's neutral copy straight away.
+    if question_mode and question_mode != "question-old-build":
         select_path = f"{path}/stories/{story_id}/select"
         # A build that predates the question UI is never shown the list.
         old = await client.get(
@@ -671,6 +673,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         )
         assert "open_questions" not in old.json()["stories"][0]["content_plan"]
         client.headers["X-Kria-Client-Protocol"] = "22"
+        card_build = {"X-Kria-Client-Protocol": "22"}
 
         async def assert_nothing_built():
             async with AsyncSessionLocal() as db:
@@ -696,7 +699,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                 ),
             )
 
-        blocked = await client.post(select_path, json=selection_body)
+        blocked = await client.post(select_path, json=selection_body, headers=card_build)
         assert blocked.status_code == 409, blocked.text
         assert blocked.json()["detail"]["code"] == "story_open_questions"
         await assert_nothing_built()
@@ -712,7 +715,9 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         assert echoed.status_code == 200, echoed.text
         assert echoed.json()["content_plan"]["open_questions"][0]["answer"] is None
         selection_body["expected_story_revision"] = 2
-        assert (await client.post(select_path, json=selection_body)).status_code == 409
+        assert (
+            await client.post(select_path, json=selection_body, headers=card_build)
+        ).status_code == 409
         await assert_nothing_built()
 
         forged = await edit(
@@ -1068,8 +1073,10 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             assert draft.snapshot_json.get("brief_binding") is None
         prepared_research = frozen.get("research")
         if question_mode:
-            # Creator answers have no downstream consumer, so they never leave the story row.
+            # Creator-typed answers stay on the story row; the prepared copy, digest and
+            # diagnostics never carry them.
             assert "open_questions" not in frozen["content_plan"]
+            assert "Which port is this crossing to?" not in json.dumps(frozen)
         if with_content_plan:
             assert frozen["research"]["evidence"]["facts"][0]["sources"][0]["url"] == (
                 "https://si.edu/recorded-fixture"

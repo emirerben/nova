@@ -3,6 +3,7 @@
 import json
 from typing import ClassVar
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
@@ -10,6 +11,8 @@ from app.agents.media_moment_relevance import MomentRelevanceInput
 from app.config import settings
 from app.schemas.media_collections import FORM_EVIDENCE, StoryContentPlan, StoryForm
 from app.schemas.research import ResearchEvidence, StoryResearch
+
+log = structlog.get_logger()
 
 
 class StoryIdea(BaseModel):
@@ -308,19 +311,37 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             if not forms_on:
                 for story in result.stories:
                     story.content_plan.form = None
-                return result
-            sources = {candidate.id: candidate.source for candidate in input.candidates}
-            result.stories = [
-                story
-                for story in result.stories
-                if _meets_form_evidence(story, len({sources[v] for v in story.moment_ids}))
-            ]
-            # A mislabelled idea is dropped on its own. Three ideas that collapse into one
-            # form keep the first two: the prompt already allows two, and failing the whole
-            # response would leave a narrow request (which may legitimately repeat a form)
-            # with no ideas at all.
-            if len(result.stories) == 3 and len({s.content_plan.form for s in result.stories}) < 2:
-                result.stories = result.stories[:2]
+            else:
+                sources = {candidate.id: candidate.source for candidate in input.candidates}
+                result.stories = [
+                    story
+                    for story in result.stories
+                    if _meets_form_evidence(story, len({sources[v] for v in story.moment_ids}))
+                ]
+                # A mislabelled idea is dropped on its own. Three ideas sharing one form are
+                # kept: an explicit narrow request ("just the performance clips") or a one-clip
+                # collection legitimately yields them, and the server cannot tell those apart
+                # from a lazy model. The prompt owns variety; this only makes misses visible.
+                if (
+                    len(result.stories) == 3
+                    and len({s.content_plan.form for s in result.stories}) < 2
+                ):
+                    log.info(
+                        "camera_roll_stories_single_form_set",
+                        form=result.stories[0].content_plan.form,
+                    )
+            if not settings.camera_roll_story_extras_enabled:
+                # Kill switch / rollback prep: store the legacy plan shape. Form was only
+                # needed to filter above; the research digest is recomputed over the stored shape.
+                from app.services.story_idea_research import story_content_digest
+
+                for story in result.stories:
+                    story.content_plan.form = None
+                    story.content_plan.open_questions = []
+                    if story.research:
+                        story.research.reviewed_content_sha256 = story_content_digest(
+                            story.title, story.content_plan.model_dump(), story.moment_ids
+                        )
             return result
         except ValueError as exc:
             raise SchemaError("Invalid camera-roll story response") from exc

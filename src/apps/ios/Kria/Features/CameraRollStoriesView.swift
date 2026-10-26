@@ -7,6 +7,7 @@ struct CameraRollStoriesView: View {
     let collection: CameraRollCollection
     let result: CameraRollStories
     var cacheOnly = false
+    var onAddBackground: @MainActor (String) -> Void = { _ in }
     let onSelected: @MainActor (CreationThread) async -> Void
     var onReviewed: @MainActor (CameraRollStories) -> Void = { _ in }
     @Environment(\.dismiss) private var dismiss
@@ -37,6 +38,15 @@ struct CameraRollStoriesView: View {
                 } else if let coverage = result.coverage, !coverage.incompleteSpeech.isEmpty {
                     Label("Some audio needs checking", systemImage: "info.circle")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                }
+                if let topic = result.suggestedResearchTopic, !stories.contains(where: { $0.research != nil }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button { dismiss(); onAddBackground(topic) } label: {
+                            Label("Add background facts", systemImage: "text.book.closed")
+                        }.buttonStyle(KriaSecondaryButtonStyle(minHeight: 44)).accessibilityIdentifier("story-add-background")
+                        Text("You confirm the topic first. Only “\(topic)” is searched, never your footage.")
+                            .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                    }
                 }
                 if stories.allSatisfy(\.rejected) { ContentUnavailableView("No story to suggest", systemImage: "photo.stack", description: Text("Try a smaller collection or a more specific story. You can also create a video from your chosen footage in chat.")) }
                 ForEach(stories.filter { !$0.rejected }) { story in
@@ -131,7 +141,7 @@ struct CameraRollStoriesView: View {
                 }
             }
             .onDisappear {
-                onReviewed(CameraRollStories(stories: stories, coverage: result.coverage))
+                onReviewed(CameraRollStories(stories: stories, coverage: result.coverage, suggestedResearchTopic: result.suggestedResearchTopic))
                 selectionTask?.cancel(); player?.pause()
             }
             .interactiveDismissDisabled(busy)
@@ -182,6 +192,8 @@ struct CameraRollStoriesView: View {
                 set: { keep in Task { await change(story, order: nil, audioPolicy: keep ? "preserve_source_audio" : "muted", action: keep ? "sound-original" : "sound-muted") } }
             )).accessibilityIdentifier("story-sound")
             if story.audioPolicy == "muted" { Text("Muted footage").font(.footnote).foregroundStyle(.secondary) }
+            Text("From your footage").font(KriaFont.body(13).weight(.semibold))
+                .accessibilityIdentifier("story-provenance-footage-\(story.id)")
             ForEach(Array(story.moments.enumerated()), id: \.element.id) { index, moment in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .top, spacing: 12) {
@@ -354,9 +366,10 @@ struct CameraRollStoriesView: View {
 private struct CameraRollIdeaResearchView: View {
     let research: CameraRollStoryResearch
     var body: some View {
-        DisclosureGroup("Research behind the idea") {
+        DisclosureGroup("Background facts") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("About \(research.topic)").font(KriaFont.body(13).weight(.semibold))
+                Text("Background on \(research.topic)").font(KriaFont.body(13).weight(.semibold))
+                Text("Public sources, not something your footage shows.").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 if !research.reviewCurrent {
                     Text("Wording or footage changed. Recheck these sources.")
                         .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)

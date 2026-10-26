@@ -1281,6 +1281,85 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
     assert ungrounded.status_code == 503 and len(calls) == 12
 
 
+async def test_place_in_query_suggests_a_topic_and_only_the_confirmed_topic_reaches_search(
+    collection_world, monkeypatch
+):
+    """The suggestion is a prefill: nothing is searched until the creator sends the topic."""
+    from app.agents.camera_roll_stories import CameraRollStoriesAgent
+    from app.services import story_idea_research as research
+    from app.services.researched_text import GroundedResearchAgent, ResearchEvidence
+
+    client, assets, sources, _owner, _app = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+    searches = []
+
+    def search(self, value, *, ctx):
+        searches.append(value.model_dump())
+        return ResearchEvidence(
+            facts=[
+                dict(
+                    id="fact-0",
+                    text="The city was excavated in the nineteenth century.",
+                    sources=[dict(title="Public archive", url="https://si.edu/troy")],
+                )
+            ],
+            retrieved_at="2026-10-21T00:00:00+00:00",
+            search_entry_html="<div>Recorded provider attribution</div>",
+        )
+
+    def ideas(self, value, *, ctx):
+        plan = {
+            "audience": "Ferry passengers",
+            "angle": "The crossing",
+            "why_it_works": "A plain arrival.",
+            "opening_text": "We finally arrived" + (" at Troy" if value.public_research else ""),
+            "caption": "An arrival.",
+            "beat_reasons": ["Crossing footage supplies atmosphere"],
+        }
+        story = {"title": "An arrival", "moment_ids": ["m1"], "content_plan": plan}
+        if value.public_research:
+            story["research_fact_ids"] = ["fact-0"]
+            plan["form"] = "factual_story"
+        else:
+            plan["form"] = "atmosphere"
+        return self.parse(json.dumps({"stories": [story]}), value)
+
+    def approve(self, value, *, ctx):
+        return research.StoryResearchReviewOutput(approved=True, reason="Recorded review")
+
+    monkeypatch.setattr(GroundedResearchAgent, "run", search)
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
+    monkeypatch.setattr(research.StoryResearchReviewAgent, "run", approve)
+    monkeypatch.setattr(research.StorySourceReviewAgent, "run", approve)
+
+    async def ask(**fields):
+        response = await client.post(f"{path}/stories", json={"expected_revision": 1, **fields})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    plain = await ask(query="Suggest different content ideas from this outing")
+    assert plain["stories"] and "suggested_research_topic" not in plain
+    lowercase = await ask(query="a ferry outing with my friends on monday")
+    assert "suggested_research_topic" not in lowercase
+
+    place = await ask(query="A day trip to Troy")
+    assert place["suggested_research_topic"] == "Troy"
+    assert place["stories"][0].get("research") is None
+    assert searches == [], "Suggesting a topic must not search"
+
+    confirmed = await ask(
+        query="A day trip to Troy", research_topic=place["suggested_research_topic"]
+    )
+    assert searches == [{"topic": "Troy", "request_quote": "Troy"}]
+    assert "suggested_research_topic" not in confirmed
+    assert confirmed["stories"][0]["research"]["topic"] == "Troy"
+    assert confirmed["stories"][0]["research"]["evidence"]["facts"][0]["sources"] == [
+        {"title": "Public archive", "url": "https://si.edu/troy"}
+    ]
+
+
 async def test_visual_end_overshoot_retains_in_bounds_footage_without_trimming_speech(
     collection_world,
 ):
