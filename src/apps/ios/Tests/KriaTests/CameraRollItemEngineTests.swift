@@ -73,6 +73,20 @@ final class CameraRollItemStateTests: XCTestCase {
         XCTAssertEqual(CameraRollItemReducer.reduce(.exporting, .server(.queued)), .queued)
     }
 
+    func testAStaleServerSnapshotNeverWalksATileBackwards() {
+        XCTAssertEqual(CameraRollItemReducer.reduce(.ready, .server(.analyzing)), .ready)
+        XCTAssertEqual(CameraRollItemReducer.reduce(.ready, .server(.queued)), .ready)
+        XCTAssertEqual(CameraRollItemReducer.reduce(.analyzing, .server(.queued)), .analyzing)
+        // Forward moves and a real failure still land.
+        XCTAssertEqual(CameraRollItemReducer.reduce(.queued, .server(.analyzing)), .analyzing)
+        XCTAssertEqual(CameraRollItemReducer.reduce(.analyzing, .server(.needsRetry(.providerError))), .needsRetry(.providerError))
+    }
+
+    func testAServerUploadingSnapshotKeepsAWaitingItemWaiting() {
+        XCTAssertEqual(CameraRollItemReducer.reduce(.queued, .server(.uploading(progress: 1))), .queued)
+        XCTAssertEqual(CameraRollItemReducer.reduce(.analyzing, .server(.uploading(progress: 1))), .analyzing)
+    }
+
     func testServerSnapshotsMapEveryContractStateAndSurviveUnknownValues() throws {
         func item(_ state: String, reason: String? = nil) throws -> CameraRollServerItem {
             let reasonJSON = reason.map { "\"\($0)\"" } ?? "null"
@@ -264,6 +278,54 @@ final class CameraRollItemEngineTests: XCTestCase {
         let polls = server.polls
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(server.polls, polls, "nothing is waiting on the server, so polling must have stopped")
+    }
+
+    func testStopPollingEndsAPollThatIsStillWaiting() async throws {
+        let a = UUID()
+        let server = Server([[serverItem(a, "analyzing")]])
+        let engine = CameraRollItemEngine(client: server, pollInterval: .milliseconds(1), sleep: { try await Task.sleep(for: $0) })
+        engine.sync(entries: try entries(["a"], assets: ["a": a]))
+        engine.startPolling(collectionID: UUID())
+        for _ in 0..<200 where server.polls < 3 { try await Task.sleep(for: .milliseconds(5)) }
+        engine.stopPolling()
+        try await Task.sleep(for: .milliseconds(20))
+        let polls = server.polls
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertEqual(server.polls, polls, "a dismissed screen must not keep polling an item that is still analyzing")
+    }
+
+    func testADuplicateUploadDropsItsTileAndLeavesTheSurvivorMapped() async throws {
+        let shared = UUID()
+        let server = Server([[serverItem(shared, "analyzing")]])
+        let engine = CameraRollItemEngine(client: server, pollInterval: .milliseconds(1), sleep: { try await Task.sleep(for: $0) })
+        final class Box: @unchecked Sendable { var collection: CameraRollCollection; init(_ c: CameraRollCollection) { collection = c } }
+        let box = Box(try CameraRollCollection(name: "Trip", identifiers: ["a", "b"]))
+        box.collection.bind(makeAsset(id: shared, kind: "video"), to: "a")
+        engine.sync(entries: box.collection.entries)
+        let loop = CameraRollUploadLoop(
+            export: { item in try makeFile("\(item.id).jpg") },
+            upload: { _, _, progress in progress(1); return makeAsset(id: shared, kind: "video") })
+        // `b` is the same photo as `a`, so binding removes `b` and `a` keeps the asset.
+        await engine.upload([CameraRollUploadItem(id: "b", kind: "image", duration: 0)], loop: loop, pollingCollectionID: UUID()) { id, asset in
+            box.collection.bind(asset, to: id)
+            return box.collection.entries
+        }
+        XCTAssertNil(engine.store.state(of: "b"), "the removed entry's tile must disappear")
+        for _ in 0..<200 where engine.store.state(of: "a") != .analyzing { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(engine.store.state(of: "a"), .analyzing, "the survivor receives the server's snapshots")
+        engine.stopPolling()
+    }
+
+    func testSettledItemsAreNotUploadedAgain() throws {
+        let engine = CameraRollItemEngine(client: Server([[]]))
+        engine.sync(entries: try entries(["rejected", "revoked", "flaky", "fresh"], assets: [:]))
+        engine.store.send(.rejected(.tooLarge), to: "rejected")
+        engine.store.send(.exportStarted, to: "revoked"); engine.store.send(.unreachable(.accessRevoked), to: "revoked")
+        engine.store.send(.exportStarted, to: "flaky"); engine.store.send(.failedLocally(.uploadFailed), to: "flaky")
+        XCTAssertFalse(engine.needsUpload("rejected"))
+        XCTAssertFalse(engine.needsUpload("revoked"))
+        XCTAssertTrue(engine.needsUpload("flaky"), "a retryable local failure is worth another attempt")
+        XCTAssertTrue(engine.needsUpload("fresh"))
     }
 
     func testRetryOptimisticallyAnalyzesAndRevertsWhenTheCallFails() async throws {

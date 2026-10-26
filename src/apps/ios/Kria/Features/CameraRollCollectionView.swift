@@ -148,10 +148,16 @@ struct CameraRollCollectionView: View {
                 if !fixture && !metadataOnly { tasteAvailable = (try? await api.editorialTaste()) != nil }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active && !running { work = Task { await refreshMetadata() } }
-                else { persist() }
+                if phase == .active {
+                    if !running { work = Task { await refreshMetadata() } }
+                    if let id = pollableCollectionID { itemEngine?.startPolling(collectionID: id) }
+                } else {
+                    // A poll left running in the background would outlive the screen's sign-in state.
+                    itemEngine?.stopPolling()
+                    persist()
+                }
             }
-            .onDisappear { work?.cancel(); persist() }
+            .onDisappear { work?.cancel(); itemEngine?.stopPolling(); persist() }
             .interactiveDismissDisabled(running)
             .kriaPage()
         }
@@ -433,6 +439,9 @@ struct CameraRollCollectionView: View {
         persist()
     }
 
+    /// Only a collection the server already holds can be polled; a first upload is polled after its save.
+    private var pollableCollectionID: UUID? { collection.serverRevision == nil ? nil : collection.id }
+
     @MainActor private func upload() async -> Bool {
         guard let originals, !fixture, !metadataOnly, !cacheOnly, !cacheOnlyRequired else { return false }
         running = true; error = nil; status = nil
@@ -440,15 +449,16 @@ struct CameraRollCollectionView: View {
         let engine = itemEngine ?? CameraRollItemEngine(client: api, store: itemStore)
         itemEngine = engine
         engine.sync(entries: collection.entries)
-        let jobs = collection.entries.filter { $0.savedAsset == nil }.map { entry in
+        let jobs = collection.entries.filter { $0.savedAsset == nil && engine.needsUpload($0.id) }.map { entry in
             let isMovie = providers[entry.id]?.supportedContentTypes.contains { $0.conforms(to: .movie) } == true
             return CameraRollUploadItem(id: entry.id, kind: entry.metadata?.kind ?? (isMovie ? "video" : "image"), duration: entry.metadata?.duration ?? 0)
         }
         let owner = originals.owner
-        await engine.upload(jobs, loop: .live(api: api, providers: providers)) { id, asset in
+        await engine.upload(jobs, loop: .live(api: api, providers: providers), pollingCollectionID: pollableCollectionID) { id, asset in
             guard api.mediaLibraryOwner == owner else { throw SourceAssetError.invalidBinding }
             collection.bind(asset, to: id)
             persist()
+            return collection.entries
         }
         guard !Task.isCancelled else { status = "Paused. Completed uploads are saved; you can resume."; return false }
         do {

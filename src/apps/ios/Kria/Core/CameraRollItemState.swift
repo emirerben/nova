@@ -45,7 +45,7 @@ enum CameraRollItemState: Equatable, Sendable {
     // Phone only.
     case picking
     case exporting
-    /// 0...1 while bytes are in flight. A server `uploading` snapshot maps here at 1 (bytes sent, being finalized).
+    /// 0...1 while bytes are in flight. Phone only: the reducer ignores a server `uploading` snapshot.
     case uploading(progress: Double)
     // Server derived.
     case queued
@@ -148,9 +148,14 @@ enum CameraRollItemReducer {
         case .retryRequested:
             return state.isRetryable ? .analyzing : state
         case let .server(incoming):
-            // A server `uploading` snapshot must not reset the byte progress the phone already knows.
-            if case .uploading = incoming, case .uploading = state { return state }
-            return incoming
+            // `uploading` means the server is still finalizing bytes the phone already sent. Taking it would turn a
+            // waiting item into a local-only one and stop the poll, so it never changes the tile.
+            if case .uploading = incoming { return state }
+            // A snapshot requested before a newer one landed must not walk a tile back to an earlier server phase.
+            switch (state, incoming) {
+            case (.ready, .queued), (.ready, .analyzing), (.analyzing, .queued): return state
+            default: return incoming
+            }
         }
     }
 }

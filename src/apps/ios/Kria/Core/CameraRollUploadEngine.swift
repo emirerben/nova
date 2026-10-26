@@ -250,14 +250,31 @@ extension CameraRollUploadLoop {
         }
     }
 
-    /// Runs the bounded loop. `bind` runs on the main actor as each upload lands, so progress survives a crash.
-    func upload(_ items: [CameraRollUploadItem], loop: CameraRollUploadLoop,
-                bind: @escaping @MainActor @Sendable (String, SavedMediaAsset) throws -> Void) async {
+    /// True for items the upload loop should still try: a rejected or revoked item would only be exported again for
+    /// nothing, because the reducer ignores every event for it.
+    func needsUpload(_ id: String) -> Bool {
+        guard let state = store.state(of: id) else { return true }
+        switch state {
+        case .excluded, .failed: return false
+        default: return true
+        }
+    }
+
+    /// Runs the bounded loop. `bind` runs on the main actor as each upload lands, so progress survives a crash. It
+    /// returns the collection's entries afterwards: a duplicate asset removes an entry, so the id maps and tiles are
+    /// rebuilt from that truth instead of patched. `pollingCollectionID` is set only when the server already has the
+    /// collection, so uploads that finish early show server state without waiting for the whole loop.
+    func upload(_ items: [CameraRollUploadItem], loop: CameraRollUploadLoop, pollingCollectionID: UUID? = nil,
+                bind: @escaping @MainActor @Sendable (String, SavedMediaAsset) throws -> [CameraRollCollection.Entry]) async {
         let store = store
         await loop.run(items, uploaded: { [weak self] id, asset in
             try await MainActor.run {
-                try bind(id, asset)
-                self?.assetForEntry[id] = asset.id; self?.entryForAsset[asset.id] = id
+                let entries = try bind(id, asset)
+                guard let self else { return }
+                self.sync(entries: entries)
+                // Queued now, not when the loop reports it, so the poll that starts below sees a waiting item.
+                self.store.send(.uploaded, to: id)
+                if let pollingCollectionID { self.startPolling(collectionID: pollingCollectionID) }
             }
         }, report: { id, event in
             await MainActor.run { _ = store.send(event, to: id) }
