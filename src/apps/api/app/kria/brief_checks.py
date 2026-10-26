@@ -871,23 +871,39 @@ def plan_facts_from_strategy(
     (the caller's cohort check); None keeps the cleanup receipt from promising it.
     """
     strategy = strategy or {}
-    per_clip: dict[str, str] = {}
-    inferred: dict[str, str] = {}
+    per_clip_parts: dict[str, list[str]] = {}
+    inferred_parts: dict[str, list[str]] = {}
+    label_texts: list[str] = []
     for intent in strategy.get("resolved_clip_intents") or []:
-        if not isinstance(intent, Mapping) or intent.get("op") != "label":
+        if not isinstance(intent, Mapping) or intent.get("status", "resolved") != "resolved":
+            continue
+        if intent.get("op") not in {"label", "caption"}:
             continue
         for assignment in intent.get("assignments") or []:
             if not isinstance(assignment, Mapping):
                 continue
             media_id = str(assignment.get("media_id") or "")
-            value = assignment.get("value")
+            value = (
+                intent.get("caption_text")
+                if intent.get("op") == "caption"
+                else assignment.get("value")
+            )
+            grounding = (
+                intent.get("caption_grounding")
+                if intent.get("op") == "caption"
+                else assignment.get("grounding")
+            )
             if not media_id or not value:
                 continue
-            per_clip[media_id] = str(value)
+            per_clip_parts.setdefault(media_id, []).append(str(value))
+            if intent.get("op") == "label":
+                label_texts.append(str(value))
             # Only the creator's own words are "read"; everything the server
             # matched from footage or the record is reported as inferred.
-            if assignment.get("grounding") not in {"creator_text", "placeholder"}:
-                inferred[media_id] = str(value)
+            if grounding not in {"creator_text", "placeholder"}:
+                inferred_parts.setdefault(media_id, []).append(str(value))
+    per_clip = {media: "\n".join(dict.fromkeys(parts)) for media, parts in per_clip_parts.items()}
+    inferred = {media: "\n".join(dict.fromkeys(parts)) for media, parts in inferred_parts.items()}
     labels = tuple(str(x) for x in (strategy.get("shot_labels") or []) if str(x).strip())
     title = strategy.get("opening_title")
     texts = [
@@ -896,7 +912,7 @@ def plan_facts_from_strategy(
             title,
             strategy.get("closing_title"),
             *labels,
-            *per_clip.values(),
+            *label_texts,
             *_pinned_text_values(strategy.get("pinned_texts")),
         )
         if value

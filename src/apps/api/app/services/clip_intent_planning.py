@@ -18,6 +18,7 @@ from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.agents.clip_intent_planner import (
     ClipIntentPlannerAgent,
     ClipIntentPlannerInput,
+    ClipIntentPlannerOutput,
     ConfirmedTitleCopy,
     PlannedClipIntent,
     salvage_question,
@@ -50,6 +51,7 @@ from app.services.clip_intent_resolution import (
     picker_eligible,
     resolve_clip_intents_for_turn,
 )
+from app.services.clip_picker_inventory import PickerInventory, media_digest
 from app.services.clip_selection import ClipSelections
 from app.services.clip_understanding import clip_record, understanding_incomplete
 from app.services.creator_label_reply import (
@@ -829,6 +831,7 @@ async def plan_and_resolve_clip_intents(
     refresh_clips: ClipRefresh | None = None,
     understanding_wait_until: float | None = None,
     clip_selections: ClipSelections | None = None,
+    picker_inventory: PickerInventory | None = None,
     describe_clips: bool = False,
     spoken_text: Sequence[str] = (),
     brief_labels: Sequence[BriefLabel] = (),
@@ -874,22 +877,25 @@ async def plan_and_resolve_clip_intents(
     # Candidates improve recall but are never the authority: even an empty
     # creative strategy must pass through the complete request inventory.
     try:
-        output = await asyncio.to_thread(
-            ClipIntentPlannerAgent(default_client()).run,
-            ClipIntentPlannerInput(
-                creator_request=creator_request,
-                latest_user_message=latest_user_message,
-                generated_brief=generated_brief,
-                candidate_intents=candidate_intents,
-                confirmed_titles=list(confirmed_titles or ()),
-                available_clip_count=len(clips),
-                **({"clip_facts": True} if clip_facts_on else {}),
-                reply_language=current_reply_language(),
-                # KRI-667: the `exclude` op; omitted when off (byte-identical input).
-                **({"clip_exclusions": True} if settings.clip_intent_exclude_enabled else {}),
-            ),
-            ctx=run_context,
-        )
+        if picker_inventory is not None and picker_inventory.media_digest == media_digest(clips):
+            output = ClipIntentPlannerOutput(intents=picker_inventory.planned)
+        else:
+            output = await asyncio.to_thread(
+                ClipIntentPlannerAgent(default_client()).run,
+                ClipIntentPlannerInput(
+                    creator_request=creator_request,
+                    latest_user_message=latest_user_message,
+                    generated_brief=generated_brief,
+                    candidate_intents=candidate_intents,
+                    confirmed_titles=list(confirmed_titles or ()),
+                    available_clip_count=len(clips),
+                    **({"clip_facts": True} if clip_facts_on else {}),
+                    reply_language=current_reply_language(),
+                    # KRI-667: the `exclude` op; omitted when off (byte-identical input).
+                    **({"clip_exclusions": True} if settings.clip_intent_exclude_enabled else {}),
+                ),
+                ctx=run_context,
+            )
     except TerminalSchemaError as exc:
         # Invalid model output is a content-recovery problem, not a failed
         # preparation. Ask for a restatement and trust none of the candidate
@@ -1028,6 +1034,18 @@ async def plan_and_resolve_clip_intents(
     selected, visual_intents, dropped_ids = apply_creator_selections(
         visual_intents, clips=clips, selections=clip_selections, creator_request=creator_request
     )
+    carried = []
+    if picker_inventory is not None and picker_inventory.media_digest == media_digest(clips):
+        remaining_ids = {intent.intent_id for intent in visual_intents}
+        carried = [
+            intent
+            for intent in picker_inventory.resolved
+            if intent.status == "resolved" and intent.intent_id in remaining_ids
+        ]
+        carried_ids = {intent.intent_id for intent in carried}
+        visual_intents = [
+            intent for intent in visual_intents if intent.intent_id not in carried_ids
+        ]
     # KRI-614: clips the creator names by the file name the app shows ("IMG_7382").
     named, visual_intents, split = apply_file_name_references(
         visual_intents, clips=clips, creator_request=creator_request
@@ -1058,7 +1076,7 @@ async def plan_and_resolve_clip_intents(
             if intent.intent_id not in dropped_ids
             for piece in split.get(intent.intent_id, [intent])
         ]
-    resolved_orders = [*selected, *named, *kept, *resolved_orders]
+    resolved_orders = [*selected, *named, *kept, *carried, *resolved_orders]
     # Transcript labels are fulfilled later from the pinned narration and
     # final timeline. They remain in the complete requested inventory, but
     # must never enter the vision resolver.
@@ -1143,5 +1161,22 @@ async def plan_and_resolve_clip_intents(
     if resolved_orders:
         resolution = replace(
             resolution, intents=_as_listed([*resolution.intents, *resolved_orders], intents)
+        )
+    if resolution.clip_question is not None:
+        inventory = PickerInventory(
+            media_digest=media_digest(clips),
+            planned=output.intents,
+            resolved=[
+                i
+                for i in resolution.intents
+                if i.intent_id in {p.intent_id for p in output.intents}
+            ],
+        )
+        resolution = replace(
+            resolution,
+            clip_question={
+                **resolution.clip_question,
+                "inventory": inventory.model_dump(mode="json"),
+            },
         )
     return PlannedIntentResolution(intents, resolution, dropped_exclusions=dropped_exclusions)

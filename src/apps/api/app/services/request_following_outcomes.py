@@ -110,6 +110,57 @@ def activity_at(case):
     return max(values, default="")
 
 
+def delivery_counts(capture: dict) -> dict[str, int]:
+    from app.kria.device_render import DeviceRenderStatus
+    from app.services.device_render import DEVICE_RENDER_FIELD, checked_export_report
+
+    sections = capture.get("sections") or {}
+    jobs = {
+        str(row.get("id") or key): row
+        for key, row in sections.items()
+        if key.startswith("job-") and isinstance(row, dict)
+    }
+    counts = dict(
+        ready_jobs=0,
+        failed_jobs=0,
+        device_export_attempts=0,
+        acknowledged_device_exports=0,
+        verified_device_exports=0,
+    )
+    for job in jobs.values():
+        counts["ready_jobs"] += int(job.get("status") in {"ready", "variants_ready"})
+        counts["failed_jobs"] += int(job.get("status") == "failed")
+        assembly = job.get("assembly_plan") or {}
+        variants = {
+            v.get("variant_id"): v for v in assembly.get("variants") or [] if isinstance(v, dict)
+        }
+        for variant_id, record in (assembly.get(DEVICE_RENDER_FIELD) or {}).items():
+            if not isinstance(record, dict):
+                continue
+            counts["device_export_attempts"] += len(record.get("attempts") or {})
+            published = record.get("published_attempt")
+            variant = variants.get(variant_id) or {}
+            if not published or variant.get("render_generation_id") != published:
+                continue
+            try:
+                status = DeviceRenderStatus.model_validate(record.get("status"))
+            except (ValidationError, TypeError, ValueError):
+                continue
+            if status.phase != "published":
+                continue
+            counts["acknowledged_device_exports"] += 1
+            if "actual_export_policy" in record and checked_export_report(
+                record, status, published
+            ):
+                counts["verified_device_exports"] += 1
+    failed_before_job = not jobs and any(
+        row.get("status") == "failed" and not row.get("job_ids")
+        for row in sections.get("turns") or []
+        if isinstance(row, dict)
+    )
+    return {**counts, "render_jobs": len(jobs), "pre_job_failure": int(failed_before_job)}
+
+
 async def current_export(db, case, variant_id=None, *, sign=True):
     """Resolve only the current coherent owned job and an actual ready object."""
     from app.routes.creation_threads import _load_authorized_projection_rows
@@ -221,6 +272,18 @@ async def daily_report(db):
     misses = defaultdict(set)
     findings = Counter()
     sessions = []
+    delivery = dict(
+        request_sessions=0,
+        ready_job_sessions=0,
+        pre_job_failure_sessions=0,
+        render_jobs=0,
+        device_export_attempts=0,
+        acknowledged_device_exports=0,
+        verified_device_exports=0,
+        fulfilled_reviewed_sessions=0,
+        unfulfilled_reviewed_sessions=0,
+        creator_changed_sessions=0,
+    )
     for case in rows[:1000]:
         if not await eligible_case(db, case):
             continue
@@ -238,6 +301,17 @@ async def daily_report(db):
         except ValueError:
             continue
         counts["recent_request_sessions"] += 1
+        observed = delivery_counts(case.capture or {})
+        delivery["request_sessions"] += 1
+        delivery["ready_job_sessions"] += int(observed["ready_jobs"] > 0)
+        delivery["pre_job_failure_sessions"] += observed["pre_job_failure"]
+        for key in (
+            "render_jobs",
+            "device_export_attempts",
+            "acknowledged_device_exports",
+            "verified_device_exports",
+        ):
+            delivery[key] += observed[key]
         review = case.review or {}
         if review.get("decision") != "approved":
             continue
@@ -276,6 +350,12 @@ async def daily_report(db):
             continue
         counts["export_reviewed_sessions"] += 1
         verdicts = Counter(o.verdict for o in value.outcomes)
+        if verdicts["creator_changed"]:
+            delivery["creator_changed_sessions"] += 1
+        elif verdicts["met"] == len(value.outcomes):
+            delivery["fulfilled_reviewed_sessions"] += 1
+        elif verdicts["partial"] or verdicts["missed"]:
+            delivery["unfulfilled_reviewed_sessions"] += 1
         for verdict, count in verdicts.items():
             requirements[verdict] += count
             requirements["total"] += count
@@ -306,12 +386,23 @@ async def daily_report(db):
         for category, ids in misses.items()
     ]
     actions.sort(key=lambda a: (-a["sessions"], -a["missed_requirements"], a["category"]))
+    delivery["unknown_fulfillment_sessions"] = (
+        delivery["request_sessions"]
+        - delivery["fulfilled_reviewed_sessions"]
+        - delivery["unfulfilled_reviewed_sessions"]
+    )
     return {
         "schema_version": 1,
         "generated_at": now.isoformat(),
         "window_days": 14,
         "truncated": len(rows) > 1000,
         "counts": counts,
+        "delivery": {
+            **delivery,
+            "first_attempt_fulfillment": None,
+            "photos_save_acknowledgements": None,
+            "scope": "eligible recent captured sessions; original-request retry lineage is unknown",
+        },
         "requirements": requirements,
         "sessions": sessions,
         "next_actions": actions,

@@ -17,6 +17,98 @@
   ],
   "gates": [
     {
+      "id": "launch-clarification-preservation",
+      "tickets": [
+        "KRI-948",
+        "KRI-950",
+        "KRI-954",
+        "KRI-941"
+      ],
+      "symptom": "A picker answer loses settled photo copy or repeats a membership question; a collapsed listed order loses member order.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-950",
+      "journey": "launch-clarification-preservation",
+      "paths": [
+        "src/apps/api/app/services/clip_picker_inventory.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/kria/brief_checks.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_launch_clarification_replay.py",
+        "tests/services/test_kri948_single_take_resolution.py",
+        "tests/services/test_kri950_picker_inventory.py",
+        "tests/pipeline/test_launch_listed_members.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real inventory/resolver agents with provider transport replay; before/after clarification, missing-moment and listed-order checks retained in the launch proof report.",
+        "live_model": "Not run. Prompt compliance remains unverified.",
+        "native_output": "Existing media-engine export checks run separately. No iPhone original-case fulfillment claim.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "include/group/order selection carry without crossing into exclusion",
+        "exact photo copy and wrong/missing target controls",
+        "changed media generation and a later typed request invalidate picker inventory",
+        "missing moment check defers technical failure instead of asking for a tap",
+        "typed member order preserves groups without a listed order"
+      ],
+      "neighbours_gap": [
+        "physical iPhone and named TestFlight acceptance",
+        "legacy unmarked lists cannot establish internal order"
+      ],
+      "follow_ups": [
+        "KRI-946",
+        "KRI-954"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "request-outcome-measurement",
+      "tickets": [
+        "KRI-728"
+      ],
+      "symptom": "Ready jobs and unreviewed or partial outputs must not count as fulfilled requests.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-728",
+      "journey": "request-outcome-measurement",
+      "paths": [
+        "src/apps/api/app/services/request_following_outcomes.py"
+      ],
+      "regression_tests": [
+        "tests/integration/test_request_following_queue.py",
+        "tests/routes/test_actual_export_publication.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "32 real HTTP review/database and export-publication controls passed.",
+        "live_model": "Not applicable to count projection.",
+        "native_output": "No new exporter; uses the existing current published output checks.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "current complete human review versus unknown or partial review",
+        "unverified and stale export evidence cannot count as a verified current export",
+        "pre-Job failures stay in captured-session denominators"
+      ],
+      "neighbours_gap": [
+        "original request/recovery lineage and client/server cost/version cohorts",
+        "Photos save acknowledgements"
+      ],
+      "follow_ups": [
+        "KRI-728"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-852-speech-editor",
       "tickets": [
         "KRI-852",
@@ -1006,7 +1098,7 @@
       "tickets": [
         "KRI-542"
       ],
-      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana dönüştüremedim').",
+      "symptom": "Main Creator at thinking=high exhausted the shared 8k output budget after a clip answer and the turn dead-ended ('plana d\u00f6n\u00fc\u015ft\u00fcremedim').",
       "boundary": "model_budget",
       "fix_prs": [
         1493
@@ -1157,7 +1249,7 @@
         "KRI-651",
         "KRI-674"
       ],
-      "symptom": "Phone Montage render-ready reply said 'Doğrulayamadım' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
+      "symptom": "Phone Montage render-ready reply said 'Do\u011frulayamad\u0131m' for order, duplicate removal and the closing line: the published export carried the phone's upload-attempt id instead of the approved generation, so the plan record was dropped. KRI-651: an approved hook was stripped/rewritten during preparation and retry, then reported as unsupported by the iPhone.",
       "boundary": "publication",
       "fix_prs": [
         1503,
@@ -1196,7 +1288,7 @@
       "kill_switch": null,
       "evidence": {
         "offline_replay": "prod thread 7d7c5e25 shape: generation vs attempt id; KRI-651: pre-fix 6636cae71 fails the approved Unicode hook; fixed tree passes composition/reload/retry plus real-Postgres EN/TR publication receipt; fresh-edit title race: real-Postgres red control 97d44d932 repeats the provider call; first-step recovery fixes title-only completion for response/draft/read; KRI-674 follow-up timeout: stalled Pro transport causes both EN/TR healthy rendered follow-ups to fail before the fix (2 failed, 2 passed); Flash-first preserves successful clarification and single-call unknown recovery (4 passed).",
-        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17–14.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
+        "live_model": "2026-10-17 final narrow configuration: Flash/medium/4096, prompt v11. Synthetic EN/TR title edits, ambiguous retry and 12k-contract/40-message compound rebuild: four one-call passes, 3.17\u201314.60s, $0.031400 settled. Earlier low-budget candidates omitted constraints or truncated and are not counted as passes. Production-account follow-up/retry re-send pending.",
         "native_output": "Berlin re-run job a7d69a5b (2026-10-08) was the incident; post-fix phone re-send pending; KRI-651: native simulator export and pixel checks passed 2026-10-13 (exact hook, color emoji, no context caption)",
         "production": "merged 2026-10-08"
       },
@@ -1595,7 +1687,7 @@
         "KRI-808",
         "KRI-802"
       ],
-      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"Спасибо.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
+      "symptom": "Don Julio M1 (2026-10-21, plan item 7a4ce1d5): the clip records Main Creator read had whisper TRANSLATIONS as timed segments (a Turkish speaker's \"What's your name?\" as \"Ne isminiz?\", \"Gracias\" as \"\u0421\u043f\u0430\u0441\u0438\u0431\u043e.\"), a 24-word Gemini sentence on a 1.1 s clip and a \"Video. Video...\" loop, so the quoted line \"What's your name?\" had no timed words.",
       "boundary": "persistence",
       "status": "open_pr",
       "owner": "KRI-808",

@@ -157,6 +157,7 @@ from app.services.clip_intent_planning import (
     whole_video_text_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
+from app.services.clip_picker_inventory import answered_inventory
 from app.services.clip_selection import fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
@@ -3439,6 +3440,11 @@ async def _plan_creator_action(
                 ),
                 understanding_wait_until=_clip_understanding_wait_until(),
                 **({"clip_selections": clip_selections} if clip_selections else {}),
+                **(
+                    {"picker_inventory": inventory}
+                    if (inventory := answered_inventory(thread_events, intent_clips)) is not None
+                    else {}
+                ),
                 # KRI-612: "explain the footages" puts a line from the footage on each clip.
                 **({"describe_clips": True} if describe_clips else {}),
                 **({"brief_labels": brief_labels} if brief_labels else {}),

@@ -1823,6 +1823,34 @@
         "src/apps/api/tests/kria/test_kri945_claims_journey.py",
         "src/apps/api/tests/services/test_kri945_whole_video_captions.py"
       ]
+    },
+    {
+      "id": "launch-clarification-preservation",
+      "needs_native": false,
+      "api_tests": "tests/services/test_launch_clarification_replay.py tests/services/test_kri948_single_take_resolution.py tests/services/test_kri950_picker_inventory.py tests/pipeline/test_launch_listed_members.py",
+      "paths": [
+        "src/apps/api/app/services/clip_picker_inventory.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/services/test_launch_clarification_replay.py",
+        "src/apps/api/tests/services/test_kri948_single_take_resolution.py",
+        "src/apps/api/tests/services/test_kri950_picker_inventory.py",
+        "src/apps/api/tests/pipeline/test_launch_listed_members.py"
+      ]
+    },
+    {
+      "id": "request-outcome-measurement",
+      "needs_native": false,
+      "api_tests": "tests/integration/test_request_following_queue.py tests/routes/test_actual_export_publication.py",
+      "paths": [
+        "src/apps/api/app/services/request_following_outcomes.py",
+        "src/apps/api/tests/integration/test_request_following_queue.py",
+        "src/apps/api/tests/routes/test_actual_export_publication.py"
+      ]
     }
   ]
 }

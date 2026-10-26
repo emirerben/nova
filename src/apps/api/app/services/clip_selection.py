@@ -40,7 +40,7 @@ _FALLBACK_MIN_SIMILARITY = 0.5
 # Ops whose picker answers may stand in for each other. KRI-667: never `exclude`, so the
 # clips a creator tapped for "include: laundry" can never become the clips an
 # "exclude: laundry" leaves out (an exclude is its own picker category, KRI-761).
-_MEMBERSHIP_OPS = frozenset({"group", "include"})
+_MEMBERSHIP_OPS = frozenset({"group", "include", "order"})
 # KRI-697: an `intent_id` binds an answer only with a 4+ letter word outside these generic
 # words AND not as one word plus digits ("clip_1", "media2"): a re-plan may reuse those
 # positional ids for a different intent. A descriptive id ("caption_rule3_text") binds.
@@ -219,7 +219,7 @@ def clip_question_text(categories: list[dict[str, Any]], *, only_video: bool = F
     ``only_video`` (KRI-779): every category's one candidate is the project's only video,
     so there is no "which clip" to ask: the question is whether the moment is in it at all.
     """
-    labels = [c["label"] for c in categories]
+    labels = list(dict.fromkeys(c["label"] for c in categories))
     if only_video:
         return _not_in_the_video_text(labels)
     if len(labels) == 1:
@@ -254,12 +254,13 @@ def _not_in_the_video_text(labels: list[str]) -> str:
     if len(labels) == 1:
         return say(
             en=(
-                f'I couldn\'t find "{labels[0]}" in your video. '
-                "Tap the video if it's in there, or tell me it isn't."
+                f'About when does "{labels[0]}" appear in your video? '
+                "Give a rough time, such as near the start or 30 seconds, "
+                "or tell me it isn't there."
             ),
             tr=(
-                f'Videonda "{labels[0]}" olan yeri bulamadım. '
-                "Varsa videoya dokun, yoksa olmadığını söyle."
+                f'Videonda "{labels[0]}" yaklaşık ne zaman görünüyor? '
+                "Başlara doğru veya 30. saniye gibi yaklaşık bir zaman ver ya da olmadığını söyle."
             ),
         )
     shown = ", ".join(f'"{label}"' for label in labels[:4])
@@ -269,12 +270,12 @@ def _not_in_the_video_text(labels: list[str]) -> str:
     )
     return say(
         en=(
-            f"I couldn't find {shown}{more} in your video. "
-            "Tap the video for each one that's in it, or mark the ones that aren't."
+            f"About when do {shown}{more} appear in your video? "
+            "Give a rough time for each, or tell me which aren't there."
         ),
         tr=(
-            f"Videonda şunları bulamadım: {shown}{more}. "
-            "Videoda olanlar için videoya dokun, olmayanları işaretle."
+            f"Videonda şunlar yaklaşık ne zaman görünüyor: {shown}{more}? "
+            "Her biri için yaklaşık bir zaman ver ya da hangilerinin olmadığını söyle."
         ),
     )
 
