@@ -8,10 +8,16 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import MediaAsset, MediaAssetSource, MediaCollection, MediaCollectionMember
+from app.models import (
+    MediaAsset,
+    MediaAssetSource,
+    MediaCollection,
+    MediaCollectionMember,
+    MediaCollectionStory,
+)
 from app.schemas.media_collections import CollectionMember, CollectionOut, CollectionWrite
 from app.services.media_library_ingest import lock_library_owner
 
@@ -123,6 +129,50 @@ async def eligible_sources(
     return {
         asset.id: (asset, source) for asset, source in rows if wanted.get(asset.id) == source.id
     }
+
+
+def unchanged_groups(before: list[CollectionMember], after: list[CollectionMember]) -> set[str]:
+    """Event names whose exact (asset, source) membership is the same in both selections."""
+
+    def by_group(selected):
+        grouped: dict[str, set] = {}
+        for member in selected:
+            if member.group is not None:
+                grouped.setdefault(member.group, set()).add((member.asset_id, member.source_id))
+        return grouped
+
+    old, new = by_group(before), by_group(after)
+    return {name for name, pairs in old.items() if new.get(name) == pairs}
+
+
+async def carry_forward_stories(
+    db: AsyncSession,
+    owner: uuid.UUID,
+    identifier: uuid.UUID,
+    *,
+    from_revision: int,
+    to_revision: int,
+    groups: set[str],
+) -> None:
+    """Keep an event's ideas when only other events changed.
+
+    Ideas are pinned to the collection revision they were found against, so any write would
+    orphan every event's ideas. An event whose members are identical keeps the same evidence,
+    so its ideas move to the new revision. Only rows that were current can move: an older
+    revision of the event may have had different members.
+    """
+    if not groups:
+        return
+    await db.execute(
+        update(MediaCollectionStory)
+        .where(
+            MediaCollectionStory.user_id == owner,
+            MediaCollectionStory.collection_id == identifier,
+            MediaCollectionStory.collection_revision == from_revision,
+            MediaCollectionStory.story_json["group"].astext.in_(sorted(groups)),
+        )
+        .values(collection_revision=to_revision)
+    )
 
 
 def collection_out(row: MediaCollection, eligible: dict) -> CollectionOut:
@@ -243,6 +293,7 @@ async def write_collection(
     if row is None:
         row = MediaCollection(id=identifier, user_id=owner, name=body.name, revision=0)
         db.add(row)
+    previous_revision, previous = row.revision, members(row)
     row.name = body.name.strip()
     row.revision += 1
     row.selection_json = {
@@ -250,6 +301,14 @@ async def write_collection(
         "members": [member.model_dump(mode="json") for member in grouped],
     }
     await db.flush()
+    await carry_forward_stories(
+        db,
+        owner,
+        identifier,
+        from_revision=previous_revision,
+        to_revision=row.revision,
+        groups=unchanged_groups(previous, grouped),
+    )
     await db.execute(
         delete(MediaCollectionMember).where(
             MediaCollectionMember.collection_id == identifier,

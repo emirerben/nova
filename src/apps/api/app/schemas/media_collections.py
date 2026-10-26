@@ -140,6 +140,12 @@ class StoryGenerationBody(SemanticSearchBody):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     research_topic: str | None = Field(default=None, min_length=4, max_length=200)
     allow_partial_analysis: bool = False
+    # Ideas are per event: evidence is limited to the members whose group equals this.
+    # Absent keeps the whole-collection behaviour of older builds.
+    group: str | None = Field(default=None, min_length=1, max_length=80)
+    # The event's existing ideas. Non-empty means "one more idea": it is added beside them,
+    # never replaces them, and never repeats their footage or wording.
+    exclude_story_ids: list[UUID] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def public_research_topic(self):
@@ -254,6 +260,7 @@ class CollectionStoryOut(BaseModel):
     requires_render_approval: Literal[True] = True
     rejected: bool = False
     research: StoryResearch | None = None
+    group: str | None = None
 
 
 class CollectionStoriesOut(BaseModel):
@@ -268,6 +275,23 @@ class CollectionStoriesOut(BaseModel):
 class SavedCollectionStoriesOut(BaseModel):
     revision: int
     stories: list[CollectionStoryOut] = Field(max_length=20)
+
+
+class StoryDeletedOut(BaseModel):
+    """An idea is soft-deleted; restoring it is possible until this moment."""
+
+    restore_until: datetime
+
+
+class GroupDeleteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    group: str = Field(min_length=1, max_length=80)
+    expected_revision: int = Field(ge=1)
+
+
+class GroupDeleteOut(BaseModel):
+    revision: int
+    deleted_story_ids: list[UUID]
 
 
 class StoryReviewBody(BaseModel):

@@ -15,7 +15,13 @@ from sqlalchemy import delete, select, update
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models import ContentPlan, Job, Persona, PlanItem, User
-from tests.integration.test_media_collections import collection_world, selection  # noqa: F401
+from tests.integration.test_media_collections import (  # noqa: F401
+    EVENT_QUERY,
+    _stub_ideas,
+    _two_events,
+    collection_world,
+    selection,
+)
 
 
 async def projects(owner):
@@ -1141,3 +1147,49 @@ async def test_would_post_idea_or_rewrite_becomes_a_taste_example_only_when_conf
         assert "Beacon at dusk" not in json.dumps([v.payload for v in versions])
         assert lighthouse not in json.dumps([v.payload for v in versions])
         assert await creator_editorial_taste.generation_context(db, owner.id, "lighthouse") == ""
+
+
+async def test_deleting_an_idea_is_a_refusal_only_while_personalization_is_on(
+    collection_world, monkeypatch
+):
+    """A deleted idea feeds the same repeat filter as a not_for_me verdict. Nothing private is
+    stored for a creator who has not confirmed personalization, and Undo withdraws it."""
+    from app.models import CreatorIdeaFeedback
+    from app.routes import editorial_taste
+    from app.services import creator_editorial_taste
+
+    client, _, _, owner, app = collection_world
+    app.include_router(editorial_taste.router)
+    monkeypatch.setattr(settings, "creator_editorial_taste_enabled", True)
+    monkeypatch.setattr(settings, "creator_editorial_taste_user_ids", [str(owner.id)])
+    path, _, _, _ = await _two_events(client, owner)
+    collection = uuid.UUID(path.rsplit("/", 1)[1])
+    _stub_ideas(monkeypatch, lambda input: [("Crossing", "A point", "Opening", [0])])
+    idea = (await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Ferry"})).json()[
+        "stories"
+    ][0]
+
+    async def refusals():
+        async with AsyncSessionLocal() as db:
+            rows = (
+                await db.scalars(
+                    select(CreatorIdeaFeedback).where(CreatorIdeaFeedback.user_id == owner.id)
+                )
+            ).all()
+            return len(rows), await creator_editorial_taste.rejected_ideas(db, owner.id, collection)
+
+    await client.delete(f"{path}/stories/{idea['id']}")
+    assert await refusals() == (0, []), "no profile, nothing stored"
+    await client.post(f"{path}/stories/{idea['id']}/restore")
+
+    ids = await projects(owner)
+    assert (await client.put("/me/editorial-taste", json=profile_body(ids))).status_code == 200
+    await client.delete(f"{path}/stories/{idea['id']}")
+    stored, refused = await refusals()
+    assert stored == 1 and len(refused) == 1
+    assert refused[0]["texts"] == ["A point", "Opening"]
+    await client.delete(f"{path}/stories/{idea['id']}")
+    assert (await refusals())[0] == 1, "deleting twice records one judgment"
+
+    assert (await client.post(f"{path}/stories/{idea['id']}/restore")).status_code == 200
+    assert await refusals() == (0, []), "a restored idea was never refused"

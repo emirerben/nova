@@ -6,7 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents._runtime import SchemaError
-from app.agents.camera_roll_stories import CameraRollStoriesAgent
+from app.agents.camera_roll_stories import (
+    CameraRollStoriesAgent,
+    CameraRollStoriesInput,
+    OfferedIdea,
+)
 from app.agents.media_moment_relevance import (
     MomentCandidate,
     MomentRelevanceAgent,
@@ -675,3 +679,26 @@ def test_open_questions_are_trimmed_and_never_cost_the_idea():
     story["content_plan"]["open_questions"] = "not a list"
     parsed = CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), _form_input())
     assert "open_questions" not in parsed.stories[0].content_plan.model_dump()
+
+
+def test_another_idea_prompt_names_the_offered_ideas_by_candidate_label_only_when_present():
+    value = evidence()
+    agent = CameraRollStoriesAgent(CassetteModelClient('{"stories": []}'))
+    plain = agent.render_prompt(value)
+    assert "already_offered" not in plain and "adds ONE idea" not in plain
+
+    offered = CameraRollStoriesInput(
+        **value.model_dump(),
+        already_offered=[
+            OfferedIdea(
+                angle="A crossing ends in a light",
+                opening_text="What is waiting across the water?",
+                moment_ids=[value.candidates[0].id, "not-a-candidate"],
+            )
+        ],
+    )
+    prompt = agent.render_prompt(offered)
+    assert "adds ONE idea" in prompt
+    assert '"already_offered": [{"angle": "A crossing ends in a light"' in prompt
+    assert '"moment_ids": ["m1"]' in prompt, "uuids stay out of the prompt; unknown ids are dropped"
+    assert value.candidates[0].id not in prompt

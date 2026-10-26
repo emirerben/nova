@@ -5,9 +5,10 @@ import hashlib
 import json
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from app.agents._model_client import default_client
 from app.agents._runtime import TerminalError
@@ -15,6 +16,7 @@ from app.agents.camera_roll_stories import (
     CameraRollStoriesAgent,
     CameraRollStoriesInput,
     CameraRollStoriesOutput,
+    OfferedIdea,
 )
 from app.agents.media_moment_relevance import MomentCandidate
 from app.models import MediaCollectionStory
@@ -22,7 +24,11 @@ from app.pipeline.clip_cache import (
     MediaAssetFactKey,
     complete_media_asset_fact,
 )
-from app.schemas.media_collections import CollectionStoriesOut, CollectionStoryOut
+from app.schemas.media_collections import (
+    CollectionStoriesOut,
+    CollectionStoryOut,
+    StoryDeletedOut,
+)
 from app.services import creator_editorial_taste, media_collections, media_moments
 from app.services.media_collection_analysis import claim_collection_analysis, collection_run_context
 from app.services.research_topic_suggestion import suggest_research_topic
@@ -33,14 +39,45 @@ from app.services.story_idea_research import (
     story_content_digest,
 )
 
+# How long a deleted idea stays restorable. The Undo toast is seconds; the rest covers an
+# event delete whose members the client re-saves before restoring its ideas.
+RESTORE_WINDOW = timedelta(minutes=10)
+MAX_STORY_EVENTS = 200
+
 
 def event(kind, revision, **fields):
     return {"type": kind, "story_revision": revision, "at": datetime.now(UTC).isoformat(), **fields}
 
 
+def is_deleted(row):
+    return row.story_json.get("deleted_at") is not None
+
+
+def deleted_as_idea(row):
+    reason = next(
+        (value.get("reason") for value in reversed(row.events_json) if value["type"] == "deletion"),
+        "idea",
+    )
+    return reason == "idea"
+
+
+def restore_deadline(row):
+    return datetime.fromisoformat(row.story_json["deleted_at"]) + RESTORE_WINDOW
+
+
+def soft_delete(row, *, reason, now=None):
+    """Mark an idea deleted. The row stays: restore is an undo and generation excludes it."""
+    row.story_json = {
+        **row.story_json,
+        "deleted_at": (now or datetime.now(UTC)).isoformat(),
+    }
+    if len(row.events_json) < MAX_STORY_EVENTS:
+        row.events_json = [*row.events_json, event("deletion", row.revision, reason=reason)]
+
+
 def story_out(row):
     plan = row.story_json.get("content_plan")
-    details = dict(row.story_json)
+    details = {k: v for k, v in row.story_json.items() if k != "deleted_at"}
     if research := details.get("research"):
         details["research"] = {
             **research,
@@ -69,10 +106,7 @@ def story_out(row):
     )
 
 
-async def read_saved_stories(db, owner, identifier, revision, story_ids=None):
-    from sqlalchemy import select
-
-    from app.models import MediaCollectionStory
+async def read_saved_stories(db, owner, identifier, revision, story_ids=None, group=None):
     from app.schemas.media_collections import SavedCollectionStoriesOut
 
     collection = await media_collections.owned_collection(db, owner, identifier, revision=revision)
@@ -80,7 +114,10 @@ async def read_saved_stories(db, owner, identifier, revision, story_ids=None):
         MediaCollectionStory.user_id == owner,
         MediaCollectionStory.collection_id == collection.id,
         MediaCollectionStory.collection_revision == collection.revision,
+        MediaCollectionStory.story_json["deleted_at"].astext.is_(None),
     )
+    if group is not None:
+        query = query.where(MediaCollectionStory.story_json["group"].astext == group)
     if story_ids is not None:
         query = query.where(MediaCollectionStory.id.in_(story_ids))
     rows = list(
@@ -103,7 +140,7 @@ async def read_saved_stories(db, owner, identifier, revision, story_ids=None):
 
 
 async def candidate_evidence(
-    db, owner, identifier, revision, query="", *, moment_ids=None, retained_story=None
+    db, owner, identifier, revision, query="", *, moment_ids=None, retained_story=None, group=None
 ):
     evidence = await media_moments.search_moments(
         db,
@@ -115,10 +152,17 @@ async def candidate_evidence(
         all_candidates=True,
         moment_ids=moment_ids,
         retained_story=retained_story,
+        group=group,
     )
     collection = await media_collections.owned_collection(db, owner, identifier, revision=revision)
     eligible = await media_collections.eligible_sources(
-        db, owner, media_collections.members(collection)
+        db,
+        owner,
+        [
+            member
+            for member in media_collections.members(collection)
+            if group is None or member.group == group
+        ],
     )
     supported = {
         source.id
@@ -161,8 +205,70 @@ def require_requested_coverage(evidence, body):
         )
 
 
+def _refusal(row):
+    """An idea's wording in the shape `repeated_rejection` compares against."""
+    plan = row.story_json.get("content_plan") or {}
+    return {
+        "id": str(row.id),
+        "texts": [str(plan.get("angle") or ""), str(plan.get("opening_text") or "")],
+    }
+
+
+def _copy_identity(plan):
+    return tuple(
+        " ".join(str(text or "").casefold().split())
+        for text in (plan.get("opening_text"), plan.get("closing_text"), plan.get("caption"))
+    )
+
+
+async def _event_history(db, owner, identifier, group, exclude_story_ids):
+    """The ideas a new request must not repeat: the event's offered ones and its deleted ones."""
+    offered = []
+    if exclude_story_ids:
+        offered = list(
+            (
+                await db.scalars(
+                    select(MediaCollectionStory).where(
+                        MediaCollectionStory.user_id == owner,
+                        MediaCollectionStory.collection_id == identifier,
+                        MediaCollectionStory.id.in_(exclude_story_ids),
+                    )
+                )
+            ).all()
+        )
+        if len(offered) != len(set(exclude_story_ids)):
+            raise HTTPException(404, "Idea not found")
+        if group is not None and any(row.story_json.get("group") != group for row in offered):
+            raise HTTPException(422, "Those ideas belong to another event")
+    deleted = select(MediaCollectionStory).where(
+        MediaCollectionStory.user_id == owner,
+        MediaCollectionStory.collection_id == identifier,
+        MediaCollectionStory.story_json["deleted_at"].astext.is_not(None),
+    )
+    if group is not None:
+        deleted = deleted.where(MediaCollectionStory.story_json["group"].astext == group)
+    rows = (
+        await db.scalars(deleted.order_by(MediaCollectionStory.created_at.desc()).limit(50))
+    ).all()
+    # Removing a whole event is not a judgment on its ideas, so only ideas the creator
+    # deleted one by one are barred from coming back.
+    return offered, [row for row in rows if deleted_as_idea(row)]
+
+
 async def generate_stories(db, owner, identifier, body):
-    evidence = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
+    group = body.group
+    if group is not None:
+        collection = await media_collections.owned_collection(
+            db, owner, identifier, revision=body.expected_revision
+        )
+        if not any(member.group == group for member in media_collections.members(collection)):
+            raise HTTPException(404, "Event not found in this collection")
+    offered_rows, deleted_rows = await _event_history(
+        db, owner, identifier, group, body.exclude_story_ids
+    )
+    evidence = await candidate_evidence(
+        db, owner, identifier, body.expected_revision, body.query, group=group
+    )
     require_requested_coverage(evidence, body)
     candidates = [value for value in evidence.moments if 1 <= value.end_s - value.start_s <= 20]
     # A prefill for the creator to confirm; nothing is searched until they send it back.
@@ -185,6 +291,16 @@ async def generate_stories(db, owner, identifier, body):
     input = CameraRollStoriesInput(
         query=body.query,
         editorial_taste_context=taste,
+        already_offered=[
+            OfferedIdea(
+                angle=(row.story_json.get("content_plan") or {}).get("angle", "")[:280],
+                opening_text=(row.story_json.get("content_plan") or {}).get("opening_text", "")[
+                    :100
+                ],
+                moment_ids=[value["id"] for value in row.moments_json][:8],
+            )
+            for row in offered_rows
+        ],
         candidates=[
             MomentCandidate(
                 id=str(value.id),
@@ -215,6 +331,8 @@ async def generate_stories(db, owner, identifier, body):
                 [research_topic, research_spec_identity(), *([rejected] if rejected else [])]
                 if research_topic
                 else None,
+                # Appended only for an event request, so whole-collection digests are unchanged.
+                *([[group, sorted(map(str, body.exclude_story_ids))]] if group else []),
             ],
             sort_keys=True,
         ).encode()
@@ -272,12 +390,20 @@ async def generate_stories(db, owner, identifier, body):
         db, owner, taste_query
     ) or rejected != await creator_editorial_taste.rejected_research(db, owner, research_topic):
         raise HTTPException(409, "Personalization changed; request ideas again")
-    fresh = await candidate_evidence(db, owner, identifier, body.expected_revision, body.query)
+    fresh = await candidate_evidence(
+        db, owner, identifier, body.expected_revision, body.query, group=group
+    )
     require_requested_coverage(fresh, body)
     by_id = {str(value.id): value for value in fresh.moments}
     refused = await creator_editorial_taste.rejected_ideas(db, owner, identifier)
+    # Hard exclusions, unlike `refused` (which keeps the best idea rather than answer with
+    # nothing): a deleted idea is never re-offered, and "another idea" never repeats the
+    # wording or the exact footage of the ones the event already has.
+    barred = [_refusal(row) for row in [*offered_rows, *deleted_rows]]
+    offered_sets = [frozenset(value["id"] for value in row.moments_json) for row in offered_rows]
     valid = []
-    seen = set()
+    seen = {_copy_identity(row.story_json.get("content_plan") or {}) for row in offered_rows}
+    seen |= {_copy_identity(row.story_json.get("content_plan") or {}) for row in deleted_rows}
     for index, idea in enumerate(ideas.stories):
         ids = idea.moment_ids
         if len(set(ids)) != len(ids) or any(value not in by_id for value in ids):
@@ -291,7 +417,12 @@ async def generate_stories(db, owner, identifier, body):
             " ".join(text.casefold().split())
             for text in (plan.opening_text, plan.closing_text or "", plan.caption)
         )
-        if not 1 <= duration <= 60 or identity in seen:
+        if (
+            not 1 <= duration <= 60
+            or identity in seen
+            or frozenset(ids) in offered_sets
+            or creator_editorial_taste.repeated_rejection(plan.angle, plan.opening_text, barred)
+        ):
             continue
         seen.add(identity)
         repeat = creator_editorial_taste.repeated_rejection(plan.angle, plan.opening_text, refused)
@@ -299,10 +430,14 @@ async def generate_stories(db, owner, identifier, body):
     # Never answer with nothing: when every idea repeats a refusal, the first
     # (best-ranked) stays and records which judgment it resembles.
     kept = [value for value in valid if value[3] is None] or valid[:1]
+    if body.exclude_story_ids:
+        kept = kept[:1]
     accepted = []
     for index, idea, moments, repeat in kept:
         story_id = uuid.uuid5(identifier, f"{digest}:{index}")
         row = await db.get(MediaCollectionStory, story_id)
+        if row is not None and is_deleted(row):
+            continue
         if row is None:
             row = MediaCollectionStory(
                 id=story_id,
@@ -310,7 +445,10 @@ async def generate_stories(db, owner, identifier, body):
                 user_id=owner,
                 collection_revision=body.expected_revision,
                 revision=1,
-                story_json=idea.model_dump(exclude={"moment_ids"}),
+                story_json={
+                    **idea.model_dump(exclude={"moment_ids"}),
+                    **({"group": group} if group else {}),
+                },
                 moments_json=[value.model_dump(mode="json") for value in moments],
                 events_json=[
                     event(
@@ -499,6 +637,64 @@ async def reject_story(db, owner, identifier, story_id, body):
             event("rejection", row.revision, client_event_id=body.client_event_id),
         ]
         await db.commit()
+    return story_out(row)
+
+
+async def _owned_deletable(db, owner, identifier, story_id):
+    await media_collections.lock_library_owner(db, owner)
+    await media_collections.owned_collection(db, owner, identifier)
+    row = await db.get(MediaCollectionStory, story_id, populate_existing=True, with_for_update=True)
+    if row is None or row.user_id != owner or row.collection_id != identifier:
+        raise HTTPException(404, "Story not found")
+    return row
+
+
+async def delete_story(db, owner, identifier, story_id):
+    row = await _owned_deletable(db, owner, identifier, story_id)
+    if not is_deleted(row):
+        # Same lock order as generation: library owner, then taste owner.
+        await creator_editorial_taste.lock_owner(db, owner)
+        soft_delete(row, reason="idea")
+        await creator_editorial_taste.record_deleted_idea(db, owner, row)
+        await db.commit()
+    return StoryDeletedOut(restore_until=restore_deadline(row))
+
+
+async def restore_story(db, owner, identifier, story_id):
+    row = await _owned_deletable(db, owner, identifier, story_id)
+    collection = await media_collections.owned_collection(db, owner, identifier)
+    if is_deleted(row):
+        if datetime.now(UTC) > restore_deadline(row):
+            raise HTTPException(
+                410,
+                {"code": "restore_window_closed", "message": "This idea can no longer be restored"},
+            )
+        group = row.story_json.get("group")
+        current = {
+            str(member.source_id): member.group for member in media_collections.members(collection)
+        }
+        # An idea may only come back onto evidence that is still in its event.
+        if any(
+            value["source_id"] not in current
+            or (group is not None and current[value["source_id"]] != group)
+            for value in row.moments_json
+        ):
+            raise HTTPException(
+                409,
+                {
+                    "code": "restore_evidence_changed",
+                    "message": "This idea's footage is no longer in its event",
+                },
+            )
+        await creator_editorial_taste.lock_owner(db, owner)
+        await creator_editorial_taste.forget_deleted_idea(db, owner, row.id)
+        row.story_json = {k: v for k, v in row.story_json.items() if k != "deleted_at"}
+        row.collection_revision = collection.revision
+        if len(row.events_json) < MAX_STORY_EVENTS:
+            row.events_json = [*row.events_json, event("restoration", row.revision)]
+        await db.commit()
+    elif row.collection_revision != collection.revision:
+        raise HTTPException(409, "Story belongs to an older collection")
     return story_out(row)
 
 

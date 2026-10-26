@@ -679,9 +679,11 @@ async def search_moments(
     all_candidates: bool = False,
     moment_ids: list[uuid.UUID] | None = None,
     retained_story=None,
+    group: str | None = None,
 ) -> MomentSearchOut:
     row = await owned_collection(db, owner, identifier, revision=revision)
-    selected = members(row)
+    # An event's ideas may cite only that event's members; everything below follows `selected`.
+    selected = [member for member in members(row) if group is None or member.group == group]
     available = await eligible_sources(db, owner, selected)
     source_durations = {
         source.id: (asset.metadata_json or {}).get("duration_s")
