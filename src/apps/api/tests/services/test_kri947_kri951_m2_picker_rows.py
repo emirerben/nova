@@ -65,7 +65,8 @@ _FIXTURE = json.loads(
     ).read_text()
 )
 VIDEO = _FIXTURE["video"]
-PHOTO = "asset-d17aeec6-0000-4000-8000-000000000001"  # never offered in prod (KRI-949)
+# Never offered in prod; since KRI-949 a one-video picker offers it when nothing matched.
+PHOTO = "asset-d17aeec6-0000-4000-8000-000000000001"
 
 
 def _question(sequence: int) -> dict:
@@ -410,7 +411,7 @@ async def test_prod_rounds_1_to_3_ask_the_butcher_once_and_never_the_queue_again
     (row,) = first.clip_question["categories"]
     assert (row["key"], row["candidate_media_ids"]) == (
         "include:the-queue-under-the-striped-awning",
-        [VIDEO],
+        [VIDEO, PHOTO],
     )
     thread = [("assistant", {"clip_question": first.clip_question})]
     thread.append(_tap(first.clip_question, row["key"], [VIDEO]))  # the seq-7 tap
@@ -426,9 +427,10 @@ async def test_prod_rounds_1_to_3_ask_the_butcher_once_and_never_the_queue_again
         "order:the-butcher-holding-a-cut-of-beef"
     ]
     asked = {i.question for i in third.intents if i.status != "resolved"}
+    # KRI-949: the photo is offered too, so the question is no longer "in your video".
     assert asked == {
-        'I couldn\'t find "the butcher holding a cut of beef" in your video. '
-        "Tap the video if it's in there, or tell me it isn't."
+        'I couldn\'t tell which of your clips show "the butcher holding a cut of beef". '
+        "Tap the clips that do, or tell me there aren't any."
     }
 
     # One tap on the one row settles both butcher intents; nothing is asked any more.
