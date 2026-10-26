@@ -164,16 +164,16 @@ async def candidate_evidence(
             if group is None or member.group == group
         ],
     )
-    supported = {
-        source.id
-        for asset, source in eligible.values()
-        if asset.kind == "video" and source.role == "analysis_proxy"
-    }
-    supported_assets = {
-        asset.id
-        for asset, source in eligible.values()
-        if asset.kind == "video" and source.role == "analysis_proxy"
-    }
+    # A video runs from its analysis proxy; a photo, only where a story citing one can be built.
+    stills = media_moments.stills_buildable()
+
+    def offered(asset, source):
+        if asset.kind == "image":
+            return stills and source.role == "original"
+        return asset.kind == "video" and source.role == "analysis_proxy"
+
+    supported = {source.id for asset, source in eligible.values() if offered(asset, source)}
+    supported_assets = {asset.id for asset, source in eligible.values() if offered(asset, source)}
     # Only offer the hardware-verified adapter. Other catalogue sources remain
     # searchable, but cannot be advertised as executable phone stories. A video bound to
     # one of them is reported, not dropped: bindings that have an analysis proxy were
@@ -197,7 +197,7 @@ async def candidate_evidence(
 def require_requested_coverage(evidence, body):
     if evidence.unindexed_asset_ids and not body.allow_partial_analysis:
         count = len(evidence.unindexed_asset_ids)
-        subject = "video still needs" if count == 1 else "videos still need"
+        subject = "item still needs" if count == 1 else "items still need"
         raise HTTPException(
             409,
             f"{count} {subject} usable analysis. "
@@ -311,6 +311,7 @@ async def generate_stories(db, owner, identifier, body):
                 source=str(value.source_id),
                 kind=value.kind,
                 evidence_scope=value.evidence_scope,
+                media="still" if value.evidence.get("media") == "still" else "video",
                 text=value.text[:800],
                 quality_notes=json.dumps(value.evidence.get("quality") or {}, ensure_ascii=False)[
                     :600

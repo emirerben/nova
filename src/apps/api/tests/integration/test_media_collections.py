@@ -2635,3 +2635,252 @@ async def test_event_delete_with_a_stale_revision_is_a_409_and_changes_nothing(c
     assert unknown.status_code == 404
     collection = (await client.get(path)).json()
     assert collection["revision"] == 1 and len(collection["members"]) == 4
+
+
+# --- KRI-944: photos feed ideas -----------------------------------------------------------
+
+
+async def _add_photo(
+    owner, *, facts_status="ready", subject="A red ferry at dusk", description="Ferry in harbour"
+):
+    """A library photo: an original source and (optionally) its image analysis."""
+    result = {
+        "subject": subject,
+        "description": description,
+        "on_screen_text": "",
+        "kind_hint": "photo",
+        "aspect": 0.75,
+    }
+    async with AsyncSessionLocal() as db:
+        asset = MediaAsset(
+            user_id=owner.id,
+            kind="image",
+            status="ready" if facts_status == "ready" else "pending",
+            original_availability="cloud_backed",
+            metadata_json={},
+        )
+        db.add(asset)
+        await db.flush()
+        source = MediaAssetSource(
+            user_id=owner.id,
+            asset_id=asset.id,
+            role="original",
+            object_path=f"users/{owner.id}/kri944/{asset.id}.jpg",
+            object_generation="42",
+            uploaded_sha256=hashlib.sha256(str(asset.id).encode()).hexdigest(),
+            byte_count=1234,
+            content_type="image/jpeg",
+            status="available",
+        )
+        db.add(source)
+        await db.flush()
+        if facts_status is not None:
+            ref = facts._Source(
+                str(asset.id),
+                str(source.id),
+                str(owner.id),
+                "image",
+                "original",
+                source.object_path,
+                "42",
+                source.uploaded_sha256,
+                "available",
+            )
+            key = facts._key(ref, None)
+            db.add(
+                MediaAssetAnalysis(
+                    user_id=owner.id,
+                    asset_id=asset.id,
+                    source_id=source.id,
+                    analyzer=key.analyzer,
+                    model=key.model,
+                    prompt_version=key.prompt_version,
+                    schema_version=key.schema_version,
+                    source_identity=key.source_identity,
+                    status=facts_status,
+                    result_json=result if facts_status == "ready" else None,
+                )
+            )
+        await db.commit()
+        return str(asset.id), str(source.id)
+
+
+@pytest.fixture
+def stills_buildable(monkeypatch):
+    """Open the gate that lets an idea cite a photo (see `media_moments.stills_buildable`)."""
+    from app.config import settings
+    from app.services import actual_export_verification
+
+    monkeypatch.setattr(actual_export_verification, "VERIFIES_STILL_PICTURES", True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["stillImages"])
+
+
+async def _saved_event(client, owner, videos, photos, group="Day"):
+    members = [await _add_video(owner) for _ in range(videos)]
+    members += [await _add_photo(owner) for _ in range(photos)]
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    body = {
+        "name": "Mixed",
+        "expected_revision": 0,
+        "members": [{"asset_id": a, "source_id": s, "group": group} for a, s in members],
+    }
+    assert (await client.put(path, json=body)).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.status_code == 200, indexed.text
+    return path, members, indexed.json()
+
+
+async def test_two_photos_and_two_videos_yield_an_idea_citing_a_photo(
+    collection_world, stills_buildable, monkeypatch
+):
+    """Failure catalogue: photos left out of indexing (stuck "untimed"); a photo indexed with the
+    video spec or with source time it never had; the model not told a candidate is a photo;
+    an idea built only from the videos because photos never reached the candidate list."""
+    client, _, _, owner, _ = collection_world
+    path, members, indexed = await _saved_event(client, owner, videos=2, photos=2)
+    assert indexed["indexed_sources"] == 4
+    assert indexed["untimed_asset_ids"] == [] and indexed["missing_analysis_asset_ids"] == []
+    photo_assets = {a for a, _ in members[2:]}
+    calls = _stub_ideas(
+        monkeypatch,
+        lambda input: [("All", "One point", "Opening", list(range(len(input.candidates))))],
+    )
+    response = await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Day"})
+    assert response.status_code == 200, response.text
+    offered = calls[0].candidates
+    assert {c.media for c in offered if str(c.source) in {s for _, s in members[2:]}} == {"still"}
+    assert {c.media for c in offered if str(c.source) in {s for _, s in members[:2]}} == {"video"}
+    cited = response.json()["stories"][0]["moments"]
+    photos = [m for m in cited if m["asset_id"] in photo_assets]
+    assert len(photos) == 2
+    for moment in photos:
+        assert (moment["start_s"], moment["end_s"]) == (0.0, 3.0)
+        assert moment["evidence_scope"] == "timed_moment" and moment["kind"] == "visual"
+        assert moment["evidence"]["media"] == "still"
+        assert moment["text"].startswith("Still photo shown for 3s")
+        assert "A red ferry at dusk" in moment["text"]
+    # A photo has no speech to leave incomplete.
+    assert not photo_assets & set(response.json()["coverage"]["incomplete_speech_asset_ids"])
+
+
+async def test_a_photo_only_event_yields_ideas(collection_world, stills_buildable, monkeypatch):
+    client, _, _, owner, _ = collection_world
+    path, members, indexed = await _saved_event(client, owner, videos=0, photos=3)
+    assert indexed["indexed_sources"] == 3
+    calls = _stub_ideas(
+        monkeypatch,
+        lambda input: [("Stills", "A point", "Opening", [0, 1, 2])],
+    )
+    response = await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Day"})
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1 and {c.media for c in calls[0].candidates} == {"still"}
+    story = response.json()["stories"][0]
+    assert story["duration_s"] == 9.0 and len(story["moments"]) == 3
+
+
+async def test_photos_stay_out_of_ideas_until_a_project_with_photos_can_be_built(
+    collection_world, monkeypatch
+):
+    """With the gate closed (the default), photos are analysed and shown but never offered, and
+    never hold the event's video ideas back."""
+    client, _, _, owner, _ = collection_world
+    path, members, indexed = await _saved_event(client, owner, videos=2, photos=2)
+    assert indexed["indexed_sources"] == 4
+    calls = _stub_ideas(
+        monkeypatch,
+        lambda input: [("All", "One point", "Opening", list(range(len(input.candidates))))],
+    )
+    response = await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Day"})
+    assert response.status_code == 200, response.text
+    assert {c.media for c in calls[0].candidates} == {"video"}
+    assert {m["asset_id"] for m in response.json()["stories"][0]["moments"]} <= {
+        a for a, _ in members[:2]
+    }
+    assert response.json()["coverage"]["unindexed_asset_ids"] == []
+
+
+async def test_items_route_reports_photos_ready_after_analysis_and_sets_empty_ones_aside(
+    collection_world, stills_buildable, monkeypatch
+):
+    """Failure catalogue: an analysed photo still shown as waiting; a photo whose analysis holds
+    nothing usable offered a pointless retry or left to block its event forever."""
+    client, _, _, owner, _ = collection_world
+    waiting = await _add_photo(owner, facts_status=None)
+    analysed = await _add_photo(owner)
+    empty = await _add_photo(owner, subject="", description="")
+    video = await _add_video(owner)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    pairs = [waiting, analysed, empty, video]
+    body = {
+        "name": "Photos",
+        "expected_revision": 0,
+        "members": [{"asset_id": a, "source_id": s, "group": "Day"} for a, s in pairs],
+    }
+    assert (await client.put(path, json=body)).status_code == 200
+    before = await _items(client, path)
+    assert before[analysed[0]]["state"] == "ready" and before[analysed[0]]["kind"] == "image"
+    assert before[waiting[0]]["state"] == "queued"
+
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.json()["missing_analysis_asset_ids"] == [waiting[0]]
+    assert indexed.json()["unusable_timing_asset_ids"] == [empty[0]]
+    after = await _items(client, path)
+    assert after[analysed[0]]["state"] == "ready"
+    assert (after[empty[0]]["state"], after[empty[0]]["reason"], after[empty[0]]["retryable"]) == (
+        "excluded",
+        "no_usable_moment",
+        False,
+    )
+
+    calls = _stub_ideas(monkeypatch, lambda input: [("Idea", "A point", "Opening", [0])])
+    ideas = await client.post(
+        f"{path}/stories",
+        json={**EVENT_QUERY, "group": "Day", "allow_partial_analysis": False},
+    )
+    # Only the still-queued photo may hold ideas back; the empty one never does.
+    assert ideas.status_code == 409, ideas.text
+    partial = await client.post(
+        f"{path}/stories", json={**EVENT_QUERY, "group": "Day", "allow_partial_analysis": True}
+    )
+    assert partial.status_code == 200, partial.text
+    assert partial.json()["coverage"]["unindexed_asset_ids"] == [waiting[0]]
+    assert len(calls) == 1
+
+
+async def test_reindexing_a_photo_replaces_its_moment_when_the_analysis_changes(
+    collection_world, monkeypatch
+):
+    from app.models import MediaSourceMoment
+    from app.pipeline import clip_cache
+
+    # Read the stored fact itself, not this process's copy of it.
+    monkeypatch.setattr(clip_cache, "get_versioned_media_cache", lambda key: None)
+    client, _, _, owner, _ = collection_world
+    path, members, _ = await _saved_event(client, owner, videos=0, photos=1)
+    photo, source = members[0]
+
+    async def moments():
+        async with AsyncSessionLocal() as db:
+            return (
+                await db.scalars(
+                    select(MediaSourceMoment).where(MediaSourceMoment.asset_id == uuid.UUID(photo))
+                )
+            ).all()
+
+    first = await moments()
+    assert len(first) == 1
+    again = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert again.json()["indexed_sources"] == 1
+    assert [m.id for m in await moments()] == [first[0].id], "an unchanged photo keeps its row"
+
+    async with AsyncSessionLocal() as db:
+        row = await db.scalar(
+            select(MediaAssetAnalysis).where(MediaAssetAnalysis.asset_id == uuid.UUID(photo))
+        )
+        row.result_json = {**row.result_json, "subject": "A market stall"}
+        await db.commit()
+    changed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert changed.json()["indexed_sources"] == 1
+    replaced = await moments()
+    assert len(replaced) == 1 and replaced[0].id != first[0].id
+    assert "A market stall" in replaced[0].text
