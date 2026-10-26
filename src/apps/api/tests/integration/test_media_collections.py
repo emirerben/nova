@@ -2294,3 +2294,344 @@ async def test_items_route_reports_every_state_and_reason(collection_world):
     assert {items[a]["group"] for a, _ in cases.values()} == {"Day 1", "Day 2"}
     assert items[cases["photo"][0]]["kind"] == "image"
     assert (await client.get(f"/me/media-collections/{uuid.uuid4()}/items")).status_code == 404
+
+
+# --- KRI-944: ideas per event, delete and restore, another idea, delete event ----------------
+
+
+async def _two_events(client, owner, per_event=2):
+    """A saved, fully indexed collection holding a "Ferry" event and a "Market" event."""
+    ferry = [await _add_video(owner) for _ in range(per_event)]
+    market = [await _add_video(owner) for _ in range(per_event)]
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    members = [
+        {"asset_id": a, "source_id": s, "group": name}
+        for name, pairs in (("Ferry", ferry), ("Market", market))
+        for a, s in pairs
+    ]
+    body = {"name": "Trip", "expected_revision": 0, "members": members}
+    assert (await client.put(path, json=body)).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.status_code == 200 and indexed.json()["missing_analysis_asset_ids"] == []
+    return path, body, ferry, market
+
+
+def _stub_ideas(monkeypatch, make):
+    """Replace only the provider: `make(input)` returns (title, angle, opening, picks) tuples,
+    where `picks` index into the candidates the model was actually offered."""
+    from app.agents.camera_roll_stories import (
+        CameraRollStoriesAgent,
+        CameraRollStoriesOutput,
+        StoryIdea,
+    )
+
+    calls = []
+
+    def run(self, input, *, ctx):
+        calls.append(input)
+        return CameraRollStoriesOutput(
+            stories=[
+                StoryIdea(
+                    title=title,
+                    hook=opening,
+                    payoff=angle,
+                    rationale="Grounded in the footage.",
+                    moment_ids=[input.candidates[i].id for i in picks],
+                    content_plan=dict(
+                        audience="Travellers",
+                        angle=angle,
+                        why_it_works="A specific everyday moment.",
+                        opening_text=opening,
+                        beat_reasons=["Shows it"] * len(picks),
+                    ),
+                )
+                for title, angle, opening, picks in make(input)
+            ]
+        )
+
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", run)
+    return calls
+
+
+EVENT_QUERY = {"expected_revision": 1, "query": "Ideas for this outing"}
+
+
+async def _saved(client, path, revision=1, group=None):
+    params = {"expected_revision": revision, **({"group": group} if group else {})}
+    response = await client.get(f"{path}/stories", params=params)
+    assert response.status_code == 200, response.text
+    return response.json()["stories"]
+
+
+async def test_event_ideas_cite_only_their_own_events_moments(collection_world, monkeypatch):
+    """Failure catalogue: an idea for one event citing footage from another; a model shown the
+    other event's candidates; an event's ideas listed under a sibling; an unknown event
+    silently falling back to the whole collection; a stale revision answering anyway."""
+    client, _, _, owner, _ = collection_world
+    path, _, ferry, market = await _two_events(client, owner)
+    calls = _stub_ideas(
+        monkeypatch,
+        lambda input: [("All", "One point", "Opening", list(range(len(input.candidates))))],
+    )
+    for name, pairs in (("Ferry", ferry), ("Market", market)):
+        response = await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": name})
+        assert response.status_code == 200, response.text
+        stories = response.json()["stories"]
+        assert [story["group"] for story in stories] == [name]
+        assert {m["source_id"] for m in stories[0]["moments"]} == {s for _, s in pairs}
+        assert {m["source_id"] for m in response.json()["coverage"]["moments"]} == {
+            s for _, s in pairs
+        }
+    assert [{c.source for c in call.candidates} for call in calls] == [
+        {s for _, s in ferry},
+        {s for _, s in market},
+    ], "the model only ever saw its own event's footage"
+
+    assert [story["group"] for story in await _saved(client, path, group="Ferry")] == ["Ferry"]
+    assert [story["group"] for story in await _saved(client, path, group="Market")] == ["Market"]
+    assert {story["group"] for story in await _saved(client, path)} == {"Ferry", "Market"}
+
+    unknown = await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Nowhere"})
+    assert unknown.status_code == 404
+    stale = await client.post(
+        f"{path}/stories", json={"expected_revision": 9, "query": "x", "group": "Ferry"}
+    )
+    assert stale.status_code == 409
+
+
+async def test_deleting_an_idea_then_restoring_it_returns_the_same_idea(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: delete removing the row for good (Undo impossible); a deleted idea
+    coming back from the cached generation; restore forging a new idea or changing the old
+    one; restore after the window; another creator's or unknown idea."""
+    from datetime import timedelta
+
+    from app.services import media_collection_stories
+
+    client, _, _, owner, _ = collection_world
+    path, _, _, _ = await _two_events(client, owner)
+    _stub_ideas(monkeypatch, lambda input: [("Crossing", "A point", "Opening", [0])])
+    body = {**EVENT_QUERY, "group": "Ferry"}
+    offered = (await client.post(f"{path}/stories", json=body)).json()["stories"]
+    assert len(offered) == 1
+    idea = offered[0]
+
+    deleted = await client.delete(f"{path}/stories/{idea['id']}")
+    assert deleted.status_code == 200, deleted.text
+    assert datetime.fromisoformat(deleted.json()["restore_until"]) > datetime.now(UTC)
+    assert await _saved(client, path, group="Ferry") == []
+    again = await client.post(f"{path}/stories", json=body)
+    assert again.status_code == 200 and again.json()["stories"] == [], "never re-offered"
+    assert (await client.delete(f"{path}/stories/{idea['id']}")).status_code == 200
+
+    restored = await client.post(f"{path}/stories/{idea['id']}/restore")
+    assert restored.status_code == 200, restored.text
+    assert restored.json() == idea
+    assert await _saved(client, path, group="Ferry") == [idea]
+    assert (await client.post(f"{path}/stories/{idea['id']}/restore")).json() == idea
+
+    assert (await client.delete(f"{path}/stories/{uuid.uuid4()}")).status_code == 404
+    assert (await client.post(f"{path}/stories/{uuid.uuid4()}/restore")).status_code == 404
+    await client.delete(f"{path}/stories/{idea['id']}")
+    monkeypatch.setattr(media_collection_stories, "RESTORE_WINDOW", timedelta(seconds=-1))
+    late = await client.post(f"{path}/stories/{idea['id']}/restore")
+    assert late.status_code == 410
+    assert late.json()["detail"]["code"] == "restore_window_closed"
+
+
+async def test_a_deleted_idea_cannot_be_reviewed_corrected_rejected_or_selected(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: a stale client selecting, rejecting, exposing or correcting an idea
+    the creator just deleted; the response looking like a live idea; the refusal writing
+    taste feedback or events; a replay of an event recorded before the delete failing."""
+    from app.config import settings
+    from app.models import MediaCollectionStory
+
+    client, _, _, owner, _ = collection_world
+    path, _, _, _ = await _two_events(client, owner)
+    _stub_ideas(monkeypatch, lambda input: [("Crossing", "A point", "Opening", [0])])
+    idea = (await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Ferry"})).json()[
+        "stories"
+    ][0]
+    review = {"expected_revision": 1, "expected_story_revision": 1}
+    seen = await client.post(
+        f"{path}/stories/{idea['id']}/expose", json={**review, "client_event_id": "seen-1"}
+    )
+    assert seen.status_code == 200
+    assert (await client.delete(f"{path}/stories/{idea['id']}")).status_code == 200
+
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    url = f"{path}/stories/{idea['id']}"
+    attempts = [
+        client.post(f"{url}/reject", json={**review, "client_event_id": "reject-1"}),
+        client.post(f"{url}/expose", json={**review, "client_event_id": "seen-2"}),
+        client.patch(url, json={**review, "client_event_id": "fix-1", "audio_policy": "muted"}),
+        client.post(
+            f"{url}/select",
+            json={
+                **review,
+                "client_event_id": "select-1",
+                "thread_id": str(uuid.uuid4()),
+                "expected_thread_revision": 0,
+            },
+        ),
+    ]
+    assert [(await attempt).status_code for attempt in attempts] == [404] * 4
+    async with AsyncSessionLocal() as db:
+        row = await db.get(MediaCollectionStory, uuid.UUID(idea["id"]))
+        assert [event["type"] for event in row.events_json] == ["offered", "exposure", "deletion"]
+
+    replay = await client.post(f"{url}/expose", json={**review, "client_event_id": "seen-1"})
+    assert replay.status_code == 200, "a replay of an earlier event still answers"
+
+    restored = await client.post(f"{url}/restore")
+    assert restored.status_code == 200
+    again = await client.post(f"{url}/reject", json={**review, "client_event_id": "reject-2"})
+    assert again.status_code == 200, "a restored idea is reviewable again"
+
+
+async def test_an_idea_deleted_while_generation_runs_is_not_re_offered(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: the event history read before the provider call going stale, so an
+    idea deleted during the 25 to 115 s generation comes back as a new idea with the same copy."""
+    client, _, _, owner, _ = collection_world
+    path, _, _, _ = await _two_events(client, owner)
+    loop = asyncio.get_running_loop()
+    state = {"delete": None}
+
+    def make(input):
+        if state["delete"]:
+            asyncio.run_coroutine_threadsafe(
+                client.delete(f"{path}/stories/{state['delete']}"), loop
+            ).result(timeout=30)
+        return [("Crossing", "A point", "Opening", [0])]
+
+    _stub_ideas(monkeypatch, make)
+    body = {**EVENT_QUERY, "group": "Ferry"}
+    idea = (await client.post(f"{path}/stories", json=body)).json()["stories"][0]
+
+    state["delete"] = idea["id"]
+    again = await client.post(f"{path}/stories", json={**body, "query": "A different angle"})
+    assert again.status_code == 200, again.text
+    assert again.json()["stories"] == [], "the deleted idea's copy is barred, not re-offered"
+    assert await _saved(client, path, group="Ferry") == []
+
+
+async def test_another_idea_adds_one_and_never_repeats_or_replaces(collection_world, monkeypatch):
+    """Failure catalogue: another idea replacing the existing ones; repeating an existing
+    idea's exact footage; the same copy under a new title or in different case; adding more
+    than one; the model never being told what the event already has."""
+    client, _, _, owner, _ = collection_world
+    path, _, ferry, _ = await _two_events(client, owner, per_event=3)
+    body = {**EVENT_QUERY, "group": "Ferry"}
+    script = {
+        "first": lambda input: [("First", "Point one", "Opening one", [0])],
+        "more": lambda input: [
+            ("Same footage", "Entirely different point", "Fresh opening", [0]),
+            ("Genuinely new", "A third point", "A third opening", [1, 2]),
+            ("Also new", "A fourth point", "A fourth opening", [2]),
+        ],
+        "repeats_only": lambda input: [
+            ("Reworded", "Yet another point", "  OPENING ONE ", [2]),
+            ("Same footage", "Other point", "Other opening", [1, 2]),
+        ],
+    }
+    state = {"step": "first"}
+    calls = _stub_ideas(monkeypatch, lambda input: script[state["step"]](input))
+    first = (await client.post(f"{path}/stories", json=body)).json()["stories"]
+    assert len(first) == 1 and calls[0].already_offered == []
+
+    state["step"] = "more"
+    added = await client.post(
+        f"{path}/stories", json={**body, "exclude_story_ids": [first[0]["id"]]}
+    )
+    assert added.status_code == 200, added.text
+    new = added.json()["stories"]
+    assert [story["title"] for story in new] == ["Genuinely new"], "exactly one, and a new one"
+    first_moments = {m["id"] for m in first[0]["moments"]}
+    assert {m["id"] for m in new[0]["moments"]}.isdisjoint(first_moments)
+    offered = calls[-1].already_offered
+    assert [value.moment_ids for value in offered] == [[m["id"] for m in first[0]["moments"]]]
+    assert offered[0].opening_text == "Opening one"
+
+    saved = await _saved(client, path, group="Ferry")
+    assert {story["id"] for story in saved} == {first[0]["id"], new[0]["id"]}
+    assert next(s for s in saved if s["id"] == first[0]["id"]) == first[0], "never replaced"
+
+    state["step"] = "repeats_only"
+    nothing = await client.post(
+        f"{path}/stories",
+        json={**body, "exclude_story_ids": [first[0]["id"], new[0]["id"]]},
+    )
+    assert nothing.status_code == 200 and nothing.json()["stories"] == []
+    assert len(await _saved(client, path, group="Ferry")) == 2
+    other = await client.post(
+        f"{path}/stories",
+        json={**body, "group": "Market", "exclude_story_ids": [first[0]["id"]]},
+    )
+    assert other.status_code == 422, "an event's ideas cannot be excluded from another event"
+    gone = await client.post(
+        f"{path}/stories", json={**body, "exclude_story_ids": [str(uuid.uuid4())]}
+    )
+    assert gone.status_code == 404
+
+
+async def test_deleting_an_event_keeps_other_events_and_bumps_the_revision(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: the delete taking a sibling's members or ideas with it; the
+    sibling's ideas orphaned by the revision bump; the event's ideas hard-deleted so Undo
+    cannot bring them back; Undo (save the members again, restore the ideas) losing the
+    sibling's ideas."""
+    client, _, _, owner, _ = collection_world
+    path, put_body, ferry, market = await _two_events(client, owner)
+    _stub_ideas(monkeypatch, lambda input: [("Idea", "A point", "Opening", [0])])
+    ferry_idea = (
+        await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Ferry"})
+    ).json()["stories"][0]
+    market_idea = (
+        await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Market"})
+    ).json()["stories"][0]
+
+    removed = await client.request(
+        "DELETE", f"{path}/groups", json={"group": "Ferry", "expected_revision": 1}
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json() == {"revision": 2, "deleted_story_ids": [ferry_idea["id"]]}
+    collection = (await client.get(path)).json()
+    assert collection["revision"] == 2
+    assert {m["asset_id"] for m in collection["members"]} == {a for a, _ in market}
+    assert await _saved(client, path, revision=2, group="Ferry") == []
+    kept = await _saved(client, path, revision=2, group="Market")
+    assert [story["id"] for story in kept] == [market_idea["id"]]
+    assert kept[0]["moments"] == market_idea["moments"]
+    assert {i["asset_id"] for i in (await _items(client, path)).values()} == {a for a, _ in market}
+
+    # Undo: the client saves the members again, then restores each returned idea.
+    undone = await client.put(path, json={**put_body, "expected_revision": 2})
+    assert undone.status_code == 200 and undone.json()["revision"] == 3
+    restored = await client.post(f"{path}/stories/{ferry_idea['id']}/restore")
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["collection_revision"] == 3
+    final = await _saved(client, path, revision=3)
+    assert {story["id"] for story in final} == {ferry_idea["id"], market_idea["id"]}
+    assert {story["collection_revision"] for story in final} == {3}
+
+
+async def test_event_delete_with_a_stale_revision_is_a_409_and_changes_nothing(collection_world):
+    client, _, _, owner, _ = collection_world
+    path, _, _, _ = await _two_events(client, owner)
+    stale = await client.request(
+        "DELETE", f"{path}/groups", json={"group": "Ferry", "expected_revision": 7}
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "collection_changed"
+    unknown = await client.request(
+        "DELETE", f"{path}/groups", json={"group": "Nowhere", "expected_revision": 1}
+    )
+    assert unknown.status_code == 404
+    collection = (await client.get(path)).json()
+    assert collection["revision"] == 1 and len(collection["members"]) == 4

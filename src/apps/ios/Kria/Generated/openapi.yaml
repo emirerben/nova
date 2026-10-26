@@ -1385,6 +1385,11 @@
             "title": "Duration S",
             "type": "number"
           },
+          "group": {
+            "nullable": true,
+            "title": "Group",
+            "type": "string"
+          },
           "hook": {
             "title": "Hook",
             "type": "string"
@@ -4924,6 +4929,50 @@
           "to"
         ],
         "title": "GradientBackground",
+        "type": "object"
+      },
+      "GroupDeleteBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "group": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Group",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "expected_revision"
+        ],
+        "title": "GroupDeleteBody",
+        "type": "object"
+      },
+      "GroupDeleteOut": {
+        "properties": {
+          "deleted_story_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Deleted Story Ids",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "deleted_story_ids"
+        ],
+        "title": "GroupDeleteOut",
         "type": "object"
       },
       "GuidedEditorSource": {
@@ -10926,6 +10975,21 @@
         "title": "StoryCorrectionBody",
         "type": "object"
       },
+      "StoryDeletedOut": {
+        "description": "An idea is soft-deleted; restoring it is possible until this moment.",
+        "properties": {
+          "restore_until": {
+            "format": "date-time",
+            "title": "Restore Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "restore_until"
+        ],
+        "title": "StoryDeletedOut",
+        "type": "object"
+      },
       "StoryGenerationBody": {
         "additionalProperties": false,
         "properties": {
@@ -10939,10 +11003,26 @@
             "title": "Cache Only",
             "type": "boolean"
           },
+          "exclude_story_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Exclude Story Ids",
+            "type": "array"
+          },
           "expected_revision": {
             "minimum": 1.0,
             "title": "Expected Revision",
             "type": "integer"
+          },
+          "group": {
+            "maxLength": 80,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Group",
+            "type": "string"
           },
           "query": {
             "maxLength": 500,
@@ -16038,6 +16118,65 @@
         ]
       }
     },
+    "/me/media-collections/{identifier}/groups": {
+      "delete": {
+        "description": "Remove one event's members and soft-delete its ideas; other events are untouched.",
+        "operationId": "delete_group_me_media_collections__identifier__groups_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupDeleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupDeleteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Delete Group",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
     "/me/media-collections/{identifier}/index": {
       "post": {
         "operationId": "index_me_media_collections__identifier__index_post",
@@ -16473,6 +16612,18 @@
             }
           },
           {
+            "in": "query",
+            "name": "group",
+            "required": false,
+            "schema": {
+              "maxLength": 80,
+              "minLength": 1,
+              "nullable": true,
+              "title": "Group",
+              "type": "string"
+            }
+          },
+          {
             "in": "header",
             "name": "X-Kria-Client-Protocol",
             "required": false,
@@ -16583,6 +16734,62 @@
       }
     },
     "/me/media-collections/{identifier}/stories/{story_id}": {
+      "delete": {
+        "operationId": "delete_story_me_media_collections__identifier__stories__story_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "story_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Story Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoryDeletedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Delete Story",
+        "tags": [
+          "media-library"
+        ]
+      },
       "patch": {
         "operationId": "correct_story_me_media_collections__identifier__stories__story_id__patch",
         "parameters": [
@@ -16811,6 +17018,74 @@
           }
         ],
         "summary": "Reject Story",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/stories/{story_id}/restore": {
+      "post": {
+        "operationId": "restore_story_me_media_collections__identifier__stories__story_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "story_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionStoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Restore Story",
         "tags": [
           "media-library"
         ]

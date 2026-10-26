@@ -16,12 +16,15 @@ from app.schemas.media_collections import (
     CollectionStoriesOut,
     CollectionStoryOut,
     CollectionWrite,
+    GroupDeleteBody,
+    GroupDeleteOut,
     MomentInspectionBody,
     MomentInspectionOut,
     MomentSearchOut,
     SavedCollectionStoriesOut,
     SemanticSearchBody,
     StoryCorrectionBody,
+    StoryDeletedOut,
     StoryGenerationBody,
     StoryReviewBody,
     StorySelectionBody,
@@ -76,6 +79,19 @@ async def read(identifier: uuid.UUID, user: CurrentUser, db: AsyncSession = Depe
     row = await collections.owned_collection(db, user.id, identifier)
     available = await collections.eligible_sources(db, user.id, collections.members(row))
     return collections.collection_out(row, available)
+
+
+@router.delete("/{identifier}/groups", response_model=GroupDeleteOut)
+async def delete_group(
+    identifier: uuid.UUID,
+    body: GroupDeleteBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove one event's members and soft-delete its ideas; other events are untouched."""
+    from app.services.media_collection_groups import delete_group as delete
+
+    return await delete(db, user.id, identifier, body)
 
 
 @router.get("/{identifier}/items", response_model=CollectionItemsOut)
@@ -174,13 +190,14 @@ async def saved_stories(
     user: CurrentUser,
     expected_revision: int = Query(ge=1),
     story_ids: list[uuid.UUID] | None = Query(default=None, max_length=20),
+    group: str | None = Query(default=None, min_length=1, max_length=80),
     client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import read_saved_stories
 
     return _for_client(
-        await read_saved_stories(db, user.id, identifier, expected_revision, story_ids),
+        await read_saved_stories(db, user.id, identifier, expected_revision, story_ids, group),
         client_protocol,
     )
 
@@ -196,6 +213,31 @@ async def stories(
     from app.services.media_collection_stories import generate_stories
 
     return _for_client(await generate_stories(db, user.id, identifier, body), client_protocol)
+
+
+@router.delete("/{identifier}/stories/{story_id}", response_model=StoryDeletedOut)
+async def delete_story(
+    identifier: uuid.UUID,
+    story_id: uuid.UUID,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.media_collection_stories import delete_story as delete
+
+    return await delete(db, user.id, identifier, story_id)
+
+
+@router.post("/{identifier}/stories/{story_id}/restore", response_model=CollectionStoryOut)
+async def restore_story(
+    identifier: uuid.UUID,
+    story_id: uuid.UUID,
+    user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.media_collection_stories import restore_story as restore
+
+    return _for_client(await restore(db, user.id, identifier, story_id), client_protocol)
 
 
 @router.patch("/{identifier}/stories/{story_id}", response_model=CollectionStoryOut)
