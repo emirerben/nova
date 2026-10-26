@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,8 +22,6 @@ from app.services.media_moments import INDEX_OUTCOME_KEY
 
 # Never improves on retry: the item is shown as excluded, not as a failure.
 EXCLUDED_REASONS = frozenset({"unsupported_type", "too_large", "too_long", "access_revoked"})
-# Attempts after which a transient failure stops being retried automatically.
-MAX_ATTEMPTS = 3
 _ACTIVE = frozenset({"queued", "analyzing"})
 
 
@@ -35,6 +33,7 @@ class ItemSignals:
     eligible: bool
     source_role: str | None
     asset_status: str
+    updated_at: datetime | None
     metadata: dict
     byte_count: int | None
     fact_status: str | None  # semantic analysis row: queued|analyzing|ready|failed|None
@@ -49,11 +48,20 @@ class DerivedState:
     attempts: int = 0
 
 
+def _recent(updated_at: datetime | None) -> bool:
+    if updated_at is None:
+        return False
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return updated_at > datetime.now(UTC) - facts.LEGACY_FAILURE_WINDOW
+
+
 def derive_item_state(signals: ItemSignals) -> DerivedState:
     """The single source of truth for a collection item's state.
 
-    needs_retry: failed for a transient reason with automatic attempts left (retryable).
-    failed: gave up (attempts exhausted, or nothing usable); retrying is still allowed
+    needs_retry: failed for a transient reason with automatic revivals left (retryable); a
+        failure recorded before reasons existed counts while the reconciler would still revive it.
+    failed: gave up (revivals spent, or nothing usable); retrying is still allowed
         through the retry route but the server will not do it on its own.
     excluded: can never be analysed or used (type, size, length, access).
     """
@@ -63,8 +71,6 @@ def derive_item_state(signals: ItemSignals) -> DerivedState:
 
     if not signals.eligible:
         return DerivedState("excluded", "access_revoked")
-    if signals.kind not in {"video", "image"}:
-        return DerivedState("excluded", "unsupported_type")
     if signals.kind == "video" and signals.source_role != "analysis_proxy":
         # Only the proxy runs on the phone; an original-only video cannot become a story.
         return DerivedState("excluded", "unsupported_type")
@@ -76,7 +82,11 @@ def derive_item_state(signals: ItemSignals) -> DerivedState:
         reason = failure.get("reason") or "provider_error"
         if reason in EXCLUDED_REASONS:
             return DerivedState("excluded", reason, attempts=attempts)
-        if reason in facts.TRANSIENT_FAILURE_REASONS and attempts < MAX_ATTEMPTS:
+        if failure:
+            revivable = facts.revival_budget_left(failure)
+        else:
+            revivable = _recent(signals.updated_at)
+        if revivable:
             return DerivedState("needs_retry", reason, True, attempts)
         return DerivedState("failed", reason, False, attempts)
 
@@ -158,8 +168,8 @@ async def collection_items(db: AsyncSession, owner: uuid.UUID, collection) -> Co
     items: list[CollectionItemOut] = []
     for member in selected:
         asset = assets.get(member.asset_id)
-        if asset is None:
-            continue  # Deleted outright: there is no tile left to describe.
+        if asset is None or asset.kind not in {"video", "image"}:
+            continue  # Deleted outright, or not footage: there is no tile to describe.
         pair = available.get(member.asset_id)
         derived = derive_item_state(
             ItemSignals(
@@ -167,6 +177,7 @@ async def collection_items(db: AsyncSession, owner: uuid.UUID, collection) -> Co
                 eligible=pair is not None,
                 source_role=pair[1].role if pair else None,
                 asset_status=asset.status,
+                updated_at=asset.updated_at,
                 metadata=asset.metadata_json or {},
                 byte_count=asset.original_byte_count,
                 fact_status=fact_status(asset.id, None),

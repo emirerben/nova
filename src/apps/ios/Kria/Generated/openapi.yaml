@@ -1083,11 +1083,6 @@
       },
       "CollectionIndexOut": {
         "properties": {
-          "candidate_limit_reached": {
-            "default": false,
-            "title": "Candidate Limit Reached",
-            "type": "boolean"
-          },
           "context_asset_ids": {
             "items": {
               "format": "uuid",
@@ -1170,7 +1165,7 @@
         "type": "object"
       },
       "CollectionItemOut": {
-        "description": "One collection member's server-derived progress. See media_collection_items.py.",
+        "description": "One collection member's server-derived progress. See media_collection_items.py.\n\n`uploading` and `icloud_unavailable` are device-side: a member's bytes are on the server\nby definition, so the client owns both while it exports and uploads.",
         "properties": {
           "asset_id": {
             "format": "uuid",
@@ -1190,8 +1185,7 @@
           "kind": {
             "enum": [
               "video",
-              "image",
-              "audio"
+              "image"
             ],
             "title": "Kind",
             "type": "string"
@@ -7089,6 +7083,14 @@
               "type": "string"
             },
             "title": "Unindexed Asset Ids",
+            "type": "array"
+          },
+          "unoffered_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unoffered Asset Ids",
             "type": "array"
           },
           "unsupported_asset_ids": {

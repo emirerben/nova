@@ -6,7 +6,7 @@ import hashlib
 import os
 import tempfile
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -24,10 +24,14 @@ from app.pipeline.clip_cache import (
 
 log = structlog.get_logger()
 
-# Why an analysis failed, as the creator-facing item state sees it. The first two are
-# transient (the reconciler and the task re-attempt them); the rest never improve on retry.
-TRANSIENT_FAILURE_REASONS = frozenset({"provider_error", "budget_paused"})
+# Why an analysis failed, as the creator-facing item state sees it. Transient reasons get
+# automatic revivals from the reconciler (the value is how many); the rest never improve on
+# retry. A spend pause can last hours, so it outlasts a provider blip by a wide margin.
+REVIVAL_BUDGET = {"provider_error": 3, "budget_paused": 6}
+TRANSIENT_FAILURE_REASONS = frozenset(REVIVAL_BUDGET)
 FAILURE_KEY = "analysis_failure"
+# A pre-existing failure with no recorded reason is revived once, but only while it is recent.
+LEGACY_FAILURE_WINDOW = timedelta(days=7)
 # Videos longer than this are rejected at ingest; an image this large is not worth a model call.
 MAX_ANALYZABLE_VIDEO_S = 1800
 MAX_ANALYZABLE_IMAGE_BYTES = 25 * 1024 * 1024
@@ -96,6 +100,18 @@ def classify_analysis_failure(exc: BaseException) -> str:
     return "provider_error"
 
 
+def revival_budget_left(failure: dict | None) -> bool:
+    """Whether the reconciler may still re-dispatch an asset with this recorded failure.
+
+    `attempts` counts every failed run (task self-retries included) and is only displayed;
+    the budget is spent by `revivals`, so a quick burst of task retries cannot exhaust it.
+    """
+    if not isinstance(failure, dict):
+        return False
+    budget = REVIVAL_BUDGET.get(failure.get("reason"))
+    return budget is not None and int(failure.get("revivals") or 0) < budget
+
+
 def analysis_exclusion_reason(
     kind: str, metadata: dict | None, byte_count: int | None
 ) -> str | None:
@@ -118,14 +134,13 @@ def record_analysis_failure(
     asset_id: str,
     owner_id: str,
     reason: str,
-    attempts: int | None = None,
     not_before: datetime | None = None,
 ) -> None:
-    """Persist why the latest analysis failed and how many attempts have failed.
+    """Persist why the latest analysis failed and how many runs have failed.
 
-    One atomic statement: concurrent workers cannot lose an increment. ``attempts`` pins the
-    count (terminal rejections); ``not_before`` makes the write a no-op when a newer failure
-    was already recorded, so a task backstop never double-counts the attempt that recorded it.
+    One atomic statement: concurrent workers cannot lose an increment, and the reconciler's
+    ``revivals`` count survives. ``not_before`` makes the write a no-op when a newer failure
+    was already recorded, so a task backstop never double-counts the run that recorded it.
     """
     now = datetime.now(UTC)
     with sync_engine.begin() as conn:
@@ -135,10 +150,10 @@ def record_analysis_failure(
                 coalesce(metadata_json, '{}'::jsonb), ARRAY[CAST(:key AS text)],
                 jsonb_build_object(
                     'reason', CAST(:reason AS text),
-                    'attempts', COALESCE(
-                        CAST(:attempts AS int),
-                        COALESCE(CAST(metadata_json->CAST(:key AS text)->>'attempts' AS int), 0) + 1
-                    ),
+                    'attempts',
+                    COALESCE(CAST(metadata_json->CAST(:key AS text)->>'attempts' AS int), 0) + 1,
+                    'revivals',
+                    COALESCE(CAST(metadata_json->CAST(:key AS text)->>'revivals' AS int), 0),
                     'at', CAST(:at AS text)
                 )
             )
@@ -152,7 +167,6 @@ def record_analysis_failure(
                 "asset_id": asset_id,
                 "owner_id": owner_id,
                 "reason": reason,
-                "attempts": attempts,
                 "at": now.isoformat(),
                 "not_before": not_before.isoformat() if not_before else None,
             },
@@ -262,12 +276,14 @@ def get_media_asset_analysis(
     return get_media_asset_fact(_key(source, analyzer))
 
 
-def media_asset_analysis_status(*, asset_id: str, owner_id: str) -> str:
+def media_asset_analysis_status(
+    *, asset_id: str, owner_id: str, analyzer: str | None = None
+) -> str:
     """Distinguish another worker's live lease from a failed analysis."""
     source = _requested_source(asset_id, owner_id, None)
     if source is None:
         return "failed"
-    key = _key(source, None)
+    key = _key(source, analyzer)
     with sync_engine.begin() as conn:
         state = conn.scalar(
             text("""
@@ -507,9 +523,7 @@ def ensure_media_asset_analysis(
             reason=reason,
         )
         complete_media_asset_fact(claim, None, failed=True)
-        if analyzer != "transcript":
-            # A missing transcript degrades to visual-only evidence; it is not an asset failure.
-            record_analysis_failure(asset_id=asset_id, owner_id=owner_id, reason=reason)
+        record_analysis_failure(asset_id=asset_id, owner_id=owner_id, reason=reason)
         return None
     if not complete_media_asset_fact(claim, result):
         return None

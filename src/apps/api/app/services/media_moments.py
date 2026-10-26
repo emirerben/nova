@@ -317,11 +317,16 @@ async def _fact_status(db: AsyncSession, owner: uuid.UUID, asset, source, analyz
 
 
 def transcript_pending(asset, status: str | None) -> bool:
-    """Whether a transcript may still arrive. A silent video's never will: do not wait for it."""
+    """Whether a transcript may still arrive. A silent video's never will: do not wait for it.
+
+    A failed transcript is awaited while the asset's recorded failure still has automatic
+    retries left: a speaking clip must not be indexed as if it were silent. Once those are
+    spent (or no failure was ever recorded) the clip falls back to its visual evidence.
+    """
     if status in {"queued", "analyzing"}:
         return True
     if status == "failed":
-        return False
+        return facts.revival_budget_left((asset.metadata_json or {}).get(facts.FAILURE_KEY))
     audible = (asset.metadata_json or {}).get("has_audio") is True
     return audible and asset.status in {"pending", "processing"}
 
@@ -502,7 +507,6 @@ async def index_collection(
         context_asset_ids=context,
         sampled_asset_ids=sampled,
         unusable_timing_asset_ids=unusable_timing,
-        candidate_limit_reached=bool(truncated),
     )
 
 
@@ -884,10 +888,12 @@ async def search_moments(
             if member.source_id in indexed and member.source_id not in full_speech
         ],
         truncated_asset_ids=[
+            member.asset_id for member in selected if member.source_id in capped_sources
+        ],
+        unoffered_asset_ids=[
             member.asset_id
             for member in selected
-            if member.source_id in capped_sources
-            or (capped and member.source_id in indexed and member.source_id not in offered)
+            if capped and member.source_id in indexed and member.source_id not in offered
         ],
         candidate_limit_reached=capped,
     )

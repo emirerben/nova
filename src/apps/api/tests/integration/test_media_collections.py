@@ -1827,7 +1827,7 @@ async def test_failed_analysis_retries_itself_and_ends_ready(collection_world, m
     sent = []
     monkeypatch.setattr(task.analyze_media_asset_task, "delay", lambda *args: sent.append(args))
     await asyncio.to_thread(task.reconcile_media_library_analysis.run)
-    assert sent == [], "A fresh failure waits out its backoff"
+    assert [a for a in sent if a[0] == asset_id] == [], "A fresh failure waits out its backoff"
     async with AsyncSessionLocal() as db:
         await db.execute(
             update(MediaAsset)
@@ -1836,8 +1836,8 @@ async def test_failed_analysis_retries_itself_and_ends_ready(collection_world, m
         )
         await db.commit()
     await asyncio.to_thread(task.reconcile_media_library_analysis.run)
-    assert sent == [(asset_id, str(owner.id))]
-    await asyncio.to_thread(task.analyze_media_asset_task.run, *sent[0])
+    assert (asset_id, str(owner.id)) in sent
+    await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
     ready = (await _items(client, path))[asset_id]
     assert (ready["state"], ready["reason"], ready["attempts"]) == ("ready", None, 0)
     async with AsyncSessionLocal() as db:
@@ -1845,82 +1845,114 @@ async def test_failed_analysis_retries_itself_and_ends_ready(collection_world, m
         assert asset.status == "ready" and "analysis_failure" not in asset.metadata_json
 
 
-async def test_failed_analysis_stops_after_three_attempts_with_a_reason(
-    collection_world, monkeypatch
-):
+async def _age(asset_id, minutes):
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(MediaAsset)
+            .where(MediaAsset.id == uuid.UUID(asset_id))
+            .values(updated_at=datetime.now(UTC) - timedelta(minutes=minutes))
+        )
+        await db.commit()
+
+
+async def test_task_retries_do_not_spend_the_reconciler_budget(collection_world, monkeypatch):
+    """A burst of task retries is not three strikes: revivals are counted on their own."""
     from celery.exceptions import Retry
 
-    from app.agents._runtime import AiBudgetExceededError
+    from app.services.media_library_ingest import retry_library_asset
     from app.tasks import media_library as task
 
     client, _, _, owner, _ = collection_world
-    broken, paused = [
-        await _add_video(owner, status="pending", facts_status=None) for _ in range(2)
-    ]
+    asset_id, source_id = await _add_video(owner, status="pending", facts_status=None)
 
     def analyze(source, *, analyzer=None, snapshot_local_path=None):
-        if source.asset_id == paused[0]:
-            raise AiBudgetExceededError(
-                scope="environment:test", reset_at="2026-11-01", cached_behavior_available=False
-            )
         raise RuntimeError("provider 503")
 
     monkeypatch.setattr(facts, "_analyze_source", analyze)
     path = f"/me/media-collections/{uuid.uuid4()}"
-    body = selection([broken[0], paused[0]], [broken[1], paused[1]])
-    assert (await client.put(path, json=body)).status_code == 200
-    for attempt in range(1, 4):
-        for asset_id in (broken[0], paused[0]):
-            async with AsyncSessionLocal() as db:
-                await db.execute(
-                    update(MediaAsset)
-                    .where(MediaAsset.id == uuid.UUID(asset_id), MediaAsset.status == "failed")
-                    .values(updated_at=datetime.now(UTC) - timedelta(days=1))
-                )
-                await db.commit()
-            run = task.analyze_media_asset_task.run
-            if attempt < 3:
-                with pytest.raises(Retry):
-                    await asyncio.to_thread(run, asset_id, str(owner.id))
-            else:
-                result = await asyncio.to_thread(run, asset_id, str(owner.id))
-                assert result["status"] == "failed"
-        items = await _items(client, path)
-        assert items[broken[0]]["attempts"] == attempt
-        assert items[broken[0]]["state"] == ("needs_retry" if attempt < 3 else "failed")
-    assert items[broken[0]]["reason"] == "provider_error" and not items[broken[0]]["retryable"]
-    assert items[paused[0]]["reason"] == "budget_paused" and items[paused[0]]["state"] == "failed"
-
-    # Terminal means terminal: neither a late copy nor the reconciler revives it.
-    async with AsyncSessionLocal() as db:
-        await db.execute(
-            update(MediaAsset)
-            .values(updated_at=datetime.now(UTC) - timedelta(days=1))
-            .where(MediaAsset.id.in_([uuid.UUID(broken[0]), uuid.UUID(paused[0])]))
-        )
-        await db.commit()
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
     resent = []
-    monkeypatch.setattr(task.analyze_media_asset_task, "delay", lambda *a: resent.append(a))
+    monkeypatch.setattr(
+        task.analyze_media_asset_task,
+        "delay",
+        lambda *a: resent.append(a) if a[0] == asset_id else None,
+    )
+    run = task.analyze_media_asset_task.run
+
+    for _ in range(4):  # more failed runs than the old whole-budget of three
+        with pytest.raises(Retry):
+            await asyncio.to_thread(run, asset_id, str(owner.id))
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["attempts"], item["retryable"]) == ("needs_retry", 4, True)
+
+    # The reconciler still has its whole budget: three revivals, then the row is terminal.
+    for revival in range(1, 4):
+        await _age(asset_id, 300)
+        await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+        assert len(resent) == revival
+        if revival < 3:
+            with pytest.raises(Retry):
+                await asyncio.to_thread(run, asset_id, str(owner.id))
+    assert (await asyncio.to_thread(run, asset_id, str(owner.id)))["status"] == "failed"
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"], item["retryable"]) == ("failed", "provider_error", False)
+
+    await _age(asset_id, 24 * 60)
     await asyncio.to_thread(task.reconcile_media_library_analysis.run)
-    assert resent == [], "A terminal row is not re-sent"
+    assert len(resent) == 3, "A terminal row is not re-sent"
     # The creator's own retry is always allowed and starts the history over.
-    from app.services.media_library_ingest import retry_library_asset
-
     async with AsyncSessionLocal() as db:
-        await retry_library_asset(db, owner.id, uuid.UUID(broken[0]))
-    assert resent == [(broken[0], str(owner.id))]
-    assert (await _items(client, path))[broken[0]]["state"] in {"queued", "analyzing"}
+        await retry_library_asset(db, owner.id, uuid.UUID(asset_id))
+    assert resent[-1] == (asset_id, str(owner.id))
+    assert (await _items(client, path))[asset_id]["state"] in {"queued", "analyzing"}
 
 
-@pytest.mark.parametrize("silence", ["no-audio-track", "transcript-failed", "old-asset-no-row"])
+async def test_budget_pause_is_left_to_the_reconciler_and_outlasts_a_provider_blip(
+    collection_world, monkeypatch
+):
+    from app.agents._runtime import AiBudgetExceededError
+    from app.tasks import media_library as task
+
+    client, _, _, owner, _ = collection_world
+    asset_id, source_id = await _add_video(owner, status="pending", facts_status=None)
+
+    def analyze(source, *, analyzer=None, snapshot_local_path=None):
+        raise AiBudgetExceededError(
+            scope="environment:test", reset_at="2026-11-01", cached_behavior_available=False
+        )
+
+    monkeypatch.setattr(facts, "_analyze_source", analyze)
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    resent = []
+    monkeypatch.setattr(
+        task.analyze_media_asset_task,
+        "delay",
+        lambda *a: resent.append(a) if a[0] == asset_id else None,
+    )
+
+    # A task countdown would be gone long before a spend cap lifts, so none is scheduled.
+    result = await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    assert result["status"] == "failed"
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"]) == ("needs_retry", "budget_paused")
+
+    for revival in range(1, 7):
+        await _age(asset_id, 30)
+        await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+        assert len(resent) == revival - 1, "Waits out its backoff first"
+        await _age(asset_id, 300)
+        await asyncio.to_thread(task.reconcile_media_library_analysis.run)
+        assert len(resent) == revival
+        await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"], item["retryable"]) == ("failed", "budget_paused", False)
+
+
+@pytest.mark.parametrize("silence", ["no-audio-track", "old-asset-no-row"])
 async def test_silent_video_becomes_ready_instead_of_missing_forever(collection_world, silence):
     client, _, _, owner, _ = collection_world
-    audible = silence != "no-audio-track"
-    asset_id, source_id = await _add_video(
-        owner,
-        has_audio=audible,
-        transcript_status="failed" if silence == "transcript-failed" else None,
-    )
+    asset_id, source_id = await _add_video(owner, has_audio=silence != "no-audio-track")
     path = f"/me/media-collections/{uuid.uuid4()}"
     assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
     indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
@@ -1930,6 +1962,76 @@ async def test_silent_video_becomes_ready_instead_of_missing_forever(collection_
     assert (await _items(client, path))[asset_id]["state"] == "ready"
     found = await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
     assert [value["asset_id"] for value in found.json()["moments"]] == [asset_id]
+
+
+async def test_failed_transcript_on_a_speaking_clip_is_retried_not_indexed_as_silent(
+    collection_world, monkeypatch
+):
+    from celery.exceptions import Retry
+
+    from app.tasks import media_library as task
+
+    client, _, _, owner, _ = collection_world
+    asset_id, source_id = await _add_video(
+        owner, status="pending", has_audio=True, facts_status=None
+    )
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    transcripts = [RuntimeError("provider 503"), {"words": []}]
+
+    def analyze(source, *, analyzer=None, snapshot_local_path=None):
+        if analyzer == "transcript":
+            outcome = transcripts.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        return {
+            "duration_s": 8.0,
+            "description": "A red ferry crossing a harbour",
+            "understanding": {"summary": "Ferry crossing", "notable_moments": []},
+        }
+
+    monkeypatch.setattr(facts, "_analyze_source", analyze)
+    with pytest.raises(Retry):
+        await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"], item["retryable"]) == (
+        "needs_retry",
+        "provider_error",
+        True,
+    )
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.json()["missing_analysis_asset_ids"] == [asset_id], "Not passed off as silent"
+
+    await asyncio.to_thread(task.analyze_media_asset_task.run, asset_id, str(owner.id))
+    assert (await _items(client, path))[asset_id]["state"] == "ready"
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.json()["missing_analysis_asset_ids"] == []
+    assert indexed.json()["context_asset_ids"] == [asset_id]
+
+
+async def test_speaking_clip_with_spent_transcript_retries_falls_back_to_its_visuals(
+    collection_world,
+):
+    client, _, _, owner, _ = collection_world
+    spent = {
+        "analysis_failure": {
+            "reason": "provider_error",
+            "attempts": 12,
+            "revivals": 3,
+            "at": "2026-10-26T00:00:00Z",
+        }
+    }
+    asset_id, source_id = await _add_video(
+        owner, status="failed", has_audio=True, transcript_status="failed", metadata=spent
+    )
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    assert (await client.put(path, json=selection([asset_id], [source_id], 1))).status_code == 200
+    indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
+    assert indexed.json()["missing_analysis_asset_ids"] == []
+    assert indexed.json()["context_asset_ids"] == [asset_id]
+    item = (await _items(client, path))[asset_id]
+    assert (item["state"], item["reason"], item["retryable"]) == ("failed", "provider_error", False)
 
 
 async def test_audible_video_still_waits_for_its_transcript(collection_world):
@@ -2028,7 +2130,8 @@ async def test_candidate_cap_names_the_sources_it_left_out(collection_world):
     assert evidence.candidate_limit_reached is True
     assert len(evidence.moments) == FAIR_CANDIDATE_CAP
     represented = {value.asset_id for value in evidence.moments}
-    assert {uuid.UUID(a) for a, _ in pairs} - represented == set(evidence.truncated_asset_ids)
+    assert {uuid.UUID(a) for a, _ in pairs} - represented == set(evidence.unoffered_asset_ids)
+    assert evidence.truncated_asset_ids == [], "No source's own intervals were cut"
 
 
 async def test_original_role_binding_is_rebound_to_the_proxy_and_used(
@@ -2110,8 +2213,13 @@ async def test_original_role_binding_is_rebound_to_the_proxy_and_used(
 
 async def test_items_route_reports_every_state_and_reason(collection_world):
     client, _, _, owner, _ = collection_world
-    failure = lambda reason, attempts: {  # noqa: E731
-        "analysis_failure": {"reason": reason, "attempts": attempts, "at": "2026-10-26T00:00:00Z"}
+    failure = lambda reason, attempts, revivals=0: {  # noqa: E731
+        "analysis_failure": {
+            "reason": reason,
+            "attempts": attempts,
+            "revivals": revivals,
+            "at": "2026-10-26T00:00:00Z",
+        }
     }
     cases = {
         "queued": await _add_video(owner, status="pending", facts_status=None),
@@ -2124,9 +2232,14 @@ async def test_items_route_reports_every_state_and_reason(collection_world):
             owner, status="failed", facts_status="failed", metadata=failure("budget_paused", 2)
         ),
         "failed": await _add_video(
-            owner, status="failed", facts_status="failed", metadata=failure("provider_error", 3)
+            owner,
+            status="failed",
+            facts_status="failed",
+            metadata=failure("provider_error", 9, revivals=3),
         ),
         "legacy-failed": await _add_video(owner, status="failed", facts_status="failed"),
+        "legacy-old-failed": await _add_video(owner, status="failed", facts_status="failed"),
+        "audio": await _add_video(owner, kind="audio"),
         "no-moment": await _add_video(
             owner, metadata={"moment_index": {"source_id": "x", "outcome": "none"}}
         ),
@@ -2145,6 +2258,7 @@ async def test_items_route_reports_every_state_and_reason(collection_world):
     ]
     body = {"name": "States", "expected_revision": 0, "members": members}
     assert (await client.put(path, json=body)).status_code == 200
+    await _age(cases["legacy-old-failed"][0], 8 * 24 * 60)
     async with AsyncSessionLocal() as db:
         await db.execute(
             update(MediaAsset)
@@ -2156,6 +2270,7 @@ async def test_items_route_reports_every_state_and_reason(collection_world):
     assert response.status_code == 200, response.text
     assert response.json()["revision"] == 1
     items = {item["asset_id"]: item for item in response.json()["items"]}
+    assert cases.pop("audio")[0] not in items, "Only footage has a tile"
     got = {
         name: (items[a]["state"], items[a]["reason"], items[a]["retryable"], items[a]["attempts"])
         for name, (a, _) in cases.items()
@@ -2166,8 +2281,9 @@ async def test_items_route_reports_every_state_and_reason(collection_world):
         "ready": ("ready", None, False, 0),
         "needs_retry": ("needs_retry", "provider_error", True, 1),
         "budget": ("needs_retry", "budget_paused", True, 2),
-        "failed": ("failed", "provider_error", False, 3),
+        "failed": ("failed", "provider_error", False, 9),
         "legacy-failed": ("needs_retry", "provider_error", True, 0),
+        "legacy-old-failed": ("failed", "provider_error", False, 0),
         "no-moment": ("failed", "no_usable_moment", False, 0),
         "too-long": ("excluded", "too_long", False, 0),
         "too-large": ("excluded", "too_large", False, 0),

@@ -59,7 +59,6 @@ class CollectionIndexOut(BaseModel):
     # Long clips with no detected moment, offered as a fixed sampled window.
     sampled_asset_ids: list[UUID] = Field(default_factory=list)
     unusable_timing_asset_ids: list[UUID] = Field(default_factory=list)
-    candidate_limit_reached: bool = False
 
 
 ItemState = Literal[
@@ -78,10 +77,14 @@ ItemReason = Literal[
 
 
 class CollectionItemOut(BaseModel):
-    """One collection member's server-derived progress. See media_collection_items.py."""
+    """One collection member's server-derived progress. See media_collection_items.py.
+
+    `uploading` and `icloud_unavailable` are device-side: a member's bytes are on the server
+    by definition, so the client owns both while it exports and uploads.
+    """
 
     asset_id: UUID
-    kind: Literal["video", "image", "audio"]
+    kind: Literal["video", "image"]
     group: str | None = None
     state: ItemState
     reason: ItemReason | None = None
@@ -116,9 +119,11 @@ class MomentSearchOut(BaseModel):
     unavailable_asset_ids: list[UUID]
     unindexed_asset_ids: list[UUID] = Field(default_factory=list)
     incomplete_speech_asset_ids: list[UUID] = Field(default_factory=list)
-    # Sources cut short by the per-source interval cap, or left without any offered
-    # candidate because the candidate cap was reached.
+    # Sources whose own interval list was cut short by the per-source cap.
     truncated_asset_ids: list[UUID] = Field(default_factory=list)
+    # Indexed sources with no offered candidate because the candidate cap was reached;
+    # `candidate_limit_reached` is true exactly when that cap was hit.
+    unoffered_asset_ids: list[UUID] = Field(default_factory=list)
     candidate_limit_reached: bool = False
     # Videos bound to a source that cannot run on the phone (no analysis proxy).
     unsupported_asset_ids: list[UUID] = Field(default_factory=list)
