@@ -2819,6 +2819,7 @@ def _run_generative_job_impl(
                         phone_snapshot,
                         ownership_epoch=ownership_epoch,
                         landscape_fit=_creator_landscape_fit(candidates),
+                        creator_strategy=candidates.get("creator_strategy"),
                     )
                 elif declared_format not in phone_render_supported_formats():
                     if contract is not None and candidates.get(PLAN_AUTHORITY_FIELD) is not None:
@@ -2938,6 +2939,7 @@ def _run_generative_job_impl(
                                     unified_snapshot,
                                     ownership_epoch=ownership_epoch,
                                     landscape_fit=_creator_landscape_fit(candidates),
+                                    creator_strategy=candidates.get("creator_strategy"),
                                 )
                 elif declared_format == "subtitled" or (
                     declared_format in NARRATED_EDIT_FORMATS and not has_voiceover_candidate
@@ -4703,6 +4705,155 @@ def _phone_repair_notes(
     return merged
 
 
+def _phone_timed_card_lane(
+    job_id: str,
+    *,
+    strategy: object,
+    bindings: tuple,
+    clip_windows: dict[str, tuple[float, float]],
+    timeline_end: float,
+) -> tuple[tuple, tuple, dict] | None:
+    """Ground the confirmed strategy's exact-timed small cards (``timed_cards``) for one
+    phone writer -> ``(cards, visuals, receipt)`` or ``None`` when the strategy has none.
+
+    Flag `PHONE_TIMED_CARDS_ENABLED` (`phone_rollout.phone_timed_cards_supported()`, the
+    gate the manifest advertised on): off, every card lands on the receipt as
+    ``lane_disabled`` and nothing is bound or compiled (a job queued before the flag
+    flipped, or a redelivery). The cards' Visuals are bound from the job's ready pool
+    (`bind_phone_visual_assets`, the same receipt path the beats use); the grounding itself
+    is pure (`app.pipeline.phone_timed_cards.ground_timed_cards`). A card never fails the
+    job: a bind failure or a grounding miss is a receipt row, and the caller compiles the
+    survivors onto the existing ``subtitled-overlays`` lane.
+    """
+    from app.pipeline.phone_timed_cards import ground_timed_cards  # noqa: PLC0415
+    from app.services.phone_overlay_grounding import _load_ready_pool_assets  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+        _index_pool_assets,
+        _visual_id_candidates,
+    )
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_timed_cards_supported,
+        phone_timed_video_cards_supported,
+    )
+    from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
+
+    raw = strategy.get("timed_cards") if isinstance(strategy, dict) else None
+    rows = [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
+    if not rows:
+        return None
+    if not phone_timed_cards_supported():
+        return (
+            (),
+            (),
+            {
+                "version": 1,
+                "matcher": "disabled",
+                "timeline_end_s": float(timeline_end),
+                "placed": [],
+                "unplaced": [
+                    {
+                        "card_id": str(row.get("card_id") or f"card-{index}"),
+                        "visual_id": row.get("visual_id"),
+                        "label": row.get("label"),
+                        "at_s": row.get("at_s"),
+                        "reason": "lane_disabled",
+                    }
+                    for index, row in enumerate(rows)
+                ],
+            },
+        )
+    videos_allowed = phone_timed_video_cards_supported()
+    visuals: tuple = ()
+    try:
+        assets_by_id = _index_pool_assets(_load_ready_pool_assets(_sync_session, job_id=job_id))
+        pins: dict[str, tuple[str, str, str]] = {}
+        for row in rows:
+            visual_id = row.get("visual_id")
+            if not isinstance(visual_id, str):
+                continue
+            asset = next(
+                (
+                    assets_by_id[candidate.casefold()]
+                    for candidate in _visual_id_candidates(visual_id)
+                    if candidate.casefold() in assets_by_id
+                ),
+                None,
+            )
+            if asset is None or not asset.get("gcs_generation") or not asset.get("gcs_path"):
+                continue
+            kind = "video" if asset.get("kind") == "video" else "image"
+            if kind == "video" and not videos_allowed:
+                continue
+            pins[str(asset["id"])] = (kind, asset["gcs_path"], str(asset["gcs_generation"]))
+        if pins:
+            visuals = bind_phone_visual_assets(_sync_session, job_id=job_id, pins=pins)
+    except OperationalError:
+        raise  # transient DB -> Celery autoretry, never a lane drop
+    except Exception as exc:  # noqa: BLE001 - a card never fails the job
+        log.warning("phone_timed_cards.bind_failed", job_id=job_id, error=str(exc)[:200])
+        visuals = ()
+    grounded = ground_timed_cards(
+        rows,
+        clip_windows=clip_windows,
+        timeline_end=timeline_end,
+        visuals=visuals,
+        videos_allowed=videos_allowed,
+    )
+    referenced = {card.media_id for card in grounded.cards}
+    return (
+        grounded.cards,
+        tuple(visual for visual in visuals if visual.media_id in referenced),
+        grounded.receipt,
+    )
+
+
+def _demote_timed_card_receipt(receipt: dict, *, card_ids: frozenset[str], reason: str) -> dict:
+    """Move timed cards (``timed-<card_id>`` lane ids) that were grounded but dropped by a
+    later compile out of ``placed`` into ``unplaced`` with ``reason``."""
+    if not card_ids:
+        return receipt
+    demoted = copy.deepcopy(receipt)
+    kept, moved = [], []
+    for entry in demoted.get("placed") or []:
+        if f"timed-{entry.get('card_id')}" in card_ids:
+            moved.append(
+                {
+                    key: entry.get(key)
+                    for key in ("card_id", "media_id", "visual_id", "label", "at_s")
+                }
+                | {"reason": reason}
+            )
+        else:
+            kept.append(entry)
+    demoted["placed"] = kept
+    demoted["unplaced"] = [*(demoted.get("unplaced") or []), *moved]
+    return demoted
+
+
+def _phone_clip_windows(recipe, *, video_track_id: str, bindings: tuple) -> dict:  # noqa: ANN001
+    from app.pipeline.phone_timed_cards import clip_windows_from_recipe  # noqa: PLC0415
+
+    return clip_windows_from_recipe(recipe, video_track_id=video_track_id, bindings=bindings)
+
+
+def _narrated_step_windows(steps) -> dict[str, tuple[float, float]]:  # noqa: ANN001
+    """A narrated edit's clip windows ARE the voice clock: each step's own span, keyed by
+    media id (first appearance)."""
+    windows: dict[str, tuple[float, float]] = {}
+    for step in steps:
+        media_id = getattr(step, "media_id", None)
+        if media_id is None or media_id in windows:
+            continue
+        windows[str(media_id)] = (float(step.start_s), float(step.end_s))
+    return windows
+
+
+def _merge_visual_bindings(primary: tuple, extra: tuple) -> tuple:
+    """``primary`` plus every ``extra`` visual it does not already pin (by media id)."""
+    seen = {visual.media_id for visual in primary}
+    return tuple(primary) + tuple(v for v in extra if v.media_id not in seen)
+
+
 @phone_text_generation
 def _run_phone_guided_job(
     job_id: str,
@@ -4710,8 +4861,14 @@ def _run_phone_guided_job(
     *,
     ownership_epoch: int | None,
     landscape_fit: str = "fill",
+    creator_strategy: dict | None = None,
 ) -> None:
-    """Use cloud decisions only; never enter a media renderer for proxy sources."""
+    """Use cloud decisions only; never enter a media renderer for proxy sources.
+
+    ``creator_strategy`` (the confirmed strategy, from ``all_candidates``) carries the
+    exact-timed small cards (`timed_cards`, flag `PHONE_TIMED_CARDS_ENABLED`): grounded
+    against the compiled story clock and compiled onto the ``subtitled-overlays`` lane.
+    """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.guided_story import (  # noqa: PLC0415
         GuidedStoryExecutionPlan,
@@ -4872,7 +5029,46 @@ def _run_phone_guided_job(
         landscape_fit="fit" if landscape_fit == "fit" else "fill",
     )
     recipe, repair_notes = compiled.recipe, list(compiled.notes)
-    validate_phone_pilot_recipe(recipe)
+    # Exact-timed small cards: the first compile fixes where every clip really starts on
+    # the output clock (transitions, refits); the cards are grounded against that and the
+    # plan is compiled once more with the lane. The grounding never fails the job.
+    timed_cards: tuple = ()
+    timed_receipt: dict | None = None
+    timed_lane = _phone_timed_card_lane(
+        job_id,
+        strategy=creator_strategy,
+        bindings=bindings,
+        clip_windows=_phone_clip_windows(recipe, video_track_id="story", bindings=bindings),
+        timeline_end=recipe.duration,
+    )
+    if timed_lane is not None:
+        timed_cards, card_visuals, timed_receipt = timed_lane
+        if timed_cards:
+            visuals = _merge_visual_bindings(visuals, card_visuals)
+            try:
+                compiled = compile_phone_guided_repaired(
+                    plan,
+                    bindings,
+                    contract=contract,
+                    visuals=visuals,
+                    narration=narration_bed,
+                    song=song_bed,
+                    sound_effects=sound_effects,
+                    landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                    timed_cards=timed_cards,
+                    allow_editor_media=True,
+                )
+                recipe, repair_notes = compiled.recipe, list(compiled.notes)
+            except (UnsupportedPhonePlan, ValueError) as exc:
+                # The lane never costs the creator their video: render without it, say so.
+                log.warning("phone_timed_cards.compile_dropped", job_id=job_id, error=str(exc))
+                timed_receipt = _demote_timed_card_receipt(
+                    timed_receipt,
+                    card_ids=frozenset(card.id for card in timed_cards),
+                    reason="compile_dropped",
+                )
+                timed_cards = ()
+    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
     repaired_plan_payload = copy.deepcopy(raw_plan) if current_phone_text_policy() else None
     if compiled.plan is not plan:
@@ -4951,6 +5147,18 @@ def _run_phone_guided_job(
             # Creator-visible (job projection -> render_notes): what Kria changed so
             # the plan could render on the phone (KRI-129: never a silent override).
             current["variants"][0]["phone_repair_notes"] = list(repair_notes)
+        if timed_receipt is not None:
+            from app.pipeline.phone_timed_cards import (  # noqa: PLC0415
+                TIMED_CARD_RECEIPT_FIELD,
+                TIMED_CARDS_FIELD,
+                timed_card_rows,
+            )
+
+            # The creator-safe receipt the brief check reads, and the grounded rows the
+            # editor's Save recompiles (a text-only Save keeps the cards).
+            current["variants"][0][TIMED_CARD_RECEIPT_FIELD] = timed_receipt
+            if timed_cards:
+                current["variants"][0][TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
         if repaired_plan_payload is not None:
             # The editor's first Save recompiles from this private per-variant plan, not
             # the approved canonical plan (whose text lane is re-validated against the
@@ -5600,7 +5808,41 @@ def _run_phone_voiceover_montage_job(
                     resolved_text_elements=rows,
                 )
 
-    validate_phone_pilot_recipe(recipe)
+    # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): grounded against the
+    # compiled montage clock and added as the KRI-281 overlay lane on top of the finished
+    # recipe (pins, intro and beds untouched); the editor derives the lane from the pinned
+    # recipe on its first Save. Never fails the job.
+    timed_cards: tuple = ()
+    timed_receipt: dict | None = None
+    timed_lane = _phone_timed_card_lane(
+        job_id,
+        strategy=raw_creator_strategy,
+        bindings=bindings,
+        clip_windows=_phone_clip_windows(recipe, video_track_id="montage", bindings=bindings),
+        timeline_end=recipe.duration,
+    )
+    if timed_lane is not None:
+        timed_cards, card_visuals, timed_receipt = timed_lane
+        if timed_cards:
+            from app.pipeline.phone_narrated_plan import replace_editor_lanes  # noqa: PLC0415
+            from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
+
+            try:
+                recipe = replace_editor_lanes(
+                    recipe,
+                    lanes=PhoneSubtitledLanes(overlays=list(timed_cards)),
+                    visuals=card_visuals,
+                    video_track_id="montage",
+                )
+            except (UnsupportedPhonePlan, ValueError) as exc:
+                log.warning("phone_timed_cards.compile_dropped", job_id=job_id, error=str(exc))
+                timed_receipt = _demote_timed_card_receipt(
+                    timed_receipt,
+                    card_ids=frozenset(card.id for card in timed_cards),
+                    reason="compile_dropped",
+                )
+                timed_cards = ()
+    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=spec["variant_id"], revision=1, recipe=recipe
     )
@@ -5653,6 +5895,16 @@ def _run_phone_voiceover_montage_job(
             "original_audio_level": float(recipe.audio.original_volume),
             "ok": False,
         }
+        if timed_receipt is not None:
+            from app.pipeline.phone_timed_cards import (  # noqa: PLC0415
+                TIMED_CARD_RECEIPT_FIELD,
+                TIMED_CARDS_FIELD,
+                timed_card_rows,
+            )
+
+            new_entry[TIMED_CARD_RECEIPT_FIELD] = timed_receipt
+            if timed_cards:
+                new_entry[TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
@@ -11684,6 +11936,31 @@ def _run_phone_narrated_job(
                     ],
                     duration_s=voiceover_duration_s,
                 )
+            # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): grounded on the
+            # voice timeline (each step's window IS the output clock) and merged into the
+            # same KRI-281 lane the beats use. Never fails the job.
+            timed_cards: tuple = ()
+            timed_receipt: dict | None = None
+            timed_lane = _phone_timed_card_lane(
+                job_id,
+                strategy=strategy,
+                bindings=bindings,
+                clip_windows=_narrated_step_windows(steps),
+                timeline_end=voiceover_duration_s,
+            )
+            if timed_lane is not None:
+                timed_cards, card_visuals, timed_receipt = timed_lane
+                if timed_cards:
+                    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+                        PhoneSubtitledLanes,
+                    )
+
+                    lanes = (
+                        lanes.model_copy(update={"overlays": [*lanes.overlays, *timed_cards]})
+                        if lanes is not None
+                        else PhoneSubtitledLanes(overlays=list(timed_cards))
+                    )
+                    visuals = _merge_visual_bindings(visuals, card_visuals)
             while True:
                 try:
                     recipe = compile_phone_narrated_plan(
@@ -11733,7 +12010,7 @@ def _run_phone_narrated_job(
                         raise
                     # A beat lane never fails the job: drop the lane that failed
                     # (every lane when the error names none), then recompile.
-                    if lanes is None or beat_receipt is None:
+                    if lanes is None or (beat_receipt is None and timed_receipt is None):
                         raise
                     lane = exc.lane if isinstance(exc, SubtitledLaneError) else None
                     log.warning("phone_narrated_beats.lane_dropped", job_id=job_id, lane=lane)
@@ -11742,14 +12019,21 @@ def _run_phone_narrated_job(
                         if lane is not None
                         else lanes.model_copy(update={"overlays": [], "sound_effects": []})
                     )
-                    beat_receipt = _demote_beat_receipt(
-                        beat_receipt,
-                        card_ids=frozenset(card.id for card in lanes.overlays)
-                        - frozenset(card.id for card in dropped.overlays),
-                        sfx_ids=frozenset(sfx.request.id for sfx in lanes.sound_effects)
-                        - frozenset(sfx.request.id for sfx in dropped.sound_effects),
-                        reason="compile_dropped",
+                    dropped_card_ids = frozenset(card.id for card in lanes.overlays) - frozenset(
+                        card.id for card in dropped.overlays
                     )
+                    if beat_receipt is not None:
+                        beat_receipt = _demote_beat_receipt(
+                            beat_receipt,
+                            card_ids=dropped_card_ids,
+                            sfx_ids=frozenset(sfx.request.id for sfx in lanes.sound_effects)
+                            - frozenset(sfx.request.id for sfx in dropped.sound_effects),
+                            reason="compile_dropped",
+                        )
+                    if timed_receipt is not None:
+                        timed_receipt = _demote_timed_card_receipt(
+                            timed_receipt, card_ids=dropped_card_ids, reason="compile_dropped"
+                        )
                     lanes = dropped if dropped.overlays or dropped.sound_effects else None
             # An explicit photo-then-original sequence is atomic. Only the final
             # surviving full-screen photo may restart its aligned video. A lost
@@ -11891,6 +12175,17 @@ def _run_phone_narrated_job(
             # KRI-519: the same creator-safe receipt Talking keeps; the chat's
             # render notes read it to say which named moment never came up.
             new_entry["phone_beat_receipt"] = beat_receipt
+        if timed_receipt is not None:
+            from app.pipeline.phone_timed_cards import (  # noqa: PLC0415
+                TIMED_CARD_RECEIPT_FIELD,
+                TIMED_CARDS_FIELD,
+                timed_card_rows,
+            )
+
+            new_entry[TIMED_CARD_RECEIPT_FIELD] = timed_receipt
+            kept_cards = [card for card in timed_cards if lanes and card in lanes.overlays]
+            if kept_cards:
+                new_entry[TIMED_CARDS_FIELD] = timed_card_rows(kept_cards)
         if clip_sound_plan is not None:
             # KRI-842: what the pinned recipe plays for each clip-sound ask, read back from
             # the recipe itself (the receipts judge this, never the global bed level).

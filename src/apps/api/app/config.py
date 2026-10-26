@@ -248,6 +248,26 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker + light).
     phone_voiceover_reaction_beats_enabled: bool = True
+    # Exact-timed small cards: "show the menu photo as a small card at 3 seconds for 2
+    # seconds" / "put the receipt in the corner during the second clip" on a
+    # phone-rendered Montage (guided / unified montage, montage-family voiceover) or
+    # narrated Voiceover edit. `phone_rollout.phone_timed_cards_supported()` is the
+    # single source of truth: this flag AND `media_overlays_enabled` AND every feature in
+    # `phone_rollout.PHONE_TIMED_CARD_FEATURES` (`stillImages`, `visualBlocks`,
+    # `alphaOverlay`, `audioMix`) verified. When it holds the manifest advertises
+    # `timed_cards` on those phone edits, the creator agent may author
+    # `strategy.timed_cards` (`TimedCard`: visual + `at_s` or `clip_id`/`offset_s` +
+    # `hold_s`), the workers ground them (`app.pipeline.phone_timed_cards`) into the
+    # existing `subtitled-overlays` lane (`_compile_overlay_track`) and persist a
+    # creator-safe `phone_timed_card_receipt` + `phone_timed_cards` rows on the variant.
+    # A video card additionally needs `visualVideos` verified. False (default):
+    # byte-identical to before -- the manifest carries no `timed_cards` key (hashes
+    # unchanged), `media_overlays` keeps its `unsupported_on_phone` refusal on these
+    # edits, a strategy's `timed_cards` are stripped with a plain notice, and the
+    # compilers emit no lane. Apply: `fly secrets set PHONE_TIMED_CARDS_ENABLED=true
+    # --app nova-video` + `fly machine restart <id>` (api + worker); rollback with
+    # `=false` the same way.
+    phone_timed_cards_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.

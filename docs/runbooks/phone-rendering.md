@@ -813,6 +813,56 @@ caption band. The request is private job state (`_phone_subtitled_lanes_v1`,
 stripped from public assembly-plan responses) and stays on the item until
 deleted, so clear it once Phase 2 owns the lanes.
 
+#### Exact-timed small cards on Montage and Voiceover edits (`PHONE_TIMED_CARDS_ENABLED`)
+
+"Show the menu photo as a small card at 3 seconds for 2 seconds" / "put the receipt in the
+corner during the second clip" on a phone Montage (guided / unified montage via
+`_run_phone_guided_job`, montage-family voiceover via `_run_phone_voiceover_montage_job`) or
+narrated Voiceover (`_run_phone_narrated_job`). Flag `PHONE_TIMED_CARDS_ENABLED`
+(`settings.phone_timed_cards_enabled`, default `false`); gate
+`phone_rollout.phone_timed_cards_supported()` = flag AND `media_overlays_enabled` AND every
+`PHONE_TIMED_CARD_FEATURES` (= the Talking overlay features `stillImages`, `visualBlocks`,
+`alphaOverlay`, `audioMix`) verified; a VIDEO card also needs `visualVideos`
+(`phone_timed_video_cards_supported()`).
+
+- **Request**: `strategy.timed_cards` (`app.agents._schemas.reaction_beats.TimedCard`:
+  `visual_id`, `label`, ONE of `at_s` (output seconds) or `clip_id` + `offset_s`, `hold_s`).
+  Taught to the Main Creator only when the manifest advertises `timed_cards`
+  (`creator_capabilities.CAPABILITY_TIMED_CARDS`: phone guided formats, or `narrated*` WITH a
+  recorded voiceover; never Talking, never cloud). Word-timed photos stay `reaction_beats`.
+- **Repair** (`repair_creator_timed_cards`, run by `compile_strategy_to_plan` and the brief
+  checks): capability off -> all cards dropped with one notice; unresolved visual / clip ->
+  that card dropped, named by the creator's words and time; ids canonicalised.
+- **Grounding** (`app/pipeline/phone_timed_cards.py`, pure): the worker compiles once, reads
+  where each clip REALLY starts on the output clock (`clip_windows_from_recipe`; a narrated
+  edit uses its step windows), then `ground_timed_cards` -> `SubtitledOverlayCard`s on the
+  Talking `subtitled-overlays` track via `_compile_overlay_track`. Rules: start inside the last
+  0.3 s or after the end -> `past_end`; a card outlasting the video is shortened; spots are
+  tried right-corner, left-corner, right-middle, left-middle, all above `CAPTION_BAND_TOP_FRAC`;
+  a face shown in the card's window (`FaceWindow`) moves it, and if every spot collides the
+  card is `face_collision` (never drawn over a face); overlapping cards -> the later one is
+  `overlaps_card`; a video needs `videos_allowed`.
+- **Receipt**: `variants[i].phone_timed_card_receipt` = `{matcher: "timed"|"disabled",
+  timeline_end_s, placed: [{card_id, media_id, label, anchor, at_s, end_s, hold_s, kind,
+  x_frac, y_frac}], unplaced: [{card_id, ..., reason}]}` (reasons: `lane_disabled`, `invalid`,
+  `clip_not_in_edit`, `past_end`, `visual_not_bound`, `video_not_supported`,
+  `overlaps_card`, `face_collision`, `compile_dropped`). The brief check
+  (`brief_checks._check_timed_cards`, ask = the model's `facts["timed_card"]`) reads it: "Small
+  card of menu photo at 3.0 s for 2.0 s" / "3.0 s is past the end of the video (2.4 s)".
+- **Editor round-trip**: the grounded rows persist as `variants[i].phone_timed_cards`; a guided
+  text-only Save re-attaches them (`phone_editor._compile_editor_commit`); Voiceover edits
+  derive the lane from the pinned recipe like any KRI-281 lane.
+- **Flag off**: byte-identical -- no `timed_cards` manifest key (hashes unchanged),
+  `media_overlays` keeps `unsupported_on_phone`, strategies stripped with a notice, the
+  worker writes a `matcher: "disabled"` receipt and no lane. Apply / rollback: `fly secrets set
+  PHONE_TIMED_CARDS_ENABLED=true|false --app nova-video` + `fly machine restart <id>` (api +
+  worker). Failure modes: `docs/reviews/timed-cards-montage-voiceover-failure-modes.md`;
+  tests `tests/pipeline/test_phone_timed_cards.py`, `tests/tasks/test_phone_timed_cards_dispatch.py`,
+  `tests/kria/test_brief_timed_cards.py`.
+- **Not yet wired**: the guided / voiceover workers pass no `FaceWindow`s (the grounding
+  honours them; a face sampler on the montage clips is the follow-up), so face avoidance on
+  these edits is not active until that lands.
+
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
 **Gate:** `app.services.phone_rollout.phone_subtitled_overlays_supported()` --

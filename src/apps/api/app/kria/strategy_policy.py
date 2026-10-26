@@ -201,6 +201,18 @@ _KNOWN_TR: dict[str, str] = {
         "Sound and photo pop-ins timed to your words aren't available for this "
         "edit yet; left them out."
     ): "Sözlerine göre çıkan ses ve fotoğraflar bu düzenleme için henüz yok; koymadım.",
+    "Small cards at an exact time aren't available for this edit yet; left them out.": (
+        "Tam zamanlı küçük kartlar bu düzenleme için henüz yok; koymadım."
+    ),
+    "Couldn't find the clip the small card should follow; left that card out.": (
+        "Küçük kartın takip edeceği klibi bulamadım; o kartı koymadım."
+    ),
+    "Couldn't find the photo or video you named for a small card; left it out.": (
+        "Küçük kart için söylediğin fotoğrafı ya da videoyu bulamadım; koymadım."
+    ),
+    "Videos can't show as small cards in this edit yet; left that card out.": (
+        "Bu düzenlemede videolar henüz küçük kart olarak çıkamıyor; o kartı koymadım."
+    ),
     "Couldn't find the closing photo you named; kept the normal ending.": (
         "Söylediğin kapanış fotoğrafını bulamadım; normal bitişi bıraktım."
     ),

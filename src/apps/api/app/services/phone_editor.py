@@ -58,6 +58,7 @@ from app.pipeline.phone_subtitled_plan import (
     sfx_duck_receipt,
     speaker_binding_from_recipe,
 )
+from app.pipeline.phone_timed_cards import TIMED_CARDS_FIELD, timed_cards_from_rows
 from app.pipeline.phone_voiceover_cut import replace_voiceover_cut
 from app.services.creator_render_contract import (
     CONTRACT_FIELD,
@@ -83,6 +84,7 @@ from app.services.phone_rollout import (
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
     phone_subtitled_title_supported,
+    phone_timed_cards_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
     recipe_has_freeze_frame,
@@ -684,7 +686,16 @@ def _compile_editor_commit(
                 },
             )
             song = _pinned_song_bed(previous.recipe, plan["user_song"])
-        allow_editor_media = bool(plan.get("editor_visual_blocks"))
+        # Exact-timed small cards the worker grounded (`phone_timed_cards` rows): a Save
+        # recompiles from the plan, which never carried them, so they are re-attached here
+        # exactly as pinned while the lane is still on (flag off: the Save drops the lane,
+        # like every other refused phone lane -- never a 422).
+        timed_cards = (
+            timed_cards_from_rows(variant.get(TIMED_CARDS_FIELD))
+            if phone_timed_cards_supported()
+            else ()
+        )
+        allow_editor_media = bool(plan.get("editor_visual_blocks")) or bool(timed_cards)
         recipe = compile_phone_guided_plan(
             GuidedStoryExecutionPlan.model_validate(plan),
             bindings,
@@ -693,6 +704,7 @@ def _compile_editor_commit(
             allow_editor_media=allow_editor_media,
             song=song,
             sound_effects=_guided_sound_effects(plan, previous.recipe, visuals),
+            timed_cards=timed_cards,
             # KRI-306/285: an editor Save keeps (or changes) the bars; without
             # this every guided Save would silently drop a letterbox.
             landscape_fit=_resolved_landscape_fit(

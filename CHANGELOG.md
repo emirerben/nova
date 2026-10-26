@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.131.0] - 2026-10-26
+
+### Added
+- feat(phone): exact-timed small cards on Montage and Voiceover edits (PHONE_TIMED_CARDS_ENABLED) (#1835) <!-- release-pr: 1835 -->
+
 ## [0.81.130.0] - 2026-10-26
 
 ### Changed
