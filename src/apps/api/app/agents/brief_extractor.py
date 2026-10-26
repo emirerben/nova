@@ -49,7 +49,8 @@ from app.pipeline.prompt_loader import load_prompt
 # v35 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`.
 # v36: the shared brief section records a `timed_card` fact (a photo as a small card at an
 # exact second / clip) for phone Montage and Voiceover edits.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-26-v36"
+# v37 (KRI-942): the shared brief section records clip sound on / off (`clip_sound` "on"/"off").
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-26-v37"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

@@ -151,7 +151,9 @@ log = structlog.get_logger()
 # Montage / Voiceover edits, and the shared brief records a `timed_card` fact for the ask.
 # v97 (KRI-945): the described-text exception covers text on particular clips only; an
 # intro, explanation or facts for the whole video is never a clip intent.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-26-v97"
+# v98 (KRI-942): the shared brief records clip sound on / off (`clip_sound` "on"/"off" with
+# `sound_clip`, `sound_from_s`/`sound_to_s`, `sound_line`, `sound_except`) for montages.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-26-v98"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -665,6 +667,23 @@ and values whatever the language: "Seslendirme net duyulsun ama ısırık klibin
 hafifçe altta kalsın" => scope clip:<the bite clip's media_id>, {"clip_sound": "under_voice"};
 "After my voiceover ends, let the last clip play so Caro's "bye bye" is heard" => scope
 clip:<the last clip's media_id>, {"clip_sound": "after_voice", "triggers": ["bye bye"]}.
+On a montage or any other edit that keeps the clips' own sound, turning that sound OFF or ON
+for the whole video, a clip, a stretch of seconds or a spoken line => an `audio` requirement with
+{"clip_sound": "off"} or {"clip_sound": "on"} plus where, only what the creator said: scope
+`clip:<media_id>` for one attached clip they name (every time it plays); {"sound_clip": "last"}
+or "first" for the last / first clip of the edit; {"sound_from_s": 5, "sound_to_s": 8} for seconds
+of the video, or of that clip when one is named ("the first 2 seconds of the grill clip" => scope
+clip:<the grill clip's media_id>, {"sound_from_s": 0, "sound_to_s": 2}); {"sound_line": "Super
+excited!"} for only where that line is said, exactly as written, never translated. Parts that get
+the opposite go in "sound_except", a list of objects with the same keys ("sound_media" names a
+clip there): "Clip sound off except that last line" (the last clip's line is "Super excited!") =>
+{"clip_sound": "off", "sound_except": [{"sound_clip": "last", "sound_line": "Super excited!"}]};
+"sadece kasap klibinin sesi kalsın" => {"clip_sound": "off", "sound_except": [{"sound_media":
+"<the butcher clip's media_id>"}]}; "mute the last clip" / "son klibin sesini kapat" =>
+{"clip_sound": "off", "sound_clip": "last"}; "5. saniyeden 8. saniyeye kadar ses olmasın" =>
+{"clip_sound": "off", "sound_from_s": 5, "sound_to_s": 8}. Lowering or raising the volume is not
+on/off and records no `clip_sound`. A later message that moves where the sound is on or off
+changes THIS requirement (`operation`: "change"); a message about anything else leaves it as it is.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":

@@ -48,6 +48,7 @@ from app.kria.brief_checks import (
     clip_speed_notice,
     defers_caption_words_to_phone_render,
     defers_to_narrated_render,
+    defers_to_unified_montage,
     describe_text_look,
     is_judged,
     judged_at_render,
@@ -1526,6 +1527,14 @@ def _complete_draft_turn(
                         # KRI-842: one clip's own sound is judged on the draft that the phone
                         # Voiceover compiler will render, against the footage it will play.
                         phone_narrated=defers_to_narrated_render(
+                            creator_id=thread.creator_id,
+                            edit_format=document.strategy.get("edit_format") or item.edit_format,
+                            audio_strategy=document.strategy.get("audio_strategy"),
+                            clip_paths=item.clip_gcs_paths or (),
+                        ),
+                        # KRI-942: clip sound on/off is judged on a draft the phone montage
+                        # writer will render.
+                        phone_montage=defers_to_unified_montage(
                             creator_id=thread.creator_id,
                             edit_format=document.strategy.get("edit_format") or item.edit_format,
                             audio_strategy=document.strategy.get("audio_strategy"),
@@ -6364,6 +6373,26 @@ def _approved_generation_review(
     return f"{text}{separator}{note}", receipts
 
 
+def _with_clip_sound_toggles(job: Job, variant: dict, facts: Any, *, brief_binding: Any) -> Any:
+    """``facts`` with the on/off asks re-judged against the recipe pinned for ``variant``.
+
+    An editor Save re-pins the recipe, so the receipt follows what the phone renders now;
+    without a pinned recipe the worker's own record (already on the facts) stands.
+    """
+    from app.services.device_render import device_status  # noqa: PLC0415
+    from app.services.phone_clip_sound_toggle import rendered_toggle_receipt  # noqa: PLC0415
+
+    variant_id = variant.get("variant_id")
+    try:
+        recipe = device_status(job, str(variant_id)).request.recipe if variant_id else None
+    except (AttributeError, KeyError, ValueError, TypeError):
+        return facts
+    receipt = rendered_toggle_receipt(
+        job.assembly_plan or {}, variant, recipe, brief_binding=brief_binding
+    )
+    return dataclasses.replace(facts, clip_sound_toggles=receipt) if receipt is not None else facts
+
+
 def _approved_generation_requirements_review(
     db: Any,
     thread: CreationThread,
@@ -6435,6 +6464,8 @@ def _approved_generation_requirements_review(
         facts = dataclasses.replace(
             facts, original_audio_control=original_audio_recovery(job, variant)
         )
+    # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
+    facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
     known = {receipt.requirement_id for receipt in receipts}
     receipts.extend(
         build_receipts(

@@ -90,6 +90,7 @@ from app.kria.clip_exclusions import (
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
 from app.kria.contracts import KriaTurnPlan
+from app.kria.draft_sound_carry import sound_asks_unchanged
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.narration_notes import (
     keeps_camera_sound,
@@ -1299,6 +1300,21 @@ async def _load_kept_labels(db: AsyncSession, item_id: uuid.UUID) -> list[KeptLa
     await db.rollback()  # no connection pinned across the model calls that follow
     strategy = snapshot.get("strategy") if isinstance(snapshot, dict) else None
     return kept_labels_from_strategy(strategy)
+
+
+async def _load_draft_strategy(db: AsyncSession, item_id: uuid.UUID) -> dict | None:
+    """The item's current draft strategy (KRI-942), then release the txn."""
+    snapshot = (
+        await db.execute(
+            select(CreatorEditDraft.snapshot_json)
+            .where(CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True))
+            .order_by(CreatorEditDraft.updated_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    await db.rollback()  # no connection pinned across the model calls that follow
+    strategy = snapshot.get("strategy") if isinstance(snapshot, dict) else None
+    return strategy if isinstance(strategy, dict) else None
 
 
 async def _load_thread_events(
@@ -2519,6 +2535,7 @@ async def _plan_from_creator_output(
     spoken_text: Sequence[str] = (),
     effective_brief: CreativeBrief | None = None,
     batch_questions: bool = False,
+    keeps_sound: bool = False,
 ) -> PlannedKriaTurn:
     """Turn a Main Creator answer into an inert plan (clip-intent resolution incl.).
 
@@ -2586,6 +2603,7 @@ async def _plan_from_creator_output(
             describe_clips=describe_clips,
             spoken_text=spoken_text,
             effective_brief=effective_brief,
+            keeps_sound=keeps_sound,
             **({"held_wording": held} if hold_wording else {}),
         )
     except Exception as exc:  # noqa: BLE001 - re-raised unless a question is held
@@ -2991,6 +3009,7 @@ async def _plan_creator_action(
     spoken_text: Sequence[str] = (),
     effective_brief: CreativeBrief | None = None,
     held_wording: list[PlannedKriaTurn] | None = None,
+    keeps_sound: bool = False,
 ) -> PlannedKriaTurn:
     # KRI-802: given `held_wording`, a title-wording question is added there (one per turn)
     # and planning goes on, so the caller can ask it together with a clip picker.
@@ -3158,6 +3177,15 @@ async def _plan_creator_action(
                 selected=len(scoped.selected_media_ids),
             )
             action = action.model_copy(update={"strategy": scoped})
+        if keeps_sound:
+            # KRI-942: a turn that didn't touch the sound asks keeps the draft's sound choice
+            # (the route it picks), like a confirmed label (KRI-766).
+            from app.kria.draft_sound_carry import carry_draft_sound  # noqa: PLC0415
+
+            carried = carry_draft_sound(action.strategy, await _load_draft_strategy(db, item_id))
+            if carried is not action.strategy:
+                log.info("kria_draft_sound_kept", thread_id=str(thread_id))
+                action = action.model_copy(update={"strategy": carried})
         # KRI-142: the same server compile v1 runs, so a phone render never
         # silently drops what it can't draw while the reply claims it.
         check_kwargs: dict[str, Any] = {
@@ -5673,6 +5701,7 @@ async def _plan_live_turn(
         describe_clips=wants_clip_descriptions(effective),
         spoken_text=spoken_text_literals(effective),
         effective_brief=effective,
+        keeps_sound=sound_asks_unchanged(prior_brief, effective),
         **({"batch_questions": True} if batch_questions else {}),
     )
     if isinstance(output.action, DraftVoiceoverScript):

@@ -230,6 +230,13 @@ class GuidedStoryMoment(BaseModel):
     # The creator silenced this moment's own (camera) sound in the editor. Omitted when
     # unset so every stored plan keeps its exact dump. Honoured by the phone compiler.
     source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-942: parts of this moment's own sound the creator turned off in chat ("no sound from
+    # 5 to 8 seconds"), as (start, end) in the clip's SOURCE seconds, so a later trim keeps the
+    # same footage silent. The phone compiler turns them into recipe mute windows. Omitted when
+    # empty so every stored plan keeps its exact dump.
+    source_audio_mute_spans: list[tuple[float, float]] | None = Field(
+        default=None, max_length=8, exclude_if=lambda value: not value
+    )
     # KRI-828: the creator's freeze: the frame at ``source_end_s`` holds for these seconds
     # after the moment plays (``duration_s`` = source span / rate + hold). The clip's own
     # sound is silent under the hold. Omitted when unset so every stored plan keeps its dump.
