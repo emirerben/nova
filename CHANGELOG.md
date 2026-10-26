@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.144.0] - 2026-10-26
+
+### Changed
+- feat(api): ideas per event with delete, restore, another idea and delete event (KRI-944) (#1845) <!-- release-pr: 1845 -->
+
 ## [0.81.143.0] - 2026-10-26
 
 ### Changed
