@@ -1,0 +1,155 @@
+{
+  "_source": "KRI-945. Prod thread e3e91b35-cf96-4617-8d01-b2cb1d90fab3 (Cunda Island, plan item 064520cf, montage), 2026-10-26 08:20-08:38 UTC. Kept from prod: the creator's messages, the 11 video durations (analysis-proxy media), 10 ready pool images, the brief shape (v1 r1 text/global facts.research + r2 text/title literal null; v2 r1.literal = the typed facts), the T2 hook wording and the T3 caption question. Prod agent_run rows keep only keys and a sha256, so every model answer below is AUTHORED from prompts/main_creator.txt, app/agents/main_creator.py (_DESCRIBED_TEXT_EXCEPTION, OPEN-VOCABULARY CLIP INTENTS), prompts/clip_intent_planner.txt and prompts/clip_request_resolver.txt; the clip records, the first hook wording and the research sources are authored too.",
+  "messages": {
+    "t1": "We went to Cunda Island in Turkey and we should include some facts about Cunda to show why people should go there, an introductory explanation. Add a hook about it being a must visit spot with great food, town and sea",
+    "t2": "Revise it",
+    "t3": "Use this wording",
+    "t5": "Cunda is home to historical building, old churches, great restaurants and amazing beaches",
+    "butcher": "Make a montage of our Cunda trip and label the butcher shot 'The butcher's counter'"
+  },
+  "hook": {
+    "first": "Cunda Island: a must-visit for food, town and sea",
+    "approved": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea."
+  },
+  "clips": [
+    {"uuid": "99AF2B48-E5C9-590D-8C8D-435840901B07", "duration_s": 7.7, "subject": "a car crossing the causeway onto the island", "summary": "Driving across a narrow causeway road with the sea on both sides.", "setting": "coastal causeway", "activity": "driving"},
+    {"uuid": "D8E230D8-860F-58C5-8DB3-3EF88290ED17", "duration_s": 3.84, "subject": "a cobbled street between old stone houses", "summary": "Walking down a narrow cobbled street lined with old stone houses and bougainvillea.", "setting": "old town street", "activity": "walking"},
+    {"uuid": "4BE77BF2-93E5-51B7-861D-945062533C20", "duration_s": 3.84, "subject": "meze plates on a waterfront table", "summary": "Small plates of meze and seafood on a restaurant table by the water.", "setting": "waterfront restaurant", "activity": "eating"},
+    {"uuid": "DF89FF40-E8BE-5ABC-9CFB-096DD8CB4702", "duration_s": 1.93, "subject": "the facade of a large stone church", "summary": "A large old stone church with tall arched windows.", "setting": "town square", "activity": "sightseeing"},
+    {"uuid": "FDFD8377-5697-5DDA-96AB-1474E12E36AC", "duration_s": 3.84, "subject": "fishing boats along the harbour promenade", "summary": "Fishing boats moored along a harbour promenade.", "setting": "harbour", "activity": "walking"},
+    {"uuid": "3087961C-CA4D-5ECB-B5B1-4F8419DD95D9", "duration_s": 2.4, "subject": "grilled fish being served", "summary": "A waiter sets down a plate of grilled fish with lemon.", "setting": "restaurant", "activity": "eating"},
+    {"uuid": "B4A33848-2C37-5C46-BCC0-ECC576A7575C", "duration_s": 1.93, "subject": "rooftops below a hilltop windmill", "summary": "View over red-tiled rooftops from a hill with an old windmill.", "setting": "hilltop", "activity": "sightseeing"},
+    {"uuid": "D5EE9749-E5AD-5DFB-A2F8-A02624F77C83", "duration_s": 2.4, "subject": "swimming in clear turquoise water", "summary": "Someone swims in clear turquoise water off a rocky shore.", "setting": "beach", "activity": "swimming"},
+    {"uuid": "762381D1-64AC-5EB8-8D11-4D5162C9DFFD", "duration_s": 7.7, "subject": "sunset over the sea from a beach", "summary": "The sun sets over a calm sea seen from a pebble beach.", "setting": "beach", "activity": "watching the sunset"},
+    {"uuid": "C3D795EB-844C-57F9-AB9D-A78A2DDDC4CB", "duration_s": 3.37, "subject": "a cat asleep on a cafe chair", "summary": "A ginger cat sleeps on a wicker cafe chair.", "setting": "street cafe", "activity": "resting"},
+    {"uuid": "09127E6F-F9E3-5E97-BADB-17EB4FF1DF92", "duration_s": 3.84, "subject": "a butcher's counter in the town market", "summary": "A butcher's counter with cuts of meat behind a glass case in the market.", "setting": "town market", "activity": "shopping"}
+  ],
+  "speaker": {
+    "uuid": "D8E230D8-860F-58C5-8DB3-3EF88290ED17",
+    "transcript": "This is Cunda, honestly the prettiest little town we have seen.",
+    "segments": [{"s": 0.2, "e": 3.4, "text": "This is Cunda, honestly the prettiest little town we have seen."}]
+  },
+  "visuals": [
+    {"source_filename": "cunda_01.jpg", "summary": "Harbour at dusk with fishing boats"},
+    {"source_filename": "cunda_02.jpg", "summary": "Stone church bell tower against a blue sky"},
+    {"source_filename": "cunda_03.jpg", "summary": "Table of meze plates and grilled octopus"},
+    {"source_filename": "cunda_04.jpg", "summary": "Whitewashed street with blue shutters"},
+    {"source_filename": "cunda_05.jpg", "summary": "Old windmill on a hill above the town"},
+    {"source_filename": "cunda_06.jpg", "summary": "Turquoise cove with rocks"},
+    {"source_filename": "cunda_07.jpg", "summary": "Ice cream cones in front of a shop"},
+    {"source_filename": "cunda_08.jpg", "summary": "Two friends smiling on the promenade"},
+    {"source_filename": "cunda_09.jpg", "summary": "Sunset over the sea"},
+    {"source_filename": "cunda_10.jpg", "summary": "Olive trees on a hillside"}
+  ],
+  "brief_updates": {
+    "t1": [
+      {
+        "operation": "add",
+        "kind": "text",
+        "scope": "global",
+        "literal": null,
+        "description": "An introductory explanation with facts about Cunda that show why people should go there",
+        "facts": {
+          "research": {
+            "topic": "Reasons to visit Cunda Island, Turkey",
+            "request_quote": "include some facts about Cunda to show why people should go there, an introductory explanation"
+          }
+        }
+      },
+      {
+        "operation": "add",
+        "kind": "text",
+        "scope": "title",
+        "literal": null,
+        "description": "a hook about it being a must visit spot with great food, town and sea"
+      }
+    ],
+    "t5": [
+      {
+        "operation": "change",
+        "target_requirement_id": "r1",
+        "kind": "text",
+        "scope": "global",
+        "literal": "Cunda is home to historical building, old churches, great restaurants and amazing beaches",
+        "description": "The introductory explanation about Cunda, in the creator's words"
+      }
+    ]
+  },
+  "strategy": {
+    "pacing": "balanced",
+    "direction": "fast_montage",
+    "edit_format": "montage",
+    "rationale": "A 30-second introduction to Cunda Island: the hook opens on the causeway drive, then the old town, the food and the sea, with a short explanation of why it is worth the trip.",
+    "caption_style": "auto",
+    "audio_strategy": "original_audio",
+    "montage_audio": {"source_media_ids": [], "preview_source_beds": false, "preserve_source_audio": true},
+    "story_structure": ["Arriving over the causeway", "The old town", "The food", "The sea"],
+    "target_duration_s": 30.0,
+    "selected_media_ids": [],
+    "media_scope": "all",
+    "video_reuse_policy": "once",
+    "optional_treatments": []
+  },
+  "intro_caption": {
+    "main_creator": {
+      "intent_id": "cunda-intro",
+      "op": "caption",
+      "attribute": "Cunda Island introductory explanation",
+      "creator_text": null,
+      "caption_attribute": "facts about Cunda that show why people should go there",
+      "position": null
+    },
+    "clip_intent_planner": {
+      "intent_id": "cunda-intro",
+      "op": "caption",
+      "attribute": "Cunda Island introductory explanation",
+      "creator_text": null,
+      "caption_attribute": "facts about Cunda that show why people should go there",
+      "source_quote": "include some facts about Cunda to show why people should go there, an introductory explanation"
+    },
+    "resolver": {
+      "intent_id": "cunda-intro",
+      "subjects": ["a car crossing the causeway onto the island"],
+      "evidence": "the arrival over the causeway opens the trip",
+      "caption": "Cunda: Greek-era churches, tavernas and quiet Aegean coves"
+    },
+    "vision_answer": "a road over the sea"
+  },
+  "butcher_caption": {
+    "main_creator": {
+      "intent_id": "butcher-counter",
+      "op": "caption",
+      "attribute": "the butcher shot",
+      "creator_text": "The butcher's counter",
+      "caption_attribute": null,
+      "position": null
+    },
+    "clip_intent_planner": {
+      "intent_id": "butcher-counter",
+      "op": "caption",
+      "attribute": "the butcher shot",
+      "creator_text": "The butcher's counter",
+      "caption_attribute": null,
+      "source_quote": "label the butcher shot 'The butcher's counter'"
+    },
+    "resolver": {
+      "intent_id": "butcher-counter",
+      "subjects": ["a butcher's counter in the town market"],
+      "evidence": "the record shows a butcher's counter in the market"
+    },
+    "brief_update": {
+      "operation": "add",
+      "kind": "text",
+      "scope": "per_clip",
+      "literal": "The butcher's counter",
+      "description": "the butcher shot"
+    }
+  },
+  "research": {
+    "facts": [
+      ["Cunda Island lies off Ayvalik and is joined to the mainland by a causeway.", "https://balikesir.ktb.gov.tr/cunda-adasi", "Cunda Adasi"],
+      ["Cunda Island's Taksiyarhis church is a 19th-century Greek Orthodox church that now opens as a museum.", "https://www.turkishmuseums.com/museum/detail/taksiyarhis", "Taksiyarhis Monument Museum"]
+    ],
+    "caption": {"text": "Cunda Island: joined to Ayvalik by a causeway", "context_label": "Cunda Island", "evidence_ids": ["fact-0"]}
+  }
+}
