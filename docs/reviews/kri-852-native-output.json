@@ -1,0 +1,247 @@
+{
+  "schema_version": 1,
+  "claim": "local_fix",
+  "issue": "KRI-852",
+  "implementation_sha": "d682bcab41afe4285527048ba7be714380ef2627",
+  "verified_source_trees": {
+    "api_app": "376a79acd51eed912646fc05f88cb70a7a802a08",
+    "ios": "2abd01ee7b0916dc2db10691f816243aa80b8dc2"
+  },
+  "evidence_type": "Constructed cleaned synthetic Talking QA; scratch Postgres Save/reopen and macOS AVFoundation native output. Original physical iPhone acceptance remains KRI-771.",
+  "artifact_directory": "/Users/emirerben/.codex/visualizations/2026/10/23/01a16750-30f9-7cd1-b2e8-7560519bbd1f/kri852/verified",
+  "source": {
+    "sha256": "b4d825ce0b381f2a66385815d77d51322de3f63e3b2d3871532840234e644ef2",
+    "bytes": 6568984,
+    "retained_word_evidence_sha256": "76769a5bb955de00c3dccc313a40694144072576a42096190794554f9f43d652",
+    "font_sha256": "3133e71e9ef5de172c374f43daa0c10a5609b99f2fb78a03ff0622ca58b7c36f"
+  },
+  "stages": {
+    "delete": {
+      "wrong_source_same_clock_audio_max_correlation": 0.008810555265718143,
+      "source_title_verified": true,
+      "duration_s": 14.788333,
+      "expected_duration_s": 14.788,
+      "caption_words": 22,
+      "wrong_segment_same_timing_rejected": true,
+      "segments": [
+        {
+          "source_start": 0,
+          "length": 7,
+          "zero_delay_correlation": 0.9995728491133876,
+          "correlation_at_measured_delay": 0.9995728491133876,
+          "delay_s": 0.0,
+          "maximum_allowed_delay_s": 0.001,
+          "picture_mae": 0.7434419191919192
+        },
+        {
+          "source_start": 18,
+          "length": 7.788,
+          "zero_delay_correlation": 0.9429588897533261,
+          "correlation_at_measured_delay": 0.9828881779424663,
+          "delay_s": -6.25e-05,
+          "maximum_allowed_delay_s": 0.001,
+          "picture_mae": 0.7146329966329966
+        }
+      ],
+      "sha256": "221855655dbf73350b3c5f371db0138a0f34bf0245b668fd18cd24decc900786",
+      "bytes": 11695148
+    },
+    "trim": {
+      "wrong_source_same_clock_audio_max_correlation": 0.008810555265718143,
+      "source_title_verified": true,
+      "duration_s": 11.5,
+      "expected_duration_s": 11.5,
+      "caption_words": 19,
+      "wrong_segment_same_timing_rejected": true,
+      "segments": [
+        {
+          "source_start": 0,
+          "length": 7,
+          "zero_delay_correlation": 0.9995728491133876,
+          "correlation_at_measured_delay": 0.9995728491133876,
+          "delay_s": 0.0,
+          "maximum_allowed_delay_s": 0.001,
+          "picture_mae": 0.7434419191919192
+        },
+        {
+          "source_start": 20.8,
+          "length": 4.5,
+          "zero_delay_correlation": 0.9492095996157441,
+          "correlation_at_measured_delay": 0.985017867867682,
+          "delay_s": -6.25e-05,
+          "maximum_allowed_delay_s": 0.001,
+          "picture_mae": 1.8588421717171717
+        }
+      ],
+      "sha256": "63bce424d546f621f70941452665882d36c2614de5acd566ad51c2b106218986",
+      "bytes": 8512595
+    },
+    "slide": {
+      "wrong_source_same_clock_audio_max_correlation": 0.008810555265718143,
+      "source_title_verified": true,
+      "duration_s": 11.5,
+      "expected_duration_s": 11.5,
+      "caption_words": 19,
+      "wrong_segment_same_timing_rejected": true,
+      "segments": [
+        {
+          "source_start": 0,
+          "length": 7,
+          "zero_delay_correlation": 0.9995728491133876,
+          "correlation_at_measured_delay": 0.9995728491133876,
+          "delay_s": 0.0,
+          "maximum_allowed_delay_s": 0.001,
+          "picture_mae": 0.7434419191919192
+        },
+        {
+          "source_start": 20.5,
+          "length": 4.5,
+          "zero_delay_correlation": 0.9490601322611955,
+          "correlation_at_measured_delay": 0.9850089936328781,
+          "delay_s": -6.25e-05,
+          "maximum_allowed_delay_s": 0.001,
+          "picture_mae": 1.946094696969697
+        }
+      ],
+      "sha256": "d527d8340822f67b5a3aa1fada36739d6491251cc86c299d50e991700a9cf990",
+      "bytes": 8560151
+    },
+    "combined": {
+      "wrong_source_same_clock_audio_max_correlation": 0.015147196349757254,
+      "source_title_verified": true,
+      "duration_s": 11.5,
+      "expected_duration_s": 11.5,
+      "caption_words": 19,
+      "wrong_segment_same_timing_rejected": true,
+      "segments": [
+        {
+          "source_start": 20.5,
+          "length": 4.5,
+          "zero_delay_correlation": 0.9492221208312523,
+          "correlation_at_measured_delay": 0.9850113996130214,
+          "delay_s": -6.25e-05,
+          "maximum_allowed_delay_s": 0.001,
+          "picture_mae": 2.046570707070707
+        },
+        {
+          "source_start": 0,
+          "length": 7,
+          "zero_delay_correlation": 0.9996564639704818,
+          "correlation_at_measured_delay": 0.9996564639704818,
+          "delay_s": 0.0,
+          "maximum_allowed_delay_s": 0.001,
+          "picture_mae": 0.643587962962963
+        }
+      ],
+      "sha256": "36041528ee410b2210a0d5d1761bf41b9fccfb639bb50ccf4c0cd880d98a8445",
+      "bytes": 9014656
+    }
+  },
+  "commands": {
+    "incident": "DATABASE_URL=postgresql://emirerben@localhost:5432/nova_kri_852_speech_editor_test python3 scripts/reliability-gates.py run kri-852-speech-editor",
+    "native": "xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation -destination 'platform=iOS Simulator,id=8F9AAA8A-67F5-4A0C-A9D1-8F03041F0116' -derivedDataPath /private/tmp/nova-kri-852-speech-editor/.dev/kri852/DerivedData CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO -only-testing:KriaTests/NativeSpeechTimelineTests -only-testing:KriaTests/NativeEditorSessionTests -only-testing:KriaTests/NativeEditorRenderCompilerTests -only-testing:KriaTests/NativeEditorSourcesTests -only-testing:KriaTests/EditorSaveMatrixTests -only-testing:KriaTests/EditorSaveCodeCatalogTests test",
+    "export": ".dev/kri852/export-build/debug/ModelExport /Users/emirerben/.codex/visualizations/2026/10/23/01a16750-30f9-7cd1-b2e8-7560519bbd1f/kri852/verified/requests.json",
+    "verify": "src/apps/api/.venv/bin/python .dev/kri852/verify-exports.py /Users/emirerben/.codex/visualizations/2026/10/23/01a16750-30f9-7cd1-b2e8-7560519bbd1f/kri852/verified"
+  },
+  "checks": {
+    "api_adjacent_passed": 338,
+    "final_incident_passed": 159,
+    "durable_postgres_passed": 26,
+    "environment_skips": 0,
+    "native_passed": 320,
+    "native_xcresult": ".dev/kri852/DerivedData/Logs/Test/Test-Kria-2026.10.23_09-38-39-+0300.xcresult",
+    "caption_contact_sheet_inspected": true,
+    "title_inspected": true,
+    "source_audio_clock_filter": "aresample=async=1:min_hard_comp=0.000001:first_pts=0",
+    "maximum_audio_delay_s": 0.001,
+    "minimum_audio_correlation": 0.95,
+    "maximum_picture_roi_mae": 15,
+    "source_pool_representation_case": {
+      "seconds": 300,
+      "slots": 120,
+      "words": 1500,
+      "serialized_basis_less_than_bytes": 300000
+    }
+  },
+  "mandatory_web_check": {
+    "full_make_exit": "nonzero",
+    "jest_passed": 209,
+    "desktop_first_passed": 21,
+    "desktop_first_failed": 7,
+    "unchanged_sequential_retry_passed": 7,
+    "mobile_stage": "not reached",
+    "root_cause": "unproven; observed timeout/aborted/detached navigation",
+    "web_code_changes": false,
+    "further_browser_investigation": "not authorized under standing iPhone scope"
+  },
+  "pending": [
+    "KRI-771 original physical iPhone Save/reopen/export",
+    "Combined #1761 resolver/exact endpoint/speed export after that independent change lands",
+    "Full remote CI and normal merge/deploy review"
+  ],
+  "file_hashes": {
+    "verified/assets.json": "1e32bc1da034f6a70b05fe056fc42cfc26c473bf49e22b7d78bbebdb40f85b03",
+    "verified/caption-contact.jpg": "100a4e3049d335c0e5b79a0f5e68e73ae18956683032e2d94a31d56ba9fc0c82",
+    "verified/combined/caption-0.png": "f6bf5c7c0a0fd83c0bda13bd18d54e79e35ffdcbb3ae1b148f133c76d90f8cd3",
+    "verified/combined/caption-1.png": "17d30002d02b14cdcf4841ddb648b421d2aaf1f2b6337ff6395fe32ae037db9b",
+    "verified/combined/caption-2.png": "f4311a0ed46a1c9f4bee302217f35a4eb641fb7b4498eabcf38ea750253b9f4b",
+    "verified/combined/caption-3.png": "1a9f413728111c897a59f179a0e05c0d80218b4f443411abd7335a3ed6e5b9a3",
+    "verified/combined/caption-4.png": "8edc4253a9f09c71ca88db91f2173d10f4a75b07db5e1362d08c22c68479a0f9",
+    "verified/combined/export.mp4": "36041528ee410b2210a0d5d1761bf41b9fccfb639bb50ccf4c0cd880d98a8445",
+    "verified/combined/picture-1.png": "8df4aa8699906dd21b7452adacac07b196431470a761f029f39cb65266c2066a",
+    "verified/combined/picture-2.png": "4149294cad1a545d1467e2e4d4216b7af1a9e61edab05c3b61bf1f3e73f676a7",
+    "verified/combined/reference-1.png": "a2fb28fff199afd469e1b7dbc2a45fb73ced484ae75b4f279c575797a25c1a83",
+    "verified/combined/reference-2.png": "8297e33329b19cd47aee78fcd47ed8f05415fb514d3ab7589d502ca41cd5b00f",
+    "verified/combined/state/kri852-combined.json": "a26b3a1fa731afd3615fafab8a24707ed3cafd7c63e62540f24d01850fa39e0e",
+    "verified/combined-identity.json": "860758368789984a1dcf0c150e3188a7333b56b642778ebf843d197faeb5ba95",
+    "verified/combined-recipe.json": "80146bec75be55c5c125cfcb6c9dae5d034496dafef6d80219c2838383969d1b",
+    "verified/combined-saved-sections.json": "e44ad754f7c98baf47c21ba337b7d30ec86ff49014fdd9083117bb3cf71400ce",
+    "verified/delete/caption-0.png": "03bcde8784d7e24c027caeef63042f161588c61d1ccea21f80f1a93fb8785c2b",
+    "verified/delete/caption-1.png": "577f4eae7be1b11376909e6c67e7cf3f34a72f0f7132dce3a0cee5e52c8eddf0",
+    "verified/delete/caption-2.png": "b6163ead641c50f9a29d72ac11b5d8de12d69915854ac5237972f2d19915191b",
+    "verified/delete/caption-3.png": "9fc8782b360307fc263ebeba29a802413eb7b2381d2bcaf30313caa0dbefd540",
+    "verified/delete/caption-4.png": "727d6198b8f01abe08420724ea15cecb808d400d6ff61bc6c2a97e3cf4ea95d2",
+    "verified/delete/caption-5.png": "a9c8f2ae6c1aaace03d887c3704fc3b7640755c91e5e2578786d689b9f8848b5",
+    "verified/delete/export.mp4": "221855655dbf73350b3c5f371db0138a0f34bf0245b668fd18cd24decc900786",
+    "verified/delete/picture-1.png": "825c466fdfa989f23c841b0fdcfc5d9d1f37812f9e1f5f16ae477b37ac4b9427",
+    "verified/delete/picture-2.png": "e1a4ebf36d6c5e8d48d40a999f2cc591adff6b43d0dd440f2ee093acd420d0e8",
+    "verified/delete/reference-1.png": "8297e33329b19cd47aee78fcd47ed8f05415fb514d3ab7589d502ca41cd5b00f",
+    "verified/delete/reference-2.png": "55fbee0cfb9203501c14f5d8fefee8407720278032952672e9c4c07465766bca",
+    "verified/delete/state/kri852-delete.json": "5cc804db64a5089994a67c1ebe9723664d8cc89f980f80b59b5ffe3b04be716f",
+    "verified/delete-identity.json": "937a95d4c790021ca307e3bd4bc43af42dae2fd10d68a49c9ac241b4c216ae10",
+    "verified/delete-recipe.json": "952d69f132d0ce3065573117c3bff62ca1960cf653758b560912b7f4f1b7d4d2",
+    "verified/delete-saved-sections.json": "c2db330aea0cc1a1924c890202e81e4d1adf1bd4dd4bea2014bd0eba8a4d106f",
+    "verified/requests.json": "ad1c501cf3056144db7d5766a14b3a8881934e7ac6477a2fb9fc0d11c524ca05",
+    "verified/requests.results.json": "e4db574f876bc13b6519a188b1ae71f293cd06d4e02c19bf8054b7acbebf3bb3",
+    "verified/slide/caption-0.png": "03bcde8784d7e24c027caeef63042f161588c61d1ccea21f80f1a93fb8785c2b",
+    "verified/slide/caption-1.png": "577f4eae7be1b11376909e6c67e7cf3f34a72f0f7132dce3a0cee5e52c8eddf0",
+    "verified/slide/caption-2.png": "b6163ead641c50f9a29d72ac11b5d8de12d69915854ac5237972f2d19915191b",
+    "verified/slide/caption-3.png": "344b386b0ff78535c8a73e151b00f5d2a7325a434c528ad5e1604b2f7a170db1",
+    "verified/slide/caption-4.png": "995a9927e9a47c546f99b540c252a99a983002bc4aa3165bc77f24e9975faed5",
+    "verified/slide/export.mp4": "d527d8340822f67b5a3aa1fada36739d6491251cc86c299d50e991700a9cf990",
+    "verified/slide/picture-1.png": "825c466fdfa989f23c841b0fdcfc5d9d1f37812f9e1f5f16ae477b37ac4b9427",
+    "verified/slide/picture-2.png": "7cd83972bd30bed33c8dcaced7447a5feb213de19220ddb726ce791d71642c61",
+    "verified/slide/reference-1.png": "8297e33329b19cd47aee78fcd47ed8f05415fb514d3ab7589d502ca41cd5b00f",
+    "verified/slide/reference-2.png": "a2fb28fff199afd469e1b7dbc2a45fb73ced484ae75b4f279c575797a25c1a83",
+    "verified/slide/state/kri852-slide.json": "dad5ca6a59b6134f7424ca16b02eec94af8de273b77a74ccb0c172dc707ddcc1",
+    "verified/slide-identity.json": "d866345c9f089fde14e8c0a6de99bfd7eaa5a0fd63e06e5eb79e63c7f203d69f",
+    "verified/slide-recipe.json": "ed5c6e07f178957789152c0d1324ff495ab89dc0a325e062d3d4a480c0c64246",
+    "verified/slide-saved-sections.json": "d9c8c57169a9af80fe3768a3dd563a941080f29f8b3c3f9b260899d4715d5a35",
+    "verified/source-evidence.json": "ca89fc561eb39aed17ae6f53a22cc6fa320d736f69e5f290aa78ea95a5705179",
+    "verified/trim/caption-0.png": "03bcde8784d7e24c027caeef63042f161588c61d1ccea21f80f1a93fb8785c2b",
+    "verified/trim/caption-1.png": "577f4eae7be1b11376909e6c67e7cf3f34a72f0f7132dce3a0cee5e52c8eddf0",
+    "verified/trim/caption-2.png": "b6163ead641c50f9a29d72ac11b5d8de12d69915854ac5237972f2d19915191b",
+    "verified/trim/caption-3.png": "47a3b126b34cb4c68b95bae980261f7087cb64cf80b7e8f577da65e7af5c4792",
+    "verified/trim/caption-4.png": "b776e7b8004c175bf82e0e6ed41a60fa9a3da59e45296465e6fe60a91e2b372f",
+    "verified/trim/export.mp4": "63bce424d546f621f70941452665882d36c2614de5acd566ad51c2b106218986",
+    "verified/trim/picture-1.png": "825c466fdfa989f23c841b0fdcfc5d9d1f37812f9e1f5f16ae477b37ac4b9427",
+    "verified/trim/picture-2.png": "bd9e44ac9312f6f9ceec73f8672c574493de868a9b344738d9e41e27a143d2a7",
+    "verified/trim/reference-1.png": "8297e33329b19cd47aee78fcd47ed8f05415fb514d3ab7589d502ca41cd5b00f",
+    "verified/trim/reference-2.png": "1c2e16cbe3dea255a35c21038045c8f88723857aa6dfe09717a6be4cdab5a69d",
+    "verified/trim/state/kri852-trim.json": "5aab4a84310b6680145e18e23f1b6dd03e7dcbcb34cbaf560ec72a0e8ff28870",
+    "verified/trim-identity.json": "73a949128d7c18839588568140ad0582e9ad75443386263613d64bcfda65f736",
+    "verified/trim-recipe.json": "860d76748d77c3e1d8fa3c312b62de98781a5123b7cb19488ee8300f3270796a",
+    "verified/trim-saved-sections.json": "6e9fbde553e5e718c2946db6eccdce0e02e892f6946beed77197e0763d0fc2aa",
+    "verified/verification.json": "d4aff82a84272c2327d9852e6bd3e57c86d862882de25109cedf60c176ffed01"
+  }
+}

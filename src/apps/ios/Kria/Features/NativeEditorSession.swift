@@ -2808,7 +2808,8 @@ struct NativeEditorTemporaryVideo {
     static func isPermanentSourcePreviewFailure(_ error: Error) -> Bool {
         switch error {
         case NativeEditorRenderError.missingVideoTrack, NativeEditorRenderError.unsupportedLane,
-             NativeEditorRenderError.missingFont, NativeEditorRenderError.tooManyTextLayers:
+             NativeEditorRenderError.missingFont, NativeEditorRenderError.tooManyTextLayers,
+             NativeEditorRenderError.missingSpeechCaptionTiming:
             return true
         default:
             return false
@@ -2821,6 +2822,8 @@ struct NativeEditorTemporaryVideo {
             return "This video changed while it was loading. Retry to load the newest version."
         case APIError.sessionExpired:
             return "Sign in again to load the source videos."
+        case NativeEditorRenderError.missingSpeechCaptionTiming:
+            return "Your range is kept. Add captions for the newly exposed speech, turn captions off, or restore the previous range before exporting."
         case NativeEditorRenderError.unsupportedLane:
             return "This edit contains an effect that iPhone preview does not support yet."
         case NativeEditorRenderError.missingFont:
@@ -3839,9 +3842,6 @@ struct NativeEditorTemporaryVideo {
     /// translations cannot be applied repeatedly to an already-trimmed clip.
     func beginTrim(clipID: UUID, edge: NativeTrimEdge) {
         guard canEditTimeline, draft.clips.contains(where: { $0.id == clipID }) else { return }
-        // KRI-770: the server pins a talking-source slot's window to its approved cut and answers any
-        // change with 409 TIMELINE_STALE, so the handle must not start a gesture that can never save.
-        if let index = clipSlotIndex(clipID.uuidString), Self.isTalkingSourceSlot(document.clips[index]) { return }
         activeTrim = ActiveTrim(
             clipID: clipID,
             edge: edge,
@@ -3924,11 +3924,6 @@ struct NativeEditorTemporaryVideo {
     static func explicitPlaybackRate(_ slot: EditorTimelineSlot) -> Double {
         if let explicit = slot.raw["playback_rate"]?.numberValue, explicit.isFinite, explicit > 0 { return explicit }
         return 1
-    }
-
-    /// Slots cut from the approved talking take: the server rejects any window change on them.
-    static func isTalkingSourceSlot(_ slot: EditorTimelineSlot) -> Bool {
-        slot.id?.hasPrefix("native-phone-talking-source") == true
     }
 
     func endTrim() {
@@ -4037,7 +4032,10 @@ struct NativeEditorTemporaryVideo {
     }
     func setClipTiming(clipID: String, inS: Double? = nil, durationS: Double? = nil, durationBeats: Int? = nil) {
         mutateClip(clipID: clipID) { slot in
-            if let inS { slot.inS = max(0, inS) }
+            if let inS {
+                if abs(inS - slot.inS) > 1e-9 { slot.raw["source_start_locked"] = .bool(true) }
+                slot.inS = max(0, inS)
+            }
             if let durationS { slot.durationS = max(minimumClipDuration, durationS) }
             if let durationBeats { slot.durationBeats = durationBeats }
             if inS != nil || durationS != nil {
@@ -6342,6 +6340,7 @@ struct NativeEditorTemporaryVideo {
         var next = document; body(&next)
         if !next.clips.isEmpty { next.editorState = "renderable" }
         guard next != document else { return }
+        NativeSpeechTimelineProjection.acknowledgeCaptionEdits(&next, from: document)
         rebaseGuidedLabels(&next, from: document)
         invalidateDurationSources(for: sections)
         if transactionBaseline == nil { appendUndo(document); redoStack.removeAll() }
@@ -7148,6 +7147,7 @@ struct NativeEditorTemporaryVideo {
     /// then differs from the clean document and is saved alongside `timeline_slots`.
     /// No-op unless a window actually moved and the text lane is editable.
     private func rebaseGuidedLabels(_ next: inout EditorDocument, from previous: EditorDocument) {
+        if NativeSpeechTimelineProjection.rebase(&next, from: previous) { return }
         let freeText = ridesGuidedTimeline
         guard GuidedLabelRebase.hasLabels(next.textElements, includeFreeText: freeText), canEditSection(.text),
               previous.clips != next.clips else { return }

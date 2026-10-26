@@ -393,3 +393,72 @@ def test_trailing_cut_drops_lanes_on_the_unplayed_tail() -> None:
         {"id": "clamped", "start_s": 7.5, "end_s": 8.0},
         {"id": "past-the-end", "at_s": 8.5},
     ]
+
+
+def test_authored_speech_occurrences_match_native_fractional_fixture():
+    import json
+    from pathlib import Path
+
+    from app.pipeline.speech_cut_state import (
+        authored_speech_windows,
+        reproject_authored_speech_records,
+    )
+
+    path = (
+        Path(__file__).resolve().parents[5]
+        / "src/apps/ios/Tests/Fixtures/speech_editor_projection.json"
+    )
+    fixture = json.loads(path.read_text())
+    for key in ("old", "new"):
+        actual = authored_speech_windows(fixture[f"{key}_slots"])
+        for window, expected in zip(actual, fixture[f"{key}_windows"], strict=True):
+            assert (window["start"], window["end"]) == pytest.approx(expected, abs=1e-10)
+    assert (
+        reproject_authored_speech_records(
+            fixture["records"], old_slots=fixture["old_slots"], new_slots=fixture["new_slots"]
+        )
+        == fixture["expected"]
+    )
+
+
+def test_authored_speech_exact_source_end_does_not_caption_the_held_tail():
+    import json
+    from pathlib import Path
+
+    from app.pipeline.speech_cut_state import reproject_authored_speech_records
+
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[5]
+            / "src/apps/ios/Tests/Fixtures/speech_editor_projection.json"
+        ).read_text()
+    )["exact_source_end"]
+    assert (
+        reproject_authored_speech_records(
+            fixture["records"],
+            old_slots=fixture["old_slots"],
+            new_slots=fixture["new_slots"],
+            captions=True,
+        )
+        == fixture["expected"]
+    )
+
+
+def test_authored_relative_word_timings_follow_trimmed_source():
+    import json
+    from pathlib import Path
+
+    from app.pipeline.speech_cut_state import reproject_authored_speech_records
+
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[5]
+            / "src/apps/ios/Tests/Fixtures/speech_editor_projection.json"
+        ).read_text()
+    )["relative_word_timings"]
+    assert (
+        reproject_authored_speech_records(
+            fixture["records"], old_slots=fixture["old_slots"], new_slots=fixture["new_slots"]
+        )
+        == fixture["expected"]
+    )

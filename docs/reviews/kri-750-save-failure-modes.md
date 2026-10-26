@@ -179,6 +179,48 @@ Only the exact shape the server minted (`^cs-[A-Za-z0-9_-]{1,12}-\d+$`) is read 
 any other unknown id stays stale. The app drops the id of a staged-draft clip that matches no saved
 clip. `editor_commit_stale_slot` logs the offending id.
 
+## 12. Window or order changes on a Talking speech segment (KRI-852)
+
+A phone Talking edit with a speech cleanup shows one clip per kept segment
+(`native-phone-talking-source*`, `editor_deletion_timeline`). The first whole-segment Delete stages
+an authored timeline. Before #1770, `prepare_authored_editor_commit` then pinned every segment to
+its approved window (any Range/slide answered 409 `TIMELINE_STALE`) and a reorder saved with the
+caption cues left on the pre-move clock. #1770 removes the window pin and projects every timed
+lane through the segment's source occurrence (`speech_cut_state`, `NativeSpeechTimelineProjection`).
+The rows below were first written for the stopgap #1788 (which greyed the controls out); they now
+check that editing works. Failure modes they pin:
+
+1. **Delete the middle segment**: its caption must disappear, and every later caption must move
+   up with its clip; nothing may stay on the pre-delete clock.
+2. **Range sheet** (`setSourceWindow`) writes a shorter window on a segment: the Save is accepted,
+   the window persists, and the caption keeps only the speech still inside the window.
+3. **"Slide source later"** (`slideSourceWindow`) moves the source start into speech that has no
+   transcript here: the Save is kept exactly (protocol 2, what the iPhone sends), the caption follows
+   the part still covered, and `speech_timing_unresolved` makes export ask for captions or the
+   previous range instead of playing unknown speech under old captions.
+4. **Reorder** (`moveClip`, "Move earlier/later"): the swap saves and every caption travels with its
+   source occurrence.
+5. **The genuine protections stay**: a stale generation, a foreign slot, a changed source and an
+   out-of-bounds window are still refused atomically (`test_talking_authored_negative_controls_are_atomic`).
+6. **The KRI-770 trim test must target the real clip id** (renaming a slot after the session is
+   built mints a new clip id, so the old test never reached the guard it claimed to test); the
+   session rows here come from a server snapshot, as on a real load.
+
+| Row id | Shape | Outcome |
+| --- | --- | --- |
+| `talking-segment-delete-moves-later-captions` | delete the middle of three segments | ok; kept windows unchanged; cues `one` 0-1.5 and `three` 2.0-4.5, `two` gone |
+| `talking-segment-range-saves-and-clips-caption` | delete one, then a shorter window on the last | ok; window 7.5 + 2.5 saved; `three` 2.0-4.0 |
+| `talking-segment-slide-saves-and-flags-untranscribed-speech` | delete one, then slide the first 0.5 s later | ok; window 0.5 + 2 saved; `one` 0-1.0; `speech_timing_unresolved` |
+| `talking-segment-reorder-moves-captions-with-clips` | delete one, then swap the other two | ok; `three` 0-2.5 then `one` 3.0-4.5 |
+
+Phone side (`NativeEditorSessionTests`, `testTalkingSegment*`): on a session whose slots and cues
+come from the server snapshot, Delete drops the middle caption and moves the later one (one undo
+step restores both), Range and slide/timing write the window with `source_start_locked`, a slide into
+untranscribed speech sets `requiresCaptionTiming`, and a moved segment's caption moves with it.
+
+Phrase cutting is KRI-724. Chat edit ops that stage a window on a talking-source slot were not
+checked here.
+
 ## Not covered here on purpose
 
 * Cloud-rendered (non-device) Save: separate contract, separate tests (`test_editor_commit.py`).

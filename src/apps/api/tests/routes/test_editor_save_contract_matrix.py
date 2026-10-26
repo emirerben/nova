@@ -46,6 +46,7 @@ from tests.routes._editor_save_matrix import (
     NULL_ROLE_TEXT_ID,
     ORDER,
     SOURCE_S,
+    TALKING_CUES,
     TITLE,
     VARIANT,
     Edit,
@@ -60,6 +61,7 @@ from tests.routes._editor_save_matrix import (
     phone_retimed_lane,
     requirements,
     run_save,
+    talking_segment_save,
     title_edit_lane,
 )
 
@@ -267,6 +269,71 @@ def _slides_untouched(outcome: Outcome) -> None:
     variant = outcome.job.assembly_plan["variants"][0]
     assert variant["render_status"] == "ready"
     assert "text_elements" not in variant
+
+
+# --- phone Talking speech segments after the first Delete (KRI-852) ------------------------
+# Output clock of the cleaned take: segment windows [0, 2), [2, 5), [5, 8) carry source
+# [0, 2), [3, 6), [7, 10); cues "one" 0-1.5, "two" 2-4.5, "three" 5-7.5 (TALKING_CUES).
+
+
+def _saved_talking_windows(outcome: Outcome) -> list[tuple[str, float, float]]:
+    slots = outcome.variant["user_timeline"]["slots"]
+    return [(s["slot_id"], s["in_s"], s["duration_s"]) for s in slots if not s.get("removed")]
+
+
+def _saved_talking_cues(outcome: Outcome) -> list[tuple[str, float, float]]:
+    return [
+        (c["text"], round(c["start_s"], 3), round(c["end_s"], 3))
+        for c in outcome.variant["caption_cues"]
+    ]
+
+
+def _talking_delete_moves_later_captions(outcome: Outcome) -> None:
+    # The kept segments keep their source windows; the deleted segment's caption is gone and
+    # the caption after it moved up with its clip (5-7.5 -> 2-4.5). Nothing stays on the
+    # pre-delete clock.
+    assert _saved_talking_windows(outcome) == [
+        ("native-phone-talking-source", 0.0, 2.0),
+        ("native-phone-talking-source-2", 7.0, 3.0),
+    ]
+    assert _saved_talking_cues(outcome) == [("one", 0.0, 1.5), ("three", 2.0, 4.5)]
+    assert not outcome.variant.get("speech_timing_unresolved")
+    assert len(TALKING_CUES) == 3
+
+
+def _talking_range_saves_and_clips_caption(outcome: Outcome) -> None:
+    # The Range sheet shortened the last segment to source [7.5, 10): its caption keeps only
+    # the spoken part still in the window (source 7.5-9.5 -> output 2.0-4.0).
+    assert _saved_talking_windows(outcome) == [
+        ("native-phone-talking-source", 0.0, 2.0),
+        ("native-phone-talking-source-2", 7.5, 2.5),
+    ]
+    assert _saved_talking_cues(outcome) == [("one", 0.0, 1.5), ("three", 2.0, 4.0)]
+    assert not outcome.variant.get("speech_timing_unresolved")
+
+
+def _talking_slide_saves_and_flags_untranscribed_speech(outcome: Outcome) -> None:
+    # "Slide source later" moved the first segment to source [0.5, 2.5). The Save is kept
+    # exactly; the caption follows (source 0.5-1.5 -> output 0-1.0); the newly exposed half
+    # second has no transcript here, so export asks for captions or the previous range
+    # (`speech_timing_unresolved`, the genuine protection #1770 keeps).
+    assert _saved_talking_windows(outcome) == [
+        ("native-phone-talking-source", 0.5, 2.0),
+        ("native-phone-talking-source-2", 7.0, 3.0),
+    ]
+    assert _saved_talking_cues(outcome) == [("one", 0.0, 1.0), ("three", 2.0, 4.5)]
+    assert outcome.variant.get("speech_timing_unresolved") is True
+
+
+def _talking_reorder_moves_captions_with_clips(outcome: Outcome) -> None:
+    # The swap is saved and every caption travels with its source occurrence: "three" now
+    # opens the video, "one" plays over the second clip. No word is left on the old clock.
+    assert [s[0] for s in _saved_talking_windows(outcome)] == [
+        "native-phone-talking-source-2",
+        "native-phone-talking-source",
+    ]
+    assert _saved_talking_cues(outcome) == [("three", 0.0, 2.5), ("one", 3.0, 4.5)]
+    assert not outcome.variant.get("speech_timing_unresolved")
 
 
 # --- pure-helper rows (the seam a Save leans on, pinned where it can be decided) --------------
@@ -877,6 +944,33 @@ ROWS: list[Row] = [
         # The capability map closes every lane for a slide post; Save agrees (KRI-750 fix).
         Expect(ok=False, status=422, code="slide_post_edit_unsupported", check=_slides_untouched),
     ),
+    # 12. a phone Talking speech segment after the first Delete (KRI-852) -------------------------
+    # The Delete makes the timeline authored and editable. Every window or order change on a
+    # speech segment saves, and captions follow their source occurrence (no 409, no stale clock).
+    Row(
+        "talking-segment-delete-moves-later-captions",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_delete_moves_later_captions),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "none"),
+    ),
+    Row(
+        "talking-segment-range-saves-and-clips-caption",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_range_saves_and_clips_caption),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "range"),
+    ),
+    Row(
+        "talking-segment-slide-saves-and-flags-untranscribed-speech",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_slide_saves_and_flags_untranscribed_speech),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "slide"),
+    ),
+    Row(
+        "talking-segment-reorder-moves-captions-with-clips",
+        "talking_authored",
+        Expect(ok=True, authored=True, check=_talking_reorder_moves_captions_with_clips),
+        run=lambda monkeypatch: talking_segment_save(monkeypatch, "reorder"),
+    ),
 ]
 
 
@@ -1011,3 +1105,397 @@ def test_ios_fixture_pins_the_incident_cases(monkeypatch) -> None:
     assert cases["in_point_past_the_end"]["verdict"] == "refuse"
     encode = {c["name"]: c for c in build_fixture(monkeypatch)["text_encode"]}
     assert encode["role_nil_is_sent_as_null"]["server_role"] == "generative_intro"
+
+
+# KRI-852 failure modes and six timing decisions: docs/reviews/kri-852-speech-editor.md.
+def _talking_edit_job(monkeypatch, *, job_id=None):
+    import copy
+    import uuid
+
+    from app.kria.device_render import make_device_request
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+    from app.services.device_render import pin_device_request
+    from app.services.phone_sources import PHONE_SOURCES_FIELD
+    from tests.pipeline.test_authored_timeline import binding
+
+    monkeypatch.setattr(gj.settings, "phone_rendering_enabled", True)
+    monkeypatch.setattr(gj.settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        [
+            "basicComposition",
+            "local1080Export",
+            "audioMix",
+            "positionedText",
+            "animatedText",
+            "authoredText",
+        ],
+    )
+    from app.services.phone_rollout import PHONE_SUBTITLED_EDITOR_FEATURES
+
+    monkeypatch.setattr(gj.settings, "phone_subtitled_editor_lanes_enabled", True)
+    monkeypatch.setattr(gj.settings, "phone_subtitled_media_lanes_enabled", True)
+    monkeypatch.setattr(
+        gj.settings,
+        "phone_render_verified_features",
+        list(
+            set(gj.settings.phone_render_verified_features) | set(PHONE_SUBTITLED_EDITOR_FEATURES)
+        ),
+    )
+    source = binding("old")
+    cues = [
+        {
+            "id": "a",
+            "start_s": 0,
+            "end_s": 2,
+            "text": "Alpha",
+            "words": [{"text": "Alpha", "start_s": 0.2, "end_s": 1.5}],
+        },
+        {
+            "id": "b",
+            "start_s": 2,
+            "end_s": 4,
+            "text": "Bravo",
+            "words": [{"text": "Bravo", "start_s": 2.2, "end_s": 3.5}],
+        },
+        {
+            "id": "c",
+            "start_s": 4,
+            "end_s": 8,
+            "text": "Charlie Delta",
+            "words": [
+                {"text": "Charlie", "start_s": 4.2, "end_s": 5},
+                {"text": "Delta", "start_s": 6.2, "end_s": 7.5},
+            ],
+        },
+    ]
+    variant = {
+        "variant_id": "original_text",
+        "resolved_archetype": "subtitled",
+        "render_destination": "device",
+        "render_status": "ready",
+        "render_generation_id": "first",
+        "duration_s": 8,
+        "text_mode": "none",
+        "caption_cues": copy.deepcopy(cues),
+        "text_elements": [],
+        "silence_cut": {"removed": [{"start_s": 2, "end_s": 3}, {"start_s": 5, "end_s": 8}]},
+    }
+    from types import SimpleNamespace
+
+    job = SimpleNamespace(
+        id=job_id or uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        status="variants_ready",
+        current_phase=None,
+        all_candidates={"clip_paths": [source.proxy_path]},
+        assembly_plan={
+            PHONE_SOURCES_FIELD: [source.model_dump(mode="json")],
+            "variants": [variant],
+        },
+    )
+    recipe = compile_phone_subtitled_plan((source,), caption_cues=cues)
+    pin_device_request(
+        job,
+        make_device_request(job_id=job.id, variant_id="original_text", revision=1, recipe=recipe),
+        base_generation="first",
+    )
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "preflight_snapshot": _talking_full_speech_snapshot(job)
+    }
+    return job
+
+
+def _talking_save(job, rows, *, deletions=None, generation=None, **sections):
+    from app.services.authored_editor import prepare_authored_editor_commit
+    from app.services.editor_empty_drafts import stage_initial_authored_baseline
+
+    variant = job.assembly_plan["variants"][0]
+    if variant.get("editor_timeline_mode") != "authored":
+        job = stage_initial_authored_baseline(
+            job, "original_text", gj.editor_deletion_timeline(job, variant)
+        )
+    body = gj.EditorCommitRequest(
+        base_generation=generation or gj.variant_render_baseline(variant),
+        editor_state_version=1,
+        timeline_slots=[{k: v for k, v in r.items() if v is not None} for r in rows],
+        deletions=deletions or [],
+        **sections,
+    )
+    body = gj.normalize_editor_deletion_request(job, "original_text", body)
+    prepare_authored_editor_commit(job, "original_text", body, validation_arguments={})
+    return job
+
+
+@pytest.mark.parametrize("operation", ["trim", "slide", "reorder", "combined"])
+def test_talking_delete_then_window_and_order_save(monkeypatch, operation):
+    import copy
+
+    job = _talking_edit_job(monkeypatch)
+    rows = gj.editor_deletion_timeline(job, job.assembly_plan["variants"][0])
+    job = _talking_save(job, rows, deletions=[{"kind": "clip", "id": rows[1]["slot_id"]}])
+    rows = copy.deepcopy(job.assembly_plan["variants"][0]["user_timeline"]["slots"])
+    rows = [row for row in rows if not row.get("removed")]
+    if operation in {"trim", "combined"}:
+        rows[1].update(in_s=10, duration_s=2, source_start_locked=True)
+    if operation == "slide":
+        rows[1].update(in_s=7, source_start_locked=True)
+    if operation in {"reorder", "combined"}:
+        rows.reverse()
+    job = _talking_save(job, rows)
+    variant = job.assembly_plan["variants"][0]
+    active = [row for row in variant["user_timeline"]["slots"] if not row.get("removed")]
+    assert [(r["in_s"], r["duration_s"]) for r in active] == [
+        (r["in_s"], r["duration_s"]) for r in rows
+    ]
+    cues = variant["caption_cues"]
+    assert not any("Bravo" in c["text"] for c in cues)
+    delta = next(c for c in cues if "Delta" in c["text"])
+    expected = {"trim": 2.2, "slide": 5.2, "reorder": 2.2, "combined": 0.2}[operation]
+    word = next(w for w in delta["words"] if w["text"] == "Delta")
+    assert word["start_s"] == pytest.approx(expected, abs=0.001)
+    if operation in {"trim", "combined"}:
+        assert "Charlie" not in delta["text"]
+    request = device_status(job, "original_text").request
+    assert request.recipe.duration == pytest.approx(sum(r["duration_s"] for r in active))
+    # Same-duration wrong-segment words cannot satisfy the expected source occurrence.
+    assert word["start_s"] != pytest.approx((expected + 1) % request.recipe.duration)
+
+
+@pytest.mark.parametrize("operation", ["trim", "slide"])
+def test_talking_source_words_return_after_save_and_reopen(monkeypatch, operation):
+    import copy
+
+    from app.services.editor_empty_drafts import editor_sections
+
+    job = _talking_edit_job(monkeypatch)
+    original = gj.editor_deletion_timeline(job, job.assembly_plan["variants"][0])
+    job = _talking_save(job, original, deletions=[{"kind": "clip", "id": original[1]["slot_id"]}])
+    rows = [
+        copy.deepcopy(r)
+        for r in job.assembly_plan["variants"][0]["user_timeline"]["slots"]
+        if not r.get("removed")
+    ]
+    restored = copy.deepcopy(rows)
+    rows[1].update(in_s=10, duration_s=2 if operation == "trim" else 4)
+    if operation == "slide":
+        rows[1].update(in_s=6, duration_s=4)
+    job = _talking_save(job, rows)
+    # Reopen uses a serialized copy, rather than an in-process reference to old cues.
+    job.assembly_plan = json.loads(json.dumps(job.assembly_plan))
+    sections = editor_sections(job, "original_text")
+    assert "speech_timing_basis" in sections
+    job = _talking_save(job, restored)
+    cues = job.assembly_plan["variants"][0]["caption_cues"]
+    assert next(c for c in cues if c["id"] == "c")["text"] == "Charlie Delta"
+
+
+@pytest.mark.parametrize(
+    "fault,code",
+    [
+        ("generation", "baseline_conflict"),
+        ("source", "TIMELINE_STALE"),
+        ("slot", "TIMELINE_STALE"),
+        ("bounds", "TIMELINE_OUT_OF_BOUNDS"),
+    ],
+)
+def test_talking_authored_negative_controls_are_atomic(monkeypatch, fault, code):
+    import copy
+
+    job = _talking_edit_job(monkeypatch)
+    rows = gj.editor_deletion_timeline(job, job.assembly_plan["variants"][0])
+    job = _talking_save(job, rows, deletions=[{"kind": "clip", "id": rows[1]["slot_id"]}])
+    rows = [
+        copy.deepcopy(r)
+        for r in job.assembly_plan["variants"][0]["user_timeline"]["slots"]
+        if not r.get("removed")
+    ]
+    before = copy.deepcopy(job.assembly_plan)
+    if fault == "source":
+        rows[0]["clip_index"] = 1
+    if fault == "slot":
+        rows[0]["slot_id"] += "-foreign"
+    if fault == "bounds":
+        rows[0].update(in_s=11, duration_s=2)
+    with pytest.raises(HTTPException) as caught:
+        _talking_save(job, rows, generation="stale" if fault == "generation" else None)
+    assert caught.value.detail == code or caught.value.detail.get("code") == code
+    assert job.assembly_plan == before
+
+
+def _talking_full_speech_snapshot(job, *, duration=12, words=None):
+    """Synthetic words, hydrated through the real persisted preflight contract."""
+    import uuid
+
+    from app.pipeline.transcribe import Word
+    from tests.services.test_speech_cleanup_preflight import (
+        analysis_input,
+        fake_transcript,
+        run_analysis,
+    )
+
+    fingerprint = "c" * 64
+    result = run_analysis(
+        analysis_input(
+            source_fingerprint=fingerprint,
+            duration_s=duration,
+            source_window_start_s=0,
+            source_window_end_s=duration,
+        ),
+        transcript=fake_transcript(
+            words
+            or [
+                Word("Alpha", 0.2, 1.5, 1),
+                Word("Hidden", 2.2, 2.7, 1),
+                Word("Bravo", 3.2, 4.5, 1),
+                Word("Charlie", 8.2, 9, 1),
+                Word("Delta", 10.2, 11.5, 1),
+            ]
+        ),
+        silences=(),
+    )
+    from app.services.phone_sources import PHONE_SOURCES_FIELD
+
+    source = job.assembly_plan[PHONE_SOURCES_FIELD][0]
+    return {
+        "schema_version": 1,
+        "analysis_id": str(uuid.uuid4()),
+        "engine_version": "preflight-v1-2026-09-05",
+        "detector_version": result.detector_version,
+        "source": {
+            "kind": "embedded_spine",
+            "media_identity": source["media_id"],
+            "storage_path": source["proxy_path"],
+            "generation": source["generation"],
+            "window_start_s": 0,
+            "window_end_s": duration,
+            "source_policy_fingerprint": fingerprint,
+        },
+        "analysis": result.to_payload(),
+    }
+
+
+@pytest.mark.parametrize("generation", ["1", "replaced"])
+def test_talking_newly_exposed_words_use_only_matching_source_evidence(monkeypatch, generation):
+    import copy
+
+    job = _talking_edit_job(monkeypatch)
+    snapshot = _talking_full_speech_snapshot(job)
+    snapshot["source"]["generation"] = generation
+    job.assembly_plan["_speech_cleanup_internal"] = {"preflight_snapshot": snapshot}
+    rows = gj.editor_deletion_timeline(job, job.assembly_plan["variants"][0])
+    job = _talking_save(job, rows, deletions=[{"kind": "clip", "id": rows[1]["slot_id"]}])
+    rows = [
+        copy.deepcopy(r)
+        for r in job.assembly_plan["variants"][0]["user_timeline"]["slots"]
+        if not r.get("removed")
+    ]
+    rows[0].update(in_s=1, source_start_locked=True)
+    if generation == "replaced":
+        with pytest.raises(HTTPException) as error:
+            _talking_save(job, rows)
+        assert error.value.detail["code"] == "unsupported_phone_edit"
+        assert "caption" in error.value.detail["reason"].lower()
+    else:
+        job = _talking_save(job, rows)
+        hidden = next(
+            w
+            for c in job.assembly_plan["variants"][0]["caption_cues"]
+            for w in c.get("words", [])
+            if w["text"] == "Hidden"
+        )
+        assert hidden["start_s"] == pytest.approx(1.2)
+
+
+def test_talking_creator_projected_text_and_server_captions_map_once(monkeypatch):
+    import copy
+
+    job = _talking_edit_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    variant.update(
+        text_mode="agent_text",
+        text_elements_user_edited=True,
+        text_elements=[
+            {
+                "id": "on-delta",
+                "text": "Before",
+                "start_s": 6.2,
+                "end_s": 7.5,
+                "effect": "none",
+                "font_family": "TikTok Sans",
+                "size_px": 64,
+                "position": "middle",
+                "role": "generative_intro",
+            }
+        ],
+    )
+    variant["text_elements"].append(
+        {
+            **copy.deepcopy(variant["text_elements"][0]),
+            "id": "caption-mirror",
+            "source_params": {"source": "caption_cue"},
+        }
+    )
+    rows = gj.editor_deletion_timeline(job, variant)
+    projected = [
+        {
+            **copy.deepcopy(variant["text_elements"][0]),
+            "text": "Creator changed this",
+            "start_s": 4.2,
+            "end_s": 5.5,
+        }
+    ]
+    job = _talking_save(
+        job, rows, deletions=[{"kind": "clip", "id": rows[1]["slot_id"]}], text_elements=projected
+    )
+    saved = job.assembly_plan["variants"][0]
+    title = next(t for t in saved["text_elements"] if t["id"] == "on-delta")
+    assert title["text"] == "Creator changed this"
+    assert (title["start_s"], title["end_s"]) == (4.2, 5.5)
+    delta = next(
+        w for c in saved["caption_cues"] for w in c.get("words", []) if w["text"] == "Delta"
+    )
+    assert (delta["start_s"], delta["end_s"]) == (4.2, 5.5)
+
+    assert not any(
+        (entry["record"].get("source_params") or {}).get("source") == "caption_cue"
+        for entry in saved["speech_timing_basis"].get("text_elements", [])
+    )
+
+
+def test_talking_maximum_slots_share_one_full_source_caption_pool(monkeypatch):
+    from app.pipeline.speech_cut_state import project_speech_basis
+    from app.pipeline.transcribe import Word
+    from app.services.authored_editor import speech_timing_basis_for_job
+    from app.services.editor_limits import EDITOR_MAX_TIMELINE_SLOTS
+    from app.services.phone_sources import PHONE_SOURCES_FIELD
+
+    job = _talking_edit_job(monkeypatch)
+    job.assembly_plan[PHONE_SOURCES_FIELD][0]["original"]["duration_s"] = 300
+    words = [Word(f"word{i}", i * 0.2, i * 0.2 + 0.15, 1) for i in range(1500)]
+    job.assembly_plan["_speech_cleanup_internal"] = {
+        "preflight_snapshot": _talking_full_speech_snapshot(job, duration=300, words=words)
+    }
+    slots = [
+        {
+            "slot_id": f"native-phone-talking-source-{i}",
+            "clip_index": 0,
+            "in_s": i * 2.5,
+            "duration_s": 2.5,
+            "transition_after": "cut",
+        }
+        for i in range(EDITOR_MAX_TIMELINE_SLOTS)
+    ]
+    variant = {**job.assembly_plan["variants"][0], "caption_cues": []}
+    basis = speech_timing_basis_for_job(job, variant, slots)
+    pool = basis["caption_cues"]
+    assert len(pool) == 1
+    assert len(pool[0]["source_groups"]) == EDITOR_MAX_TIMELINE_SLOTS
+    assert sum(len(c["words"]) for c in pool[0]["source_captions"]) == 1500
+    # A representation budget assertion, not a new admission limit or word cap.
+    assert len(json.dumps(basis).encode()) < 300_000
+    moved = [dict(row, in_s=297.5) for row in slots]
+    projected = project_speech_basis(pool, moved, captions=True)
+    assert projected and len(json.dumps(basis).encode()) < 300_000
+    assert all(c["end_s"] <= 300 for c in projected)

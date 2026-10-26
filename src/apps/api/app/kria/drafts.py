@@ -445,6 +445,7 @@ def _editor_snapshot(variant: dict[str, Any], generation_id: str | None) -> dict
 
     keys = (
         "text_elements",
+        "speech_timing_basis",
         "caption_cues",
         "captions_enabled",
         "caption_style",

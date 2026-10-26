@@ -41,7 +41,13 @@ def explicit_authored_slots(variant: dict) -> list[dict]:
 
 
 def prepare_authored_editor_commit(
-    job: Any, variant_id: str, payload: Any, *, validation_arguments: dict[str, Any]
+    job: Any,
+    variant_id: str,
+    payload: Any,
+    *,
+    validation_arguments: dict[str, Any],
+    phone_sfx_catalog_paths: dict[str, str] | None = None,
+    creator_brief_binding: dict | None = None,
 ) -> dict:
     """Prepare on a staging copy supplied by the saved-draft transaction.
 
@@ -84,15 +90,114 @@ def prepare_authored_editor_commit(
             raise HTTPException(422, detail={"code": "authored_source_required"})
         if row.slot_id.startswith("native-phone-talking-source"):
             baseline = canonical.get(row.slot_id)
-            if (
-                baseline is None
-                or row.clip_index != baseline["clip_index"]
-                or any(
-                    value is None or abs(float(value) - float(baseline[key])) > 1e-6
-                    for key, value in (("in_s", row.in_s), ("duration_s", row.duration_s))
-                )
-            ):
+            if baseline is None or row.clip_index != baseline["clip_index"]:
                 raise HTTPException(409, detail={"code": "TIMELINE_STALE"})
+    if (payload.timeline_slots is not None or variant.get("speech_timing_basis")) and any(
+        str(key).startswith("native-phone-talking-source") for key in canonical
+    ):
+        from app.pipeline.speech_cut_state import (
+            SPEECH_EDITOR_LANES,
+            authored_speech_texts,
+            project_speech_basis,
+            speech_basis_entry,
+            sync_speech_basis,
+        )
+        from app.services.editor_deletions import canonical_caption_rows
+
+        variant["editor_timeline_mode"] = AUTHORED_TIMELINE_MODE
+        resolved = (
+            resolve_authored_phone_slots(job, variant, payload.timeline_slots)
+            if payload.timeline_slots is not None
+            else list(canonical.values())
+        )
+        old_slots = list(canonical.values())
+        basis = speech_timing_basis_for_job(job, variant, old_slots)
+        captions_enabled = variant.get("captions_enabled", True)
+        if payload.caption_meta is not None and payload.caption_meta.enabled is not None:
+            captions_enabled = payload.caption_meta.enabled
+        unresolved = False
+        projected_cues = project_speech_basis(
+            basis.get("caption_cues", []), resolved, captions=True
+        )
+        authored_captions = payload.caption_cues is not None and (
+            canonical_caption_rows(payload.caption_cues) != projected_cues
+            or any(row.kind == "caption_cue" for row in payload.deletions)
+        )
+        if authored_captions:
+            # A creator-authored full lane replacement owns its content on this
+            # exact submitted timeline. Merely sending the automatically rebased
+            # lane does not confirm missing source words (the native client
+            # sends that lane whenever source geometry makes it dirty).
+            basis["source_windows"] = speech_basis_entry({}, resolved)["slots"]
+        elif captions_enabled and (variant.get("caption_cues") or basis.get("caption_cues")):
+            coverage = basis.get("source_windows") or old_slots
+            for row in resolved:
+                if not str(row.get("slot_id")).startswith("native-phone-talking-source"):
+                    continue
+                start = float(row["in_s"])
+                nominal_end = start + float(row["duration_s"]) * float(
+                    row.get("playback_rate") or 1
+                )
+                end = min(nominal_end, float(row.get("source_end_s") or nominal_end))
+                if not any(
+                    w.get("slot_id") == row["slot_id"]
+                    and start >= float(w["in_s"]) - 1e-6
+                    and end
+                    <= float(w["in_s"])
+                    + float(w["duration_s"]) * float(w.get("playback_rate") or 1)
+                    + 1e-6
+                    for w in coverage
+                ):
+                    unresolved = True
+        variant["speech_timing_unresolved"] = unresolved
+        if payload.text_elements is not None:
+            payload = payload.model_copy(
+                update={"text_elements": authored_speech_texts(payload.text_elements)}
+            )
+        for field in SPEECH_EDITOR_LANES:
+            current = variant.get(field)
+            if field == "text_elements" and isinstance(current, list):
+                current = authored_speech_texts(current)
+            if not isinstance(current, list):
+                continue
+            if field == "caption_cues":
+                current = canonical_caption_rows(current)
+            entries = sync_speech_basis(
+                basis.get(field), current, old_slots, captions=field == "caption_cues"
+            )
+            supplied = getattr(payload, field, None)
+            if supplied is not None:
+                if field == "caption_cues":
+                    supplied = canonical_caption_rows(supplied)
+                entries = sync_speech_basis(
+                    entries,
+                    supplied,
+                    resolved,
+                    captions=field == "caption_cues",
+                    deleted_ids={
+                        row.id
+                        for row in payload.deletions
+                        if row.kind
+                        == {
+                            "caption_cues": "caption_cue",
+                            "text_elements": "text",
+                            "sound_effects": "sound_effect",
+                            "media_overlays": "media_overlay",
+                            "visual_blocks": "visual_block",
+                            "motion_scenes": "motion_scene",
+                            "camera_effects": "camera_effect",
+                            "drawings": "drawing",
+                        }[field]
+                    },
+                )
+            basis[field] = entries
+            # Only omitted lanes need server projection. A present lane is an
+            # authored replacement on the submitted output clock, never remap twice.
+            if supplied is None:
+                variant[field] = project_speech_basis(
+                    entries, resolved, captions=field == "caption_cues"
+                )
+        variant["speech_timing_basis"] = basis
     variant["editor_timeline_mode"] = AUTHORED_TIMELINE_MODE
     if variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit
@@ -104,6 +209,8 @@ def prepare_authored_editor_commit(
                 staged, variant_id, payload, **validation_arguments
             ),
             learning_sections=payload.model_fields_set,
+            sfx_catalog_paths=phone_sfx_catalog_paths,
+            creator_brief_binding=creator_brief_binding,
         )
     else:
         prep = _prepare_editor_commit(job, variant_id, payload, **validation_arguments)
@@ -621,3 +728,94 @@ def resolve_authored_cloud_slots(
                 if row["source_gcs_path"] == path:
                     row["source_unavailable"] = True
     return resolved
+
+
+def speech_timing_basis_for_job(job: Any, variant: dict, slots: list[dict]) -> dict:
+    """Seed source anchors from existing, generation-checked speech evidence only.
+
+    Historical jobs without a full preflight transcript still retain every
+    caption they have. No read/Save may invoke transcription to fill a gap.
+    """
+    from app.pipeline.speech_cut_state import initial_speech_timing_basis, speech_basis_entry
+
+    basis = initial_speech_timing_basis(variant, slots)
+    basis.setdefault("source_windows", speech_basis_entry({}, slots)["slots"])
+    if variant.get("speech_timing_basis"):
+        return basis
+    from app.pipeline.speech_cleanup_apply import (
+        SpeechCleanupSnapshotError,
+        hydrate_job_speech_cleanup_snapshot,
+    )
+    from app.services.phone_editor_sources import phone_editor_source_revision
+
+    try:
+        snapshot = hydrate_job_speech_cleanup_snapshot(job.assembly_plan)
+        catalog = (phone_editor_source_revision(job, variant) or {})["sources"]
+        source = catalog[0]
+        snapshot.require_source(
+            kind="embedded_spine",
+            storage_path=source["gcs_path"],
+            window_start_s=0,
+            window_duration_s=float(source["duration_s"]),
+        )
+        if snapshot.generation != source["generation"]:
+            return basis
+    except (SpeechCleanupSnapshotError, KeyError, IndexError, TypeError, ValueError):
+        return basis
+    basis["source_windows"] = [
+        {
+            "slot_id": row["slot_id"],
+            "clip_index": row["clip_index"],
+            "in_s": 0,
+            "duration_s": float(source["duration_s"]),
+        }
+        for row in slots
+        if row.get("clip_index") == 0
+    ]
+    # Preserve existing corrected/creator-authored captions. Extra anchors only
+    # cover source words outside each occurrence's initial visible source window.
+    from app.pipeline.captions import PHONE_CUE_BUDGET, build_plain_cues
+
+    groups = []
+    for slot in slots:
+        if slot.get("clip_index") != 0 or not str(slot.get("slot_id")).startswith(
+            "native-phone-talking-source"
+        ):
+            continue
+        start = float(slot["in_s"])
+        end = start + float(slot["duration_s"]) * float(slot.get("playback_rate") or 1)
+        groups.append(
+            {
+                "slot": {
+                    "slot_id": slot["slot_id"],
+                    "clip_index": 0,
+                    "in_s": 0,
+                    "duration_s": float(source["duration_s"]),
+                    "transition_after": "cut",
+                },
+                "initial_start_s": start,
+                "initial_end_s": end,
+            }
+        )
+    # One shared source transcript plus one small occurrence descriptor. Never
+    # clone the full transcript for each possible source-window placement.
+    # Bound cue planning too: an unpunctuated long take is one sentence to the
+    # general caption balancer. Small word batches keep editor reads linear.
+    words = snapshot.source_words()
+    source_captions = [
+        cue
+        for offset in range(0, len(words), PHONE_CUE_BUDGET.max_words)
+        for cue in build_plain_cues(
+            words[offset : offset + PHONE_CUE_BUDGET.max_words],
+            attach_words=True,
+            budget=PHONE_CUE_BUDGET,
+        )
+    ]
+    basis.setdefault("caption_cues", []).append(
+        {
+            "source_captions": source_captions,
+            "source_groups": groups,
+            "suppressed_ids": [],
+        }
+    )
+    return basis
