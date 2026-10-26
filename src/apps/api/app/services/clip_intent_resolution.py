@@ -1161,6 +1161,30 @@ def _build_resolver_input(
     return resolver_input, alias_to_media, aliases
 
 
+def _error_type(exc: BaseException) -> str:
+    """KRI-952: a failure's class chain and HTTP status, never its message.
+
+    ``str(exc)`` can quote the creator's request or the vision question built from it, and
+    media ids are file names (KRI-536 keeps class names only for the same reason).
+    ``TerminalError<-ClientError:400`` names the runtime's wrapper and the provider error
+    it hides; the status is the innermost HTTP-like ``code`` / ``status_code``.
+    """
+    names: list[str] = []
+    status: int | None = None
+    link: BaseException | None = exc
+    for _ in range(4):
+        if link is None:
+            break
+        if not names or names[-1] != type(link).__name__:
+            names.append(type(link).__name__)
+        for attr in ("code", "status_code"):
+            value = getattr(link, attr, None)
+            if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+                status = value
+        link = link.__cause__ or (None if link.__suppress_context__ else link.__context__)
+    return "<-".join(names) + (f":{status}" if status is not None else "")
+
+
 def _failure_status_and_code(exc: BaseException) -> tuple[ResolutionStatus, str]:
     if isinstance(exc, (FileNotFoundError, OSError)) and not isinstance(exc, TimeoutError):
         return "media_unavailable", "clip_media_unavailable"
@@ -1671,6 +1695,8 @@ async def resolve_clip_intents_for_turn(
     # intents about the same chapter worded differently each pay for a check).
     # Required work only; soft re-queries are opportunistic. Redacted counts.
     vision_stats = {"cached": 0, "over_cap": 0, "deadline_cut": 0}
+    # KRI-952: why each required vision check failed (``_error_type``), for the diagnostics.
+    vision_errors: list[str] = []
     questions_by_clip: dict[str, set[str]] = {}
 
     def record_failure(candidates, error_code, works=None):
@@ -1860,6 +1886,18 @@ async def resolve_clip_intents_for_turn(
                     output = task.result()
                 except Exception as exc:  # noqa: BLE001 — classify per candidate
                     _status, error_code = _failure_status_and_code(exc)
+                    # KRI-952: Don Julio M2 round 7 failed 3 ms after the upload and said
+                    # only "vision_provider_error". Name the exception, never its message.
+                    error_type = _error_type(exc)
+                    log.warning(
+                        "clip_intent_vision_failed",
+                        error_type=error_type,
+                        error_code=error_code,
+                        op=candidate.op,
+                        soft=soft,
+                    )
+                    if not soft:
+                        vision_errors.append(error_type)
                     record_failure(dependents_for_candidate, error_code, works)
                     if error_code == "vision_provider_error":
                         _defer(candidate)
@@ -2153,6 +2191,8 @@ async def resolve_clip_intents_for_turn(
         "vision_multi_question_clips": sum(1 for q in questions_by_clip.values() if len(q) > 1),
         "named_guesses_settled": named_guesses_settled,
         "single_take_settled": single_take_settled,
+        # Omitted when nothing failed, so every other turn's diagnostics are unchanged.
+        **({"vision_error_types": vision_errors[:8]} if vision_errors else {}),
     }
     clip_order = {clip.media_id: index for index, clip in enumerate(clips)}
     exclusion_suspects = {
