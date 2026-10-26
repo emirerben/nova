@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.142.0] - 2026-10-26
+
+### Fixed
+- fix(kria): one picker answer counts for every row about the same moment (KRI-947, KRI-951) (#1852) <!-- release-pr: 1852 -->
+
 ## [0.81.141.0] - 2026-10-26
 
 ### Changed
