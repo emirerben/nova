@@ -16,13 +16,15 @@ class MomentCandidate(BaseModel):
     text: str = Field(max_length=800)
     quality_notes: str = Field(default="", max_length=600)
     evidence_scope: Literal["timed_moment", "whole_source_context"] = "timed_moment"
+    # A "still" is one photo held for its listed duration; it has no motion, sound or speech.
+    media: Literal["video", "still"] = Field(default="video", exclude_if=lambda v: v == "video")
     start_s: float
     end_s: float
 
 
 class MomentRelevanceInput(BaseModel):
     query: str = Field(min_length=1, max_length=500)
-    candidates: list[MomentCandidate] = Field(max_length=100)
+    candidates: list[MomentCandidate] = Field(max_length=150)
 
 
 class MomentRelevanceOutput(BaseModel):
