@@ -1740,6 +1740,15 @@
       ]
     },
     {
+      "id": "kri-957-after-voice-clip-line",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri957_after_voice_line.py tests/tasks/test_kri842_narrated_clip_sound.py tests/agents/test_main_creator_user_song.py tests/agents/test_brief_extractor.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri957_donjulio_n1_after_voice.json",
+        "src/apps/api/tests/tasks/test_kri957_after_voice_line.py"
+      ]
+    },
+    {
       "id": "kri-942-clip-sound-toggle",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",

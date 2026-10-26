@@ -1,0 +1,112 @@
+{
+ "scenario": "Don Julio walk-in kit N1 (Voiceover), prod thread 99627FBC, 2026-10-26: Atakan's \"Super excited!\" after the creator's last words was refused (KRI-957).",
+ "provenance": "Prod read-only (2026-10-26, Yasin approved): the brief row creative_brief_versions v1 r5 as the Main Creator v98 recorded it, and the clip-analysis speech segments of the Atakan upload (analysis-proxy-ios-6163F36C, Gemini clip_metadata). Durations: the plan item clip assignments. Step starts: job bdb0c798 narrated_alignment (voiceover after silence cut, 20.527 s). sha256: the kit upload files the creator attached. The independent line window is the kit README N1 table (local whisper-medium at kit build, 2026-10-25), not the analysis the code reads.",
+ "prompt": "After my last words \"before we eat\", play Atakan's \"Super excited!\" with its own sound and end right there.",
+ "recorded_requirement": {
+  "id": "r5",
+  "kind": "audio",
+  "facts": {
+   "triggers": [
+    "before we eat"
+   ],
+   "clip_sound": "after_voice"
+  },
+  "scope": "clip:N1_07",
+  "status": "open",
+  "literal": null,
+  "description": "play Atakan's 'Super excited!' with its own sound after my last words",
+  "source_turn_id": "ca8658fc-e4f1-4286-87e0-815a00e1897c"
+ },
+ "voiceover": {
+  "played_duration_s": 20.527,
+  "recorded_duration_s": 26.029569
+ },
+ "step_starts_s": [
+  0.0,
+  4.148,
+  7.508,
+  11.968,
+  13.468,
+  15.957,
+  18.307
+ ],
+ "uploads": [
+  {
+   "media_id": "N1_01",
+   "file": "N1_01_footage.mp4",
+   "sha256": "8906e0d55fef633834c91c5fd89100c75739e0157bedb80c85f14b0f34ef6f13",
+   "kind": "video",
+   "duration_s": 4.0
+  },
+  {
+   "media_id": "N1_02",
+   "file": "N1_02_footage.mp4",
+   "sha256": "051fcf5a867d8b14781c9df59bcb6b83bc01f27637cb50e3d2a4766389371277",
+   "kind": "video",
+   "duration_s": 4.5
+  },
+  {
+   "media_id": "N1_03",
+   "file": "N1_03_footage.mp4",
+   "sha256": "5fdd65dbe17f867b834a6bb472501648bbf8fff59cec6a5103311be4a352c4b0",
+   "kind": "video",
+   "duration_s": 10.0
+  },
+  {
+   "media_id": "N1_04",
+   "file": "N1_04_footage.mp4",
+   "sha256": "da33692bd51849d7b3176fe291edaf2c26d0a275d21019e77ea684527dd46d4f",
+   "kind": "video",
+   "duration_s": 8.0
+  },
+  {
+   "media_id": "N1_05",
+   "file": "N1_05_footage.mp4",
+   "sha256": "8a23657577c65578eb6ec9ef1b4ae0282279dadc80e5b9b35cb0d0d8f8959b63",
+   "kind": "video",
+   "duration_s": 12.0
+  },
+  {
+   "media_id": "N1_06",
+   "file": "N1_06_footage.mp4",
+   "sha256": "79fb63172433aec717a258d0c4a9d1e6b11c9ed5ea85846989cf6d3e8f7a4ce9",
+   "kind": "video",
+   "duration_s": 7.0
+  },
+  {
+   "media_id": "N1_07",
+   "file": "N1_07_footage.mp4",
+   "sha256": "d9dd2af0e76d6089ed2689e762bf00e110d3c88dd7a5eaddaa5e734b22f8a341",
+   "kind": "video",
+   "duration_s": 8.5
+  }
+ ],
+ "atakan_speech_segments": [
+  {
+   "text": "Farille Don Julio, what do you think?",
+   "end_s": 4.24,
+   "start_s": 2.22
+  },
+  {
+   "text": "Are you excited for the meet?",
+   "end_s": 5.32,
+   "start_s": 4.44
+  },
+  {
+   "text": "Super excited.",
+   "end_s": 6.44,
+   "start_s": 5.86
+  },
+  {
+   "text": "Nice.",
+   "end_s": 7.08,
+   "start_s": 6.8
+  }
+ ],
+ "line": {
+  "text": "Super excited!",
+  "media_id": "N1_07",
+  "kit_start_s": 5.9,
+  "kit_end_s": 6.7
+ }
+}

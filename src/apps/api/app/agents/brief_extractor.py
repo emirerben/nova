@@ -50,7 +50,9 @@ from app.pipeline.prompt_loader import load_prompt
 # v36: the shared brief section records a `timed_card` fact (a photo as a small card at an
 # exact second / clip) for phone Montage and Voiceover edits.
 # v37 (KRI-942): the shared brief section records clip sound on / off (`clip_sound` "on"/"off").
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-26-v37"
+# v38 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
+# creator's own last voiceover words.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-26-v38"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
