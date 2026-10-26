@@ -15,15 +15,28 @@ first sound, same last sound class, at most 1-2 sound-folded edits, never a word
 already reads as the target, and no fuzzy matching for short targets.
 
 KRI-793: a target may be several words ("Oblea de la Casa", the creator's own list in the
-approved brief). Such a phrase is matched only as the same number of adjacent words with
-nothing but spaces between them, so every word keeps its own timing; the same sound rule
-then runs on the words joined ("Ole de la Casa" -> "Oblea de la Casa").
+approved brief). Such a phrase is matched as adjacent words with nothing but spaces between
+them; the same sound rule then runs on the words joined ("Ole de la Casa" -> "Oblea de la
+Casa"), so every word keeps its own timing.
+
+KRI-961: whisper can also hear a phrase as one word fewer or more ("ojo de bife" heard as
+"Olloda bife"). ``find_named_phrase`` is the one matcher for a phrase the creator named,
+shared by the captions (respelled here) and the reaction-beat grounding (the card shows when
+the voice says it, `app.services.phone_reaction_grounding`). A span with another word count
+counts only with a strong signal: one word more or fewer, at least one word of the phrase
+(3+ letters) heard exactly, and the joined words within the same sound rule -- or the same
+letters with other spacing ("Kızkulesi" for "Kız Kulesi"). The words heard exactly always
+win, and a one-word phrase only ever matches one heard word. When the count changes, a
+heard word split in two shares its time by letters and two heard words merged keep both
+times.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from app.text_fold import loose_case
@@ -190,25 +203,171 @@ _APOSTROPHE = re.compile(r"['’]")
 _APOSTROPHE_SPLIT = re.compile(r"([^'’]*)(['’]?)(.*)", re.DOTALL)
 _SPACES_ONLY = re.compile(r"\s+")
 
+# --- KRI-961: the creator-named phrase matcher -------------------------------------------
 
-def _respell_phrase_tokens(
+# A span with one word more or fewer than the phrase must hear one of the phrase's words of
+# at least this many letters exactly (folded): "Olloda bife" hears "bife". A short function
+# word ("de", "la") never anchors a fuzzy match on its own.
+_ANCHOR_MIN_LETTERS = 3
+_SENTENCE_ENDS = (".", "!", "?", "…")
+_OPENING_MARKS = "\"'“”‘’«»(["
+
+
+@dataclass(frozen=True)
+class NamedPhraseHit:
+    """``words[start:stop]`` say the phrase. ``exact``: they already read as it (folded, a
+    case ending on the last word allowed), so there is nothing to respell."""
+
+    start: int
+    stop: int
+    exact: bool
+
+
+def _split_ending(word: str) -> tuple[str, str]:
+    """``word`` and the Turkish case ending after its apostrophe ("Casa'da" -> "Casa", "'da")."""
+    stem, apostrophe, ending = _APOSTROPHE_SPLIT.match(word).groups()  # type: ignore[union-attr]
+    return stem, apostrophe + ending
+
+
+def _span_stems(span: Sequence[str]) -> list[str] | None:
+    """The heard words with the last one's case ending off; None when an ending sits
+    mid-span (a case ending closes a name)."""
+    if any(_APOSTROPHE.search(word) for word in span[:-1]):
+        return None
+    return [*span[:-1], _split_ending(span[-1])[0]]
+
+
+def _reads_as(span: Sequence[str], wanted: Sequence[str]) -> bool:
+    stems = _span_stems(span) if len(span) == len(wanted) else None
+    return stems is not None and [_fold(w) for w in stems] == [_fold(w) for w in wanted]
+
+
+def _sound_distance(span: Sequence[str], wanted: Sequence[str]) -> int:
+    got, want = _sound("".join(span)), _sound("".join(wanted))
+    return _edit_distance(got, want, max(len(got), len(want)))
+
+
+def _near_cost(span: Sequence[str], target: str) -> int | None:
+    """How far ``span`` (one token per heard word) is from ``target`` when it is a hearing
+    of it spelled another way (lower is closer), else None."""
+    wanted = _phrase_words(target)
+    if not span or not wanted:
+        return None
+    if len(wanted) == 1:
+        # A one-word phrase is one heard word, by the single-word rule (KRI-631).
+        if len(span) != 1 or _match_word(span[0], target) is None:
+            return None
+        return _sound_distance(span, wanted)
+    if len(span) == len(wanted):
+        return _sound_distance(span, wanted) if _match_phrase(span, target) else None
+    stems = _span_stems(span)
+    if stems is None or abs(len(span) - len(wanted)) != 1:
+        return None
+    heard, written = [_fold(w) for w in stems], [_fold(w) for w in wanted]
+    if "".join(heard) == "".join(written):
+        return 0  # the same letters, spaced another way ("Kızkulesi" for "Kız Kulesi")
+    anchors = {w for w in written if len(w) >= _ANCHOR_MIN_LETTERS}
+    if anchors.isdisjoint(heard) or not _sounds_like("".join(stems), "".join(wanted)):
+        return None
+    return _sound_distance(stems, wanted)
+
+
+def _phrase_hits(
     tokens: Sequence[str], joined_to_next: Sequence[bool], target: str
-) -> dict[int, str]:
-    """Replacements (token index -> new text) for every run of ``tokens`` heard as ``target``.
+) -> list[NamedPhraseHit]:
+    """Every run of ``tokens`` that says ``target``, in order, never overlapping.
 
-    ``joined_to_next[i]`` is True when only spaces separate token ``i`` from ``i + 1``.
+    ``tokens[i]`` is the one word token of heard word ``i`` ("" when it has none or
+    several); ``joined_to_next[i]`` is True when only spaces separate it from ``i + 1``.
+    Exact runs are taken first; a near run never overlaps one. At one place the closest of
+    the same count, one fewer and one more words wins (ties keep the same count).
     """
     size = len(_phrase_words(target))
-    out: dict[int, str] = {}
+    if not size:
+        return []
+
+    def usable(i: int, n: int) -> bool:
+        return (
+            n >= 1
+            and i + n <= len(tokens)
+            and all(tokens[i : i + n])
+            and all(joined_to_next[i : i + n - 1])
+        )
+
+    wanted = _phrase_words(target)
+    exact: list[NamedPhraseHit] = []
     i = 0
     while i + size <= len(tokens):
-        if all(tokens[i : i + size]) and all(joined_to_next[i : i + size - 1]):
-            replaced = _match_phrase(tokens[i : i + size], target)
-            if replaced is not None:
-                out.update({i + k: word for k, word in enumerate(replaced)})
-                i += size
+        if usable(i, size) and _reads_as(tokens[i : i + size], wanted):
+            exact.append(NamedPhraseHit(i, i + size, True))
+            i += size
+        else:
+            i += 1
+    taken = {j for hit in exact for j in range(hit.start, hit.stop)}
+    sizes = (size,) if size == 1 else (size, size - 1, size + 1)
+    near: list[NamedPhraseHit] = []
+    i = 0
+    while i < len(tokens):
+        best: tuple[int, int] | None = None
+        for n in sizes:
+            if not usable(i, n) or not taken.isdisjoint(range(i, i + n)):
                 continue
-        i += 1
+            cost = _near_cost(tokens[i : i + n], target)
+            if cost is not None and (best is None or cost < best[0]):
+                best = (cost, n)
+        if best is None:
+            i += 1
+            continue
+        near.append(NamedPhraseHit(i, i + best[1], False))
+        i += best[1]
+    return sorted([*exact, *near], key=lambda hit: hit.start)
+
+
+def _word_tokens(texts: Sequence[str]) -> tuple[list[list[re.Match[str]]], list[str], list[bool]]:
+    """Per heard word: its token matches, its one token ("" unless exactly one), and whether
+    only spaces join it to the next word ("leche," ends a phrase)."""
+    singles = [list(_TOKEN.finditer(text)) for text in texts]
+    tokens = [found[0].group(0) if len(found) == 1 else "" for found in singles]
+    joined = [
+        bool(
+            tokens[i]
+            and tokens[i + 1]
+            and singles[i][0].end() == len(texts[i].rstrip())
+            and singles[i + 1][0].start() == len(texts[i + 1]) - len(texts[i + 1].lstrip())
+        )
+        for i in range(len(texts) - 1)
+    ]
+    return singles, tokens, [*joined, False]
+
+
+def find_named_phrase(words: Sequence[str], phrase: str) -> list[NamedPhraseHit]:
+    """Where the heard ``words`` (one transcript word each, punctuation attached) say the
+    creator-named ``phrase``: exactly, or heard another way under the narrow rule above.
+
+    The one matcher behind the captions' respelling and the reaction-beat grounding, so a
+    phrase the captions write the creator's way is a phrase the card hears (KRI-961).
+    """
+    texts = [str(word or "") for word in words]
+    _singles, tokens, joined = _word_tokens(texts)
+    return _phrase_hits(tokens, joined, phrase)
+
+
+def _starts_sentence(before: str) -> bool:
+    """True when the text before a word ends a sentence (or there is none)."""
+    head = before.rstrip().rstrip(_OPENING_MARKS).rstrip()
+    return not head or head.endswith(_SENTENCE_ENDS)
+
+
+def _respelled(span: Sequence[str], target: str, *, sentence_start: bool) -> list[str] | None:
+    """The words a near hit is written as. The same word count keeps KRI-793's casing; with
+    another count the creator's own casing stands, capitalised only at a sentence start
+    ("the Olloda bife" -> "the ojo de bife", "Olloda bife is" -> "Ojo de bife is")."""
+    wanted = _phrase_words(target)
+    if len(span) == len(wanted):
+        return _match_phrase(span, target)
+    _stem, ending = _split_ending(span[-1])
+    out = [_recase(span[0][0], wanted[0]) if sentence_start else wanted[0], *wanted[1:]]
+    out[-1] += ending
     return out
 
 
@@ -219,10 +378,25 @@ def _respell_phrases_in_text(text: str, phrases: Sequence[str]) -> str:
             bool(_SPACES_ONLY.fullmatch(text[a.end() : b.start()]))
             for a, b in zip(found, found[1:], strict=False)
         ]
-        swaps = _respell_phrase_tokens([m.group(0) for m in found], [*joined, False], target)
-        for index in sorted(swaps, reverse=True):
-            match = found[index]
-            text = text[: match.start()] + swaps[index] + text[match.end() :]
+        tokens = [m.group(0) for m in found]
+        # From the end, so earlier offsets in ``found`` stay valid.
+        for hit in reversed(_phrase_hits(tokens, [*joined, False], target)):
+            if hit.exact:
+                continue
+            first, last = found[hit.start], found[hit.stop - 1]
+            new = _respelled(
+                tokens[hit.start : hit.stop],
+                target,
+                sentence_start=_starts_sentence(text[: first.start()]),
+            )
+            if new is None:
+                continue
+            if len(new) == hit.stop - hit.start:
+                # Word for word, the spaces as heard.
+                for match, word in reversed(list(zip(found[hit.start : hit.stop], new))):
+                    text = text[: match.start()] + word + text[match.end() :]
+            else:
+                text = text[: first.start()] + " ".join(new) + text[last.end() :]
     return text
 
 
@@ -247,37 +421,137 @@ def respell_text(text: str, targets: Sequence[str]) -> str:
     return _TOKEN.sub(_swap, text)
 
 
+def _time(word: dict[str, Any], key: str) -> float | None:
+    value = word.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _split_word(word: dict[str, Any], first: str, second: str) -> list[dict[str, Any]]:
+    """One heard word written as two: its time shared by their letters."""
+    start, end = _time(word, "start_s"), _time(word, "end_s")
+    if start is None or end is None or end < start:
+        return [{**word, "text": first}, {**word, "text": second}]
+    a, b = len(_fold(first)), len(_fold(second))
+    cut = round(start + (end - start) * a / (a + b), 3) if a + b else start
+    cut = min(max(cut, start), end)
+    return [{**word, "text": first, "end_s": cut}, {**word, "text": second, "start_s": cut}]
+
+
+def _merge_words(first: dict[str, Any], second: dict[str, Any], text: str) -> dict[str, Any]:
+    """Two heard words written as one: from the first's start to the second's end."""
+    merged = {**first, "text": text}
+    if "end_s" in second:
+        merged["end_s"] = second["end_s"]
+    a, b = first.get("confidence"), second.get("confidence")
+    if all(isinstance(c, (int, float)) and not isinstance(c, bool) for c in (a, b)):
+        merged["confidence"] = min(a, b)  # type: ignore[type-var]
+    return merged
+
+
+def _groups(heard: Sequence[str], new: Sequence[str]) -> list[tuple[list[int], list[int]]]:
+    """Which heard words become which written words (a count differs by at most one).
+
+    Word for word, except the one heard word split in two (or the two heard words merged)
+    where the letters fit best: "Olloda bife" -> "ojo de" + "bife", not "ojo" + "de bife".
+    """
+    n, k = len(heard), len(new)
+    if n == k:
+        return [([j], [j]) for j in range(n)]
+    options: list[list[tuple[list[int], list[int]]]] = []
+    if n == k - 1:
+        for s in range(n):
+            options.append(
+                [([j], [j]) for j in range(s)]
+                + [([s], [s, s + 1])]
+                + [([j], [j + 1]) for j in range(s + 1, n)]
+            )
+    else:
+        for m in range(k):
+            options.append(
+                [([j], [j]) for j in range(m)]
+                + [([m, m + 1], [m])]
+                + [([j + 1], [j]) for j in range(m + 1, k)]
+            )
+
+    def cost(groups: list[tuple[list[int], list[int]]]) -> int:
+        total = 0
+        for hs, ws in groups:
+            got = _fold("".join(heard[h] for h in hs))
+            want = _fold("".join(new[w] for w in ws))
+            total += _edit_distance(got, want, max(len(got), len(want)))
+        return total
+
+    return min(options, key=cost)  # the first of equals: the earliest split or merge
+
+
+def _respelled_words(
+    words: Sequence[dict[str, Any]],
+    singles: Sequence[list[re.Match[str]]],
+    tokens: Sequence[str],
+    new: Sequence[str],
+) -> list[dict[str, Any]]:
+    """The heard ``words`` of one hit written as ``new``; text around a word's token
+    (punctuation) stays on the written word at that edge."""
+    texts = [str(w.get("text") or "") for w in words]
+    head = [text[: found[0].start()] for text, found in zip(texts, singles, strict=True)]
+    tail = [text[found[0].end() :] for text, found in zip(texts, singles, strict=True)]
+    out: list[dict[str, Any]] = []
+    for hs, ws in _groups(tokens, new):
+        if len(hs) == 1 and len(ws) == 1:
+            out.append({**words[hs[0]], "text": head[hs[0]] + new[ws[0]] + tail[hs[0]]})
+        elif len(hs) == 1:
+            h = hs[0]
+            out.extend(_split_word(words[h], head[h] + new[ws[0]], new[ws[1]] + tail[h]))
+        else:
+            out.append(
+                _merge_words(words[hs[0]], words[hs[1]], head[hs[0]] + new[ws[0]] + tail[hs[1]])
+            )
+    return out
+
+
 def _respell_word_list(words: list[dict[str, Any]], targets: Sequence[str]) -> list[dict[str, Any]]:
     """A cue's timed words with the targets applied; a phrase spans adjacent words only.
 
     A word joins the next one into a phrase only when each holds exactly one token and no
-    punctuation sits between them ("leche," ends a phrase).
+    punctuation sits between them ("leche," ends a phrase). The same word count keeps every
+    timing; one more or fewer (KRI-961) re-times only the words of that hit.
     """
-    texts = [str(w.get("text") or "") for w in words]
-    singles = [list(_TOKEN.finditer(text)) for text in texts]
-    tokens = [found[0].group(0) if len(found) == 1 else "" for found in singles]
-    joined = [
-        bool(
-            tokens[i]
-            and tokens[i + 1]
-            and singles[i][0].end() == len(texts[i].rstrip())
-            and singles[i + 1][0].start() == len(texts[i + 1]) - len(texts[i + 1].lstrip())
-        )
-        for i in range(len(words) - 1)
-    ]
-    new_texts = list(texts)
+    words = list(words)
     for target in (t for t in targets if len(_phrase_words(t)) > 1):
-        for index, word in _respell_phrase_tokens(tokens, [*joined, False], target).items():
-            match, text = singles[index][0], new_texts[index]
-            new_texts[index] = text[: match.start()] + word + text[match.end() :]
-            # The next target reads the respelled word, exactly as the cue text pass does
-            # ("dulse de leche condensata" with "dulce de leche" and "leche condensada").
-            tokens[index] = word
-            singles[index] = list(_TOKEN.finditer(new_texts[index]))
+        texts = [str(w.get("text") or "") for w in words]
+        singles, tokens, joined = _word_tokens(texts)
+        out: list[dict[str, Any]] = []
+        cursor = 0
+        for hit in _phrase_hits(tokens, joined, target):
+            if hit.exact:
+                continue
+            # The cue text before the hit, as the cue text pass sees it.
+            prefix = texts[hit.start][: singles[hit.start][0].start()]
+            before = " ".join([*texts[: hit.start], prefix])
+            new = _respelled(
+                tokens[hit.start : hit.stop], target, sentence_start=_starts_sentence(before)
+            )
+            if new is None:
+                continue
+            out.extend(words[cursor : hit.start])
+            out.extend(
+                _respelled_words(
+                    words[hit.start : hit.stop],
+                    singles[hit.start : hit.stop],
+                    tokens[hit.start : hit.stop],
+                    new,
+                )
+            )
+            cursor = hit.stop
+        # The next target reads the respelled words, exactly as the cue text pass does
+        # ("dulse de leche condensata" with "dulce de leche" and "leche condensada").
+        words = [*out, *words[cursor:]]
     single_targets = [t for t in targets if len(_phrase_words(t)) == 1]
     return [
-        {**word, "text": respell_text(new_text, single_targets)}
-        for word, new_text in zip(words, new_texts, strict=True)
+        {**word, "text": respell_text(str(word.get("text") or ""), single_targets)}
+        for word in words
     ]
 
 
@@ -286,15 +560,11 @@ def is_mishearing(shown: str, target: str) -> bool:
 
     The same narrow rule the respelling applies, so a check after render calls exactly
     what the render would have fixed a miss (KRI-793): "Meropa" for "Merope", "Ole de la
-    Casa" for "Oblea de la Casa". The target itself, in any case, is never a mishearing.
+    Casa" for "Oblea de la Casa", "Olloda bife" for "ojo de bife" (KRI-961). The target
+    itself, in any case, is never a mishearing.
     """
     words = [m.group(0) for m in _TOKEN.finditer(shown)]
-    wanted = _phrase_words(target)
-    if not words or not wanted:
-        return False
-    if len(wanted) == 1:
-        return len(words) == 1 and _match_word(words[0], target) is not None
-    return _match_phrase(words, target) is not None
+    return _near_cost(words, target) is not None
 
 
 def apply_spelling_to_cues(
@@ -302,7 +572,9 @@ def apply_spelling_to_cues(
 ) -> list[dict[str, Any]]:
     """Caption cues (text and attached word timings) with the creator's spellings applied.
 
-    Timings are untouched; only ``text`` strings change, in a copy of each touched cue.
+    The cue's own start and end never change; a word's timing changes only when a phrase
+    was heard as one word more or fewer (KRI-961), and only inside that hit. A touched cue
+    is a copy.
     """
     cues = list(cues)
     if not targets:
