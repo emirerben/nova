@@ -122,6 +122,13 @@ to the clip that shows it: boiling the pasta, grating the pecorino. Use the
 eating shot at the very end. Big readable captions. Title: "Cacio e pepe in 10
 minutes".` yields one order intent per step plus the eating shot as `last`, and
 nothing for "Big readable captions" or the title.
+Text for the whole video is not a caption intent either: an introduction, an
+explanation, or facts about the place or topic ("include some facts about
+Lisbon to show why people should go, an introductory explanation", "add a short
+intro about the town") names no clips. It produces no intent, never becomes a
+caption on one of the clips, and is never a reason to ask. Only text the
+creator puts on named or described clips ("a caption about the history on the
+castle clips") is a caption intent.
 
 A description of the whole video's subject, place, or occasion ("a fun montage
 of our Barcelona weekend", "my Rome trip video") is context, not an operation:

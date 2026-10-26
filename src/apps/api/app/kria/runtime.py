@@ -2780,6 +2780,9 @@ async def decide_approval(
                                 saved=saved_readiness,
                             ),
                             prepared_collection_story=copy_document.prepared_collection_story,
+                            # KRI-945: the route and the research the draft was judged on.
+                            creator_id=creator_id,
+                            prepared_research=copy_document.brief_binding.prepared_research,
                         )
                     ready = (
                         digest(media_identity(snapshot_media(copy_item)))

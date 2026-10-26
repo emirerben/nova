@@ -13,12 +13,15 @@ import pytest
 
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.reply_language import reply_language_for
 from app.services.choice_questions import (
+    CONFLICT_SOURCE_COVERAGE,
     ChoiceCapability,
     choice_question_text,
     collect_conflicts,
     title_text_choice,
 )
+from app.services.length_planning import build_length_plan
 
 CAP = ChoiceCapability(voice_route=True)
 
@@ -79,6 +82,68 @@ def _strategy(**update):
     return CreativeStrategy.model_validate({**base, **update})
 
 
+def _coverage_text(codes, *, strategy=None, sources=None, **envelope) -> str:
+    """The question text for a durable length-plan conflict, through the public collector."""
+    plan = {
+        "conflicts": [{"code": code} for code in codes],
+        "sources": [{"duration_s": 10.0}] if sources is None else sources,
+        **envelope,
+    }
+    found = collect_conflicts(
+        strategy or {"edit_format": "montage"}, None, {"length_plan": plan}, CAP
+    )
+    coverage = [c for c in found if c.kind == CONFLICT_SOURCE_COVERAGE]
+    assert coverage, codes
+    return choice_question_text(coverage[0].candidate())
+
+
+def _built_plan_text(snapshot_rows, selected_ids) -> str:
+    plan = build_length_plan(
+        {"edit_format": "montage"}, {"clip_assignments": snapshot_rows}, selected_ids=selected_ids
+    )
+    found = collect_conflicts(
+        {"edit_format": "montage"},
+        None,
+        {"clip_assignments": snapshot_rows, "length_plan": plan},
+        CAP,
+    )
+    coverage = [c for c in found if c.kind == CONFLICT_SOURCE_COVERAGE]
+    assert coverage, plan["conflicts"]
+    return choice_question_text(coverage[0].candidate())
+
+
+_COVERAGE_CASES = {
+    "coverage_source_below_minimum": dict(codes=["source_below_minimum"]),
+    "coverage_no_usable_sources": dict(codes=["no_usable_sources"]),
+    "coverage_cap_below_coverage": dict(codes=["cap_below_coverage"]),
+    "coverage_source_count_limit": dict(
+        codes=[], sources=[{"duration_s": 5.0}] * 3, max_source_count=2
+    ),
+    "coverage_snapshot_min_duration": dict(codes=[], sources=[{"duration_s": 1.0}]),
+    "coverage_natural_source_capacity": dict(
+        codes=["insufficient_capacity"],
+        sources=[{"duration_s": 4.0}],
+        natural_owner="voiceover",
+        natural_duration_s=30.0,
+    ),
+    "coverage_hold_coverage": dict(
+        codes=["target_below_coverage"],
+        strategy={"edit_format": "montage", "montage_cadence": "fast"},
+        target_duration_s=5.0,
+    ),
+    "coverage_hold_coverage_ceiling": dict(
+        codes=["target_below_coverage"],
+        strategy={"edit_format": "montage", "montage_cadence": "fast"},
+        target_duration_s=5.0,
+        target_duration_bound="at_most",
+    ),
+    "coverage_single_hero_order": dict(codes=["single_hero_order_conflict"]),
+    "coverage_insufficient_media": dict(codes=["insufficient_media"]),
+    "coverage_duration_out_of_bounds": dict(codes=["duration_out_of_bounds"]),
+    "coverage_named_moments": dict(codes=["named_moments_unplaceable"]),
+}
+
+
 def _texts() -> dict[str, str]:
     out: dict[str, str] = {}
 
@@ -108,6 +173,8 @@ def _texts() -> dict[str, str]:
     )
     add("which_voice", two, _brief(_timing(30)), _voice())
     out["title_text"] = choice_question_text(title_text_choice(["r1"]).candidate())
+    for name, case in _COVERAGE_CASES.items():
+        out[name] = _coverage_text(**case)
     return out
 
 
@@ -140,3 +207,32 @@ def test_a_single_length_is_a_statement_not_the_most_i_can_do():
         "Your voice runs 147.7 seconds. 41 clips need at least 32.8 seconds to each be seen. "
         'I can make it 33 seconds. Reply "33 seconds" to go with that, or change your request.'
     )
+
+
+def test_source_coverage_never_puts_an_instruction_after_unfortunately():
+    for name in _COVERAGE_CASES:
+        first = TEXTS[name].splitlines()[0]
+        assert "Unfortunately " in first, first
+        assert not re.search(r"Unfortunately (choose|replace|add|select)\b", first, re.I), first
+
+
+def test_a_clip_that_is_no_longer_attached_is_not_blamed_on_clip_length():
+    """The prod Cunda thread: a selected id with no clip row said 'shorter than 0.1 seconds'."""
+
+    rows = [{"media_id": "a", "kind": "video", "duration_s": 5.0}]
+    text = _built_plan_text(rows, selected_ids=["a", "gone"])
+    assert "0.1" not in text, text
+    assert "no longer attached to this edit" in text, text
+    assert "Select your clips again, or add them back." in text, text
+    with reply_language_for("tr"):
+        assert "0,1" not in _built_plan_text(rows, selected_ids=["a", "gone"])
+
+
+def test_a_clip_that_really_is_too_short_still_says_so():
+    rows = [
+        {"media_id": "a", "kind": "video", "duration_s": 5.0},
+        {"media_id": "b", "kind": "video", "duration_s": 0.05},
+    ]
+    text = _built_plan_text(rows, selected_ids=["a", "b"])
+    assert "shorter than 0.1 seconds" in text, text
+    assert "no longer attached" not in text, text

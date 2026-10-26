@@ -186,6 +186,25 @@ def repair_plan_for_phone(plan, exc: Exception) -> tuple[Any, list[str]]:  # noq
 # ``verify_phone_recipe`` stays the authority at pin time: this only removes the refusal
 # for a plan that can be made to show the words.
 
+# The contract text roles ``repair_plan_for_contract`` always puts on screen. A ``clip``
+# text lands only when its clip is in the compiled plan, so only the plan can say.
+PLACED_WITHOUT_PLAN = frozenset({"opening", "closing", "any"})
+# The phone routes whose writer compiles through ``compile_phone_guided_repaired`` with the
+# job's pinned contract (``generative_build._run_phone_guided_job``).
+CONTRACT_REPAIR_ROUTES = frozenset(
+    {"guided_story", "unified_montage", "user_song_montage", "lipsync_montage"}
+)
+
+
+def contract_text_drawn(requirement, *, route: str | None) -> bool:  # noqa: ANN001
+    """Whether the render shows this pinned contract text whatever its plan holds (KRI-945).
+
+    The draft check before approval (``approval_readiness``) asks this; the repair below is
+    what makes it true, so a writer that cannot draw contract text is never promised it.
+    """
+    return route in CONTRACT_REPAIR_ROUTES and requirement.role in PLACED_WITHOUT_PLAN
+
+
 _TITLE_ID = "guided-title"
 _TITLE_HOLD_S = 2.2
 _TITLE_Y = 0.16
@@ -351,7 +370,7 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             texts = [e for i, e in enumerate(texts) if i not in title]
             texts.insert(title[0], replacement)
             notes.append(f"Used your title {_quoted(literal)} exactly as you wrote it")
-        elif requirement.role == "clip":
+        elif requirement.role not in PLACED_WITHOUT_PLAN:
             windows = _clip_windows(current, requirement)
             if not windows:
                 continue  # no such clip in the plan: the pin-time check stays the authority

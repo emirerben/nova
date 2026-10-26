@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from app.agents._runtime import ModelInvocation, RunContext
-from app.kria.brief import BriefRequirement, CreativeBrief
+from app.kria.brief import BriefRequirement, CreativeBrief, apply_updates
 from app.kria.brief_checks import build_receipts, plan_facts_from_unified_montage
 from app.kria.media_sources import OriginalMediaDescriptor
 from app.kria.reply_language import reply_language_for
@@ -26,7 +26,12 @@ from app.services.creation_text_composition import (
     CreationTextCompositionError,
     compose_creation_text,
 )
-from app.services.creative_copy_decisions import fold_creative_copy, media_digest, wording_question
+from app.services.creative_copy_decisions import (
+    bind_approved_copy,
+    fold_creative_copy,
+    media_digest,
+    wording_question,
+)
 from app.services.creative_copy_gate import creative_copy_problem
 from app.services.phone_sources import PhoneSourceBinding
 
@@ -51,7 +56,8 @@ def approved_plan(
             {"choice_selection": {"question_id": question["question_id"], "option_key": "approve"}},
         ),
     ]
-    approved = fold_creative_copy(events, dependency_digest=digest)["opening_title"].approved
+    states = fold_creative_copy(events, dependency_digest=digest)
+    approved = states["opening_title"].approved
     strategy = {"opening_title": approved, "closing_title": closing}
     assert creative_copy_problem(events, media, strategy=strategy) is None
     if context_caption:
@@ -67,13 +73,20 @@ def approved_plan(
                 "assignments": [{"media_id": "clip", "confidence": 0.9}],
             }
         ]
-    brief = CreativeBrief(
+    # The hook ask as the creator stated it (no words); approving the wording writes them in.
+    asked = CreativeBrief(
         version=2,
         requirements=[
-            BriefRequirement(id="r1", kind="text", scope="title", literal=approved),
+            BriefRequirement(id="r1", kind="text", scope="title", description="a hook"),
             *extra_requirements,
         ],
     )
+    brief = apply_updates(
+        asked,
+        bind_approved_copy(asked, (), states, answered_ids={"r1"}),
+        source_turn_id="approve",
+    )
+    assert brief.live()[0].literal == approved
     clip = UnifiedClip(
         media_id="clip",
         proxy_path="users/test/analysis-proxy-clip.mp4",
