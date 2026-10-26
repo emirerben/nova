@@ -844,7 +844,14 @@ def _live_photo_ids(
     unflagged does not show the moment. One they flagged, or one we know nothing about (an
     empty record), still might. A take's record cannot list every moment of a long take, so
     a video is never ruled out this way.
+
+    KRI-949: that holds only when the resolver read the intent as something in the take.
+    When it put NOTHING forward (Don Julio walk-in M2: "the ribeye photo", matched to the
+    photo in rounds 1 and 3, nothing in rounds 4 and 6), its silence about a photo rules
+    nothing out, so every photo stays a real answer.
     """
+    if not work.considered_media_ids:
+        return {c.media_id for c in clips if c.kind == "image"}
     return {
         c.media_id
         for c in clips
