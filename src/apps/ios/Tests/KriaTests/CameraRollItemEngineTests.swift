@@ -460,3 +460,47 @@ final class CameraRollIdeaBoardTests: XCTestCase {
         XCTAssertTrue(ids(board, "A").isEmpty)
     }
 }
+
+/// KRI-944: Reduce Motion removes every movement a tile can play and nothing else.
+final class CameraRollTileMotionTests: XCTestCase {
+    func testReduceMotionPlaysNothing() {
+        for effect in [CameraRollTileMotion.Effect.shimmer, .uploadRing, .checkPop, .shake] {
+            XCTAssertFalse(CameraRollTileMotion.allows(effect, reduceMotion: true), "\(effect)")
+            XCTAssertTrue(CameraRollTileMotion.allows(effect, reduceMotion: false), "\(effect)")
+        }
+        for phase in CameraRollItemPhase.allCases {
+            XCTAssertNil(CameraRollTileMotion.onChange(from: .analyzing, to: phase, reduceMotion: true), "\(phase)")
+        }
+    }
+
+    func testTheCheckPopsOnArrivingAtReadyAndTheTileShakesOnDidntFinish() {
+        XCTAssertEqual(CameraRollTileMotion.onChange(from: .analyzing, to: .ready, reduceMotion: false), .checkPop)
+        XCTAssertEqual(CameraRollTileMotion.onChange(from: .analyzing, to: .needsRetry, reduceMotion: false), .shake)
+        XCTAssertNil(CameraRollTileMotion.onChange(from: .ready, to: .ready, reduceMotion: false))
+        XCTAssertNil(CameraRollTileMotion.onChange(from: .analyzing, to: .failed, reduceMotion: false), "A permanent failure is quiet")
+    }
+
+    func testTheShimmerPausesWhileTheAppIsNotActive() {
+        XCTAssertFalse(CameraRollTileMotion.allows(.shimmer, reduceMotion: false, sceneActive: false))
+        XCTAssertTrue(CameraRollTileMotion.allows(.uploadRing, reduceMotion: false, sceneActive: false))
+    }
+}
+
+#if DEBUG
+/// KRI-944: an ideas refresh answers with what the server held when it asked. A delete tapped meanwhile is newer.
+@MainActor final class CameraRollSurfaceRefreshTests: XCTestCase {
+    func testAnIdeaDeletedWhileTheRefreshIsInFlightStaysDeleted() async throws {
+        let model = CameraRollSurfaceFixture.model()
+        await model.refreshIdeas()
+        let story = try XCTUnwrap(model.ideas(in: CameraRollSurfaceFixture.sunday).first)
+
+        let refresh = Task { await model.refreshIdeas() }
+        await Task.yield()
+        model.deleteIdea(story, in: CameraRollSurfaceFixture.sunday)
+        await refresh.value
+
+        XCTAssertFalse(model.ideas(in: CameraRollSurfaceFixture.sunday).contains { $0.id == story.id })
+        XCTAssertNotNil(model.board.undo, "Undo is still on offer")
+    }
+}
+#endif

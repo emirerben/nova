@@ -13,6 +13,19 @@ struct CameraRollCollectionMember: Codable, Sendable, Equatable {
     let asset_id: UUID
     let source_id: UUID
     let group: String
+
+    init(asset_id: UUID, source_id: UUID, group: String) {
+        self.asset_id = asset_id; self.source_id = source_id; self.group = group
+    }
+
+    /// The server's `group` is nullable (`CollectionMember`); a member it holds without one is simply ungrouped.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        asset_id = try c.decode(UUID.self, forKey: .asset_id)
+        source_id = try c.decode(UUID.self, forKey: .source_id)
+        group = try c.decodeIfPresent(String.self, forKey: .group) ?? ""
+    }
+    private enum CodingKeys: String, CodingKey { case asset_id, source_id, group }
 }
 
 struct CameraRollCollectionSelection: Codable, Sendable, Equatable {
@@ -20,30 +33,29 @@ struct CameraRollCollectionSelection: Codable, Sendable, Equatable {
     let members: [CameraRollCollectionMember]
 }
 
-struct SavedCameraRollIdeas: Codable, Sendable {
-    let revision: Int
-    let selection: CameraRollCollectionSelection
-    let query: String
-    let researchTopic: String?
-    var result: CameraRollStories
-    var allowPartialAnalysis: Bool? = nil
+/// One event's ideas as last read from the server.
+struct SavedCameraRollGroupIdeas: Codable, Sendable {
+    var revision: Int
+    var stories: [CameraRollStory]
+    var query: String
+    var researchTopic: String?
 }
 
 extension CameraRollCollection {
-    var remoteSelection: CameraRollCollectionSelection? {
+    /// The server never learns about an item that has not uploaded, so a collection saves only what is bound
+    /// to a cloud source. Phone stories pin the analysis proxy; a cloud original is not interchangeable.
+    var uploadedSelection: CameraRollCollectionSelection {
         var members: [CameraRollCollectionMember] = []
+        let map = groupMap()
         for entry in entries {
-            // Phone stories pin the analysis proxy; a cloud original is not interchangeable.
             guard let asset = entry.savedAsset,
-                  let source = asset.kind == "video" ? asset.bindableSource(for: .clip, destination: .phone) : asset.source else { return nil }
-            members.append(CameraRollCollectionMember(asset_id: asset.id, source_id: source.id, group: group(for: entry.id)))
+                  let source = asset.kind == "video" ? asset.bindableSource(for: .clip, destination: .phone) : asset.source else { continue }
+            members.append(CameraRollCollectionMember(asset_id: asset.id, source_id: source.id, group: map[entry.id] ?? name))
         }
         return CameraRollCollectionSelection(name: name.trimmingCharacters(in: .whitespacesAndNewlines), members: members)
     }
-    var matchingSavedIdeas: SavedCameraRollIdeas? {
-        guard let savedIdeas, savedIdeas.revision == serverRevision, savedIdeas.selection == remoteSelection,
-              savedIdeas.result.stories.contains(where: { !$0.rejected }) else { return nil }
-        return savedIdeas
+    func members(inGroup group: String) -> [CameraRollCollectionMember] {
+        uploadedSelection.members.filter { $0.group == group }
     }
 }
 
@@ -149,6 +161,7 @@ struct CameraRollGroupDeletion: Decodable, Sendable {
 }
 
 extension KriaAPIClient {
+    func savedCameraRollStories(id: UUID, revision: Int, group: String) async throws -> [CameraRollStory] { throw APIError.unsupported }
     func cameraRollCollection(id: UUID) async throws -> SavedCameraRollCollection { throw APIError.unsupported }
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset { throw APIError.unsupported }
     func importCollectionMedia(file: URL, kind: String, progress: (@Sendable (Double) -> Void)?) async throws -> SavedMediaAsset {
@@ -175,7 +188,7 @@ private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @u
 
 extension KriaAPI {
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection {
-        guard let selection = collection.remoteSelection else { throw APIError.invalidResponse }
+        let selection = collection.uploadedSelection
         return try await replaceCameraRollMembers(collectionID: collection.id, name: selection.name, members: selection.members, expectedRevision: revision)
     }
     func replaceCameraRollMembers(collectionID: UUID, name: String, members: [CameraRollCollectionMember], expectedRevision: Int) async throws -> SavedCameraRollCollection {
@@ -188,13 +201,20 @@ extension KriaAPI {
         try await request(path: "me/media-collections/\(id)/items", method: "GET", bodyData: nil, decode: CameraRollItemsSnapshot.self)
     }
     func generateCameraRollStories(id: UUID, request story: CameraRollStoryRequest) async throws -> CameraRollStories {
+        // The server bounds these (`StoryGenerationBody`): at most 20 excluded ideas, a research topic of 4 to 200 characters.
         var body: [String: JSONValue] = ["expected_revision": .number(Double(story.revision)), "query": .string(String(story.query.prefix(500))),
                                          "cache_only": .bool(story.cacheOnly), "allow_partial_analysis": .bool(story.allowPartialAnalysis),
-                                         "exclude_story_ids": .array(story.excludeStoryIDs.map { .string($0.uuidString) })]
-        if let topic = story.researchTopic { body["research_topic"] = .string(String(topic.prefix(200))) }
+                                         "exclude_story_ids": .array(story.excludeStoryIDs.suffix(20).map { .string($0.uuidString) })]
+        if let topic = story.researchTopic?.trimmingCharacters(in: .whitespacesAndNewlines), topic.count >= 4 { body["research_topic"] = .string(String(topic.prefix(200))) }
         if let group = story.group { body["group"] = .string(group) }
         return try await request(path: "me/media-collections/\(id)/stories", method: "POST", bodyData: JSONEncoder().encode(body),
                                  decode: CameraRollStories.self, timeoutInterval: story.researchTopic == nil ? 90 : 130)
+    }
+    /// The ideas the server holds for one event, newest first (`GET .../stories?group=`).
+    func savedCameraRollStories(id: UUID, revision: Int, group: String) async throws -> [CameraRollStory] {
+        struct Saved: Decodable { let stories: [CameraRollStory] }
+        let query = [URLQueryItem(name: "expected_revision", value: String(revision)), URLQueryItem(name: "group", value: group)]
+        return try await request(path: "me/media-collections/\(id)/stories", method: "GET", query: query, bodyData: nil, decode: Saved.self).stories
     }
     func deleteCameraRollStory(collectionID: UUID, storyID: UUID) async throws -> CameraRollStoryDeletion {
         try await request(path: "me/media-collections/\(collectionID)/stories/\(storyID)", method: "DELETE", bodyData: nil, decode: CameraRollStoryDeletion.self)
