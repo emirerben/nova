@@ -1096,6 +1096,41 @@ def _apply_sequence(
     return apply_sequence(ordered, rows, key=lambda clip: clip.ref_id)
 
 
+def _group_landed(
+    position: str | None,
+    index: int,
+    mine: Sequence[str],
+    spot: Mapping[str, int],
+    owner: Mapping[str, int],
+    rows: Sequence[tuple[str | None, str, list[str], str]],
+) -> bool:
+    """KRI-941: is row ``index``'s group ``mine`` where its ``position`` put it in the cut?
+
+    ``spot`` is each clip's place in the finished cut and ``owner`` the row that seats it. A
+    ``first`` group must play before every clip outside it, bar the clips an earlier ``first``
+    row leads with; a ``last`` group after every clip outside it, bar the clips a later
+    ``last`` row closes with. A ``then`` group must play after every clip a ``first`` row
+    seats (listed anywhere) and every clip an earlier ``then`` row seats, and before every
+    clip a ``last`` row seats. Clips no row names are not judged against a ``then`` group.
+    """
+    here = [spot[m] for m in mine]
+    if position == "first":
+        led = {m for m, at in owner.items() if at < index and rows[at][0] == "first"}
+        others = [i for m, i in spot.items() if m not in mine and m not in led]
+        return max(here) < min(others, default=len(spot))
+    if position == "last":
+        closed = {m for m, at in owner.items() if at > index and rows[at][0] == "last"}
+        others = [i for m, i in spot.items() if m not in mine and m not in closed]
+        return min(here) > max(others, default=-1)
+    before = [
+        spot[m]
+        for m, at in owner.items()
+        if rows[at][0] == "first" or (rows[at][0] is None and at < index)
+    ]
+    after = [spot[m] for m, at in owner.items() if rows[at][0] == "last"]
+    return min(here) > max(before, default=-1) and max(here) < min(after, default=len(spot))
+
+
 def _sequence_outcomes(
     rows: Sequence[tuple[str | None, str, list[str], str]],
     ordered: Sequence[UnifiedClip],
@@ -1117,13 +1152,27 @@ def _sequence_outcomes(
     no sequence rule seats) and ``unresolved``. ``status`` keeps its meaning for every other
     consumer.
 
+    A row lands (KRI-941) when the finished cut agrees with it against EVERY other clip in the
+    edit, named or not: a ``first`` group leads the whole cut, a ``last`` group closes it, and
+    a ``then`` group plays after the clips ``first`` rows seat and after the clips of the
+    ``then`` rows listed before it, and before the clips ``last`` rows seat. Rows are in the
+    creator's listed order; clips no row names may sit anywhere between the groups. A group's
+    own clips keep no order of their own, so a list the planner wrote as ONE row is judged as
+    a group (``test_kri941_listed_order_replay``).
+
     ``seats`` (KRI-796) are the rows read as moments of one take (``moment_seats``) and
     ``cuts`` the finished cut order as (clip ref, source start): those rows are judged off
     the cuts by ``_moment_outcomes`` and carry the ``moment`` they name or follow.
     """
     spot = {clip.ref_id: i for i, clip in enumerate(c for c in ordered if c.lane == "clip")}
     visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"}
-    named = {m for _p, _n, members, _s in rows for m in members if m in spot}
+    # The row that seats each clip: the first one naming it (``apply_sequence``'s own rule).
+    owner: dict[str, int] = {}
+    for at, (_p, _n, members, status) in enumerate(rows):
+        if status == "resolved":
+            for member in members:
+                if member in spot:
+                    owner.setdefault(member, at)
     relations = row_relations(rows, present=spot)
     moments = (
         _moment_outcomes(seats, cuts, spans=spans, record=moment_record)
@@ -1185,14 +1234,7 @@ def _sequence_outcomes(
             out.append({**row, "status": "not_possible", "code": code, "reason": reason})
             continue
         seen.update(mine)
-        ahead = {spot[m] for m in mine}
-        others = [i for r, i in spot.items() if i not in ahead and r not in named]
-        met = (
-            position is None
-            or not others
-            or (position == "first" and max(ahead) < min(others))
-            or (position == "last" and min(ahead) > max(others))
-        )
+        met = _group_landed(position, index, mine, spot, owner, rows)
         if met:
             landed_clips.update(mine)
         out.append(
