@@ -1,0 +1,533 @@
+{
+ "provenance": {
+  "ticket": "KRI-962",
+  "thread": "99627FBC (Don Julio walk-in kit N1, Voiceover)",
+  "turn": "9dac2374-a990-4075-b40b-08d688e04c61",
+  "job": "bdb0c798-c2e6-4f58-8a31-e50f9acdfdd7",
+  "alignment_prompt_version": "2026-10-25-editorial-skills-v2",
+  "note": "Minimal slice of the prod run 2026-10-26: the approved strategy's resolved clip intents (the photo assignments stay: it is a corner card, never a step clip), the voiceover words and clip descriptions the alignment agent received, the analyzer's speaks_to_camera / content_type from the job's own clip_metadata runs, and the agent's placements. Clips are listed in attachment order."
+ },
+ "voiceover_s": 22.1275,
+ "words": [
+  [
+   "This",
+   0.30000000000000004,
+   0.6600000143051148
+  ],
+  [
+   "is",
+   0.6600000143051148,
+   1.0999999523162842
+  ],
+  [
+   "Don",
+   1.0999999523162842,
+   1.3799999237060547
+  ],
+  [
+   "Julio",
+   1.3799999237060547,
+   1.7000000953674317
+  ],
+  [
+   "in",
+   1.7000000953674317,
+   2.1199999332427977
+  ],
+  [
+   "Palermo,",
+   2.1199999332427977,
+   2.659999895095825
+  ],
+  [
+   "Buenos",
+   3.1278748474121096,
+   3.3278751335144046
+  ],
+  [
+   "Aires.",
+   3.3278751335144046,
+   3.547874923706055
+  ],
+  [
+   "The",
+   3.987874980926514,
+   4.147874828338623
+  ],
+  [
+   "queue",
+   4.147874828338623,
+   4.407875057220459
+  ],
+  [
+   "starts",
+   4.407875057220459,
+   4.727875228881836
+  ],
+  [
+   "under",
+   4.727875228881836,
+   5.047874923706055
+  ],
+  [
+   "the",
+   5.047874923706055,
+   5.727875228881836
+  ],
+  [
+   "awning.",
+   5.727875228881836,
+   5.947875019073487
+  ],
+  [
+   "Inside,",
+   6.567874904632569,
+   6.607874866485596
+  ],
+  [
+   "the",
+   7.12787484741211,
+   7.507874961853028
+  ],
+  [
+   "butcher",
+   7.507874961853028,
+   7.787874694824219
+  ],
+  [
+   "cuts",
+   7.787874694824219,
+   8.167874809265136
+  ],
+  [
+   "the",
+   8.167874809265136,
+   8.847875114440917
+  ],
+  [
+   "Olloda",
+   8.847875114440917,
+   9.187875267028808
+  ],
+  [
+   "bife",
+   9.187875267028808,
+   9.547874923706054
+  ],
+  [
+   "right",
+   9.547874923706054,
+   10.267875190734863
+  ],
+  [
+   "in",
+   10.267875190734863,
+   10.567875381469726
+  ],
+  [
+   "front",
+   10.567875381469726,
+   10.707874771118163
+  ],
+  [
+   "of",
+   10.707874771118163,
+   10.947874542236327
+  ],
+  [
+   "you.",
+   10.947874542236327,
+   11.207874771118163
+  ],
+  [
+   "The",
+   11.787874694824218,
+   12.067875381469726
+  ],
+  [
+   "grill",
+   12.067875381469726,
+   12.227875228881835
+  ],
+  [
+   "never",
+   12.227875228881835,
+   12.667874809265136
+  ],
+  [
+   "stops.",
+   12.667874809265136,
+   13.047874923706054
+  ],
+  [
+   "Dried",
+   13.448000381469726,
+   13.467999885559081
+  ],
+  [
+   "flowers",
+   13.467999885559081,
+   14.068000267028808
+  ],
+  [
+   "hang",
+   14.068000267028808,
+   14.487999389648436
+  ],
+  [
+   "from",
+   14.487999389648436,
+   14.788000534057616
+  ],
+  [
+   "the",
+   14.788000534057616,
+   15.208000610351561
+  ],
+  [
+   "ceiling.",
+   15.208000610351561,
+   15.208000610351561
+  ],
+  [
+   "And",
+   15.477499923706052,
+   15.717499694824216
+  ],
+  [
+   "two",
+   15.717499694824216,
+   15.95749946594238
+  ],
+  [
+   "Michelin",
+   15.95749946594238,
+   16.43750091552734
+  ],
+  [
+   "plaques",
+   16.43750091552734,
+   16.77750106811523
+  ],
+  [
+   "sit",
+   16.77750106811523,
+   17.27750106811523
+  ],
+  [
+   "on",
+   17.27750106811523,
+   17.477499923706052
+  ],
+  [
+   "the",
+   17.477499923706052,
+   17.61749931335449
+  ],
+  [
+   "brick",
+   17.61749931335449,
+   17.817500076293943
+  ],
+  [
+   "wall.",
+   17.817500076293943,
+   18.057499847412107
+  ],
+  [
+   "One",
+   18.307499847412107,
+   18.587500534057614
+  ],
+  [
+   "question",
+   18.587500534057614,
+   19.02750106811523
+  ],
+  [
+   "before",
+   19.02750106811523,
+   19.50750061035156
+  ],
+  [
+   "we",
+   19.50750061035156,
+   19.88749977111816
+  ],
+  [
+   "eat.",
+   19.88749977111816,
+   20.02750106811523
+  ]
+ ],
+ "clips": [
+  {
+   "media_id": "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4",
+   "duration_s": 8.5,
+   "clip_summary": "A man stands outside a restaurant called Parrilla Don Julio, expresses excitement for the meal, and makes a peace sign gesture.",
+   "activity": "walking, talking, and posing outside a restaurant",
+   "detected_subject": "man outside a restaurant",
+   "setting": "restaurant entrance / outdoor seating area",
+   "speaks_to_camera": true,
+   "content_type": "talking_head",
+   "alignment_creator_label": "the DON JULIO sign"
+  },
+  {
+   "media_id": "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4",
+   "duration_s": 7.0,
+   "clip_summary": "The camera pans slowly across a brick wall adorned with Michelin plaques and a green award, showing parts of a restaurant interior with people seated at tables.",
+   "activity": "dining and socializing",
+   "detected_subject": "restaurant interior with awards and diners",
+   "setting": "",
+   "speaks_to_camera": false,
+   "content_type": "ambience",
+   "alignment_creator_label": "the plaques"
+  },
+  {
+   "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+   "duration_s": 12.0,
+   "clip_summary": "The video shows the interior of a restaurant with high ceilings, decorative dried flowers, and a visible kitchen area with a chef.",
+   "activity": "panning across a restaurant interior, with a chef working at a grill",
+   "detected_subject": "restaurant interior with a chef",
+   "setting": "",
+   "speaks_to_camera": false,
+   "content_type": "ambience",
+   "alignment_creator_label": "the grill; the flowers"
+  },
+  {
+   "media_id": "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4",
+   "duration_s": 8.0,
+   "clip_summary": "A chef in a white chef's hat and black apron is working at a large indoor grill, placing and adjusting food items. Another person is briefly visible next to them.",
+   "activity": "chef grilling food items on a rotating skewer grill",
+   "detected_subject": "chef cooking on grill",
+   "setting": "restaurant kitchen or open-kitchen dining area",
+   "speaks_to_camera": false,
+   "content_type": "action",
+   "alignment_creator_label": "the grill"
+  },
+  {
+   "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+   "duration_s": 10.0,
+   "clip_summary": "A female chef is seasoning raw cuts of meat with salt on a white cutting board, then places one piece onto a grill. Another chef is partially visible in the background.",
+   "activity": "seasoning raw meat and placing it on a grill",
+   "detected_subject": "chef preparing meat",
+   "setting": "restaurant kitchen / grill area",
+   "speaks_to_camera": false,
+   "content_type": "action",
+   "alignment_creator_label": "the butcher; the grill"
+  },
+  {
+   "media_id": "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4",
+   "duration_s": 4.5,
+   "clip_summary": "People are standing on a sidewalk outside a restaurant or cafe, some under a striped awning and others under red umbrellas, possibly waiting to enter or be seated.",
+   "activity": "waiting outside a restaurant",
+   "detected_subject": "people outside restaurant",
+   "setting": "sidewalk outside a restaurant/cafe",
+   "speaks_to_camera": false,
+   "content_type": "broll",
+   "alignment_creator_label": "the queue"
+  },
+  {
+   "media_id": "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4",
+   "duration_s": 4.0,
+   "clip_summary": "A person walks past a restaurant called \"DON JULIO Parrilla\" with two people visible through its window, dining inside.",
+   "activity": "walking on sidewalk, dining in restaurant",
+   "detected_subject": "pedestrian walking past restaurant",
+   "setting": "city sidewalk next to a restaurant",
+   "speaks_to_camera": false,
+   "content_type": "broll",
+   "alignment_creator_label": "the DON JULIO sign"
+  }
+ ],
+ "resolved_clip_intents": [
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the DON JULIO sign",
+   "intent_id": "include_don_julio_sign",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4",
+     "confidence": 0.9,
+     "evidence": "white restaurant sign with black text; man points to sign"
+    },
+    {
+     "media_id": "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4",
+     "confidence": 0.9,
+     "evidence": "Don Julio Parrilla sign"
+    },
+    {
+     "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+     "confidence": 0.9,
+     "evidence": "on_screen_text: DON JULIO"
+    }
+   ]
+  },
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the queue",
+   "intent_id": "include_queue",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4",
+     "confidence": 0.9,
+     "evidence": "people waiting outside and entering a restaurant; people gather near a restaurant entrance"
+    }
+   ]
+  },
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the butcher",
+   "intent_id": "include_butcher",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+     "confidence": 0.8,
+     "evidence": "chef prepares various cuts of raw meat by salting them"
+    },
+    {
+     "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+     "confidence": 0.8,
+     "evidence": "Chef seasoning raw meat cuts"
+    }
+   ]
+  },
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the grill",
+   "intent_id": "include_grill",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+     "confidence": 0.9,
+     "evidence": "chefs working at a grill; large silver grill"
+    },
+    {
+     "media_id": "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4",
+     "confidence": 0.9,
+     "evidence": "chef working at a grill station; large stainless steel oven with grill"
+    },
+    {
+     "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+     "confidence": 0.9,
+     "evidence": "preparing meat...before placing them on a grill; large metal grill"
+    },
+    {
+     "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+     "confidence": 0.8,
+     "evidence": "a grill...in the background"
+    }
+   ]
+  },
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the flowers",
+   "intent_id": "include_flowers",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+     "confidence": 0.9,
+     "evidence": "unique decor featuring dried flowers; bunches of dried yellow flowers; bunches of dried purple flowers"
+    }
+   ]
+  },
+  {
+   "op": "include",
+   "status": "resolved",
+   "attribute": "the plaques",
+   "intent_id": "include_plaques",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4",
+     "confidence": 0.9,
+     "evidence": "rustic brick wall decorated with Michelin plaques; red Michelin 2024 plaque; red Michelin 2025 plaque"
+    }
+   ]
+  }
+ ],
+ "agent_placements": [
+  {
+   "media_id": "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4",
+   "start_word": 0
+  },
+  {
+   "media_id": "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4",
+   "start_word": 9
+  },
+  {
+   "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+   "start_word": 16
+  },
+  {
+   "media_id": "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4",
+   "start_word": 27
+  },
+  {
+   "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+   "start_word": 31
+  },
+  {
+   "media_id": "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4",
+   "start_word": 38
+  },
+  {
+   "media_id": "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4",
+   "start_word": 45
+  }
+ ],
+ "prod_steps": [
+  {
+   "step_id": "seg_0",
+   "media_id": "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4",
+   "start_s": 0.0,
+   "end_s": 4.148,
+   "text": "This is Don Julio in Palermo, Buenos Aires. The"
+  },
+  {
+   "step_id": "seg_1",
+   "media_id": "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4",
+   "start_s": 4.148,
+   "end_s": 7.508,
+   "text": "queue starts under the awning. Inside, the"
+  },
+  {
+   "step_id": "seg_2",
+   "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+   "start_s": 7.508,
+   "end_s": 11.968,
+   "text": "butcher cuts the Olloda bife right in front of you. The"
+  },
+  {
+   "step_id": "seg_3",
+   "media_id": "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4",
+   "start_s": 11.968,
+   "end_s": 13.468,
+   "text": "grill never stops. Dried"
+  },
+  {
+   "step_id": "seg_4",
+   "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+   "start_s": 13.468,
+   "end_s": 15.957,
+   "text": "flowers hang from the ceiling. And two"
+  },
+  {
+   "step_id": "seg_5",
+   "media_id": "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4",
+   "start_s": 15.957,
+   "end_s": 18.307,
+   "text": "Michelin plaques sit on the brick wall."
+  },
+  {
+   "step_id": "seg_6",
+   "media_id": "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4",
+   "start_s": 18.307,
+   "end_s": 20.527,
+   "text": "One question before we eat."
+  }
+ ]
+}

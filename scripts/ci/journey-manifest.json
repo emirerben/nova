@@ -1753,6 +1753,16 @@
       ]
     },
     {
+      "id": "kri-962-voiceover-look-alikes",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri962_look_alike_cue.py tests/tasks/test_phone_subtitled_narrated_dispatch.py tests/tasks/test_kri842_narrated_clip_sound.py",
+      "paths": [
+        "src/apps/api/app/pipeline/narrated_look_alikes.py",
+        "src/apps/api/tests/fixtures/kri962_don_julio_n1_look_alike.json",
+        "src/apps/api/tests/tasks/test_kri962_look_alike_cue.py"
+      ]
+    },
+    {
       "id": "kri-215-creative-copy-skills",
       "needs_native": false,
       "api_tests": "tests/evals/test_runtime_creative_skills.py tests/evals/test_platform_copy_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_sequence_quote_writer_evals.py tests/agents/test_intro_writer.py tests/agents/test_sequence_quote_writer.py tests/services/test_creator_sessions.py tests/kria/test_plan_snapshot_postgres.py",

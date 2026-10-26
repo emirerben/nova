@@ -11663,12 +11663,35 @@ def _run_phone_narrated_job(
                 # (voice-vs-footage), instead of equal-duration buckets. Any
                 # failure returns None and the legacy split below runs unchanged.
                 aligned = None
+                # KRI-962: clips whose identical creator labels cannot tell the agent which
+                # one a named cue means (N1: the DON JULIO sign vs Atakan at the plaque).
+                look_alikes: list[Any] = []
                 if settings.narrated_clip_alignment_enabled:
                     creator_labels, pinned_first, pinned_last, ordered_groups = (
                         _narrated_creator_clip_labels(
                             all_candidates, clip_id_to_gcs, _media_id_for_clip
                         )
                     )
+                    look_alikes = _narrated_look_alike_sets(
+                        all_candidates,
+                        snapshot,
+                        clip_id_to_gcs,
+                        _media_id_for_clip,
+                        clip_ids=ordered_ids,
+                        clip_metas=list(ingest.get("clip_metas") or []),
+                        held={
+                            *pinned_first,
+                            *pinned_last,
+                            *(clip_id for group in ordered_groups for clip_id in group),
+                        },
+                        order_locked=bool(guide_narrative_order),
+                    )
+                    if look_alikes:
+                        from app.pipeline.narrated_look_alikes import (  # noqa: PLC0415
+                            labels_for_alignment,
+                        )
+
+                        creator_labels = labels_for_alignment(creator_labels, look_alikes)
                     aligned = _narrated_clip_alignment_steps(
                         transcript=transcript,
                         clip_ids=ordered_ids,
@@ -11684,6 +11707,17 @@ def _run_phone_narrated_job(
                     )
                 if aligned is not None:
                     ordered_ids, step_timings, moved_clip_ids = aligned
+                    if look_alikes:
+                        ordered_ids = _narrated_settle_look_alikes(
+                            list(ordered_ids),
+                            look_alikes,
+                            step_timings=step_timings,
+                            bindings=bindings,
+                            media_id_for_clip=_media_id_for_clip,
+                            snapshot=snapshot,
+                            notes=narrated_repair_notes,
+                            job_id=job_id,
+                        )
                     step_clip_ids = list(ordered_ids)
                 else:
                     if snapshot.get("creator_brief_binding") and len(ordered_ids) > 1:
@@ -27627,30 +27661,48 @@ def _narrated_clip_description(meta: Any) -> str:
     return " | ".join(parts)[:600]
 
 
-def _narrated_creator_clip_labels(
+def _narrated_clip_keys(
+    clip_id: str, gcs_path: str, media_id_for_clip: Callable[[str], str | None]
+) -> list[str]:
+    """The ids a resolved assignment may name this clip by: its proxy basename, then the
+    phone source binding id."""
+    keys = [os.path.basename(str(gcs_path))]
+    try:
+        bound = media_id_for_clip(clip_id)
+    except Exception:  # noqa: BLE001 -- a missing binding only costs a label
+        bound = None
+    if bound:
+        keys.append(str(bound))
+    return keys
+
+
+def _narrated_clip_label_rows(
     all_candidates: Mapping[str, Any],
     clip_id_to_gcs: Mapping[str, str],
     media_id_for_clip: Callable[[str], str | None],
-) -> tuple[dict[str, str], list[str], list[str], list[list[str]]]:
-    """Creator brief labels per clip id, plus the order the creator described.
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Creator labels per clip id, in brief order: ``{clip_id: {label: row}}``.
 
-    A resolved clip intent names a shot ("grating the pecorino") and the media
-    it matched; ``media_id`` is the basename of the clip's proxy path (or the
-    phone source binding id). Returns ``(labels, pinned_first, pinned_last,
-    ordered_groups)`` from the resolved ``op == "order"`` intents without ``order_by``:
-    ``first`` / ``last`` intents are pins; intents with no position are a described
-    SEQUENCE, one group of clip ids each in listed order. None of it locks the whole
-    order, so the narration may still place every other clip (KRI-532).
+    A resolved clip intent names a shot ("grating the pecorino") and the media it matched;
+    ``media_id`` is the basename of the clip's proxy path (or the phone source binding id).
+    Each row keeps the ops that gave the label (``"cue"`` for a fullscreen photo's spoken cue)
+    and the resolver's highest confidence for it (KRI-962 reads both).
     """
     strategy = all_candidates.get("creator_strategy")
     strategy = strategy if isinstance(strategy, Mapping) else {}
-    resolved = [
-        intent
-        for intent in (strategy.get("resolved_clip_intents") or [])
-        if isinstance(intent, Mapping)
-    ]
-    labels_by_media: dict[str, list[str]] = {}
-    for intent in resolved:
+    rows_by_media: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def add(media_id: str, label: str, op: str, confidence: Any) -> None:
+        row = rows_by_media.setdefault(media_id, {}).setdefault(
+            label, {"ops": set(), "confidence": 0.0}
+        )
+        row["ops"].add(op)
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            row["confidence"] = max(row["confidence"], float(confidence))
+
+    for intent in strategy.get("resolved_clip_intents") or []:
+        if not isinstance(intent, Mapping):
+            continue
         attribute = " ".join(str(intent.get("attribute") or "").split())
         if not attribute or intent.get("status") not in (None, "resolved"):
             continue
@@ -27659,8 +27711,13 @@ def _narrated_creator_clip_labels(
             continue
         for assignment in intent.get("assignments") or []:
             media_id = assignment.get("media_id") if isinstance(assignment, Mapping) else None
-            if media_id and attribute not in labels_by_media.setdefault(str(media_id), []):
-                labels_by_media[str(media_id)].append(attribute)
+            if media_id:
+                add(
+                    str(media_id),
+                    attribute,
+                    str(intent.get("op") or ""),
+                    assignment.get("confidence"),
+                )
     # The typed photo -> original relation gives the alignment agent the same
     # exact spoken cue even if no redundant include intent survived planning.
     for beat in strategy.get("reaction_beats") or []:
@@ -27670,25 +27727,49 @@ def _narrated_creator_clip_labels(
         trigger = " ".join(str(beat.get("trigger") or "").split())
         if following and trigger:
             cue_label = f'Show at the spoken cue "{trigger}"; a photo covers the opening'
-            labels_by_media.setdefault(str(following), []).append(cue_label)
-    labels: dict[str, str] = {}
+            add(str(following), cue_label, "cue", 1.0)
+    rows_by_clip: dict[str, dict[str, dict[str, Any]]] = {}
+    for clip_id, gcs_path in clip_id_to_gcs.items():
+        found: dict[str, dict[str, Any]] = {}
+        for key in _narrated_clip_keys(clip_id, gcs_path, media_id_for_clip):
+            for label, row in rows_by_media.get(key, {}).items():
+                merged = found.setdefault(label, {"ops": set(), "confidence": 0.0})
+                merged["ops"] |= row["ops"]
+                merged["confidence"] = max(merged["confidence"], row["confidence"])
+        if found:
+            rows_by_clip[clip_id] = found
+    return rows_by_clip
+
+
+def _narrated_creator_clip_labels(
+    all_candidates: Mapping[str, Any],
+    clip_id_to_gcs: Mapping[str, str],
+    media_id_for_clip: Callable[[str], str | None],
+) -> tuple[dict[str, str], list[str], list[str], list[list[str]]]:
+    """Creator brief labels per clip id, plus the order the creator described.
+
+    Labels come from ``_narrated_clip_label_rows``. Returns ``(labels, pinned_first,
+    pinned_last, ordered_groups)`` from the resolved ``op == "order"`` intents without
+    ``order_by``: ``first`` / ``last`` intents are pins; intents with no position are a
+    described SEQUENCE, one group of clip ids each in listed order. None of it locks the
+    whole order, so the narration may still place every other clip (KRI-532).
+    """
+    strategy = all_candidates.get("creator_strategy")
+    strategy = strategy if isinstance(strategy, Mapping) else {}
+    resolved = [
+        intent
+        for intent in (strategy.get("resolved_clip_intents") or [])
+        if isinstance(intent, Mapping)
+    ]
+    labels = {
+        clip_id: "; ".join(rows)[:240]
+        for clip_id, rows in _narrated_clip_label_rows(
+            all_candidates, clip_id_to_gcs, media_id_for_clip
+        ).items()
+    }
     clip_by_media: dict[str, str] = {}
     for clip_id, gcs_path in clip_id_to_gcs.items():
-        keys = [os.path.basename(str(gcs_path))]
-        try:
-            bound = media_id_for_clip(clip_id)
-        except Exception:  # noqa: BLE001 -- a missing binding only costs a label
-            bound = None
-        if bound:
-            keys.append(str(bound))
-        found: list[str] = []
-        for key in keys:
-            for label in labels_by_media.get(key, []):
-                if label not in found:
-                    found.append(label)
-        if found:
-            labels[clip_id] = "; ".join(found)[:240]
-        for key in keys:
+        for key in _narrated_clip_keys(clip_id, gcs_path, media_id_for_clip):
             clip_by_media.setdefault(key, clip_id)
 
     # Same seating as `clip_order_sequence.apply_sequence`: walk the order intents in
@@ -27720,6 +27801,205 @@ def _narrated_creator_clip_labels(
         else:
             pinned[position].extend(members)
     return labels, pinned["first"], pinned["last"], groups
+
+
+def _narrated_talks_to_camera(meta: Any) -> bool | None:
+    """KRI-962: the clip's analysis says someone talks to the camera; None when unknown.
+
+    Read through the shared understanding record (the allowed ``ClipMeta`` reader). No meta,
+    or a failed / degraded analysis, is unknown: never read as "nobody talks".
+    """
+    if meta is None or getattr(meta, "failed", False) or getattr(meta, "analysis_degraded", False):
+        return None
+    from app.pipeline.narrated_look_alikes import TALKING_HEAD  # noqa: PLC0415
+    from app.services.clip_understanding import understanding_payload  # noqa: PLC0415
+
+    try:
+        record = understanding_payload(meta)
+    except Exception:  # noqa: BLE001 -- an unreadable analysis is unknown
+        return None
+    people = record.get("people") or {}
+    speech = record.get("speech") or {}
+    return bool(
+        people.get("speaks_to_camera")
+        or speech.get("to_camera")
+        or record.get("content_type") == TALKING_HEAD
+    )
+
+
+def _narrated_own_sound_media_ids(
+    snapshot: Mapping[str, Any], media_ids: Sequence[str]
+) -> frozenset[str] | None:
+    """KRI-962: the clips a clip-sound ask (KRI-842) plays with their own sound.
+
+    None when the approved brief cannot be read: then no look-alike is reseated, because a
+    clip that must keep its sound (an after-voice clip has to close the video) could move.
+    """
+    raw = snapshot.get("creator_brief_binding")
+    if not raw:
+        return frozenset()
+    try:
+        from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+        from app.kria.narrated_clip_sound_ask import brief_clip_sound_asks  # noqa: PLC0415
+        from app.pipeline.phone_clip_sound import resolve_ask_media  # noqa: PLC0415
+
+        brief = BriefBinding.model_validate(raw).resolve()
+        media_snapshot = raw.get("media_snapshot") if isinstance(raw, Mapping) else None
+        found: set[str] = set()
+        for ask in brief_clip_sound_asks(brief):
+            media, _reason = resolve_ask_media(ask, list(media_ids), media_snapshot)
+            if media is not None:
+                found.add(media)
+        return frozenset(found)
+    except Exception:  # noqa: BLE001 -- unreadable brief: reseat nothing
+        return None
+
+
+def _narrated_bound_media_id(
+    media_id_for_clip: Callable[[str], str | None], clip_id: str
+) -> str | None:
+    try:
+        return media_id_for_clip(clip_id)
+    except Exception:  # noqa: BLE001 -- an unbound clip is simply not matched
+        return None
+
+
+def _narrated_look_alike_sets(
+    all_candidates: Mapping[str, Any],
+    snapshot: Mapping[str, Any],
+    clip_id_to_gcs: Mapping[str, str],
+    media_id_for_clip: Callable[[str], str | None],
+    *,
+    clip_ids: Sequence[str],
+    clip_metas: Sequence[Any],
+    held: Collection[str],
+    order_locked: bool,
+) -> list[Any]:
+    """KRI-962: the edit's look-alike sets (``app.pipeline.narrated_look_alikes``).
+
+    Empty when the order is locked (a filming guide) or the brief cannot be read. ``held``
+    clips (pinned first/last, in a described sequence) and clips a clip-sound ask plays with
+    their own sound are never in a set. Reads the resolved intents' ops and confidences and
+    the analysis' talking-to-camera facts; never the creator's words. Never raises: on any
+    error there is no set and the edit is aligned exactly as before.
+    """
+    from app.pipeline.narrated_look_alikes import (  # noqa: PLC0415
+        INCLUDE,
+        CueClip,
+        look_alike_sets,
+    )
+
+    if order_locked:
+        return []
+    try:
+        bound = {
+            clip_id: _narrated_bound_media_id(media_id_for_clip, clip_id) for clip_id in clip_ids
+        }
+        own_sound = _narrated_own_sound_media_ids(
+            snapshot, [media_id for media_id in bound.values() if media_id]
+        )
+        if own_sound is None:
+            return []
+        rows = _narrated_clip_label_rows(all_candidates, clip_id_to_gcs, media_id_for_clip)
+        meta_by_id = {str(getattr(meta, "clip_id", "")): meta for meta in clip_metas}
+        clips = []
+        for clip_id in clip_ids:
+            clip_rows = rows.get(clip_id)
+            if clip_id in held or bound[clip_id] in own_sound or not clip_rows:
+                continue
+            clips.append(
+                CueClip(
+                    clip_id=clip_id,
+                    labels=tuple(clip_rows),
+                    include_only=all(row["ops"] == {INCLUDE} for row in clip_rows.values()),
+                    confidence={label: row["confidence"] for label, row in clip_rows.items()},
+                    talks_to_camera=_narrated_talks_to_camera(meta_by_id.get(clip_id)),
+                )
+            )
+        return look_alike_sets(clips)
+    except Exception as exc:  # noqa: BLE001 -- a tie-break never costs the video
+        log.warning("narrated_look_alikes_failed", stage="sets", error=str(exc)[:200])
+        return []
+
+
+def _narrated_settle_look_alikes(
+    order: list[str],
+    sets: Sequence[Any],
+    *,
+    step_timings: Sequence[Any],
+    bindings: Sequence[Any],
+    media_id_for_clip: Callable[[str], str | None],
+    snapshot: dict,
+    notes: list[str],
+    job_id: str,
+) -> list[str]:
+    """KRI-962: open each look-alike set on its lead, and name what could not be settled.
+
+    Returns the screen order (clip ids per step) after at most one swap per set; the step
+    windows are untouched. A swapped clip must fill its new window: from its own footage, or
+    slowed to no less than ``MIN_SWAP_RATE`` where the phone retimes (``variableSpeed``
+    verified); a clip of unknown length never moves. Notes for an unbroken tie or a swap the
+    lengths blocked join ``notes`` (the creator-visible render notes). Never raises: on any
+    error the agent's order is kept as it was.
+    """
+    from app.pipeline.narrated_look_alikes import (  # noqa: PLC0415
+        MIN_SWAP_RATE,
+        blocked_note,
+        reseat,
+        tie_note,
+        unbroken_ties,
+    )
+    from app.services.phone_rollout import clip_speed_planned_for  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    try:
+        seat_s = [float(timing.end_s) - float(timing.start_s) for timing in step_timings]
+        retimes = clip_speed_planned_for()
+        duration_by_media = {
+            binding.media_id: float(binding.original.duration_s) for binding in bindings
+        }
+
+        def fits(clip_id: str, seat: int) -> bool:
+            media_id = _narrated_bound_media_id(media_id_for_clip, clip_id)
+            available = duration_by_media.get(media_id) if media_id else None
+            if available is None or not 0 <= seat < len(seat_s) or seat_s[seat] <= 0:
+                return False
+            if available >= seat_s[seat]:
+                return True
+            return retimes and available / seat_s[seat] >= MIN_SWAP_RATE
+
+        seats, swaps, blocked = reseat(order, sets, fits=fits)
+        ties = unbroken_ties(seats, sets)
+        with _worker_reply_language(snapshot):
+            added = [
+                *(
+                    blocked_note(
+                        row["labels"],
+                        lead_position=row["lead_position"],
+                        first_position=row["first_position"],
+                    )
+                    for row in blocked
+                ),
+                *(tie_note(tie["labels"], tie["positions"]) for tie in ties),
+            ]
+    except Exception as exc:  # noqa: BLE001 -- a tie-break never costs the video
+        log.warning("narrated_look_alikes_failed", job_id=job_id, error=str(exc)[:200])
+        return list(order)
+    notes.extend(note for note in dict.fromkeys(added) if note not in notes)
+    record_pipeline_event(
+        "narrated",
+        "narrated_look_alikes",
+        {
+            "sets": [{"labels": list(one.labels), "clip_ids": list(one.clip_ids)} for one in sets],
+            "demoted": sorted({clip_id for one in sets for clip_id in one.demoted}),
+            "swaps": swaps,
+            "blocked": blocked,
+            "ties": ties,
+        },
+    )
+    if swaps or blocked or ties:
+        log.info("narrated_look_alikes", job_id=job_id, swaps=swaps, blocked=blocked, ties=ties)
+    return seats
 
 
 def _narrated_clip_alignment_steps(

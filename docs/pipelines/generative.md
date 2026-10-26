@@ -845,6 +845,22 @@ restart (restores the bucket split for unbound jobs; bound requests ask for reco
 cacio e pepe job, a pinned-last Cappadocia case from prod 38caaebd, and the Tigre
 spoken-cue case from prod ef8e35b8, KRI-590).
 
+*Look-alike cues (KRI-962, Don Julio N1, job bdb0c798)*: "the DON JULIO sign while I say
+'Don Julio'" matched the window sign AND Atakan talking at the plaque, both 0.9; both
+clips got the same creator label, the agent opened on Atakan and put the sign on the last
+line. `app.pipeline.narrated_look_alikes` now finds clips whose creator labels are
+identical and all from `include` asks (never a pinned / sequenced clip, one with a
+clip-sound ask, or a group / caption / order label; nothing under a LOCKED order). Fields
+only, never words (KRI-667): a clip the resolver rated higher is never demoted; otherwise a
+clip whose analysis says someone talks to the camera (silent under the voice) yields the
+cue to a look-alike where nobody talks. The demoted clip loses the label in the agent's
+input; if the agent still opens the set on it, the two clips swap seats (windows and every
+other seat unchanged), only when both fill their new window (slowed to at least 0.5x, and
+only with `variableSpeed` verified). A blocked swap, and a tie nothing ranks whose clips
+end up apart, add a render note (`phone_repair_notes`). Trace event
+`narrated`/`narrated_look_alikes`; fails open. Guard:
+`tests/tasks/test_kri962_look_alike_cue.py`.
+
 ### Named-line cuts in a narrated voiceover (KRI-889)
 
 "Cut the line 'with bread, no'" / "cut my second 'thank you Karo'" on a narrated edit
