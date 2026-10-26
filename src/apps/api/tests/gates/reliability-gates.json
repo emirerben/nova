@@ -3133,7 +3133,7 @@
       "boundary": "planner",
       "status": "open_pr",
       "owner": "KRI-947",
-      "journey": null,
+      "journey": "kri-947-951-same-moment-picker",
       "paths": [
         "src/apps/api/app/services/clip_selection.py",
         "src/apps/api/app/services/clip_intent_resolution.py",
