@@ -195,6 +195,19 @@ Partial-consent reuse requires the same excluded-video IDs, not merely the same 
 changed coverage offers a fresh ready-video choice. Catalogue capacity remains 500;
 selected-story rendering keeps its separate bound.
 
+The native Camera roll is a full-screen surface in the projects drawer, not a set of sheets (KRI-944).
+Footage is a contact sheet grouped by event; every tile renders one `CameraRollItemState`
+(queued, uploading, analyzing, ready, needs retry, failed, excluded) from `GET .../items`, and
+**Find ideas**, **Another idea**, delete idea and delete event all work per event (`group`).
+Ideas persist per event on the server; the phone caches them per event (`ideasByGroup`) and re-reads
+`GET .../stories?group=` after any membership change. A rename changes only the local title, never the
+server group key, so it cannot orphan ideas; moving items between events does clear both events' ideas
+(the server drops what it can no longer stand behind) and the surface says so. Collections saved before
+this kept one `savedIdeas` object; that key is ignored on read, so the collection loads and its ideas come
+back from the server. Offline fixtures: `-camera-roll-collection -collection-mixed-states` (and
+`-collection-empty`, `-collection-access-notices`); under the real drawer, `-ui-testing-chat
+-camera-roll-surface-fixture`.
+
 Each idea carries an additive `content_plan.form` (`guide`, `factual_story`, `atmosphere`,
 `review`, `performance`). `FORM_EVIDENCE` in `schemas/media_collections.py` lists what a form
 needs: `guide` three distinct source clips, `factual_story` a selected research fact, the rest

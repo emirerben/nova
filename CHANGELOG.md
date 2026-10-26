@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.147.0] - 2026-10-26
+
+### Changed
+- feat(ios): full-screen Camera roll surface, ideas per event, old sheets deleted (KRI-944) (#1855) <!-- release-pr: 1855 -->
+
+## [0.81.146.0] - 2026-10-26
+
+### Changed
+- feat(ios): camera roll per-item engine and state reducer (KRI-944) (#1841) <!-- release-pr: 1841 -->
+
 ## [0.81.145.0] - 2026-10-26
 
 ### Changed
