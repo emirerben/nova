@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.135.0] - 2026-10-26
+
+### Changed
+- fix(kria): intro facts + hook request no longer dead-ends (KRI-945) (#1843) <!-- release-pr: 1843 -->
+
 ## [0.81.134.0] - 2026-10-26
 
 ### Fixed
