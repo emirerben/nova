@@ -38,7 +38,9 @@ from app.schemas.user_song import SongCaptionTrack, UserSongPlan
 
 # Keep existing integer JSON stable for approval hashes while accepting fractions.
 MIN_PROPOSAL_DURATION_S = 3
-MAX_PROPOSAL_DURATION_S = 120
+# 240 s is the ceiling for spoken edits (voiceover, talk-to-camera). Footage-owned
+# edits keep the 120 s planner cap in ``app.pipeline.best_parts.edit_cap_s``.
+MAX_PROPOSAL_DURATION_S = 240
 ProposalDuration = Annotated[
     int | float,
     Field(ge=MIN_PROPOSAL_DURATION_S, le=MAX_PROPOSAL_DURATION_S),

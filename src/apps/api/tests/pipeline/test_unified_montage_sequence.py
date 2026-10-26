@@ -14,6 +14,7 @@ from app.kria.brief_checks import (
     plan_facts_from_unified_montage,
     reply_from_receipts,
 )
+from app.pipeline import unified_montage
 from app.pipeline.unified_montage import BriefView, plan_unified_montage
 from tests.pipeline.test_unified_montage import clip
 
@@ -138,3 +139,138 @@ def test_unmatched_sequence_makes_the_reply_a_failure_notice():
     assert [r.status for r in receipts] == ["partial"]
     assert reply.startswith("Not everything you asked for made it in")
     assert "I found no clips of it" in reply
+
+
+# -- KRI-941: judge every row against the finished cut ----------------------------------
+# Prod 2026-10-25 (job b3820ddc): "start on the sign, end on my friend, in between, in this
+# order: the door, the butcher, the grill, ...". Every clip was named by some row, so the
+# first / last rows had no stray clip to be judged against (vacuously met), and a row with no
+# position was always met whatever came before it.
+
+
+def _codes(strategy, *order):
+    """The sequence rows' ``code`` for a cut already in ``order`` (no seating rule in between)."""
+    by_ref = {f"c{i}": clip(i) for i in range(5)}
+    rows = unified_montage._sequence_intents(strategy, True)
+    return [o["code"] for o in unified_montage._sequence_outcomes(rows, [by_ref[r] for r in order])]
+
+
+def test_a_then_clip_seated_before_the_first_clip_is_misplaced():
+    strategy = _strategy(
+        _intent("football", "first", FOOTBALL),
+        _intent("volleyball", None, VOLLEY_A, VOLLEY_B),
+    )
+    assert _codes(strategy, FOOTBALL, VOLLEY_A, VOLLEY_B, CAFE, PUB) == ["landed", "landed"]
+    # A volleyball clip plays before the football clip the creator said to start on.
+    assert _codes(strategy, VOLLEY_A, FOOTBALL, VOLLEY_B, CAFE, PUB) == ["misplaced", "misplaced"]
+
+
+def test_a_then_clip_seated_after_the_last_clip_is_misplaced():
+    strategy = _strategy(
+        _intent("pub", "last", PUB),
+        _intent("volleyball", None, VOLLEY_A, VOLLEY_B),
+    )
+    assert _codes(strategy, CAFE, VOLLEY_A, VOLLEY_B, FOOTBALL, PUB) == ["landed", "landed"]
+    assert _codes(strategy, CAFE, VOLLEY_A, FOOTBALL, PUB, VOLLEY_B) == ["misplaced", "misplaced"]
+
+
+def test_listed_then_rows_seated_reversed_are_misplaced():
+    # "in this order: the pub, then volleyball": two rows, listed order = row order.
+    strategy = _strategy(_intent("the pub", None, PUB), _intent("volleyball", None, VOLLEY_A))
+    assert _codes(strategy, CAFE, PUB, VOLLEY_A, VOLLEY_B, FOOTBALL) == ["landed", "landed"]
+    # Row 2 (volleyball) plays before row 1 (the pub): the later row is the one out of place.
+    assert _codes(strategy, CAFE, VOLLEY_A, PUB, VOLLEY_B, FOOTBALL) == ["landed", "misplaced"]
+
+
+def test_a_first_clip_seated_second_is_misplaced_when_every_clip_is_named():
+    strategy = _strategy(
+        _intent("football", "first", FOOTBALL),
+        _intent("the rest", None, VOLLEY_A, VOLLEY_B, CAFE, PUB),
+    )
+    # Every clip is named, so nothing is "unnamed" to judge the first clip against: it must
+    # still lead the whole cut.
+    assert _codes(strategy, FOOTBALL, CAFE, PUB, VOLLEY_A, VOLLEY_B) == ["landed", "landed"]
+    assert _codes(strategy, CAFE, FOOTBALL, PUB, VOLLEY_A, VOLLEY_B) == ["misplaced", "misplaced"]
+
+
+def test_a_last_clip_seated_second_to_last_is_misplaced_when_every_clip_is_named():
+    strategy = _strategy(
+        _intent("pub", "last", PUB),
+        _intent("the rest", None, VOLLEY_A, VOLLEY_B, CAFE, FOOTBALL),
+    )
+    assert _codes(strategy, CAFE, FOOTBALL, VOLLEY_A, VOLLEY_B, PUB) == ["landed", "landed"]
+    assert _codes(strategy, CAFE, FOOTBALL, VOLLEY_A, PUB, VOLLEY_B) == ["misplaced", "misplaced"]
+
+
+def test_a_multi_clip_first_group_is_met_as_a_block_and_misplaced_when_split():
+    strategy = _strategy(
+        _intent("volleyball", "first", VOLLEY_A, VOLLEY_B),
+        _intent("the rest", None, CAFE, PUB, FOOTBALL),
+    )
+    # Inside the group any order is fine: a group has no listed order of its own.
+    assert _codes(strategy, VOLLEY_B, VOLLEY_A, CAFE, PUB, FOOTBALL) == ["landed", "landed"]
+    assert _codes(strategy, VOLLEY_A, CAFE, VOLLEY_B, PUB, FOOTBALL) == ["misplaced", "misplaced"]
+
+
+def test_unnamed_clips_between_groups_do_not_fail_the_order():
+    strategy = _strategy(
+        _intent("football", "first", FOOTBALL),
+        _intent("volleyball", None, VOLLEY_A, VOLLEY_B),
+        _intent("pub", "last", PUB),
+    )
+    # The cafe shot is named by nobody: it may sit anywhere between the first and last clips.
+    for order in (
+        (FOOTBALL, CAFE, VOLLEY_A, VOLLEY_B, PUB),
+        (FOOTBALL, VOLLEY_A, CAFE, VOLLEY_B, PUB),
+        (FOOTBALL, VOLLEY_A, VOLLEY_B, CAFE, PUB),
+    ):
+        assert _codes(strategy, *order) == ["landed", "landed", "landed"], order
+    # ...but not before the first clip or after the last one.
+    assert _codes(strategy, CAFE, FOOTBALL, VOLLEY_A, VOLLEY_B, PUB) == [
+        "misplaced",
+        "landed",
+        "landed",
+    ]
+    assert _codes(strategy, FOOTBALL, VOLLEY_A, VOLLEY_B, PUB, CAFE) == [
+        "landed",
+        "landed",
+        "misplaced",
+    ]
+
+
+def test_two_first_rows_and_two_last_rows_are_met_in_their_listed_order():
+    strategy = _strategy(
+        _intent("football", "first", FOOTBALL),
+        _intent("the cafe", "first", CAFE),
+        _intent("volleyball", None, VOLLEY_A, VOLLEY_B),
+        _intent("the pub", "last", PUB),
+    )
+    assert _codes(strategy, FOOTBALL, CAFE, VOLLEY_A, VOLLEY_B, PUB) == ["landed"] * 4
+    # Swapped: the first row's clip is behind the second row's, which is the one out of place.
+    assert _codes(strategy, CAFE, FOOTBALL, VOLLEY_A, VOLLEY_B, PUB) == [
+        "misplaced",
+        "landed",
+        "landed",
+        "landed",
+    ]
+    ends = _strategy(
+        _intent("volleyball", None, VOLLEY_A, VOLLEY_B, FOOTBALL),
+        _intent("the cafe", "last", CAFE),
+        _intent("the pub", "last", PUB),
+    )
+    assert _codes(ends, VOLLEY_A, VOLLEY_B, FOOTBALL, CAFE, PUB) == ["landed"] * 3
+    assert _codes(ends, VOLLEY_A, VOLLEY_B, FOOTBALL, PUB, CAFE) == [
+        "landed",
+        "landed",
+        "misplaced",
+    ]
+
+
+def test_a_then_row_naming_a_first_clip_again_is_judged_on_its_own_new_clips():
+    strategy = _strategy(
+        _intent("football", "first", FOOTBALL),
+        _intent("football then volleyball", None, FOOTBALL, VOLLEY_A),
+    )
+    assert _codes(strategy, FOOTBALL, VOLLEY_A, CAFE, PUB, VOLLEY_B) == ["landed", "landed"]
+    # The football clip belongs to the first row; the then row owns only the volleyball clip.
+    assert _codes(strategy, VOLLEY_A, FOOTBALL, CAFE, PUB, VOLLEY_B) == ["misplaced", "misplaced"]
