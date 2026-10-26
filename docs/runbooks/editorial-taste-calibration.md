@@ -62,10 +62,30 @@ exclude copied footage across projects using canonical media identities. No
 independent holdout evaluation has run. The first ten are all development data.
 
 The bounded context uses a transparent lexical baseline over at most three
-positive examples, confirmed profile rules and up to two reviewed calibrations.
+positive examples, confirmed profile rules and up to four reviewed calibrations (two `would_post`, two others).
 It labels examples as evidence of taste, never as facts about the current footage.
 Inspect retrieval choices and measure them before choosing a more expensive
 retrieval or model approach. Do not interpret structural checks as creative wins.
+
+In the account API, camera-roll generation ranks the creator's saved idea judgments
+by word overlap with the outing and footage descriptions (same lexical baseline, no new
+retrieval system). It sends up to two `would_post` and two other judgments, newest first
+on ties. It never infers an aggregate preference from the pile (no "too_generic x3"
+line): each judgment stays contextual. After generation, `generate_stories` drops any idea
+whose angle or opening text is a near repeat of a `not_for_me` idea the creator refused
+**for the same collection (outing)**: identical text, or at least 0.8 word overlap
+(Jaccard over 3+ letter words, four or more distinct words). Refusals never filter another
+outing. It never drops every idea: the best one stays and its `offered` event records
+`repeat_of_rejected` (a feedback id). Paraphrases with new vocabulary escape this check.
+Pause and Forget empty both paths.
+
+Kill switch: `CREATOR_EDITORIAL_TASTE_FEEDBACK_SIGNALS_ENABLED` (default `true`). `false`
+turns off similarity ranking (back to the two newest judgments), the repeat filter and
+the wrong-facts exclusion, and hides the `wrong_fact_feedback` capability, while profile,
+rules and examples keep working. Apply with `fly secrets set ...=false` on api + worker
+and restart. Account rollout: `CREATOR_EDITORIAL_TASTE_ENABLED=true` plus
+`CREATOR_EDITORIAL_TASTE_USER_IDS` as a JSON array of account ids, or `["*"]` for every
+account.
 
 External TikTok research is a separate reference pool. Preserve post ids, original
 capture dates, raw metric provenance, missing captions, promotion markers and the
@@ -96,12 +116,13 @@ A judgment does not build a project or authorize rendering. Project notes remain
 contextual; they never silently become standing rules.
 
 The `wrong_facts` reason (researched ideas only) is actionable, not just context: the
-next research run for the same topic drops every fact that repeats the wording the creator
-saw on that idea (best-effort word-overlap match, so light rewording is caught; a
-claim reworded beyond recognition can still return), before `CameraRollStoriesAgent`
-sees the evidence. Source URLs are deliberately not excluded: correct facts share them
-and grounding redirect URLs are unstable. Fact ids restart at `fact-0` on each search,
-so identity is the stored wording, read from the feedback row's `proposal` (no column). The exclusion joins the
+next research run for the same topic drops every fact that says what a fact the creator
+saw on that idea said, and every stable source address it cited, before
+`CameraRollStoriesAgent` sees the evidence. Fact ids restart at `fact-0` on each search
+and Gemini rewords facts and issues fresh grounding-redirect URLs every time, so identity
+is word overlap (Jaccard >= 0.5 over 3+ letter words) with the stored wording, read from
+the feedback row's `proposal` (no column); redirect URLs are never stored as identity.
+A paraphrase with new vocabulary can still come back. The exclusion joins the
 proposal cache key, so the same request re-searches and re-reviews. Forget, pause and the
 feature gate empty it; if every fact found was rejected the request fails closed (503).
 Clients show the choice only when `/creation-threads/capabilities` returns
@@ -117,7 +138,7 @@ confirming a newer profile. The service captures saved server metadata, not clie
 supplied post words. This is not pixel inspection or evidence of publication.
 
 The actual camera-roll proposer retrieves at most three examples against the
-query and outing descriptions. Confirmed rules and up to two recent judgments
+query and outing descriptions. Confirmed rules and up to four similarity-ranked judgments
 enter its bounded sensitive input. The prompt version and context bind its cache.
 Story history stores opaque version/source-hash receipts, not copied private words.
 Preferences and Memory pause are rechecked under an owner lock after generation;
@@ -236,8 +257,8 @@ and offered `MediaCollectionStory` rows through the app's DB session, in a
   receipt: the earlier judgment was in the prompt, was not, or the story predates
   receipts. The receipt is fixed when the story is offered, so an earlier judgment
   made after that moment gets its own bucket (`earlier_judgment_after_offer`) and is
-  not counted as the prompt dropping it. Only the two newest judgments reach a
-  prompt, so "not in the prompt" is expected for older reasons.
+  not counted as the prompt dropping it. Only up to four judgments (two `would_post`, two others, ranked by
+  similarity to the outing) reach a prompt, so "not in the prompt" is expected for older reasons.
 - wrong_facts rate: rows with `invented_experience` or `footage_mismatch`.
 - context diff for `--query`: `generation_context` with and without `reviewed_ideas`
   (sizes, hashes, verdicts/reasons and note lengths; no text).

@@ -1,6 +1,7 @@
 """Shared provider-owned public research evidence; never model-authored links."""
 
 import ipaddress
+import re
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -38,27 +39,33 @@ class ResearchSource(BaseModel):
         return value
 
 
-_CLAIM_STOPWORDS = frozenset(
-    "the and for was were are with from that this its has had have been into over after "
-    "before about which their they them than then also not but who whom what when where".split()
-)
+def _claim_words(text) -> set[str]:
+    return set(re.findall(r"\w{3,}", str(text).casefold()))
 
 
-def claim_tokens(text) -> frozenset[str]:
-    # Fact ids are positional and a fresh grounded search rewords the same claim, so
-    # identity is the distinctive words (names, numbers), not an exact hash.
-    words = "".join(c if c.isalnum() else " " for c in str(text).casefold()).split()
-    return frozenset(w for w in words if (len(w) > 2 or w.isdigit()) and w not in _CLAIM_STOPWORDS)
+def same_claim(a, b, threshold: float = 0.5) -> bool:
+    """True when two fact sentences say the same thing in different words.
+
+    Fact ids are positional (fact-N) and Gemini rewords the same fact on every grounded
+    search, so exact wording cannot identify a fact across runs. Jaccard overlap of 3+
+    letter words is the same lexical baseline used for taste retrieval. Failure modes:
+    a paraphrase with new vocabulary escapes; two facts about the same noun can match.
+    """
+    left, right = _claim_words(a), _claim_words(b)
+    if not left or not right:
+        return False
+    if " ".join(str(a).casefold().split()) == " ".join(str(b).casefold().split()):
+        return True
+    return len(left & right) / len(left | right) >= threshold
 
 
-def is_same_claim(text, rejected_texts, threshold=0.75) -> bool:
-    """True when `text` repeats a rejected claim, allowing light rewording."""
-    tokens = claim_tokens(text)
-    for other in map(claim_tokens, rejected_texts):
-        shared = len(tokens & other)
-        if shared >= 3 and shared / min(len(tokens), len(other)) >= threshold:
-            return True
-    return False
+def stable_source_url(url) -> bool:
+    """False for Google grounding redirects: the token in the path changes every search."""
+    parsed = urlsplit(str(url))
+    return not (
+        (parsed.hostname or "").lower() == "vertexaisearch.cloud.google.com"
+        and parsed.path.startswith("/grounding-api-redirect/")
+    )
 
 
 class ResearchFact(BaseModel):

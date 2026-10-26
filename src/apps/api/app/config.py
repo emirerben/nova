@@ -596,6 +596,10 @@ class Settings(BaseSettings):
     # Admission alone personalizes nothing: a creator must confirm a profile first.
     creator_editorial_taste_enabled: bool = False
     creator_editorial_taste_user_ids: list[str] = []
+    # Independent kill switch for what ACTS on idea feedback: similarity ranking of saved
+    # judgments, the repeat-of-refused-idea filter, and wrong-facts research exclusion.
+    # False keeps profile/rules/examples and the two newest judgments (pre-feedback-loop).
+    creator_editorial_taste_feedback_signals_enabled: bool = True
 
     def creator_editorial_taste_for(self, user_id: object) -> bool:
         if not self.creator_editorial_taste_enabled:

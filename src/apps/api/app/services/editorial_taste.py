@@ -25,6 +25,10 @@ MAX_CONTEXT_CHARS = 8_000
 _URL = re.compile(r"https?://\S+", re.I)
 
 
+def word_tokens(value):
+    return set(re.findall(r"\w{3,}", value.casefold()))
+
+
 def digest(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
@@ -378,7 +382,7 @@ class TasteStore:
     def context_for(value, owner, query="", kind=None):
         if value is None or value["owner_id"] != identifier(owner):
             raise ValueError("Private corpus unavailable for this creator")
-        tokens = set(re.findall(r"\w{3,}", text(query, 2000, blank=True).casefold()))
+        tokens = word_tokens(text(query, 2000, blank=True))
         examples = [
             e
             for e in value["examples"]
@@ -389,7 +393,7 @@ class TasteStore:
             words = " ".join(
                 [e["title"], e.get("post_form", ""), *e["words"], *e["source_descriptions"]]
             ).casefold()
-            return len(tokens & set(re.findall(r"\w{3,}", words))) + 2 * (e["kind"] == kind)
+            return len(tokens & word_tokens(words)) + 2 * (e["kind"] == kind)
 
         examples.sort(key=lambda e: (-relevance(e), e["project_id"]))
         profile = value["profile"] or {}

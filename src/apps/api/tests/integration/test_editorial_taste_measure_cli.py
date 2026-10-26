@@ -163,8 +163,8 @@ async def test_measures_one_account_without_leaking_or_crossing_accounts():
 
         diff = report["context_diff"]
         assert diff["available"] is True
-        assert diff["reviewed_ideas_in_context"] == 2
-        assert diff["feedback_rows_not_in_context"] == 5
+        assert diff["reviewed_ideas_in_context"] == 4
+        assert diff["feedback_rows_not_in_context"] == 3
         assert diff["chars_with_feedback"] > diff["chars_without_feedback"]
 
         assert report["owner"] == report["owner"].lower() and len(report["owner"]) == 12

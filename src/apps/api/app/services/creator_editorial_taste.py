@@ -24,9 +24,26 @@ from app.models import (
     PlanItemAsset,
     User,
 )
-from app.services.editorial_taste import MAX_CONTEXT_CHARS, TasteStore, digest
+from app.schemas.research import stable_source_url
+from app.services.editorial_taste import MAX_CONTEXT_CHARS, TasteStore, digest, word_tokens
 from app.services.library_variant_selection import selected_variant_id
 from app.services.private_text import normalize_private_text
+
+FEEDBACK_POOL = 200
+JUDGMENTS_PER_SIDE = 2
+REJECTED_POOL = 50
+# Jaccard over 3+ letter words. 0.8 means four of five words shared: a reword that
+# adds or swaps one word still matches; a new angle on the same footage does not.
+# Texts with fewer than four distinct words only match when they are identical.
+# Failure modes: paraphrase with new vocabulary escapes; a short generic opening
+# shared by two different ideas can wrongly match (the best idea is always kept).
+NEAR_REPEAT = 0.8
+NEAR_REPEAT_MIN_WORDS = 4
+
+
+def signals_enabled():
+    """Kill switch for what acts on idea feedback (ranking, repeat filter, wrong-facts)."""
+    return settings.creator_editorial_taste_feedback_signals_enabled
 
 
 def enabled(owner):
@@ -411,13 +428,13 @@ async def active_version(db, owner):
 
 
 async def rejected_research(db, owner, topic):
-    """Fact wording the creator called wrong on an earlier idea about this topic.
+    """Facts and stable sources the creator called wrong on an earlier idea about this topic.
 
-    Fact ids restart at fact-0 on every search, so identity is the stored wording,
-    matched loosely (`is_same_claim`). Source URLs are not used: correct facts share
-    them. Forget, pause and the feature gate all empty the result.
+    Fact ids restart at fact-0 on every search, so identity is the stored wording
+    (matched loosely, `same_claim`) and stable source address. Forget, pause and the
+    feature gate all empty the result.
     """
-    if not topic or await active_version(db, owner) is None:
+    if not topic or not signals_enabled() or await active_version(db, owner) is None:
         return None
     wanted = " ".join(topic.casefold().split())
     rows = (
@@ -431,7 +448,7 @@ async def rejected_research(db, owner, topic):
             .limit(50)
         )
     ).all()
-    texts = set()
+    texts, urls = set(), set()
     for row in rows:
         research = ((row.proposal or {}).get("idea") or {}).get("research") or {}
         if " ".join(str(research.get("topic", "")).casefold().split()) != wanted:
@@ -439,7 +456,14 @@ async def rejected_research(db, owner, topic):
         for fact in (research.get("evidence") or {}).get("facts", []):
             if fact.get("text"):
                 texts.add(fact["text"])
-    return {"fact_texts": sorted(texts)} if texts else None
+            urls.update(
+                s["url"]
+                for s in fact.get("sources", [])
+                if s.get("url") and stable_source_url(s["url"])
+            )
+    if not texts:
+        return None
+    return {"fact_texts": sorted(texts), "source_urls": sorted(urls)}
 
 
 async def generation_context(db, owner, query):
@@ -462,17 +486,37 @@ async def generation_context(db, owner, query):
     intro, raw = context.split("\n", 1)
     payload = json.loads(raw)
     payload["reviewed_ideas"] = []
-    recent = list(
+    pool = list(
         (
             await db.scalars(
                 select(CreatorIdeaFeedback)
                 .where(CreatorIdeaFeedback.user_id == owner)
                 .order_by(CreatorIdeaFeedback.created_at.desc(), CreatorIdeaFeedback.id)
-                .limit(2)
+                .limit(FEEDBACK_POOL)
             )
         ).all()
     )
-    for row in recent:
+    if signals_enabled():
+        wanted = word_tokens(query)
+
+        def overlap(row):
+            idea = (row.proposal or {}).get("idea") or {}
+            plan = idea.get("content_plan") or {}
+            words = " ".join(
+                str(v or "")
+                for v in (idea.get("title"), plan.get("angle"), plan.get("opening_text"))
+            )
+            return len(wanted & word_tokens(f"{words} {row.note} {row.rewrite}"))
+
+        # sorted() is stable: equal overlap keeps the newest-first order of the pool.
+        ranked = sorted(pool, key=lambda row: -overlap(row))
+        chosen = [
+            *[row for row in ranked if row.verdict == "would_post"][:JUDGMENTS_PER_SIDE],
+            *[row for row in ranked if row.verdict != "would_post"][:JUDGMENTS_PER_SIDE],
+        ]
+    else:
+        chosen = pool[:2]  # legacy behavior: the two newest judgments
+    for row in chosen:
         idea = (row.proposal or {}).get("idea") or {}
         item = {
             "id": str(row.id),
@@ -488,3 +532,55 @@ async def generation_context(db, owner, query):
         if len(intro + "\n" + json.dumps(trial, ensure_ascii=False)) <= MAX_CONTEXT_CHARS:
             payload = trial
     return intro + "\n" + json.dumps(payload, ensure_ascii=False)
+
+
+async def rejected_ideas(db, owner, collection_id):
+    """Angles and opening lines of ideas the creator refused for this same outing.
+
+    A not_for_me verdict is contextual judgment, not a standing rule, so it only
+    filters re-offers for the collection it was given on.
+    """
+    if not signals_enabled() or await active_version(db, owner) is None:
+        return []
+    rows = (
+        await db.scalars(
+            select(CreatorIdeaFeedback)
+            .join(MediaCollectionStory, MediaCollectionStory.id == CreatorIdeaFeedback.story_id)
+            .where(
+                CreatorIdeaFeedback.user_id == owner,
+                CreatorIdeaFeedback.verdict == "not_for_me",
+                MediaCollectionStory.collection_id == collection_id,
+            )
+            .order_by(CreatorIdeaFeedback.created_at.desc(), CreatorIdeaFeedback.id)
+            .limit(REJECTED_POOL)
+        )
+    ).all()
+    found = []
+    for row in rows:
+        plan = ((row.proposal or {}).get("idea") or {}).get("content_plan") or {}
+        found.append(
+            {
+                "id": str(row.id),
+                "texts": [str(plan.get(k) or "") for k in ("angle", "opening_text")],
+            }
+        )
+    return found
+
+
+def _near_identical(a, b):
+    left, right = word_tokens(a), word_tokens(b)
+    if not left or not right:
+        return False
+    if " ".join(a.casefold().split()) == " ".join(b.casefold().split()):
+        return True
+    union = left | right
+    return len(union) >= NEAR_REPEAT_MIN_WORDS and len(left & right) / len(union) >= NEAR_REPEAT
+
+
+def repeated_rejection(angle, opening, rejected):
+    """Feedback id of the first rejected idea this angle or opening nearly repeats."""
+    for value in rejected:
+        old_angle, old_opening = value["texts"]
+        if _near_identical(angle, old_angle) or _near_identical(opening, old_opening):
+            return value["id"]
+    return None
