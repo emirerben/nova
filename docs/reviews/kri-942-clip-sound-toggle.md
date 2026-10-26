@@ -174,8 +174,8 @@ covers the same contract in preview and export. This is a macOS export, not an i
 
 **Not checked.** No paid model run: whether the live Main Creator writes these facts for every
 phrasing is unverified (the prompt carries EN and TR examples). No iPhone device run. The final
-check is Don Julio walk-in M1 re-sent on the iPhone after deploy (needs KRI-939, PR #1839, for
-the title on the speech-excerpt route the carried turn takes).
+check is Don Julio walk-in M1 re-sent on the iPhone after deploy (KRI-939, PR #1839, merged
+2026-10-26, draws the title on the speech-excerpt route the carried turn takes).
 
 ## Known gaps
 
