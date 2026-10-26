@@ -157,7 +157,7 @@ from app.services.clip_intent_planning import (
     whole_video_text_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
-from app.services.clip_selection import fold_clip_selections
+from app.services.clip_selection import answered_rows, fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
     CreativeCopyState,
@@ -2760,9 +2760,10 @@ def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -
     plan = planned.plan
     title = _pin_key(str((wording.plan.choice_question or {}).get("candidate") or ""))
     words = [
-        _pin_key(str(category.get("creator_text") or ""))
+        _pin_key(str(row.get("creator_text") or ""))
         for category in (plan.clip_question or {}).get("categories") or []
         if isinstance(category, dict)
+        for row in answered_rows(category)  # KRI-951: and the rows joined behind it
     ]
     if (
         plan.mode != "respond"
