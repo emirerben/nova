@@ -3858,9 +3858,9 @@ _CLEANUP_IF_OFFERED = (
     "If Clean up speech is offered when you approve, choose it to cut the long pauses"
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
-# KRI-846: said as a plain limit, never as editor work: no editor action cuts a spoken line
-# out (talking-source slots can't be trimmed or split, the server refuses any change to their
-# windows with 409 TIMELINE_STALE, and a Narrated editor trims pictures, not the voice).
+# KRI-846: said as a plain limit, never as editor work: no editor action cuts one exact spoken
+# line out (a talking-source window can be trimmed or moved since KRI-852, but there is no
+# split and no per-line cut, and a Narrated editor trims pictures, not the voice).
 # KRI-551: a consented retake cleanup may have removed the line, and a generic cleanup record
 # (even one with a retake) cannot prove it, so it says "may still be", never "stays". One
 # static string for every speech format: `_loc` translates exact keys only and the
