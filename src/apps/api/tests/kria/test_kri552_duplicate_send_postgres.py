@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -456,10 +457,14 @@ async def test_the_same_client_event_id_replays_the_copy_answer_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_different_message_sent_mid_planning_still_throws_the_first_turn_back(
+async def test_a_different_message_sent_mid_planning_waits_for_the_first_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The fence only forgives copies: a real follow-up still makes the turn plan again."""
+    """A real follow-up is queued: the first turn finishes, and the follow-up runs after it.
+
+    It used to throw the first turn back to plan again with the follow-up in its history,
+    and the follow-up then ran on its own turn too (acted on twice; `formal/kria_turns`).
+    """
     user_id, thread_id, _session = _seed_runtime_project()
     calls: list[int] = []
 
@@ -472,10 +477,13 @@ async def test_a_different_message_sent_mid_planning_still_throws_the_first_turn
     monkeypatch.setattr("app.tasks.kria_runtime._plan_with_live_agent", _planner)
     first = await _send(user_id, thread_id, _MESSAGE)
 
-    result = await asyncio.to_thread(run_kria_turn.run, first.turn_id)
+    with patch.object(run_kria_turn, "apply_async"):
+        result = await asyncio.to_thread(run_kria_turn.run, first.turn_id)
 
-    assert result == {"turn_id": first.turn_id, "status": "requeued"}
-    assert [t.status for t in _turns(thread_id)] == ["pending", "queued"]
+    # One planning run; its proposal waits for approval with the follow-up behind it.
+    assert result == {"turn_id": first.turn_id, "status": "awaiting_approval"}
+    assert calls == [1]
+    assert [t.status for t in _turns(thread_id)] == ["awaiting_approval", "queued"]
 
 
 @pytest.mark.asyncio

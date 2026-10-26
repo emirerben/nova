@@ -58,6 +58,14 @@ CREATOR_AGENT_TURN_STATUSES = (
     "cancelled",
     "superseded",
 )
+# A thread runs one of these at a time; a queued follow-up waits behind it.
+CREATOR_AGENT_RUNNING_TURN_STATUSES = (
+    "pending",
+    "planning",
+    "executing",
+    "awaiting_approval",
+    "observing",
+)
 CREATOR_AGENT_APPROVAL_STATUSES = (
     "pending",
     "approved",

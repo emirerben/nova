@@ -24,7 +24,7 @@ from typing import Any
 
 import structlog
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents._model_client import default_client
@@ -1255,6 +1255,16 @@ async def _load_thread_events(
             .where(
                 CreationThreadEvent.thread_id == thread_id,
                 CreationThreadEvent.role.in_({"user", "assistant"}),
+                *(
+                    ()
+                    if (through := answering_through_sequence.get()) is None
+                    else (
+                        or_(
+                            CreationThreadEvent.role != "user",
+                            CreationThreadEvent.sequence <= through,
+                        ),
+                    )
+                ),
             )
             .order_by(CreationThreadEvent.sequence)
         )
@@ -1753,6 +1763,12 @@ _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar
 # from its soft time limit). None = no deadline known: only the settings cap applies.
 turn_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "kria_turn_deadline", default=None
+)
+# Sequence of the creator message the running turn answers (set by the turn task). A later
+# message is a queued follow-up with its own turn, so the history this turn plans from stops
+# here. None = no bound.
+answering_through_sequence: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "kria_answering_through_sequence", default=None
 )
 # What a turn keeps after the clip-understanding wait, on top of the resolver's vision
 # deadline: membership calls, the answer-cache write, and the draft commit.

@@ -53,6 +53,7 @@ from app.kria.reply_language import (
     thread_reply_language,
 )
 from app.models import (
+    CREATOR_AGENT_RUNNING_TURN_STATUSES,
     ContentPlan,
     CreationThread,
     CreationThreadEvent,
@@ -891,9 +892,7 @@ async def submit_turn(
                 select(CreatorAgentTurn)
                 .where(
                     CreatorAgentTurn.thread_id == thread.id,
-                    CreatorAgentTurn.status.in_(
-                        {"pending", "planning", "executing", "awaiting_approval", "observing"}
-                    ),
+                    CreatorAgentTurn.status.in_(CREATOR_AGENT_RUNNING_TURN_STATUSES),
                 )
                 .order_by(CreatorAgentTurn.created_at, CreatorAgentTurn.id)
             )
@@ -1394,19 +1393,20 @@ async def cancel_turn(
         payload={"turn_id": str(turn.id), "approval_ids": approval_ids},
     )
     await db.commit()
+    # Read before the promotion: its rollback (nothing queued) expires every loaded row,
+    # and an async session cannot lazy-load them afterwards (MissingGreenlet -> 500).
+    cancelled = TurnCancelled(
+        turn_id=str(turn.id),
+        thread_revision=int(thread.revision),
+        status=turn.status,
+        approval_ids=approval_ids,
+    )
+    thread_id = thread.id
     # Promotion is deliberately a second transaction. Locking queued Turn B
     # while this transaction holds Thread would deadlock with cancellation of
     # B, whose valid order is Turn B -> Thread.
-    successor_id = await _promote_queued_successor(db, thread_id=thread.id)
-    return (
-        TurnCancelled(
-            turn_id=str(turn.id),
-            thread_revision=int(thread.revision),
-            status=turn.status,
-            approval_ids=approval_ids,
-        ),
-        successor_id,
-    )
+    successor_id = await _promote_queued_successor(db, thread_id=thread_id)
+    return cancelled, successor_id
 
 
 async def cancel_render(
@@ -1579,6 +1579,21 @@ async def _promote_queued_successor(db: AsyncSession, *, thread_id: uuid.UUID) -
     # Turn -> Thread is the global order. Holding Thread here serializes the
     # promotion with submit_turn, which locks Thread before checking slots.
     await db.execute(select(CreationThread).where(CreationThread.id == thread_id).with_for_update())
+    # A turn the creator sent after this finished may already run (a delayed promotion,
+    # or the reconciler's): then the follow-up stays queued behind it (formal/kria_turns).
+    running = (
+        await db.execute(
+            select(CreatorAgentTurn.id)
+            .where(
+                CreatorAgentTurn.thread_id == thread_id,
+                CreatorAgentTurn.status.in_(CREATOR_AGENT_RUNNING_TURN_STATUSES),
+            )
+            .limit(1)
+        )
+    ).first()
+    if running is not None:
+        await db.rollback()
+        return None
     successor.status = "pending"
     await db.commit()
     return str(successor.id)
