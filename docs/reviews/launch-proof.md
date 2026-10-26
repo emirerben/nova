@@ -1,6 +1,7 @@
 # Launch proof
 
 This run starts from `42e131f34ac5a1a68cf541804dfa0ead5a268a68`.
+It was later rebased onto `2c9102105` after the audio/photo fixes merged.
 Scope is the iPhone app, native output and required backend. No merge or deployment
 is authorized by this document. A passing offline check does not certify a release.
 
@@ -9,8 +10,8 @@ is authorized by this document. A passing offline check does not certify a relea
 - [x] Read the Principles section of the poteto-mode skill.
 - [x] Phase A: Frame.
 - [x] Phase B: Design the workflow.
-- [ ] Phase C: Run the loop.
-- [ ] Phase D: Keep the audit trail.
+- [x] Phase C: Run the loop.
+- [x] Phase D: Keep the audit trail.
 - [ ] Phase E: Verify and hand back.
 
 ## Acceptance
@@ -57,7 +58,7 @@ Wrong sources, wrong order, missing text and wrong audio must fail their checks.
   TestFlight replay and inspected receipt, rather than a known missing code fix.
 - KRI-632, KRI-810 and KRI-811 already have implementation and regression checks
   on main. Their open status alone does not establish a current code defect.
-- KRI-941, KRI-942 and KRI-949 have open implementation PRs 1846, 1847 and 1849.
+- KRI-941 has implementation PR 1846. KRI-942 and KRI-949 merged as PRs 1847 and 1849 during this run.
 - KRI-56 requires actual beta participants. Code cannot substitute for that gate.
 
 ## Evidence levels
@@ -67,8 +68,9 @@ API revision, worker revision and effective flags must be named for rollout proo
 
 ## Implemented changes
 
-- Integrated the existing fixes from PRs 1846, 1847 and 1849. Original authorship
-  stays in the branch history. Main Creator prompt changes were reconciled at v98.
+- Reviewed and tested the existing fixes from PRs 1846, 1847 and 1849. After
+  rebasing, the audio/photo fixes come from main and the listed-order commit
+  retains its original authorship. Main Creator remains at v98.
 - KRI-948. Missing metadata in a video-only project now uses the existing bounded
   vision budget. An unresolved single-video question asks for a rough time and
   does not offer another identical picker. Provider/budget failure stays technical.
@@ -111,6 +113,8 @@ which runs from `src/apps/ios/Packages/KriaMediaEngine`.
 | Existing hook/caption/export-verifier regressions | 67 passed with local socket access. The first sandboxed run failed its HTTP-listener check. |
 | Free replay plus clarification regression run | Initially 2,356 passed with two flag-off regressions. The fallback was scoped to the picker flag; all 105 clarification checks then passed. |
 | Mobile/tool/OpenAPI contract check | Unchanged, all three match their checked artifacts. |
+| Full `make verify-kria` after the receipt correction | 6,573 passed, 6 skipped, 3 expected failures before the final rebase. |
+| Simulator approved-hook export and source recovery | 3 passed, 0 skipped. Exported MP4 and inspected Unicode/emoji frame retained. |
 
 The two expected failures include the legacy unmarked collapsed-list limitation.
 A new marker cannot establish the meaning of old rows that never stored it.
