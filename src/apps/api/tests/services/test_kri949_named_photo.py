@@ -167,11 +167,14 @@ async def test_round_four_offers_the_photo_for_both_rows(monkeypatch) -> None:
 
     assert result.status == "needs_creator"
     categories = result.clip_question["categories"]
+    # KRI-951: the include and caption asks about the same photo are one row; the caption
+    # rides along, so one tap answers both.
     assert [(c["key"], c["candidate_media_ids"]) for c in categories] == [
         ("include:the-ribeye-photo", [TAKE, PHOTO]),
-        ("caption:the-ribeye-photo", [TAKE, PHOTO]),
     ]
-    assert categories[1]["creator_text"] == "Ojo de bife 🥩"
+    assert [(a["key"], a["creator_text"]) for a in categories[0]["also_answers"]] == [
+        ("caption:the-ribeye-photo", "Ojo de bife 🥩"),
+    ]
     # KRI-693: the photo row is drawn with its thumbnail, named as a photo.
     assert result.clip_question["candidate_media"] == [
         {"media_id": PHOTO, "kind": "image", "label": "Photo 1"}
