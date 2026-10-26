@@ -891,6 +891,16 @@
       ]
     },
     {
+      "id": "kri-941-listed-order",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri941_listed_order_replay.py tests/pipeline/test_unified_montage_sequence.py tests/services/test_order_sequence_contract.py",
+      "paths": [
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/tests/fixtures/kri941_donjulio_m1_turn2.json",
+        "src/apps/api/tests/pipeline/test_kri941_listed_order_replay.py"
+      ]
+    },
+    {
       "id": "kri-632-phone-captions",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_phone_caption_cue_budget.py tests/pipeline/test_caption_spelling.py",
