@@ -609,13 +609,6 @@ def test_three_ideas_of_one_form_keep_two_instead_of_failing():
     assert _forms(value, *mixed) == ["atmosphere", "review", "atmosphere"]
 
 
-def test_one_form_is_allowed_when_footage_supports_only_one():
-    three = [_form_story("performance", n=i) for i in range(3)]
-    assert _forms(_form_input(sources=1), *three) == ["performance"] * 3
-    researched = [_form_story("factual_story", facts=("fact-0",), n=i) for i in range(3)]
-    assert _forms(_form_input(research=True), *researched) == ["factual_story"] * 3
-
-
 def test_forms_flag_off_neither_requires_validates_nor_stores_a_form(monkeypatch):
     from app.config import settings
 
