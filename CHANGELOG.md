@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.139.0] - 2026-10-26
+
+### Changed
+- feat(phone): turn clip sound on/off by clip, seconds or spoken line (KRI-942) (#1847) <!-- release-pr: 1847 -->
+
 ## [0.81.138.0] - 2026-10-26
 
 ### Fixed
