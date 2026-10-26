@@ -133,9 +133,11 @@ when every "off" stretch is silent and every "on" stretch is audible. That cover
 speech-excerpt route and editor Saves without trusting the planner. The planner's record
 (`variant["clip_sound_toggles"]`) only supplies the reason when something could not be built.
 
-**Correction turns (1).** On top of the durable brief, a turn whose `brief_updates` touch no
-`audio` requirement keeps the draft's `montage_audio` and `voice_mode` when the model rewrote
-them, as long as the named clips are still in the edit, so the route doesn't flip between turns.
+**Correction turns (1).** On top of the durable brief, when the brief holds a sound ask and a
+turn's `brief_updates` leave every `audio` requirement unchanged, the draft's `montage_audio` and
+`voice_mode` are kept if the model rewrote them, as long as the named clips are still in the edit,
+so the route doesn't flip between turns. A brief with no sound ask leaves the planner free
+(KRI-945's spoken-excerpt montage picks its camera voice on a text-only turn).
 
 ## Evidence
 

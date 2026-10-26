@@ -45,11 +45,16 @@ def _audio_asks(brief: CreativeBrief | None) -> list[str]:
 
 
 def sound_asks_unchanged(before: CreativeBrief | None, after: CreativeBrief | None) -> bool:
-    """True when this turn's brief updates left every live ``audio`` requirement as it was.
+    """True when the brief holds a sound ask and this turn's updates left every live ``audio``
+    requirement as it was.
 
-    A first turn (no brief before) is never "unchanged": there is nothing to keep.
+    A first turn (no brief before) is never "unchanged": there is nothing to keep. Neither is
+    a brief with no ``audio`` requirement at all: the creator never said anything about the
+    sound, so the strategy's sound design is the planner's to change (KRI-945's spoken-excerpt
+    montage picks its camera voice on a text-only turn).
     """
-    return before is not None and _audio_asks(before) == _audio_asks(after)
+    asks = _audio_asks(after)
+    return before is not None and bool(asks) and _audio_asks(before) == asks
 
 
 def carry_draft_sound(

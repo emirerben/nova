@@ -873,8 +873,9 @@ butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit thr
   `audio` requirement with `facts.clip_sound` `"on"`/`"off"` plus where (`clip:<id>` scope or
   `sound_media`, `sound_clip` first/last, `sound_from_s`/`sound_to_s`, `sound_line`) and
   `sound_except` parts (`app/kria/clip_sound_toggle_ask.py`). The brief is cumulative, so a
-  correction turn keeps the ask; a turn whose updates touch no `audio` requirement also keeps the
-  draft's `montage_audio`/`voice_mode` (`app/kria/draft_sound_carry.py`), so the route holds.
+  correction turn keeps the ask; when the brief holds a sound ask that a turn leaves unchanged,
+  the draft's `montage_audio`/`voice_mode` are kept too (`app/kria/draft_sound_carry.py`), so the
+  route holds.
 - **Build**: after the first compile, `phone_clip_sound_toggle.plan_toggle_lane` resolves the asks
   on that recipe's clips (`app/pipeline/clip_sound_toggle.py`, pure): whole-video asks first,
   then targeted ones, `sound_except` last inside an ask; "last" is the edit's last picture clip; a

@@ -558,6 +558,11 @@ def test_a_turn_that_changes_a_sound_ask_lets_the_new_choice_stand() -> None:
     after = _brief({"clip_sound": "on"}, description="Turn the clip sound back on everywhere.")
     assert not sound_asks_unchanged(before, after)
     assert not sound_asks_unchanged(None, before)  # a first turn has nothing to keep
+    # No sound ask at all: the planner's sound design is free to change (KRI-945).
+    silent = CreativeBrief(
+        version=1, requirements=[r for r in before.requirements if r.kind != "audio"]
+    )
+    assert not sound_asks_unchanged(silent, silent)
 
 
 def test_a_named_clip_that_left_the_edit_is_not_carried() -> None:
