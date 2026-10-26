@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.133.0] - 2026-10-26
+
+### Changed
+- fix(ios): keep Talking captions with source segment edits (KRI-852) (#1770) <!-- release-pr: 1770 -->
+
 ## [0.81.132.0] - 2026-10-26
 
 ### Fixed
