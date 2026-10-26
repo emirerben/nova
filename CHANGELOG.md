@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.129.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): open questions gate building an idea (#1830) <!-- release-pr: 1830 -->
+
 ## [0.81.128.0] - 2026-10-26
 
 ### Changed
