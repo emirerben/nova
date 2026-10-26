@@ -145,6 +145,7 @@ from app.services.choice_questions import (
     simpler_version_accepted,
     simpler_version_question,
     tag_event,
+    without_length_answer_echo,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import (
@@ -5562,6 +5563,19 @@ async def _plan_live_turn(
         updates=updates,
         states=inputs.creative_copy_state or {},
     )
+    if answers_clip_question and updates:
+        # KRI-966: a tapped length answer is the server's own option label, already applied by
+        # the gate; the model's restatement of it is never the creator's length ask.
+        echo_free = without_length_answer_echo(
+            prior_brief, updates, await _load_thread_events(db, thread_id)
+        )
+        if echo_free != updates:
+            log.info(
+                "kria_length_answer_echo_dropped",
+                thread_id=str(thread_id),
+                dropped=len(updates) - len(echo_free),
+            )
+        updates = echo_free
     delegated = (
         extracted_delegation if extraction_complete else _declares_delegation(outputs, updates)
     )
