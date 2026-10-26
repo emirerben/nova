@@ -47,6 +47,10 @@ struct CameraRollStoriesView: View {
                             Text("\(story.duration, specifier: "%.1f") sec").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                         }
                         if let plan = story.contentPlan {
+                            if let label = plan.formLabel {
+                                Text(label).font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.mutedInk)
+                                    .accessibilityIdentifier("story-form-\(story.id)")
+                            }
                             Text(plan.angle).font(KriaFont.body(16).weight(.semibold))
                         }
                         ScrollView(.horizontal, showsIndicators: false) {

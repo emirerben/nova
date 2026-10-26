@@ -16,6 +16,7 @@ struct CameraRollMoment: Codable, Identifiable, Sendable {
 struct CameraRollContentPlan: Codable, Sendable {
     let version: Int
     let format: String
+    var form: String? = nil
     let audience: String
     let angle: String
     let whyItWorks: String
@@ -23,7 +24,17 @@ struct CameraRollContentPlan: Codable, Sendable {
     var closingText: String?
     var caption: String
     let beatReasons: [String]
-    enum CodingKeys: String, CodingKey { case version, format, audience, angle, caption; case whyItWorks = "why_it_works", openingText = "opening_text", closingText = "closing_text", beatReasons = "beat_reasons" }
+    enum CodingKeys: String, CodingKey { case version, format, form, audience, angle, caption; case whyItWorks = "why_it_works", openingText = "opening_text", closingText = "closing_text", beatReasons = "beat_reasons" }
+    var formLabel: String? {
+        switch form ?? "" {
+        case "guide": "Guide"
+        case "factual_story": "Fact story"
+        case "atmosphere": "Atmosphere"
+        case "review": "Review"
+        case "performance": "Performance"
+        default: nil
+        }
+    }
 }
 struct CameraRollStory: Codable, Identifiable, Sendable {
     let id: UUID

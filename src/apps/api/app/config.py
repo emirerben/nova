@@ -2044,6 +2044,12 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_SLIDE_POSTS_ENABLED twin. Rollback:
     #   fly secrets set SLIDE_POSTS_ENABLED=false --app nova-video (api + worker)
     slide_posts_enabled: bool = True
+    # Camera-roll idea forms (`content_plan.form`). Off: parse neither requires, validates
+    # nor stores a form (legacy-shaped ideas; wording edits drop a stored form), so new rows
+    # stay readable by an older API image. Flip BEFORE rolling the API image back; see
+    # agents/DECISIONS.md "Idea forms". Apply: fly secrets set STORY_IDEA_FORMS_ENABLED=false
+    # (api + worker) + restart.
+    story_idea_forms_enabled: bool = True
     # KRI-298/299: rich per-slide text (styled `SlideEdits.texts`, rendered as Pillow PNG
     # overlays). Off: the renderer keeps the legacy drawtext path using the mirrored
     # `text` (texts[0]); saved `texts` are preserved. Dual-flag with the iOS capability

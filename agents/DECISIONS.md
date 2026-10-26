@@ -3004,3 +3004,13 @@ token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` an
 
 **Why:** KRI-520 added ~170 Turkish regex twins in a week. They drifted (the legacy fold broke English "TRY AGAIN"), missed paraphrases, and older layers kept overriding the model with English-only rules. A Turkish creator got the model's guess; an English creator got a deterministic fix.
 **Revisit if:** a third creator language arrives (the same rules apply; the fold and `say()` grow a language, not a twin per module).
+
+---
+
+## [2026-10-25] Idea forms: drop mislabelled ideas, fail collapsed sets
+
+**Decision:** `content_plan.form` is validated server-side in `CameraRollStoriesAgent.parse`. An idea whose form lacks its evidence (guide < 3 distinct sources, factual_story without a selected fact) is dropped alone. Three surviving ideas with one form raise `SchemaError` only when variety is expected (2+ distinct source clips, no `public_research`); one clip or a researched run may legitimately share one form. `StoryContentPlan.version` stays 1; legacy = `form` absent.
+**Why:** A mislabelled idea is independently wrong and the others stay valid, so a subset is safe (the service already drops invalid ideas the same way). Trimming a collapsed set would pick one clone arbitrarily and hide that the model skipped variety, and the model has no retry (`max_attempts=1`), so the existing retry-later 503 is the honest outcome. Bumping `version` would make older iOS builds, which echo the plan back on wording edits, send a v2 plan without a form.
+**Revisit if:** the collapsed-set 503 rate is visible in prod agent_run outcomes, then prefer one bounded re-ask.
+
+**Rollback:** `STORY_IDEA_FORMS_ENABLED` (default `true`). `false` (Fly secret, api + worker, restart) = form neither required, validated nor stored on new ideas, and wording edits drop a stored form. An older API image cannot read stored `content_plan.form` (`extra="forbid"` => 500 on the saved-stories list), so before rolling the image back: flip the flag off, then strip stored forms with `UPDATE media_collection_stories SET story_json = story_json #- '{content_plan,form}'`. During a rolling deploy an old machine can 500 on a new row for minutes; ship the API before any iOS build that echoes `form`.

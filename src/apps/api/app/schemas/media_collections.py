@@ -1,6 +1,6 @@
 """Bounded, owned catalogue selections. Never accepts a Photos identifier or bytes."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NamedTuple
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -126,12 +126,31 @@ class MomentInspectionOut(BaseModel):
     sample_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+StoryForm = Literal["guide", "factual_story", "atmosphere", "review", "performance"]
+
+
+class FormEvidence(NamedTuple):
+    research_facts: int = 0
+    source_stops: int = 0
+
+
+# What the offered footage/research must contain before an idea may claim a form.
+FORM_EVIDENCE: dict[StoryForm, FormEvidence] = {
+    "guide": FormEvidence(source_stops=3),
+    "factual_story": FormEvidence(research_facts=1),
+    "atmosphere": FormEvidence(),
+    "review": FormEvidence(),
+    "performance": FormEvidence(),
+}
+
+
 class StoryContentPlan(BaseModel):
     """Suggested creative wording, kept distinct from source-analysis descriptions."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     version: Literal[1] = 1
     format: Literal["text_story"] = "text_story"
+    form: StoryForm | None = Field(default=None, exclude_if=lambda value: value is None)
     audience: str = Field(min_length=1, max_length=200)
     angle: str = Field(min_length=1, max_length=280)
     why_it_works: str = Field(min_length=1, max_length=500)

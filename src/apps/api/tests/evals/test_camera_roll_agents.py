@@ -72,6 +72,7 @@ def test_story_replay_separates_review_reasoning_from_proposed_creative_copy():
         "title": "Arrival after dark",
         "moment_ids": [value.candidates[0].id],
         "content_plan": {
+            "form": "atmosphere",
             "audience": "Evening walkers",
             "angle": "A crossing ends in an unexpected light",
             "why_it_works": "The last view answers the opening question.",
@@ -111,6 +112,7 @@ def test_story_replay_resolves_request_local_references_to_exact_sources():
         "title": "Evening crossing",
         "moment_ids": ["m1"],
         "content_plan": {
+            "form": "atmosphere",
             "audience": "Evening walkers",
             "angle": "An illuminated house seen from the ferry",
             "why_it_works": "The actual final view supplies the atmosphere.",
@@ -165,6 +167,7 @@ def test_researched_story_cannot_invent_or_duplicate_citations(references):
         moment_ids=["m1"],
         research_fact_ids=references,
         content_plan=dict(
+            form="factual_story",
             audience="Walkers",
             angle="Building history",
             why_it_works="A specific fact adds context.",
@@ -227,6 +230,7 @@ def _paired_review_fixture():
                         title="A rebuilding story",
                         moment_ids=["m1"],
                         content_plan=dict(
+                            form="atmosphere",
                             audience="History visitors",
                             angle="Rebuilding over time",
                             why_it_works="Historical background accompanies the outing.",
@@ -510,3 +514,133 @@ def test_story_planning_receives_real_coverage_without_double_counting_overlaps(
         "maximum_story_seconds": 60,
         "maximum_story_moments": 8,
     }
+
+
+# Failure catalogue for editorial forms: a missing/unknown form, a form claimed over
+# footage or research that cannot support it, three ideas that are one form reworded,
+# and a pre-form saved plan that must still load unchanged.
+def _form_input(sources=3, research=False):
+    from app.agents.camera_roll_stories import CameraRollStoriesInput
+    from app.schemas.research import ResearchEvidence
+
+    base = evidence().candidates[0]
+    candidates = [
+        base.model_copy(update={"id": f"{i:08d}-1111-1111-1111-111111111111", "source": f"s{i}"})
+        for i in range(sources)
+    ]
+    extra = {}
+    if research:
+        extra = dict(
+            research_topic="Public building history",
+            public_research=ResearchEvidence(
+                facts=[
+                    dict(
+                        id="fact-0",
+                        text="Recorded building history.",
+                        sources=[dict(title="Archive", url="https://si.edu/recorded-fixture")],
+                    )
+                ],
+                retrieved_at="2026-10-21T00:00:00Z",
+                search_entry_html="<div>Recorded attribution</div>",
+            ),
+        )
+    return CameraRollStoriesInput(query=evidence().query, candidates=candidates, **extra)
+
+
+def _form_story(form, moments=("m1",), facts=(), n=0):
+    return dict(
+        title=f"Idea {n}",
+        moment_ids=list(moments),
+        research_fact_ids=list(facts),
+        content_plan=dict(
+            form=form,
+            audience="Walkers",
+            angle=f"Point {n}",
+            why_it_works="The recorded view supports this point.",
+            opening_text=f"Opening {n}",
+            caption=f"Caption {n}",
+            beat_reasons=["A beat"] * len(moments),
+        ),
+    )
+
+
+def _forms(value, *stories):
+    parsed = CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=list(stories))), value)
+    return [story.content_plan.form for story in parsed.stories]
+
+
+def test_every_form_declares_its_evidence_requirement():
+    from typing import get_args
+
+    from app.schemas.media_collections import FORM_EVIDENCE, StoryForm
+
+    assert set(FORM_EVIDENCE) == set(get_args(StoryForm))
+    assert FORM_EVIDENCE["guide"].source_stops == 3
+    assert FORM_EVIDENCE["factual_story"].research_facts == 1
+
+
+@pytest.mark.parametrize("form", [None, "listicle", ""])
+def test_story_needs_a_known_form(form):
+    story = _form_story("review")
+    story["content_plan"].pop("form")
+    if form is not None:
+        story["content_plan"]["form"] = form
+    with pytest.raises(SchemaError):
+        CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=[story])), _form_input())
+
+
+def test_guide_and_factual_story_are_dropped_when_their_evidence_is_missing():
+    three = _form_input(sources=3)
+    assert _forms(three, _form_story("guide", ("m1", "m2", "m3"))) == ["guide"]
+    assert _forms(three, _form_story("guide", ("m1", "m2")), _form_story("review", n=1)) == [
+        "review"
+    ]
+    assert _forms(three, _form_story("factual_story", n=2)) == []
+    researched = _form_input(research=True)
+    assert _forms(researched, _form_story("factual_story", facts=("fact-0",))) == ["factual_story"]
+
+
+def test_three_ideas_cannot_be_one_form_reworded():
+    value = _form_input()
+    same = [_form_story("atmosphere", n=i) for i in range(3)]
+    with pytest.raises(SchemaError):
+        CameraRollStoriesAgent(None).parse(json.dumps(dict(stories=same)), value)
+    assert _forms(value, *same[:2]) == ["atmosphere"] * 2
+    mixed = [_form_story("atmosphere", n=0), _form_story("review", n=1), same[2]]
+    assert _forms(value, *mixed) == ["atmosphere", "review", "atmosphere"]
+
+
+def test_one_form_is_allowed_when_footage_supports_only_one():
+    three = [_form_story("performance", n=i) for i in range(3)]
+    assert _forms(_form_input(sources=1), *three) == ["performance"] * 3
+    researched = [_form_story("factual_story", facts=("fact-0",), n=i) for i in range(3)]
+    assert _forms(_form_input(research=True), *researched) == ["factual_story"] * 3
+
+
+def test_forms_flag_off_neither_requires_validates_nor_stores_a_form(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "story_idea_forms_enabled", False)
+    value = _form_input(sources=1)
+    bare = _form_story("guide", n=0)  # guide over one clip would be dropped when on
+    missing = _form_story("review", n=1)
+    missing["content_plan"].pop("form")
+    assert _forms(value, bare, missing) == [None, None]
+
+
+def test_pre_form_plan_loads_and_serializes_without_a_form_key():
+    from app.schemas.media_collections import StoryContentPlan
+
+    legacy = dict(
+        version=1,
+        format="text_story",
+        audience="Walkers",
+        angle="A",
+        why_it_works="W",
+        opening_text="O",
+        closing_text=None,
+        caption="C",
+        beat_reasons=["B"],
+    )
+    plan = StoryContentPlan.model_validate(legacy)
+    assert plan.form is None and plan.model_dump(mode="json") == legacy

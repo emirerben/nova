@@ -7,7 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents.media_moment_relevance import MomentRelevanceInput
-from app.schemas.media_collections import StoryContentPlan
+from app.config import settings
+from app.schemas.media_collections import FORM_EVIDENCE, StoryContentPlan, StoryForm
 from app.schemas.research import ResearchEvidence, StoryResearch
 
 
@@ -27,11 +28,15 @@ class CameraRollStoriesOutput(BaseModel):
     stories: list[StoryIdea] = Field(default_factory=list, max_length=3)
 
 
+class _ProposedContentPlan(StoryContentPlan):
+    form: StoryForm
+
+
 class _StoryProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=100)
     moment_ids: list[str] = Field(min_length=1, max_length=8)
-    content_plan: StoryContentPlan
+    content_plan: _ProposedContentPlan
     research_fact_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
@@ -40,17 +45,39 @@ class _StoryProposals(BaseModel):
     stories: list[_StoryProposal] = Field(default_factory=list, max_length=3)
 
 
+class _LegacyStoryProposal(_StoryProposal):
+    content_plan: StoryContentPlan
+
+
+class _LegacyStoryProposals(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    stories: list[_LegacyStoryProposal] = Field(default_factory=list, max_length=3)
+
+
 class CameraRollStoriesInput(MomentRelevanceInput):
     editorial_taste_context: str = Field(default="", max_length=8000, exclude_if=lambda v: not v)
     public_research: ResearchEvidence | None = Field(default=None, exclude_if=lambda v: v is None)
     research_topic: str = Field(default="", max_length=200, exclude_if=lambda v: not v)
 
 
+def _meets_form_evidence(story, source_stops):
+    need = FORM_EVIDENCE[story.content_plan.form]
+    facts = len(story.research.evidence.facts) if story.research else 0
+    return facts >= need.research_facts and source_stops >= need.source_stops
+
+
+def _variety_expected(input):  # noqa: A002
+    # Footage from one source clip, or a researched run (whose ideas naturally share
+    # factual_story), may genuinely support a single form; only multi-clip, unresearched
+    # footage is expected to vary.
+    return not input.public_research and len({c.source for c in input.candidates}) > 1
+
+
 class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-24.1",
+        prompt_version="2026-10-25.1",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -94,7 +121,8 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             'Return JSON {"stories": [{"title": "", "moment_ids": ["id"], '
             '"research_fact_ids": [], '
             '"content_plan": {"version": 1, '
-            '"format": "text_story", "audience": "", "angle": "", "why_it_works": "", '
+            '"format": "text_story", "form": "guide|factual_story|atmosphere|review|performance", '
+            '"audience": "", "angle": "", "why_it_works": "", '
             '"opening_text": "", "closing_text": null, "caption": "", '
             '"beat_reasons": ["why this exact moment advances the idea"]}}]}. '
             "Aim for three DISTINCT, worthwhile content ideas grounded in candidate evidence, "
@@ -107,13 +135,19 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "footage supports just one worthwhile idea or the creator explicitly requests one; "
             "return zero when none is supported. Never invent facts, personal opinions or "
             "missing footage to fill the count. An explicit narrow creator request takes "
-            "priority over variety. Choose a "
-            "suitable editorial "
-            "form that fits the creator's request and footage: a useful guide, an honest firsthand "
-            "review, a concrete observation or joke, a simple atmosphere/day-in-the-life post, "
-            "or a recorded performance. These forms are equally valid; a mood post needs no "
-            "question, twist or invented narrative. Explain the actual value: what viewers learn, "
-            "recognize, find funny or enjoy seeing. Name the intended audience in ordinary words. "
+            "priority over variety. Set content_plan.form to the editorial form that fits the "
+            "creator's request and footage: guide (a useful multi-stop walkthrough; needs at "
+            "least three different source references among its moments), factual_story (a "
+            "specific researched fact is the point; only when public_research is supplied), "
+            "atmosphere (a simple mood or day-in-the-life post), review (an honest firsthand "
+            "opinion, observation or joke), or performance (a recorded performance). Never "
+            "claim a form whose footage or research requirement is unmet: that idea is "
+            "discarded. These forms are equally valid; a mood post needs no "
+            "question, twist or invented narrative. When you return three ideas, use at least "
+            "two different forms unless the footage genuinely supports only one; three "
+            "rewordings of one form are not three options. Explain the actual value: what "
+            "viewers learn, recognize, find funny or enjoy seeing. Name the intended audience in "
+            "ordinary words. "
             "Do not force a question, comparison, engagement-bait ending or a dramatic hook. "
             "Candidates with evidence_scope whole_source_context cover the full analysed "
             "short clip, not a detected highlight. Their overall description is fallible, "
@@ -217,7 +251,10 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     def parse(self, raw_text, input):  # noqa: A002
         try:
             input = self.Input.model_validate(input.model_dump())
-            proposals = _StoryProposals.model_validate_json(raw_text)
+            forms_on = settings.story_idea_forms_enabled
+            proposals = (
+                _StoryProposals if forms_on else _LegacyStoryProposals
+            ).model_validate_json(raw_text)
             result = self.Output(
                 stories=[
                     StoryIdea(
@@ -258,6 +295,24 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
                     )
                 elif ids:
                     raise ValueError("Story has no researched evidence")
+            if not forms_on:
+                for story in result.stories:
+                    story.content_plan.form = None
+                return result
+            sources = {candidate.id: candidate.source for candidate in input.candidates}
+            result.stories = [
+                story
+                for story in result.stories
+                if _meets_form_evidence(story, len({sources[v] for v in story.moment_ids}))
+            ]
+            # A mislabelled idea is dropped on its own; three ideas that collapse into one
+            # form fail the whole response because dropping any would hide the variety miss.
+            if (
+                len(result.stories) == 3
+                and _variety_expected(input)
+                and len({story.content_plan.form for story in result.stories}) < 2
+            ):
+                raise ValueError("Three ideas must not share one editorial form")
             return result
         except ValueError as exc:
             raise SchemaError("Invalid camera-roll story response") from exc
