@@ -97,7 +97,9 @@ public struct LivePreviewExportSnapshot: Sendable {
                     text: above ? Array(active.suffix(from: index + 1)) : Array(active.prefix(index)),
                     canvas: composition.renderSize, cameraPulses: original.cameraPulses,
                     motionScenes: above ? nil : original.motionScenes,
-                    drawings: above ? original.drawings : nil, transparentBackground: above)
+                    drawings: above ? original.drawings : nil, transparentBackground: above,
+                    // The dragged text itself paints plain while the finger is down (F8); the scene below keeps its occlusion.
+                    subjectMatte: above ? nil : original.subjectMatte)
             }
             return copy
         }
@@ -128,7 +130,8 @@ public struct LivePreviewExportSnapshot: Sendable {
                 return RecipeVideoInstruction(timeRange: original.timeRange, layers: layers, text: text,
                     canvas: composition.renderSize, cameraPulses: original.cameraPulses,
                     motionScenes: transparent ? nil : original.motionScenes,
-                    drawings: paintsDrawings ? original.drawings : nil, transparentBackground: transparent)
+                    drawings: paintsDrawings ? original.drawings : nil, transparentBackground: transparent,
+                    subjectMatte: transparent ? nil : original.subjectMatte)
             }
             return copy
         }
@@ -274,9 +277,11 @@ public struct LivePreviewExportSnapshot: Sendable {
                     fadeIn: fill.fadeIn, fadeOut: fill.fadeOut), visualOrder: fill.order))
         }
         let total = TimelineMath.totalDuration(of: next)
+        // Keep the live matte (and its warmed segmenter) across a text-only edit; drop it when no layer asks any more.
+        let subjectMatte = next.textLayers.contains(where: { $0.behindSubject == true }) ? (first.subjectMatte ?? NativeSubjectMatte()) : nil
         replacement.instructions = RecipeInstructionTiming.tiledRanges(total: total, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
-                cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings)
+                cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte)
         }
         // Publish only after every layer validates successfully. Never touch
         // `audioMix` here (see `withoutVisuals`).

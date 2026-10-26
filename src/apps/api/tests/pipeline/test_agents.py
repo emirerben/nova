@@ -49,8 +49,8 @@ class TestCopyWriter:
         assert status == "generated"
         assert copy.tiktok.hook == "Amazing hook"
 
-    def test_template_tone_included_in_prompt(self):
-        """template_tone param should appear in the prompt sent to Gemini."""
+    def test_template_tone_keeps_voice_without_account_topics(self):
+        """The public wrapper keeps delivery qualities and drops niche-bearing text."""
         mock_data = {
             "tiktok": {"hook": "h", "caption": "c", "hashtags": ["a"] * 5},
             "instagram": {"hook": "h", "caption": "c", "hashtags": ["a"] * 10},
@@ -62,11 +62,18 @@ class TestCopyWriter:
             mock_get_client.return_value = mock_client
             mock_client.models.generate_content.return_value = _make_gemini_response(mock_data)
 
-            generate_copy("hook", "transcript", ["tiktok"], template_tone="casual energetic")
+            generate_copy(
+                "hook",
+                "transcript",
+                ["tiktok"],
+                template_tone="casual energetic ACCOUNT_TOPIC_SENTINEL",
+            )
 
         call_args = mock_client.models.generate_content.call_args
         prompt_text = call_args.kwargs["contents"][0]
-        assert "casual energetic" in prompt_text
+        assert '"creator_voice": "conversational, energetic"' in prompt_text
+        assert "ACCOUNT_TOPIC_SENTINEL" not in prompt_text
+        assert '"transcript_excerpt": "transcript"' in prompt_text
 
     def test_double_failure_returns_template_fallback(self):
         with (

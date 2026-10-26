@@ -157,7 +157,9 @@ def test_measured_output_with_stale_authority_never_keeps_a_checked_receipt(
     stored = device_record(fixture.job, "first")
     assert stored["attempts"][attempt]["actual_export_verification"]["status"] == "rejected"
     if stale == "source_receipts":
-        assert stored["status"]["reason_code"] == "unsupported_recipe", (
+        # An authority drift is not "this iPhone can't render it" (S3-j): it is its
+        # own code, and that code still asks for a change, never an exact retry loop.
+        assert stored["status"]["reason_code"] == "contract_changed", (
             "Changed authority needs re-approval, not an exact retry loop"
         )
 

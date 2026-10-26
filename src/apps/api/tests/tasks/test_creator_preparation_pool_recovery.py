@@ -80,7 +80,8 @@ def _pending_task(monkeypatch, *, owned=True, expired=False):
         status="running",
         attempts=1,
         lease_until=now + timedelta(minutes=30),
-        created_at=now - timedelta(minutes=11 if expired else 4),
+        created_at=now
+        - (task.POOL_WAIT_LIMIT + timedelta(minutes=1) if expired else timedelta(minutes=4)),
     )
     graph = (attempt, SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), [], [asset])
     db = SimpleNamespace(commit=Mock())

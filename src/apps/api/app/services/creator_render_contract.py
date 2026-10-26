@@ -18,12 +18,17 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import CreativeBrief
 from app.kria.brief_checks import is_spoken_text_cue
 from app.kria.brief_route import chapter_list
 from app.kria.freeze_ask import times_one_moment
 from app.kria.recipes_v2 import EditRecipeV2
-from app.kria.render_assets import OriginalRenderAsset, VoiceoverRenderAsset
+from app.kria.render_assets import (
+    OriginalRenderAsset,
+    ProcessedAudioRenderAsset,
+    VoiceoverRenderAsset,
+)
 from app.kria.reply_language import say
 from app.kria.spoken_text_ask import requirement_spoken_text
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -50,7 +55,12 @@ from app.services.clip_order_sequence import (
     unresolved_questions,
 )
 from app.services.creator_label_reply import label_text_reply
-from app.services.length_policy import creator_duration_s, length_owner
+from app.services.length_policy import (
+    DurationBound,
+    creator_duration,
+    creator_duration_s,
+    length_owner,
+)
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -478,6 +488,18 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "ending_clip_repair",
+        "ending_clip",
+        "ending_clip.media_id",
+        "ending_clip.keep_audio",
+        note=(
+            "KRI-841: kept or dropped by creator_capabilities.repair_creator_ending_clip; the "
+            "phone Talking worker appends it and records variant['phone_ending_clip'], which "
+            "the brief receipts judge. The contract itself does not verify it"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "choice_questions",
         "choice_answers[]",
         *(
@@ -489,13 +511,16 @@ FIELD_MATRIX: dict[str, FieldRule] = {
                 "input_digest",
                 "requirement_ids[]",
                 "source",
+                "value",
+                "detail",
             )
         ),
         note=(
             "server-owned creator decisions on material conflicts; the planner gate writes "
             "them, build_render_contract consumes them (order basis, shot placement) and the "
             "chosen duration/clip subset is already rewritten into target_duration_s / "
-            "selected_media_ids"
+            "selected_media_ids; an unclear-word answer's detail (KRI-849) is copied onto the "
+            "approved brief, which the phone Talking caption writer reads"
         ),
     ),
     **_rules(
@@ -695,7 +720,6 @@ ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
         _phone(
             "phone_narrated",
             {"require_voiceover"},
-            audio_source_ids=_VOICE_CONFLICT,
         ),
     )
 }
@@ -1050,6 +1074,30 @@ def _edit_rows(
     return list(rows)
 
 
+def _one_unkeyed_clip(
+    media_snapshot: Mapping[str, Any] | None,
+    typed: CreativeStrategy | None,
+    hidden_ids: frozenset[str],
+) -> bool:
+    """One selected clip whose snapshot row carries no ``media_id`` is still one clip.
+
+    Prod 0701fcc9 / f88555bc (2026-10-21): a one-take Talking edit ("in the order the clips
+    were added") whose only clip row had no ``media_id``. The selected-media filter in
+    ``_edit_rows`` then left NO rows, so ``one_clip_edit`` said "not one clip" and the
+    contract pinned "I can't verify this ordering rule" for a single take, refusing the
+    approved render. A single clip is in every order (KRI-661 / KRI-789).
+    """
+    if typed is None:
+        return False
+    selected = set(typed.selected_media_ids or ()) - hidden_ids
+    rows = [
+        row
+        for row in (media_snapshot or {}).get("clip_assignments") or []
+        if isinstance(row, Mapping) and row.get("kind", "video") == "video"
+    ]
+    return len(selected) == 1 and len(rows) == 1 and not rows[0].get("media_id")
+
+
 def build_render_contract(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1180,8 +1228,24 @@ def build_render_contract(
         if position and status == "resolved" and clip_ids.intersection(members)
     }
     talking_edit = str(raw.get("edit_format") or "") in {"subtitled", "talking_head"}
+    # A word-timed text ask is omitted from the ordinary exact-copy pin only
+    # when this approval can actually use the native narrated word-text lane.
+    # Other typed voiceover strategies still need their literal pinned, so a
+    # renderer cannot silently treat a caption or title as the requested cue.
+    voiceover_spoken_text = False
+    if (
+        typed is not None
+        and typed.audio_strategy == "voiceover"
+        and typed.edit_format in NARRATED_EDIT_FORMATS
+        and typed.render_program != "guided"
+    ):
+        from app.services.phone_rollout import (
+            phone_voiceover_spoken_text_supported,  # noqa: PLC0415
+        )
+
+        voiceover_spoken_text = phone_voiceover_spoken_text_supported(require_client=False)
     edit_rows = _edit_rows(media_snapshot, typed, hidden_ids)
-    one_clip = one_clip_edit(edit_rows)
+    one_clip = one_clip_edit(edit_rows) or _one_unkeyed_clip(media_snapshot, typed, hidden_ids)
     if brief:
         for requirement in brief.live():
             if (
@@ -1201,7 +1265,7 @@ def build_render_contract(
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
             if requirement.kind == "text" and requirement.literal:
-                if talking_edit and (
+                if (talking_edit or voiceover_spoken_text) and (
                     requirement_spoken_text(requirement) is not None
                     or is_spoken_text_cue(requirement)
                 ):
@@ -1383,7 +1447,11 @@ def build_render_contract(
         ]
         # KRI-661: a single clip is trivially in order, dated or not.
         single_clip = one_clip
-        if (
+        if single_clip and not ids:
+            # The one clip has no snapshot id to pin (``_one_unkeyed_clip``): a single
+            # take is already in filming order, so there is nothing left to verify.
+            order_required = False
+        elif (
             not ids
             or len(ids) != len(rows)
             or len(set(ids)) != len(ids)
@@ -1507,6 +1575,28 @@ def build_render_contract(
     return CreatorRenderContract(**data).rebind()
 
 
+def contract_duration_bound(
+    contract: CreatorRenderContract | None,
+    strategy: Mapping[str, Any] | None,
+    brief: CreativeBrief | None,
+) -> DurationBound:
+    """Whether the contract's ``duration_s`` is the brief's ceiling ("at most 10 seconds").
+
+    KRI-847. The contract model is frozen (an older worker forbids extra keys), so the bound
+    cannot ride on it; the length-policy state carries it (`stamp_length_policy`). This reads
+    the same brief length `build_render_contract` pinned, and is a ceiling only when the
+    contract's number is that length.
+    """
+    if contract is None or contract.duration_s is None or brief is None:
+        return "exact"
+    typed = _strategy(strategy)
+    answers = {a.conflict: a for a in (typed.choice_answers or ())} if typed else {}
+    found = creator_duration(brief=brief, authoritative_answers=answers.values())
+    if found is None or found.bound != "at_most":
+        return "exact"
+    return "at_most" if abs(found.seconds - contract.duration_s) <= 0.001 else "exact"
+
+
 def read_render_contract(assembly: Mapping[str, Any]) -> CreatorRenderContract | None:
     if CONTRACT_FIELD not in assembly:
         return None
@@ -1612,6 +1702,7 @@ def check_phone_dispatch_contract(
     snapshot_generation_id: object,
     has_voiceover_candidate: bool,
     user_song: object = None,
+    allow_voiceover_source_audio: bool = False,
 ) -> bool:
     """Gate a phone dispatch on the pinned contract; return the voiceover route.
 
@@ -1635,7 +1726,9 @@ def check_phone_dispatch_contract(
             field_path=REQUIREMENT_FIELD_PATHS["require_voiceover"],
             alternative="Record or upload your voice, or tell me to use music instead.",
         )
-    if contract.audio_source_ids and (contract.require_voiceover or user_song):
+    if contract.audio_source_ids and (
+        user_song or (contract.require_voiceover and not allow_voiceover_source_audio)
+    ):
         raise CreatorRenderContractError(
             "This renderer can't combine the confirmed soundtracks.",
             decline_reason="requirement_conflict",
@@ -1937,6 +2030,86 @@ def source_group_text_matches(
     return bounded
 
 
+def check_recipe_duration(
+    contract: CreatorRenderContract,
+    duration_s: float,
+    *,
+    length_policy: Any = None,
+    max_export_duration_s: float | None = None,
+    brand_tail_s: float | None = None,
+    exact_tolerance_s: float | None = None,
+    emit_observation: bool = True,
+) -> dict[str, Any] | None:
+    """The length promise `verify_phone_recipe` checks, for an edit of ``duration_s``.
+
+    Raises the typed refusal a pin would raise; returns the length-policy observation (or
+    ``None``). Split out so a worker can ask "would adding this clip break the length the
+    creator approved?" before it compiles (KRI-841), with the very same rule: an exclusive
+    "under N seconds" cap counts the standard ending (``brand_tail_s``), a proven creator
+    length is checked as the policy state says, and a legacy stated length drifts by 10 %
+    (``exact_tolerance_s`` replaces that for a composer plan's exact shots). A what-if probe
+    passes ``emit_observation=False`` so it adds nothing to the fleet length-check proof.
+    """
+    if max_export_duration_s is not None:
+        from app.kria.device_render import BRAND_TAIL_SECONDS  # noqa: PLC0415
+        from app.services.export_duration_policy import check_export_maximum  # noqa: PLC0415
+
+        # Reserve the standard ending before the phone does expensive work.
+        # Publication independently checks the actual bytes, without this estimate.
+        check_export_maximum(
+            duration_s + (BRAND_TAIL_SECONDS["standard"] if brand_tail_s is None else brand_tail_s),
+            max_export_duration_s,
+        )
+    elif length_policy is not None:
+        from app.services.length_policy_state import check_creator_duration  # noqa: PLC0415
+
+        try:
+            return check_creator_duration(
+                contract, duration_s, state=length_policy, emit_observation=emit_observation
+            )
+        except CreatorRenderContractError as exc:
+            raise _phone_decline("duration_s", str(exc)) from exc
+    elif contract.duration_s is not None:
+        drift = abs(duration_s - contract.duration_s)
+        allowed = exact_tolerance_s if exact_tolerance_s is not None else contract.duration_s * 0.1
+        if drift > allowed + 1e-9:
+            raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
+    return None
+
+
+def creator_length_note(
+    contract: CreatorRenderContract | None,
+    actual_duration_s: float,
+    *,
+    length_policy: Any = None,
+) -> str | None:
+    """The creator-visible line for a confirmed length the edit could not keep, or ``None``.
+
+    Since the length policy (every job stamped from 2026-10-08) a confirmed length is a
+    ``log_only`` check by default: an edit the footage cannot stretch renders at the
+    footage's length, which until now happened without a word to the creator. ``None``
+    when there is no confirmed length, it is kept (the ten-percent rule of
+    ``creator_duration_matches``), or the pin-time verifier still decides (no policy, or
+    an ``enforce`` one: that refusal speaks for itself).
+    """
+    from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
+
+    if contract is None or contract.duration_s is None:
+        return None
+    if getattr(length_policy, "check_mode", None) != "log_only":
+        return None
+    requested = contract.duration_s
+    if creator_duration_matches(actual_duration_s, requested):
+        return None
+    actual = f"{actual_duration_s:.0f}" if actual_duration_s >= 10 else f"{actual_duration_s:.1f}"
+    if actual_duration_s < requested:
+        return (
+            f"Your clips fill about {actual} seconds, so the video is that long instead of "
+            f"the {requested:g} seconds you asked for"
+        )
+    return f"The video runs about {actual} seconds; you asked for {requested:g}"
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -1958,35 +2131,16 @@ def verify_phone_recipe(
         raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
     receipts: list[dict[str, Any]] = []
-    if max_export_duration_s is not None:
-        from app.kria.device_render import BRAND_TAIL_SECONDS  # noqa: PLC0415
-        from app.services.export_duration_policy import check_export_maximum  # noqa: PLC0415
-
-        # Reserve the standard ending before the phone does expensive work.
-        # Publication independently checks the actual bytes, without this estimate.
-        check_export_maximum(
-            recipe.duration
-            + (BRAND_TAIL_SECONDS["standard"] if brand_tail_s is None else brand_tail_s),
-            max_export_duration_s,
-        )
-    elif length_policy is not None:
-        from app.services.length_policy_state import check_creator_duration  # noqa: PLC0415
-
-        try:
-            observation = check_creator_duration(contract, recipe.duration, state=length_policy)
-        except CreatorRenderContractError as exc:
-            raise _phone_decline("duration_s", str(exc)) from exc
-        if observation is not None:
-            receipts.append(observation)
-    elif contract.duration_s is not None:
-        drift = abs(recipe.duration - contract.duration_s)
-        allowed = (
-            max(0.1, 1 / recipe.frame_rate)
-            if composition is not None
-            else contract.duration_s * 0.1
-        )
-        if drift > allowed + 1e-9:
-            raise _phone_decline("duration_s", "This edit couldn't keep the confirmed length.")
+    observation = check_recipe_duration(
+        contract,
+        recipe.duration,
+        length_policy=length_policy,
+        max_export_duration_s=max_export_duration_s,
+        brand_tail_s=brand_tail_s,
+        exact_tolerance_s=max(0.1, 1 / recipe.frame_rate) if composition is not None else None,
+    )
+    if observation is not None:
+        receipts.append(observation)
 
     def audible(track, clip) -> bool:
         return _clip_audible(recipe, track, clip)
@@ -2032,6 +2186,23 @@ def verify_phone_recipe(
             for clip in track.clips
         )
     }
+    # A processed-audio clip is still the creator's camera audio, merely a
+    # pinned, server-made derivative.  Treat it as its declared source for
+    # original-audio requirements; otherwise muting the video clip before
+    # adding the timed derivative would falsely look like dropped audio.
+    original_ids.update(
+        asset.source_media_id
+        for asset in manifest.values()
+        if isinstance(asset, ProcessedAudioRenderAsset)
+        and any(
+            track.kind == "audio"
+            and clip.source_asset_id == asset.id
+            and audible(track, clip)
+            and (source_audio is None or source_audio.get(asset.source_media_id) is True)
+            for track in recipe.tracks
+            for clip in track.clips
+        )
+    )
     if isinstance(bed_asset, OriginalRenderAsset) and (
         source_audio is None or source_audio.get(bed_asset.media_id) is True
     ):

@@ -9,10 +9,12 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from json import JSONDecodeError
 from types import SimpleNamespace
 from typing import TypeVar
 
 import structlog
+from pydantic import ValidationError
 from sqlalchemy import or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -35,6 +37,7 @@ from app.models import (
     PlanItemAsset,
 )
 from app.schemas.edit_proposal import MediaRef
+from app.services import pool_analysis_deadline as pool_deadline
 from app.services.creator_clip_analysis import (
     analyze_clip_assignment,
     clip_analysis_ready,
@@ -55,6 +58,10 @@ log = structlog.get_logger()
 LEASE_SECONDS = 1830  # exceeds the hard task limit; a live provider call is never reclaimed
 MAX_ATTEMPTS = 3
 POOL_REDISPATCH_AFTER = timedelta(minutes=2)
+# KRI-820: a pending pool source ends (ready, or omitted once past its declared
+# deadline) within max_dispatch_window(); the limit adds one reaper sweep plus
+# slack and only guards against a row whose deadline was never readable.
+POOL_WAIT_LIMIT = pool_deadline.max_dispatch_window() + timedelta(minutes=10)
 POOL_REDISPATCH_BATCH = 10
 DB_TRANSACTION_ATTEMPTS = 4
 _RETRYABLE_DB_SQLSTATES = frozenset({"40P01", "40001"})
@@ -67,6 +74,20 @@ class PreparationStale(RuntimeError):
 
 class PreparationPending(RuntimeError):
     pass
+
+
+# Failures of the request as a whole: never downgraded to "leave one file out".
+_SYSTEMIC_FAILURES = (
+    PreparationStale,
+    PreparationPending,
+    PermissionError,
+    FileNotFoundError,
+    ValueError,
+    DBAPIError,
+    AiBudgetExceededError,
+    ProviderOutcomeUnknownError,
+    ProviderQuotaExceededError,
+)
 
 
 def _retry_db_transaction(identifier: uuid.UUID, action: str, operation: Callable[[], _T]) -> _T:
@@ -272,9 +293,24 @@ def _check_source_ownership(identifier: uuid.UUID, token: str, raw: dict, creato
     _retry_db_transaction(identifier, "source_ownership", check)
 
 
+def _omittable(raw: dict) -> bool:
+    """A Visuals upload the server already marked failed: planning never sees it
+    (creator context lists only uploaded/queued/analyzing/ready assets), so
+    leaving it out here keeps what the creator is told and what is planned equal."""
+    return bool(raw.get("asset_id")) and raw.get("asset_status") == "failed"
+
+
 def _analyze_sources(
     identifier: uuid.UUID, token: str, sources: list[dict], ctx: RunContext
-) -> None:
+) -> list[dict]:
+    """Analyze every usable source; return the pool sources left out.
+
+    KRI-820: one stalled or failed Visuals upload no longer fails the whole
+    request. A pool asset past its declared analysis bound, or whose analysis
+    fails here, is left out (and reported to the creator) while the ready
+    sources are planned. Systemic failures (quota, budget, ownership, missing
+    bytes) still fail the attempt, and so does having nothing usable at all.
+    """
     pool = {
         raw["gcs_path"]: MediaRef(
             lane="asset",
@@ -290,10 +326,24 @@ def _analyze_sources(
         if raw.get("asset_id") and clip_analysis_ready(raw, kind=raw.get("kind"))
     }
     candidates = []
+    omitted: list[dict] = []
+    usable = 0
     pool_pending = False
     for raw in sources:
         if raw.get("asset_id") and raw.get("asset_status") in {"uploaded", "queued", "analyzing"}:
-            pool_pending = True
+            if raw.get("analysis_expired"):
+                omitted.append({"asset_id": raw["asset_id"], "reason": "analysis_timed_out"})
+            else:
+                pool_pending = True
+            continue
+        if (
+            raw.get("asset_id")
+            and raw.get("asset_status") == "failed"
+            and raw.get("asset_error_code") == pool_deadline.TIMED_OUT_CODE
+        ):
+            # The reaper already persisted this bound as a timeout: never re-run
+            # a paid, unbounded inline analysis of the same stalled file.
+            omitted.append({"asset_id": raw["asset_id"], "reason": "analysis_timed_out"})
             continue
         candidates.append(raw)
     # Even ready source clips pass the helper's cheap immutable-generation
@@ -324,11 +374,28 @@ def _analyze_sources(
         while pending:
             done, _ = wait(pending, return_when=FIRST_COMPLETED)
             for future in done:
-                pending.pop(future)
-                analyzed, _ref = future.result()
-                if not clip_analysis_ready(analyzed, kind=analyzed.get("kind")):
-                    raise RuntimeError("semantic analysis unavailable")
-                _checkpoint(identifier, token, analyzed)
+                raw = pending.pop(future)
+                try:
+                    analyzed, _ref = future.result()
+                    ready = clip_analysis_ready(analyzed, kind=analyzed.get("kind"))
+                except (ValidationError, JSONDecodeError):
+                    # Malformed model output for one file (both are ValueErrors).
+                    if not _omittable(raw):
+                        raise
+                    ready = False
+                except _SYSTEMIC_FAILURES:
+                    raise
+                except Exception:  # noqa: BLE001 - one failed pool file is left out, not fatal
+                    if not _omittable(raw):
+                        raise
+                    ready = False
+                if not ready:
+                    if not _omittable(raw):
+                        raise RuntimeError("semantic analysis unavailable")
+                    omitted.append({"asset_id": raw["asset_id"], "reason": "analysis_failed"})
+                else:
+                    _checkpoint(identifier, token, analyzed)
+                    usable += 1
                 submit_next()
         success = True
     finally:
@@ -337,10 +404,18 @@ def _analyze_sources(
         executor.shutdown(wait=True, cancel_futures=not success)
     if pool_pending:
         raise PreparationPending()
+    if omitted and not usable:
+        raise RuntimeError("no usable source")
+    return omitted
 
 
 async def _resume(
-    identifier: uuid.UUID, token: str, inputs: dict, creator_id: str, session_id: str
+    identifier: uuid.UUID,
+    token: str,
+    inputs: dict,
+    creator_id: str,
+    session_id: str,
+    omitted: list[dict] | None = None,
 ) -> None:
     from app.routes.creator_agent import _run_planning_turn  # noqa: PLC0415
     from app.services.creator_preparation import require_current_attempt  # noqa: PLC0415
@@ -353,7 +428,9 @@ async def _resume(
             attempt = await db.get(CreatorPlanningAttempt, identifier)
             session = await db.get(CreatorAgentSession, attempt.session_id)
             total = int((session.preparation or {}).get("total", 0))
-            session.preparation = progress(identifier, "resolving", total, total)
+            session.preparation = progress(
+                identifier, "resolving", total - len(omitted or []), total, omitted=omitted
+            )
             await db.commit()
             await _run_planning_turn(
                 db,
@@ -453,7 +530,7 @@ def _defer_pending(identifier: uuid.UUID, token: str) -> list[tuple[str, str, st
                 attempt, session, *_ = graph
                 if not owns_attempt(*graph[:4], graph[4]):
                     _supersede(db, attempt, session, graph[2])
-                elif datetime.now(UTC) - attempt.created_at > timedelta(minutes=10):
+                elif datetime.now(UTC) - attempt.created_at > POOL_WAIT_LIMIT:
                     _record_failure(db, attempt, session, "analysis_unavailable", retryable=True)
                 else:
                     attempt.status = "queued"
@@ -473,13 +550,15 @@ def _pending_pool_dispatches(
 
     Called under the owned preparation's Plan/Item locks, which also fence
     pool claims. Commit these cooldowns before publishing outside the locks.
-    The ten-minute preparation deadline bounds retries for each original token.
+    Re-sends keep the attempt's token AND its declared deadline (KRI-820), so
+    they never extend the bound; an expired attempt is never re-sent.
     """
     dispatches = []
     for asset in assets:
         dispatched_at = asset.analysis_last_dispatched_at or asset.created_at
         if (
             asset.status != "queued"
+            or pool_deadline.is_expired(asset, now)
             or asset.analysis_started_at is not None
             or not asset.analysis_attempt_token
             or not asset.gcs_generation
@@ -487,6 +566,9 @@ def _pending_pool_dispatches(
             or dispatched_at > now - POOL_REDISPATCH_AFTER
         ):
             continue
+        if getattr(asset, "analysis_deadline_at", None) is None:
+            # Legacy (pre-0125) row: pin its derived bound before the anchor moves.
+            asset.analysis_deadline_at = pool_deadline.effective_deadline(asset)
         asset.analysis_last_dispatched_at = now
         dispatches.append((str(asset.id), asset.analysis_attempt_token, asset.correlation_id))
         if len(dispatches) >= POOL_REDISPATCH_BATCH:
@@ -559,9 +641,9 @@ def prepare_creator_clips(attempt_id: str) -> None:
         # Preparation precedes Job creation. Agent runs are attributed through
         # RunContext.creator_agent_session_id and durable progress through the attempt.
         with pipeline_trace_for(None):
-            _analyze_sources(identifier, token, sources, ctx)
+            omitted = _analyze_sources(identifier, token, sources, ctx) or []
             failure_stage = "planning"
-            asyncio.run(_resume(identifier, token, inputs, creator_id, session_id))
+            asyncio.run(_resume(identifier, token, inputs, creator_id, session_id, omitted))
     except PreparationPending:
         # Pool tasks already own this work. Recheck later without spending
         # provider budget or consuming a crash-recovery attempt. A queued

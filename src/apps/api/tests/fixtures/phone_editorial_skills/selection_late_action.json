@@ -1,0 +1,55 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "creator_request": "Include the gate actually opening, even if it is late in the long take.",
+    "intents": [
+      {
+        "intent_id": "spot",
+        "op": "include",
+        "attribute": "gate actually opens"
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "record": {
+          "summary": "Fast cars pass a gate. The gate stays closed."
+        }
+      },
+      {
+        "alias": "m002",
+        "record": {
+          "summary": "A 60-second quiet shot. At 40 seconds the gate opens.",
+          "best_moments": [
+            {
+              "start_s": 40,
+              "end_s": 42,
+              "description": "Gate opens."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"spot\", \"assignments\": [{\"media\": \"m002\", \"evidence\": \"Visible action in the record.\", \"confidence\": 0.95}], \"needs_vision\": []}]}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "An action late in the long take beats a busy but unrelated opening. This membership-only caller cannot select an exact source window.",
+    "skills": [
+      "meaningful-moment"
+    ],
+    "expected": {
+      "intents": [
+        {
+          "assignments": [
+            {
+              "media": "m002"
+            }
+          ]
+        }
+      ]
+    },
+    "wrong_raw_text": "{\"intents\": [{\"intent_id\": \"spot\", \"assignments\": [{\"media\": \"m001\", \"evidence\": \"Visible action in the record.\", \"confidence\": 0.95}], \"needs_vision\": []}]}"
+  }
+}

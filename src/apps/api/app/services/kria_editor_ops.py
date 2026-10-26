@@ -82,7 +82,9 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
     caps = _editor_capabilities(job, variant)
     clips = caps.get("clips") if isinstance(caps, dict) else {}
     clips = clips if isinstance(clips, dict) else {}
-    guided = _is_guided_native(job, variant)
+    source_window_timeline = _is_guided_native(job, variant) or _is_authored_phone_native(
+        job, variant
+    )
     device = variant.get("render_destination") == "device"
 
     def enabled(key: str, default: bool = True) -> bool:
@@ -100,7 +102,7 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
         "transition_after": enabled("transitions"),
         "transition_duration_s": enabled("transitions"),
         "look_preset": enabled("looks") and not device,
-        "playback_rate": enabled("playback_rate") and guided and not device,
+        "playback_rate": enabled("playback_rate", default=not device) and source_window_timeline,
         "source_crop": enabled("source_crop", default=False),
     }
 
@@ -242,6 +244,8 @@ def _safe_slot(
         slot["media_id"] = media_id
     if row.get("playback_rate") is not None:
         slot["playback_rate"] = row["playback_rate"]
+    if row.get("source_end_s") is not None:
+        slot["source_end_s"] = row["source_end_s"]
     if moment:
         slot["moment"] = moment
     if facts:
@@ -250,6 +254,8 @@ def _safe_slot(
         slot["seen"] = {"text": seen, "provenance": "vision"}
     if visible_text:
         slot["visible_text"] = visible_text[:1000]
+    if row.get("read_only") is True:
+        slot["read_only"] = True
     return slot
 
 
@@ -340,18 +346,30 @@ def _clip_description_by_media_id(
     it cannot tell what that clip shows, never guess.
     """
     guided = _guided_v2_revision(job, variant)
-    if guided is None:
+    phone_sources = _phone_source_media(job, variant) if guided is None else {}
+    if guided is None and not phone_sources:
         return {}
     media_by_path = {
         str(source.get("gcs_path")): str(source.get("media_id"))
-        for source in guided.get("sources") or []
+        for source in (guided or {}).get("sources") or []
         if isinstance(source, dict) and source.get("gcs_path") and source.get("media_id")
     }
     out: dict[str, str] = {}
     for row in assignments:
         if not isinstance(row, dict):
             continue
-        media_id = media_by_path.get(str(row.get("gcs_path")))
+        if guided is None:
+            # KRI-816: phone sources join on the immutable binding triple, so a
+            # re-uploaded (new generation) clip is never described as this one.
+            media_id = phone_sources.get(
+                (
+                    str(row.get("media_id")),
+                    str(row.get("gcs_path")),
+                    str(row.get("storage_generation")),
+                )
+            )
+        else:
+            media_id = media_by_path.get(str(row.get("gcs_path")))
         if media_id is None:
             continue
         if visible_text:
@@ -367,6 +385,22 @@ def _clip_description_by_media_id(
         if text:
             out[media_id] = text
     return out
+
+
+def _phone_source_media(job: Any, variant: dict[str, Any]) -> dict[tuple[str, str, str], str]:
+    """(media_id, proxy path, generation) -> media_id for a phone Talking edit's sources."""
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        is_phone_subtitled_editor_variant,
+    )
+    from app.services.phone_voiceover_timeline import _bindings  # noqa: PLC0415
+
+    assembly = getattr(job, "assembly_plan", None)
+    if not is_phone_subtitled_editor_variant(variant) or not isinstance(assembly, dict):
+        return {}
+    return {
+        (binding.media_id, binding.proxy_path, binding.generation): binding.media_id
+        for binding in _bindings(assembly)
+    }
 
 
 def clip_seen_by_media_id(
@@ -436,6 +470,15 @@ def _is_guided_native(job: Any, variant: dict[str, Any]) -> bool:
     ):
         return False
     return _guided_v2_revision(job, variant) is not None
+
+
+def _is_authored_phone_native(job: Any, variant: dict[str, Any]) -> bool:
+    """An explicit phone timeline has the same source-window speed contract."""
+    return (
+        variant.get("render_destination") == "device"
+        and variant.get("editor_timeline_mode") == "authored"
+        and isinstance(variant.get("user_timeline"), dict)
+    )
 
 
 def _has_label_lane(job: Any, variant: dict[str, Any]) -> bool:
@@ -654,8 +697,15 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
     if caps.get("automatic_cut") is True and variant.get("speech_cut_candidates"):
         families.append("automatic_cut")
     music_ops = caps.get("music_operations") or {}
+    original_audio = caps.get("original_audio")
     if (
         caps.get("mix") is True
+        # KRI-821: a phone Voiceover edit's footage level (`set_mix original_level`).
+        or (
+            variant.get("resolved_archetype") in {"narrated", "voiceover"}
+            and isinstance(original_audio, dict)
+            and original_audio.get("editable") is True
+        )
         or caps.get("swap_song") is True
         or any(
             value is True or (isinstance(value, dict) and value.get("editable") is True)
@@ -922,6 +972,15 @@ def build_editor_snapshot(
         **(clip_context.get("visible_text") or {}),
     }
     slot_rows = _variant_slots(variant, job)
+    if not slot_rows:
+        # KRI-816: a phone Talking cut lives only in its pinned recipe. Project it
+        # read-only for the snapshot (research binds to what is pictured); it is
+        # never added to `_variant_slots`, which also seeds the applier.
+        from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+            phone_subtitled_research_slots,
+        )
+
+        slot_rows = phone_subtitled_research_slots(job, variant)
     guided_source_labels = _slot_moments(job, variant, slot_rows)
     label_links = _clip_label_links(job, variant)
     label_text_by_clip = {
@@ -1019,6 +1078,10 @@ def build_editor_snapshot(
         "text_bars": text_bars,
         "total_duration_s": duration,
     }
+    if variant.get("resolved_archetype") in {"subtitled", "talking_head"}:
+        # KRI-816: the recorded speech is the edit's primary track, so research
+        # places sourced text only in its pauses (narrated/voiceover cues do not).
+        snapshot["spoken_edit"] = True
     brief = clip_context.get("brief")
     if isinstance(brief, str) and brief.strip():
         from app.kria.brief import BriefCoverageError  # noqa: PLC0415
@@ -1106,6 +1169,14 @@ def build_editor_snapshot(
             # `original_level` would be silently dropped, so it is not offered.
             if not _is_guided_native(job, variant):
                 snapshot["mix"]["original_level"] = variant.get("original_audio_level")
+        if caps.get("mix") is not True and variant.get("resolved_archetype") in {
+            "narrated",
+            "voiceover",
+        }:
+            # KRI-821: the family is open only for the footage level (`original_audio`);
+            # the voice/music balance has no control here (Save refuses music_level).
+            snapshot["mix"].pop("music_level", None)
+            snapshot["mix"]["music_level_locked"] = True
         bed = _background_bed(caps, variant, guided_native=_is_guided_native(job, variant))
         if bed is not None:
             snapshot["mix"]["background_music"] = bed
@@ -1223,7 +1294,7 @@ def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
             # Only guided rows carry these; omission on the wire means "inherit".
             **{
                 key: row[key]
-                for key in ("playback_rate", "source_crop", "source_start_locked")
+                for key in ("playback_rate", "source_crop", "source_start_locked", "source_end_s")
                 if key in row
             },
         )
@@ -1247,7 +1318,9 @@ def _summary(op: dict[str, Any]) -> str:
     return name[:1].upper() + name[1:]
 
 
-def fresh_editor_head_payload(head: Any, variant: dict[str, Any]) -> dict[str, Any]:
+def fresh_editor_head_payload(
+    head: Any, variant: dict[str, Any], job: Any = None
+) -> dict[str, Any]:
     """The head draft's editor payload iff it was built on the variant's CURRENT render.
 
     The session pointer and ``CreatorEditDraft.base_generation_id`` go stale after an
@@ -1255,6 +1328,7 @@ def fresh_editor_head_payload(head: Any, variant: dict[str, Any]) -> dict[str, A
     payload's own ``base_generation`` (stamped from ``variant_render_baseline``) can:
     a mismatch means the draft predates a saved render and must not be overlaid on it.
     Returns ``{}`` (build on the saved variant) when absent, non-editor, or stale.
+    With ``job``, a phone-published export of the payload's generation is current too.
     """
     snapshot = getattr(head, "snapshot_json", None) if head is not None else None
     if not isinstance(snapshot, dict) or snapshot.get("kind") != "editor":
@@ -1262,8 +1336,12 @@ def fresh_editor_head_payload(head: Any, variant: dict[str, Any]) -> dict[str, A
     payload = snapshot.get("editor_payload")
     if not isinstance(payload, dict) or not payload:
         return {}
-    if str(payload.get("base_generation") or "") != variant_render_baseline(variant):
-        return {}
+    base = str(payload.get("base_generation") or "")
+    if base != variant_render_baseline(variant):
+        from app.services.device_render import published_source_generation  # noqa: PLC0415
+
+        if job is None or not base or base != published_source_generation(job, variant):
+            return {}
     return payload
 
 
@@ -1453,7 +1531,7 @@ def resolve_editor_base(
             return EditorBase(project_editor_draft(variant, prior, job), prior, "client_state")
         except Exception as exc:  # noqa: BLE001 - client state is untrusted input
             reason = f"client_state_unusable:{type(exc).__name__}"
-    fresh = fresh_editor_head_payload(head, variant)
+    fresh = fresh_editor_head_payload(head, variant, job)
     if fresh:
         return EditorBase(project_editor_draft(variant, fresh, job), fresh, "head", reason)
     return EditorBase(project_editor_draft(variant, {}, job), {}, "variant", reason)
@@ -1965,6 +2043,8 @@ def _fit_slots_to_footage(state: _DraftState, before: list[dict[str, Any]]) -> N
         row["in_s"] = round(fitted_in, 6)
         row["duration_s"] = fitted
         row["duration_beats"] = None
+        if "source_end_s" in row:
+            row["source_end_s"] = round(fitted_in + fitted * rate, 6)
         state.changes.append(
             f"Clip {visible} only has {fitted:.2f}s of footage, so it is that long"
         )
@@ -1977,8 +2057,19 @@ def _op_set_clip_duration(state: _DraftState, op: dict[str, Any]) -> None:
     if name == "set_clip_duration":
         row["duration_beats"] = None
         row["duration_s"] = float(op["duration_s"])
+        if "source_end_s" in row:
+            row["source_end_s"] = float(row.get("in_s") or 0) + _slot_duration(row) * _slot_rate(
+                row
+            )
     elif name == "set_clip_in":
+        span = (
+            float(row["source_end_s"]) - float(row.get("in_s") or 0)
+            if row.get("source_end_s") is not None
+            else None
+        )
         row["in_s"] = float(op["in_s"])
+        if span is not None:
+            row["source_end_s"] = row["in_s"] + span
         row["source_start_locked"] = True
     elif name == "trim_clip_start":
         amount = min(float(op["start_s"]), max(0.0, _slot_duration(row) - 0.1))
@@ -2049,6 +2140,8 @@ def _op_split_clip(state: _DraftState, op: dict[str, Any]) -> None:
         "duration_beats": None,
         "duration_s": duration - local,
     }
+    if "source_end_s" in row:
+        left["source_end_s"] = right["in_s"]
     state.slots[index : index + 1] = [left, right]
     state.changed.add("timeline")
 
@@ -2402,6 +2495,29 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         # its (right-biased, non-label-aware) own projection.
         state.explicit_text_ids.update(_explicit_text_timing_ids(initial_text, state.text))
         rebase_guided_text(state, guided)
+    elif (
+        "timeline" in changed
+        and _is_authored_phone_native(job, variant)
+        and any(
+            str(op.get("op") or "") == "patch_slots"
+            and "playback_rate" in dict(op.get("patch") or {})
+            for op in ops
+        )
+    ):
+        from app.services.authored_text_fit import _segments  # noqa: PLC0415
+        from app.services.kria_editor_timeline import rebase_guided_text  # noqa: PLC0415
+
+        # Authored phone clips use the same source-time mapping as guided clips,
+        # but their compiler owns transition overlap. Reuse that exact row
+        # projection so speed changes re-time labels and visual blocks without
+        # turning an ordinary authored trim into a lane rewrite.
+        state.explicit_text_ids.update(_explicit_text_timing_ids(initial_text, state.text))
+        rebase_guided_text(
+            state,
+            None,
+            old_segments_override=_segments(state.initial_slots),
+            new_segments_override=_segments(state.slots),
+        )
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
         visual_blocks=state.visual_blocks,

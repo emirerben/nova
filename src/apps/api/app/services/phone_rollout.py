@@ -316,7 +316,10 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         )
     if any(
         clip.overlay_dissolve_seed is not None
-        or clip.hold_duration is not None
+        or (
+            clip.hold_duration is not None
+            and not _main_track_freeze(clip, track, recipe.frame_rate)
+        )
         or clip.overlay_above_text is not None
         or clip.overlay_pop_in is not None
         or clip.overlay_preserve_alpha is not None
@@ -324,6 +327,16 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         for clip in track.clips
     ):
         raise ValueError("Editor media await native parity and device qualification")
+    # KRI-828: a creator's freeze (a main-video hold) is admitted only on a verified device.
+    if any(
+        _main_track_freeze(clip, track, recipe.frame_rate)
+        for track in recipe.tracks
+        for clip in track.clips
+    ) and "freezeFrame" not in set(settings.phone_render_verified_features):
+        raise PhoneCapabilityUnavailable(
+            "Freeze frames await native parity and device qualification",
+            capability="freezeFrame",
+        )
     if recipe.motion_scenes is not None:
         raise ValueError("Motion scenes await native parity and device qualification")
     if recipe.camera_pulses:
@@ -345,6 +358,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "Bent text awaits native parity and device qualification",
             capability="textBend",
+        )
+    # Text behind people: same explicit gate (`compile_text_overlay` strips the flag before
+    # it gets here unless verified; this catches a caller that stamped it afterwards).
+    if any(layer.behind_subject for layer in recipe.text_layers) and "behindSubject" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Text behind people awaits native parity and device qualification",
+            capability="behindSubject",
         )
     if _has_unqualified_font_instance(recipe):
         font_files, font_effects = unqualified_font_causes(recipe)
@@ -473,6 +495,84 @@ def freehand_drawing_supported(*, require_client: bool | None = None) -> bool:
     )
 
 
+def freeze_frame_planned_for(client_protocol: int | None) -> bool:
+    """May a phone montage plan hold a frame for the creator's freeze (KRI-828, KRI-898)?
+
+    ``client_protocol`` is the app build the creator acted from, stamped where they act:
+    the message the draft answers (``client_protocol`` on the turn) and the approval the
+    render serves (``creator_client_protocol`` on the Job). True iff ``freezeFrame`` is in
+    ``phone_render_verified_features`` (device parity) and that build declares at least
+    ``freeze_frame_min_client_protocol``. No stamp plans no hold: the freeze stays KRI-777's
+    honest "Couldn't" and the rest of the video renders, instead of a held recipe the
+    approving phone would be told to update for (426 on the whole video).
+
+    There is deliberately no request context read here: the draft, the pre-approval check
+    and the render all run in Celery, where a context fallback would skip the build check.
+    """
+    return (
+        "freezeFrame" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= settings.freeze_frame_min_client_protocol
+    )
+
+
+def clip_speed_planned_for() -> bool:
+    """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
+
+    True iff ``variableSpeed`` is in ``phone_render_verified_features`` (device parity: the
+    same gate the editor's clip speed control reads, `_phone_clip_speed_reason`). Off, the
+    plan writes no rate and the receipt keeps KRI-689's honest "can't change clip speed on
+    your iPhone yet", so an approved recipe never asks the phone for a capability it lacks.
+    """
+    return "variableSpeed" in set(settings.phone_render_verified_features)
+
+
+def stamped_client_protocol(value: object) -> int | None:
+    """A stored app-protocol stamp read back, or ``None`` when absent or malformed."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _main_track_freeze(clip: Any, track: Any, frame_rate: float) -> bool:
+    """A main-video hold longer than one frame: the creator's freeze (KRI-828)."""
+    return (
+        track.kind == "video"
+        and clip.hold_duration is not None
+        and clip.hold_duration > 1 / frame_rate + 1e-6
+    )
+
+
+def recipe_has_freeze_frame(recipe: Any) -> bool:
+    """Does this recipe hold a main-video frame for a creator's freeze (KRI-828)?"""
+    return any(
+        _main_track_freeze(clip, track, recipe.frame_rate)
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def freeze_frame_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a main-track ``freezeFrame`` hold (KRI-828)?
+
+    The render worker plans the hold with no app build in hand, so the build that fetches
+    or edits the recipe is qualified here (mirrors `text_bend_client_supported`): below
+    ``freeze_frame_min_client_protocol`` it is told to update instead of receiving a recipe
+    it cannot decode (or opening the held slot as slow motion in an old editor).
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.freeze_frame_min_client_protocol
+
+
 def text_bend_client_supported(*, require_client: bool | None = None) -> bool:
     """Does the requesting app build understand text ``bend`` (KRI-646)?
 
@@ -507,6 +607,44 @@ def text_bend_supported(*, require_client: bool | None = None) -> bool:
         settings.text_bend_enabled
         and "textBend" in set(settings.phone_render_verified_features)
         and text_bend_client_supported(require_client=require_client)
+    )
+
+
+def text_behind_subject_phone_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a text layer's ``behind_subject``?
+
+    At least ``text_behind_subject_phone_min_client_protocol`` (21) knows the key; an older
+    build refuses the whole recipe (`rejectUnknownAssetFields`). ``require_client`` ``None``
+    applies the gate only inside an HTTP request (workers have no app build to qualify);
+    pass ``True``/``False`` to force it. Mirrors `text_bend_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return (
+        protocol is not None and protocol >= settings.text_behind_subject_phone_min_client_protocol
+    )
+
+
+def text_behind_subject_phone_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a phone recipe carry ``behind_subject`` right now".
+
+    True iff the kill switch (``text_behind_subject_phone_enabled``, default off) is on,
+    ``behindSubject`` is in ``phone_render_verified_features`` (the device-parity gate) and
+    the app-build gate holds (`text_behind_subject_phone_client_supported`). When False,
+    `compile_text_overlay` strips the flag and the layer renders as plain text.
+    """
+    return bool(
+        settings.text_behind_subject_phone_enabled
+        and "behindSubject" in set(settings.phone_render_verified_features)
+        and text_behind_subject_phone_client_supported(require_client=require_client)
     )
 
 
@@ -1195,3 +1333,29 @@ def phone_render_supported_formats() -> frozenset[str]:
     # Defense in depth: never advertise a format the static compiler-existence
     # allowlist doesn't even recognize, regardless of how settings resolve.
     return frozenset(formats) & PHONE_RENDER_SUPPORTED_FORMATS
+
+
+def phone_voiceover_spoken_text_supported(*, require_client: bool = True) -> bool:
+    """Use the existing editable narrated text lane for grounded spoken text."""
+    return bool(
+        settings.phone_voiceover_spoken_text_enabled
+        and phone_narrated_title_edits_supported(require_client=require_client)
+    )
+
+
+def phone_voiceover_source_audio_supported(*, require_client: bool = True) -> bool:
+    """New authoring requires a preview that preserves selected camera sound."""
+    if not (
+        settings.phone_voiceover_source_audio_enabled
+        and "audioMix" in settings.phone_render_verified_features
+    ):
+        return False
+    if not require_client:
+        return True
+    from app.services.client_protocol import current_client_protocol
+
+    protocol = current_client_protocol()
+    return (
+        protocol is not None
+        and protocol >= settings.phone_voiceover_source_audio_min_client_protocol
+    )

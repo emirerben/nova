@@ -228,6 +228,11 @@ MediaCapability = Literal[
     "freehandDrawing",
     "textBend",
     "singleWordText",
+    # KRI-828: a creator's freeze frame (a main-video hold longer than one frame).
+    "freezeFrame",
+    # Text behind people: `text_layers[].behind_subject`, occluded on device by a Vision
+    # person mask (`KriaMediaEngine.NativeSubjectMatte`).
+    "behindSubject",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
@@ -245,6 +250,7 @@ MediaCapability = Literal[
     "slidePosts",
     "semanticCamera",
     "musicBed",
+    "processedAudio",
 ]
 
 
@@ -296,9 +302,27 @@ class EditRecipeV1(_RecipeModel):
                             "a source crop cannot combine with a still card or a visual placement"
                         )
                     self.required_capabilities |= {"sourceCrop"}
+                # A fractional final frame pads a quantized main-video slot;
+                # it is not an authored freeze or permission for overlay fields.
+                frame_padding = (
+                    self.schema_version == 2
+                    and track.kind == "video"
+                    and clip.hold_duration is not None
+                    and clip.hold_duration <= 1 / self.frame_rate + 1e-6
+                )
+                # KRI-828: a longer main-video hold is the creator's freeze frame: the
+                # engine holds the clip's last frame; no overlay field is involved.
+                freeze_frame = (
+                    self.schema_version == 2
+                    and track.kind == "video"
+                    and clip.hold_duration is not None
+                    and not frame_padding
+                )
+                if freeze_frame:
+                    self.required_capabilities |= {"freezeFrame"}
                 if (
                     clip.overlay_dissolve_seed is not None
-                    or clip.hold_duration is not None
+                    or (clip.hold_duration is not None and not frame_padding and not freeze_frame)
                     or clip.overlay_above_text is not None
                     or clip.overlay_pop_in is not None
                     or clip.overlay_preserve_alpha is not None

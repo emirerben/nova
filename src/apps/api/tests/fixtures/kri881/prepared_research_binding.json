@@ -1,0 +1,206 @@
+{
+  "_comment": "Written by KRI-881 (#1807) code: BriefBinding.create(..., prepared_research=PreparedResearch(...)) and drafts.canonical_snapshot. Regenerate only from that writer.",
+  "binding": {
+    "brief": {
+      "requirements": [
+        {
+          "description": "Include sources for the historical facts",
+          "facts": {
+            "research": {
+              "request_quote": "Include sources for the historical facts",
+              "topic": "the history of Hagia Sophia"
+            }
+          },
+          "id": "r1",
+          "kind": "text",
+          "literal": null,
+          "scope": "global",
+          "source_turn_id": null,
+          "status": "open"
+        }
+      ],
+      "version": 3
+    },
+    "creator_request": "Creative brief v3 (everything the creator has asked for, still in force):\n- [r1] [text/global] Include sources for the historical facts facts={research: {\"request_quote\":\"Include sources for the historical facts\",\"topic\":\"the history of Hagia Sophia\"}}\nLatest message: Include sources for the historical facts",
+    "digest": "d91d1ec726d92eb2952b49bf3cb156fd47f8440ad3bdee6a0b869b6a896948d0",
+    "media_snapshot": {
+      "clip_assignments": [
+        {
+          "gcs_path": "u/m1.mp4",
+          "media_id": "m1"
+        }
+      ],
+      "item_id": "22222222-2222-2222-2222-222222222222"
+    },
+    "prepared_research": {
+      "basis_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "limitations": "",
+      "reason": "",
+      "request_quote": "Include sources for the historical facts",
+      "requirement_id": "r1",
+      "retrieved_at": "2026-10-25T09:00:00Z",
+      "search_entry_html": "<div>Google Search</div>",
+      "status": "ready",
+      "texts": [
+        {
+          "end_s": 6.5,
+          "facts": [
+            {
+              "id": "f1",
+              "sources": [
+                {
+                  "title": "Hagia Sophia | Britannica",
+                  "url": "https://www.britannica.com/topic/Hagia-Sophia"
+                }
+              ],
+              "text": "Hagia Sophia was completed in 537 and was the largest cathedral for nearly a thousand years."
+            }
+          ],
+          "media_ids": [
+            "m1"
+          ],
+          "sources": [
+            {
+              "title": "Hagia Sophia | Britannica",
+              "url": "https://www.britannica.com/topic/Hagia-Sophia"
+            }
+          ],
+          "start_s": 2.0,
+          "text": "Built in 537 as a cathedral, it was the world's largest church for nearly 1,000 years."
+        }
+      ],
+      "topic": "the history of Hagia Sophia",
+      "version": 1
+    },
+    "state": "pinned",
+    "thread_id": "11111111-1111-1111-1111-111111111111"
+  },
+  "draft_snapshot": {
+    "brief_binding": {
+      "brief": {
+        "requirements": [
+          {
+            "description": "Include sources for the historical facts",
+            "facts": {
+              "research": {
+                "request_quote": "Include sources for the historical facts",
+                "topic": "the history of Hagia Sophia"
+              }
+            },
+            "id": "r1",
+            "kind": "text",
+            "literal": null,
+            "scope": "global",
+            "source_turn_id": null,
+            "status": "open"
+          }
+        ],
+        "version": 3
+      },
+      "creator_request": "Creative brief v3 (everything the creator has asked for, still in force):\n- [r1] [text/global] Include sources for the historical facts facts={research: {\"request_quote\":\"Include sources for the historical facts\",\"topic\":\"the history of Hagia Sophia\"}}\nLatest message: Include sources for the historical facts",
+      "digest": "d91d1ec726d92eb2952b49bf3cb156fd47f8440ad3bdee6a0b869b6a896948d0",
+      "media_snapshot": {
+        "clip_assignments": [
+          {
+            "gcs_path": "u/m1.mp4",
+            "media_id": "m1"
+          }
+        ],
+        "item_id": "22222222-2222-2222-2222-222222222222"
+      },
+      "prepared_research": {
+        "basis_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "limitations": "",
+        "reason": "",
+        "request_quote": "Include sources for the historical facts",
+        "requirement_id": "r1",
+        "retrieved_at": "2026-10-25T09:00:00Z",
+        "search_entry_html": "<div>Google Search</div>",
+        "status": "ready",
+        "texts": [
+          {
+            "end_s": 6.5,
+            "facts": [
+              {
+                "id": "f1",
+                "sources": [
+                  {
+                    "title": "Hagia Sophia | Britannica",
+                    "url": "https://www.britannica.com/topic/Hagia-Sophia"
+                  }
+                ],
+                "text": "Hagia Sophia was completed in 537 and was the largest cathedral for nearly a thousand years."
+              }
+            ],
+            "media_ids": [
+              "m1"
+            ],
+            "sources": [
+              {
+                "title": "Hagia Sophia | Britannica",
+                "url": "https://www.britannica.com/topic/Hagia-Sophia"
+              }
+            ],
+            "start_s": 2.0,
+            "text": "Built in 537 as a cathedral, it was the world's largest church for nearly 1,000 years."
+          }
+        ],
+        "topic": "the history of Hagia Sophia",
+        "version": 1
+      },
+      "state": "pinned",
+      "thread_id": "11111111-1111-1111-1111-111111111111"
+    },
+    "changes": [],
+    "edit_format": "montage",
+    "editor_payload": null,
+    "intent": "",
+    "kind": "strategy",
+    "schema_version": 2,
+    "strategy": {
+      "edit_format": "montage"
+    }
+  },
+  "draft_snapshot_hash": "57907b8ad5fa92317ef275887b53411b014722c82311614ceef2282b5b0623f9",
+  "prepared_research": {
+    "basis_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "limitations": "",
+    "reason": "",
+    "request_quote": "Include sources for the historical facts",
+    "requirement_id": "r1",
+    "retrieved_at": "2026-10-25T09:00:00Z",
+    "search_entry_html": "<div>Google Search</div>",
+    "status": "ready",
+    "texts": [
+      {
+        "end_s": 6.5,
+        "facts": [
+          {
+            "id": "f1",
+            "sources": [
+              {
+                "title": "Hagia Sophia | Britannica",
+                "url": "https://www.britannica.com/topic/Hagia-Sophia"
+              }
+            ],
+            "text": "Hagia Sophia was completed in 537 and was the largest cathedral for nearly a thousand years."
+          }
+        ],
+        "media_ids": [
+          "m1"
+        ],
+        "sources": [
+          {
+            "title": "Hagia Sophia | Britannica",
+            "url": "https://www.britannica.com/topic/Hagia-Sophia"
+          }
+        ],
+        "start_s": 2.0,
+        "text": "Built in 537 as a cathedral, it was the world's largest church for nearly 1,000 years."
+      }
+    ],
+    "topic": "the history of Hagia Sophia",
+    "version": 1
+  },
+  "writer_head_sha": "090df2c93cad6a20684b54f84c9254e65b4a48f2"
+}

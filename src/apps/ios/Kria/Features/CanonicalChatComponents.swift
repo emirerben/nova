@@ -199,9 +199,22 @@ struct ChatMessageRow: View {
     var questionBatch: QuestionBatch? = nil
     /// KRI-588: how to present `message.songRangeQuestion`. nil (old server, flag off, not a question) = text only.
     var songRangeMode: SongRangeCardMode? = nil
+    /// KRI-901: how to present `message.protectedRegionQuestion`. nil (old server, not a question) = text only.
+    var objectMarkMode: ObjectMarkCardMode? = nil
+    /// KRI-723: how to present `message.momentOrderQuestion`. nil (old server, not a question) = text only.
+    var momentOrderMode: MomentOrderCardMode? = nil
     /// Tappable answers for a plain `assistant_response` question. nil = not the newest unanswered question
     /// (or no options): no chips are drawn, so history never keeps stale tappable answers.
     var replyOptionsMode: ReplyOptionsMode? = nil
+    /// KRI-815: how to present `message.voiceoverScript`. nil (old server, flag off, no script) = the reply text,
+    /// which holds the script too.
+    var voiceoverScriptMode: VoiceoverScriptCardMode? = nil
+
+    /// With the script card shown, the reply text drops the script it ends with (the card holds it).
+    private var shownContent: String {
+        guard voiceoverScriptMode != nil, let script = message.voiceoverScript else { return message.displayedContent }
+        return script.reply(from: message.displayedContent)
+    }
 
     private static let userBubbleShape = UnevenRoundedRectangle(
         topLeadingRadius: 18,
@@ -243,14 +256,14 @@ struct ChatMessageRow: View {
                 }
                 // With receipts and a server `reply_lead`, the lead replaces the long prose: the receipt rows
                 // below carry each fact once. No lead (old server) = today's text, unchanged.
-                ChatResponseText(content: message.displayedContent, startedAt: responseStartedAt)
+                ChatResponseText(content: shownContent, startedAt: responseStartedAt)
                     .font(KriaFont.body(14))
                     .foregroundStyle(KriaColor.ink)
                     .lineSpacing(4)
-                    .copyableMessage(message.displayedContent, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .copyableMessage(shownContent, previewShape: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     // On the text, not the stack: a stack's label is applied to
                     // every child, which read each option chip as the question.
-                    .accessibilityLabel("Kria: \(message.displayedContent)")
+                    .accessibilityLabel("Kria: \(shownContent)")
                 if !message.options.isEmpty, let onSelectOption {
                     QuestionOptionsRow(
                         options: message.options,
@@ -281,7 +294,19 @@ struct ChatMessageRow: View {
                     SongRangeQuestionCard(question: question, fallbackDurationS: songDurationS, mode: songRangeMode)
                         .id(question.questionID)
                 }
+                if let question = message.protectedRegionQuestion, let objectMarkMode {
+                    ObjectMarkCard(question: question, projectID: projectID, mode: objectMarkMode)
+                        .id(question.questionID)
+                }
+                if let question = message.momentOrderQuestion, let momentOrderMode {
+                    MomentOrderCard(question: question, projectID: projectID, language: clipSelectionLanguage, mode: momentOrderMode)
+                        .id(question.questionID)
+                }
                 if questionBatch == nil { choiceCard }
+                if let script = message.voiceoverScript, let voiceoverScriptMode {
+                    VoiceoverScriptCard(script: script, mode: voiceoverScriptMode)
+                        .id("\(script.scriptID)-\(script.revision)")
+                }
                 if !message.receipts.isEmpty {
                     RequirementChipsView(
                         receipts: message.receipts, requirements: requirements, titlesReady: briefSettled,
@@ -713,6 +738,10 @@ struct DirectionStage: View {
     /// when it sends the approval, so `decide` needs no extra argument.
     var renderShape: (offer: RenderShapeOffer, choice: Binding<RenderShapeChoice>)? = nil
     var automaticRepairs: Binding<Bool>? = nil
+    /// KRI-881: the draft's sourced wording and sources (`draft_applied.research_preview`). Nil (no research, an
+    /// older server, or an unreadable payload) leaves the card exactly as it was.
+    var researchPreview: ResearchPreview? = nil
+    var replyLanguage: ClipAnswerLanguage = .english
     let isBusy: Bool
     var responseStartedAt: Date? = nil
     /// `decision` is "approve" or "deny". `cleanupChoice` is only meaningful on
@@ -765,6 +794,10 @@ struct DirectionStage: View {
                     .stroke(KriaColor.border, lineWidth: 1)
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            if let researchPreview {
+                ResearchPreviewCard(preview: researchPreview, strings: ResearchPreviewStrings(language: replyLanguage))
+            }
 
             if let renderShape {
                 VideoShapeCard(offer: renderShape.offer, choice: renderShape.choice, isEnabled: !isBusy)
@@ -1251,9 +1284,29 @@ struct FailedStage: View {
     /// it would fail identically. "Refresh project" is misleading there, so
     /// this offers a fresh project instead.
     var nonRetryableReasonCode: String? = nil
+    /// The typed creator decline behind a non-retryable failure (`decline_reason`).
+    var declineReason: String? = nil
+    /// Hands the creator the composer. Used where the next step is a reply in this
+    /// chat rather than a fresh project (`replyInChatDeclineReasons`).
+    var replyInChat: (() -> Void)? = nil
 
-    private var isNonRetryable: Bool {
-        isNonRetryableFailureCode(nonRetryableReasonCode)
+    /// The one way forward the failed card offers.
+    enum Affordance: Equatable {
+        /// Nothing to tap: the copy says to wait, and the composer stays.
+        case none
+        /// Focus the composer: the next step is a reply in this chat.
+        case reply
+        case newChat
+        case retry
+    }
+
+    static func affordance(code: String?, declineReason: String?, canReply: Bool, canRetry: Bool) -> Affordance {
+        // A Retry or Refresh would answer the same, and New chat would drop the conversation.
+        if isNotRetryableNowFailureCode(code) { return .none }
+        if isNonRetryableFailureCode(code) {
+            return canReply && declineReason.map(replyInChatDeclineReasons.contains) == true ? .reply : .newChat
+        }
+        return canRetry ? .retry : .none
     }
 
     var body: some View {
@@ -1262,12 +1315,24 @@ struct FailedStage: View {
                 title: title,
                 bodyText: bodyText
             )
-            if isNonRetryable {
+            switch Self.affordance(code: nonRetryableReasonCode, declineReason: declineReason,
+                                   canReply: replyInChat != nil, canRetry: retry != nil) {
+            case .none:
+                EmptyView()
+            case .reply:
+                if let replyInChat {
+                    Button("Reply to Kria", action: replyInChat)
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                        .accessibilityIdentifier("failed-stage-reply")
+                }
+            case .newChat:
                 NewChatButton()
                     .accessibilityIdentifier("failed-stage-start-new-edit")
-            } else if let retry {
-                Button(retryLabel, action: retry)
-                    .buttonStyle(CanonicalPrimaryButtonStyle())
+            case .retry:
+                if let retry {
+                    Button(retryLabel, action: retry)
+                        .buttonStyle(CanonicalPrimaryButtonStyle())
+                }
             }
         }
     }

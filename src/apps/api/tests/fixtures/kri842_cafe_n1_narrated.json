@@ -1,0 +1,122 @@
+{
+  "scenario": "KRI-842 cafe N1: a phone Voiceover edit whose brief asks for ONE clip's own sound under the voice (the bite clip, N1_05) and for the last clip (N1_08) to play on after the voice so Caro's 'bye bye' is heard.",
+  "provenance": "Measured locally, no paid AI: ffprobe for durations and streams, ffmpeg astats at 50 ms RMS frames for the pause and room-tone edges, and local whisper-medium on the kit files for the spoken spans. The media itself is not in git (only its sha256 below), so these numbers are the independent expectation source for the tests that read this file.",
+  "prompt": {
+    "tr": "Seslendirme her yerde net duyulsun ama Atakan'ın ısırdığı klipte o klibin kendi sesi de hafifçe altta kalsın. Seslendirme bitince son klipte Caro'nun \"bye bye\" demesi duyulsun.",
+    "tr_under_voice": "Seslendirme her yerde net duyulsun ama Atakan'ın ısırdığı klipte o klibin kendi sesi de hafifçe altta kalsın.",
+    "tr_after_voice": "Seslendirme bitince son klipte Caro'nun \"bye bye\" demesi duyulsun.",
+    "en_under_voice": "Keep the clip sound low under the voiceover on the bite clip"
+  },
+  "voiceover": {
+    "media_id": "N1_10",
+    "file": "N1_10_voiceover.m4a",
+    "sha256": "a4062b7a683d7d895abd19d4b7eeb5edc062dc100c0ed62450ea818cc9df6a67",
+    "duration_s": 23.202
+  },
+  "uploads": [
+    {
+      "media_id": "N1_01",
+      "file": "N1_01_footage.mp4",
+      "sha256": "638443dc983d3baa958a5d94c69dd87e6bf963853a6b6c8f4c88d3870285b183",
+      "kind": "video",
+      "duration_s": 5.0,
+      "has_audio": true,
+      "audio_codec": "aac"
+    },
+    {
+      "media_id": "N1_02",
+      "file": "N1_02_footage.mp4",
+      "sha256": "9c5698ac2babba35c9fd29458306fbcaa14bdb05a9bf39556da41b611bf0d271",
+      "kind": "video",
+      "duration_s": 5.5,
+      "has_audio": true,
+      "audio_codec": "aac"
+    },
+    {
+      "media_id": "N1_03",
+      "file": "N1_03_footage.mp4",
+      "sha256": "32081e8e20d0058aed7bf628e674f25949457f78fc4bcdf99cb50e40a73ef561",
+      "kind": "video",
+      "duration_s": 3.8,
+      "has_audio": true,
+      "audio_codec": "aac"
+    },
+    {
+      "media_id": "N1_04",
+      "file": "N1_04_footage.mp4",
+      "sha256": "dc09bda5d9df7aefe7b535b92b43cceb16df8c122eed7bc64c46e7907d06f555",
+      "kind": "video",
+      "duration_s": 15.8,
+      "has_audio": true,
+      "audio_codec": "aac"
+    },
+    {
+      "media_id": "N1_05",
+      "file": "N1_05_footage.mp4",
+      "sha256": "9bbc73a1a657fdbee20e5fa40e6fc5c7b3c60da4237000e837d0e7af429661d1",
+      "kind": "video",
+      "duration_s": 6.4,
+      "has_audio": true,
+      "audio_codec": "aac",
+      "note": "the bite clip"
+    },
+    {
+      "media_id": "N1_06",
+      "file": "N1_06_footage.mp4",
+      "sha256": "9eac1040c84ee44e455c0be3bcf88982b09b2507550bbea1fb84a12dba5c0e13",
+      "kind": "video",
+      "duration_s": 4.0,
+      "has_audio": true,
+      "audio_codec": "aac"
+    },
+    {
+      "media_id": "N1_07",
+      "file": "N1_07_footage.mp4",
+      "sha256": "3ab4a979f0e6c3f8031ad04da400aeb30d211cbc23a24058124e2c653303e998",
+      "kind": "video",
+      "duration_s": 5.6,
+      "has_audio": true,
+      "audio_codec": "aac"
+    },
+    {
+      "media_id": "N1_08",
+      "file": "N1_08_footage.mp4",
+      "sha256": "1f70ae3fee7e49057828313c421f7663384d83d70ec0c1581c47a1b30c1e564c",
+      "kind": "video",
+      "duration_s": 4.77,
+      "has_audio": true,
+      "audio_codec": "aac",
+      "note": "Caro's goodbye, the last clip"
+    },
+    {
+      "media_id": "N1_09",
+      "file": "N1_09_visual.jpg",
+      "sha256": "684cfbb7955c484d06701e2464b72d1ec06d62fca03ccc1af373675b1946f930",
+      "kind": "image",
+      "note": "the Cotopaxi photo (a Visuals item, not a footage clip)"
+    }
+  ],
+  "speech": {
+    "N1_05": [
+      {"start_s": 0.0, "end_s": 2.3, "kind": "speech", "text": "Take the first bite."},
+      {
+        "start_s": 3.3,
+        "end_s": 6.2,
+        "kind": "speech",
+        "text": "The coffee is really good here as well. Yeah, it's Colombian."
+      }
+    ],
+    "N1_08": [
+      {
+        "start_s": 0.8,
+        "end_s": 2.8,
+        "kind": "speech",
+        "text": "Thank you, thank you, thank you, Caro."
+      },
+      {"start_s": 2.85, "end_s": 3.4, "kind": "pause"},
+      {"start_s": 3.42, "end_s": 4.4, "kind": "speech", "text": "Bye bye."},
+      {"start_s": 4.4, "end_s": 4.77, "kind": "room_tone"}
+    ]
+  },
+  "line": {"media_id": "N1_08", "quote": "bye bye", "start_s": 3.42, "end_s": 4.4}
+}

@@ -10,9 +10,10 @@ by the phone planner ten seconds after approval: "This draft is about 4.7s; you 
 ``tests/fixtures/kri775_merope_m2_turns.json`` holds both renders' approved brief, strategy
 and media snapshot (the 68 s take's clip record: duration, timed speech, best moments,
 answers) exactly as prod pinned them, plus prod's own length plan and refusal. The first
-two tests replay prod's recorded brief and reproduce prod's failure: the real gate rebuilds
-prod's length plan and the real phone worker refuses it on prod's own "about 4.7s; you asked
-for 14s" (on 857ab6738 its whole message and every receipt match prod word for word).
+two tests replay prod's recorded brief: the real gate rebuilds prod's length plan, and the
+real phone worker judges it on prod's own "about 4.7s; you asked for 14s" (every receipt
+matches prod word for word). Prod refused the render there; since KRI-129's repair lane the
+worker renders the approved draft and carries that receipt as a "What Kria changed" note.
 
 The six-windows and buildable tests replay the same turns with the creator's messages run
 through ``carry_moment_ask`` the way the planner does since KRI-776 (#1711). The freeze test
@@ -36,6 +37,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +46,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.agents._schemas.creator_agent import CreatorMediaRef, ResolvedCreatorManifest
 from app.config import settings
 from app.kria import planner
 from app.kria.brief import CreativeBrief, apply_updates
@@ -150,6 +153,7 @@ def prod_flags(monkeypatch: pytest.MonkeyPatch) -> None:
 class WorkerOutcome:
     refusal: str | None
     receipts: list[dict]
+    notes: tuple[str, ...] = ()
 
     @property
     def failures(self) -> list[dict]:
@@ -164,6 +168,7 @@ def run_worker(
     media: dict | None = None,
     strategy: dict | None = None,
     reply_language: str = "en",
+    client_protocol: int | None = None,
 ) -> WorkerOutcome:
     """``_run_phone_unified_montage_job`` on an approved M2 draft, up to the pin.
 
@@ -171,6 +176,8 @@ def run_worker(
     only write text (landmark names for per-clip labels, the creation-text lane). A plan
     that passes stops at the job lock (``refusal is None``). ``receipts`` are the worker's
     own requirement receipts in both cases, read off the plan record it judged.
+    ``client_protocol`` is the app build that approved (KRI-898: dispatch stamps it on the
+    Job as ``creator_client_protocol``); ``None`` = an unstamped job.
     """
     import app.kria.brief_checks as brief_checks  # noqa: PLC0415
     import app.services.clip_facts as clip_facts  # noqa: PLC0415
@@ -201,6 +208,7 @@ def run_worker(
         "clip_paths": [source.proxy_path for source in sources],
         "edit_format": "montage",
         "creator_strategy": copy.deepcopy(strategy if strategy is not None else render["strategy"]),
+        **({"creator_client_protocol": client_protocol} if client_protocol is not None else {}),
     }
     seen: dict = {}
 
@@ -230,6 +238,13 @@ def run_worker(
     monkeypatch.setattr(gb, "_sync_session", contextlib.nullcontext)
     monkeypatch.setattr(gb, "_lock_owned_entry_job", plan_stops_at_the_pin)
     monkeypatch.setattr(brief_checks, "plan_facts_from_unified_montage", judged)
+    import app.services.pipeline_trace as pipeline_trace  # noqa: PLC0415
+
+    def traced(stage, event, data=None):  # noqa: ANN001, ANN202
+        if event == "requirement_recovery":
+            seen["notes"] = tuple((data or {}).get("notes") or ())
+
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", traced)
     try:
         result = gb._run_phone_unified_montage_job(
             str(uuid.uuid4()), snapshot, candidates, ownership_epoch=1
@@ -237,10 +252,17 @@ def run_worker(
     except UnsupportedPhonePlan as exc:
         return WorkerOutcome(refusal=str(exc), receipts=seen["receipts"])
     assert result is None and seen.get("planned"), "the plan must reach the job lock"
-    receipts = brief_checks.build_receipts(
-        brief.live(), read_record(seen["record"]), include_unchecked=True
+    from app.kria.reply_language import reply_language_for  # noqa: PLC0415
+
+    with reply_language_for(reply_language):  # the worker binds the chat's language
+        receipts = brief_checks.build_receipts(
+            brief.live(), read_record(seen["record"]), include_unchecked=True
+        )
+    return WorkerOutcome(
+        refusal=None,
+        receipts=[r.model_dump(mode="json") for r in receipts],
+        notes=seen.get("notes", ()),
     )
-    return WorkerOutcome(refusal=None, receipts=[r.model_dump(mode="json") for r in receipts])
 
 
 def planned_turn(render: dict) -> PlannedKriaTurn:
@@ -269,6 +291,24 @@ def planned_turn(render: dict) -> PlannedKriaTurn:
         manifest_hash="a" * 64,
         context_hash="b" * 64,
         media_snapshot=copy.deepcopy(render["media_snapshot"]),
+        brief_manifest=_manifest(render),
+    )
+
+
+def _manifest(render: dict) -> ResolvedCreatorManifest:
+    """The item's media as prod's manifest lists it: the take(s) and the Visual photo(s)."""
+    visuals = sorted(set(re.findall(r"asset-[0-9a-f-]{36}", json.dumps(render))))
+    takes = [row["media_id"] for row in render["media_snapshot"]["clip_assignments"]]
+    return ResolvedCreatorManifest(
+        item_id="item-m2",
+        edit_format="montage",
+        render_program="guided",
+        media=[
+            *(CreatorMediaRef(media_id=media_id, kind="video") for media_id in takes),
+            *(CreatorMediaRef(media_id=media_id, kind="image") for media_id in visuals),
+        ],
+        context_hash="b" * 64,
+        manifest_hash="a" * 64,
     )
 
 
@@ -314,17 +354,18 @@ async def test_the_gate_rebuilds_the_length_plan_prod_approved(
 
 
 @pytest.mark.parametrize("index", [0, 1], ids=["job-417eecd4", "job-50f67a06"])
-def test_the_phone_worker_refuses_it_on_prods_length_shortfall(
+def test_the_phone_worker_renders_prods_length_shortfall_and_says_so(
     monkeypatch: pytest.MonkeyPatch, index: int
 ) -> None:
-    """On 857ab6738 (= prod 6b689783a for these paths) the worker's message and every
-    receipt equal prod's word for word. Pinned here is the part the sibling fixes leave
-    alone (KRI-777 rewords the freeze row, KRI-778 the message): the refusal itself and the
-    total-length receipt, "about 4.7s; you asked for 14s"."""
+    """On 857ab6738 (= prod 6b689783a for these paths) every receipt equals prod's word for
+    word, and prod refused the render on them. KRI-129: the approved draft now renders (it
+    reaches the job lock) and the "What Kria changed" notes carry the same total-length
+    receipt, "about 4.7s; you asked for 14s"."""
     render = RENDERS[index]
     outcome = run_worker(monkeypatch, render)
-    assert outcome.refusal is not None
+    assert outcome.refusal is None
     assert "This draft is about 4.7s; you asked for 14s." in render["prod_message"]
+    assert "This draft is about 4.7s; you asked for 14s." in outcome.notes
     ours = {row["requirement_id"]: row for row in outcome.receipts}
     assert (ours["r7"]["status"], ours["r7"]["verification"], ours["r7"]["reason"]) == (
         "partial",

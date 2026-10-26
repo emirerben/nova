@@ -65,16 +65,26 @@ release lane is never cancelled. Nightly/manual regressions have separate concur
 API tests run as two deterministic round-robin shards over the
 complete non-quality test-file set; both shards feed the same stable `test-api`
 gate, so sharding changes wall-clock scheduling without reducing coverage.
-On PRs, a Linux mobile-contract job runs alongside one Mac job for native unit,
-selected UI and native journey scenarios. That Mac job compiles once and reuses
-the build for every selected scenario. The stable `build-and-test` gate requires
-both jobs to pass when iOS is selected. Main uses one iOS build/unit/smoke lane and dispatches TestFlight after those checks
+On PRs, a Linux mobile-contract job runs alongside the `iPhone validation`
+matrix: a `unit` leg (build, unit tests, selected UI subset, named-unit gate)
+plus `creation` and `screens` legs that compile from the same cache and split
+the fixture-driven journeys by measured duration. The selector's `native_legs`
+output starts only the legs whose journeys were selected (`LEG_JOURNEYS` in
+`scripts/ci/select-tests.py`; `test_ci_throughput.py` keeps that map and the
+workflow's step conditions in agreement). One serial Mac took 40-55 min per PR
+(2026-10-23); each leg targets about 20 min at roughly a third more Mac
+minutes. The stable `build-and-test` gate requires every leg and the contract
+job to pass when iOS is selected. Main uses one iOS build/unit/smoke lane and dispatches TestFlight after those checks
 pass. Full iOS regression runs at 03:23 UTC nightly or on manual dispatch; full
 native journeys run at 02:23 UTC nightly or on manual CI dispatch. Neither
 regression path dispatches TestFlight.
 
 The stable `journey` job now aggregates `journey-mapping`, `journey-offline`,
-the database-backed `journey-library` (Linux), and `journey-native` (Mac). The
+the database-backed `journey-library` (Linux), and every `journey-native` leg
+(Mac). Linux jobs install FFmpeg and friends through
+`.github/actions/apt-install`, which caches the downloaded `.deb` files so a
+crawling Ubuntu mirror (25-35 min in 4 of 22 PR runs on 2026-10-23) no longer
+holds the Mac legs back. The
 selector's `native_validation` output is
 false on main pushes, and otherwise follows selected iOS/native journeys. The
 aggregate independently checks that decision against the event and manifest,

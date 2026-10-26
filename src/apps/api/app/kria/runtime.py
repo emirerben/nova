@@ -28,6 +28,8 @@ from app.kria.api_schemas import (
     ApprovalDecisionOut,
     ApprovalSnapshotOut,
     DeltaEvent,
+    MomentOrderAnswerIn,
+    ProtectedRegionIn,
     SubmitTurnBody,
     ThreadDeltaOut,
     TurnAccepted,
@@ -72,7 +74,10 @@ from app.services.choice_questions import (
     match_open_choice,
     tag_event,
 )
-from app.services.client_protocol import current_client_protocol
+from app.services.client_protocol import (
+    APPROVAL_CLIENT_PROTOCOL_FIELD,
+    current_client_protocol,
+)
 from app.services.clip_selection import ClipSelectionIn, latest_open_clip_question
 from app.services.creation_thread_titles import (
     conversation_revision_matches,
@@ -119,10 +124,46 @@ class RuntimeFailure(Exception):
     current_revision: int | None = None
 
 
+def _answers_moment_questions() -> bool:
+    """KRI-723: the app sending this request answers a ``moment_order_question``."""
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.moment_order_min_client_protocol
+
+
 def _answers_batched_questions() -> bool:
     """KRI-802: the app sending this request answers a reply's cards together."""
     protocol = current_client_protocol()
     return protocol is not None and protocol >= settings.kria_question_batch_min_client_protocol
+
+
+def _marks_protected_regions() -> bool:
+    """KRI-901: the app sending this request can answer a "Mark the plate" card."""
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.protected_region_mark_min_client_protocol
+
+
+async def _render_client_protocol(db: AsyncSession, turn: Any) -> int | None:
+    """KRI-898: the app build the approved render may plan a freeze hold for.
+
+    The draft promised (or refused) the freeze for the build that sent its message
+    (``client_protocol`` on the turn's source event). The render keeps that promise and
+    the approving build can only lower it: an older approving phone gets the supported,
+    hold-free plan, never a held recipe it would 426 on. A protocol-less approver (the web
+    sends no header) keeps the drafting build's stamp instead of dropping the hold the
+    draft promised. A legacy turn with no source event falls back to the approver.
+    """
+    from app.services.phone_rollout import stamped_client_protocol  # noqa: PLC0415
+
+    approver = current_client_protocol()
+    source_id = getattr(turn, "source_event_id", None)
+    source = await db.get(CreationThreadEvent, source_id) if source_id is not None else None
+    if source is None:
+        return approver
+    payload = source.payload if isinstance(source.payload, dict) else {}
+    drafted = stamped_client_protocol(payload.get("client_protocol"))
+    if drafted is None or approver is None:
+        return drafted
+    return min(drafted, approver)
 
 
 def request_digest(body: SubmitTurnBody) -> str:
@@ -141,6 +182,10 @@ def request_digest(body: SubmitTurnBody) -> str:
         # KRI-441: additive the same way, so every pre-existing digest holds.
         | ({"scope"} if body.scope is None else set())
         | ({"manual_edits"} if body.manual_edits is None else set())
+        # KRI-827: additive the same way.
+        | ({"protected_region"} if body.protected_region is None else set())
+        # KRI-723: additive the same way.
+        | ({"moment_order"} if body.moment_order is None else set())
     )
     encoded = json.dumps(
         body.model_dump(mode="json", exclude=excluded),
@@ -293,6 +338,124 @@ async def _apply_song_range_answer(
     item = await db.get(PlanItem, thread.active_plan_item_id, with_for_update=True)
     if item is not None and getattr(item, "song_gcs_path", None):
         apply_song_range(thread, item, chosen)
+
+
+async def _validate_moment_order(
+    db: AsyncSession, thread: CreationThread, answer: MomentOrderAnswerIn
+) -> dict:
+    """KRI-723: the answer must close the thread's latest open moment question, answer each
+    of its moments once, and point only at this thread's take, inside it, without overlaps.
+
+    The take must still be one of THIS thread's clips (its active plan item's media, the
+    KRI-827 ownership rule) at the storage generation the question was asked about: a
+    re-uploaded or removed take makes the question stale instead of pinning other bytes."""
+    from app.services.named_moments import (  # noqa: PLC0415
+        MEDIA_CODE,
+        STALE_CODE,
+        MomentOrderError,
+        latest_open_moment_question,
+        validate_moment_order_answer,
+    )
+
+    rows = (
+        await db.execute(
+            select(CreationThreadEvent.role, CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    question = latest_open_moment_question((role, payload) for role, payload in rows)
+    payload = answer.model_dump(mode="json", exclude_none=True)
+    try:
+        validate_moment_order_answer(payload, question)
+        take = dict((question or {}).get("take") or {})
+        item = (
+            await db.get(PlanItem, thread.active_plan_item_id)
+            if thread.active_plan_item_id
+            else None
+        )
+        plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+        owned = plan is not None and plan.user_id == thread.creator_id
+        match = next(
+            (
+                row
+                for row in (list(getattr(item, "clip_assignments", None) or []) if owned else [])
+                if isinstance(row, dict) and str(row.get("media_id")) == str(take.get("media_id"))
+            ),
+            None,
+        )
+        if match is None:
+            raise MomentOrderError(MEDIA_CODE, "That clip isn't part of this video anymore.")
+        generation = match.get("storage_generation") or match.get("generation")
+        if str(generation or "") != str(take.get("generation") or ""):
+            raise MomentOrderError(STALE_CODE, "That clip changed. Answer the latest question.")
+    except MomentOrderError as exc:
+        status = 409 if exc.code == STALE_CODE else 404 if exc.code == MEDIA_CODE else 422
+        raise RuntimeFailure(
+            status,
+            exc.code,
+            str(exc),
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        ) from exc
+    return payload
+
+
+async def _stamp_protected_region(
+    db: AsyncSession, thread: CreationThread, region: ProtectedRegionIn
+) -> dict:
+    """KRI-827: the creator's mark, checked and stamped by the server.
+
+    The clip must be one of THIS thread's clips (its active plan item's media); anything
+    else -- another creator's media id, a clip removed from the item -- is a 404, so a
+    mark can never point the tracker at media the creator does not own. The clip's
+    storage generation is read from the item, never from the client: a later re-upload or
+    swap then invalidates the mark instead of reusing it on other bytes."""
+    from app.kria.protected_targets import ProtectedRegionSelection  # noqa: PLC0415
+
+    item = (
+        await db.get(PlanItem, thread.active_plan_item_id) if thread.active_plan_item_id else None
+    )
+    plan = await db.get(ContentPlan, item.content_plan_id) if item is not None else None
+    owned = plan is not None and plan.user_id == thread.creator_id
+    assignments = list(getattr(item, "clip_assignments", None) or []) if owned else []
+    match = next(
+        (
+            row
+            for row in assignments
+            if isinstance(row, dict) and str(row.get("media_id")) == region.media_id
+        ),
+        None,
+    )
+    if match is None:
+        raise RuntimeFailure(
+            404,
+            "protected_region_media_not_found",
+            "That clip isn't part of this video. Mark the object on one of your clips.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        )
+    generation = match.get("storage_generation") or match.get("generation")
+    try:
+        mark = ProtectedRegionSelection(
+            label=region.label,
+            media_id=region.media_id,
+            source_t_s=region.source_t_s,
+            box=region.box,
+            generation=str(generation) if generation is not None else None,
+        )
+    except ValueError as exc:
+        raise RuntimeFailure(
+            422,
+            "protected_region_invalid",
+            "That mark is too small or outside the frame. Draw a box around the object.",
+            recovery="refresh_replan",
+            current_revision=int(thread.revision),
+        ) from exc
+    return mark.model_dump(mode="json")
 
 
 async def _validate_choice_selection(
@@ -694,6 +857,7 @@ async def submit_turn(
         and body.clip_selection is None
         and body.song_order is None
         and body.song_range is None
+        and body.moment_order is None
         and scope is None  # a scoped ask is an edit; free text must not become an answer
     ):
         # The request digest above stays that of the body as sent (idempotency); only
@@ -707,6 +871,16 @@ async def submit_turn(
         await _validate_song_order(db, thread, body.song_order)
     if body.song_range is not None and settings.song_filming_range_enabled:
         await _apply_song_range_answer(db, thread, body.song_range)
+    moment_order = (
+        await _validate_moment_order(db, thread, body.moment_order)
+        if body.moment_order is not None
+        else None
+    )
+    protected_region = (
+        await _stamp_protected_region(db, thread, body.protected_region)
+        if body.protected_region is not None
+        else None
+    )
     if choice_selection is not None and not choice_reanswer:
         # A derived re-answer targets a question the server asked and has closed
         # (KRI-794); every client-sent selection must still answer the open one.
@@ -780,6 +954,7 @@ async def submit_turn(
         and body.clip_selection is None
         and body.song_order is None
         and body.song_range is None
+        and body.moment_order is None
     ):
         duplicate = await find_duplicate_send(db, thread, body.message)
     # KRI-520: the chat's reply language after this message, stored on the locked
@@ -956,6 +1131,10 @@ async def submit_turn(
                 if body.song_order is not None and settings.user_song_montage_enabled
                 else {}
             ),
+            # KRI-827: the creator's checked + stamped mark (never client-stamped).
+            **({"protected_region": protected_region} if protected_region is not None else {}),
+            # KRI-723: the creator's checked answer (folded by the planner's moment gate).
+            **({"moment_order": moment_order} if moment_order is not None else {}),
             # KRI-588: flag off -> dropped silently, nothing stored.
             **(
                 {"song_range": body.song_range.model_dump(mode="json")}
@@ -995,6 +1174,20 @@ async def submit_turn(
             # the planner may ask them together. Not part of `request_digest`; older builds
             # and the web store nothing (existing payloads byte-identical).
             **({"answers_batched_questions": True} if _answers_batched_questions() else {}),
+            # KRI-901: this app shows the mark card, so the runtime may ask for a mark before
+            # approval. Not part of `request_digest`; older builds and the web store nothing.
+            **({"marks_protected_regions": True} if _marks_protected_regions() else {}),
+            # KRI-723: this app answers a moment-order card. Not part of `request_digest`;
+            # older builds and the web store nothing (existing payloads byte-identical).
+            **({"answers_moment_questions": True} if _answers_moment_questions() else {}),
+            # KRI-898: the app build that sent this message, so the draft plans a freeze
+            # only for a build that can play it. Not part of `request_digest`; the web and
+            # headerless callers store nothing (existing payloads byte-identical).
+            **(
+                {"client_protocol": current_client_protocol()}
+                if current_client_protocol() is not None
+                else {}
+            ),
             # KRI-756: {"suggestion": {...}} when the message equals an offered chip. Not
             # part of `request_digest`; flag off => {} (existing payloads byte-identical).
             **(
@@ -2074,6 +2267,98 @@ async def _validated_render_shape(
     return chosen
 
 
+async def _mint_prepared_execution(
+    db: AsyncSession,
+    *,
+    approval: CreatorAgentApproval,
+    draft: CreatorEditDraft,
+    thread: CreationThread,
+    item: PlanItem | None,
+    execution: CreatorAgentExecution | None,
+    retry_execution: CreatorAgentExecution | None,
+) -> None:
+    """KRI-722: pin one immutable prepared execution to this approval.
+
+    Runs after every approve gate, in the approving transaction, so a refused
+    approval never leaves a snapshot behind. A render retry keeps the snapshot of
+    the attempt it retries (same authority); its claim mints the new attempt id.
+    """
+
+    from app.kria import prepared_execution as prepared  # noqa: PLC0415
+    from app.models import CreatorPreparedExecution  # noqa: PLC0415
+
+    if retry_execution is not None:
+        retry = (retry_execution.result or {}).get("render_retry") or {}
+        source = await db.get(
+            CreatorAgentExecution, _optional_uuid(retry.get("source_execution_id"))
+        )
+        source_approval = (
+            await db.get(
+                CreatorAgentApproval, _optional_uuid((source.result or {}).get("approval_id"))
+            )
+            if source is not None
+            else None
+        )
+        # An unstamped (legacy) source attempt keeps the legacy retry path.
+        if getattr(source_approval, "prepared_execution_id", None) is not None:
+            approval.prepared_execution_id = source_approval.prepared_execution_id
+        return
+    if not settings.kria_prepared_execution_enabled or item is None:
+        return
+    document = _parse_draft_document(draft.snapshot_json)
+    if document is None:
+        return
+    # KRI-725: a slide post's slides/stickers are sources and its draft a compiled ref.
+    slides = prepared.targets_slides(item, document)
+    try:
+        snapshot = prepared.build_snapshot(
+            creator_id=approval.creator_id,
+            thread_id=thread.id,
+            approval_id=approval.id,
+            draft=draft,
+            document=document,
+            sources=await prepared.load_source_identities(
+                db, item, approval.creator_id, slides=slides
+            ),
+            execution_result=execution.result if execution is not None else None,
+            latest_brief=(
+                await load_latest_brief(db, thread.id) if document.brief_binding is None else None
+            ),
+            slide_post=(prepared.slide_post_draft(item),) if slides else None,
+        )
+    except ValueError as exc:
+        log.warning("kria_prepared_execution_refused", approval_id=str(approval.id), error=str(exc))
+        raise RuntimeFailure(
+            409,
+            prepared.STALE,
+            "This edit could not be prepared for rendering. Ask Kria to prepare it again.",
+            phase="approval",
+            recovery="refresh_replan",
+        ) from exc
+    row = CreatorPreparedExecution(
+        creator_id=approval.creator_id,
+        thread_id=thread.id,
+        approval_id=approval.id,
+        draft_id=draft.id,
+        draft_revision=int(draft.draft_revision),
+        schema_version=snapshot.schema_version,
+        snapshot=snapshot.model_dump(mode="json"),
+        snapshot_digest=snapshot.digest,
+    )
+    db.add(row)
+    # The snapshot row references the approval and the approval references it back:
+    # insert the snapshot first, then point the approval at it.
+    await db.flush()
+    approval.prepared_execution_id = row.id
+
+
+def _optional_uuid(value: object) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value)) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def decide_approval(
     db: AsyncSession,
     *,
@@ -2454,6 +2739,7 @@ async def decide_approval(
                 digest,
                 readiness_matches,
                 resolve_readiness_manifest,
+                saved_protected_marks,
             )
             from app.services.choice_questions import answered_brief  # noqa: PLC0415
 
@@ -2483,6 +2769,17 @@ async def decide_approval(
                             editor_payload=copy_document.editor_payload,
                             editor_text_diff=copy_document.editor_text_diff,
                             creator_request=copy_document.brief_binding.creator_request,
+                            # KRI-901: the marks the approval pinned.
+                            protected_regions=list(
+                                copy_document.brief_binding.protected_regions or []
+                            ),
+                            protected_marks=saved_protected_marks(
+                                copy_document,
+                                creator_id=creator_id,
+                                item=copy_item,
+                                saved=saved_readiness,
+                            ),
+                            prepared_collection_story=copy_document.prepared_collection_story,
                         )
                     ready = (
                         digest(media_identity(snapshot_media(copy_item)))
@@ -2597,6 +2894,13 @@ async def decide_approval(
             stashed["render_shape"] = render_shape_stash
         else:
             stashed.pop("render_shape", None)
+        # KRI-898: the build the render plans a freeze hold for; set-or-clear for the
+        # same reason (a retry from another phone must not inherit the first attempt's).
+        render_protocol = await _render_client_protocol(db, turn)
+        if render_protocol is not None:
+            stashed[APPROVAL_CLIENT_PROTOCOL_FIELD] = render_protocol
+        else:
+            stashed.pop(APPROVAL_CLIENT_PROTOCOL_FIELD, None)
         if stashed != (execution.result or {}):
             execution.result = stashed
     elif render_shape_stash is not None:
@@ -2652,6 +2956,16 @@ async def decide_approval(
                 "media_snapshot": snapshot_media(grant_item),
             },
         }
+    if decision == "approve":
+        await _mint_prepared_execution(
+            db,
+            approval=approval,
+            draft=draft,
+            thread=thread,
+            item=plan_item or await db.get(PlanItem, session.plan_item_id),
+            execution=execution,
+            retry_execution=retry_execution if is_render_retry else None,
+        )
     approval.status = "approved" if decision == "approve" else "denied"
     if decision == "deny":
         turn.status = "completed"

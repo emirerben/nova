@@ -1,0 +1,134 @@
+---
+title: "iOS editor: re-rendering a saved edit on the iPhone"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    %% Code on codex/killer-integration (model: formal/ios_edit_flow/PhoneRender.tla).
+    %% src/apps/ios/Kria/Features/NativeEditorSession.swift (refreshDeviceRender)
+    state "Checking what this iPhone can do" as Capabilities
+    %% NativeEditorSession.swift (refreshDeviceRender: keep the last answer; none yet, deviceReconcilePending)
+    state "Capability check failed:<br/>keep the last answer, or let<br/>the preview poll try again" as CapsKept
+    %% src/apps/ios/Kria/Core/DeviceRenderSessions.swift (reconcile, one ticket per key)
+    state "Asking Kria what to render" as AskServer
+    %% DeviceRenderSessions.swift (reconcile: rereads[key], run when the ticket is released)
+    state "Another check is running:<br/>check again right after it" as Reread
+    %% DeviceRenderSessions.swift (readFailed .transient, wait, scheduleRetry)
+    state "Waiting for the connection<br/>(re-reads on its own)" as QuietWait
+    %% DeviceRenderSessions.swift (gate .wait(.cooling), resumeWaiting)
+    state "Waiting for this iPhone to cool<br/>(starts on its own)" as Cooling
+    %% DeviceRenderSessions.swift (apply: published)
+    state "Already rendered and synced" as AlreadyPublished
+    %% DeviceRenderSessions.swift (gate .decline unsupported_recipe, sendDecline) + DeviceRenderPanel.swift (changeReasons)
+    state "This edit needs a change<br/>(Review in chat)" as NeedsChange
+    %% DeviceRenderSessions.swift (readFailed .updateRequired(target), gate .decline renderer_outdated, requires_update)
+    %% KriaUpdateLink.swift (TestFlight itms-beta://, else its App Store page)
+    state "Update Kria to render this edit<br/>(Update Kria, Review in chat)" as NeedsUpdate
+    %% DeviceRenderSessions.swift (apply: renderer_outdated it renders now -> renderable_now)
+    state "Ready to render on this iPhone<br/>(Render on this iPhone)" as RenderNow
+    %% src/apps/ios/Kria/Core/AppState.swift (openCreationThread) + ChatWorkspaceView.swift (chatRouteRequest)
+    state "Gallery editor: open this edit's<br/>own conversation" as OpenThread
+    %% DeviceRenderSessions.swift (apply: needs_attention, requiresServerRetry)
+    state "Kria says: needs attention<br/>(Retry device render)" as ServerNeedsAttention
+    %% src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderCoordinator.swift (performOnce: isCurrent, sources)
+    state "Getting your clips ready" as Preparing
+    %% DeviceRenderCoordinator.swift (performOnce: export)
+    state "Rendering on iPhone" as Rendering
+    %% DeviceRenderCoordinator.swift (park: offline, 5xx, background window)
+    state "Paused by a blip or the background<br/>(resumes on its own)" as Parked
+    %% DeviceRenderCoordinator.swift (performOnce: export done)
+    state "Video ready on this iPhone" as LocalReady
+    %% DeviceRenderCoordinator.swift (performOnce: reserve + upload)
+    state "Uploading to Kria" as Syncing
+    %% DeviceRenderCoordinator.swift (performOnce: complete)
+    state "Rendered on iPhone and synced" as Synced
+    %% DeviceRenderCoordinator.swift (performOnce: not current any more)
+    state "Newer edit available<br/>(this render set aside)" as Superseded
+    %% DeviceRenderCoordinator.swift (perform: genuine failure, reportFailure until accepted)
+    state "This edit needs its original clips<br/>(Find original files)" as OriginalMissing
+    %% DeviceRenderCoordinator.swift (cancelByUser) + routes/device_render.py (mark_device_paused)
+    state "Saved, rendering paused<br/>(Resume rendering)" as Paused
+    %% DeviceRenderCoordinator.swift (receipt on disk; recover on reopen)
+    state "App killed mid-render,<br/>receipt saved on disk" as Killed
+    %% src/apps/api/app/routes/device_render.py (_client_update_detail first, then _auto_resume_reaped / _auto_resume_updated)
+    state "Kria re-sends the same edit<br/>on its own (build passes every floor)" as AutoResume
+    %% NativeEditorSession.swift (applyPreviewVariant: generation, identity fence, newer generation read twice)
+    state "Editor shows the new video" as EditorReady
+    %% DeviceRenderSessions.swift (retryNeedsAttention) + routes/device_render.py (retry_device_export)
+    state "Asking Kria for a fresh attempt" as ServerRetry
+    %% ChatWorkspaceView.swift (reviewInChat) / NativeEditorView.swift (reviewRetryInChat)
+    state "You ask Kria for a change<br/>in chat" as Chat
+
+    [*] --> Capabilities : save OK, generation G2
+    Capabilities --> AskServer : capabilities loaded
+    Capabilities --> CapsKept : capabilities fetch failed
+    CapsKept --> AskServer : last answer, or next preview poll
+    AskServer --> Reread : another check holds the ticket
+    Reread --> AskServer : that check finished
+    AskServer --> QuietWait : status read failed (offline, 5xx)
+    QuietWait --> AskServer : backoff, reconnect or foreground
+    AskServer --> AlreadyPublished : server phase published
+    AskServer --> Cooling : too hot to start
+    Cooling --> AskServer : cooled down
+    AskServer --> NeedsChange : recipe this iPhone can't render, server told
+    AskServer --> NeedsUpdate : 426 for this request (or a newer one), or recipe newer than this build, server told
+    AskServer --> RenderNow : declined as outdated, this build renders it now
+    AskServer --> ServerNeedsAttention : server phase needs_attention
+    AskServer --> AutoResume : reaped, or a floor decline and this build is newer and passes the floors
+    AutoResume --> AskServer : new identity, same recipe
+    AskServer --> Preparing : awaiting_device, new identity
+    AskServer --> Syncing : video for this request exists, upload it
+    AskServer --> Rendering : capability lost mid-render, the export finishes
+
+    Preparing --> Superseded : server no longer current
+    Preparing --> Parked : offline or 5xx
+    Preparing --> Rendering : clips resolved
+    Preparing --> OriginalMissing : original not on this iPhone
+    Rendering --> LocalReady : export finished
+    Rendering --> Parked : app left Kria
+    Rendering --> Paused : you tap Stop rendering
+    Rendering --> Killed : app killed
+    Parked --> Preparing : next check resumes it
+    Killed --> AskServer : you reopen the project
+
+    LocalReady --> Superseded : server moved on
+    LocalReady --> Syncing : still current
+    Syncing --> Synced : publish accepted
+    Syncing --> Superseded : publish says superseded
+    Syncing --> Parked : upload blip, retry without rendering
+    Superseded --> AskServer : the save's own check, run again
+
+    Synced --> EditorReady : variant ready (or a newer one, read twice)
+    AlreadyPublished --> EditorReady : variant ready
+
+    NeedsChange --> Chat : Review in chat
+    NeedsChange --> OpenThread : Review in chat (from the gallery)
+    NeedsUpdate --> OpenThread : Review in chat (from the gallery)
+    OpenThread --> Chat : the conversation opens
+    NeedsUpdate --> Chat : Review in chat
+    Chat --> AskServer : the new version is pinned (it may still need a change)
+    NeedsUpdate --> AutoResume : Update Kria, reopen
+    NeedsUpdate --> NeedsUpdate : update still too old (426)
+    RenderNow --> ServerRetry : Render on this iPhone (renders_locally)
+    ServerNeedsAttention --> ServerRetry : Retry device render
+    OriginalMissing --> ServerRetry : Find original files, all back
+    Paused --> ServerRetry : Resume rendering
+    ServerRetry --> AskServer : new identity (same one after a pause)
+    ServerRetry --> NeedsChange : requires_change
+    ServerRetry --> NeedsUpdate : requires_update
+    EditorReady --> [*]
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    class Capabilities,CapsKept,AskServer,Reread,QuietWait,Cooling,Preparing,Rendering,Parked,LocalReady,Syncing,ServerRetry,AutoResume,Killed,Superseded working
+    class NeedsChange,NeedsUpdate,RenderNow,OpenThread,ServerNeedsAttention,OriginalMissing,Paused,Chat yourturn
+    class AlreadyPublished,Synced,EditorReady done

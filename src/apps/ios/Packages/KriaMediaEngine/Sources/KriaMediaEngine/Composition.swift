@@ -96,6 +96,12 @@ public struct PreviewComposition: @unchecked Sendable {
             track.scaleTimeRange(CMTimeRange(start: time(clip.timelineStart), duration: sourceRange.duration),
                                  toDuration: time(clip.sourceDuration / clip.rate))
             let parameter = AVMutableAudioMixInputParameters(track: track)
+            // Source-camera audio follows the retimed footage. AVFoundation's
+            // spectral algorithm keeps its pitch stable for both preview and
+            // export; narration, music and SFX never enter this branch.
+            if originalGain, abs(clip.rate - 1) > 0.000_001 {
+                parameter.audioTimePitchAlgorithm = .spectral
+            }
             applyAudioGain(parameter, clip: clip, gain: gain, windows: recipe.audio.muteWindows, duck: originalGain ? duck : nil, cut: cut)
             audioParameters.append(parameter)
         }
@@ -444,12 +450,14 @@ public struct PreviewComposition: @unchecked Sendable {
         if composition.duration.seconds < brandedTotal { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, duration: time(brandedTotal - composition.duration.seconds))) }
         let motion = try NativeMotionPainter.make(recipe.motionScenes, assets: assetURLs, canvas: canvas, duration: total, frameRate: recipe.frameRate)
         let drawings = recipe.drawingLayers.isEmpty ? nil : NativeDrawingStore(layers: recipe.drawingLayers, canvas: canvas)
+        // Text behind people: one segmenter per composition, only when a layer asks for it (F7).
+        let subjectMatte = recipe.textLayers.contains(where: { $0.behindSubject == true }) ? NativeSubjectMatte() : nil
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.
         let covered = max(brandedTotal, composition.duration.seconds)
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
-                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings)
+                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte)
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters

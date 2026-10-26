@@ -57,8 +57,19 @@ struct ChatWorkspaceView: View {
             if let previous, previous != identifier { Task { await model.discardIfAbandoned(previous) } }
         }
         .onChange(of: scenePhase) { _, phase in
+            // Phone renders parked by a background suspension or an outage
+            // continue on their own when Kria comes back (S3-c, S3-d).
+            if phase == .active { Task { await model.deviceRenders.resumeParked() } }
             guard phase == .background, let id = model.selectedProject?.id else { return }
             Task { await model.discardIfAbandoned(id) }
+        }
+        .onChange(of: model.chatRouteRequest) { _, request in
+            // "Review in chat" from the gallery editor: close the gallery (and the editor
+            // and video it presented) onto this edit's conversation, or the projects list
+            // when the conversation is unknown.
+            guard let request else { return }
+            showsGallery = false
+            if request.threadID == nil { setDrawerOpen(true) }
         }
         .fullScreenCover(isPresented: $showsGallery) {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
@@ -487,6 +498,10 @@ private struct CreationWorkspaceView: View {
     /// reason for refusing the last range, shown on that question's card.
     @State private var closedSongRangeQuestions: Set<String> = []
     @State private var songRangeProblem: SongRangeProblem?
+    /// KRI-901: the server's reason for refusing the last mark (404 / 422), shown on that question's card.
+    @State private var protectedRegionProblem: ProtectedRegionProblem?
+    /// KRI-723: the server's reason for refusing the last moments answer (404 / 422), shown on that question's card.
+    @State private var momentOrderProblem: MomentOrderProblem?
     @State private var isActing = false
     @State private var isThinking = false
     /// The turn request id doubles as the thought-summary lookup key. It is
@@ -510,6 +525,8 @@ private struct CreationWorkspaceView: View {
     /// The server's reason the last confirmation was rejected, shown inside the card.
     @State private var confirmationConflict: CreationConfirmationConflict?
     @State private var showsAttachments = false
+    /// KRI-815: the script the attachment sheet shows on its voiceover step; nil = the sheet as before.
+    @State private var attachmentScript: VoiceoverScript?
     @State private var showsResult = false
     /// Live plan & review: the "Review your video" sheet, opened from the feed's CTA / Change or the project.
     @State private var reviewPresentation: ReviewPlanPresentation?
@@ -610,7 +627,7 @@ private struct CreationWorkspaceView: View {
         let suppressed = suppressedTimelineMessages
         let uploads = activeUploadIDs.compactMap { uploadAnchors[$0] }
         // A pending message that carries a song answer also changes how its card reads: always rebuild for those.
-        let cacheable = !pendingMessages.contains { $0.songOrder != nil || $0.songRange != nil }
+        let cacheable = !pendingMessages.contains { $0.songOrder != nil || $0.songRange != nil || $0.protectedRegion != nil || $0.momentOrder != nil }
         var hasher = Hasher()
         hasher.combine(ChatFingerprint.events(events))
         for message in pendingMessages {
@@ -691,7 +708,8 @@ private struct CreationWorkspaceView: View {
         guard let presentation = model.deviceRenders.presentations[key] else { return true }
         guard deviceBuildStage != nil else { return false }
         guard !presentation.outputVerificationPending, presentation.repairAttempt == nil else { return false }
-        return presentation.message == nil && !presentation.requiresServerRetry
+        // A quiet network wait stays in the feed; heat, storage and unknown states need the card.
+        return presentation.message == nil && !presentation.requiresServerRetry && presentation.waiting?.isQuiet != false
     }
 
     @ViewBuilder private var planFeedView: some View {
@@ -959,7 +977,10 @@ private struct CreationWorkspaceView: View {
                            choiceQuestionMode: choiceQuestionMode(for: message),
                            questionBatch: asksTogether(message) ? questionBatches[message.id] ?? QuestionBatch() : nil,
                            songRangeMode: songRangeMode(for: message),
-                           replyOptionsMode: replyOptionsMode(for: message))
+                           objectMarkMode: objectMarkMode(for: message),
+                           momentOrderMode: momentOrderMode(for: message),
+                           replyOptionsMode: replyOptionsMode(for: message),
+                           voiceoverScriptMode: voiceoverScriptMode(for: message))
                 .id(entry.id)
             if let operationID = message.memoryOperationID {
                 SavedTextPreferenceUndo(operationID: operationID, api: model.api)
@@ -1090,6 +1111,57 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    /// KRI-901: the "Mark the plate" card, only when the server advertises `protected_region_marks`. Interactive on
+    /// the newest question no mark of that object has answered; read-only once answered; hidden once replaced.
+    private func objectMarkMode(for message: ChatTranscriptMessage) -> ObjectMarkCardMode? {
+        guard transcriptIsFresh, capabilities?.protectedRegionMarks == true,
+              let question = message.protectedRegionQuestion else { return nil }
+        let entries = timeline.compactMap { entry -> ProtectedRegionFold.Entry? in
+            guard case .message(let message) = entry.content else { return nil }
+            return ProtectedRegionFold.Entry(messageID: message.id, question: message.protectedRegionQuestion,
+                                             isUser: message.role == .user, answer: message.protectedRegionAnswer)
+        }
+        switch ProtectedRegionFold.phases(entries)[message.id] {
+        case .active:
+            let problem = protectedRegionProblem?.questionID == question.questionID ? protectedRegionProblem?.message : nil
+            return .active(isSending: isSending || isActing || isThinking, problem: problem) { answer in
+                // A refused send removes the pending message, which reopens the card (the box is kept).
+                protectedRegionProblem = nil
+                Task { await send(message: answer.message, protectedRegion: answer, markQuestionID: question.questionID) }
+            }
+        case .answered(let answer):
+            return .answered(summary: answer.message)
+        case .superseded, nil:
+            return nil
+        }
+    }
+
+    /// KRI-723: the "show me your moments" card, only when the server advertises `moment_order_questions`.
+    /// Interactive on the newest question no answer has closed; read-only once answered; hidden once replaced.
+    private func momentOrderMode(for message: ChatTranscriptMessage) -> MomentOrderCardMode? {
+        guard transcriptIsFresh, capabilities?.momentOrderQuestions == true,
+              let question = message.momentOrderQuestion else { return nil }
+        let entries = timeline.compactMap { entry -> MomentOrderFold.Entry? in
+            guard case .message(let message) = entry.content else { return nil }
+            return MomentOrderFold.Entry(messageID: message.id, question: message.momentOrderQuestion,
+                                         isUser: message.role == .user, answer: message.momentOrderAnswer)
+        }
+        let language = ClipAnswerLanguage(threadState: threadState)
+        switch MomentOrderFold.phases(entries)[message.id] {
+        case .active:
+            let problem = momentOrderProblem?.questionID == question.questionID ? momentOrderProblem?.message : nil
+            return .active(isSending: isSending || isActing || isThinking, problem: problem) { answer in
+                // A refused send removes the pending message, which reopens the card (the choices are kept).
+                momentOrderProblem = nil
+                Task { await send(message: MomentOrderAnswer.message(language: language), momentOrder: answer) }
+            }
+        case .answered(let answer):
+            return .answered(summary: MomentOrderStrings(language).answered(count: answer.answers.count))
+        case .superseded, nil:
+            return nil
+        }
+    }
+
     /// Options only when the server advertises `choice_questions`. Interactive on the newest question that no
     /// later user message has answered; read-only (with the choice made, if known) afterwards.
     private func choiceQuestionMode(for message: ChatTranscriptMessage) -> ChoiceQuestionCardMode? {
@@ -1114,6 +1186,38 @@ private struct CreationWorkspaceView: View {
             // A rejected send removes the pending message, which reopens the card for a retry.
             Task { await send(message: text, choiceSelection: submission) }
         }
+    }
+
+    /// KRI-815: the script card only when the server advertises it. Interactive on the newest script of THIS
+    /// project (its item, its latest revision); every other script card is read-only text.
+    private func voiceoverScriptMode(for message: ChatTranscriptMessage) -> VoiceoverScriptCardMode? {
+        guard capabilities?.voiceoverScriptCardsEnabled == true, let script = message.voiceoverScript else { return nil }
+        let messages = timeline.compactMap { entry -> ChatTranscriptMessage? in
+            if case .message(let message) = entry.content { message } else { nil }
+        }
+        let scripts = messages.compactMap(\.voiceoverScript)
+        // A draft is live while it is the newest draft; a failed draft only while no draft exists to record.
+        let current = script.isDraft ? scripts.last(where: \.isDraft) : (scripts.contains(where: \.isDraft) ? nil : scripts.last)
+        let index = messages.firstIndex(where: { $0.id == message.id }) ?? messages.endIndex
+        let alreadyPlanned = messages[index...].contains { $0.role == .user && $0.content == script.recordedMessage }
+        guard transcriptIsFresh, current == script, !alreadyPlanned,
+              script.itemID == fullThread?.activePlanItemID else { return .readOnly }
+        let voiceoverAttached = CreationAttachedMedia.parse(threadState).contains(where: \.isVoiceover)
+        return .active(
+            voiceoverAttached: voiceoverAttached,
+            isSending: isSending || isActing || isThinking,
+            record: { openVoiceoverStep(with: $0) },
+            importVoiceover: { openVoiceoverStep(with: $0) },
+            planWithVoiceover: { script in Task { await send(message: script.recordedMessage) } }
+        )
+    }
+
+    /// KRI-815: the attachment sheet, opened on the voiceover step with this script to read along.
+    private func openVoiceoverStep(with script: VoiceoverScript) {
+        guard canAttachMedia else { return }
+        attachmentScript = script
+        scrollRequest += 1
+        showsAttachments = true
     }
 
     /// KRI-802: this reply asks a choice card and a clip picker together (servers send that only to protocol 14
@@ -1209,6 +1313,7 @@ private struct CreationWorkspaceView: View {
 
     private func openAttachments() {
         guard canAttachMedia else { return }
+        attachmentScript = nil
         scrollRequest += 1
         showsAttachments = true
     }
@@ -1481,6 +1586,7 @@ private struct CreationWorkspaceView: View {
                 thread: fullThread,
                 capabilities: capabilities,
                 capabilitiesLoaded: capabilitiesAreAuthoritative,
+                voiceoverScript: attachmentScript,
                 refresh: {
                     if !capabilitiesAreAuthoritative { await refreshCapabilities() }
                     await refreshNow()
@@ -1548,6 +1654,12 @@ private struct CreationWorkspaceView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
+                if let routedKey = routedDeviceRenderKey {
+                    routedDeviceRenderPanel(routedKey)
+                        .padding(.horizontal, 16).padding(.top, 8)
+                        .background(KriaColor.paper)
+                        .accessibilityIdentifier("routed-device-render")
+                }
                 // KRI-756: the first-prompt chips sit just above the composer, not inside the scrolling transcript.
                 let firstPromptChips = suggestionChips(for: .firstPrompt)
                 if !firstPromptChips.isEmpty {
@@ -1637,6 +1749,8 @@ private struct CreationWorkspaceView: View {
                     speechCleanup: approval.retryOfExecutionID == nil ? fullThread?.speechCleanup : nil,
                     renderShape: approval.retryOfExecutionID == nil ? renderShapePicker : nil,
                     automaticRepairs: approval.automaticRepairLimit == 2 ? $allowAutomaticRepairs : nil,
+                    researchPreview: ResearchPreview.parse(activeProposalEvent?.payload?["research_preview"]),
+                    replyLanguage: ClipAnswerLanguage(threadState: threadState),
                     isBusy: isActing || pendingUploadCount > 0,
                     responseStartedAt: activeProposalEvent.flatMap { responsePresentation.startTime(for: $0.id) },
                     decide: decide,
@@ -1671,11 +1785,7 @@ private struct CreationWorkspaceView: View {
             if feedHostsDeviceBuild {
                 planFeedView
             } else if let deviceRenderKey {
-                DeviceRenderPanel(key: deviceRenderKey, sessions: model.deviceRenders,
-                    retryApproved: model.deviceRenders.retryNeedsApproval(deviceRenderKey) ? { await retryApprovedRender() } : nil) {
-                    await refreshCapabilities()
-                    await refreshDeviceRender(retry: true)
-                }
+                deviceRenderPanel(deviceRenderKey)
             } else if showsPlanFeed {
                 planFeedView
             } else {
@@ -1735,6 +1845,21 @@ private struct CreationWorkspaceView: View {
                     }
                 }
             }
+        case .failed where fullThread == nil && currentProject.deliveryNeedsAttention == true:
+            // KRI-823: the list row already knows this is a delivery failure; wait
+            // for the full thread's Retry card instead of flashing "wasn't made".
+            ProgressView("Opening your project…")
+                .frame(maxWidth: .infinity, minHeight: 120)
+                .accessibilityIdentifier("delivery-resolving")
+                .id("delivery-resolving")
+        case .failed where fullThread?.deliveryNeedsAttention == true && deviceRenderKey != nil:
+            // KRI-823: a device delivery failure keeps its device Retry/Stop card,
+            // the same one the rendering stage hosts, never the generic failure.
+            if feedHostsDeviceBuild {
+                planFeedView
+            } else if let deviceRenderKey {
+                deviceRenderPanel(deviceRenderKey)
+            }
         case .failed:
             if failedWorkspacePresentation == .legacyCreationConfirmation, let thread = fullThread {
                 CreationConfirmationStage(
@@ -1764,10 +1889,37 @@ private struct CreationWorkspaceView: View {
                             if fullThread?.failedRenderExecutionID != nil { await retryApprovedRender() }
                             else { await refreshNow() }
                         } },
-                        nonRetryableReasonCode: fullThread?.lastAssistantErrorCode
+                        nonRetryableReasonCode: fullThread?.lastAssistantErrorCode,
+                        declineReason: fullThread?.lastAssistantDeclineReason,
+                        replyInChat: { composerFocused = true }
                     ).id("failed")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func deviceRenderPanel(_ key: DeviceRenderKey) -> some View {
+        DeviceRenderPanel(key: key, sessions: model.deviceRenders,
+            retryApproved: model.deviceRenders.retryNeedsApproval(key) ? { await retryApprovedRender() } : nil,
+            // The edit needs a change only the conversation can make: hand over the composer.
+            reviewInChat: { composerFocused = true }) {
+            await refreshCapabilities()
+            await refreshDeviceRender(retry: true)
+            // The retry re-pins the delivery server-side without a thread revision;
+            // re-read the project so drawer, detail and chat leave Needs attention.
+            await refreshNow()
+        }
+    }
+
+    /// The card of the video "Review in chat" came from, when it is not this thread's
+    /// current job (`AppModel.chatDeviceRenderFocus`): its own way forward (Update Kria,
+    /// Render on this iPhone, Try again, a change in the composer) against its own record.
+    private func routedDeviceRenderPanel(_ key: DeviceRenderKey) -> some View {
+        DeviceRenderPanel(key: key, sessions: model.deviceRenders,
+            reviewInChat: { composerFocused = true }) {
+            await refreshCapabilities()
+            await refreshDeviceRender(key, retry: true)
         }
     }
 
@@ -1885,7 +2037,7 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: chip.message, suggestion: tap, keepsDraft: true) }
     }
 
-    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, keepsDraft: Bool = false) async {
+    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false) async {
         // Slide direction is intentionally handled by SlidePostWorkspaceView.
         // Generic creator runtime has no slide proposal/create tools.
         guard selectedFormat != .slides else { return }
@@ -1898,6 +2050,7 @@ private struct CreationWorkspaceView: View {
         // A chip tap sends the chip's message and leaves the composer alone: whatever the creator typed stays,
         // and a failed tap never drops the chip's own text (often not in their language) into the composer.
         let draftToRestore = keepsDraft ? "" : (submittedMessage == nil ? prompt : message)
+        model.clearChatDeviceRenderFocus()
         isSending = true
         failure = nil
         confirmationConflict = nil
@@ -1937,7 +2090,8 @@ private struct CreationWorkspaceView: View {
         } else {
             nextLocalOrder += 1
             optimistic = ChatPendingMessage(content: message, clientEventID: submission.clientEventID,
-                                            afterSequence: afterSequence, localOrder: nextLocalOrder, songOrder: songOrder, songRange: songRange)
+                                            afterSequence: afterSequence, localOrder: nextLocalOrder, songOrder: songOrder, songRange: songRange,
+                                            protectedRegion: protectedRegion, momentOrder: momentOrder)
         }
         submissionAnchor = optimistic
         if !pendingMessages.contains(where: { $0.id == optimistic.id }) {
@@ -1984,13 +2138,14 @@ private struct CreationWorkspaceView: View {
                 threadID: project.id, message: message,
                 expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
                 editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
-                songRange: songRange, suggestion: suggestion
+                songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: momentOrder
             )
         } catch let error as APIError where error == .conflict {
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             let staleSongRange = songRange != nil && error.conflictCode == SongRangeAnswer.staleConflictCode
-            if prompt.isEmpty && !staleSongRange { prompt = draftToRestore }
+            // KRI-723: a moments answer is the card's, never composer text to restore.
+            if prompt.isEmpty && !staleSongRange && momentOrder == nil { prompt = draftToRestore }
             pendingTurnSubmission = nil
             submissionAnchor = nil
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
@@ -2002,6 +2157,12 @@ private struct CreationWorkspaceView: View {
             }
             // KRI-374: the order was answered against a question Kria has since replaced. The thread refresh above
             // brings the new question (or the settled plan); say so instead of a generic conflict.
+            // KRI-723: the moments question was replaced (or the take re-uploaded). The refresh above brings the newest
+            // card (the old one hides as superseded); say why, in the chat's language, instead of a generic conflict.
+            if momentOrder != nil, error.conflictCode == MomentOrderAnswer.staleCode {
+                failure = ChatFailure(MomentOrderStrings(ClipAnswerLanguage(threadState: threadState)).stale)
+                return
+            }
             if error.conflictCode == SongOrderSubmission.staleConflictCode {
                 failure = ChatFailure("Kria checked your clips again, so that order is out of date. Review the latest order and confirm it.")
                 return
@@ -2010,6 +2171,25 @@ private struct CreationWorkspaceView: View {
             failure = submitTurnConflictMessage(
                 detail: error.conflictDetail, approvalExpired: approvalNotice != nil
             ).map { ChatFailure($0) }
+            return
+        } catch let error as APIError where protectedRegion != nil && ProtectedRegionProblem.isMarkProblem(error) {
+            // KRI-901: the server refused the mark (not this thread's clip, or too small). Say why on the card.
+            thoughtRequestID = nil; liveThoughtSummaries = []
+            pendingMessages.removeAll { $0.id == optimistic.id }
+            pendingTurnSubmission = nil
+            submissionAnchor = nil
+            if let markQuestionID { protectedRegionProblem = ProtectedRegionProblem(questionID: markQuestionID, error: error) }
+            return
+        } catch let error as APIError where momentOrder != nil && MomentOrderProblem.isAnswerProblem(error) {
+            // KRI-723: the server refused the answer (not this thread's take, bad bounds, overlap). Say why on the card.
+            thoughtRequestID = nil; liveThoughtSummaries = []
+            pendingMessages.removeAll { $0.id == optimistic.id }
+            pendingTurnSubmission = nil
+            submissionAnchor = nil
+            if let momentOrder {
+                momentOrderProblem = MomentOrderProblem(questionID: momentOrder.questionID, error: error,
+                                                        language: ClipAnswerLanguage(threadState: threadState))
+            }
             return
         } catch let error as APIError where songRange != nil && SongRangeProblem.isInvalid(error) {
             // KRI-588: the server refused the range. Say why on the card; the answer is not a draft to restore.
@@ -2164,14 +2344,16 @@ private struct CreationWorkspaceView: View {
     private func pollUntilDismissed() async {
         await refreshNow()
         await refreshDeviceRender()
+        if let routedKey = routedDeviceRenderKey { await refreshDeviceRender(routedKey) }
         var delay: UInt64 = 1_000_000_000
         while !Task.isCancelled {
             do {
                 let changed = try await refreshDelta()
                 // A published device render never changes on its own; keep
                 // polling it only while it is unsettled or the thread moved.
-                let deviceSettled = deviceRenderKey.flatMap { model.deviceRenders.presentations[$0]?.phase } == .synced
+                let deviceSettled = serverDeviceRenderKey.map { model.deviceRenders.isSettled($0) } ?? false
                 if changed || !deviceSettled || currentProject.status == .rendering { await refreshDeviceRender() }
+                if let routedKey = routedDeviceRenderKey { await refreshDeviceRender(routedKey) }
                 delay = changed || isSending || isActing || isThinking || currentProject.status == .rendering
                     || fullThread?.preparationIsActive == true || speechCleanupIsChecking
                     ? 1_000_000_000 : min(delay * 2, 8_000_000_000)
@@ -2197,18 +2379,35 @@ private struct CreationWorkspaceView: View {
         SpeechCleanupOffer.resolve(fullThread?.speechCleanup).offer == .checking
     }
 
+    /// The device card's key. Nil once the server has no device render behind it
+    /// (job or record gone, editor draft empty), so the job's own status shows instead.
     private var deviceRenderKey: DeviceRenderKey? {
+        serverDeviceRenderKey.flatMap { model.deviceRenders.isInactive($0) ? nil : $0 }
+    }
+
+    /// Polled and shown beside the conversation until it settles or the creator sends a
+    /// message (a change there makes a new job, whose card the stage shows).
+    private var routedDeviceRenderKey: DeviceRenderKey? {
+        guard let key = model.chatDeviceRenderFocus, key.projectID == project.id,
+              key != serverDeviceRenderKey, !model.deviceRenders.isSettled(key),
+              !model.deviceRenders.isInactive(key) else { return nil }
+        return key
+    }
+
+    private var serverDeviceRenderKey: DeviceRenderKey? {
         guard let job = fullThread?.job, let jobID = UUID(uuidString: job.id),
               let variant = job.variants.first(where: {
-                  $0.renderDestination == "device" || $0.renderStatus == "awaiting_device"
+                  $0.renderDestination == "device" || $0.renderStatus == "awaiting_device" || $0.deliveryPhase != nil
               }), let variantID = variant.variantID else { return nil }
         return DeviceRenderKey(projectID: project.id, jobID: jobID, variantID: variantID)
     }
 
-    private func refreshDeviceRender(retry: Bool = false) async {
-        guard capabilitiesAreAuthoritative,
-              let deviceRenderKey,
-              let phoneRendering = capabilities?.phoneRendering else { return }
+    private func refreshDeviceRender(_ key: DeviceRenderKey? = nil, retry: Bool = false) async {
+        // A failed capability read keeps the last set the server enabled; it
+        // never substitutes `.disabled`, which reads as "not available" (S4-d).
+        guard let deviceRenderKey = key ?? serverDeviceRenderKey,
+              let phoneRendering = capabilitiesAreAuthoritative
+                ? capabilities?.phoneRendering : model.deviceRenders.lastEnabledCapabilities else { return }
         await model.deviceRenders.reconcile(deviceRenderKey, capabilities: phoneRendering, retry: retry)
     }
 
@@ -2389,7 +2588,8 @@ private struct CreationWorkspaceView: View {
             lastFullProjectionRevision: lastFullProjectionRevision,
             incomingRevision: delta.threadRevision,
             receivedEvents: fresh,
-            isRendering: currentProject.status == .rendering
+            // A device delivery changes without a thread revision (KRI-823).
+            isRendering: currentProject.status == .rendering || fullThread?.deliveryNeedsAttention == true
         ) {
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
         }
@@ -2770,6 +2970,14 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     var songRangeQuestion: SongRangeQuestion? = nil
     /// KRI-588: the `song_range` a user message carried (from the stored event, or the in-flight send).
     var songRangeAnswer: SongRangeAnswer? = nil
+    /// KRI-901: the "Mark the plate" card the question carries, when the server sent one.
+    var protectedRegionQuestion: ProtectedRegionQuestion? = nil
+    /// KRI-901: the `protected_region` a user message carried (from the stored event, or the in-flight send).
+    var protectedRegionAnswer: ProtectedRegionAnswer? = nil
+    /// KRI-723: the "show me your moments" card the question carries, when the server sent one.
+    var momentOrderQuestion: MomentOrderQuestion? = nil
+    /// KRI-723: the `moment_order` a user message carried (from the stored event, or the in-flight send).
+    var momentOrderAnswer: MomentOrderAnswer? = nil
     var memoryOperationID: String? = nil
     /// Chip labels of a plain `assistant_response` question (`turn_value == "question"`). Distinct from
     /// `options`, which are the legacy exact-string choices rendered by `QuestionOptionsRow`.
@@ -2778,6 +2986,8 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
     var replyLead: String? = nil
     /// Deliberate extra changes no request claimed; shown as one muted line under the receipts.
     var alsoChanged: [String] = []
+    /// KRI-815: the voiceover script this reply carries, when the server sent one.
+    var voiceoverScript: VoiceoverScript? = nil
 
     /// True only with receipts AND a lead: an old server (no lead) or a reply without receipts renders `content`.
     var usesReplyLead: Bool { !receipts.isEmpty && !(replyLead ?? "").isEmpty }
@@ -2830,8 +3040,13 @@ struct ChatTranscriptMessage: Identifiable, Equatable {
         let choiceQuestion = role == .assistant ? ChoiceQuestion.parse(payload: event.payload) : nil
         let songRangeQuestion = role == .assistant ? SongRangeQuestion.parse(payload: event.payload) : nil
         let songRangeAnswer = role == .user ? SongRangeAnswer.parse(payload: event.payload) : nil
+        let protectedRegionQuestion = role == .assistant ? ProtectedRegionQuestion.parse(payload: event.payload) : nil
+        let protectedRegionAnswer = role == .user ? ProtectedRegionAnswer.parse(payload: event.payload) : nil
+        let momentOrderQuestion = role == .assistant ? MomentOrderQuestion.parse(payload: event.payload) : nil
+        let momentOrderAnswer = role == .user ? MomentOrderAnswer.parse(payload: event.payload) : nil
         let memoryOperationID = event.payload?["kind"]?.stringValue == "creator_memory_receipt" ? event.payload?["operation_id"]?.stringValue : nil
-        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [])
+        let voiceoverScript = role == .assistant ? VoiceoverScript.parse(payload: event.payload) : nil
+        return Self(id: event.id, role: role, content: content, isProposal: isProposal, options: options, recommendedOption: recommendedOption, receipts: receipts, clipQuestion: clipQuestion, songOrderQuestion: songOrderQuestion, songOrderAnswer: songOrderAnswer, choiceQuestion: choiceQuestion, songRangeQuestion: songRangeQuestion, songRangeAnswer: songRangeAnswer, protectedRegionQuestion: protectedRegionQuestion, protectedRegionAnswer: protectedRegionAnswer, momentOrderQuestion: momentOrderQuestion, momentOrderAnswer: momentOrderAnswer, memoryOperationID: memoryOperationID, replyOptions: replyExtras?.options ?? [], replyLead: replyExtras?.lead, alsoChanged: replyExtras?.alsoChanged ?? [], voiceoverScript: voiceoverScript)
     }
 }
 

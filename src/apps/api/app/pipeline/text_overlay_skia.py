@@ -439,7 +439,9 @@ def _giant_title_wipe_scale_origin(
     max_width = _overlay_max_width_px(overlay, render_canvas)
     initial_size = _resolve_font_size_px(overlay)
     if overlay.get("wrap_lines") is False:
-        font, size, lines = _authored_lines(text, typeface, initial_size)
+        font, size, lines = _authored_lines(
+            text, typeface, initial_size, max_width, letter_spacing_em
+        )
     elif overlay.get("preserve_font_size"):
         font, size, lines = _wrap_at_fixed_size(
             text, typeface, initial_size, max_width, letter_spacing_em
@@ -680,7 +682,20 @@ def _staggered_slice_state(
 
 
 def _overlay_max_width_px(overlay: dict, canvas: Canvas = PORTRAIT) -> float:
-    """Per-overlay wrap budget. Missing field preserves the legacy 0.9 width."""
+    """Per-overlay wrap budget. Missing field preserves the legacy 0.9 width.
+
+    ``wrap_lines=False`` (the creator's own lines, KRI-564) has no box to wrap in, so
+    its only bound is the frame's safe area (KRI-826, see `_authored_lines`): 0.9 of
+    the canvas, narrowed by where the line is anchored (`text_fit.authored_safe_width`)
+    so text dragged off-centre or left-anchored never runs past the edge. A stale
+    ``max_width_frac`` never re-wraps a line that fits.
+    """
+    if overlay.get("wrap_lines") is False:
+        from app.pipeline.text_fit import authored_safe_width  # noqa: PLC0415
+
+        return authored_safe_width(
+            canvas.width, overlay.get("position_x_frac"), _resolve_text_anchor(overlay)
+        )
     return canvas.width * resolve_max_width_frac(overlay.get("max_width_frac"))
 
 
@@ -1407,11 +1422,82 @@ def _draw_string_spaced(
         cx += font.measureText(ch) + spacing_px
 
 
-def _authored_lines(text, typeface, size, max_width=None, letter_spacing_em=0, *, shape_text=False):
-    """Keep the creator's exact size and explicit line breaks, including blank rows."""
-    font = skia.Font(typeface, size)
-    font.setSubpixel(True)
-    return font, size, text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+def _authored_rows(
+    line: str,
+    font: skia.Font,
+    max_width: float,
+    spacing_px: float = 0.0,
+    *,
+    shape_text: bool = False,
+) -> list[str]:
+    """One authored line as drawn rows: itself while it fits, else soft-wrapped (KRI-826)."""
+    if not line or _measure_line(font, line, spacing_px, shape_text=shape_text) <= max_width:
+        return [line]
+    return _wrap_text_to_lines(line, font, max_width, spacing_px, shape_text=shape_text)
+
+
+def _authored_lines(
+    text: str,
+    typeface: skia.Typeface,
+    size: int,
+    max_width: float,
+    letter_spacing_em: float = 0.0,
+    *,
+    shape_text: bool = False,
+) -> tuple[skia.Font, int, list[str]]:
+    """Lay out ``wrap_lines=False`` text: the creator's lines, kept inside the frame.
+
+    KRI-564 keeps the creator's size and explicit line breaks (blank rows too); KRI-826
+    keeps them on screen. The one rule every renderer applies (cloud Skia, the phone
+    compile through this function, iOS ``AuthoredTextLayout`` and the slide canvas):
+
+    * an explicit line break is always a hard break;
+    * an authored line that fits ``max_width`` stays one line at the creator's size;
+    * a wider line soft-wraps at word boundaries at ``max_width``;
+    * only a single word still wider than ``max_width`` shrinks the whole text, never
+      below ``min(size, _MIN_FONT_SIZE)``. Nothing is ever cut.
+
+    ``max_width`` is required, so no call site can forget the fit.
+    """
+    raw = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+    def layout(px: int) -> tuple[skia.Font, list[str], float]:
+        font = skia.Font(typeface, px)
+        font.setSubpixel(True)
+        spacing_px = letter_spacing_em * px
+        lines = [
+            row
+            for line in raw
+            for row in _authored_rows(line, font, max_width, spacing_px, shape_text=shape_text)
+        ]
+        widest = max(
+            (_measure_line(font, ln, spacing_px, shape_text=shape_text) for ln in lines if ln),
+            default=0.0,
+        )
+        return font, lines, widest
+
+    font, lines, widest = layout(size)
+    floor = min(size, _MIN_FONT_SIZE)
+    while widest > max_width and size > floor:
+        size = max(floor, min(size - 1, int(size * 0.9)))
+        font, lines, widest = layout(size)
+    return font, size, lines
+
+
+def _auto_shape(typeface: skia.Typeface, text: str, shape_text: bool) -> bool:
+    """Shape whenever the face lacks a glyph (inline emoji, a rare symbol), KRI-826.
+
+    The unshaped drawString path draws such a character as an empty box, while the
+    phone compile already shapes it (`portable_text_layout.compile_text_overlay`) and
+    resolves it through the system's fallback faces. `_shaped_paragraph` falls back
+    per character the same way (Noto Color Emoji in the prod image), so preview and
+    export agree. Text the face fully covers keeps the byte-identical unshaped path.
+    """
+    if shape_text or not text:
+        return shape_text
+    from app.pipeline.portable_text_layout import legacy_glyphs_resolvable  # noqa: PLC0415
+
+    return not legacy_glyphs_resolvable(skia.Font(typeface, 40), text)
 
 
 def _wrap_text_to_lines(
@@ -1692,7 +1778,7 @@ def measure_text_overlay_box(
     initial_size = _resolve_font_size_px(overlay)
     max_width = _overlay_max_width_px(overlay, render_canvas)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    shape_text = resolved_size and bool(overlay.get("shape_text"))
+    shape_text = resolved_size and _auto_shape(typeface, text, bool(overlay.get("shape_text")))
     fit = (
         _authored_lines
         if overlay.get("wrap_lines") is False
@@ -1753,9 +1839,16 @@ def static_block_height_px(
     typeface = _typeface_for_overlay(overlay)
     initial_size = _resolve_font_size_px(overlay)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    shape_text = bool(overlay.get("shape_text"))
+    shape_text = _auto_shape(typeface, text, bool(overlay.get("shape_text")))
     if overlay.get("wrap_lines") is False:
-        font, size, lines = _authored_lines(text, typeface, initial_size)
+        font, size, lines = _authored_lines(
+            text,
+            typeface,
+            initial_size,
+            _overlay_max_width_px(overlay, render_canvas),
+            letter_spacing_em,
+            shape_text=shape_text,
+        )
     else:
         fit = _wrap_at_fixed_size if overlay.get("preserve_font_size") else _shrink_to_fit
         font, size, lines = fit(
@@ -1971,10 +2064,19 @@ def _draw_centered_text(
     if not geometry_text:
         return
     typeface = _typeface_for_overlay(overlay)
+    if font_override is None:
+        shape_text = _auto_shape(typeface, geometry_text, shape_text)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
     max_width = _overlay_max_width_px(overlay, render_canvas)
     if overlay.get("wrap_lines") is False:
-        font, size, lines = _authored_lines(geometry_text, typeface, _resolve_font_size_px(overlay))
+        font, size, lines = _authored_lines(
+            geometry_text,
+            typeface,
+            _resolve_font_size_px(overlay),
+            max_width,
+            letter_spacing_em,
+            shape_text=shape_text,
+        )
     elif font_override is not None:
         font = font_override
         size = int(font.getSize())
@@ -2342,7 +2444,7 @@ def _draw_staggered_slice(
     max_width = _overlay_max_width_px(overlay, render_canvas)
     initial_size = _resolve_font_size_px(overlay)
     if overlay.get("wrap_lines") is False:
-        font, size, _ = _authored_lines(text, typeface, initial_size)
+        font, size, _ = _authored_lines(text, typeface, initial_size, max_width, letter_spacing_em)
     elif overlay.get("preserve_font_size"):
         font, size, _ = _wrap_at_fixed_size(
             text, typeface, initial_size, max_width, letter_spacing_em
@@ -2354,7 +2456,7 @@ def _draw_staggered_slice(
     visual_rows: list[tuple[int, str]] = []
     for logical_index, logical_line in enumerate(text.split("\n")):
         wrapped = (
-            [logical_line]
+            _authored_rows(logical_line, font, max_width, letter_spacing_px)
             if overlay.get("wrap_lines") is False
             else _wrap_text_to_lines(logical_line, font, max_width, letter_spacing_px)
         )
@@ -2616,7 +2718,9 @@ def _draw_pop_in_with_suffix(
     # at the resolved size instead of shrinking as later words are added.
     # Center/right captions without that flag are capped at two lines.
     if overlay.get("wrap_lines") is False:
-        full_font, _full_size, full_lines = _authored_lines(text, typeface, initial_size)
+        full_font, _full_size, full_lines = _authored_lines(
+            text, typeface, initial_size, _overlay_max_width_px(overlay, render_canvas)
+        )
     elif overlay.get("preserve_font_size"):
         full_font, _full_size, full_lines = _wrap_at_fixed_size(
             text,

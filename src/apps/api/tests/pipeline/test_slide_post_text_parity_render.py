@@ -207,13 +207,24 @@ class TestParityRender:
         assert height(line_spacing=2.5) > base * 1.4
         assert height(line_spacing=0.6) < base
 
-    def test_wrap_lines_false_keeps_a_long_line_on_one_line(self, tmp_path, canvas):
+    def test_wrap_lines_false_keeps_a_fitting_line_whole_and_fits_a_long_one(
+        self, tmp_path, canvas
+    ):
         text = "one long line the user typed on a single line"
         wrapped = _opaque_bbox(_render(tmp_path, canvas, text=text, size_px=100))
-        single = _opaque_bbox(_render(tmp_path, canvas, text=text, size_px=100, wrap_lines=False))
         one_line = _opaque_bbox(_render(tmp_path, canvas, text="lyp", size_px=100))
         assert wrapped[3] - wrapped[1] > 1.6 * (one_line[3] - one_line[1])
-        assert single[3] - single[1] < 1.6 * (one_line[3] - one_line[1])
+        # KRI-826: a hand-typed line that fits the frame's safe width stays one line
+        # (the narrow default box never re-wraps it)...
+        short = _opaque_bbox(
+            _render(tmp_path, canvas, text="one typed line here", size_px=100, wrap_lines=False)
+        )
+        assert short[3] - short[1] < 1.6 * (one_line[3] - one_line[1])
+        # ...and one wider than the frame soft-wraps inside it instead of clipping.
+        single = _opaque_bbox(_render(tmp_path, canvas, text=text, size_px=100, wrap_lines=False))
+        assert single[3] - single[1] > 1.6 * (one_line[3] - one_line[1])
+        width = _render(tmp_path, canvas, text=text, size_px=100, wrap_lines=False).size[0]
+        assert single[0] >= 0.05 * width - 8 and single[2] <= 0.95 * width + 8
         # unset and wrap_lines=True are the legacy auto-wrap, pixel for pixel
         assert _h(_render(tmp_path, canvas, text=text, size_px=100, wrap_lines=True)) == _h(
             _render(tmp_path, canvas, text=text, size_px=100)

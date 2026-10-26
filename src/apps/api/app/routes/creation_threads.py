@@ -120,6 +120,7 @@ from app.services.creator_direction_receipts import project_direction_receipt
 from app.services.creator_execution_contract import requests_guided_voiceover
 from app.services.creator_render_projection import build_creator_render_projection
 from app.services.creator_sessions import reconcile_render_state
+from app.services.device_render import variant_delivery_phase
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.guided_speech_cleanup import DISABLED_MESSAGE as CLEANUP_DISABLED_MESSAGE
 from app.services.guided_speech_cleanup import guided_voiceover_cleanup_available
@@ -362,6 +363,11 @@ class CreationCapabilitiesOut(BaseModel):
     media_library: bool = False
     media_collections: bool = False
     media_collection_cache_only: bool = True
+    # The feedback route accepts the `wrong_facts` reason. A build that does not see this
+    # (an older server) must not offer the chip: the old route 422s the whole judgment.
+    wrong_fact_feedback: bool = False
+    # POST /me/editorial-taste/feedback/{id}/example exists; older servers 404 it.
+    idea_example_feedback: bool = False
     formats: list[CreationFormatCapabilityOut]
     media: CreationMediaCapabilitiesOut
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
@@ -412,6 +418,15 @@ class CreationCapabilitiesOut(BaseModel):
     # KRI-588: the server may ask "which part of the song did you film?" in the chat
     # (`song_range_question` on a turn plan) and accepts the answer as `song_range` on a turn.
     song_range_questions: bool = False
+    # KRI-901: the server may ask "Mark the plate on one frame" (`protected_region_question` on
+    # a turn plan) and accepts the answer as `protected_region` on a turn. The question goes
+    # only to app builds at `protected_region_mark_min_client_protocol`.
+    protected_region_marks: bool = False
+    # KRI-723: the server may ask "put your moments in order and show me where each one is"
+    # (`moment_order_question` on a turn plan) and accepts the answer as `moment_order` on a
+    # turn. Only app builds at `moment_order_min_client_protocol` are asked; false = the kill
+    # switch (999) is on, so no build is asked.
+    moment_order_questions: bool = False
     # KRI-443: plan_block events follow Create and cancel-render is available.
     live_plan_review_enabled: bool = False
     # KRI-439: 2 = structured payloads, GET /plan, scoped turns and undo; 1 = the feed only.
@@ -420,6 +435,10 @@ class CreationCapabilitiesOut(BaseModel):
     # (KRIA_SUGGESTION_CHIPS_ENABLED or the cohort list). Clients gate on this bool; a 404 or
     # empty chips list means "render nothing". No NEXT_PUBLIC twin.
     suggestion_chips: bool = False
+    # KRI-815: a reply may carry `voiceover_script` (a footage-grounded script with a
+    # record/import continuation) when KRIA_VOICEOVER_SCRIPT_ENABLED. False/absent = the app
+    # shows the reply's text only; the script is in that text too, so nothing is lost.
+    voiceover_script_cards: bool = False
 
 
 class CreateBody(StrictBody):
@@ -2147,6 +2166,10 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     from app.services.user_song_projection import attach_user_song  # noqa: PLC0415
 
     attach_user_song(variants, job, song_filename=getattr(item, "song_filename", None))
+    # KRI-823: the current generation's device delivery phase, on response copies only.
+    for value in variants:
+        if isinstance(value, dict) and value.get("variant_id"):
+            value["delivery_phase"] = variant_delivery_phase(job, value.get("variant_id"))
     # KRI-178/KRI-183: same "primary variant" rule as `creator_sessions.py`
     # -- the first variant dict that carries a `variant_id` at all (there is
     # only ever one live variant on a phone job). Render notes are a
@@ -3824,6 +3847,11 @@ async def capabilities(
             and settings.media_collection_proposals_for(user.id)
         ),
         "media_collection_cache_only": settings.media_collection_cache_only,
+        "wrong_fact_feedback": bool(
+            settings.creator_editorial_taste_for(user.id)
+            and settings.creator_editorial_taste_feedback_signals_enabled
+        ),
+        "idea_example_feedback": bool(settings.creator_editorial_taste_for(user.id)),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
             recipe_versions=[2] if phone_enabled else [],
@@ -3915,9 +3943,12 @@ async def capabilities(
         "song_order_placements": bool(song_available and settings.song_order_timeline_enabled),
         "song_filming_range": bool(song_available and settings.song_filming_range_enabled),
         "song_range_questions": bool(song_available and settings.song_filming_range_enabled),
+        "protected_region_marks": True,
+        "moment_order_questions": settings.moment_order_min_client_protocol < 999,
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),
+        "voiceover_script_cards": bool(settings.kria_voiceover_script_enabled),
     }
 
 
@@ -4193,6 +4224,11 @@ async def list_threads(
                             {
                                 "variant_id": variant.get("variant_id"),
                                 "render_status": variant.get("render_status"),
+                                # KRI-823: the drawer reads the current device
+                                # delivery, not only the job lifecycle.
+                                "delivery_phase": variant_delivery_phase(
+                                    job, variant.get("variant_id")
+                                ),
                             }
                             for variant in variants
                             if isinstance(variant, dict)

@@ -11,7 +11,8 @@ the approval card; the runtime then holds the draft back with the reason and the
 ``test_kri775_preflight_runtime_postgres.py``).
 
 The ground truth is the worker itself on prod's own inputs
-(``test_kri775_merope_m2_replay.py`` proves it refuses with prod's words).
+(``test_kri775_merope_m2_replay.py`` proves it judges them with prod's words; since KRI-129
+the worker renders the approved draft and notes those misses instead of refusing it).
 
 Ways this can fail, each pinned below:
 1. The check passes a draft the worker refuses (both M2 renders).
@@ -99,7 +100,10 @@ def test_it_holds_back_exactly_what_the_phone_worker_refuses(
 ) -> None:
     render = RENDERS[index]
     worker = run_worker(monkeypatch, render)
-    assert worker.refusal is not None
+    # KRI-129: the worker now renders an approved draft and notes the misses instead of
+    # refusing it; the preflight still asks before approval about exactly those misses.
+    assert worker.refusal is None
+    assert "This draft is about 4.7s; you asked for 14s." in worker.notes
     kinds = _judged_kinds(m2_brief(render))
     expected = {k: v for k, v in _rows(worker.failures).items() if k in kinds}
     blockers = _blockers(render)
@@ -140,7 +144,9 @@ def _five_second_brief(render: dict) -> CreativeBrief:
 def test_a_draft_the_worker_builds_is_not_held_back(monkeypatch: pytest.MonkeyPatch) -> None:
     render = RENDERS[0]
     brief = _five_second_brief(render)
-    assert run_worker(monkeypatch, render, brief=brief).refusal is None
+    worker = run_worker(monkeypatch, render, brief=brief)
+    assert worker.refusal is None
+    assert not [row for row in worker.failures if row["requirement_id"] in {"r1", "r7"}]
     assert _blockers(render, brief=brief) == []
 
 

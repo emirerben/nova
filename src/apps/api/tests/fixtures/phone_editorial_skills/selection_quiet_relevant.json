@@ -1,0 +1,52 @@
+{
+  "agent": "nova.plan.clip_request_resolver",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "creator_request": "Include the quiet moment when the child finally spots the bird, not the running crowd.",
+    "intents": [
+      {
+        "intent_id": "spot",
+        "op": "include",
+        "attribute": "child spots the bird"
+      }
+    ],
+    "clips": [
+      {
+        "alias": "m001",
+        "record": {
+          "summary": "A noisy crowd runs past a park bench.",
+          "activity": "running",
+          "energy": 0.95
+        }
+      },
+      {
+        "alias": "m002",
+        "record": {
+          "summary": "A child sits still, then points at a bird on the branch.",
+          "activity": "spots and points at bird",
+          "energy": 0.1
+        }
+      }
+    ]
+  },
+  "raw_text": "{\"intents\": [{\"intent_id\": \"spot\", \"assignments\": [{\"media\": \"m002\", \"evidence\": \"Visible action in the record.\", \"confidence\": 0.95}], \"needs_vision\": []}]}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "Low-energy requested action wins over unrelated busy footage.",
+    "skills": [
+      "meaningful-moment"
+    ],
+    "expected": {
+      "intents": [
+        {
+          "assignments": [
+            {
+              "media": "m002"
+            }
+          ]
+        }
+      ]
+    },
+    "wrong_raw_text": "{\"intents\": [{\"intent_id\": \"spot\", \"assignments\": [{\"media\": \"m001\", \"evidence\": \"Visible action in the record.\", \"confidence\": 0.95}], \"needs_vision\": []}]}"
+  }
+}

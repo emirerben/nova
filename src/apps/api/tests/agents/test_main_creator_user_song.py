@@ -18,6 +18,7 @@ from app.agents._schemas.creator_agent import (
     ProposeStrategy,
     UserSongFacts,
 )
+from app.agents._skills import load_skill
 from app.agents.main_creator import (
     MAIN_CREATOR_PROMPT_VERSION,
     MainCreatorAgent,
@@ -46,11 +47,22 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v71 (KRI-814) adds the typed `delegates_all_choices` declaration: brief-on hashes only.
 # v72 (KRI-814) re-reads unrecorded earlier creator lines: brief-on hashes only.
 # v74 combines subtitle semantics and delegation; brief-off matches subtitle v73 exactly.
+# v76 (KRI-816) teaches the typed `starts_fresh` declaration: brief-on hashes only.
+# v77 (KRI-827) adds `keep_text_off` facts to the brief section: brief-on hashes only.
+# v77 (KRI-821) teaches the typed `source_muted` audio intent: brief-on hashes only.
+# v78 (KRI-821) teaches `cut_line_occurrences` for a repeated named cut: brief-on hashes only.
+# v80 combines KRI-827 keep_text_off with KRI-821: brief-on hashes re-pinned.
+# v81 (KRI-881) types the research ask in the brief section (brief-on) and rewords the
+# shared "Researched explanations" section (research happens before approval): all four
+# hashes re-pinned after reviewing both edits.
+# v92 merges main's v91 (KRI-724/840/841/842/847/849 brief facts) with KRI-881: brief-on
+# hashes re-pinned (brief-off equal KRI-881's v81, main left those prompts unchanged).
+# v95 (KRI-689): brief-on hashes re-pinned for the `playback_rate` fact; brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "bf51b31e7238e2286a68be7275ec9a502085f667f4885053353116f9c9ea1b12",
-    (True, False): "e33c7b44e601b95b61036b2806cc2111d8aa20204994881bf8fe128534b5cf3c",
-    (False, True): "d004dd784a572ce4d5dea3fd98fd9f5e17688271bafc14b2627ed3c1b96b57c4",
-    (False, False): "6e32911313c9667767209df7d6d929db36873990e5dceb2d27549ba179569c1d",
+    (True, True): "79c7991bbe32d87fd7f3afc5bb667f43877dd04423018ebb0ea21298751405aa",
+    (True, False): "cc7c6427ab34d031e6428fc804484ff65079c972be7c38a1e3a144d2b720ee23",
+    (False, True): "c4396de105bf334138313df82ee9272926c6b2c790c174887e9434a39fbbdb96",
+    (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
 }
 
 
@@ -74,7 +86,7 @@ def _song_input() -> MainCreatorInput:
 
 
 @pytest.mark.parametrize(("clip_intents", "brief"), sorted(PRE_CHANGE_PROMPT_SHA))
-def test_prompt_without_a_song_is_byte_identical_to_the_pre_change_render(
+def test_prompt_without_a_song_preserves_base_under_editorial_skills(
     monkeypatch, clip_intents, brief
 ) -> None:
     monkeypatch.setattr(settings, "clip_intents_enabled", clip_intents)
@@ -82,8 +94,19 @@ def test_prompt_without_a_song_is_byte_identical_to_the_pre_change_render(
 
     prompt = _render(_input().model_copy(update={"brief_enabled": brief}))
 
+    skills = (
+        load_skill("edit-story")
+        + "\n\n"
+        + load_skill("grounded-hook")
+        + "\n\n"
+        + load_skill("meaningful-moment")
+        + "\n\n"
+    )
+    assert prompt.startswith(skills)
+    base_prompt = prompt.removeprefix(skills)
     assert (
-        hashlib.sha256(prompt.encode()).hexdigest() == PRE_CHANGE_PROMPT_SHA[(clip_intents, brief)]
+        hashlib.sha256(base_prompt.encode()).hexdigest()
+        == PRE_CHANGE_PROMPT_SHA[(clip_intents, brief)]
     )
     assert "UPLOADED SONG" not in prompt
     assert "$user_song_section" not in prompt
@@ -120,7 +143,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v75"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v95"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

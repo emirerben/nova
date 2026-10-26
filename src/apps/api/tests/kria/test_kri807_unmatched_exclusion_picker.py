@@ -47,6 +47,7 @@ import pytest
 
 from app.agents._runtime import ModelInvocation, RunContext
 from app.agents._schemas.creator_agent import CreativeStrategy
+from app.agents._skills import load_skill
 from app.agents.clip_question import ClipQuestionAgent
 from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.config import settings
@@ -236,7 +237,9 @@ RED_CAP_LAST = {
     "source_quote": "End on my friend in the red cap smiling at the camera",
 }
 _PLANNER_PROMPT = load_prompt("clip_intent_planner")[:60]
-_RESOLVER_PROMPT = load_prompt("clip_request_resolver")[:60]
+_RESOLVER_PROMPT = (
+    load_skill("meaningful-moment") + "\n\n" + load_prompt("clip_request_resolver")[:60]
+)
 
 
 class _Provider:

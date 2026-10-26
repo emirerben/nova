@@ -205,7 +205,9 @@ class MomentSeats:
 
     ``after``: Visual id -> the moment (1-based) it plays right after. ``named``: sequence
     row index -> the moment that row names (one row per moment). ``placed``: sequence row
-    index -> (moment, its Visual ids) for each row that seated a Visual.
+    index -> (moment, its Visual ids) for each row that seated a Visual. ``listed`` (KRI-723):
+    sequence row index -> the moments one row lists ("A, B, C"); ``skipped``: rows whose
+    every moment the creator said is not in their clips.
     """
 
     take: str
@@ -213,6 +215,8 @@ class MomentSeats:
     after: dict[str, int] = field(default_factory=dict)
     named: dict[int, int] = field(default_factory=dict)
     placed: dict[int, tuple[int, tuple[str, ...]]] = field(default_factory=dict)
+    listed: dict[int, tuple[int, ...]] = field(default_factory=dict)
+    skipped: tuple[int, ...] = ()
 
 
 def _words(text: object) -> list[str]:
@@ -252,7 +256,12 @@ def _anchored_seat(name: str, moments: Sequence[frozenset[str]]) -> tuple[bool, 
 
 
 def moment_seats(
-    rows: Sequence[SequenceRow], *, windows: Mapping[str, int], visuals: Collection[str]
+    rows: Sequence[SequenceRow],
+    *,
+    windows: Mapping[str, int],
+    visuals: Collection[str],
+    pinned: Sequence[tuple[int, str]] | None = None,
+    skipped_rows: Collection[int] = (),
 ) -> MomentSeats | None:
     """The creator's sequence read as moments of ONE take, else None (group seating stands).
 
@@ -263,6 +272,11 @@ def moment_seats(
     per moment. A Visual's row seats it after the moment its own words anchor ("the photo
     right after B"); with one row per moment, a row with no anchor seats it where it is
     listed. A Visual before the first moment would open the video: it is not seated.
+
+    ``pinned`` (KRI-723): the approved plan's named moments as (row index, the creator's words),
+    in the order their windows play (the creator's final order, skipped ones left out). They
+    replace the rows' listing, so the i-th window is the i-th pinned moment by construction,
+    not by assumption. ``skipped_rows``: rows the creator said are not in their clips.
     """
     if not rows or any(pos is not None or status != "resolved" for pos, _n, _m, status in rows):
         return None
@@ -277,25 +291,43 @@ def moment_seats(
         for i, (_p, _n, members, _s) in enumerate(rows)
         if members and set(members) <= set(visuals)
     ]
-    if count < 2 or len(take_rows) + len(visual_rows) != len(rows):
+    if len(take_rows) + len(visual_rows) != len(rows):
         return None
-    if len(take_rows) == 1:
+    listed: dict[int, tuple[int, ...]] = {}
+    if pinned is not None:
+        moments = [_content(_words(words)) for _row, words in pinned]
+        owners: dict[int, list[int]] = {}
+        for moment, (row, _words_) in enumerate(pinned, start=1):
+            owners.setdefault(row, []).append(moment)
+        named = {row: own[0] for row, own in owners.items() if len(own) == 1 and len(take_rows) > 1}
+        listed = {row: tuple(own) for row, own in owners.items() if row not in named}
+    elif len(take_rows) == 1:
         moments = _listed_moments(rows[take_rows[0]][1])
-        named: dict[int, int] = {}
+        named = {}
+        listed = {take_rows[0]: tuple(range(1, len(moments) + 1))}
     else:
         moments = [_content(_words(rows[i][1])) for i in take_rows]
         named = {row: moment for moment, row in enumerate(take_rows, start=1)}
-    if len(moments) != count:
+    if count < 2 or len(moments) != count:
         return None
-    seats = MomentSeats(take=take, moments=count, named=named)
+    seats = MomentSeats(
+        take=take,
+        moments=count,
+        named=named,
+        listed=listed,
+        skipped=tuple(row for row in take_rows if row in set(skipped_rows)),
+    )
     for index in visual_rows:
         anchored, seat = _anchored_seat(rows[index][1], moments)
         if not anchored and named:
-            seat = sum(1 for row in take_rows if row < index)
+            # One row per moment, the Visual listed among them: after the moment of the
+            # nearest take row above it (the creator's final order may have moved it).
+            above = [row for row in take_rows if row < index and row in named]
+            seat = named[max(above)] if above else None
         if seat is None or not 1 <= seat <= count:
             continue
         members = tuple(rows[index][2])
         seats.placed[index] = (seat, members)
         for member in members:
             seats.after.setdefault(member, seat)
-    return seats if seats.after or seats.named else None
+    return seats if seats.after or seats.named or seats.listed else None

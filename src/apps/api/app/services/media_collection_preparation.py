@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import math
+from typing import Literal
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -26,6 +28,69 @@ def execution_digest(value):
     ).hexdigest()
 
 
+class PreparedSourceContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    moment_id: UUID
+    asset_id: UUID
+    source_id: UUID
+    generation: str
+    start_s: float = Field(ge=0, le=0, allow_inf_nan=False)
+    end_s: float = Field(ge=1, le=20, allow_inf_nan=False)
+    evidence_scope: Literal["whole_source_context"]
+    context_contract: Literal["whole-source-context-v1"]
+    semantic_localization: Literal["none"]
+    timing_basis: Literal["verified_source_bounds"]
+    uncertain: Literal[True]
+    fact_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    index_spec: str = Field(pattern=r"^[a-f0-9]{64}$")
+    quality: dict
+
+
+def _source_contexts(moments: list[dict]) -> list[PreparedSourceContext]:
+    result = []
+    for raw in moments:
+        evidence = raw.get("evidence") or {}
+        scope = raw.get("evidence_scope", evidence.get("evidence_scope", "timed_moment"))
+        if scope != "whole_source_context":
+            if evidence.get("evidence_scope") == "whole_source_context":
+                raise ValueError("Story source context scope changed")
+            continue
+        result.append(
+            PreparedSourceContext(
+                moment_id=raw["id"],
+                asset_id=raw["asset_id"],
+                source_id=raw["source_id"],
+                generation=raw["generation"],
+                start_s=raw["start_s"],
+                end_s=raw["end_s"],
+                uncertain=raw["uncertain"],
+                evidence_scope=scope,
+                **{
+                    key: evidence.get(key)
+                    for key in (
+                        "context_contract",
+                        "semantic_localization",
+                        "timing_basis",
+                        "fact_version",
+                        "index_spec",
+                        "quality",
+                    )
+                },
+            )
+        )
+    return result
+
+
+class PreparedSourceWindowAdjustment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    moment_id: UUID
+    selected_start_s: float = Field(ge=0)
+    selected_end_s: float = Field(gt=0)
+    original_duration_s: float = Field(gt=0)
+    prepared_end_s: float = Field(gt=0)
+    reason: Literal["original_source_bounds"] = "original_source_bounds"
+
+
 class PreparedCollectionStory(BaseModel):
     model_config = ConfigDict(extra="forbid")
     story_id: UUID
@@ -39,10 +104,73 @@ class PreparedCollectionStory(BaseModel):
         default=None, exclude_if=lambda value: value is None
     )
     research: StoryResearch | None = Field(default=None, exclude_if=lambda value: value is None)
+    source_window_adjustments: list[PreparedSourceWindowAdjustment] = Field(
+        default_factory=list, max_length=8, exclude_if=lambda value: not value
+    )
+    source_contexts: list[PreparedSourceContext] = Field(
+        default_factory=list, max_length=8, exclude_if=lambda value: not value
+    )
+
+
+def _without_open_questions(plan):
+    """Creator answers have no consumer downstream, so they stay in the story row only."""
+    return plan.model_copy(update={"open_questions": []}) if plan else plan
+
+
+def selected_story_requirement(prepared: PreparedCollectionStory):
+    """The creator selected this complete reviewed story, not an empty delegation."""
+    from app.kria.brief import BriefUpdate
+
+    return BriefUpdate(
+        kind="select",
+        scope="global",
+        description=prepared.snapshot.title,
+        facts={
+            "collection_story": {
+                "story_id": str(prepared.story_id),
+                "story_revision": prepared.story_revision,
+                "collection_id": str(prepared.collection_id),
+                "collection_revision": prepared.collection_revision,
+                "prepared_digest": execution_digest(prepared.model_dump(mode="json")),
+            }
+        },
+    )
+
+
+def prepared_story_readiness(raw, *, strategy, media):
+    """Read execution evidence; ownership/current revisions remain separately fenced."""
+    from app.agents._schemas.creator_agent import CreativeStrategy
+    from app.pipeline.guided_story import GuidedStoryError, compile_proposal_execution_plan
+
+    prepared = PreparedCollectionStory.model_validate(raw)
+    if CreativeStrategy.model_validate(strategy) != CreativeStrategy.model_validate(
+        prepared.strategy
+    ):
+        raise ValueError("Selected story strategy changed")
+    try:
+        compiled_digest = execution_digest(compile_proposal_execution_plan(prepared.snapshot))
+    except GuidedStoryError as exc:
+        raise ValueError("Selected story execution is invalid") from exc
+    if compiled_digest != prepared.compiled_digest:
+        raise ValueError("Selected story execution changed")
+    assignments = {
+        str(row.get("media_id")): row
+        for row in media.get("clip_assignments") or []
+        if isinstance(row, dict)
+    }
+    for ref in prepared.snapshot.media:
+        attached = assignments.get(ref.media_id) or {}
+        if attached.get("gcs_path") != ref.gcs_path or str(
+            attached.get("storage_generation")
+        ) != str(ref.generation):
+            raise ValueError("Selected story source binding changed")
+    return selected_story_requirement(prepared), execution_digest(prepared.model_dump(mode="json"))
 
 
 async def prepare_story_snapshot(db, owner, story, item):
     from app.pipeline.guided_story import compile_proposal_execution_plan
+    from app.pipeline.phone_recipe_shared import EXPORT_SAFETY_MARGIN_S
+    from app.services.phone_sources import bind_phone_sources
     from app.services.proposal_planning import refresh_snapshot_schedule
 
     collection = await media_collections.owned_collection(
@@ -54,10 +182,16 @@ async def prepare_story_snapshot(db, owner, story, item):
         story.collection_id,
         story.collection_revision,
         moment_ids=[UUID(value["id"]) for value in story.moments_json],
+        retained_story=story,
     )
     current = {str(value.id): value for value in evidence.moments}
     if any(value["id"] not in current for value in story.moments_json):
         raise HTTPException(409, "Story source changed; refresh the collection")
+    contexts = _source_contexts(
+        [current[value["id"]].model_dump(mode="json") for value in story.moments_json]
+    )
+    if contexts != _source_contexts(story.moments_json):
+        raise HTTPException(409, "Story source context evidence changed; review it again")
     eligible = await media_collections.eligible_sources(
         db, owner, media_collections.members(collection)
     )
@@ -67,6 +201,7 @@ async def prepare_story_snapshot(db, owner, story, item):
         if isinstance(value, dict)
     }
     refs, cuts, beats = {}, [], []
+    phone_bindings, source_window_adjustments = {}, []
     for index, raw in enumerate(story.moments_json):
         moment = current[raw["id"]]
         asset, source = eligible[moment.asset_id]
@@ -81,6 +216,35 @@ async def prepare_story_snapshot(db, owner, story, item):
         media_id = str(assignment.get("media_id") or "")
         if not media_id:
             raise HTTPException(409, "Story source has no render binding")
+        try:
+            binding = bind_phone_sources([assignment], [source.object_path])[0]
+        except ValueError as exc:
+            raise HTTPException(
+                422, "Link this story's originals before preparing its draft"
+            ) from exc
+        phone_bindings[media_id] = binding
+        start_frame, end_frame = round(moment.start_s * 30), round(moment.end_s * 30)
+        prepared_end_s = moment.end_s
+        if end_frame / 30 > binding.original.duration_s:
+            safe_end = math.floor(
+                (binding.original.duration_s - EXPORT_SAFETY_MARGIN_S) * 30 + 1e-9
+            )
+            maximum_correction = math.ceil((EXPORT_SAFETY_MARGIN_S + 1 / 30) * 30)
+            if safe_end <= start_frame or end_frame - safe_end > maximum_correction:
+                raise HTTPException(
+                    422,
+                    "The original is shorter than this story's selected footage; review its timing",
+                )
+            prepared_end_s = safe_end / 30
+            source_window_adjustments.append(
+                PreparedSourceWindowAdjustment(
+                    moment_id=moment.id,
+                    selected_start_s=moment.start_s,
+                    selected_end_s=moment.end_s,
+                    original_duration_s=binding.original.duration_s,
+                    prepared_end_s=prepared_end_s,
+                )
+            )
         duration = float((asset.metadata_json or {}).get("duration_s") or 0)
         refs[media_id] = MediaRef(
             lane="clip",
@@ -94,13 +258,13 @@ async def prepare_story_snapshot(db, owner, story, item):
         role = (
             "hook" if index == 0 else "payoff" if index == len(story.moments_json) - 1 else "build"
         )
-        length = moment.end_s - moment.start_s
+        length = prepared_end_s - moment.start_s
         cuts.append(
             FastMontageCut(
                 cut_id=str(moment.id),
                 media_id=media_id,
                 source_start_s=moment.start_s,
-                source_end_s=moment.end_s,
+                source_end_s=prepared_end_s,
                 output_duration_s=length,
                 role=role,
             )
@@ -122,7 +286,7 @@ async def prepare_story_snapshot(db, owner, story, item):
     )
     if not 30 <= duration_frames <= 60 * 30:
         raise HTTPException(422, "This story cannot fit the supported export duration")
-    content_plan = (
+    content_plan = _without_open_questions(
         StoryContentPlan.model_validate(story.story_json["content_plan"])
         if story.story_json.get("content_plan")
         else None
@@ -186,6 +350,32 @@ async def prepare_story_snapshot(db, owner, story, item):
         "rationale": story.story_json["rationale"],
         **copy_fields,
     }
+    # Offer consent only after the actual native compiler and publication gates
+    # can execute this same source-bound snapshot. No media or model I/O occurs.
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan
+    from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
+    from app.services.actual_export_verification import unsupported_reasons
+    from app.services.creator_render_contract import build_render_contract, verify_phone_recipe
+    from app.services.phone_rollout import validate_phone_pilot_recipe
+
+    try:
+        recipe = compile_phone_guided_plan(
+            GuidedStoryExecutionPlan.model_validate(compiled), tuple(phone_bindings.values())
+        )
+        validate_phone_pilot_recipe(recipe)
+        contract = build_render_contract(strategy, generation_id="camera-roll-preflight")
+        verify_phone_recipe(
+            contract,
+            recipe,
+            source_audio={key: value.original.has_audio for key, value in phone_bindings.items()},
+        )
+    except (UnsupportedPhonePlan, ValueError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if unsupported_reasons(recipe):
+        raise HTTPException(
+            422,
+            "These story settings cannot be verified on your iPhone; review the clips and wording",
+        )
     return PreparedCollectionStory(
         story_id=story.id,
         story_revision=story.revision,
@@ -196,6 +386,8 @@ async def prepare_story_snapshot(db, owner, story, item):
         compiled_digest=execution_digest(compiled),
         content_plan=content_plan,
         research=story_out(story).research,
+        source_contexts=contexts,
+        source_window_adjustments=source_window_adjustments,
     )
 
 
@@ -241,7 +433,8 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
                 422, "This story cannot preserve its timing and sound on this version of the app"
             )
     prepared.strategy = strategy.model_dump(mode="json", exclude_none=True)
-    summary = f"{story.story_json['title']}. {prepared.snapshot.duration_s:g} seconds; " + (
+    duration_label = f"{round(prepared.snapshot.duration_s, 1):g}"
+    summary = f"{story.story_json['title']}. {duration_label} seconds; " + (
         "chosen source windows and original sound. No added text or music."
         if prepared.snapshot.montage_audio.preserve_source_audio
         else "chosen source windows, muted. No added text or music."
@@ -252,7 +445,7 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
             *([content_plan["closing_text"]] if content_plan.get("closing_text") else []),
         ]
         summary = (
-            f"{story.story_json['title']}. {prepared.snapshot.duration_s:g} seconds. "
+            f"{story.story_json['title']}. {duration_label} seconds. "
             f"{content_plan['angle']} "
             + (
                 "Original sound. "
@@ -263,6 +456,31 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
             + " / ".join(json.dumps(value, ensure_ascii=False) for value in wording)
             + ". No added music or narration."
         )
+    if prepared.source_window_adjustments:
+        summary += " Clip ends are shortened slightly to fit your iPhone originals."
+    if prepared.source_contexts:
+        summary += (
+            " Whole clip; no timed highlight detected."
+            if len(prepared.source_contexts) == 1
+            else " Whole clips; no timed highlights detected."
+        )
+        if any(
+            value.quality.get("overlapping_unusable_spans") for value in prepared.source_contexts
+        ):
+            summary += " Cached quality notes flag a source span for review."
+    from app.config import settings
+    from app.kria.brief import load_latest_brief
+
+    brief_fields = {}
+    if settings.brief_binding_for(creator_id):
+        previous_brief = await load_latest_brief(db, thread_id)
+        brief_fields = {
+            "brief_updates": (selected_story_requirement(prepared),),
+            "brief_route": "replan",
+            "brief_expected_version": previous_brief.version if previous_brief else 0,
+            "brief_clip_ids": tuple(ref.media_id for ref in prepared.snapshot.media),
+            "brief_manifest": manifest,
+        }
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="act",
@@ -287,6 +505,8 @@ async def plan_selected_story(db, *, reference, thread_id, item_id, creator_id):
         context_hash=manifest.context_hash,
         media_snapshot=snapshot_media(item),
         prepared_collection_story=prepared.model_dump(mode="json"),
+        readiness_manifest=manifest,
+        **brief_fields,
     )
 
 
@@ -334,6 +554,10 @@ def install_approved_story(db, *, item, owner, raw, strategy, dry_run=False):
         raise ValueError("Approved story strategy changed")
     if prepared.research != story_out(story).research:
         raise ValueError("Approved story research changed")
+    if prepared.content_plan != _without_open_questions(story_out(story).content_plan):
+        raise ValueError("Approved story content plan changed")
+    if prepared.source_contexts != _source_contexts(story.moments_json):
+        raise ValueError("Approved story context evidence changed")
     if (
         execution_digest(compile_proposal_execution_plan(prepared.snapshot))
         != prepared.compiled_digest
@@ -415,5 +639,10 @@ async def validate_prepared_story_for_approval(db, *, owner, item, raw):
     ):
         raise HTTPException(409, "This story was rejected")
     current = await prepare_story_snapshot(db, owner, story, item)
-    if current.compiled_digest != prepared.compiled_digest or current.research != prepared.research:
-        raise HTTPException(409, "Chosen story source or compiler changed")
+    if (
+        current.compiled_digest != prepared.compiled_digest
+        or current.research != prepared.research
+        or current.content_plan != prepared.content_plan
+        or current.source_contexts != prepared.source_contexts
+    ):
+        raise HTTPException(409, "Chosen story source, wording or compiler changed")

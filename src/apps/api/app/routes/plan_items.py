@@ -4160,6 +4160,10 @@ async def update_item_edit_proposal(
                 "text_composition": current.draft.text_composition,
                 # KRI-569: the song's lyric track is server-authored too.
                 "song_captions": current.draft.song_captions,
+                # KRI-824: per-photo holds are stamped server-side from the brief. A
+                # Save can neither drop them (old clients never send the field) nor
+                # forge one for another photo or length.
+                "creator_still_holds": current.draft.creator_still_holds,
             }
         )
         if (
@@ -4366,6 +4370,11 @@ class SlidePostStateAsset(BaseModel):
     source_url: str | None = None
     duration_s: float | None = None
     media_status: str
+    # KRI-820: why analysis failed (e.g. `analysis_timed_out`), whether Retry
+    # can fix it, and while in flight the declared time it resolves by.
+    error_code: str | None = None
+    retryable: bool = False
+    analysis_deadline_at: datetime | None = None
     # KRI-300: when/where the photo or video was taken, as the phone read it.
     # {capture_time?: ISO-8601 UTC, coarse_location?: {lat, lon},
     #  place?: {sub_locality?, locality?, country?}}; null when none was sent.
@@ -4564,7 +4573,12 @@ def _same_approval(a: BriefBinding, b: BriefBinding) -> bool:
     """Brief and frozen conflict answers are server-owned: they must not move."""
     brief_a = a.brief.model_dump(mode="json") if a.brief is not None else None
     brief_b = b.brief.model_dump(mode="json") if b.brief is not None else None
-    return a.state == b.state and brief_a == brief_b and a.choice_answers == b.choice_answers
+    return (
+        a.state == b.state
+        and brief_a == brief_b
+        and a.choice_answers == b.choice_answers
+        and a.protected_regions == b.protected_regions
+    )
 
 
 def _slide_post_binding_anchor(
@@ -4642,6 +4656,7 @@ def _rebind_slide_post(
     brief = previous.brief.model_copy(deep=True) if previous and previous.brief else None
     state = "pinned" if brief is not None else "none"
     choice_answers = copy.deepcopy(list(previous.choice_answers)) if previous else []
+    protected_regions = copy.deepcopy(list(previous.protected_regions)) if previous else []
     media_snapshot = _slide_post_media_snapshot(item, draft, owned_assets)
     return BriefBinding(
         thread_id=str(thread.id),
@@ -4650,8 +4665,15 @@ def _rebind_slide_post(
         creator_request=request,
         media_snapshot=media_snapshot,
         choice_answers=choice_answers,
+        protected_regions=protected_regions,
         digest=BriefBinding._digest(
-            str(thread.id), state, brief, request, media_snapshot, choice_answers
+            str(thread.id),
+            state,
+            brief,
+            request,
+            media_snapshot,
+            choice_answers,
+            protected_regions,
         ),
     )
 
@@ -5453,6 +5475,9 @@ async def get_slide_post_state(
                     "source_url",
                     "duration_s",
                     "media_status",
+                    "error_code",
+                    "retryable",
+                    "analysis_deadline_at",
                 }
             ),
             capture=_stored_asset_capture(asset),
@@ -9439,6 +9464,10 @@ class PoolAssetOut(BaseModel):
     error_code: str | None = None
     error_detail: str | None = None
     retryable: bool = False
+    # KRI-820: while queued/analyzing, the declared time by which this analysis
+    # becomes ready or a retryable `analysis_timed_out` failure. Clients show
+    # progress against it (and keep showing it after a reopen).
+    analysis_deadline_at: datetime | None = None
     source_filename: str | None
     duration_s: float | None
     aspect: float | None
@@ -9544,9 +9573,33 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
     raw_error_detail = getattr(asset, "error_detail", None)
     raw_retryable = getattr(asset, "error_retryable", False)
     visible_status = asset.status
+    analysis_deadline_at = (
+        getattr(asset, "analysis_deadline_at", None)
+        if asset.status in {"queued", "analyzing"}
+        else None
+    )
+    from app.services.pool_analysis_deadline import (  # noqa: PLC0415
+        TIMED_OUT_CODE,
+        TIMED_OUT_DETAIL,
+        effective_deadline,
+        is_expired,
+    )
+
+    timed_out = is_expired(asset)
+    if timed_out:
+        # KRI-820: the declared bound passed. Report the actionable failure the
+        # reaper will persist within one sweep, so every reader (and a reopen)
+        # agrees before that write lands.
+        visible_status = "failed"
+        raw_error_code, raw_error_detail, raw_retryable = TIMED_OUT_CODE, TIMED_OUT_DETAIL, True
+        analysis_deadline_at = None
+    elif analysis_deadline_at is None and asset.status in {"queued", "analyzing"}:
+        analysis_deadline_at = effective_deadline(asset)
     if visible_status == "queued" and not _settings.pool_asset_queued_status_enabled:
         visible_status = "uploaded"
     raw_media_status = getattr(asset, "media_status", None)
+    if timed_out and raw_media_status == "pending":
+        raw_media_status = "failed"
     media_status = (
         raw_media_status
         if raw_media_status in {"pending", "ready", "unreadable", "failed"}
@@ -9588,6 +9641,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         error_code=raw_error_code if isinstance(raw_error_code, str) else None,
         error_detail=raw_error_detail if isinstance(raw_error_detail, str) else None,
         retryable=raw_retryable if isinstance(raw_retryable, bool) else False,
+        analysis_deadline_at=analysis_deadline_at,
         source_filename=asset.source_filename,
         duration_s=asset.duration_s,
         aspect=asset.aspect,
@@ -9667,16 +9721,24 @@ async def _queue_pool_asset_analysis(
 
         await adopt_uploaded_visual(db, asset)
 
-    attempt_token = uuid.uuid4().hex
+    from app.services.pool_analysis_deadline import (  # noqa: PLC0415
+        begin_attempt,
+        queue_backlog_stmt,
+    )
+
     prior_attempts = int(getattr(asset, "analysis_attempt_count", 0) or 0)
-    asset.status = "queued"
-    asset.error_code = None
-    asset.error_detail = None
-    asset.error_retryable = False
-    asset.analysis_attempt_token = attempt_token
-    asset.analysis_attempt_count = 1 if reset_attempts else prior_attempts + 1
-    asset.analysis_last_dispatched_at = datetime.now(UTC)
-    asset.analysis_started_at = None
+    dispatched_at = datetime.now(UTC)
+    # KRI-820: the claim window covers the shared queue's live backlog, so a
+    # photo that is only waiting in line never times out.
+    queue_ahead = int(
+        (await db.execute(queue_backlog_stmt(dispatched_at, exclude_id=asset.id))).scalar() or 0
+    )
+    attempt_token = begin_attempt(
+        asset,
+        now=dispatched_at,
+        attempt_count=1 if reset_attempts else prior_attempts + 1,
+        queue_ahead=queue_ahead,
+    )
     await db.commit()
     await db.refresh(asset)
 
@@ -9688,6 +9750,9 @@ async def _queue_pool_asset_analysis(
             args=[str(asset.id), False],
             queue=_settings.pool_asset_visuals_queue,
             headers=task_headers,
+            # KRI-820: a copy still in the broker past the attempt's deadline is
+            # dropped; by then the row is (or will be) a retryable timeout.
+            expires=asset.analysis_deadline_at,
         )
         log.info(
             "pool_asset_analysis_queued",
@@ -10516,7 +10581,17 @@ async def reanalyze_pool_asset(
             return _asset_out(asset)
         return _asset_out(asset)
     if asset.status in {"queued", "analyzing"}:
-        return _asset_out(asset)
+        from app.services.pool_analysis_deadline import (  # noqa: PLC0415
+            is_expired,
+            mark_timed_out,
+        )
+
+        # Inside its declared bound the attempt is still live: duplicate taps
+        # (and a tap racing the reaper) share its single token. Past the bound
+        # the row lock above makes exactly one tap terminalize and requeue.
+        if not is_expired(asset):
+            return _asset_out(asset)
+        mark_timed_out(asset)
     if asset.status not in {"failed", "uploaded"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

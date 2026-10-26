@@ -30,6 +30,7 @@ from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
     MAX_REACTION_BEATS,
     ClosingMedia,
+    EndingClip,
     ReactionBeat,
 )
 from app.agents._schemas.sfx_intent import (
@@ -314,7 +315,8 @@ class ChoiceAnswer(_CreatorModel):
     depended on; ``requirement_ids`` link it to the brief requirements it resolves.
     ``source`` is ``creator`` for a tapped/typed answer and ``creator_delegated`` when the
     creator explicitly left the choice to us ("you choose"; the draft then says so).
-    An unanswered question never produces an answer.
+    An unanswered question never produces an answer. ``value`` is the picked text, for a
+    question whose options are lines of the creator's own footage (KRI-844).
     """
 
     conflict: str = Field(min_length=1, max_length=80)
@@ -323,6 +325,17 @@ class ChoiceAnswer(_CreatorModel):
     input_digest: str = Field(min_length=1, max_length=64)
     requirement_ids: list[str] = Field(default_factory=list, max_length=16)
     source: Literal["creator", "creator_delegated"] = "creator"
+    # KRI-844: the text the answer picked, when the option is a piece of the creator's own
+    # footage (the spoken line of a take they chose to open / end on). Omitted when unset, so
+    # every stored answer stays byte-identical. KRI-724: also the word / line a
+    # ``speech_occurrence`` answer picked a time of.
+    value: str | None = Field(default=None, max_length=300, exclude_if=lambda value: value is None)
+    # KRI-849: what an unclear-word answer is for (the span's start_s / end_s, the action and
+    # the creator's chosen words). Server-written from the tapped option; omitted when empty so
+    # every other stored answer keeps its shape.
+    detail: dict[str, str | int | float] | None = Field(
+        default=None, max_length=8, exclude_if=lambda value: not value
+    )
 
 
 class CreativeStrategy(_CreatorModel):
@@ -459,7 +472,8 @@ class CreativeStrategy(_CreatorModel):
     # ``ordering_choice``: the planner gate writes it from the thread's stored
     # ``choice_selection`` events and every model-authored value is discarded. Omitted
     # from the dump when unset so stored strategies stay byte-identical.
-    choice_answers: SkipJsonSchema[list[ChoiceAnswer] | None] = Field(default=None, max_length=8)
+    # KRI-724: one answer per spoken-occurrence ask can join the other conflicts' answers.
+    choice_answers: SkipJsonSchema[list[ChoiceAnswer] | None] = Field(default=None, max_length=16)
     # Server-folded cancellation suppresses saved-brief title fallbacks as well.
     omitted_copy_targets: SkipJsonSchema[list[Literal["opening_title", "closing_title"]] | None] = (
         Field(default=None, max_length=2)
@@ -483,6 +497,11 @@ class CreativeStrategy(_CreatorModel):
         ),
     )
     closing_media: SkipJsonSchema[ClosingMedia | None] = Field(default=None)
+    # KRI-841: a video appended AFTER the talk with its own sound (phone Talking only). Same
+    # pattern as the two fields above: out of every derived JSON schema (the `apply_strategy`
+    # tool schema stays byte-identical), omitted from serialization when None, taught in the
+    # creator prompt only where the manifest can render it.
+    ending_clip: SkipJsonSchema[EndingClip | None] = Field(default=None)
     # KRI-374 (creator-uploaded song). Same pattern as reaction_beats above:
     # SkipJsonSchema keeps both OUT of every derived JSON schema, default None
     # and the omit-when-None serializer below keep stored strategies and every
@@ -583,6 +602,7 @@ class CreativeStrategy(_CreatorModel):
             "omitted_copy_targets",
             "reaction_beats",
             "closing_media",
+            "ending_clip",
             "song_sync",
             "resolved_song_takes",
             "song_captions",
@@ -886,6 +906,23 @@ class ProposeStrategy(_CreatorModel):
     summary: str = Field(default="", max_length=1000)
     render_intent_evidence: CreatorRenderIntentEvidence | None = Field(
         default=None, exclude_if=lambda value: value is None
+    )
+
+
+class DraftVoiceoverScript(_CreatorModel):
+    """KRI-815: the creator asked for words to SAY over their footage (a voiceover script).
+
+    The model only chooses this action and quotes the ask; it never writes the script. The
+    server checks ``request_evidence`` against the creator's own messages and has the
+    footage-grounded writer draft the script from the clips' stored understanding.
+    """
+
+    kind: Literal["draft_voiceover_script"]
+    # Verbatim excerpt of a creator message asking for the script, or a change to it.
+    request_evidence: str = Field(min_length=1, max_length=1200)
+    # The creator's requested change to the previous draft ("shorter", "funnier"), verbatim.
+    revision_note: str | None = Field(
+        default=None, max_length=600, exclude_if=lambda value: value is None
     )
 
 
@@ -1387,7 +1424,7 @@ class CreatorAutomationDecision(_CreatorModel):
 
 
 CreatorAgentOutput: TypeAlias = Annotated[
-    AskUser | ProposeStrategy | ReviewDecision,
+    AskUser | ProposeStrategy | ReviewDecision | DraftVoiceoverScript,
     Field(discriminator="kind"),
 ]
 CREATOR_AGENT_OUTPUT_ADAPTER = TypeAdapter(CreatorAgentOutput)
@@ -1562,8 +1599,10 @@ __all__ = [
     "CREATOR_CORE_CRAFT_COMMAND_ADAPTER",
     "CREATOR_CRAFT_BUNDLE_COMMAND_ADAPTER",
     "CreatorEditSnapshot",
+    "DraftVoiceoverScript",
     "ChoiceAnswer",
     "ClosingMedia",
+    "EndingClip",
     "MAX_REACTION_BEATS",
     "ReactionBeat",
     "CreatorEditPlan",

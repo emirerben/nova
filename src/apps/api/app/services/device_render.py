@@ -48,18 +48,52 @@ def approved_runtime_generation(job: Any, execution_generation: str | None) -> s
     return generation if isinstance(generation, str) and generation else None
 
 
-# Human-readable fallback when the reporter (phone client or reaper) sends an
-# empty detail string. Keyed by reason_code; "timed_out" is the reaper's own
-# stale-timeout report (app/tasks/device_render_reaper.py).
+# Human-readable fallback when the reporter (phone client, reaper or the server's
+# own checks) sends an empty detail string. Keyed by reason_code; each line says
+# what is true and what happens next, never a generic "something went wrong".
 _DEFAULT_FAILURE_DETAIL: dict[str, str] = {
-    "export_failed": "The export failed on your device. Open the project to retry.",
-    "insufficient_storage": "Not enough storage on your device to finish the export.",
-    "thermal": "Your device paused rendering to cool down. Open the project to retry.",
-    "unsupported_recipe": "This edit isn't supported by on-device rendering yet.",
-    "cancelled_by_user": "The export was cancelled on your device.",
-    "timed_out": "No delivery from your device in the last 24 hours. Open the project to retry.",
-    "unknown": "Something went wrong rendering on your device. Open the project to retry.",
+    "export_failed": "The video couldn't finish on your iPhone. Your edit is saved; try again.",
+    "insufficient_storage": (
+        "Your iPhone is low on storage. Free up some space and Kria will finish the video."
+    ),
+    "thermal": "Your iPhone paused rendering to cool down. Kria will continue when it's cooler.",
+    "unsupported_recipe": "This edit uses something this iPhone can't render yet.",
+    "cancelled_by_user": "You stopped this render. Your edit is saved; resume it any time.",
+    "timed_out": (
+        "No delivery from your iPhone in the last 24 hours. Open the project to finish it."
+    ),
+    "renderer_outdated": "This edit needs a newer version of Kria. Update the app to finish it.",
+    "device_unavailable": (
+        "This iPhone can't render the video right now. Your edit is saved; try again soon."
+    ),
+    "original_missing": (
+        "An original video for this edit isn't on this iPhone anymore. "
+        "Find the original file and Kria will finish the video."
+    ),
+    "output_check_failed": (
+        "Kria's quality check didn't pass for this video. Your approved edit is saved; try again."
+    ),
+    "verification_unavailable": (
+        "Kria couldn't check this video. Your approved edit is saved; try again."
+    ),
+    "contract_changed": (
+        "This edit's approved details changed after it was prepared. "
+        "Review the updated edit in chat."
+    ),
+    "unknown": "The video couldn't finish on your iPhone. Your edit is saved; try again.",
 }
+
+# A user Stop pauses the record; it never moves the phase or the project label.
+PAUSED_FIELD = "paused_by_user"
+
+
+class DeviceRecipeSuperseded(CreatorRenderContractError):
+    """A newer approved attempt owns this variant (KRI-722 fence).
+
+    Not a refusal of the creator's edit: the client should follow the newer attempt,
+    so callers answer ``superseded`` instead of recording a contract decline.
+    """
+
 
 # Phases from which a device render may transition to needs_attention — a
 # published record is done, and a record already needs_attention has no
@@ -73,6 +107,71 @@ def device_record(job: Any, variant_id: str) -> dict:
     if not isinstance(record, dict):
         raise KeyError("device recipe unavailable")
     return copy.deepcopy(record)
+
+
+def published_source_generation(job: Any, variant: dict) -> str | None:
+    """The saved generation the variant's current phone-published video was rendered from.
+
+    Publishing a device export replaces ``render_generation_id`` with the upload
+    attempt id, while a Save pinned its draft to the generation the phone was
+    asked to render. The published status keeps that pre-publish
+    ``base_generation`` (``_complete_device_export``), so the two name the same
+    saved document. None unless the variant's CURRENT generation is that
+    published attempt, so a later Save or cloud render never inherits it.
+    """
+    record = ((job.assembly_plan or {}).get(DEVICE_RENDER_FIELD) or {}).get(
+        str(variant.get("variant_id"))
+    )
+    if not isinstance(record, dict):
+        return None
+    status = record.get("status")
+    current = str(variant.get("render_generation_id") or "")
+    if (
+        not isinstance(status, dict)
+        or status.get("phase") != "published"
+        or not current
+        or str(record.get("published_attempt") or "") != current
+    ):
+        return None
+    return str(status.get("base_generation") or "") or None
+
+
+_DELIVERY_PHASES = frozenset({"awaiting_device", "syncing", "published", "needs_attention"})
+
+
+def variant_delivery_phase(job: Any, variant_id: str | None) -> str | None:
+    """The device delivery phase of the variant's CURRENT generation, else None.
+
+    Pure read for status projections (KRI-823). The device record is reported only
+    when its ``base_generation`` equals the variant's ``render_generation_id`` (the
+    same fence ``routes/device_render._record`` applies), so a late failure from an
+    older generation can never outrank a newer accepted export. Malformed records
+    and cloud jobs (no record) yield None so a list projection can never fail.
+    """
+    if not variant_id:
+        return None
+    try:
+        assembly = job.assembly_plan or {}
+        record = (assembly.get(DEVICE_RENDER_FIELD) or {}).get(variant_id)
+        if not isinstance(record, dict):
+            return None
+        variant = next(
+            (
+                v
+                for v in assembly.get("variants") or []
+                if isinstance(v, dict) and v.get("variant_id") == variant_id
+            ),
+            None,
+        )
+        generation = record.get("base_generation")
+        if variant is None or not generation:
+            return None
+        if str(variant.get("render_generation_id") or "") != str(generation):
+            return None
+        phase = (record.get("status") or {}).get("phase")
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    return phase if phase in _DELIVERY_PHASES else None
 
 
 def device_status(job: Any, variant_id: str) -> DeviceRenderStatus:
@@ -348,6 +447,43 @@ def _verify_recipe_source_identity(
     return {media_id: binding.original.has_audio for media_id, binding in bindings.items()}
 
 
+def _verify_processed_audio_identity(
+    job: Any, request: DeviceRenderRequest, base_generation: str
+) -> None:
+    """Refuse a forged/stale derivative before it becomes a device receipt."""
+    from app.kria.render_assets import ProcessedAudioRenderAsset  # noqa: PLC0415
+    from app.pipeline.phone_processed_audio import (  # noqa: PLC0415
+        processed_audio_asset,
+        processed_audio_receipt_for,
+    )
+
+    manifest = request.recipe.asset_manifest
+    if not any(isinstance(asset, ProcessedAudioRenderAsset) for asset in manifest.assets):
+        return
+    bindings = _approved_source_bindings(job.assembly_plan or {}, request.identity.variant_id)
+    for asset in manifest.assets:
+        if not isinstance(asset, ProcessedAudioRenderAsset):
+            continue
+        receipt = processed_audio_receipt_for(
+            job.assembly_plan or {},
+            variant_id=request.identity.variant_id,
+            source_media_id=asset.source_media_id,
+        )
+        source = bindings.get(asset.source_media_id)
+        if (
+            receipt is None
+            or asset != processed_audio_asset(receipt, asset_id=asset.id)
+            or asset.job_id != str(job.id)
+            or asset.variant_id != request.identity.variant_id
+            or asset.render_generation != base_generation
+            or source is None
+            or source.generation != asset.source_generation
+        ):
+            raise CreatorRenderContractError(
+                "This edit's processed audio no longer matches its approved source files."
+            )
+
+
 def _verify_contract_pin(
     job: Any,
     request: DeviceRenderRequest,
@@ -358,6 +494,11 @@ def _verify_contract_pin(
     """Validate a new v2 request against its immutable creator requirements."""
     assembly = job.assembly_plan or {}
     _require_marked_root_authority(job)
+    # Asset authorization is independent of creator-contract rollout. A legacy
+    # job must not be able to pin a client-forged processed-audio identity and
+    # merely discover the refusal later while downloading it.
+    if isinstance(request.recipe, EditRecipeV2):
+        _verify_processed_audio_identity(job, request, base_generation)
     contract = _contract_for_variant(assembly, request.identity.variant_id)
     if contract is None:
         return None
@@ -387,6 +528,18 @@ def _verify_contract_pin(
 def verify_device_record_contract(job: Any, record: dict, status: DeviceRenderStatus) -> None:
     """Recheck the receipt authority before publishing a device export."""
     _require_marked_root_authority(job)
+    from app.kria.prepared_execution import variant_fence  # noqa: PLC0415
+
+    # KRI-722: a stamped Job publishes only the recipe pinned under its current
+    # prepared snapshot and attempt. A late completion of an older attempt (or a
+    # recipe pinned before the stamp) is refused; the last-good output is kept.
+    fence = variant_fence(job.assembly_plan, status.request.identity.variant_id)
+    if (fence is not None or record.get("prepared_execution") is not None) and record.get(
+        "prepared_execution"
+    ) != fence:
+        raise DeviceRecipeSuperseded(
+            "A newer approved attempt replaced this render; please use the latest version."
+        )
     contract = _contract_for_variant(job.assembly_plan or {}, status.request.identity.variant_id)
     expected = record.get("contract_digest")
     if expected is None:
@@ -485,6 +638,12 @@ def pin_device_request(
         )
     if narration_binding is not None:
         record["narration_binding"] = copy.deepcopy(narration_binding)
+    from app.kria.prepared_execution import variant_fence  # noqa: PLC0415
+
+    fence = variant_fence(job.assembly_plan, request.identity.variant_id)
+    if fence is not None:
+        # KRI-722: the attempt this recipe belongs to (absent on legacy Jobs).
+        record["prepared_execution"] = fence
     from app.config import settings  # noqa: PLC0415
 
     # Record-only envelope: strict recipe/status schemas stay readable by old workers.
@@ -564,6 +723,40 @@ def mark_device_failed(
     }
     save_device_record(job, variant_id, record)
     return status
+
+
+def mark_device_paused(job: Any, variant_id: str, now: datetime) -> DeviceRenderStatus:
+    """Record a user Stop as a resumable pause.
+
+    The phase stays where it was (``awaiting_device``/``syncing``) and the variant and
+    Job are untouched: nothing failed, the same phone will resume the same pinned
+    recipe. Only a live record can pause; published / needs_attention raise.
+    """
+    record = device_record(job, variant_id)
+    status = DeviceRenderStatus.model_validate(record["status"])
+    if status.phase not in _FAILABLE_PHASES:
+        raise ValueError(f"device render cannot pause from phase '{status.phase}'")
+    record[PAUSED_FIELD] = {
+        "paused_at": now.isoformat(),
+        "identity": status.request.identity.model_dump(mode="json"),
+    }
+    save_device_record(job, variant_id, record)
+    return status
+
+
+def device_paused(record: dict) -> bool:
+    """True while a user Stop holds a live (not yet delivered) record."""
+    phase = (record.get("status") or {}).get("phase")
+    return bool(record.get(PAUSED_FIELD)) and phase in _FAILABLE_PHASES
+
+
+def clear_device_pause(job: Any, variant_id: str) -> bool:
+    """Resume: drop the pause marker. Returns whether there was one."""
+    record = device_record(job, variant_id)
+    if record.pop(PAUSED_FIELD, None) is None:
+        return False
+    save_device_record(job, variant_id, record)
+    return True
 
 
 def touch_device_poll(job: Any, variant_id: str, now: datetime) -> None:

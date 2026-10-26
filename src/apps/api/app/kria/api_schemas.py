@@ -112,6 +112,46 @@ class SuggestionTapIn(_StrictBody):
     chip_id: str = Field(min_length=1, max_length=64)
 
 
+class ProtectedRegionIn(_StrictBody):
+    """KRI-827: the creator marks what to keep text off ("the plate"): a box on one frame of
+    one of their clips, normalized to the upright source frame. The server checks the clip
+    is this thread's and stamps its generation; old clients omit it."""
+
+    label: str = Field(min_length=1, max_length=60)
+    media_id: str = Field(min_length=1, max_length=160)
+    source_t_s: float = Field(ge=0.0, le=3600.0)
+    box: tuple[float, float, float, float]
+
+
+class MomentPointIn(_StrictBody):
+    """KRI-723: one row of a ``moment_order`` answer, in the creator's final order.
+
+    ``point``: the creator's window on the take, on the original's clock. ``skip``: "this
+    isn't in my clips". ``delegate``: "you pick". The server checks the clip is this thread's
+    and the window fits it; the storage generation is never the client's."""
+
+    moment_key: str = Field(min_length=1, max_length=64)
+    action: Literal["point", "skip", "delegate"]
+    media_id: str | None = Field(default=None, min_length=1, max_length=160)
+    source_start_s: float | None = Field(default=None, ge=0.0, le=3600.0)
+    source_end_s: float | None = Field(default=None, ge=0.0, le=3600.0)
+
+    @model_validator(mode="after")
+    def _point_has_a_window(self) -> MomentPointIn:
+        if self.action == "point" and (
+            self.media_id is None or self.source_start_s is None or self.source_end_s is None
+        ):
+            raise ValueError("a pointed moment needs media_id, source_start_s and source_end_s")
+        return self
+
+
+class MomentOrderAnswerIn(_StrictBody):
+    """KRI-723: the answer to a ``moment_order_question``; old clients omit it."""
+
+    question_id: str = Field(min_length=1, max_length=80)
+    answers: list[MomentPointIn] = Field(min_length=1, max_length=24)
+
+
 class SubmitTurnBody(_StrictBody):
     message: str = Field(min_length=1, max_length=4000)
     client_event_id: str = Field(min_length=1, max_length=160)
@@ -135,6 +175,10 @@ class SubmitTurnBody(_StrictBody):
     scope: list[str] | None = Field(default=None, max_length=32)
     # Deterministic edits (no model call); require `scope`, each covered by it.
     manual_edits: list[ManualEdit] | None = Field(default=None, max_length=12)
+    # KRI-827: the creator's mark of an object to keep text off; old clients omit it.
+    protected_region: ProtectedRegionIn | None = None
+    # KRI-723: where each named moment is, in the creator's order; old clients omit it.
+    moment_order: MomentOrderAnswerIn | None = None
 
     @model_validator(mode="after")
     def _manual_edits_well_formed(self) -> SubmitTurnBody:
@@ -170,6 +214,9 @@ class TurnAccepted(BaseModel):
     thread_revision: int
     status: TurnStatus
     replayed: bool = False
+    recoverable_held_turn_id: str | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class TurnCancelBody(_StrictBody):

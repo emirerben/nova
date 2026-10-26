@@ -20,6 +20,7 @@ from app.config import settings
 from app.kria.brief import CreativeBrief
 from app.kria.brief_binding import media_identity, snapshot_media
 from app.kria.brief_checks import (
+    _has_checker,
     _wants_source_sound_kept,
     build_receipts,
     plan_facts_from_editor_payload,
@@ -129,8 +130,15 @@ def assess_readiness(
     editor_payload: dict | None = None,
     editor_text_diff: list[dict] | None = None,
     creator_request: str | None = None,
+    protected_regions: list[Any] | None = None,
+    protected_marks: bool = False,
+    prepared_collection_story: dict | None = None,
 ) -> dict[str, Any]:
-    """Account for every live ID using existing policy, checkers and contract."""
+    """Account for every live ID using existing policy, checkers and contract.
+
+    KRI-901: ``protected_marks`` says this draft renders on the phone Talking writer for an
+    app that shows the mark card (`protected_targets.marks_route`); only then do
+    ``protected_regions`` (the marks this approval would pin) change a verdict."""
     requirements = brief.live() if brief is not None else []
     strategy = strategy or {}
     policy_problem = None
@@ -191,6 +199,20 @@ def assess_readiness(
             en="I need to establish the requested changes before offering approval.",
             tr="Onay sunmadan önce istenen değişiklikleri belirlemem gerekiyor.",
         )
+    story_requirement = None
+    story_evidence_digest = None
+    if prepared_collection_story is not None:
+        from app.services.media_collection_preparation import prepared_story_readiness
+
+        try:
+            story_requirement, story_evidence_digest = prepared_story_readiness(
+                prepared_collection_story, strategy=strategy, media=media
+            )
+        except ValueError:
+            policy_problem = say(
+                en="The selected idea's execution or sources changed. Review the idea again.",
+                tr="Seçilen fikrin düzeni veya kaynakları değişti. Fikri yeniden gözden geçir.",
+            )
     ids = [m.media_id for m in manifest.media] if manifest else []
     facts = (
         plan_facts_from_editor_payload(editor_payload, editor_text_diff)
@@ -246,10 +268,26 @@ def assess_readiness(
             receipt is not None and receipt.verification == "checked" and receipt.status == "met"
         )
         owner = "brief_checks"
+        is_story_requirement = "collection_story" in req.facts
+        if is_story_requirement:
+            proven = (
+                story_requirement is not None
+                and req.kind == story_requirement.kind
+                and req.scope == story_requirement.scope
+                and req.description == story_requirement.description
+                and req.literal == story_requirement.literal
+                and req.facts == story_requirement.facts
+            )
+            owner = "prepared_collection_story"
+            if not proven:
+                # A reviewed story cannot fall back to a checker for its title's
+                # incidental words when its bound execution evidence is absent.
+                receipt = None
         # Original camera audio is an explicit executable contract commitment;
         # it is not a claim that the final mix has already been listened to.
         if (
-            contract is not None
+            not is_story_requirement
+            and contract is not None
             and _wants_source_sound_kept(req)
             and contract.original_audio == "require"
             and strategy.get("audio_strategy") == "original_audio"
@@ -279,7 +317,23 @@ def assess_readiness(
                 tr="Bu değişikliği nasıl oluşturacağımı henüz belirleyemedim.",
             )
         )
-        if proven and owner != "brief_checks":
+        if proven and owner == "prepared_collection_story":
+            reason = say(
+                en=(
+                    "The reviewed story's source windows, wording and sound "
+                    "match its frozen execution."
+                ),
+                tr=(
+                    "Gözden geçirilen hikâyenin kaynak aralıkları, metni ve sesi "
+                    "sabitlenen düzenle eşleşiyor."
+                ),
+            )
+        elif owner == "prepared_collection_story":
+            reason = policy_problem or say(
+                en="I need the selected idea's unchanged execution evidence before approval.",
+                tr="Onaydan önce seçilen fikrin değişmemiş düzen kanıtına ihtiyacım var.",
+            )
+        elif proven and owner != "brief_checks":
             reason = say(
                 en="Original camera audio is required by the render contract.",
                 tr="Oluşturma sözleşmesi kameranın özgün sesini zorunlu tutuyor.",
@@ -291,6 +345,14 @@ def assess_readiness(
                 "reason": reason,
                 "evidence_owner": owner,
             }
+        )
+    if protected_marks and not policy_problem:
+        rows = _with_protected_marks(
+            rows,
+            requirements,
+            brief,
+            marks=protected_regions or [],
+            media=media,
         )
     report = {
         "schema_version": 1,
@@ -306,7 +368,7 @@ def assess_readiness(
             }
         ),
         "media_digest": digest(media_identity(media)),
-        "prepared_evidence_digest": digest(envelope),
+        "prepared_evidence_digest": story_evidence_digest or digest(envelope),
         "capabilities_digest": digest(
             {
                 "capabilities": manifest.capabilities if manifest else None,
@@ -317,10 +379,85 @@ def assess_readiness(
         ),
         "requirements": rows,
         "policy_problem": policy_problem,
+        # KRI-901: an input, not a verdict (the dispositions above carry it into the
+        # digest). Saved so approval re-checks with the client the draft was made for.
+        "protected_marks": bool(protected_marks),
     }
     # Pydantic values in capability records are serialized without model text.
     report["digest"] = digest(_identity(report))
     return report
+
+
+def _with_protected_marks(
+    rows: list[dict[str, Any]],
+    requirements: list[Any],
+    brief: CreativeBrief | None,
+    *,
+    marks: list[Any],
+    media: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """KRI-901: "no text on her face or on the plate" before approval, on the mark route.
+
+    Called only when the draft renders on the phone Talking writer for an app that shows the
+    mark card. No pre-render checker can prove where text lands, so the ask is a commitment
+    that writer measures (`phone_protected_text`; its receipt must still read ``clear``). An
+    object with no current mark asks for it; once marked, a requirement whose only open ask
+    is keeping text off becomes executable. Faces need no mark, and a requirement's other
+    asks (a title, a literal) keep their own checker's verdict."""
+    from app.kria.protected_targets import (  # noqa: PLC0415
+        KEEP_TEXT_OFF_KEY,
+        _fact_entries,
+        clip_generations,
+        mark_request_text,
+        speaker_candidates,
+        unmarked_object_targets,
+    )
+
+    by_id = {req.id: req for req in requirements}
+    clip_assignments = media.get("clip_assignments") or []
+    # A mark promises protection only on a clip the writer may put the text on.
+    unmarked = unmarked_object_targets(
+        brief,
+        marks,
+        clip_generations(clip_assignments),
+        render_clips=speaker_candidates(clip_assignments),
+    )
+    out = []
+    for row in rows:
+        req = by_id.get(row["requirement_id"])
+        if (
+            req is None
+            or not _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY))
+            or row["disposition"] == "unsupported"
+        ):
+            out.append(row)
+            continue
+        missing = [t for t in unmarked if req.id in t.requirement_ids]
+        if missing:
+            row = {
+                **row,
+                "disposition": "needs_choice",
+                "reason": mark_request_text(missing[0].label),
+            }
+        elif row["disposition"] == "evidence_missing" and not _has_checker(
+            req.model_copy(
+                update={"facts": {k: v for k, v in req.facts.items() if k != KEEP_TEXT_OFF_KEY}}
+            )
+        ):
+            row = {
+                **row,
+                "disposition": "executable",
+                "evidence_owner": "protected_text_render",
+                "reason": say(
+                    en="The phone render keeps the text off what you named and checks it.",
+                    tr=(
+                        "Telefon oluşturması yazıyı belirttiğin yerlerden uzak tutup "
+                        "kontrol ediyor."
+                    ),
+                ),
+            }
+        out.append(row)
+    return out
 
 
 def _identity(report: dict[str, Any]) -> dict[str, Any]:
@@ -385,14 +522,48 @@ class ApprovalReadinessError(ValueError):
     pass
 
 
+def saved_protected_marks(
+    document,  # noqa: ANN001
+    *,
+    creator_id: object,
+    item,  # noqa: ANN001
+    saved: object = None,
+) -> bool:
+    """KRI-901: the mark route a saved draft was assessed on, re-checked against today's
+    route (a draft made for the mark card whose account left the phone cohort no longer
+    gets the promise, so its readiness changes and it is prepared again)."""
+    from app.kria.protected_targets import marks_route  # noqa: PLC0415
+
+    if saved is None:
+        saved = (document.brief_coverage or {}).get(READINESS_KEY)
+    return marks_route(
+        client_marks=isinstance(saved, dict) and saved.get("protected_marks") is True,
+        creator_id=creator_id,
+        strategy=document.strategy,
+        edit_format=getattr(item, "edit_format", None) or document.edit_format,
+        clip_paths=getattr(item, "clip_gcs_paths", None) or (),
+        voiceover_path=getattr(item, "voiceover_gcs_path", None),
+    )
+
+
 def requires_readiness(document, creator_id):  # noqa: ANN001, ANN201
     return (document.brief_coverage or {}).get(READINESS_KEY) is not None or (
         settings.approval_readiness_for(creator_id) and document.brief_binding is not None
     )
 
 
-async def assess_saved_document(db, item, document, *, require_same_assessment=True):  # noqa: ANN001, ANN201
-    """Retry/Undo use the same gate without rebuilding the approved content."""
+async def assess_saved_document(  # noqa: ANN201
+    db,  # noqa: ANN001
+    item,  # noqa: ANN001
+    document,  # noqa: ANN001
+    *,
+    creator_id: object = None,
+    require_same_assessment: bool = True,
+):
+    """Retry/Undo use the same gate without rebuilding the approved content.
+
+    ``creator_id`` re-checks the KRI-901 mark route; without it a draft saved on that route
+    reads as off it (its readiness no longer matches), never the other way round."""
     if document.brief_binding is None:
         raise ApprovalReadinessError(
             say(
@@ -410,6 +581,9 @@ async def assess_saved_document(db, item, document, *, require_same_assessment=T
         editor_payload=document.editor_payload,
         editor_text_diff=document.editor_text_diff,
         creator_request=document.brief_binding.creator_request,
+        protected_regions=list(document.brief_binding.protected_regions or []),
+        protected_marks=saved_protected_marks(document, creator_id=creator_id, item=item),
+        prepared_collection_story=document.prepared_collection_story,
     )
     if digest(media_identity(snapshot_media(item))) != report["media_digest"]:
         raise ApprovalReadinessError(

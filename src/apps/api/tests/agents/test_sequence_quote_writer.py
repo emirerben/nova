@@ -108,7 +108,7 @@ def test_render_prompt_includes_real_data():
     rendered = _agent().render_prompt(_input())
     assert "person training alone in a dim gym at night" in rendered
     assert "let's get this last set in" in rendered
-    assert "gritty, no-excuses" in rendered
+    assert "gritty, no-excuses" not in rendered
     assert "10.4" in rendered  # video duration
     assert "about 8 sentences" in rendered  # duration-derived target
 
@@ -121,9 +121,9 @@ def test_render_prompt_includes_persona_context():
             idea="late-night solo session montage",
         )
     )
-    assert "discipline over motivation" in rendered
-    assert "the work nobody sees" in rendered
-    assert "late-night solo session montage" in rendered
+    assert "discipline over motivation" not in rendered
+    assert "the work nobody sees" not in rendered
+    assert "late-night solo session montage" not in rendered
 
 
 def test_render_prompt_language_instruction_turkish():

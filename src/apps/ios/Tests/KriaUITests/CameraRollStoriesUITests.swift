@@ -1,6 +1,22 @@
 import XCTest
 
 final class CameraRollStoriesUITests: XCTestCase {
+    @MainActor func testWholeSourceContextRemainsLabelledAsUnlocalized() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-camera-roll-story-review", "-camera-roll-whole-source-context"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        app.buttons["See clips and details"].tap()
+        let scope = app.staticTexts["Whole clip · no timed highlight detected"]
+        for _ in 0..<4 where !scope.isHittable { app.swipeUp() }
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "0.0–8.2s")).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["Rendering"].exists)
+        let evidence = XCTAttachment(screenshot: app.screenshot())
+        evidence.name = "Whole-source scope reaches actual native review with verified bounds"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+    }
     @MainActor func testThreeIdeasRemainIndependentWhenOneIsRejected() {
         let app = XCUIApplication()
         app.launchArguments = ["-camera-roll-story-review", "-camera-roll-multiple-ideas"]
@@ -31,6 +47,7 @@ final class CameraRollStoriesUITests: XCTestCase {
         app.launchArguments = ["-camera-roll-story-review"]
         app.launch()
         XCTAssertTrue(app.staticTexts["Boat journey"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Whole clip · no timed highlight detected"].exists)
         app.buttons["See clips and details"].tap()
         for _ in 0..<3 where !app.buttons["story-replace-0"].isHittable { app.swipeUp() }
         app.buttons["story-replace-0"].tap()

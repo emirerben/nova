@@ -1,0 +1,216 @@
+{
+  "purpose": "Blind skill-v1 vs refined-v2 copy review. Input-only, no model answers.",
+  "reviewed_regressions": [
+    {
+      "id": "persona_fitness_5am",
+      "fixture": "golden/persona_fitness_5am"
+    },
+    {
+      "id": "tr_grwm_confessional",
+      "fixture": "golden/tr_grwm_confessional"
+    },
+    {
+      "id": "persona_travel_budget",
+      "fixture": "golden/persona_travel_budget"
+    },
+    {
+      "id": "tr_persona_conflict",
+      "fixture": "adversarial/tr_persona_conflict"
+    },
+    {
+      "id": "persona_conflict_monkey_marketing",
+      "fixture": "adversarial/persona_conflict_monkey_marketing"
+    },
+    {
+      "id": "persona_conflict_fitness_cooking",
+      "fixture": "adversarial/persona_conflict_fitness_cooking"
+    }
+  ],
+  "new_transfer_cases": [
+    {
+      "id": "dog_napkin_finance",
+      "provenance": "hand_authored_synthetic_20261025",
+      "input": {
+        "hero_clip": {
+          "clip_id": "synthetic_001",
+          "media_type": "video",
+          "duration_s": 6.0,
+          "subject": "a dog pulling a paper napkin off an outdoor cafe table",
+          "description": "close shot of the dog taking the napkin and backing away; owner laughs; no money or products shown",
+          "hook_score": 6.0,
+          "energy": 4.0
+        },
+        "hero_transcript": "hey, that's my napkin. too late.",
+        "tone": "clear, measured, dry humour; a personal-finance educator",
+        "content_pillars": [
+          "saving habits",
+          "investing basics",
+          "personal finance"
+        ],
+        "theme": "small leaks that drain your budget",
+        "idea": "explain the everyday expenses people overlook",
+        "language": "en",
+        "form": {
+          "effect": "static",
+          "size_class": "large",
+          "position": "center"
+        },
+        "exemplars": []
+      }
+    },
+    {
+      "id": "kite_productivity",
+      "provenance": "hand_authored_synthetic_20261025",
+      "input": {
+        "hero_clip": {
+          "clip_id": "synthetic_001",
+          "media_type": "video",
+          "duration_s": 6.0,
+          "subject": "a person trying to fly a kite that drops onto the grass",
+          "description": "wide park shot; a brief gust lifts the kite, then it lands; the person laughs and walks over to pick it up",
+          "hook_score": 6.0,
+          "energy": 4.0
+        },
+        "hero_transcript": "one more try... nope, straight into the grass.",
+        "tone": "friendly, practical productivity coach",
+        "content_pillars": [
+          "focus routines",
+          "efficient workflows",
+          "time management"
+        ],
+        "theme": "one small change that improves your focus",
+        "idea": "share a practical focus technique",
+        "language": "en",
+        "form": {
+          "effect": "static",
+          "size_class": "large",
+          "position": "center"
+        },
+        "exemplars": []
+      }
+    },
+    {
+      "id": "bicycle_travel",
+      "provenance": "hand_authored_synthetic_20261025",
+      "input": {
+        "hero_clip": {
+          "clip_id": "synthetic_001",
+          "media_type": "video",
+          "duration_s": 6.0,
+          "subject": "a person patching a bicycle inner tube in a garage",
+          "description": "hands find a puncture, apply a patch and reconnect a pump; no destination, scenery or journey shown",
+          "hook_score": 6.0,
+          "energy": 4.0
+        },
+        "hero_transcript": "found the puncture. patch it here, then pump it back up.",
+        "tone": "warm, matter-of-fact budget-travel creator",
+        "content_pillars": [
+          "budget travel",
+          "hidden places",
+          "weekend itineraries"
+        ],
+        "theme": "hidden stops on a long weekend",
+        "idea": "show a low-cost weekend discovery",
+        "language": "en",
+        "form": {
+          "effect": "static",
+          "size_class": "large",
+          "position": "center"
+        },
+        "exemplars": []
+      }
+    },
+    {
+      "id": "quiet_balcony",
+      "provenance": "hand_authored_synthetic_20261025",
+      "input": {
+        "hero_clip": {
+          "clip_id": "synthetic_001",
+          "media_type": "video",
+          "duration_s": 6.0,
+          "subject": "yağmurda boş bir balkon masası ve bir bardak su",
+          "description": "sabit çekim; masa üstünde yağmur damlaları, arkada saksılar; kimse görünmüyor, konuşma yok",
+          "hook_score": 6.0,
+          "energy": 4.0
+        },
+        "hero_transcript": "",
+        "tone": "samimi, sakin günlük notlar",
+        "content_pillars": [
+          "evde gündelik anlar",
+          "sade yaşam"
+        ],
+        "theme": "yağmurlu bir akşam",
+        "idea": "balkondaki yağmuru kısa bir videoda paylaş",
+        "language": "tr",
+        "form": {
+          "effect": "static",
+          "size_class": "large",
+          "position": "center"
+        },
+        "exemplars": []
+      }
+    },
+    {
+      "id": "ceramics_disclosure",
+      "provenance": "hand_authored_synthetic_20261025",
+      "input": {
+        "hero_clip": {
+          "clip_id": "synthetic_001",
+          "media_type": "video",
+          "duration_s": 6.0,
+          "subject": "bir kişi yaptığı mavi seramik kupayı kameraya gösteriyor",
+          "description": "kupada düzensiz bir kulp ve mavi sır var; kişi kameraya konuşuyor; başka bir sonuç gösterilmiyor",
+          "hook_score": 6.0,
+          "energy": 4.0
+        },
+        "hero_transcript": "bunu ilk kez anlatıyorum: geçen hafta ilk seramik dersime gittim. bu da yaptığım kupa.",
+        "tone": "samimi, sade, hafif mizahlı",
+        "content_pillars": [
+          "gündelik yaratıcılık",
+          "yeni hobiler"
+        ],
+        "theme": "ilk seramik dersi",
+        "idea": "kendi yaptığı ilk kupayı paylaş",
+        "language": "tr",
+        "form": {
+          "effect": "static",
+          "size_class": "large",
+          "position": "center"
+        },
+        "exemplars": []
+      }
+    },
+    {
+      "id": "chair_beauty",
+      "provenance": "hand_authored_synthetic_20261025",
+      "input": {
+        "hero_clip": {
+          "clip_id": "synthetic_001",
+          "media_type": "video",
+          "duration_s": 6.0,
+          "subject": "bir kişi balkonda ahşap bir sandalyeyi sarıya boyuyor",
+          "description": "yakın planda fırça ve sandalyenin sırtı; ikinci kat sarı boya sürülüyor; güzellik ürünü veya bakım rutini yok",
+          "hook_score": 6.0,
+          "energy": 4.0
+        },
+        "hero_transcript": "ikinci katı sürüyorum, biraz daha sarı olsun.",
+        "tone": "samimi, enerjik güzellik içerik üreticisi; yakın arkadaşıyla konuşur gibi",
+        "content_pillars": [
+          "cilt bakım rutinleri",
+          "uygun fiyatlı makyaj",
+          "saç bakımı"
+        ],
+        "theme": "beş dakikada toparlanma rutini",
+        "idea": "güne hızlı hazırlanma rutinini paylaş",
+        "language": "tr",
+        "form": {
+          "effect": "static",
+          "size_class": "large",
+          "position": "center"
+        },
+        "exemplars": []
+      }
+    }
+  ],
+  "source_policy": "Hand-authored generic synthetic descriptions only; no private recordings, customer data, media URLs or account identifiers."
+}

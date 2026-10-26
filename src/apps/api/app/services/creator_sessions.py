@@ -24,6 +24,7 @@ from app.agents._schemas.creator_agent import (
     canonical_context_hash,
     creator_strategies_equal,
 )
+from app.agents._writing_context import writing_voice
 from app.config import settings
 from app.kria.creator_cues import SFX_NOUN_PATTERN_TR
 from app.kria.media_sources import is_analysis_proxy_path
@@ -58,6 +59,7 @@ from app.services.phone_destination import (
     item_visuals_only_on_device,
 )
 from app.services.phone_sources import bind_phone_sources
+from app.services.pool_analysis_deadline import is_expired as is_pool_analysis_expired
 from app.services.sfx_catalog import planner_catalog
 from app.services.tiktok_style_observations import effective_persona_style
 
@@ -202,6 +204,10 @@ def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) 
         segment_chars=CHAT_EVIDENCE_SEGMENT_CHARS,
     )
     view.pop("brands", None)
+    # KRI-845: the clip resolver reads props / actions / visual_quality; the chat agent's input
+    # stays as it was (it must not start dropping "blurry" clips nobody asked it to).
+    for key in ("props", "actions", "visual_quality"):
+        view.pop(key, None)
     for key, limit in CHAT_EVIDENCE_FIELD_CHARS.items():
         if key in view:
             view[key] = view[key][:limit]
@@ -306,22 +312,20 @@ def _partial_variant_render_in_flight(job: Job) -> bool:
 
 def creator_context(persona: Persona, item: PlanItem) -> tuple[str, str]:
     data = persona.persona or {}
+    style = (
+        effective_persona_style(persona.style, profile=getattr(persona, "tiktok_profile", None))
+        or {}
+    )
     creator = {
-        "summary": _clean(data.get("summary"), 1200),
-        "tone": _clean(data.get("tone"), 300),
-        "audience": _clean(data.get("audience"), 500),
-        "content_pillars": [
-            _clean(value, 160) for value in (data.get("content_pillars") or [])[:8]
-        ],
-        "style": effective_persona_style(
-            persona.style,
-            profile=getattr(persona, "tiktok_profile", None),
-        )
-        or {},
+        "tone": writing_voice(str(data.get("tone") or "")),
+        # Appearance choices are useful; their generated rationale is not a topic.
+        "style": {
+            key: style[key]
+            for key in ("style_set_id", "knobs", "instruction_level")
+            if key in style
+        },
     }
     item_data = {
-        "idea": _clean(item.idea, 1200),
-        "theme": _clean(item.theme, 300),
         "creator_notes": _clean(item.notes, 1200),
         "filming_guide": item.filming_guide or [],
         "current_edit_format": item.edit_format,
@@ -474,6 +478,11 @@ async def resolve_item_creator_context(
     for asset in assets:
         if len(media_refs) >= MAX_CREATOR_MEDIA_REFS:
             break
+        if is_pool_analysis_expired(asset):
+            # KRI-820: past its declared analysis bound the asset is a failed,
+            # retryable upload (the reaper persists that within one sweep);
+            # plan with it exactly as with any other failed upload: not at all.
+            continue
         media_id = f"asset-{asset.id}"
         if media_id in seen:
             continue

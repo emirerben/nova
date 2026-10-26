@@ -30,15 +30,27 @@ import math
 import re
 import unicodedata
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.kria.asset_holds import hold_seconds
 from app.kria.brief_route import fold_text, loose_text
-from app.kria.freeze_ask import times_one_moment
+from app.kria.freeze_ask import (
+    CONFLICT_FREEZE_FRAME,
+    FREEZE_BASIS_FRAME,
+    FREEZE_BASIS_MOMENT,
+    OPT_NO_FREEZE,
+    FreezeMoment,
+    freeze_option_key,
+    live_freezes,
+    match_moments,
+    parse_freeze_option,
+    times_one_moment,
+)
 from app.kria.reply_language import current_reply_language, say
 from app.services.clip_facts import (
     CAPTURE_ORDER_KEYS,
@@ -46,6 +58,9 @@ from app.services.clip_facts import (
     order_by_capture_time,
 )
 from app.services.clip_order_sequence import ANCHOR_FACTS
+
+if TYPE_CHECKING:
+    from app.services.length_policy import DurationBound
 
 CHOICE_QUESTION_VERSION = 1
 MAX_CHOICE_OPTIONS = 6
@@ -687,18 +702,37 @@ CONFLICT_VOICE_VS_DURATION = "voice_vs_duration"
 CONFLICT_WHICH_VOICE = "which_voice"
 CONFLICT_LENGTH_VS_NATURAL = "length_vs_natural"
 CONFLICT_SOURCE_COVERAGE = "source_coverage"
+# KRI-825: the photos the creator gave a length cannot all play inside their total.
+CONFLICT_HOLDS_VS_LENGTH = "holds_vs_length"
+# KRI-724: which of the times a word / line is said in a one-take Talking video the creator
+# means ("the first time SHE says Merope"; "cut 'thank you Karo'" said twice). Same value as
+# `opening_cut_ask.SPEECH_OCCURRENCE_KIND`, which the worker reads the answer by.
+CONFLICT_SPEECH_OCCURRENCE = "speech_occurrence"
+# KRI-844 (a quoted start / end line the one phone Talking take does not hold).
+CONFLICT_TAKE_LINE_START = "take_line_start"
+CONFLICT_TAKE_LINE_END = "take_line_end"
+TAKE_LINE_KINDS = frozenset({CONFLICT_TAKE_LINE_START, CONFLICT_TAKE_LINE_END})
+# KRI-849: "if you can't tell what he says, ask me instead of guessing" (see ``_unclear_word``).
+CONFLICT_UNCLEAR_WORD = "unclear_word"
 OPT_UPDATE_FOOTAGE = "update_footage"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
-# is asked per turn, in this order.
+# is asked per turn, in this order. The take lines come before any length question: the part
+# of the take they keep is what a length is judged against.
 CONFLICT_PRIORITY = (
     CONFLICT_ORDER_BASIS,
     CONFLICT_WHICH_VOICE,
     CONFLICT_TEXT_PLACEMENT,
     CONFLICT_TITLE_TEXT,
+    CONFLICT_TAKE_LINE_START,
+    CONFLICT_TAKE_LINE_END,
+    CONFLICT_SPEECH_OCCURRENCE,
+    CONFLICT_FREEZE_FRAME,
     CONFLICT_SOURCE_COVERAGE,
+    CONFLICT_HOLDS_VS_LENGTH,
     CONFLICT_DURATION_VS_COUNT,
     CONFLICT_VOICE_VS_DURATION,
     CONFLICT_LENGTH_VS_NATURAL,
+    CONFLICT_UNCLEAR_WORD,
 )
 
 OPT_EXTEND = "extend"
@@ -711,6 +745,10 @@ OPT_MATCH_VOICE = "match_voice"
 OPT_SILENT_TAIL = "silent_tail"
 OPT_ACCEPT_NATURAL = "accept_natural"
 OPT_TRIM_TO_REQUESTED = "trim_to_requested"
+OPT_KEEP_LENGTH = "keep_length"
+OPT_NO_TAKE_LINE = "no_line"
+OPT_LEAVE_OUT = "leave_out"
+OPT_USE_PREFIX = "use_"
 
 # What an "order I filmed them" requirement means to the contract (brief order keys).
 ATTACHMENT_ORDER_KEY = "attachment"
@@ -739,6 +777,12 @@ class ChoiceCapability:
     # KRI-479: the continuous-voice route can actually render for new jobs
     # (`Settings.voice_behind_footage_enabled`). False => no voice question is ever asked.
     voice_route: bool = False
+    # KRI-724: ask which spoken occurrence a one-take Talking ask means
+    # (`Settings.speech_occurrence_question_enabled`). False => never asked.
+    speech_occurrence: bool = False
+    # KRI-898: the app build that sent the message (stamped at submit). A freeze is only
+    # asked about for a build that can play the hold; ``None`` = unknown, never asked.
+    client_protocol: int | None = None
 
 
 @dataclass(frozen=True)
@@ -753,8 +797,21 @@ class UnresolvedChoice:
     reason: str
     options: tuple[ConflictOption, ...]
     input_digest: str
-    # option key -> {"strategy": {...}} rewrites applied when that option is chosen.
+    # option key -> {"strategy": {...}} rewrites applied when that option is chosen. A
+    # {"value": text} entry (KRI-844) is the text the option picks, stored on the answer.
     effects: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    # KRI-844: a question that depends on an earlier ANSWER of the same pass (the end line is
+    # looked for after the start line the creator just picked). ``resolve_choices`` calls it
+    # with the answers recorded so far, before checking this question's own answer; ``None``
+    # drops the question. The collector alone never has the answers, so its own copy (the
+    # approval backstop reads the picks off the answered brief) is built without it.
+    refine: Callable[[Sequence[Mapping[str, Any]]], UnresolvedChoice | None] | None = field(
+        default=None, compare=False, repr=False
+    )
+    # option key -> what the recorded answer carries beyond the option itself (KRI-849: the
+    # span an unclear-word answer is for, and the creator's chosen words). Server-owned: it
+    # is written from the option the creator tapped, never from model output.
+    answer_detail: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def candidate(self) -> ConflictCandidate:
         return ConflictCandidate(
@@ -806,6 +863,20 @@ def _rows(snapshot: Mapping[str, Any] | None) -> list[Any]:
     return list((snapshot or {}).get("clip_assignments") or [])
 
 
+def _length_asks(brief: Any) -> list[tuple[Any, float]]:
+    """The creator's own length asks: LIVE brief timing requirements with a number."""
+
+    asks = []
+    for req in _live(brief):
+        # KRI-777: a freeze's or a moment's seconds are not a length the creator asked for.
+        if req.kind != "timing" or times_one_moment(req):
+            continue
+        value = _number((req.facts or {}).get("duration_s"))
+        if value is not None:
+            asks.append((req, value))
+    return asks
+
+
 def _requested_durations(brief: Any) -> tuple[list[float], list[str], str]:
     """The creator's own lengths: LIVE brief timing requirements only.
 
@@ -814,19 +885,28 @@ def _requested_durations(brief: Any) -> tuple[list[float], list[str], str]:
     marks it ``target_duration_requested`` either way.
     """
 
-    durations: list[float] = []
-    requirement_ids: list[str] = []
+    asks = _length_asks(brief)
     quoted = ""
-    for req in _live(brief):
-        # KRI-777: a freeze's or a moment's seconds are not a length the creator asked for.
-        if req.kind != "timing" or times_one_moment(req):
-            continue
-        value = _number((req.facts or {}).get("duration_s"))
-        if value is not None:
-            durations.append(value)
-            requirement_ids.append(str(req.id))
-            quoted = quoted or " ".join(str(req.description or "").split())[:80]
-    return durations, requirement_ids, quoted
+    for req, _ in asks:
+        quoted = quoted or " ".join(str(req.description or "").split())[:80]
+    return [value for _, value in asks], [str(req.id) for req, _ in asks], quoted
+
+
+def _requested_bound(brief: Any) -> DurationBound:
+    """How `_requested_durations` are judged (KRI-847): a ceiling ("at most 10 seconds") only
+    when every one of them is."""
+
+    from app.services.length_policy import duration_bound  # noqa: PLC0415
+
+    asks = _length_asks(brief)
+    ceiling = bool(asks) and all(duration_bound(req.facts) == "at_most" for req, _ in asks)
+    return "at_most" if ceiling else "exact"
+
+
+def _facts_with_length(facts: Mapping[str, Any], seconds: Any) -> dict[str, Any]:
+    """``facts`` with the length the creator just chose by answering. It is a concrete number,
+    so a ceiling ("at most 10 seconds") on the old one ends (KRI-847)."""
+    return {**{k: v for k, v in facts.items() if k != "duration_bound"}, "duration_s": seconds}
 
 
 def _evenly_spaced(ids: Sequence[str], count: int) -> list[str]:
@@ -918,6 +998,7 @@ def _duration_vs_count(
     if _montage_exempt(strategy, cap):
         return None
     durations, requirement_ids, quoted = _requested_durations(brief)
+    bound = _requested_bound(brief)
     if not durations:
         # Only a length the CREATOR stated is a promise. The model's own pick (and the 24 s
         # default) never asks, however many clips there are.
@@ -949,6 +1030,7 @@ def _duration_vs_count(
     count = len(clip_ids)
     if count * floor_frames <= round(seconds * 1.10 * _MAX_FIT_FRAMES_FPS):
         return None
+    ceiling = bound == "at_most"
     needed = math.ceil(count * floor_frames / _MAX_FIT_FRAMES_FPS * 10 - 1e-9) / 10
     can_extend = needed <= cap.max_duration_s
     fit = max(1, int(seconds * _MAX_FIT_FRAMES_FPS) // floor_frames)
@@ -969,7 +1051,8 @@ def _duration_vs_count(
                 f"{count} klibinden {len(subset)} tanesini kullanır, çekimlerine eşit "
                 "aralıklarla dağıtır; diğerleri dışarıda kalır.",
             ),
-            recommended=not can_extend,
+            # Extending breaks a ceiling, so "fewer clips" is the way to keep it.
+            recommended=ceiling or not can_extend,
             aliases=("fewer", "fewer clips", "use fewer", "use fewer clips", "keep it short"),
             tr_aliases=_FEWER_TR_ALIASES,
         )
@@ -997,7 +1080,7 @@ def _duration_vs_count(
                     f"Her klip en az {floor_s:g} saniye görünür, böylece {count} klibin "
                     "hepsi kalır.",
                 ),
-                recommended=True,
+                recommended=not ceiling,
                 aliases=("extend", "extend it", "longer", "make it longer", "extend the length"),
                 tr_aliases=_EXTEND_TR_ALIASES,
             ),
@@ -1031,6 +1114,124 @@ def _duration_vs_count(
         options=tuple(options),
         # The creator's inputs only: the model's own selection or length never reopens it.
         input_digest=_digest(CONFLICT_DURATION_VS_COUNT, sorted(ids), sorted(clip_ids), seconds),
+        effects=effects,
+    )
+
+
+def _photo_length_only(profile: Mapping[str, Any]) -> bool:
+    from app.schemas.edit_proposal import (  # noqa: PLC0415
+        MixedMediaTimingProfile,
+        sets_photo_length_only,
+    )
+
+    try:
+        return sets_photo_length_only(MixedMediaTimingProfile.model_validate(dict(profile)))
+    except ValueError:
+        return False
+
+
+def _holds_vs_length(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None,
+) -> UnresolvedChoice | None:
+    """KRI-825: the creator's photo lengths and their total cannot both play.
+
+    "Keep each photo 3 seconds" with three photos and "make it 8 seconds" leaves no room
+    for the footage. The planner records it (``still_hold_conflict``, read off the same
+    budget the approved length plan uses); this asks once, with one recommended feasible
+    option (a total that fits every held photo) and the other feasible one (keep the
+    total; the photos go back to the edit's own pacing). Never a silent clamp.
+    """
+
+    conflict = (snapshot or {}).get("still_hold_conflict")
+    if not isinstance(conflict, Mapping):
+        return None
+    requested = _number(conflict.get("requested_s"))
+    needed = _number(conflict.get("needed_s"))
+    held = _number(conflict.get("held_s"))
+    if requested is None or needed is None or held is None or needed <= requested:
+        return None
+    _durations, total_ids, quoted = _requested_durations(brief)
+    hold_ids = [str(i) for i in conflict.get("requirement_ids") or []]
+    can_extend = needed <= cap.max_duration_s
+    asked = _clean_seconds(requested)
+    shown = _clean_seconds(needed)
+    said = quoted or say(en=f"{asked} seconds", tr=f"{asked} saniye")
+    keep_strategy: dict[str, Any] = {}
+    group = _number(conflict.get("group_hold_s"))
+    profile = strategy.get("mixed_media_timing")
+    if group is not None and isinstance(profile, Mapping):
+        # The photos' group length lives on the timing profile. A photos-only profile
+        # ("every photo 3 seconds") is dropped whole: stripping just the number would leave
+        # a binding quick-photo cadence the creator never asked for. A quick-photo/long-
+        # video contract keeps its cadence and loses only the number (the AI picks again).
+        keep_strategy["mixed_media_timing"] = (
+            None
+            if _photo_length_only(profile)
+            else {key: value for key, value in profile.items() if key != "image_hold_s"}
+        )
+    options = [
+        _option(
+            OPT_KEEP_LENGTH,
+            label=(
+                f"Keep {asked} seconds, photos at the usual pace",
+                f"{asked} saniyeyi koru, fotoğraflar normal hızda",
+            ),
+            description=(
+                "The photos you timed play at the edit's own pace so everything fits.",
+                "Süre verdiğin fotoğraflar her şey sığsın diye düzenlemenin kendi hızında oynar.",
+            ),
+            recommended=not can_extend,
+            aliases=("keep the length", "keep it", f"keep {asked} seconds"),
+            tr_aliases=("süreyi koru", "süre kalsın", "süreyi değiştirme"),
+        )
+    ]
+    effects: dict[str, Mapping[str, Any]] = {OPT_KEEP_LENGTH: {"strategy": keep_strategy}}
+    if can_extend:
+        options.insert(
+            0,
+            _option(
+                OPT_EXTEND,
+                label=(f"Make it {shown} seconds", f"Videoyu {shown} saniye yap"),
+                description=(
+                    "Every photo plays the length you gave it, with the footage around it.",
+                    "Her fotoğraf verdiğin süre kadar kalır, çekimler de etrafında oynar.",
+                ),
+                recommended=True,
+                aliases=("extend", "make it longer", "longer", f"{shown} seconds"),
+                tr_aliases=_EXTEND_TR_ALIASES,
+            ),
+        )
+        effects[OPT_EXTEND] = {
+            "strategy": {
+                "target_duration_s": shown,
+                "target_duration_requested": True,
+                "creator_duration_s": shown,
+            }
+        }
+    return UnresolvedChoice(
+        kind=CONFLICT_HOLDS_VS_LENGTH,
+        conflict_id=CONFLICT_HOLDS_VS_LENGTH,
+        field_path="target_duration_s",
+        requirement_ids=tuple(dict.fromkeys([*total_ids, *hold_ids])),
+        intro=say(
+            en=f'Your brief says "{said}" and the photos you timed take {_clean_seconds(held)} '
+            "seconds.",
+            tr=f'İsteğinde "{said}" yazıyor ve süre verdiğin fotoğraflar '
+            f"{_clean_seconds(held)} saniye tutuyor.",
+        ),
+        reason=say(
+            en=f"Those photos and your footage need about {shown} seconds, more than {asked}.",
+            tr=f"O fotoğraflar ve çekimlerin yaklaşık {shown} saniye istiyor, {asked} "
+            "saniyeden fazla.",
+        ),
+        options=tuple(options),
+        # The creator's inputs only: the requested total, the held seconds, who holds.
+        input_digest=_digest(CONFLICT_HOLDS_VS_LENGTH, requested, needed, held, sorted(hold_ids)),
         effects=effects,
     )
 
@@ -1520,6 +1721,466 @@ def title_text_choice(requirement_ids: Iterable[str]) -> UnresolvedChoice:
         ),
         input_digest=_digest(CONFLICT_TITLE_TEXT, ids),
     )
+
+
+# ── Which spoken occurrence (KRI-724) ─────────────────────────────────────────
+
+_TALKING_FORMATS = frozenset({"subtitled", "talking_head"})
+# At most this many occurrences are offered; the last slot(s) hold "every time" / the waiver.
+_MAX_OCCURRENCES_OFFERED = MAX_CHOICE_OPTIONS - 1
+
+
+def _clock(seconds: float) -> str:
+    whole = int(max(0.0, seconds) + 0.5)
+    return f"{whole // 60}:{whole % 60:02d}"
+
+
+def _occurrence_context(words: Sequence[Mapping[str, Any]], start_s: float, end_s: float) -> str:
+    """A few words around one occurrence, as said in the take ("…Merope, it's a Colombian…")."""
+    index = [i for i, w in enumerate(words) if w["start_s"] < end_s and w["end_s"] > start_s]
+    if not index:
+        return ""
+    first, last = max(0, index[0] - 3), min(len(words), index[-1] + 5)
+    text = " ".join(str(w["text"]) for w in words[first:last])
+    lead = "…" if first > 0 else ""
+    tail = "…" if last < len(words) else ""
+    return f"{lead}{text}{tail}"[:90]
+
+
+def _occurrence_label(words: Sequence[Mapping[str, Any]], start_s: float, end_s: float) -> str:
+    context = _occurrence_context(words, start_s, end_s)
+    # Curly quotes: the label is itself quoted ("Reply "..."") in the plain-text question.
+    return f"{_clock(start_s)} “{context}”" if context else _clock(start_s)
+
+
+def _speech_occurrence(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None = None,
+) -> list[UnresolvedChoice]:
+    """A spoken-word ask the take's words can't settle on their own, asked before approval.
+
+    One-take phone Talking only. The words carry no speaker, so a text "the first time SHE
+    says Merope" is asked about even when the word is said once; a named cut line said more
+    than once with no ordinal is asked about too (today it is not cut at all). Occurrences come
+    from the take's timed sentences through the worker's own matchers
+    (`phone_spoken_text.spoken_word_occurrences`, `phone_opening_cut.line_occurrences`),
+    inside the start / end cut the draft will make (`estimate_take_window`), so a moment that
+    gets cut is never offered. No option is recommended: "you choose" never picks a voice.
+    """
+    if not cap.speech_occurrence:
+        return []
+    if strategy.get("edit_format") not in _TALKING_FORMATS:
+        return []
+    if strategy.get("audio_strategy") == "voiceover":
+        return []  # a voiceover is the creator's own voice: the other slice (KRI-889)
+    from app.kria.opening_cut_ask import (  # noqa: PLC0415
+        OCCURRENCE_WAIVE,
+        estimate_take_window,
+        named_cut_asks,
+        occurrence_option_key,
+        take_speech,
+    )
+    from app.kria.spoken_text_ask import spoken_text_asks  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import line_occurrences  # noqa: PLC0415
+    from app.pipeline.phone_spoken_text import spoken_word_occurrences  # noqa: PLC0415
+    from app.services.spoken_quotes import fold_tokens  # noqa: PLC0415
+
+    take = take_speech(snapshot, strategy)
+    if take is None:
+        return []
+    live = _live(brief)
+    words = list(take.words)
+    window = estimate_take_window(live, snapshot, strategy=strategy)
+    low = (window.start_s if window and window.start_s is not None else 0.0) - 1e-6
+    high = (window.end_s if window and window.end_s is not None else take.duration_s) + 1e-6
+
+    def inside(spans: Iterable[tuple[float, float]]) -> list[tuple[float, float]]:
+        return sorted((a, b) for a, b in spans if a >= low and b <= high)
+
+    def options_for(
+        spans: list[tuple[float, float]], *, every: bool, waive: tuple[str, str]
+    ) -> tuple[tuple[ConflictOption, ...], str]:
+        limit = _MAX_OCCURRENCES_OFFERED - (1 if every else 0)
+        offered = spans[:limit]
+        built: list[ConflictOption] = []
+        for ordinal, (start, end) in enumerate(offered, start=1):
+            label = _occurrence_label(words, start, end)
+            built.append(
+                ConflictOption(
+                    key=occurrence_option_key(ordinal, len(spans), start),
+                    label=label,
+                    aliases=tuple(_ordinal_names(ordinal)),
+                )
+            )
+        if every and len(offered) == len(spans):
+            built.append(
+                _option(
+                    occurrence_option_key(None, len(spans)),
+                    label=("Every time", "Her seferinde"),
+                    aliases=("all of them", "every time", "both"),
+                    tr_aliases=("hepsi", "hepsini", "ikisi de"),
+                )
+            )
+        built.append(_option(OCCURRENCE_WAIVE, label=waive))
+        more = say(
+            en=f" I'm showing the first {len(offered)}.",
+            tr=f" İlk {len(offered)} tanesini gösteriyorum.",
+        )
+        return tuple(built), more if len(offered) < len(spans) else ""
+
+    found: list[UnresolvedChoice] = []
+    for ask in spoken_text_asks(live):
+        if not ask.speaker:
+            continue  # "the first time I / anyone say(s) it" is the first match (KRI-707)
+        spans = inside(
+            (start, end) for _t, start, end in spoken_word_occurrences(words, ask.triggers)
+        )
+        if not spans:
+            continue
+        trigger = ask.triggers[0]
+        options, more = options_for(
+            spans, every=False, waive=("Leave the text off", "Yazıyı koyma")
+        )
+        effects = {o.key: {"value": trigger} for o in options}
+        times = len(spans)
+        found.append(
+            UnresolvedChoice(
+                kind=CONFLICT_SPEECH_OCCURRENCE,
+                conflict_id=f"{CONFLICT_SPEECH_OCCURRENCE}:{ask.requirement_id}"[:80],
+                field_path="brief_requirements",
+                requirement_ids=(ask.requirement_id,),
+                intro=say(
+                    en=(
+                        f'You asked for "{ask.text}" when {ask.speaker} says "{trigger}". '
+                        f'"{trigger}" is said {times} time{"s" if times != 1 else ""} in the '
+                        "part of your take I'm keeping, and I can't tell who is speaking." + more
+                    ),
+                    tr=(
+                        f'"{trigger}" denildiğinde "{ask.text}" yazısını istedin. Koruduğum '
+                        f'kısımda "{trigger}" {times} kez geçiyor ve kimin konuştuğunu ayırt '
+                        "edemiyorum." + more
+                    ),
+                ),
+                reason=say(
+                    en="Which one should it appear on?",
+                    tr="Yazı hangisinde çıksın?",
+                ),
+                options=options,
+                input_digest=_digest(
+                    CONFLICT_SPEECH_OCCURRENCE,
+                    ask.requirement_id,
+                    take.media_id,
+                    _norm_text(ask.text),
+                    [_norm_text(t) for t in ask.triggers],
+                    _norm_text(ask.speaker or ""),  # a restated speaker reopens the question
+                    [round(a, 2) for a, _b in spans],
+                ),
+                effects=effects,
+            )
+        )
+    for cut in named_cut_asks(live):
+        if cut.occurrence is not None:
+            continue  # the creator named which one (KRI-821)
+        spans = inside(
+            (g.word_start_s, g.word_end_s)
+            for g in line_occurrences(words, cut.quote, duration_s=take.duration_s)
+        )
+        if len(spans) < 2:
+            continue
+        options, more = options_for(spans, every=True, waive=("Don't cut it", "Kesme"))
+        effects = {o.key: {"value": cut.quote} for o in options}
+        folded = "_".join(fold_tokens(cut.quote))
+        found.append(
+            UnresolvedChoice(
+                kind=CONFLICT_SPEECH_OCCURRENCE,
+                conflict_id=(f"{CONFLICT_SPEECH_OCCURRENCE}:{cut.requirement_ids[0]}:{folded}")[
+                    :80
+                ],
+                field_path="brief_requirements",
+                requirement_ids=tuple(cut.requirement_ids),
+                intro=say(
+                    en=(
+                        f'You asked me to cut "{cut.quote}". It is said {len(spans)} times in '
+                        "the part of your take I'm keeping." + more
+                    ),
+                    tr=(
+                        f'"{cut.quote}" kısmını kesmemi istedin. Koruduğum kısımda '
+                        f"{len(spans)} kez geçiyor." + more
+                    ),
+                ),
+                reason=say(en="Which one should I cut?", tr="Hangisini keseyim?"),
+                options=options,
+                input_digest=_digest(
+                    CONFLICT_SPEECH_OCCURRENCE,
+                    list(cut.requirement_ids),
+                    take.media_id,
+                    _norm_text(cut.quote),
+                    [round(a, 2) for a, _b in spans],
+                ),
+                effects=effects,
+            )
+        )
+    return found
+
+
+# ── Freeze frame (KRI-900) ────────────────────────────────────────────────────
+
+# Where in the matched moment each offered frame sits, as a share of its length.
+_FREEZE_FRAME_SHARES = (
+    (0.25, ("Early in it", "Başına yakın"), ("early", "earlier", "erken", "başına yakın")),
+    (0.5, ("Middle", "Ortası"), ("middle", "the middle", "mid", "orta", "ortası")),
+    (0.75, ("Late in it", "Sonuna yakın"), ("late", "later", "sonuna yakın")),
+)
+_FREEZE_FPS = 30
+# Same bounds the worker applies to a picked frame (`unified_montage._ground_freeze`).
+_FREEZE_MIN_MOTION_S = 0.3
+_FREEZE_END_MARGIN_S = 0.05
+_NO_FREEZE_ALIASES = (
+    "no freeze",
+    "no freeze please",
+    "skip the freeze",
+    "skip freeze",
+    "without a freeze",
+    "without the freeze",
+    "dont freeze",
+    "don t freeze",
+    "do not freeze",
+    "donma olmasın",
+    "dondurma yapma",
+    "dondurmadan",
+    "donmasın",
+)
+
+
+def _seconds_text(value: float) -> str:
+    return f"{value:.1f}"
+
+
+def _clip_name(row: Mapping[str, Any] | None, ordinal: int, count: int) -> tuple[str, str]:
+    """Where the moment is, as a phrase: "your clip" / "klibinde" for a one-clip edit, else
+    the clip's short file name or its number."""
+    if count <= 1:
+        return "your clip", "klibinde"
+    name = " ".join(str((row or {}).get("source_filename") or "").split())
+    if name and len(name) <= _NAME_MAX:
+        return f"“{name}”", f"“{name}” klibinde"
+    return f"clip {ordinal}", f"{ordinal}. klipte"
+
+
+def _holdable_frame(at_s: float, duration_s: float | None) -> float | None:
+    """``at_s`` on the 30 fps frame grid, or None when the worker could not hold it there."""
+    frame = round(round(at_s * _FREEZE_FPS) / _FREEZE_FPS, 3)
+    if frame < _FREEZE_MIN_MOTION_S:
+        return None
+    if duration_s is not None and frame >= duration_s - _FREEZE_END_MARGIN_S:
+        return None
+    return frame
+
+
+def _frame_choices(
+    moment: FreezeMoment, duration_s: float | None
+) -> list[tuple[float, float, tuple[str, str], tuple[str, ...]]]:
+    """Up to three concrete frames inside ``moment`` the worker can hold:
+    ``(frame, share, (en, tr) label, aliases)``."""
+    found: list[tuple[float, float, tuple[str, str], tuple[str, ...]]] = []
+    for share, label, aliases in _FREEZE_FRAME_SHARES:
+        at = moment.start_s + (moment.end_s - moment.start_s) * share
+        frame = _holdable_frame(at, duration_s)
+        if frame is not None and all(frame != row[0] for row in found):
+            found.append((frame, share, label, aliases))
+    return found
+
+
+def _freeze_frame(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    clip_paths: Sequence[Any] = (),
+    snapshot: Mapping[str, Any] | None = None,
+) -> list[UnresolvedChoice]:
+    """A freeze names a moment, but nothing knows the exact instant to hold (KRI-900).
+
+    A freeze naming a moment the creator already pointed at (KRI-723, the length plan's
+    ``creator_answer`` moments) is not asked: the render holds that window's last frame.
+
+    "Freeze the frame on Atakan's bite": the clip record knows the bite's moment (57.0 to
+    59.8 s, an interval) but not the instant of the bite, and the render must not guess one.
+    The phone montage settles freezes at render time (`requirements_to_check_at_draft`
+    defers them), so without this the creator only learned after approving. Asked here,
+    before approval, with concrete frames inside the moment (or, when several moments match
+    equally, the moments themselves) and "No freeze". The moments come from the same
+    matcher the worker uses (`freeze_ask.match_moments`) over the same clip record, so the
+    question and the render cannot disagree. One question per matched moment set; a later
+    correction of the hold length keeps its digest, so it is never asked again.
+    """
+
+    if cap.creator_id is None:
+        return []
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        defers_to_unified_montage,
+        freeze_plannable,
+    )
+    from app.kria.freeze_ask import planned_freeze_ids  # noqa: PLC0415
+
+    live = _live(brief)
+    # A second the creator typed ("freeze at 58.2 seconds") already pins the frame.
+    specs = [spec for spec in live_freezes(live) if spec.target_words and spec.frame_s is None]
+    from app.services.named_moments import pointed_match, pointed_moment_words  # noqa: PLC0415
+
+    pointed = pointed_moment_words(snapshot)
+    specs = [spec for spec in specs if pointed_match(spec.target_words, pointed) is None]
+    if not specs:
+        return []
+    audio = strategy.get("montage_audio")
+    if (
+        isinstance(audio, Mapping)
+        and audio.get("preserve_source_audio")
+        and audio.get("source_media_ids")
+    ):
+        return []  # the speech-excerpt lane: no freeze plan, KRI-777's "Couldn't" stands
+    if not defers_to_unified_montage(
+        creator_id=cap.creator_id,
+        edit_format=strategy.get("edit_format") or "montage",
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    ):
+        return []
+    planned = planned_freeze_ids(live)
+    by_id = {str(req.id): req for req in live}
+    selected = {str(m) for m in strategy.get("selected_media_ids") or []}
+    videos = [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and row.get("kind", "video") == "video"
+        and row.get("media_id")
+        and (not selected or str(row["media_id"]) in selected)
+    ]
+    ordinal = {str(row["media_id"]): index for index, row in enumerate(videos, start=1)}
+    row_by_id = {str(row["media_id"]): row for row in videos}
+    groups: dict[tuple, dict[str, Any]] = {}
+    for spec in specs:
+        req = by_id.get(spec.requirement_id)
+        if req is None or not freeze_plannable(
+            req, strategy, planned, client_protocol=cap.client_protocol
+        ):
+            continue
+        moments = match_moments(
+            spec.target_words, [(str(row["media_id"]), row.get("analysis")) for row in videos]
+        )
+        if not moments:
+            continue  # nothing concrete to offer: the render's "which moment?" ask stands
+        key = tuple((m.media_id, m.start_s, m.end_s) for m in moments)
+        group = groups.setdefault(key, {"moments": moments, "ids": [], "words": []})
+        group["ids"].extend(spec.requirement_ids)
+        group["words"].extend(spec.target_words)
+    choices: list[UnresolvedChoice] = []
+    for key, group in groups.items():
+        ids = tuple(dict.fromkeys(str(i) for i in group["ids"]))
+        moments: tuple[FreezeMoment, ...] = group["moments"]
+        no_freeze = _option(
+            OPT_NO_FREEZE,
+            label=("No freeze", "Donma olmasın"),
+            description=(
+                "That moment plays normally, without a freeze.",
+                "O an normal oynar, donmadan.",
+            ),
+            aliases=_NO_FREEZE_ALIASES,
+        )
+        if len(moments) == 1:
+            moment = moments[0]
+            row = row_by_id.get(moment.media_id)
+            duration = _number((row or {}).get("duration_s"))
+            frames = _frame_choices(moment, duration)
+            if not frames:
+                continue
+            name, name_tr = _clip_name(row, ordinal.get(moment.media_id, 1), len(videos))
+            span = f"{_seconds_text(moment.start_s)}–{_seconds_text(moment.end_s)}"
+            options = [
+                _option(
+                    freeze_option_key(FREEZE_BASIS_FRAME, moment.media_id, frame),
+                    label=(
+                        f"{label[0]} ({_seconds_text(frame)}s)",
+                        f"{label[1]} ({_seconds_text(frame)} sn)",
+                    ),
+                    # The middle surviving frame, so "you choose" always has a pick.
+                    recommended=index == len(frames) // 2,
+                    aliases=aliases,
+                )
+                for index, (frame, _share, label, aliases) in enumerate(frames)
+            ]
+            intro = say(
+                en=(
+                    f"You asked me to freeze the frame on that moment. I found it in {name} "
+                    f"({span}s), but I can't tell the exact instant, and I won't guess it."
+                ),
+                tr=(
+                    f"O anda kareyi dondurmamı istedin. O anı {name_tr} buldum ({span}. "
+                    "saniyeler arası) ama tam anını bilemiyorum ve tahmin etmeyeceğim."
+                ),
+            )
+            reason = say(
+                en="Which frame should hold?",
+                tr="Hangi kare dursun?",
+            )
+        else:
+            options = []
+            for moment in moments[: MAX_CHOICE_OPTIONS - 1]:
+                row = row_by_id.get(moment.media_id)
+                name, _name_tr = _clip_name(row, ordinal.get(moment.media_id, 1), len(videos))
+                where = "" if len(videos) <= 1 else f", {name}"
+                where_tr = "" if len(videos) <= 1 else f", {ordinal.get(moment.media_id, 1)}. klip"
+                middle = _holdable_frame(
+                    (moment.start_s + moment.end_s) / 2, _number((row or {}).get("duration_s"))
+                )
+                if middle is None:
+                    continue
+                what = _clean_name(moment.description) or say(en="a moment", tr="bir an")
+                span = f"{_seconds_text(moment.start_s)}–{_seconds_text(moment.end_s)}"
+                options.append(
+                    _option(
+                        freeze_option_key(FREEZE_BASIS_MOMENT, moment.media_id, middle),
+                        # The clip record's own words for the moment, quoted as such.
+                        label=(f"“{what}” ({span}s{where})", f"“{what}” ({span} sn{where_tr})"),
+                    )
+                )
+            if len(options) < 2:
+                continue
+            intro = say(
+                en=(
+                    "You asked me to freeze the frame on a moment, and more than one moment in "
+                    "your footage fits what you described. I won't guess which one."
+                ),
+                tr=(
+                    "Bir anda kareyi dondurmamı istedin; çekimlerinde tarif ettiğine uyan "
+                    "birden fazla an var. Hangisi olduğunu tahmin etmeyeceğim."
+                ),
+            )
+            reason = say(
+                en="Which moment should freeze? I'll hold the middle of it.",
+                tr="Hangi an donsun? Ortasındaki kareyi tutarım.",
+            )
+        choices.append(
+            UnresolvedChoice(
+                kind=CONFLICT_FREEZE_FRAME,
+                conflict_id=f"{CONFLICT_FREEZE_FRAME}:{ids[0]}",
+                field_path="choice_answers",
+                requirement_ids=ids,
+                intro=intro,
+                reason=reason,
+                options=(*options, no_freeze),
+                # The moments asked about, never the hold length: "make it 2 seconds instead"
+                # keeps the answer.
+                input_digest=_digest(CONFLICT_FREEZE_FRAME, [list(k) for k in key]),
+            )
+        )
+    return choices
 
 
 # ── Continuous voice (KRI-479) ────────────────────────────────────────────────
@@ -2125,6 +2786,7 @@ def _length_vs_natural(
 
     strict_max = creator_max_export_duration_s(brief=brief)
     durations, requirement_ids, quoted = _requested_durations(brief)
+    bound = _requested_bound(brief)
     if len(set(durations)) != 1 or not durations:
         return None
     # The continuous-voice montage already has its own source-aware question
@@ -2157,9 +2819,13 @@ def _length_vs_natural(
             return None
         capacity = cap.max_duration_s
     asked = durations[0]
+    ceiling = bound == "at_most"
     # A ten-percent tolerance avoids a needless card for ordinary source timing
-    # rounding (e.g. a 24.0s voice rendered as 23.8s).
-    if strict_max is None and abs(asked - capacity) <= max(0.01, asked * 0.10):
+    # rounding (e.g. a 24.0s voice rendered as 23.8s). KRI-847: "at most N" drops only the
+    # shortfall side of it, so a source shorter than N needs no card. A strict whole-export
+    # maximum (KRI-629) was judged above, ending included, and keeps its own rule.
+    gap = capacity - asked if ceiling else abs(asked - capacity)
+    if strict_max is None and gap <= max(0.01, asked * 0.10):
         return None
     if owner == "footage" and asked < 3 <= capacity:
         from app.services.length_policy import creator_duration_matches  # noqa: PLC0415
@@ -2253,10 +2919,18 @@ def _length_vs_natural(
         ),
         reason=say(
             en=(
-                f"That {source} cannot make a {asked_s}-second edit without changing the "
+                f"That {source} cannot make an edit of at most {asked_s} seconds without "
+                "changing the source timing."
+                if ceiling
+                else f"That {source} cannot make a {asked_s}-second edit without changing the "
                 "source timing."
             ),
-            tr=(f"kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."),
+            tr=(
+                f"kaynağın zamanlamasını değiştirmeden en fazla {asked_s} saniyelik bir video "
+                "yapamam."
+                if ceiling
+                else f"kaynağın zamanlamasını değiştirmeden {asked_s} saniyelik bir video yapamam."
+            ),
         ),
         options=tuple(options),
         input_digest=_digest(CONFLICT_LENGTH_VS_NATURAL, owner, asked, capacity, snapshot),
@@ -2315,10 +2989,24 @@ def _source_coverage(
             "single_hero_order_conflict",
             "insufficient_media",
             "duration_out_of_bounds",
+            "named_moments_unplaceable",
         }
     ):
         return None
-    if "single_hero_order_conflict" in codes:
+    if "named_moments_unplaceable" in codes:
+        # KRI-723: the creator's pointed moments leave no room for the rest at this length.
+        reason = say(
+            en=(
+                "Your moments can't all get their own part of this clip at this length. "
+                "Ask for a different length, or name fewer moments."
+            ),
+            tr=(
+                "Saydığın anların hepsi bu uzunlukta klipte kendi yerini alamıyor. Başka bir "
+                "uzunluk iste ya da daha az an say."
+            ),
+        )
+        label = "Update the selected clips"
+    elif "single_hero_order_conflict" in codes:
         reason = say(
             en=(
                 "The selected order conflicts with the single-hero composition. "
@@ -2344,13 +3032,24 @@ def _source_coverage(
         label = "Update the selected clips"
     elif "authored_hold_coverage" in codes:
         requested = envelope.get("target_duration_s")
+        # KRI-847: a ceiling is "at most N seconds", never "the requested N seconds".
+        ceiling = envelope.get("target_duration_bound") == "at_most"
         reason = say(
             en=(
-                f"The requested {requested:g} seconds cannot include these clips with their "
-                "approved holds. Choose fewer clips or change those holds before rendering."
+                f"A video of at most {requested:g} seconds cannot include these clips with "
+                "their approved holds. Choose fewer clips or change those holds before "
+                "rendering."
+                if ceiling
+                else f"The requested {requested:g} seconds cannot include these clips with "
+                "their approved holds. Choose fewer clips or change those holds before "
+                "rendering."
             ),
             tr=(
-                f"İstenen {requested:g} saniye, onaylı bekleme süreleriyle bu klipleri "
+                f"En fazla {requested:g} saniyelik bir video, onaylı bekleme süreleriyle bu "
+                "klipleri kapsayamıyor. Oluşturmadan önce daha az klip seç ya da bekleme "
+                "sürelerini değiştir."
+                if ceiling
+                else f"İstenen {requested:g} saniye, onaylı bekleme süreleriyle bu klipleri "
                 "kapsayamıyor. Oluşturmadan önce daha az klip seç ya da bekleme "
                 "sürelerini değiştir."
             ),
@@ -2426,6 +3125,415 @@ def _source_coverage(
     )
 
 
+# ── A quoted start / end line the take does not hold (KRI-844) ───────────────
+
+# The answers that decline the question: the video keeps opening at the start / running to the
+# end of the take, and the finished card says honestly that the quoted line was not found.
+_NO_LINE_ALIASES = ("none", "none of these", "none of them", "neither", "skip", "skip it", "no")
+_NO_LINE_TR_ALIASES = ("hiçbiri", "hiçbirini", "hiçbiri değil", "hayır", "yok", "atla")
+_NO_START_ALIASES = ("keep it from the start", "from the start", "keep the start")
+_NO_START_TR_ALIASES = ("baştan", "baştan başlasın", "başından")
+_NO_END_ALIASES = ("keep it to the end", "to the end", "keep the end")
+_NO_END_TR_ALIASES = ("sona kadar", "sonuna kadar", "sona kadar sürsün")
+_LINE_KEY = "line_"
+_LINE_LABEL_MAX = 56
+_QUOTE_SHOWN_MAX = 120
+# Keep in step with ``ChoiceAnswer.value``.
+_LINE_VALUE_MAX = 300
+
+
+@dataclass(frozen=True)
+class _TakeLineContext:
+    """What both sides of the question read: the ask, the one take's speech and its lines."""
+
+    ask: Any  # opening_cut_ask.TakeWindowAsk
+    take: Any  # opening_cut_ask.TakeSpeech
+    # take_lines.TakeLine: a line said twice is its first for a start, its last for an end.
+    start_lines: tuple[Any, ...]
+    end_lines: tuple[Any, ...]
+    words: tuple[Any, ...]  # take_lines.take_words: what TakeLine.first / .last point into
+
+
+def _line_label(text: str) -> str:
+    if len(text) <= _LINE_LABEL_MAX:
+        return f"“{text}”"
+    cut = text[:_LINE_LABEL_MAX].rsplit(" ", 1)[0].rstrip(" ,;:")
+    return f"“{cut}…”"
+
+
+def _take_line_choice(
+    side: str, ctx: _TakeLineContext, start_pick: str | None
+) -> UnresolvedChoice | None:
+    """The "which line of your take?" question for one side of the quoted window.
+
+    ``start_pick`` (end side only) is the start line the creator picked: the end line is
+    looked for after it, as the cut does (`apply_take_window`). Without one, the start the
+    take holds for the creator's own quote bounds the lines instead. ``None`` when the take
+    has no line to offer.
+    """
+    from app.kria.take_lines import offer_lines, pinned_line_text  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import ground_take_line  # noqa: PLC0415
+    from app.services.speech_segments import exact_line_count  # noqa: PLC0415
+
+    ask, take = ctx.ask, ctx.take
+    start = side == "start"
+    quote = (ask.start_quote if start else ask.end_quote) or ""
+    ids = tuple(ask.start_ids if start else ask.end_ids)
+    after_s = None
+    if not start:
+        grounded = ground_take_line(
+            take.words, start_pick, ask.start_quote, duration_s=take.duration_s
+        )
+        after_s = grounded.word_start_s if grounded is not None else None
+    lines = ctx.start_lines if start else ctx.end_lines
+    offer = offer_lines(lines, quote, side=side, limit=MAX_CHOICE_OPTIONS - 1, after_s=after_s)
+    if not offer.lines:
+        return None
+
+    def pinned(line: Any) -> str:
+        # A start pick is looked for from the top of the take, an end pick from the start line.
+        def count(text: str) -> int:
+            return exact_line_count(take.words, text, min_after_s=after_s or 0.0)
+
+        return pinned_line_text(ctx.words, line, side=side, count=count, max_chars=_LINE_VALUE_MAX)
+
+    conflict = CONFLICT_TAKE_LINE_START if start else CONFLICT_TAKE_LINE_END
+    options = [
+        ConflictOption(
+            key=f"{_LINE_KEY}{line.index}",
+            label=_line_label(line.text),
+            recommended=offer.recommended is line,
+            aliases=(line.text,),
+        )
+        for line in offer.lines
+    ]
+    options.append(
+        _option(
+            OPT_NO_TAKE_LINE,
+            label=(
+                ("None of these — keep it from the start", "Hiçbiri — baştan başlasın")
+                if start
+                else ("None of these — keep it to the end", "Hiçbiri — sona kadar sürsün")
+            ),
+            description=(
+                (
+                    "The video still opens at the start of your take.",
+                    "Video yine çekimin başından açılır.",
+                )
+                if start
+                else (
+                    "The video still runs to the end of your take.",
+                    "Video yine çekimin sonuna kadar sürer.",
+                )
+            ),
+            aliases=(*_NO_LINE_ALIASES, *(_NO_START_ALIASES if start else _NO_END_ALIASES)),
+            tr_aliases=(
+                *_NO_LINE_TR_ALIASES,
+                *(_NO_START_TR_ALIASES if start else _NO_END_TR_ALIASES),
+            ),
+        )
+    )
+    shown = " ".join(quote.split())[:_QUOTE_SHOWN_MAX]
+    reason = (
+        say(en="Which line should it open on?", tr="Hangi cümleyle açılsın?")
+        if start
+        else say(en="Which line should it end on?", tr="Hangi cümleyle bitsin?")
+    )
+    return UnresolvedChoice(
+        kind=conflict,
+        conflict_id=conflict,
+        field_path="take_start_line" if start else "take_end_line",
+        requirement_ids=ids,
+        intro=say(
+            en=f"I couldn't find “{shown}” in what's said in your video.",
+            tr=f"“{shown}” cümlesini videonda söylenenler arasında bulamadım.",
+        ),
+        reason=reason,
+        options=tuple(options),
+        # The question is about THIS quote over THIS take's words (and, at the end, after THIS
+        # start line): a new upload, a re-transcription, a reworded quote or another start
+        # pick is a new question.
+        input_digest=_digest(
+            conflict,
+            quote,
+            take.media_id,
+            [str(segment.get("text") or "") for segment in take.segments],
+            sorted(ids),
+            start_pick if not start else None,
+        ),
+        effects={f"{_LINE_KEY}{line.index}": {"value": pinned(line)} for line in offer.lines},
+    )
+
+
+def _refine_take_line_end(
+    ctx: _TakeLineContext, answers: Sequence[Mapping[str, Any]]
+) -> UnresolvedChoice | None:
+    """The end question once the start answer is known: lines after the picked start line."""
+    pick = next(
+        (
+            str(answer["value"])
+            for answer in answers
+            if answer.get("conflict") == CONFLICT_TAKE_LINE_START and answer.get("value")
+        ),
+        None,
+    )
+    return _take_line_choice("end", ctx, pick)
+
+
+def _take_line(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    clip_paths: Sequence[Any] = (),
+) -> list[UnresolvedChoice]:
+    """A start / end line the creator quoted that the take's own speech does not hold.
+
+    "Open on 'Here we have traditional Argentinian sauces'" over Spanish speech finds nothing
+    (`ground_line` matches same-language words only), so the worker kept the whole take and
+    nobody was asked. For a one-video phone Talking edit with timed speech, the creator is
+    asked, before approval, which line of THEIR take to open / end on (start first: one
+    question per turn). Whether a quote is "found" is decided by the cut's own
+    `apply_take_window` on the same estimated words the draft card uses, so the question and
+    the cut cannot disagree; a side that has a pick (``facts.*_line_spoken``) or whose quote
+    is found never asks, and `implausible` / `too_short` / `before_start` keep their receipts.
+    The pick is stored on the answer and copied onto the requirement by `answered_brief`.
+    """
+
+    if cap.creator_id is None:
+        return []  # whose draft this is decides the phone pilot: unknown = never asked
+    from app.kria.brief_checks import defers_caption_words_to_phone_render  # noqa: PLC0415
+    from app.kria.opening_cut_ask import single_take_speech, take_window_ask  # noqa: PLC0415
+    from app.kria.take_lines import take_lines, take_words  # noqa: PLC0415
+    from app.pipeline.phone_opening_cut import apply_take_window  # noqa: PLC0415
+    from app.pipeline.silence_cut import no_op_plan  # noqa: PLC0415
+
+    ask = take_window_ask(_live(brief))
+    if ask is None:
+        return []
+    edit_format = str(strategy.get("edit_format") or "")
+    if edit_format not in ("subtitled", "talking_head") or not defers_caption_words_to_phone_render(
+        creator_id=cap.creator_id,
+        edit_format=edit_format,
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    ):
+        return []
+    take = single_take_speech({"clip_assignments": rows}, strategy)
+    if take is None:
+        return []
+    start_lines = take_lines(take.segments)
+    if not start_lines:
+        return []
+    _plan, start, end = apply_take_window(
+        no_op_plan(take.duration_s),
+        take.words,
+        start_quote=ask.start_quote,
+        end_quote=ask.end_quote,
+        duration_s=take.duration_s,
+        start_spoken=ask.start_spoken,
+        end_spoken=ask.end_spoken,
+    )
+    ctx = _TakeLineContext(
+        ask,
+        take,
+        tuple(start_lines),
+        tuple(take_lines(take.segments, keep="last")),
+        tuple(take_words(take.segments)),
+    )
+    found: list[UnresolvedChoice] = []
+    start_question = (
+        _take_line_choice("start", ctx, None)
+        if start is not None and start.get("reason") == "not_found"
+        else None
+    )
+    if start_question is not None:
+        found.append(start_question)
+    end_question = (
+        _take_line_choice("end", ctx, ask.start_spoken)
+        if end is not None and end.get("reason") == "not_found"
+        else None
+    )
+    if end_question is not None:
+        # Behind an open start question the end lines depend on its answer.
+        found.append(
+            replace(end_question, refine=functools.partial(_refine_take_line_end, ctx))
+            if start_question is not None
+            else end_question
+        )
+    return found
+
+
+# ── Unclear word (KRI-849) ────────────────────────────────────────────────────
+
+_UNCLEAR_LEAVE_OUT_ALIASES = (
+    "leave it out",
+    "leave that out",
+    "leave the word out",
+    "leave that word out",
+    "skip it",
+    "skip that word",
+    "i don't know it either, leave that word out of the captions",
+)
+_UNCLEAR_LEAVE_OUT_TR = (
+    "çıkar",
+    "kelimeyi çıkar",
+    "o kelimeyi çıkar",
+    "atla",
+    "boş bırak",
+)
+_UNCLEAR_LABEL_MAX = _NAME_MAX
+
+
+def _unclear_word(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None,
+    clip_paths: Sequence[Any] = (),
+) -> list[UnresolvedChoice] | None:
+    """A Talking draft whose creator said "if you can't tell what he says, ask me".
+
+    The model records that sentence as ``facts["ask_if_unclear"]`` (KRI-667: the server never
+    reads the words). whisper-1 returns no per-word confidence, so the signal is the two
+    independent hearings the approved snapshot row already holds before approval: Gemini's
+    transcript and whisper-1's timed sentences. Where they disagree on a stretch of words (inside
+    the part of the take the creator's start / end lines keep) the creator is asked which words
+    the captions should say, or to leave them out. One question per unsettled span; a hearing
+    pair that cannot be compared, or agrees, asks nothing (the render still never prints a guess:
+    ``caption_unclear.apply_unclear_answers``). Asked only where the phone Talking writer will
+    honour the answer.
+    """
+
+    if cap.creator_id is None:
+        return None
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        brief_caption_spellings,
+        defers_caption_words_to_phone_render,
+    )
+    from app.kria.unclear_word_ask import (  # noqa: PLC0415
+        ask_requirements,
+        detect,
+        media_scope,
+        row_identity,
+        unsettled,
+    )
+    from app.pipeline.caption_unclear import STATE_UNCLEAR  # noqa: PLC0415
+
+    live = _live(brief)
+    asks = ask_requirements(live)
+    if not asks:
+        return None  # no ask, or the creator already told us in their own words
+    if not defers_caption_words_to_phone_render(
+        creator_id=cap.creator_id,
+        edit_format=strategy.get("edit_format"),
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=clip_paths,
+    ):
+        return None
+    finding = detect(live, snapshot, strategy=strategy, spellings=brief_caption_spellings(brief))
+    if finding.state != STATE_UNCLEAR:
+        return None
+    identity = row_identity(finding.row)
+    scope = media_scope(identity, finding.ask)
+    ids = tuple(sorted(str(req.id) for req in asks))
+    choices = [
+        choice
+        for position, span in unsettled(finding.spans, live, scope=scope)
+        if (choice := unclear_word_choice(span, position, ids, identity, finding.ask)) is not None
+    ]
+    return choices or None
+
+
+def _unclear_label(text: str) -> str | None:
+    label = " ".join(str(text).split())
+    return label if label and len(label) <= _UNCLEAR_LABEL_MAX else None
+
+
+def unclear_word_choice(
+    span: Any,
+    position: int,
+    requirement_ids: Sequence[str],
+    identity: Sequence[Any],
+    ask: str,
+) -> UnresolvedChoice | None:
+    """The question for one unclear span: leave it out, or write one of the two things the
+    listens heard (the creator's own pick, never ours). ``None`` when no heard words fit a
+    button; the render then leaves the span out by itself."""
+
+    from app.kria.unclear_word_ask import media_scope  # noqa: PLC0415
+    from app.pipeline.caption_unclear import (  # noqa: PLC0415
+        ACTION_OMIT,
+        ACTION_USE,
+        format_time,
+    )
+
+    heard: list[str] = []
+    for text in (span.heard, span.other):
+        label = _unclear_label(text)
+        if label and label.casefold() not in {h.casefold() for h in heard}:
+            heard.append(label)
+    if not heard:
+        return None
+    at = format_time(span.start_s)
+    window = {
+        "start_s": round(span.start_s, 3),
+        "end_s": round(span.end_s, 3),
+        "media_scope": media_scope(identity, ask),
+    }
+    options = [
+        _option(
+            OPT_LEAVE_OUT,
+            label=("Leave it out", "Çıkar"),
+            description=(
+                "The captions skip that word.",
+                "Altyazılar o kelimeyi atlar.",
+            ),
+            # Never recommended: a delegation ("you decide") must not choose a word for them.
+            recommended=False,
+            aliases=_UNCLEAR_LEAVE_OUT_ALIASES,
+            tr_aliases=_UNCLEAR_LEAVE_OUT_TR,
+        )
+    ]
+    detail: dict[str, dict[str, Any]] = {OPT_LEAVE_OUT: {**window, "action": ACTION_OMIT}}
+    for number, label in enumerate(heard, start=1):
+        key = f"{OPT_USE_PREFIX}{number}"
+        options.append(
+            _option(
+                key,
+                label=(label, label),
+                description=("Write this in the captions.", "Bunu altyazıya yaz."),
+            )
+        )
+        detail[key] = {**window, "action": ACTION_USE, "text": label}
+    conflict_id = (
+        CONFLICT_UNCLEAR_WORD if position == 0 else f"{CONFLICT_UNCLEAR_WORD}_{position + 1}"
+    )
+    return UnresolvedChoice(
+        kind=CONFLICT_UNCLEAR_WORD,
+        conflict_id=conflict_id,
+        field_path="captions",
+        requirement_ids=tuple(requirement_ids),
+        intro=say(
+            en=(
+                f"I couldn't make out one word around {at} in your clip: the two listens "
+                "heard different words, and I won't guess."
+            ),
+            tr=(
+                f"Klibinde {at} civarında bir kelimeyi anlayamadım: klibini iki kez dinledim, "
+                "farklı kelimeler duydum ve tahmin yürütmeyeceğim."
+            ),
+        ),
+        reason=say(en="What should the captions say?", tr="Altyazıda ne yazsın?"),
+        options=tuple(options),
+        input_digest=_digest(CONFLICT_UNCLEAR_WORD, list(identity), list(span.key), ask, window),
+        answer_detail=detail,
+    )
+
+
 def collect_conflicts(
     strategy: Any,
     brief: Any,
@@ -2450,11 +3558,16 @@ def collect_conflicts(
         _order_basis,
         _text_placement,
         functools.partial(_title_text, clip_paths=clip_paths),
+        functools.partial(_take_line, clip_paths=clip_paths),
+        functools.partial(_speech_occurrence, snapshot=media_snapshot),
+        functools.partial(_freeze_frame, clip_paths=clip_paths, snapshot=media_snapshot),
         functools.partial(_source_coverage, snapshot=media_snapshot),
+        functools.partial(_holds_vs_length, snapshot=media_snapshot),
         _duration_vs_count,
         _which_voice,
         _voice_vs_duration,
         functools.partial(_length_vs_natural, snapshot=media_snapshot),
+        functools.partial(_unclear_word, snapshot=media_snapshot, clip_paths=clip_paths),
     ):
         result = detector(data, brief, rows, cap)
         if isinstance(result, list):
@@ -2486,10 +3599,20 @@ def open_conflicts(
     """
 
     answered = answered_conflict_ids(strategy)
+    recorded = _as_dict(strategy).get("choice_answers") or []
     return [
         c
         for c in collect_conflicts(strategy, brief, media_snapshot, capability)
         if c.conflict_id not in answered
+        or (
+            c.kind == CONFLICT_UNCLEAR_WORD
+            and not any(
+                isinstance(answer, Mapping)
+                and answer.get("conflict") == c.conflict_id
+                and answer.get("input_digest") == c.input_digest
+                for answer in recorded
+            )
+        )
     ]
 
 
@@ -2725,12 +3848,27 @@ def delegated_choice(question: Mapping[str, Any], message: object) -> str | None
     if question.get("conflict") == "creative_copy":
         # Delegating authorship is not permission to use unreviewed wording.
         return None
-    if question.get("kind") == CONFLICT_TITLE_TEXT:
+    if question.get("kind") in {CONFLICT_TITLE_TEXT, CONFLICT_SPEECH_OCCURRENCE}:
         # Handing over a wordless title would drop the title the creator asked for (and we
         # never write on-screen words): not a delegation. The gate asks once more.
+        # KRI-724: nor is "you choose" a pick of whose voice / which take: only the creator
+        # knows who says the word.
+        return None
+    if question.get("kind") == CONFLICT_UNCLEAR_WORD:
+        # "You decide" would have us choose a word the creator asked not to be guessed.
         return None
     options = [o for o in question.get("options") or [] if isinstance(o, Mapping) and o.get("key")]
     if not options:
+        return None
+    if question.get("kind") in TAKE_LINE_KINDS and not any(o.get("recommended") for o in options):
+        # KRI-844: "you choose" over the lines of their own take with none clearly right would
+        # open / end the video on an arbitrary sentence. The gate asks once more.
+        return None
+    if question.get("kind") == CONFLICT_FREEZE_FRAME and not any(
+        o.get("recommended") for o in options
+    ):
+        # KRI-900: several moments fit the creator's words; "you choose" would be a guess
+        # at WHICH moment they meant. The gate asks once more instead.
         return None
     pick = next((o for o in options if o.get("recommended")), options[0])
     return str(pick["key"])
@@ -2849,6 +3987,10 @@ def match_answered_choice(events: Events, message: object) -> tuple[dict[str, An
     latest = _latest_questions(history)
     hits: list[tuple[dict[str, Any], str, bool]] = []
     for conflict, prior in answers.items():
+        if conflict in TAKE_LINE_KINDS:
+            # KRI-844: its options are lines of the creator's own video; a later "Gracias" or
+            # "Lucas" is far more likely a new message than a change of the opening / ending.
+            continue
         question = latest.get(conflict)
         option_key = (
             match_open_choice(_without_card(question), message, names_only=True)
@@ -2883,6 +4025,7 @@ class ChoiceResolution:
 def length_inputs_waiting(resolution: ChoiceResolution) -> str | None:
     """An unanswered timing choice or required media update never becomes a draft."""
     timing_kinds = {
+        CONFLICT_HOLDS_VS_LENGTH,
         CONFLICT_DURATION_VS_COUNT,
         CONFLICT_VOICE_VS_DURATION,
         CONFLICT_LENGTH_VS_NATURAL,
@@ -2911,6 +4054,12 @@ def _apply_effect(strategy: dict[str, Any], choice: UnresolvedChoice, option_key
 
 
 _DISCLOSURES = {
+    (CONFLICT_HOLDS_VS_LENGTH, OPT_EXTEND): (
+        "I made it long enough for every photo to play the length you gave it."
+    ),
+    (CONFLICT_HOLDS_VS_LENGTH, OPT_KEEP_LENGTH): (
+        "I kept your length: the photos you timed play at the edit's own pace."
+    ),
     (CONFLICT_DURATION_VS_COUNT, OPT_EXTEND): (
         "I extended it so every clip stays on screen long enough to be seen."
     ),
@@ -2922,6 +4071,7 @@ _DISCLOSURES = {
     (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): (
         "I'm leaving the title off, since you didn't give me the words."
     ),
+    (CONFLICT_UNCLEAR_WORD, OPT_LEAVE_OUT): "I'm leaving that word out of the captions.",
     (CONFLICT_VOICE_VS_DURATION, OPT_MATCH_VOICE): "I ended the edit where your voice ends.",
     (CONFLICT_VOICE_VS_DURATION, OPT_SILENT_TAIL): (
         "I kept your length: the last seconds play without voice."
@@ -2933,6 +4083,12 @@ _DISCLOSURES = {
 }
 # The same notes for a Turkish chat (KRI-520), keyed identically.
 _DISCLOSURES_TR = {
+    (CONFLICT_HOLDS_VS_LENGTH, OPT_EXTEND): (
+        "Her fotoğraf verdiğin süre kadar kalsın diye videoyu uzattım."
+    ),
+    (CONFLICT_HOLDS_VS_LENGTH, OPT_KEEP_LENGTH): (
+        "Süreni korudum: süre verdiğin fotoğraflar düzenlemenin kendi hızında oynuyor."
+    ),
     (CONFLICT_DURATION_VS_COUNT, OPT_EXTEND): (
         "Süreyi uzattım, böylece her klip görülecek kadar ekranda kalıyor."
     ),
@@ -2942,6 +4098,7 @@ _DISCLOSURES_TR = {
     (CONFLICT_ORDER_BASIS, OPT_ATTACHMENT_ORDER): "Klipleri eklediğin sırayla kullanıyorum.",
     (CONFLICT_ORDER_BASIS, OPT_UNORDERED): "Belirli bir sıra vaat etmiyorum.",
     (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): ("Kelimeleri söylemediğin için başlığı koymuyorum."),
+    (CONFLICT_UNCLEAR_WORD, OPT_LEAVE_OUT): "O kelimeyi altyazıdan çıkarıyorum.",
     (CONFLICT_VOICE_VS_DURATION, OPT_MATCH_VOICE): "Düzenlemeyi sesinin bittiği yerde bitirdim.",
     (CONFLICT_VOICE_VS_DURATION, OPT_SILENT_TAIL): (
         "Süreni korudum: son saniyeler sesin olmadan oynuyor."
@@ -2966,6 +4123,29 @@ def _disclosure(kind: object, option: object) -> str | None:
     english = _DISCLOSURES.get(key)  # type: ignore[arg-type]
     if english is not None:
         return say(en=english, tr=_DISCLOSURES_TR.get(key, english))  # type: ignore[arg-type]
+    if kind == CONFLICT_SPEECH_OCCURRENCE:
+        return _occurrence_disclosure(option)
+    if kind == CONFLICT_FREEZE_FRAME:
+        parsed = parse_freeze_option(option)
+        basis = parsed[0] if parsed else None
+        if basis == OPT_NO_FREEZE:
+            return say(
+                en="I'm leaving the freeze out, as you chose.",
+                tr="Seçtiğin gibi donmayı kaldırıyorum.",
+            )
+        if basis == FREEZE_BASIS_FRAME and parsed and parsed[2] is not None:
+            at = _seconds_text(parsed[2])
+            return say(
+                # Neutral: a "you choose" answer is disclosed as the AI's pick (`_disclose`).
+                en=f"I'm freezing the frame at {at}s into the clip.",
+                tr=f"Kareyi klibin {at}. saniyesinde donduruyorum.",
+            )
+        if basis == FREEZE_BASIS_MOMENT:
+            return say(
+                en="I'm freezing that moment on its middle frame.",
+                tr="O anı, ortasındaki karede donduruyorum.",
+            )
+        return None
     if kind == CONFLICT_VOICE_VS_DURATION and str(option).startswith("length_"):
         seconds = str(option).removeprefix("length_")
         return say(
@@ -2973,6 +4153,31 @@ def _disclosure(kind: object, option: object) -> str | None:
             tr=f"Videoyu {seconds} saniye yapıyorum.",
         )
     return None
+
+
+def _occurrence_disclosure(option: object) -> str | None:
+    """KRI-724: what the creator's pick of a spoken occurrence does, in plain words."""
+    from app.kria.opening_cut_ask import (  # noqa: PLC0415
+        OCCURRENCE_WAIVE,
+        parse_occurrence_option,
+    )
+
+    if option == OCCURRENCE_WAIVE:
+        return say(en="I'm skipping that one, as you chose.", tr="Seçtiğin gibi onu atlıyorum.")
+    pin = parse_occurrence_option(option)
+    if pin is None:
+        return None
+    if pin.ordinal is None:
+        return say(
+            en="I'm cutting it every time it's said.",
+            tr="Her söylendiğinde kesiyorum.",
+        )
+    if pin.approx_s is None:
+        return None
+    return say(
+        en=f"I'm using the one at {_clock(pin.approx_s)} in your take.",
+        tr=f"Çekimindeki {_clock(pin.approx_s)} anındakini kullanıyorum.",
+    )
 
 
 def _emits_answered_value(
@@ -3126,6 +4331,49 @@ def _kept_note(
     )
 
 
+def _typed_unclear_reply(
+    choice: UnresolvedChoice, brief: Any, history: Sequence[tuple[str, Any]]
+) -> tuple[dict[str, Any], int] | None:
+    """Bind exact creator wording only to the source/window question they answered.
+
+    A carried model fact alone has no source authority. Its text must occur in a real
+    user reply after this exact server-authored question, whose digest covers the source,
+    request and window. Replaying that event keeps the same confirmation across turns.
+    """
+    if choice.kind != CONFLICT_UNCLEAR_WORD:
+        return None
+    from app.kria.unclear_word_ask import model_answer  # noqa: PLC0415
+    from app.pipeline.caption_unclear import ACTION_OMIT  # noqa: PLC0415
+
+    answer = model_answer(_live(brief))
+    if answer is None:
+        return None
+    confirmed = None
+    for index, (role, payload) in enumerate(history):
+        if role != "user" or not isinstance(payload, dict):
+            continue
+        question = latest_open_choice_question(history[:index])
+        if not (
+            question
+            and question.get("kind") == CONFLICT_UNCLEAR_WORD
+            and question.get("conflict") == choice.conflict_id
+            and question.get("input_digest") == choice.input_digest
+            and not payload.get("choice_selection")
+        ):
+            continue
+        text = str(payload.get(CONTENT_KEY) or "").strip()
+        matches = (
+            match_open_choice(question, text) == OPT_LEAVE_OUT
+            if answer.action == ACTION_OMIT
+            else text == answer.text
+        )
+        if not matches:
+            continue
+        window = choice.answer_detail[OPT_LEAVE_OUT]
+        confirmed = ({**window, "action": answer.action, "text": answer.text}, index)
+    return confirmed
+
+
 def resolve_choices(
     strategy: Any,
     brief: Any,
@@ -3163,11 +4411,31 @@ def resolve_choices(
     exhausted: list[UnresolvedChoice] = []
     superseded: list[str] = []
     for choice in collect_conflicts(data, brief, media_snapshot, capability):
+        if choice.refine is not None:
+            # KRI-844: depends on an answer given earlier in this very pass.
+            refined = choice.refine(answers)
+            if refined is None:
+                continue
+            choice = refined  # noqa: PLW2901 - the same conflict, built from the answers so far
         keys = {o.key for o in choice.options}
         prior = scoped.get(choice.conflict_id)
         valid = bool(
             prior and prior.input_digest == choice.input_digest and prior.option_key in keys
         )
+        typed = _typed_unclear_reply(choice, brief, history)
+        if typed and (not valid or typed[1] > prior.index):
+            answers.append(
+                {
+                    "conflict": choice.conflict_id,
+                    "kind": choice.kind,
+                    "option": "typed",
+                    "input_digest": choice.input_digest,
+                    "requirement_ids": list(choice.requirement_ids),
+                    "source": "creator",
+                    "detail": typed[0],
+                }
+            )
+            continue
         answer_superseded = False
         if valid and _answer_superseded(history, prior, choice, data):
             superseded.append(choice.conflict_id)
@@ -3189,6 +4457,7 @@ def resolve_choices(
             return ChoiceResolution(
                 data, tuple(answers), asked, tuple(notices), tuple(exhausted), tuple(superseded)
             )
+        picked = (choice.effects.get(option_key) or {}).get("value")
         answers.append(
             {
                 "conflict": choice.conflict_id,
@@ -3197,8 +4466,12 @@ def resolve_choices(
                 "input_digest": choice.input_digest,
                 "requirement_ids": list(choice.requirement_ids),
                 "source": source,
+                # KRI-844 / KRI-724: the text the option picks (the creator's own words).
+                **({"value": picked} if isinstance(picked, str) and picked else {}),
             }
         )
+        if choice.answer_detail.get(option_key):
+            answers[-1]["detail"] = dict(choice.answer_detail[option_key])
         _apply_effect(data, choice, option_key)
         note = _disclosure(choice.kind, option_key)
         if note:
@@ -3254,20 +4527,58 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
         for req in _live(brief)
         if "opening_title" in omitted and req.kind == "text" and req.scope == "title"
     }
+    from app.kria.opening_cut_ask import (  # noqa: PLC0415
+        END_SPOKEN_FACT,
+        OPENING_CUT_KINDS,
+        START_SPOKEN_FACT,
+    )
+
+    spoken: dict[str, dict[str, str]] = {}  # KRI-844: requirement id -> picked-line facts
     for answer in answers:
         ids = {str(i) for i in answer.get("requirement_ids") or []}
         kind, option = answer.get("kind"), answer.get("option")
         for req in _live(brief):
             if req.id not in ids:
                 continue
-            if kind == CONFLICT_DURATION_VS_COUNT and option == OPT_EXTEND and req.kind == "timing":
+            if kind == CONFLICT_FREEZE_FRAME and option == OPT_NO_FREEZE:
+                # KRI-900: the creator withdrew the freeze in their answer.
+                changed[req.id] = req.model_copy(update={"status": "superseded"})
+            elif (
+                kind == CONFLICT_HOLDS_VS_LENGTH
+                and option == OPT_KEEP_LENGTH
+                and hold_seconds(req) is not None
+            ):
+                # KRI-825: the creator chose their total over these photo lengths.
+                changed[req.id] = req.model_copy(update={"status": "superseded"})
+            elif (
+                kind == CONFLICT_HOLDS_VS_LENGTH
+                and option == OPT_EXTEND
+                and req.kind == "timing"
+                and hold_seconds(req) is None
+            ):
+                new = _number(data.get("target_duration_s"))
+                if new is not None:
+                    changed[req.id] = req.model_copy(
+                        update={
+                            "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                            "description": say(
+                                en=f"Keep {_clean_seconds(new)} seconds (so every timed "
+                                "photo fits)",
+                                tr=f"{_clean_seconds(new)} saniye olsun (süre verilen her "
+                                "fotoğraf sığsın diye)",
+                            ),
+                        }
+                    )
+            elif (
+                kind == CONFLICT_DURATION_VS_COUNT and option == OPT_EXTEND and req.kind == "timing"
+            ):
                 new = _number(data.get("target_duration_s"))
                 old = _number((req.facts or {}).get("duration_s"))
                 if new is None or old is None or abs(new - old) < 0.001:
                     continue
                 changed[req.id] = req.model_copy(
                     update={
-                        "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                        "facts": _facts_with_length(req.facts, data["target_duration_s"]),
                         "description": say(
                             en=(
                                 f"Keep {_clean_seconds(new)} seconds (extended from "
@@ -3320,7 +4631,7 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                     continue
                 changed[req.id] = req.model_copy(
                     update={
-                        "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                        "facts": _facts_with_length(req.facts, data["target_duration_s"]),
                         "description": say(
                             en=(
                                 f"Keep {_clean_seconds(new)} seconds (as long as your voice, "
@@ -3351,7 +4662,7 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                     continue
                 changed[req.id] = req.model_copy(
                     update={
-                        "facts": {**req.facts, "duration_s": data["target_duration_s"]},
+                        "facts": _facts_with_length(req.facts, data["target_duration_s"]),
                         "description": say(
                             en=(
                                 f"Keep {_clean_seconds(new)} seconds (the available source "
@@ -3371,11 +4682,109 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 and req.scope == "title"
             ):
                 changed[req.id] = req.model_copy(update={"status": "superseded"})
+            elif kind == CONFLICT_SPEECH_OCCURRENCE and option == "waive":
+                # KRI-724: an explicit waiver ("leave the text off" / "don't cut it") is an
+                # agreed simpler obligation: the line leaves the cut list, or the ask goes.
+                waived = _without_cut_line(changed.get(req.id, req), answer.get("value"))
+                if waived is not None:
+                    changed[req.id] = waived
+            elif kind in TAKE_LINE_KINDS:
+                # KRI-844: the line of the take the creator picked rides the requirement that
+                # quoted the line, next to (never instead of) the quote. A declined side has
+                # no value and leaves the requirement as the creator wrote it. Applied after
+                # the loop: another answer on this requirement (a length) is rebuilt from the
+                # original above and would drop it.
+                picked = answer.get("value")
+                if isinstance(picked, str) and picked.strip():
+                    side_fact = (
+                        START_SPOKEN_FACT if kind == CONFLICT_TAKE_LINE_START else END_SPOKEN_FACT
+                    )
+                    spoken.setdefault(req.id, {})[side_fact] = picked.strip()
+    for req in _live(brief):
+        if req.id in spoken and req.kind in {*OPENING_CUT_KINDS, "order"}:
+            base = changed.get(req.id, req)
+            changed[req.id] = base.model_copy(update={"facts": {**base.facts, **spoken[req.id]}})
+    _apply_unclear_answers(brief, answers, changed)
     if not changed:
         return brief
     return brief.model_copy(
         update={"requirements": [changed.get(r.id, r) for r in brief.requirements]}
     )
+
+
+def _apply_unclear_answers(brief: Any, answers: Sequence[Mapping[str, Any]], changed: dict) -> None:
+    """KRI-849: each unclear-word answer becomes a structured entry in the ask requirement's
+    ``facts["unclear_answers"]`` (``[{start_s, end_s, action, text?}]``) on the pinned copy, so
+    the approved brief the writer reads says which span the creator left out or worded."""
+
+    for answer in answers:
+        detail = answer.get("detail")
+        if answer.get("kind") != CONFLICT_UNCLEAR_WORD or not isinstance(detail, Mapping):
+            continue
+        entry = {
+            key: detail[key]
+            for key in ("start_s", "end_s", "action", "text", "media_scope")
+            if key in detail
+        }
+        ids = {str(i) for i in answer.get("requirement_ids") or []}
+        for req in _live(brief):
+            if req.id not in ids or not (req.facts or {}).get("ask_if_unclear"):
+                continue
+            current = changed.get(req.id, req)
+            previous = [
+                row
+                for row in (current.facts or {}).get("unclear_answers") or []
+                if isinstance(row, Mapping)
+            ]
+            known = [row for row in previous if row.get("media_scope") == entry.get("media_scope")]
+            if any(
+                (row.get("start_s"), row.get("end_s")) == (entry.get("start_s"), entry.get("end_s"))
+                for row in known
+            ):
+                continue
+            facts = {**current.facts, "unclear_answers": [*known, entry]}
+            if not known or answer.get("option") == "typed":
+                facts.pop("unclear_answer", None)
+            changed[req.id] = current.model_copy(update={"facts": facts})
+
+
+def _without_cut_line(req: Any, line: object) -> Any:
+    """``req`` without the waived spoken ``line`` (KRI-724); superseded when nothing is left.
+
+    A text ask (its trigger is the waived word) and a cut ask whose only purpose was that
+    line are superseded; a cut ask naming other lines keeps them, and one that also asks
+    for pause / filler / retake cleanup keeps that cleanup with no named line."""
+    from app.kria.brief_checks import named_cut_lines  # noqa: PLC0415
+    from app.services.spoken_quotes import fold_tokens  # noqa: PLC0415
+
+    lines = named_cut_lines(req)
+    want = tuple(fold_tokens(str(line or "")))
+    kept = [x for x in lines if tuple(fold_tokens(x)) != want]
+    if lines and not kept and _asks_cleanup_besides(req, str(line or "")):
+        return req.model_copy(update={"facts": {**req.facts, "cut_lines": []}})
+    if not lines or not kept:
+        return req.model_copy(update={"status": "superseded"})
+    if len(kept) == len(lines):
+        return None
+    return req.model_copy(update={"facts": {**req.facts, "cut_lines": kept}})
+
+
+def _asks_cleanup_besides(req: Any, line: str) -> bool:
+    """``req`` asks for speech cleanup (pauses, fillers, retakes) beyond the named ``line``."""
+    from app.kria.brief_checks import (  # noqa: PLC0415
+        _CLEANUP_NOUN_RE,
+        _fold,
+        _req_text,
+        _wants_cleanup,
+    )
+
+    if not _wants_cleanup(req):
+        return False
+    text = _req_text(req)
+    folded_line = _fold(line).strip()
+    if folded_line:
+        text = text.replace(folded_line, " ")
+    return bool(_CLEANUP_NOUN_RE.search(text))
 
 
 def choice_notices(strategy: Any) -> list[str]:
@@ -3436,11 +4845,15 @@ __all__ = [
     "CAPTURE_ORDER_KEYS",
     "CHOICE_QUESTION_VERSION",
     "CONFLICT_DURATION_VS_COUNT",
+    "CONFLICT_HOLDS_VS_LENGTH",
     "CONFLICT_LENGTH_VS_NATURAL",
     "CONFLICT_ORDER_BASIS",
     "CONFLICT_PRIORITY",
+    "CONFLICT_TAKE_LINE_END",
+    "CONFLICT_TAKE_LINE_START",
     "CONFLICT_TEXT_PLACEMENT",
     "CONFLICT_TITLE_TEXT",
+    "CONFLICT_UNCLEAR_WORD",
     "CONFLICT_VOICE_VS_DURATION",
     "CONFLICT_WHICH_VOICE",
     "KEEP_OPEN_REASON",
@@ -3450,11 +4863,15 @@ __all__ = [
     "OPT_ACCEPT_NATURAL",
     "OPT_TRIM_TO_REQUESTED",
     "OPT_FEWER",
+    "OPT_KEEP_LENGTH",
+    "OPT_LEAVE_OUT",
     "OPT_MATCH_VOICE",
+    "OPT_NO_TAKE_LINE",
     "OPT_NO_TITLE",
     "OPT_SILENT_TAIL",
     "OPT_UNORDERED",
     "title_text_choice",
+    "unclear_word_choice",
     "ChoiceCapability",
     "ChoiceResolution",
     "ScopedAnswer",
@@ -3488,6 +4905,7 @@ __all__ = [
     "split_groups",
     "SIMPLER_VERSION_REASON",
     "STRATEGY_REFUSAL_KIND",
+    "TAKE_LINE_KINDS",
     "simpler_version_accepted",
     "simpler_version_question",
 ]

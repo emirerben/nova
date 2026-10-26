@@ -33,6 +33,20 @@ class BriefBinding(BaseModel):
     choice_answers: SkipJsonSchema[list[dict]] = Field(
         default_factory=list, exclude_if=lambda value: not value
     )
+    # KRI-827: the creator's own marks of what to keep text off ("the plate": a box on one
+    # frame of one of their clips), folded from their chat turns at approval
+    # (`protected_targets.fold_protected_regions`). Server-owned like the answers above, in
+    # the digest only when non-empty, so every stored binding keeps its digest.
+    protected_regions: SkipJsonSchema[list[dict]] = Field(
+        default_factory=list, exclude_if=lambda value: not value
+    )
+    # KRI-881: the sourced wording and citations the creator saw before approving, from the
+    # server's own research step (`app.kria.research_preview`). The render replays it and
+    # never searches again. Server-owned like the fields above, in the digest only when
+    # present, so every stored binding keeps its digest and wire shape.
+    prepared_research: SkipJsonSchema[dict | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     digest: str
 
     @staticmethod
@@ -43,6 +57,8 @@ class BriefBinding(BaseModel):
         request: str,
         media_snapshot: dict | None = None,
         choice_answers: list[dict] | None = None,
+        protected_regions: list[dict] | None = None,
+        prepared_research: dict | None = None,
     ) -> str:
         payload = {
             "thread_id": thread_id,
@@ -54,6 +70,10 @@ class BriefBinding(BaseModel):
             payload["media_snapshot"] = media_snapshot
         if choice_answers:
             payload["choice_answers"] = choice_answers
+        if protected_regions:
+            payload["protected_regions"] = protected_regions
+        if prepared_research is not None:
+            payload["prepared_research"] = prepared_research
         return hashlib.sha256(
             json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()
         ).hexdigest()
@@ -68,6 +88,8 @@ class BriefBinding(BaseModel):
         full_creator_request: str | None = None,
         media_snapshot: dict | None = None,
         choice_answers: list[dict] | None = None,
+        protected_regions: list[dict] | None = None,
+        prepared_research: dict | None = None,
     ) -> BriefBinding:
         snapshot = brief.model_copy(deep=True) if brief is not None else None
         state = "pinned" if snapshot is not None else "none"
@@ -95,6 +117,8 @@ class BriefBinding(BaseModel):
             raise BriefBindingRequestTooLongError("Approved creator request exceeds the safe limit")
         media = copy.deepcopy(media_snapshot or {})
         answers = copy.deepcopy(list(choice_answers or []))
+        regions = copy.deepcopy(list(protected_regions or []))
+        research = copy.deepcopy(prepared_research) if prepared_research is not None else None
         return cls(
             thread_id=str(thread_id),
             state=state,
@@ -102,7 +126,11 @@ class BriefBinding(BaseModel):
             creator_request=request,
             media_snapshot=media,
             choice_answers=answers,
-            digest=cls._digest(str(thread_id), state, snapshot, request, media, answers),
+            protected_regions=regions,
+            prepared_research=research,
+            digest=cls._digest(
+                str(thread_id), state, snapshot, request, media, answers, regions, research
+            ),
         )
 
     @model_validator(mode="after")
@@ -116,6 +144,8 @@ class BriefBinding(BaseModel):
             self.creator_request,
             self.media_snapshot,
             self.choice_answers,
+            self.protected_regions,
+            self.prepared_research,
         ):
             raise ValueError("Brief binding digest mismatch")
         return self

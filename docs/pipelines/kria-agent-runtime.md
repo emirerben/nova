@@ -253,20 +253,33 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   v64-shaped reply (key-less `order` with quoted `start` / `end`) on a one-video edit, and
   `choice_questions.one_clip_edit` keeps both the order_basis question and the render
   contract quiet about any free-form order rule on one clip.
-- **Clip speed (KRI-689).** The phone montage plays every clip at natural speed
-  (`phone_guided_plan` refuses a `playback_rate` other than 1). A speed ask ("speed the
-  river shots up 2x", slow motion, time-lapse, "2 kat hızlandır") used to be dropped
-  silently and only listed under "Have a look at these in the video" after the render.
-  `brief_checks.clip_speed_notice` now adds one plain sentence to the draft reply and the
-  approval card for a draft the unified montage will render, and the render-ready review
-  reports the ask as "Couldn't" with the same reason (a format limit: it never asks
-  "simpler version?" and never blocks the approved render). `kria/speed_ask.py` reads
-  `facts.playback_rate` (or `speed`) first; the Main Creator is not asked for it yet, so
-  today the narrow EN/TR wording fallback decides. Next step: ask for the fact in the
-  Main Creator / extractor prompt, then delete the wording fallback. Pins:
-  `tests/kria/test_kri689_clip_speed_ask.py`, `tests/kria/test_kri689_speed_notice_postgres.py`,
-  `tests/tasks/test_kri689_speed_review.py`, the KRI-689 cases in
-  `tests/tasks/test_unified_montage_dispatch.py`.
+- **Clip speed (KRI-689).** A chat speed ask at creation ("speed the river shots up 2x",
+  "slow motion on the pour", "klipleri 2 kat hızlandır", time-lapse) is planned on a phone
+  Montage. `kria/speed_ask.py` reads it into a `SpeedSpec` (`facts.playback_rate` first --
+  Main Creator v95 / extractor v35 record it -- else the words incl. the number; "slow motion"
+  = 0.5, "speed up" = 2; held to the native 0.25-4x). `unified_montage.brief_view` carries the
+  specs and `plan_unified_montage(clip_speed=...)` grounds each to its cuts
+  (`_ground_speeds`: a `clip:<id>` scope, the creator-pointed moment, one clip's analysed
+  moment, "the last clip", else every video cut) and writes `FastMontageCut.playback_rate`;
+  `compile_execution_plan` carries it onto the moment and `phone_guided_plan` emits `rate` +
+  `variableSpeed`. A planned cut keeps its OUTPUT length (no drift): its source window becomes
+  `length x rate` on the same start, lowered to what the footage covers when it runs out; a
+  creator-approved window keeps its edges and its slot follows the rate. The plan record's
+  `clip_speeds` rows drive the receipt (`brief_checks._check_clip_speed`: "Clips 1, 2 and 3
+  play at 2x" / "Her video klibi 2x hızda oynuyor"; partial for a held or lowered rate; honest
+  "Couldn't" for the locked cases: no verified `variableSpeed` (`phone_rollout.clip_speed_planned_for`),
+  a song montage, a frozen frame, a photo, a speed ramp; "which clip?" is the creator's call).
+  The pre-approval plan (`phone_montage_preflight`) returns speed receipts whatever their
+  status so the draft says it before the card; `clip_speed_notice` keeps the one-line heads-up
+  only where no plan can carry the speed. A record without `clip_speeds` (written before this)
+  keeps the original "Couldn't". The finished-video review re-judges the ask against the
+  variant's `story_timeline` (`playback_rate` on the moment rows). Still open: narrated /
+  Talking formats, the web editor, a device acceptance pass. Pins:
+  `tests/kria/test_kri689_chat_speed_spec.py`, `tests/kria/test_kri689_clip_speed_ask.py`,
+  `tests/kria/test_kri689_speed_notice_postgres.py`, `tests/tasks/test_kri689_speed_review.py`,
+  the KRI-689 groups in `tests/tasks/test_unified_montage_dispatch.py` and
+  `tests/pipeline/test_phone_guided_speed.py`; failure modes:
+  `docs/reviews/kri-689-chat-speed-failure-modes.md`; contract: `plans/playback-speed.md`.
 - **Freeze frame (KRI-777).** No edit can hold a frame (no strategy field; neither the
   phone recipe nor the cloud renderer freezes a creator-chosen frame). Café M2 filed
   "freeze the frame for one second on Atakan's bite" as `timing/global {"duration_s": 1,
@@ -494,8 +507,10 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   and are never left out without a tap. When the resolver itself asks a clip picker,
   the exclude rows ride in that same card (`with_exclusion_categories`). The notice is
   kept for a planner-dropped exclude, the picker flag off, a one-clip project, or
-  nothing tappable. Blur is not a clip-record fact: a measured sharpness probe on 170
-  kit clips could not tell M1_04 from its sharp look-alike. Guard:
+  nothing tappable. Blur is not a measured clip-record fact: a sharpness probe on 170
+  kit clips could not tell M1_04 from its sharp look-alike. KRI-845 adds the analyzer's
+  own judgment instead (`visual_quality`, with `props` / `actions`; see
+  `docs/pipelines/clip-understanding.md`). Guard:
   `tests/kria/test_kri807_unmatched_exclusion_picker.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
@@ -627,6 +642,86 @@ reply English and prompts byte-identical).
   turn plan or strategy refusal without `say()`. Worker refusal text is re-worded at the chat
   side by exact text (`kria_runtime._WORKER_TEXT_TR`); one with no Turkish twin is left out,
   never shown in English. Allowlist: `tests/kria/turkish_chat_guard.py`.
+
+## Voiceover script before a recording (KRI-815)
+
+With footage attached and no voiceover, a request for words to say over the clips gets a
+script, never a narrated draft that cannot render yet:
+
+- Main Creator may answer `draft_voiceover_script` (only offered when
+  `MainCreatorInput.voiceover_script_available`: flag on, a video clip attached, no
+  `item.voiceover_gcs_path`). Its `request_evidence` must be the creator's own words, or the
+  turn asks instead. The model never writes the script.
+- A narrated `audio_strategy: "voiceover"` proposal with no voiceover attached takes the same
+  path before the strategy check (`_plan_creator_action`), so no draft, approval or Job is
+  minted; claim-time `voiceover_required` stays as the backstop.
+- `app/kria/voiceover_script.py` builds one prompt line per attached video clip from the
+  stored clip understanding (no new vision call), runs `nova.voiceover.script_writer`, and
+  persists `voiceover_script` on the `assistant_response` payload: `script_id`, per-thread
+  `revision`, `source_media_ids`, `item_id`, `language`, `needs_check` (the writer's list plus a
+  backstop for numbers and names absent from the inputs) and the `record_or_import`
+  continuation. The event `content` also carries the script, so clients without the card read it.
+- A revision keeps `script_id` and `source_media_ids`, bumps `revision`, and writes no brief
+  version. A writer failure is `status: "failed"` with no text.
+- The app shows the card when `voiceover_script_cards` is advertised; Record / Import open the
+  voiceover step with the script to read. The upload uses the normal, ownership-checked voiceover
+  attach; the next turn plans the narrated edit as usual.
+- Kill switch `KRIA_VOICEOVER_SCRIPT_ENABLED=false` (api + worker restart): no script, but a
+  narrated plan without a voiceover still asks to record or import instead of reaching approval.
+  Independent of `TRANSCRIPT_HELPER_ENABLED`. Journey: `tests/kria/test_kri815_voiceover_script_journey.py`.
+
+## Research before approval (KRI-881)
+
+A creator who asks for sources ("Include sources for the historical facts", T06) sees the
+exact sourced wording and its sources **before** the approval card, and the render puts
+exactly that wording on exactly those clips.
+
+- **Typed ask.** Main Creator / the brief extractor record one `text` requirement, scope
+  `global`, with `facts.research = {topic, request_quote}` (prompt v81 / extractor v23).
+  `ResearchRequest` rejects a URL or private-path topic; `request_quote` must be the
+  creator's own words (`ResearchRequest.authorize` against the full creator request).
+  Never matched from words on the server; "Start fresh" withdraws it like any requirement.
+- **When.** `research_preview.with_research` runs after planning, outside every lock, for a
+  strategy draft with a render request that renders through the unified phone montage. It
+  builds the worker's own plan (`phone_montage_preflight.preflight_montage_plan`, shared with
+  KRI-775), the composer's model view (`creation_text_composition.creation_model_snapshot`)
+  and runs `researched_text.run_researched_revision` unchanged (search, copy, review).
+- **Budget.** Research runs under a thread heartbeat that renews the 15 s turn lease
+  (`_lease_heartbeat_thread`; planning's own heartbeat has stopped). Inline when at least
+  `INLINE_MIN_S` (100 s) of the turn is left; otherwise `tasks.prepare_kria_research`
+  (soft 170 s / hard 200 s) runs it and the turn continues (KRI-709, bounded by
+  `kria_turn_auto_continue_max_runs`). The deferring run anchors its `draft.apply_strategy`
+  arguments to the turn in Redis; the continued run drafts that anchored strategy (a
+  re-plan never writes the same wording) when its basis still matches, and waits for the
+  in-flight task instead of researching the same draft again (one task per basis, via an
+  in-flight marker).
+- **Cache.** Redis, keyed by `basis_digest`: research ask + full creator request + live
+  requirements + reply language + strategy + media identity + length plan. Only finished
+  results are cached and the first one wins (`SET NX`); a timeout is never cached, so the
+  next run (or the creator's resend) researches again.
+- **Ready.** The reply lists each explanation (`0:11–0:20 · "Troy: …" · Source: whc.unesco.org`),
+  the `draft_applied` payload carries `research_preview` (explanations + `{title, url}`
+  sources), and `BriefBinding.prepared_research` pins the result under the binding digest
+  (absent when unused, so stored bindings keep their digest and wire shape).
+- **Failed / unmet.** A checked `not_possible` receipt with the precise reason joins the
+  KRI-775 hold-back: "a different approach, or this simpler version?" No approval card.
+- **Render.** `_run_phone_unified_montage_job` reads the pinned result from the approved
+  binding and `compose_creation_text(prepared_research=…)` replays it through
+  `researched_text.pinned_research_operations`: same consecutive clips, inside their render
+  windows, same placement rules, approved text protected from the composer. No search, no
+  rewrite. Song-lyric caption rows are hidden from placement exactly as they were for the
+  preview, so they are never removed or treated as text to avoid. A plan it no longer fits
+  fails the job naming the explanation.
+- **Never speech.** Sourced text is `add_text` rows with `research` provenance, never caption
+  cues, narration or voiceover inputs.
+- **Scope.** Unified phone montage only, and the non-readiness draft path (KRI-721 readiness
+  drafts keep render-time research). Guided proposals already research before their offer;
+  follow-up chat research already shows a draft first.
+- **Kill switch.** `KRIA_RESEARCH_PREVIEW_ENABLED=false` + restart api + worker: nothing runs,
+  no field is pinned, render-time research is unchanged.
+- **Proof.** `tests/evals/request_following/test_kri881_research_before_approval.py` (real
+  runtime turn over scratch Postgres + real phone worker, recorded model I/O) writes
+  `.dev/kri-881/report.json`.
 
 ## Render consent
 

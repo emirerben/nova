@@ -54,7 +54,7 @@
   "KriaUITests/CreationUITests/testWaitForRenderConflictKeepsCreateRetryable": 26.5,
   "KriaUITests/DeviceRenderUITests/testPhoneRenderReachesReadyWithPlaySaveAndShare": 37.8,
   "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady": 32.7,
-  "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForANewEditWithoutRetry": 23.5,
+  "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForAChangeInChatWithoutRetry": 23.5,
   "KriaUITests/EditorUITests/testCapturedCreationWordsPlayReopenAndExport": 78.7,
   "KriaUITests/EditorUITests/testClipActionsDismissOnOutsideTapAndKeepClipSelectionWorking": 23.2,
   "KriaUITests/EditorUITests/testDeletingFinalClipShowsEmptyCanvasAndUndoRestoresPlayback": 24.1,
@@ -186,5 +186,6 @@
   "KriaUITests/SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal": 30,
   "KriaUITests/SavedUploadsUITests/testRelinkedOriginalFinishesTheVisualsAdd": 30,
   "KriaUITests/SavedUploadsUITests/testPhotoOnlyVisualsSendVideosToFootage": 30,
-  "KriaUITests/SavedUploadsUITests/testPhoneFootageAttachesProxyWithoutUploadingTheOriginal": 30
+  "KriaUITests/SavedUploadsUITests/testPhoneFootageAttachesProxyWithoutUploadingTheOriginal": 30,
+  "KriaUITests/SavedUploadsUITests/testSelectTwoThenDoneAddsBoth": 30
 }

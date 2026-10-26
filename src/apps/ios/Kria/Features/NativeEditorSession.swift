@@ -54,11 +54,22 @@ enum NativeEditorSaveState: Equatable, Sendable {
     case previewPending
     case renderRetryNeeded(String)
     case deviceRenderRetryNeeded(String)
-    case conflict
     case loadFailed(String)
-    case refreshFailed(String)
     case previewFailed(String)
     case failed(String)
+}
+
+/// How the editor's background refresh (chat drafts, newer renders) is doing. Kept apart from
+/// `NativeEditorSaveState` on purpose: a failed background read must never replace a save or render
+/// banner and its button, and a temporary failure is not something the creator has to act on.
+enum NativeEditorRefreshSync: Equatable, Sendable {
+    case idle
+    /// Reads keep failing for a temporary reason (offline, a server hiccup). Retrying on its own.
+    case reconnecting
+    /// The project moved to a new version that is still rendering. The current video stays editable.
+    case newVersionRendering
+    /// The project no longer points at this edit (started over or removed elsewhere).
+    case targetLost(String)
 }
 
 enum NativeEditorLoadState: Equatable, Sendable {
@@ -153,10 +164,26 @@ struct NativeEditorTemporaryVideo {
     @Published var isPlaying = false
     @Published var isSaving = false
     @Published var hasUnsavedChanges = false
-    @Published var saveState: NativeEditorSaveState = .idle {
-        didSet { saveStateBeforePromptFailure = nil }
-    }
-    private var saveStateBeforePromptFailure: NativeEditorSaveState?
+    @Published var saveState: NativeEditorSaveState = .idle
+    @Published private(set) var refreshSync: NativeEditorRefreshSync = .idle
+    /// Waits between background refresh retries; the last one repeats. Internal so tests can shorten it.
+    var refreshRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(27), .seconds(60)]
+    private var refreshRetryTask: Task<Void, Never>?
+    private var refreshFailureStreak = 0
+    /// The project lost this edit target, or the chat runtime is off: further draft reads cannot succeed.
+    private var promptSyncStopped = false
+    /// Polls for a new job that the thread points at but that is not ready to edit yet.
+    private var newVersionWatchTask: Task<Void, Never>?
+    private var newVersionWatchTarget: UUID?
+    /// Shown on the opening screen while a first open waits for its video or for a connection.
+    @Published private(set) var loadWaitingMessage: String?
+    private var loadRetryTask: Task<Void, Never>?
+    private var loadRetryAttempt = 0
+    var loadRetryDelays: [Duration] = [.seconds(1), .seconds(3), .seconds(9), .seconds(20)]
+    var loadRenderingDelays: [Duration] = [.seconds(3), .seconds(5), .seconds(10), .seconds(15)]
+    /// About 30 s of quiet retries at the default delays before the opening screen offers Retry.
+    static let loadTransientRetryLimit = 4
+    var newVersionPollDelays: [Duration] = [.seconds(3), .seconds(5), .seconds(10), .seconds(15)]
     private var conversationRuntimeVersion = 2
     private var legacyPromptSnapshot: [String: JSONValue]?
     @Published private(set) var loadState: NativeEditorLoadState = .loaded
@@ -660,6 +687,10 @@ struct NativeEditorTemporaryVideo {
                 doc.clips[kept.index].inS = kept.inS
                 doc.clips[kept.index].durationS = kept.durationS
                 doc.clips[kept.index].durationBeats = nil
+                if doc.clips[kept.index].raw["source_end_s"] != nil {
+                    let rate = Self.explicitPlaybackRate(doc.clips[kept.index])
+                    doc.clips[kept.index].raw["source_end_s"] = .number(kept.inS + kept.durationS * rate)
+                }
             }
             let removedSlots = plan.dropped.sorted().map { doc.clips[$0] }
             for slot in removedSlots {
@@ -793,7 +824,77 @@ struct NativeEditorTemporaryVideo {
         return DeviceRenderKey(projectID: threadID ?? projectID, jobID: jobID, variantID: variantKey)
     }
 
-    func useDeviceRendering(_ sessions: DeviceRenderSessions) { deviceRenders = sessions }
+    func useDeviceRendering(_ sessions: DeviceRenderSessions) {
+        deviceRenders = sessions
+        observeDeviceRenderPresentations(sessions)
+    }
+
+    /// `deviceRenderRetryNeeded` follows the live render instead of freezing the
+    /// moment it was set: the chat poll, a Resume in the render sheet or the
+    /// coordinator itself can heal the render while the editor is open, and the
+    /// banner (and its retry button) must clear when they do.
+    private func observeDeviceRenderPresentations(_ sessions: DeviceRenderSessions) {
+        withObservationTracking {
+            _ = sessions.presentations
+        } onChange: { [weak self, weak sessions] in
+            Task { @MainActor [weak self, weak sessions] in
+                guard let self, let sessions, self.deviceRenders === sessions else { return }
+                self.deviceRenderPresentationChanged()
+                self.observeDeviceRenderPresentations(sessions)
+            }
+        }
+    }
+
+    /// Re-derives the device-render retry banner from the current presentation.
+    func deviceRenderPresentationChanged() {
+        guard case .deviceRenderRetryNeeded = saveState, let key = deviceRenderKey,
+              let presentation = deviceRenders?.presentations[key] else { return }
+        if Self.deviceRenderNeedsRetry(presentation) {
+            let updated = NativeEditorSaveState.deviceRenderRetryNeeded(Self.deviceRenderRetryMessage(presentation))
+            if saveState != updated { saveState = updated }
+            return
+        }
+        // Healed: go back to waiting for this save's video, which the preview poll installs.
+        if let generation = pendingPreviewGeneration {
+            saveState = .previewPending
+            startPreviewRefresh(generation: generation)
+        } else {
+            saveState = .idle
+        }
+    }
+
+    /// The render cannot finish without the creator (a retry, a Resume, a change).
+    static func deviceRenderNeedsRetry(_ presentation: DeviceRenderPresentation) -> Bool {
+        presentation.requiresServerRetry || presentation.phase == .needsAttention
+            || presentation.phase == .cancelled
+            || (presentation.phase == .localReady && presentation.message != nil)
+    }
+
+    static func deviceRenderRetryMessage(_ presentation: DeviceRenderPresentation) -> String {
+        switch DeviceRenderAttentionCopy.nextStep(presentation) {
+        case .resume:
+            return "Your edit is saved. Rendering is paused on this iPhone; resume it when you’re ready."
+        case .reviewInChat:
+            return "Your edit is saved. This iPhone can’t render this version; review it in chat and Kria will make one it can."
+        case .updateApp:
+            return "Your edit is saved. This edit needs a newer version of Kria. Update the app to finish it."
+        case .renderNow:
+            return "Your edit is saved. Kria can render it on this iPhone now."
+        case .retry:
+            break
+        }
+        return presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
+    }
+
+    /// The device render behind the retry banner is the creator's own pause.
+    var deviceRenderIsPaused: Bool { deviceRenderNextStep == .resume }
+
+    /// What the retry banner offers: a retry, a Resume, the conversation for an edit
+    /// this iPhone declined (a retry would be declined the same way), or an app update.
+    var deviceRenderNextStep: DeviceRenderAttentionCopy.NextStep {
+        guard let key = deviceRenderKey, let presentation = deviceRenders?.presentations[key] else { return .retry }
+        return DeviceRenderAttentionCopy.nextStep(presentation)
+    }
     /// Upload records outlive this screen. The session only observes their
     /// results and turns a ready source into one local document transaction.
     func useMediaUploads(_ uploads: BackgroundUploadCoordinator) { mediaUploads = uploads }
@@ -803,9 +904,29 @@ struct NativeEditorTemporaryVideo {
         await resumePendingEditorPlacements()
     }
 
+    /// The last phone-rendering answer the server actually gave. A failed read says nothing new.
+    private var lastPhoneRenderingCapabilities: PhoneRenderingCapabilities?
+    /// A reconcile was skipped because capabilities were never readable; the preview poll retries it.
+    private var deviceReconcilePending = false
+
     func refreshDeviceRender(retry: Bool = false) async {
         guard let key = deviceRenderKey, let api, let deviceRenders else { return }
-        let capabilities = (try? await api.creationCapabilities())?.phoneRendering ?? .disabled
+        let capabilities: PhoneRenderingCapabilities
+        do {
+            let response = try await api.creationCapabilities()
+            capabilities = response.phoneRendering ?? .disabled
+            lastPhoneRenderingCapabilities = capabilities
+        } catch {
+            // Substituting `.disabled` for a failed read routed the edit to "Rendering on iPhone is
+            // not available for this edit yet" and stopped it, offline or on a 5xx. Keep the last
+            // real answer; without one, wait and try again rather than guess.
+            guard let last = lastPhoneRenderingCapabilities else {
+                deviceReconcilePending = true
+                return
+            }
+            capabilities = last
+        }
+        deviceReconcilePending = false
         await deviceRenders.reconcile(key, capabilities: capabilities, retry: retry)
     }
 
@@ -870,6 +991,8 @@ struct NativeEditorTemporaryVideo {
     private var pendingPlacementIDs: Set<UUID> = []
     private var editorImportsActive = true
     private var threadID: UUID?
+    /// The creation thread this edit belongs to (from open-in-editor for a gallery video).
+    var creationThreadID: UUID? { threadID }
     private var itemID: String?
     var visualItemID: String? { itemID }
     @Published private(set) var visualLibrary: [CreationVisual] = []
@@ -979,22 +1102,36 @@ struct NativeEditorTemporaryVideo {
         return probe == a
     }
 
-    /// Three-way per-lane merge of a chat draft built on `submitted`. Returns nil
-    /// when some lane changed on BOTH sides (caller raises `.conflict`).
-    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>), over submitted: EditorDocument) -> (document: EditorDocument, taken: Set<EditorSection>)? {
+    /// Three-way per-lane merge of a chat draft built on `submitted`. A lane only
+    /// one side changed keeps that side. KRI-935: a lane changed on BOTH sides
+    /// takes the chat's version, because it is the newest edit and the creator
+    /// asked for it; the caller's single Undo step restores their own version.
+    private func mergeChatDraft(_ staged: (document: EditorDocument, sections: Set<EditorSection>), over submitted: EditorDocument) -> (document: EditorDocument, taken: Set<EditorSection>) {
         var merged = document
         var taken: Set<EditorSection> = []
-        for section in staged.sections {
-            let localUntouched = lanesEqual(section, document, submitted)
-            let serverUntouched = lanesEqual(section, staged.document, submitted)
-            if localUntouched {
-                if !serverUntouched { copy(section, from: staged.document, into: &merged); taken.insert(section) }
-            } else if !serverUntouched, !lanesEqual(section, document, staged.document) {
-                return nil
-            }
+        for section in staged.sections where !lanesEqual(section, staged.document, submitted) {
+            copy(section, from: staged.document, into: &merged); taken.insert(section)
         }
         merged.revision.number = staged.document.revision.number ?? merged.revision.number
-        return (merged, taken)
+        // Deletes made after the chat saw this state stay deleted.
+        let unseen = Set(document.deletions).subtracting(submitted.deletions)
+        return (Self.honoringDeletions(unseen, in: merged), taken)
+    }
+
+    /// A chat lane copied over the creator's own edit never brings back what they
+    /// deleted and the chat never saw deleted (KRI-935).
+    private static func honoringDeletions(_ deletions: Set<EditorDeletion>, in value: EditorDocument) -> EditorDocument {
+        guard !deletions.isEmpty else { return value }
+        func ids(_ kind: String) -> Set<String> { Set(deletions.filter { $0.kind == kind }.map(\.id)) }
+        let text = ids("text"), cues = ids("caption_cue"), sounds = ids("sound_effect")
+        let overlays = ids("media_overlay"), blocks = ids("visual_block")
+        var kept = value
+        kept.textElements.removeAll { text.contains($0.id) || ($0.isCaption && cues.contains($0.id)) }
+        kept.captionCues.removeAll { cues.contains($0.id) }
+        kept.soundEffects.removeAll { sounds.contains($0.id) }
+        kept.mediaOverlays.removeAll { overlays.contains($0.id) }
+        kept.visualBlocks.removeAll { blocks.contains($0.id) }
+        return kept
     }
 
     var hasOnlyChatStagedChanges: Bool {
@@ -1587,8 +1724,12 @@ struct NativeEditorTemporaryVideo {
                 // would replay a trimmed clip sped up or slowed down.
                 sourceSpan = NativeNarratedSourceTiming.span(target: movingDuration, available: available)
             } else {
+                let selectedSpan = Self.number(slot.raw["source_end_s"]).flatMap { end -> Double? in
+                    let span = end - sourceStart
+                    return span.isFinite && span > 0 ? span : nil
+                }
                 sourceSpan = min(
-                    Self.number(slot.raw["native_source_span_s"]) ?? movingDuration,
+                    selectedSpan ?? Self.number(slot.raw["native_source_span_s"]) ?? movingDuration,
                     available ?? .greatestFiniteMagnitude
                 )
             }
@@ -1612,6 +1753,7 @@ struct NativeEditorTemporaryVideo {
 
     func load(api: any KriaAPIClient, threadID: UUID, variantID: String? = nil, allowPlaybackFallback: Bool = true) async {
         conversationRuntimeVersion = 2
+        resetBackgroundRefresh()
         self.api = api; self.threadID = threadID; isSaving = true; saveState = .saving; loadState = .loading
         defer { isSaving = false }
         do {
@@ -1647,6 +1789,7 @@ struct NativeEditorTemporaryVideo {
                 installPlayer(url: url, preferredDuration: authoritativeDuration)
             }
             loadState = .loaded
+            loadSucceeded()
             await prepareSourcePreview()
             await resumePendingEditorPlacements()
         } catch {
@@ -1654,6 +1797,9 @@ struct NativeEditorTemporaryVideo {
             NativePreviewDiagnostics.failure("editor-load-failed", error: error)
             NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
             #endif
+            if scheduleLoadRetry(after: error, { [weak self] in
+                await self?.load(api: api, threadID: threadID, variantID: variantID, allowPlaybackFallback: allowPlaybackFallback)
+            }) { return }
             saveState = .loadFailed(error.localizedDescription)
             loadState = .failed(error.localizedDescription)
         }
@@ -1694,7 +1840,8 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Reconcile the same project after an agent turn. A response that arrives
-    /// after a manual edit cannot replace it; conflict resolution remains explicit.
+    /// after a manual edit never replaces it: the newer version becomes the base
+    /// and the creator's unsaved lanes are replayed on top (KRI-935).
     private static let stagingLog = Logger(subsystem: "com.kria.app", category: "chat-staging")
     private var syncNeedsRetry = false
 
@@ -1711,7 +1858,14 @@ struct NativeEditorTemporaryVideo {
     }
 
     private func runPromptRevisionSync() async {
-        guard loadState == .loaded, !isSaving, let api, let threadID else { return }
+        if isSaving, loadState == .loaded, !promptSyncStopped,
+           refreshSync == .reconnecting || isRunningRefreshRetry {
+            // A retry that lands mid-save would otherwise be dropped and leave the
+            // offline hint up with nothing scheduled to clear it: try again shortly.
+            scheduleRefreshRetry(retryAfter: nil)
+            return
+        }
+        guard loadState == .loaded, !isSaving, !promptSyncStopped, let api, let threadID else { return }
         promptRefreshSequence &+= 1
         let sequence = promptRefreshSequence
         let baseline = cleanDocument
@@ -1728,14 +1882,15 @@ struct NativeEditorTemporaryVideo {
                 if let latest {
                     // Playback summaries may show another ready cut while the
                     // selected edit renders. Mutation authority stays selected.
+                    // No active job yet (between jobs, or a re-plan whose variant
+                    // is not seeded) is a normal moment, not an error: keep the
+                    // loaded edit and wait for the next event.
                     guard let activeJob = latest.activeJobID.flatMap(UUID.init(uuidString:)),
-                          let activeItem = latest.activePlanItemID else { throw APIError.invalidResponse }
+                          let activeItem = latest.activePlanItemID else { return }
                     let variants = latest.job?.variants ?? []
                     let selected = latest.state?["selected_variant_id"]?.stringValue
                         ?? (variants.count == 1 ? variants.first?.variantID : nil)
-                    guard let selected, variants.contains(where: { $0.variantID == selected }) else {
-                        throw APIError.invalidResponse
-                    }
+                    guard let selected, variants.contains(where: { $0.variantID == selected }) else { return }
                     targetJob = activeJob; targetVariant = selected; targetItem = activeItem
                 } else {
                     // An unavailable projection can only reuse the complete
@@ -1744,6 +1899,7 @@ struct NativeEditorTemporaryVideo {
                     targetJob = jobID; targetVariant = variantKey; targetItem = itemID
                 }
                 let current = try await api.editorVariant(jobID: targetJob, variantID: targetVariant)
+                noteRefreshReadSucceeded()
                 variant = current
                 snapshot = DraftSnapshot(
                     draftID: "job-\(targetJob.uuidString)", itemID: targetItem, variantKey: targetVariant,
@@ -1756,6 +1912,9 @@ struct NativeEditorTemporaryVideo {
                 if let targetJob = snapshot.baseJobID.flatMap(UUID.init) {
                     variant = try await api.editorVariant(jobID: targetJob, variantID: snapshot.variantKey)
                 } else { variant = nil }
+                // Only a complete read proves the path works: a draft read followed by a failing
+                // variant read must not reset the streak, or a persistent conflict retries forever.
+                noteRefreshReadSucceeded()
             }
             let nextJobID = snapshot.baseJobID.flatMap(UUID.init)
             let nextVariantKey = snapshot.variantKey
@@ -1768,7 +1927,6 @@ struct NativeEditorTemporaryVideo {
             }
             if conversationRuntimeVersion == 1, sameTarget, nextDraft.serverSnapshot == legacyPromptSnapshot,
                sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled {
-                if let previous = saveStateBeforePromptFailure { saveState = previous }
                 return
             }
             let nextDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(nextDraft))
@@ -1780,7 +1938,6 @@ struct NativeEditorTemporaryVideo {
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
-            if let previous = saveStateBeforePromptFailure { saveState = previous }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
             // Only the previous chat draft is unsaved: the newer cumulative
             // head replaces it wholesale instead of conflicting with it.
@@ -1789,11 +1946,7 @@ struct NativeEditorTemporaryVideo {
             if let staged, sameTarget, variantUnchanged(variant), pendingText == nil, !isSaving,
                let stateID = snapshot.snapshot["client_state_id"]?.stringValue,
                let submitted = submittedEditorStates[stateID] {
-                guard let result = mergeChatDraft(staged, over: submitted.document) else {
-                    Self.stagingLog.debug("sync conflict: same lane edited locally and by chat rev=\(snapshot.draftRevision, privacy: .public)")
-                    saveState = .conflict
-                    return
-                }
+                let result = mergeChatDraft(staged, over: submitted.document)
                 // One Undo restores the creator's own pre-chat UNSAVED state. The clean
                 // baseline (the rendered variant) is deliberately left untouched.
                 appendUndo(document); redoStack.removeAll()
@@ -1808,23 +1961,48 @@ struct NativeEditorTemporaryVideo {
             let onlyChatStaged = hasOnlyChatStagedChanges
             if onlyChatStaged, staged == nil, sameTarget, variantUnchanged(variant) { return }
             guard !hasUnsavedChanges || onlyChatStaged, pendingText == nil, !isSaving else {
-                // Unsaved local edits. When the rendered variant is unchanged
-                // and the chat touched only lanes the creator has not, both
-                // sides can be kept lane-by-lane; otherwise stay explicit.
-                if let staged, variantUnchanged(variant), pendingText == nil, !isSaving,
-                   staged.sections.isDisjoint(with: changedSections.union(explicitlyDirtySections)) {
+                // Text still being typed or a save in flight owns the document; the
+                // next sync (every chat send runs one first) stages this draft then.
+                guard pendingText == nil, !isSaving else {
+                    Self.stagingLog.debug("sync deferred: text entry or save in flight rev=\(snapshot.draftRevision, privacy: .public)")
+                    return
+                }
+                // Unsaved local edits on the same rendered variant: keep both sides
+                // lane-by-lane. A lane the chat also changed takes the chat's version
+                // (the newest edit, which the creator asked for); one Undo restores
+                // the creator's own version (KRI-935).
+                if let staged, variantUnchanged(variant) {
                     appendUndo(document); redoStack.removeAll()
                     var merged = document
                     for section in staged.sections { copy(section, from: staged.document, into: &merged) }
-                    document = merged
+                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
                     changedSections.formUnion(staged.sections)
                     appliedChatDraftRevision = snapshot.draftRevision
                     chatStagedDocument = nil
                     refreshDirtyState(); refreshDuration()
                     return
                 }
-                Self.stagingLog.debug("sync conflict: local edits overlap chat draft rev=\(snapshot.draftRevision, privacy: .public)")
-                saveState = .conflict
+                // Same rendered generation and no new chat draft: nothing newer exists,
+                // so the creator's edits and their Undo history stay exactly as they are.
+                if staged == nil, sameTarget, variantUnchanged(variant) { return }
+                // A newer version was rendered (or the chat moved the edit to another
+                // variant) while the creator has unsaved edits. Load it without asking:
+                // it becomes the clean base, the creator's lanes are replayed on top
+                // (one Undo drops them), and a staged chat edit lands last.
+                Self.stagingLog.debug("sync rebase: newer version under local edits rev=\(snapshot.draftRevision, privacy: .public)")
+                if !sameTarget { appliedChatDraftRevision = nil }
+                if conversationRuntimeVersion == 1 { legacyPromptSnapshot = nextDraft.serverSnapshot }
+                jobID = nextJobID; variantKey = nextVariantKey; itemID = snapshot.itemID
+                rebaseLocalEdits(onto: nextDocument, variant: variant, forcePreviewRebuild: !sameTarget)
+                if let staged {
+                    appendUndo(document); redoStack.removeAll()
+                    var merged = document
+                    for section in staged.sections { copy(section, from: staged.document, into: &merged) }
+                    document = Self.honoringDeletions(Set(merged.deletions), in: merged)
+                    changedSections.formUnion(staged.sections)
+                    appliedChatDraftRevision = snapshot.draftRevision
+                    refreshDirtyState(); refreshDuration()
+                }
                 return
             }
             let selected = selection
@@ -1847,21 +2025,136 @@ struct NativeEditorTemporaryVideo {
             await prepareSourcePreview()
         } catch {
             guard sequence == promptRefreshSequence, cleanDocument == baseline, !Task.isCancelled else { return }
+            let failure = Self.refreshFailure(error)
             // The loaded job was superseded by a re-plan render (its editor
             // routes now answer "content plan unavailable"/409): follow the
-            // thread to its current job instead of reporting a refresh failure.
-            if conversationRuntimeVersion == 2,
-               let apiError = error as? APIError, apiError == .contentPlanUnavailable || apiError == .conflict {
+            // thread to its current job instead of reporting anything.
+            if conversationRuntimeVersion == 2, failure == .readConflict {
                 let before = jobID
                 await adoptActiveJobFromThread(api: api, threadID: threadID)
-                if jobID != before || newerJobPrompt != nil { return }
+                if jobID != before || newerJobPrompt != nil || refreshSync == .newVersionRendering { return }
             }
-            // A refresh error temporarily owns the banner. Any intervening
-            // save/render status assignment relinquishes that ownership.
-            let previous = saveStateBeforePromptFailure ?? saveState
-            saveState = .refreshFailed("Your conversation changed, but the editor couldn’t refresh. Your local edit is still here. \(error.localizedDescription)")
-            saveStateBeforePromptFailure = previous
+            handleRefreshFailure(failure)
         }
+    }
+
+    /// Why a background refresh read failed, sorted by what the editor should do about it.
+    enum RefreshFailure: Equatable {
+        /// The request was cancelled (view gone, superseded). Nothing happened.
+        case cancelled
+        /// Signed out or app update required. The app-wide gates already took over.
+        case appGate
+        /// Offline, timeout, 5xx, 429. Retry on its own; `retryAfter` is the server's hint in seconds.
+        case transient(retryAfter: TimeInterval?)
+        /// A read-path 409 (generation race, re-plan in flight, superseded job). Never "changed elsewhere".
+        case readConflict
+        /// The thread no longer has this edit (started over, deleted on another device).
+        case targetLost
+        /// The chat runtime is switched off; the editor keeps working without draft sync.
+        case runtimeUnavailable
+        /// Anything else. Logged, never shown: a background read has no action for the creator.
+        case other
+    }
+
+    static let targetLostMessage = "This project was started over or removed in another place, so this edit isn’t linked to it anymore. Go back to the chat to keep going."
+
+    static func refreshFailure(_ error: Error) -> RefreshFailure {
+        if error is CancellationError { return .cancelled }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return .cancelled }
+        if RequestFailureCause(error) == .connection { return .transient(retryAfter: nil) }
+        guard let apiError = error as? APIError else { return .other }
+        switch apiError {
+        case .sessionExpired, .nativeUpdateRequired:
+            return .appGate
+        case .contentPlanUnavailable:
+            return .readConflict
+        case .conflict:
+            return apiError.conflictCode == "draft_target_missing" ? .targetLost : .readConflict
+        case let .requestFailed(status, detail):
+            if status == 408 || status == 429 || (500...599).contains(status) {
+                return .transient(retryAfter: detail.retryAfter)
+            }
+            guard status == 404 else { return .other }
+            switch detail.code {
+            case "thread_not_found", "thread_deleted", "draft_target_missing": return .targetLost
+            case "kria_runtime_unavailable": return .runtimeUnavailable
+            default: return .other
+            }
+        default:
+            return .other
+        }
+    }
+
+    /// Any successful refresh read proves the path works again: drop the quiet hint and pending retry.
+    private func noteRefreshReadSucceeded() {
+        refreshFailureStreak = 0
+        refreshRetryTask?.cancel(); refreshRetryTask = nil
+        if refreshSync == .reconnecting { refreshSync = .idle }
+    }
+
+    private func handleRefreshFailure(_ failure: RefreshFailure) {
+        Self.stagingLog.debug("sync failed kind=\(String(describing: failure), privacy: .public) streak=\(self.refreshFailureStreak, privacy: .public)")
+        switch failure {
+        case .cancelled, .other:
+            return
+        case .appGate:
+            refreshRetryTask?.cancel(); refreshRetryTask = nil
+            refreshFailureStreak = 0
+            if refreshSync == .reconnecting { refreshSync = .idle }
+        case let .transient(retryAfter):
+            refreshFailureStreak += 1
+            if refreshFailureStreak >= Self.reconnectingHintAfterFailures, refreshSync == .idle { refreshSync = .reconnecting }
+            scheduleRefreshRetry(retryAfter: retryAfter)
+        case .readConflict:
+            // A race between two reads settles in a moment; a persistent one has nothing to retry.
+            refreshFailureStreak += 1
+            if refreshFailureStreak <= Self.readConflictRetryLimit { scheduleRefreshRetry(retryAfter: nil) }
+        case .targetLost:
+            stopPromptSync()
+            refreshSync = .targetLost(Self.targetLostMessage)
+        case .runtimeUnavailable:
+            stopPromptSync()
+        }
+    }
+
+    static let reconnectingHintAfterFailures = 3
+    static let readConflictRetryLimit = 2
+
+    private func scheduleRefreshRetry(retryAfter: TimeInterval?) {
+        refreshRetryTask?.cancel()
+        guard !refreshRetryDelays.isEmpty else { refreshRetryTask = nil; return }
+        var delay = refreshRetryDelays[min(max(refreshFailureStreak - 1, 0), refreshRetryDelays.count - 1)]
+        // Honour the server's Retry-After, capped so a bad header cannot park the editor.
+        if let retryAfter { delay = max(delay, .seconds(min(retryAfter, 120))) }
+        refreshRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            self.refreshRetryTask = nil
+            await self.runRefreshRetry()
+        }
+    }
+
+    /// True while a scheduled or resumed retry runs, so a save in progress defers it instead of dropping it.
+    private var isRunningRefreshRetry = false
+
+    private func runRefreshRetry() async {
+        isRunningRefreshRetry = true
+        defer { isRunningRefreshRetry = false }
+        await synchronizePromptRevision()
+    }
+
+    private func stopPromptSync() {
+        promptSyncStopped = true
+        refreshRetryTask?.cancel(); refreshRetryTask = nil
+        refreshFailureStreak = 0
+    }
+
+    /// The connection came back or the app returned to the foreground: run a pending retry now
+    /// instead of waiting out its backoff.
+    func resumeRefreshSync() async {
+        guard refreshRetryTask != nil || refreshSync == .reconnecting else { return }
+        refreshRetryTask?.cancel(); refreshRetryTask = nil
+        await runRefreshRetry()
     }
 
     /// A shared session (`ChatWorkspaceView`'s editor tab) can be reused
@@ -1906,10 +2199,19 @@ struct NativeEditorTemporaryVideo {
         } catch {
             // Superseded (re-plan) keeps the full path, which follows the thread to its new job.
             // Anything else (a dropped connection) must not wipe local edits or error the editor.
-            if let apiError = error as? APIError, apiError == .contentPlanUnavailable || apiError == .conflict {
+            switch Self.refreshFailure(error) {
+            case .readConflict:
                 return false
+            case .transient:
+                // Keep the editor that works, clean or not, and look again quietly. A full reload
+                // here would replace it with "The editor couldn't open" while offline.
+                handleRefreshFailure(Self.refreshFailure(error))
+                return true
+            case .cancelled, .appGate:
+                return true
+            case .targetLost, .runtimeUnavailable, .other:
+                return hasOwnEdits
             }
-            return hasOwnEdits
         }
         if variantUnchanged(current) {
             loadedServerRevision = project.serverRevision
@@ -1974,12 +2276,75 @@ struct NativeEditorTemporaryVideo {
     /// dropped and the new job loads automatically. The creator's own unsaved
     /// edits are never discarded silently: they raise `newerJobPrompt` instead.
     func adoptLatestJob(_ project: ProjectSummary, api: any KriaAPIClient) async {
+        guard isBehindActiveJob(project), !isSaving, let target = project.activeJobID else { return }
+        // A re-plan points the thread at its new job before that job has a video. Loading it then
+        // threw away the working video for "The editor couldn't open", and the prompt claimed a new
+        // version was ready while it was still rendering. Keep editing the current video until then.
+        switch await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api) {
+        case .ready:
+            break
+        case .rendering:
+            refreshSync = .newVersionRendering
+            watchNewVersion(project, api: api)
+            return
+        case .failed:
+            // The new render failed; the chat says so. The current video stays as it is.
+            newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+            if refreshSync == .newVersionRendering { refreshSync = .idle }
+            return
+        }
         guard isBehindActiveJob(project), !isSaving else { return }
+        newVersionWatchTask?.cancel(); newVersionWatchTask = nil
+        if refreshSync == .newVersionRendering { refreshSync = .idle }
         if hasUnsavedChanges, !hasOnlyChatStagedChanges {
             newerJobPrompt = project
             return
         }
         await switchToLatestJob(project, api: api)
+    }
+
+    enum JobReadiness: Equatable { case ready, rendering, failed }
+
+    /// Whether a job has a variant the editor can open. An unreadable status (offline, a server
+    /// hiccup) counts as still rendering: the watch asks again, and nothing is discarded meanwhile.
+    static func readiness(ofJob jobID: UUID, preferredVariantID: String?, api: any KriaAPIClient) async -> JobReadiness {
+        guard let variants = try? await api.editorVariants(jobID: jobID) else { return .rendering }
+        let identified = variants.filter { $0["variant_id"]?.stringValue != nil }
+        let candidates = preferredVariantID.flatMap { id in
+            let matching = identified.filter { $0["variant_id"]?.stringValue == id }
+            return matching.isEmpty ? nil : matching
+        } ?? identified
+        if candidates.contains(where: { $0["render_status"]?.stringValue == "ready" }) { return .ready }
+        if !candidates.isEmpty, candidates.allSatisfy({ $0["render_status"]?.stringValue == "failed" }) { return .failed }
+        return .rendering
+    }
+
+    /// Ask again until the new job is ready, then run the normal adopt decision once.
+    private func watchNewVersion(_ project: ProjectSummary, api: any KriaAPIClient) {
+        guard let target = project.activeJobID else { return }
+        if newVersionWatchTask != nil, newVersionWatchTarget == target { return }
+        newVersionWatchTask?.cancel()
+        newVersionWatchTarget = target
+        let delays = newVersionPollDelays
+        newVersionWatchTask = Task { [weak self] in
+            var attempt = 0
+            // About 15 minutes at the default cadence, longer than any render the server allows.
+            while attempt < 64, !delays.isEmpty {
+                try? await Task.sleep(for: delays[min(attempt, delays.count - 1)])
+                attempt += 1
+                guard !Task.isCancelled, let self, self.isBehindActiveJob(project) else { return }
+                let readiness = await Self.readiness(ofJob: target, preferredVariantID: project.outputVariantID, api: api)
+                guard !Task.isCancelled else { return }
+                if readiness != .rendering {
+                    self.newVersionWatchTask = nil
+                    await self.adoptLatestJob(project, api: api)
+                    return
+                }
+            }
+            guard !Task.isCancelled, let self else { return }
+            self.newVersionWatchTask = nil
+            if self.refreshSync == .newVersionRendering { self.refreshSync = .idle }
+        }
     }
 
     /// Switch now; discards any unsaved edits (caller has decided).
@@ -1996,6 +2361,16 @@ struct NativeEditorTemporaryVideo {
     }
 
     func keepEditingCurrentJob() { newerJobPrompt = nil }
+
+    /// A load starts from the server's current answer, so earlier refresh trouble no longer applies.
+    private func resetBackgroundRefresh() {
+        refreshRetryTask?.cancel(); refreshRetryTask = nil
+        newVersionWatchTask?.cancel(); newVersionWatchTask = nil; newVersionWatchTarget = nil
+        loadRetryTask?.cancel(); loadRetryTask = nil
+        refreshFailureStreak = 0
+        promptSyncStopped = false
+        refreshSync = .idle
+    }
 
     /// The thread now points at a different render job: the old job's player,
     /// source composition and device-render identity must not keep showing.
@@ -2036,6 +2411,7 @@ struct NativeEditorTemporaryVideo {
     ) async {
         self.api = api
         self.threadID = threadID
+        resetBackgroundRefresh()
         if let previous = jobID, previous != editorJobID { discardPlaybackForNewJob() }
         jobID = editorJobID
         isSaving = true
@@ -2145,15 +2521,72 @@ struct NativeEditorTemporaryVideo {
                 finishedRenderIsCurrent = false
             }
             loadState = .loaded
+            loadSucceeded()
             await prepareSourcePreview()
         } catch {
             #if DEBUG
             NativePreviewDiagnostics.failure("editor-load-failed", error: error)
             NativePreviewDiagnostics.record("editor-load-context", fields: ["job": jobID?.uuidString ?? "none"])
             #endif
+            if scheduleLoadRetry(after: error, { [weak self] in
+                await self?.load(editorJobID: editorJobID, planItemID: planItemID, preferredVariantID: preferredVariantID,
+                                 threadID: threadID, api: api)
+            }) { return }
             saveState = .loadFailed(error.localizedDescription)
             loadState = .failed(error.localizedDescription)
         }
+    }
+
+    private func loadSucceeded() {
+        loadRetryAttempt = 0
+        loadWaitingMessage = nil
+    }
+
+    /// A first open that failed for a reason that passes on its own (still rendering, offline, a
+    /// server hiccup, the two-read generation race) waits and tries again behind the opening screen
+    /// instead of showing "The editor couldn't open". Returns false when the failure should show.
+    private func scheduleLoadRetry(after error: Error, _ retry: @escaping @MainActor () async -> Void) -> Bool {
+        let delays: [Duration]
+        let limit: Int
+        let message: String
+        let apiError = error as? APIError
+        if apiError == .editorNotReady {
+            delays = loadRenderingDelays
+            limit = 80
+            message = "Your video is still rendering. The editor opens as soon as it’s ready."
+        } else {
+            switch Self.refreshFailure(error) {
+            case .transient:
+                delays = loadRetryDelays; limit = Self.loadTransientRetryLimit
+                message = RequestFailureCause(error) == .connection
+                    ? "Waiting for a connection. The editor opens on its own when you’re back online."
+                    : "Kria is taking a moment. Trying again…"
+            case .readConflict where apiError != .contentPlanUnavailable && apiError?.conflictCode == nil:
+                delays = loadRetryDelays; limit = 2
+                message = "Loading the latest cut…"
+            default:
+                loadSucceeded()
+                return false
+            }
+        }
+        guard loadRetryAttempt < limit, !delays.isEmpty else {
+            loadSucceeded()
+            return false
+        }
+        let delay = delays[min(loadRetryAttempt, delays.count - 1)]
+        loadRetryAttempt += 1
+        loadWaitingMessage = message
+        saveState = .idle
+        loadState = .loading
+        loadRetryTask?.cancel()
+        loadRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            // Cleared first: the load cancels any pending retry, and this task must not cancel itself.
+            self.loadRetryTask = nil
+            await retry()
+        }
+        return true
     }
 
     #if DEBUG
@@ -2385,7 +2818,7 @@ struct NativeEditorTemporaryVideo {
     static func sourcePreviewMessage(for error: Error) -> String {
         switch error {
         case APIError.conflict:
-            return "A newer version of this video exists. Close and reopen the editor to see it."
+            return "This video changed while it was loading. Retry to load the newest version."
         case APIError.sessionExpired:
             return "Sign in again to load the source videos."
         case NativeEditorRenderError.unsupportedLane:
@@ -2568,9 +3001,9 @@ struct NativeEditorTemporaryVideo {
 
     /// A save acknowledgement advances the document before its render is ready.
     /// Only an authoritative rebase replaces generation-owned preview inputs.
-    private func refreshRebasedSourcePreview() {
+    private func refreshRebasedSourcePreview(force: Bool = false) {
         let generation = document.revision.baseGeneration
-        guard sourcePreviewGeneration != generation else { return }
+        guard force || sourcePreviewGeneration != generation else { return }
         sourcePreviewTask?.cancel()
         sourcePreviewSequence += 1
         resolvedSources = nil
@@ -3456,6 +3889,9 @@ struct NativeEditorTemporaryVideo {
         slot.inS = abs(resized.start - slot.inS) < 1e-9 ? slot.inS : resized.start
         slot.durationS = abs(resized.length - currentDuration) < 1e-9 && slot.durationS != nil
             ? slot.durationS : max(minimumClipDuration, resized.length)
+        if slot.raw["source_end_s"] != nil {
+            slot.raw["source_end_s"] = .number(resized.start + resized.length * rate)
+        }
         slot.durationBeats = nil; next.clips[index] = slot
         // Later clips ripple by construction (windows are a walk of the slot durations); the
         // per-clip labels must ripple with them, derived from the gesture baseline every update.
@@ -3534,6 +3970,9 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .timeline) {
             $0.clips[index].inS = start
             if start != slot.inS { $0.clips[index].raw["source_start_locked"] = .bool(true) }
+            if let selectedEnd = slot.raw["source_end_s"]?.numberValue {
+                $0.clips[index].raw["source_end_s"] = .number(start + max(0, selectedEnd - slot.inS))
+            }
         }
     }
 
@@ -3601,7 +4040,11 @@ struct NativeEditorTemporaryVideo {
             if let inS { slot.inS = max(0, inS) }
             if let durationS { slot.durationS = max(minimumClipDuration, durationS) }
             if let durationBeats { slot.durationBeats = durationBeats }
-            if inS != nil || durationS != nil { slot.durationBeats = nil }
+            if inS != nil || durationS != nil {
+                slot.durationBeats = nil
+                // Generic timeline callers don't provide a source window.
+                slot.raw.removeValue(forKey: "source_end_s")
+            }
         }
     }
     func setClipSourceWindow(clipID: String, startS: Double, endS: Double) {
@@ -5557,6 +6000,30 @@ struct NativeEditorTemporaryVideo {
 
     func save() async {
         await saveOnce()
+        if saveHitNewerVersion {
+            // KRI-935: a newer version was saved elsewhere. Load it with the creator's
+            // edits on top and send them once more, without asking them to reload.
+            saveHitNewerVersion = false
+            let reload = await reloadLatestKeepingLocalEdits()
+            switch reload {
+            case .reloaded:
+                // The newest version may already contain everything the creator changed.
+                guard hasUnsavedChanges else { saveState = .saved; return }
+                await saveOnce()
+                if saveHitNewerVersion {
+                    saveHitNewerVersion = false
+                    saveState = .failed("This edit changed again while saving. Your edits are still here on the newest version. Save again to send them.")
+                    return
+                }
+            case .failed(let error) where error is CancellationError:
+                // The editor moved to another job or variant meanwhile; that load owns the state.
+                return
+            case .alreadyTried, .failed:
+                let detail = if case .failed(let error) = reload { " \(error.localizedDescription)" } else { "" }
+                saveState = .failed("Your edits are still here, but the newest version couldn’t be loaded.\(detail)")
+                return
+            }
+        }
         // A removal the server already had: the local state was folded, so send what else is pending.
         guard songRemovalAlreadyApplied else { return }
         songRemovalAlreadyApplied = false
@@ -5584,6 +6051,10 @@ struct NativeEditorTemporaryVideo {
         let request = commitRequest(sections: sections, baseGeneration: payload?["base_generation"]?.stringValue ?? document.revision.baseGeneration)
         do {
             let response = try await api.editorCommit(itemID: itemID, variantID: variantKey, request: request)
+            // A committed save proves the connection works: drop the offline hint. Any pending
+            // retry stays scheduled so the catch-up read still runs.
+            refreshFailureStreak = 0
+            if refreshSync == .reconnecting { refreshSync = .idle }
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
             let acknowledged = acknowledgedSections(response.sections, submittedSections: submittedSections)
             let postSubmitUndo = Array(undoStack.dropFirst(submittedUndoCount))
@@ -5715,6 +6186,7 @@ struct NativeEditorTemporaryVideo {
                 await refreshDeviceRender()
                 guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: response.generation) else { return }
                 pendingDeviceRenderIdentity = deviceRenderKey.flatMap { deviceRenders?.request(for: $0)?.identity }
+                previewSupersededGeneration = saveDocumentGeneration
                 startPreviewRefresh(generation: response.generation)
             } else {
                 pendingRenderRetrySections = acknowledged
@@ -5722,7 +6194,8 @@ struct NativeEditorTemporaryVideo {
             }
         } catch APIError.conflict {
             guard saveIdentityMatches(itemID: saveItemID, jobID: saveJobID, variantKey: saveVariantKey, threadID: saveThreadID, documentGeneration: saveDocumentGeneration) else { return }
-            saveState = .conflict
+            // `save()` loads the newer version and sends this edit again.
+            saveHitNewerVersion = true
         } catch EditorSaveError.userSongUnavailable where submittedDocument.userSong?.removed == true {
             // The song is already gone on the server (an earlier removal reached it): that is what the
             // creator asked for. Fold the removal in locally and carry on with whatever else is pending.
@@ -5761,25 +6234,42 @@ struct NativeEditorTemporaryVideo {
         }
     }
 
-    /// Refresh a conflicted baseline without discarding the creator's local
-    /// work. The latest renderer-owned document becomes clean, then only the
-    /// locally dirty sections are replayed on top as one undoable change.
-    func rebaseAfterConflict() async {
-        guard saveState == .conflict, !isSaving,
-              let api, let jobID, let variantKey, let itemID else { return }
+    /// Whether the last `saveOnce` was refused because a newer version exists.
+    private var saveHitNewerVersion = false
+    /// KRI-935: the server generation a preview conflict already reloaded for. A server
+    /// that keeps answering 409 for the same generation ends on the Retry card instead of
+    /// reloading forever; Retry clears it.
+    private var previewConflictReloadGeneration: String?
+
+    private enum LatestReload { case reloaded, alreadyTried, failed(Error) }
+
+    /// KRI-935: load the newest renderer-owned version of this edit without asking the
+    /// creator. It becomes the clean base and their unsaved lanes are replayed on top
+    /// (`rebaseLocalEdits`). `fencingPreviewConflict` allows one reload per server
+    /// generation and always rebuilds the preview, even when the generation is unchanged.
+    private func reloadLatestKeepingLocalEdits(fencingPreviewConflict: Bool = false) async -> LatestReload {
+        guard !isSaving, let api, let jobID, let variantKey, let itemID else {
+            return .failed(APIError.invalidResponse)
+        }
         isSaving = true
         defer { isSaving = false }
-        let localDocument = document
-        let localSections = changedSections
-        let localExplicitSections = explicitlyDirtySections
-        let selected = selection
         do {
             let variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
+            guard self.jobID == jobID, self.variantKey == variantKey else { return .failed(CancellationError()) }
             let generation = variant["render_generation_id"]?.stringValue
                 ?? variant["render_finished_at"]?.stringValue
                 ?? document.revision.baseGeneration
+            if fencingPreviewConflict {
+                guard previewConflictReloadGeneration != generation else { return .alreadyTried }
+                previewConflictReloadGeneration = generation
+                // Already on this version: rebuild the preview and keep the Undo history.
+                if generation == cleanDocument.revision.baseGeneration, generation == document.revision.baseGeneration {
+                    refreshRebasedSourcePreview(force: true)
+                    return .reloaded
+                }
+            }
             let snapshot = DraftSnapshot(
-                draftID: "conflict-\(projectID.uuidString)",
+                draftID: "latest-\(projectID.uuidString)",
                 itemID: itemID,
                 variantKey: variantKey,
                 draftRevision: document.revision.number ?? 0,
@@ -5795,27 +6285,41 @@ struct NativeEditorTemporaryVideo {
             if conversationRuntimeVersion == 1 { legacyPromptSnapshot = latestDraft.serverSnapshot }
             var latestClean = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(latestDraft))
             latestClean.revision.baseGeneration = generation
-            var rebased = latestClean
-            for section in localSections {
-                copy(section, from: localDocument, into: &rebased)
-            }
-            document = rebased
-            cleanDocument = latestClean
-            changedSections = localSections
-            explicitlyDirtySections = localExplicitSections.intersection(localSections)
-            redoStack.removeAll()
-            configureCapabilities(from: variant)
-            refreshRebasedSourcePreview()
-            refreshDirtyState()
-            undoStack = hasUnsavedChanges ? [latestClean] : []
-            if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
-            durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
-            setAuthoritativeDuration(Self.number(variant["duration_s"]))
-            refreshDuration()
-            saveState = .idle
+            rebaseLocalEdits(onto: latestClean, variant: variant, forcePreviewRebuild: fencingPreviewConflict)
+            return .reloaded
         } catch {
-            saveState = .failed("Your edits are still here, but the latest version couldn’t be loaded. \(error.localizedDescription)")
+            return .failed(error)
         }
+    }
+
+    /// Make `latestClean` the clean baseline and replay only the locally dirty
+    /// sections on top, as one undoable change. Nothing the creator changed is lost.
+    private func rebaseLocalEdits(onto latestClean: EditorDocument, variant: [String: JSONValue]?, forcePreviewRebuild: Bool) {
+        let localDocument = document
+        let localSections = changedSections
+        let localExplicitSections = explicitlyDirtySections
+        let selected = selection
+        var rebased = latestClean
+        for section in localSections {
+            copy(section, from: localDocument, into: &rebased)
+        }
+        // Deletion intents travel with the replayed lanes, so Save still sends them.
+        for deletion in localDocument.deletions where !rebased.deletions.contains(deletion) {
+            rebased.deletions.append(deletion)
+        }
+        document = rebased
+        cleanDocument = latestClean
+        changedSections = localSections
+        explicitlyDirtySections = localExplicitSections.intersection(localSections)
+        redoStack.removeAll()
+        configureCapabilities(from: variant)
+        refreshRebasedSourcePreview(force: forcePreviewRebuild)
+        refreshDirtyState()
+        undoStack = hasUnsavedChanges ? [latestClean] : []
+        if let selected, selectionExists(selected) { selection = selected } else { selection = nil }
+        durationSourcesInvalidated = hasUnsavedChanges && (changedSections.contains(.timeline) || changedSections.contains(.carouselMoment))
+        setAuthoritativeDuration(Self.number(variant?["duration_s"]))
+        refreshDuration()
     }
 
     private func transact(section: EditorSection, _ body: (inout EditorDraft) -> Void) {
@@ -5858,6 +6362,40 @@ struct NativeEditorTemporaryVideo {
     /// fall-back to the timeline section would wrongly say yes.
     var serverOffersClipCrop: Bool { document.capabilities["clips.source_crop"] != nil }
     var canCropClips: Bool { document.capabilities["clips.source_crop"]?.editable == true }
+    /// Speed is a native-render operation. It must be explicitly advertised;
+    /// the editable timeline capability alone is never enough to expose it.
+    var serverOffersClipPlaybackRate: Bool { document.capabilities["clips.playback_rate"] != nil }
+    var canSetClipPlaybackRate: Bool { document.capabilities["clips.playback_rate"]?.editable == true }
+    /// These lanes are stored on the output clock and currently have no
+    /// source-anchor projection. Refuse a speed edit while any is present so
+    /// it cannot silently detach a creator's timed work from its footage.
+    var clipSpeedBlockedReason: String? {
+        if GuidedLabelRebase.hasLabels(document.textElements, includeFreeText: ridesGuidedTimeline), !canEditSection(.text) {
+            return "Speed isn’t available while this edit’s text timing is locked."
+        }
+        if !document.captionCues.isEmpty { return "Speed isn’t available while captions are timed to this edit." }
+        if !document.mediaOverlays.isEmpty { return "Speed isn’t available while media overlays are timed to this edit." }
+        if !document.visualBlocks.isEmpty { return "Speed isn’t available while visuals are timed to this edit." }
+        if !document.motionScenes.isEmpty { return "Speed isn’t available while motion is timed to this edit." }
+        if !document.cameraEffects.isEmpty { return "Speed isn’t available while camera effects are timed to this edit." }
+        if !document.soundEffects.isEmpty { return "Speed isn’t available while sound effects are timed to this edit." }
+        if !document.drawings.isEmpty { return "Speed isn’t available while drawings are timed to this edit." }
+        if document.carouselMoment != nil { return "Speed isn’t available while a carousel changes this edit’s timing." }
+        return nil
+    }
+
+    /// A photo can still crop, but has no source timeline to retime.
+    func speedBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let selection, selection.kind == .clip else { return nil }
+        if let found = sourceWindowSlot(for: selection) {
+            let kind = found.slot.raw["media_kind"]?.stringValue ?? found.slot.raw["kind"]?.stringValue
+            if kind == "image" { return "Photos do not have playback speed." }
+            if let url = found.clip.sourceClipIndex.flatMap({ resolvedSources?[$0] })?.url, isStill(url) {
+                return "Photos do not have playback speed."
+            }
+        }
+        return rendersOnDevice ? clipSpeedBlockedReason : nil
+    }
 
     /// Why Crop is greyed out for the selected clip, or nil when it is available.
     func cropBlockedReason(for selection: EditorSelection?) -> String? {
@@ -5912,7 +6450,7 @@ struct NativeEditorTemporaryVideo {
         return value
     }
 
-    private func sourceWindowSlot(for selection: EditorSelection?) -> (slot: EditorTimelineSlot, clip: EditorClip)? {
+    func sourceWindowSlot(for selection: EditorSelection?) -> (slot: EditorTimelineSlot, clip: EditorClip)? {
         guard let selection, selection.kind == .clip,
               let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }),
               let slot = document.clips.first(where: { $0.id == clip.slotID }) else { return nil }
@@ -5930,14 +6468,14 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Output seconds the slot lasts, as the render compiler reads it (`durationS`, else the projected span).
-    private func sourceWindowLength(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
+    func sourceWindowLength(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
         max(minimumClipDuration, slot.durationS ?? (clip.trimOut - clip.trimIn))
     }
 
     /// The playback rate the clip really plays at, derived the way the render compiler and the server do: an
     /// explicit `playback_rate`, else projected source span / slot length. That covers slowed narrated clips
     /// (`native_source_span_s`, no `playback_rate`) and older retimes that live only in the source span.
-    private func effectiveSourceRate(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
+    func effectiveSourceRate(slot: EditorTimelineSlot, clip: EditorClip) -> Double {
         if let explicit = slot.raw["playback_rate"]?.numberValue, explicit.isFinite, explicit > 0 { return explicit }
         let derived = (clip.trimOut - clip.trimIn) / sourceWindowLength(slot: slot, clip: clip)
         return derived.isFinite && derived > 0 ? derived : 1
@@ -5972,6 +6510,9 @@ struct NativeEditorTemporaryVideo {
             slot.inS = max(0, window.start)
             if moved { slot.raw["source_start_locked"] = .bool(true) }
             if resized { slot.durationS = max(minimumClipDuration, window.length); slot.durationBeats = nil }
+            if slot.raw["source_end_s"] != nil {
+                slot.raw["source_end_s"] = .number(KriaSourceWindowGeometry.sourceEnd(window, rate: rate))
+            }
         }
         return true
     }
@@ -6672,12 +7213,12 @@ struct NativeEditorTemporaryVideo {
         Task { try? await api.reportPlaybackFailure(jobID: jobID, report: report) }
     }
 
-    private func failSourcePreview(_ error: Error) {
+    private func failSourcePreview(_ error: Error, reloadsLatestOnConflict: Bool = true) {
         reportPreviewFailure(error)
         sourcePreviewFailureIsPermanent = Self.isPermanentSourcePreviewFailure(error)
         let finishedWasCurrent = finishedRenderIsCurrent
         restoreFinishedRenderFallback()
-        if retrySourcePreviewQuietly(after: error) {
+        if (reloadsLatestOnConflict && reloadLatestAfterPreviewConflict(error)) || retrySourcePreviewQuietly(after: error) {
             // KRI-535: while the quiet rebuild runs, a render older than a staged edit stays hidden.
             finishedRenderIsCurrent = finishedWasCurrent
             if canDisplayCurrentPlayer { startPendingPlaybackIfPossible() }
@@ -6703,6 +7244,39 @@ struct NativeEditorTemporaryVideo {
         case .failed: "failed"
         case .originalsUnavailable: "originals_unavailable"
         }
+    }
+
+    /// KRI-935: the preview's inputs belong to a newer version than the loaded edit. Load that
+    /// version (keeping unsaved lanes) and rebuild the preview, instead of asking the creator to
+    /// close and reopen the editor. Fenced to one reload per server generation.
+    private func reloadLatestAfterPreviewConflict(_ error: Error) -> Bool {
+        // A save whose render is still pending owns the next generation; its preview refresh follows it.
+        guard (error as? APIError) == .conflict, api != nil, let jobID, variantKey != nil,
+              pendingPreviewGeneration == nil else { return false }
+        sourcePreviewState = .preparing
+        NativePreviewDiagnostics.record("source-preview-conflict-reload")
+        let sequence = sourcePreviewSequence
+        Task { @MainActor [weak self] in
+            // The editor's own load (or a Save) is still finishing; reload once it settles.
+            for _ in 0..<200 {
+                guard let self, self.isSaving else { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            // Another job, or a newer preview build, owns the state now.
+            guard let self, !Task.isCancelled, self.jobID == jobID, self.sourcePreviewSequence == sequence else { return }
+            guard !self.isSaving else { return self.failSourcePreview(error, reloadsLatestOnConflict: false) }
+            switch await self.reloadLatestKeepingLocalEdits(fencingPreviewConflict: true) {
+            case .reloaded:
+                return
+            case .failed(let failure) where failure is CancellationError:
+                return
+            case .alreadyTried:
+                self.failSourcePreview(error, reloadsLatestOnConflict: false)
+            case .failed(let failure):
+                self.failSourcePreview(failure, reloadsLatestOnConflict: false)
+            }
+        }
+        return true
     }
 
     /// KRI-587: right after the phone's own export, AVFoundation can briefly refuse to build or play the
@@ -6796,6 +7370,8 @@ struct NativeEditorTemporaryVideo {
     /// reloaded, then the editable preview is rebuilt.
     func retryPreview() async {
         startPlaybackRecoveryEpisode()
+        // A Retry after a conflict may reload the newest version once more.
+        previewConflictReloadGeneration = nil
         if finishedRenderIsDead, let url = playableDeviceOutputURL ?? finishedRenderURL {
             finishedRenderRecoveryTask?.cancel(); finishedRenderRecoveryInFlight = false
             reinstallFinishedRender(url: url, preferredDuration: finishedRenderDuration)
@@ -7099,6 +7675,7 @@ struct NativeEditorTemporaryVideo {
         }
         let loaded: CreationCapabilities?
         if let capabilities { loaded = await capabilities.value } else { loaded = try? await api.creationCapabilities() }
+        if let loaded { lastPhoneRenderingCapabilities = loaded.phoneRendering ?? .disabled }
         let creationMode = loaded?.creationMode
         if creationMode == .deviceOnly, !rendersOnDevice {
             let message = "This video was rendered in the cloud and can’t be changed on this iPhone. You can still play its existing video."
@@ -7160,6 +7737,12 @@ struct NativeEditorTemporaryVideo {
         canEditMix = capabilities?["mix"] == .bool(true) && draft.music != nil
     }
 
+    /// The generation the last save started from. A ready read of it is the old video, never "newer".
+    private var previewSupersededGeneration: String?
+    /// Poll cadence and how many answered polls to wait before calling the preview slow. Internal for tests.
+    var previewPollInterval: Duration = .seconds(1)
+    var previewPollBudget = 300
+
     private func startPreviewRefresh(generation: String) {
         previewRefreshTask?.cancel()
         pendingPreviewGeneration = generation
@@ -7168,26 +7751,40 @@ struct NativeEditorTemporaryVideo {
             saveState = .previewFailed("Your edit is saved, but this device cannot check the new preview yet.")
             return
         }
+        let savedFrom = previewSupersededGeneration
+        let interval = previewPollInterval
+        let budget = previewPollBudget
         previewRefreshTask = Task { [weak self] in
-            var hadNetworkFailure = false
-            var lastNonTransportError: Error?
-            for _ in 0..<300 {
+            // Only answered polls spend the budget: offline or a 5xx just waits longer between tries.
+            var answered = 0
+            var unreachable = 0
+            var newerGeneration: String?
+            var newerSightings = 0
+            while answered < budget {
                 guard !Task.isCancelled else { return }
-                try? await Task.sleep(for: .seconds(1))
+                let backoff = unreachable == 0 ? interval : min(interval * (1 << min(unreachable, 4)), .seconds(15))
+                try? await Task.sleep(for: backoff)
                 guard !Task.isCancelled else { return }
                 let variant: [String: JSONValue]
                 do {
                     variant = try await api.editorVariant(jobID: jobID, variantID: variantKey)
-                } catch is CancellationError {
-                    return
                 } catch {
-                    if RequestFailureCause(error) == .connection {
-                        hadNetworkFailure = true
-                    } else {
-                        lastNonTransportError = error
+                    switch Self.refreshFailure(error) {
+                    case .cancelled:
+                        return
+                    case .appGate:
+                        // Sign-in or update is shown app-wide; nothing to poll for until then.
+                        return
+                    case let .transient(retryAfter):
+                        unreachable += 1
+                        if let retryAfter { try? await Task.sleep(for: .seconds(min(retryAfter, 60))) }
+                    case .readConflict, .targetLost, .runtimeUnavailable, .other:
+                        answered += 1
                     }
                     continue
                 }
+                unreachable = 0
+                answered += 1
                 guard !Task.isCancelled else { return }
                 guard let self, self.pendingPreviewGeneration == generation else { return }
                 // Device failures are reported on the authoritative variant;
@@ -7195,10 +7792,12 @@ struct NativeEditorTemporaryVideo {
                 // Save-time reconciliation already covers the normal path,
                 // while this branch lets a later server failure reach the
                 // device retry affordance without doing a full reconcile on
-                // every poll tick.
+                // every poll tick. A reconcile skipped for unreadable
+                // capabilities is retried here too.
                 let variantGeneration = variant["render_generation_id"]?.stringValue ?? variant["render_finished_at"]?.stringValue
                 let refreshDevice = self.deviceRenderKey != nil && (
-                    variant["render_status"]?.stringValue == "needs_attention"
+                    self.deviceReconcilePending
+                    || variant["render_status"]?.stringValue == "needs_attention"
                     || (variant["render_status"]?.stringValue == "ready" && variantGeneration != generation)
                 )
                 if refreshDevice {
@@ -7206,15 +7805,26 @@ struct NativeEditorTemporaryVideo {
                     guard !Task.isCancelled, self.pendingPreviewGeneration == generation else { return }
                 }
                 if self.applyPreviewVariant(variant, generation: generation) { return }
+                // The server moved past this save: another device saved on top of it, or this
+                // iPhone published under a request the identity fence no longer recognises. Waiting
+                // for this generation can never end, so follow the newer one once it reads the same
+                // twice (the fresh reconcile above has had its chance to match the fence).
+                guard variant["render_status"]?.stringValue == "ready",
+                      let current = variant["render_generation_id"]?.stringValue, !current.isEmpty,
+                      current != generation, current != savedFrom else {
+                    newerGeneration = nil; newerSightings = 0
+                    continue
+                }
+                newerSightings = newerGeneration == current ? newerSightings + 1 : 1
+                newerGeneration = current
+                guard newerSightings >= 2 else { continue }
+                self.pendingPreviewGeneration = current
+                if self.applyPreviewVariant(variant, generation: current) { return }
+                self.pendingPreviewGeneration = generation
             }
             guard !Task.isCancelled, let self, self.pendingPreviewGeneration == generation else { return }
-            self.saveState = .previewFailed(
-                hadNetworkFailure
-                    ? "Your edit is saved, but Kria could not finish checking the preview. Check your connection and try again."
-                    : lastNonTransportError.map {
-                        "Your edit is saved, but Kria could not finish checking the preview. \($0.localizedDescription)"
-                    } ?? "Your edit is saved, but the preview is taking longer than expected. Try checking again."
-            )
+            // Never reuse a read error's copy here: "This edit changed elsewhere" is a save conflict.
+            self.saveState = .previewFailed("Your edit is saved, but the preview is taking longer than expected. Try checking again.")
         }
     }
 
@@ -7263,9 +7873,7 @@ struct NativeEditorTemporaryVideo {
         if let key = deviceRenderKey,
            let presentation = deviceRenders?.presentations[key],
            presentation.requiresServerRetry {
-            saveState = .deviceRenderRetryNeeded(
-                presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
-            )
+            saveState = .deviceRenderRetryNeeded(Self.deviceRenderRetryMessage(presentation))
             return true
         }
         let status = variant["render_status"]?.stringValue
@@ -7380,6 +7988,9 @@ struct NativeEditorTemporaryVideo {
     func retryDeviceRender() async {
         guard !isSaving, let key = deviceRenderKey, let deviceRenders,
               let generation = pendingPreviewGeneration else { return }
+        // A change-required or outdated-app reason: a retry re-pins the same recipe and
+        // this iPhone declines it again. The banner offers chat or Update Kria instead.
+        guard [.retry, .resume, .renderNow].contains(deviceRenderNextStep) else { return }
         if deviceRenders.presentations[key]?.requiresServerRetry == true {
             let retried = await deviceRenders.retryNeedsAttention(key)
             guard retried else { return }
@@ -7398,12 +8009,8 @@ struct NativeEditorTemporaryVideo {
     @discardableResult
     private func surfaceDeviceRenderFailure() -> Bool {
         guard let key = deviceRenderKey, let presentation = deviceRenders?.presentations[key],
-              presentation.requiresServerRetry || presentation.phase == .needsAttention
-                || presentation.phase == .cancelled
-                || (presentation.phase == .localReady && presentation.message != nil) else { return false }
-        saveState = .deviceRenderRetryNeeded(
-            presentation.message ?? "Your edit is saved, but this iPhone needs to retry rendering it."
-        )
+              Self.deviceRenderNeedsRetry(presentation) else { return false }
+        saveState = .deviceRenderRetryNeeded(Self.deviceRenderRetryMessage(presentation))
         return true
     }
 

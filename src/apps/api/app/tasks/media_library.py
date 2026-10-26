@@ -37,6 +37,8 @@ def analyze_media_asset_task(self: Any, asset_id: str, owner_id: str) -> dict[st
         )
         if asset is None:
             return {"asset_id": asset_id, "status": "missing"}
+        if asset.status == "failed":  # KRI-820: a late copy never revives a capped failure
+            return {"asset_id": asset_id, "status": "failed"}
         asset.status = "processing"
         transcribe_audio = asset.kind == "video" and asset.metadata_json.get("has_audio") is True
         db.commit()
@@ -56,6 +58,13 @@ def analyze_media_asset_task(self: Any, asset_id: str, owner_id: str) -> dict[st
         )
         db.commit()
     return {"asset_id": str(asset_id), "status": status}
+
+
+# KRI-820: a stale pending/processing library asset is re-sent at most this many
+# times. An input that keeps stalling (hard kill, poison file) then ends as a
+# visible `failed` instead of being re-dispatched every sweep forever.
+MEDIA_ANALYSIS_MAX_REDISPATCHES = 3
+_REDISPATCH_COUNT_KEY = "_analysis_redispatches"
 
 
 @celery_app.task(name="tasks.reconcile_media_library_analysis")
@@ -89,7 +98,21 @@ def reconcile_media_library_analysis() -> int:
             analyze_media_asset_task.delay(str(row.asset_id), str(row.user_id))
             row.analysis_dispatch_pending = False
             sent += 1
+        stale_cutoff = datetime.now(UTC) - timedelta(minutes=15)
         for asset in stale:
+            # Re-read under the owner lock: a worker that finished in between
+            # must never be degraded to failed or re-sent (KRI-820).
+            db.refresh(asset, with_for_update=True)
+            if asset.status not in {"pending", "processing"} or asset.updated_at >= stale_cutoff:
+                continue
+            metadata = dict(asset.metadata_json or {})
+            redispatches = int(metadata.get(_REDISPATCH_COUNT_KEY) or 0)
+            if redispatches >= MEDIA_ANALYSIS_MAX_REDISPATCHES:
+                asset.status = "failed"
+                asset.updated_at = datetime.now(UTC)
+                continue
+            metadata[_REDISPATCH_COUNT_KEY] = redispatches + 1
+            asset.metadata_json = metadata
             analyze_media_asset_task.delay(str(asset.id), str(asset.user_id))
             asset.updated_at = datetime.now(UTC)
             sent += 1

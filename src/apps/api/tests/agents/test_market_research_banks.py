@@ -273,9 +273,8 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     assert success_factors_version() == "2026-10-22-research-18"
     assert PERSONA_PROMPT_VERSION == "2026-10-22-research-18"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-22-research-18"
-    # Creator direction was added to the consuming prompt without changing
-    # the research bank, so only the agent version advances.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-22-research-18"
+    # Runtime hook guidance changes the consuming prompt, not the research bank.
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-25-grounded-hook-v3"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -310,7 +309,7 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # Bump 2026-10-11: weekly research refresh — added early-morning-commitment-scaleup-01
     #                  and series-comeback-fadein-01; bumped both consuming agents.
     assert library_version() == "2026-10-22-research-18"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-22-research-18"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-25-grounded-hook-v3"
     assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-10-22-research-18"
 
 

@@ -333,6 +333,10 @@ class PortableTextLayer(_TextModel):
     # KRI-646: curve in [-100, 100] (+ = rainbow). Drawn on device; omitted from the wire
     # when None/0 so existing recipes stay byte-identical. Needs `textBend`.
     bend: float | None = Field(default=None, ge=-100, le=100)
+    # Text behind people: the phone compositor multiplies this layer's alpha by (1 - person
+    # mask) per frame. Omitted from the wire when None/False so existing recipes stay
+    # byte-identical. Needs `behindSubject`; refused with a giant title (own compositing lane).
+    behind_subject: bool | None = None
     animation_phases: TextAnimationPhases | None = None
     background: TextBackground | None = None
     runs: list[PositionedTextRun] = Field(default_factory=list, max_length=100)
@@ -377,10 +381,14 @@ class PortableTextLayer(_TextModel):
             payload.pop("background", None)
         if not self.bend:
             payload.pop("bend", None)
+        if not self.behind_subject:
+            payload.pop("behind_subject", None)
         return payload
 
     @model_validator(mode="after")
     def valid_window(self):
+        if self.behind_subject and self.giant_title is not None:
+            raise ValueError("behind_subject is unsupported with a giant title")
         if self.bend and (
             self.effect not in BEND_SUPPORTED_EFFECTS
             or (

@@ -763,7 +763,7 @@ def test_per_clip_chain_includes_setpts_for_speed_factor():
     cmd = build_single_pass_command(spec, "/tmp/out.mp4")
     fc_idx = cmd.index("-filter_complex")
     graph = cmd[fc_idx + 1]
-    assert "setpts=PTS/1.5" in graph
+    assert "setpts=(PTS-STARTPTS)/1.5" in graph
 
 
 def test_per_clip_chain_terminates_with_yuv420p():

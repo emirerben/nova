@@ -42,6 +42,20 @@ private actor SessionPublisher: DeviceRenderPublishing {
     }
 }
 
+private extension DeviceRenderRetryPolicy {
+    static let noWait = DeviceRenderRetryPolicy(transientDelays: [], reportBackoffCap: .zero, sleep: { _ in })
+}
+
+private actor OutagePublisher: DeviceRenderPublishing {
+    private var offline = false
+    func setOffline(_ value: Bool) { offline = value }
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
+        if offline { throw URLError(.notConnectedToInternet) }
+        return true
+    }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+}
+
 private actor PausedSessionPublisher: DeviceRenderPublishing {
     private var releaseContinuation: CheckedContinuation<Void, Never>?
     private(set) var publishStarted = false
@@ -89,6 +103,26 @@ private actor LocalReadySessionPublisher: DeviceRenderPublishing {
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
         .published
     }
+}
+
+/// Current only while the server still points at the identity being published.
+private actor ServerCurrentPublisher: DeviceRenderPublishing {
+    let remote: SessionRequest
+    init(remote: SessionRequest) { self.remote = remote }
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { await remote.request.identity == identity }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        await remote.request.identity == identity ? .published : .superseded
+    }
+}
+
+private actor NeverCurrentPublisher: DeviceRenderPublishing {
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { false }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .superseded }
+}
+
+private actor FetchCounter {
+    private(set) var count = 0
+    func hit() { count += 1 }
 }
 
 private actor SessionRequest {
@@ -207,10 +241,60 @@ private actor RetryGate {
         })
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
         await sessions.reconcile(key, capabilities: .disabled)
-        XCTAssertEqual(sessions.presentations[key]?.phase, .needsAttention)
+        // `.disabled` is also a failed capability read: check again, never "not available".
+        XCTAssertEqual(sessions.presentations[key]?.waiting, .checking)
         XCTAssertFalse(sessions.presentations[key]?.requiresServerRetry ?? true)
         let calls = await exporter.calls
         XCTAssertEqual(calls, 0)
+        await sessions.stopAll()
+    }
+
+    /// S3-b: a rollout pause is a hold. The phone shows a waiting state and never
+    /// starts the export (whose grant or upload the server would refuse).
+    func testRolloutPauseWaitsWithoutStartingTheExport() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let request = request(job), exporter = SessionExport()
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: "awaiting_device", request: request, reason: "Rendering on iPhone is paused for now.", phoneRenderingPaused: true)
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        XCTAssertEqual(sessions.presentations[key]?.phase, .preparing)
+        XCTAssertEqual(sessions.presentations[key]?.message, "Rendering on iPhone is paused for now.")
+        XCTAssertFalse(sessions.presentations[key]?.requiresServerRetry ?? true)
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 0)
+        await sessions.stopAll()
+    }
+
+    /// S3-c/S3-d: a render parked by an outage resumes on its own when Kria returns
+    /// to the foreground, and its parked state is never worded as a failure.
+    func testParkedRenderResumesOnForeground() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let request = request(job), exporter = SessionExport(), publisher = OutagePublisher()
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(),
+                                                      publisher: publisher, retryPolicy: .noWait, backgroundExecution: nil)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in DeviceRenderStatusResponse(phase: "awaiting_device", request: request) }, factory: { _, _ in coordinator })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await publisher.setOffline(true)
+        await sessions.reconcile(key, capabilities: enabled)
+        await coordinator.waitUntilIdle()
+        let parked = await coordinator.snapshot()
+        XCTAssertEqual(parked?.phase, .preparing)
+        XCTAssertNil(parked?.error)
+        XCTAssertNil(sessions.presentations[key]?.message)
+        await publisher.setOffline(false)
+        await sessions.resumeParked()
+        await coordinator.waitUntilIdle()
+        let final = await coordinator.snapshot()?.phase
+        XCTAssertEqual(final, .synced)
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 1)
+        await sessions.stopAll()
     }
 
     func testSyncRetryKeepsFinishedExportAndAttempt() async throws {
@@ -218,7 +302,9 @@ private actor RetryGate {
         defer { try? FileManager.default.removeItem(at: output) }
         let request = request(job), exporter = SessionExport(), publisher = SessionPublisher()
         await publisher.fail(true)
-        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher)
+        // A 503 is transient: park after no waits instead of the real 2-30 s backoff.
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher,
+                                                      retryPolicy: .noWait, backgroundExecution: nil)
         let sessions = DeviceRenderSessions(fetch: { _, _ in DeviceRenderStatusResponse(phase: "awaiting_device", request: request) }, factory: { _, _ in coordinator })
         let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
         await sessions.reconcile(key, capabilities: enabled)
@@ -247,7 +333,9 @@ private actor RetryGate {
         defer { try? FileManager.default.removeItem(at: output) }
         let request = request(job), exporter = SessionExport(), publisher = SessionPublisher()
         await publisher.fail(true)
-        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher)
+        // A 503 is transient: park after no waits instead of the real 2-30 s backoff.
+        let coordinator = try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: publisher,
+                                                      retryPolicy: .noWait, backgroundExecution: nil)
         let sessions = DeviceRenderSessions(fetch: { _, _ in
             DeviceRenderStatusResponse(phase: "syncing", request: request, outputVerificationRequired: true)
         }, factory: { _, _ in coordinator })
@@ -281,7 +369,7 @@ private actor RetryGate {
             factory: { _, request in
                 try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: SessionPublisher())
             },
-            retryFailure: { _, _ in
+            retryFailure: { _, _, _ in
                 await status.retry(to: second)
                 let data = Data("""
                 {"identity":{"jobId":"\(second.identity.jobID.uuidString)","variantId":"first","recipeRevision":2,"recipeDigest":"\(second.identity.recipeDigest)"},"phase":"awaiting_device"}
@@ -368,7 +456,7 @@ private actor RetryGate {
             factory: { _, _ in
                 try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: SessionPublisher())
             },
-            retryFailure: { _, _ in
+            retryFailure: { _, _, _ in
                 await gate.wait()
                 let data = Data("""
                 {"identity":{"jobId":"\(second.identity.jobID.uuidString)","variantId":"first","recipeRevision":2,"recipeDigest":"\(second.identity.recipeDigest)"},"phase":"awaiting_device"}
@@ -433,6 +521,70 @@ private actor RetryGate {
         }
         XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
         XCTAssertNotNil(sessions.presentations[key]?.localFile)
+        await sessions.stopAll()
+    }
+
+    /// KRI-935: a newer edit reached the server while this iPhone was exporting the previous one. The panel
+    /// follows the newest request by itself (no "Newer edit available" for the creator to act on) and that
+    /// request renders and syncs.
+    func testSupersededExportFollowsTheNewestRequestAutomatically() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let initial = request(job), exporter = PausedSessionExport()
+        let remote = SessionRequest(initial)
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: "awaiting_device", request: await remote.request)
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: exporter, sources: SessionSources(), publisher: ServerCurrentPublisher(remote: remote))
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await exporter.calls == 1 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        // A newer edit lands mid-export; nobody calls reconcile again.
+        await remote.set(DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: job, variantID: "first", recipeRevision: 2,
+            recipeDigest: String(repeating: "b", count: 64)), recipe: initial.recipe))
+        await exporter.release()
+        for _ in 0..<200 {
+            if await exporter.calls == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 2, "the newest request renders without the creator reopening anything")
+        await exporter.release()
+        for _ in 0..<100 {
+            if sessions.presentations[key]?.phase == .synced { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
+        XCTAssertEqual(sessions.request(for: key)?.identity.recipeRevision, 2)
+        await sessions.stopAll()
+    }
+
+    /// A server that keeps pointing at the request this iPhone was told is superseded gets one follow-up
+    /// reconcile, not a loop.
+    func testSupersededExportFollowsAtMostOncePerRequest() async throws {
+        let job = UUID(), output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let initial = request(job), fetches = FetchCounter()
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            await fetches.hit()
+            return DeviceRenderStatusResponse(phase: "awaiting_device", request: initial)
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionExport(), sources: SessionSources(), publisher: NeverCurrentPublisher())
+        })
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        await sessions.reconcile(key, capabilities: enabled)
+        for _ in 0..<100 {
+            if await fetches.count >= 2, sessions.presentations[key]?.phase == .superseded { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let count = await fetches.count
+        XCTAssertEqual(count, 2, "one automatic follow-up, then it stops")
+        XCTAssertEqual(sessions.presentations[key]?.phase, .superseded)
         await sessions.stopAll()
     }
 
@@ -650,7 +802,7 @@ private actor RetryGate {
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .synced), "Rendered on iPhone")
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .needsAttention), "Needs attention")
         XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .cancelled), "Render stopped")
-        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .superseded), "Newer edit available")
+        XCTAssertEqual(DeviceRenderButtonTitle.for(phase: .superseded), "Edit updated")
     }
 
     /// KRI-211: retrying can't conjure originals that are on another device, so the attention state hides
@@ -669,7 +821,7 @@ private actor RetryGate {
     func testUnsupportedRecipeHidesRetryWithGuidanceCopyOtherReasonsStayRetryable() {
         XCTAssertFalse(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: "unsupported_recipe"))
         let message = DeviceRenderAttentionCopy.message(phase: .needsAttention, reasonCode: "unsupported_recipe", fallback: nil)
-        XCTAssertTrue(message?.localizedCaseInsensitiveContains("start a new edit") ?? false)
+        XCTAssertTrue(message?.localizedCaseInsensitiveContains("in chat") ?? false)
         for code in ["thermal", "insufficient_storage", "export_failed", "cancelled_by_user"] {
             XCTAssertTrue(DeviceRenderAttentionCopy.showsRetryButton(phase: .needsAttention, reasonCode: code), code)
         }

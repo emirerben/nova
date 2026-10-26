@@ -227,7 +227,9 @@ def _old_segments(old_rows: list[dict[str, Any]], guided: dict[str, Any]) -> lis
                 "output_end_s": float(end) if end is not None else start + duration,
                 "duration_s": duration,
                 "source_start_s": source_start,
-                "source_end_s": source_start + duration * rate,
+                "source_end_s": float(row["source_end_s"])
+                if row.get("source_end_s") is not None
+                else source_start + duration * rate,
             }
         )
     return segments
@@ -281,6 +283,8 @@ def _project_span(
     old_segments: list[dict[str, Any]],
     start: float,
     end: float,
+    *,
+    project_end: Any = None,
 ) -> tuple[tuple[float, str], tuple[float, str]] | None:
     """Project a text range ``[start, end)`` through source time onto the new clips.
 
@@ -291,7 +295,7 @@ def _project_span(
     every clip under the range is gone (or the range overlaps no clip at all).
     """
     first = project(start)
-    last = project(max(start, end - _FRAME_S))
+    last = project_end(end) if project_end is not None else project(max(start, end - _FRAME_S))
     if first is not None and last is not None:
         return first, last
     pieces: list[tuple[tuple[float, str], tuple[float, str]]] = []
@@ -300,7 +304,8 @@ def _project_span(
         hi = min(end, float(segment["output_end_s"]))
         if hi - lo <= 1e-6:
             continue
-        head, tail = project(lo), project(max(lo, hi - _FRAME_S))
+        head = project(lo)
+        tail = project_end(hi) if project_end is not None else project(max(lo, hi - _FRAME_S))
         if head is not None and tail is not None:
             pieces.append((head, tail))
     if not pieces:
@@ -405,7 +410,13 @@ def _preserve_label_offsets(
     return out_start, out_end
 
 
-def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
+def rebase_guided_text(
+    state: Any,
+    guided: dict[str, Any] | None,
+    *,
+    old_segments_override: list[dict[str, Any]] | None = None,
+    new_segments_override: list[dict[str, Any]] | None = None,
+) -> None:
     """Re-window ``state.text`` (and any same-bundle lanes) onto the new timeline.
 
     Bars whose timing was explicitly authored in this bundle already use the
@@ -414,15 +425,38 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
     """
     ops = _ops()
     assign_slot_ids(state.slots)
+    if (old_segments_override is None) != (new_segments_override is None):
+        raise ValueError("timeline rebasing needs both source-window segment sets")
     old_rows = [row for row in state.initial_slots if not row.get("removed")]
-    old_segments = _old_segments(old_rows, guided)
+    old_segments = (
+        old_segments_override
+        if old_segments_override is not None
+        else _old_segments(old_rows, guided or {})
+    )
     old_total = max((float(s["output_end_s"]) for s in old_segments), default=0.0)
-    new_segments = guided_segments_for_rows(guided, state.slots)
+    new_segments = (
+        new_segments_override
+        if new_segments_override is not None
+        else guided_segments_for_rows(guided or {}, state.slots)
+    )
     new_total = max((float(s["output_end_s"]) for s in new_segments), default=0.0)
     explicit_text_ids = getattr(state, "explicit_text_ids", set()) or set()
     links = ops._clip_label_links(state.job, state.variant)
     cut_media = _cut_media_by_id(state.job)
     project = make_time_projector(old_segments, new_segments)
+    retimed = any(
+        abs(
+            (float(s["source_end_s"]) - float(s["source_start_s"]))
+            - (float(s["output_end_s"]) - float(s["output_start_s"]))
+        )
+        > 1e-5
+        for s in old_segments + new_segments
+    )
+    # Exact source-clock endpoints are required when a frame changes length.
+    # Keep the historical inset for unchanged unit-speed timelines.
+    project_end = (
+        make_time_projector(old_segments, new_segments, interval_end=True) if retimed else None
+    )
     old_index = {str(s.get("segment_id")): i for i, s in enumerate(old_segments)}
 
     notes: list[str] = []
@@ -523,7 +557,7 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
             updated["start_s"], updated["end_s"] = _round(new_start), _round(new_end)
             rebased.append(updated)
             continue
-        span = _project_span(project, old_segments, start, end)
+        span = _project_span(project, old_segments, start, end, project_end=project_end)
         if span is None:
             drop(bar, None, False)
             continue
@@ -532,7 +566,7 @@ def rebase_guided_text(state: Any, guided: dict[str, Any]) -> None:
         # frame early and shifting back keeps a bar that ended on a cut inside
         # its own clip.
         new_start = start_point[0]
-        new_end = min(new_total, end_point[0] + _FRAME_S)
+        new_end = min(new_total, end_point[0] + (0 if retimed else _FRAME_S))
         if new_end - new_start <= _FRAME_S / 2:
             # A bar spanning clips that reorder projects inverted/tiny: fall back
             # to the window of the segment it starts in, never lose the text.

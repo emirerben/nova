@@ -126,11 +126,89 @@ USER_SONG_LIPSYNC_LOCKED = "user_song_lipsync_locked"
 
 
 class GuidedStoryError(RuntimeError):
-    """Plain-language strict-render failure with a stable machine code."""
+    """Plain-language strict-render failure with a stable machine code.
 
-    def __init__(self, code: str, message: str):
+    ``transient`` is True only when a storage / probe / mix I/O call failed for a
+    reason a later attempt can get past (5xx, 429, connection reset, timeout). It
+    always comes with a ``*_unavailable`` code (``edit_proposals.
+    TRANSIENT_GUIDED_RENDER_CODES``): the worker retries it with backoff and it never
+    counts toward the render block. Every identity / generation / kind / empty-media /
+    archived-track failure stays ``transient=False`` and blocks after
+    ``GUIDED_RENDER_MAX_ATTEMPTS``, since the same approved plan fails the same way.
+    """
+
+    def __init__(self, code: str, message: str, *, transient: bool = False):
         self.code = code
+        self.transient = transient
         super().__init__(message)
+
+
+GUIDED_MEDIA_UNAVAILABLE = "guided_story_media_unavailable"
+GUIDED_MUSIC_UNAVAILABLE = "guided_story_music_unavailable"
+
+
+def _is_permanent_storage_failure(exc: BaseException) -> bool:
+    from google.api_core import exceptions as google_errors  # noqa: PLC0415
+
+    return isinstance(
+        exc,
+        (
+            FileNotFoundError,
+            google_errors.NotFound,
+            google_errors.PreconditionFailed,
+            google_errors.Forbidden,
+            google_errors.Unauthorized,
+        ),
+    )
+
+
+def _is_retryable_storage_failure(exc: BaseException) -> bool:
+    import requests  # noqa: PLC0415
+    from google.api_core import exceptions as google_errors  # noqa: PLC0415
+    from google.auth import exceptions as auth_errors  # noqa: PLC0415
+
+    return isinstance(
+        exc,
+        (
+            ConnectionError,
+            TimeoutError,
+            subprocess.TimeoutExpired,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+            auth_errors.TransportError,
+            google_errors.ServerError,
+            google_errors.TooManyRequests,
+            google_errors.RetryError,
+        ),
+    )
+
+
+def is_transient_storage_failure(exc: BaseException) -> bool:
+    """True when ``exc``'s cause chain is a blip, not a missing / replaced object.
+
+    A NotFound, a missing local file or a generation precondition anywhere in the chain
+    means the approved object itself is gone or changed: permanent, whatever wraps it.
+    """
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and all(current is not seen for seen in chain):
+        chain.append(current)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    if any(_is_permanent_storage_failure(link) for link in chain):
+        return False
+    return any(_is_retryable_storage_failure(link) for link in chain)
+
+
+def guided_io_error(
+    permanent_code: str, transient_code: str, message: str, cause: BaseException
+) -> GuidedStoryError:
+    """The error for an I/O wrapper: transient only when the cause chain says so."""
+    if is_transient_storage_failure(cause):
+        return GuidedStoryError(transient_code, message, transient=True)
+    return GuidedStoryError(permanent_code, message)
 
 
 class GuidedStoryMoment(BaseModel):
@@ -152,6 +230,16 @@ class GuidedStoryMoment(BaseModel):
     # The creator silenced this moment's own (camera) sound in the editor. Omitted when
     # unset so every stored plan keeps its exact dump. Honoured by the phone compiler.
     source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-828: the creator's freeze: the frame at ``source_end_s`` holds for these seconds
+    # after the moment plays (``duration_s`` = source span / rate + hold). The clip's own
+    # sound is silent under the hold. Omitted when unset so every stored plan keeps its dump.
+    freeze_hold_s: float | None = Field(
+        # Up to `freeze_ask.MAX_FREEZE_HOLD_S` (10 s), the longest freeze a creator can ask for.
+        default=None,
+        gt=0,
+        le=10.0,
+        exclude_if=lambda value: value is None,
+    )
     output_start_s: float = Field(ge=0)
     output_end_s: float = Field(gt=0)
     duration_s: float = Field(gt=0)
@@ -526,8 +614,15 @@ def _quantize_quick_mixed_timeline(
     *,
     target_s: float,
     mixed_media_timing: MixedMediaTimingProfile | None = None,
+    still_holds: Mapping[str, float] | None = None,
 ) -> float:
-    """Compile quick mixed-media holds to an exact, source-safe frame budget."""
+    """Compile quick mixed-media holds to an exact, source-safe frame budget.
+
+    ``still_holds`` (KRI-824): photos the creator gave their own length keep exactly it;
+    the profile's cadence bounds only the others.
+    """
+
+    still_holds = still_holds or {}
 
     fps = int(round(1.0 / _FRAME_S))
     target_frames = max(1, int(round(float(target_s) * fps)))
@@ -539,12 +634,20 @@ def _quantize_quick_mixed_timeline(
     for index, moment in enumerate(moments):
         desired_frames = float(moment["duration_s"]) * fps
         frames = max(1, int(math.floor(desired_frames + 1e-6)))
-        if moment["kind"] == "image":
+        if moment["kind"] == "image" and moment.get("media_id") in still_holds:
+            frames = max(1, int(round(still_holds[moment["media_id"]] * fps)))
+        elif moment["kind"] == "image":
             bounds = mixed_media_hold_bounds("image", mixed_media_timing)
             minimum_frames = int(math.ceil(bounds.minimum_s * fps - 1e-6))
             maximum_frames = int(math.floor(bounds.maximum_s * fps + 1e-6))
             frames = min(maximum_frames, max(minimum_frames, frames))
             image_headroom.append((desired_frames - math.floor(desired_frames), index))
+        elif moment.get("freeze_hold_s"):
+            # KRI-828: a held moment is a fixed block. Its source window ends ON the frozen
+            # frame and never grows; frame rounding lands in the hold, never in the footage.
+            original_video_end_s[index] = float(moment["source_end_s"])
+            frames = max(1, int(round(float(moment["duration_s"]) * fps)))
+            floor_video_frames[index] = frames
         else:
             original_video_end_s[index] = float(moment["source_end_s"])
             bounds = mixed_media_hold_bounds("video", mixed_media_timing)
@@ -553,9 +656,11 @@ def _quantize_quick_mixed_timeline(
                 # Proposal source/output windows allow 1ms numeric tolerance.
                 # The near-minimum source still contains the 45th frame.
                 frames = int(math.ceil(bounds.minimum_s * fps - 1e-6))
+            # KRI-689: a retimed moment's source span covers ``rate`` times its output.
+            rate = float(moment.get("playback_rate") or 1.0)
             source_span_s = max(
                 0.0,
-                float(moment["source_end_s"]) - float(moment["source_start_s"]),
+                (float(moment["source_end_s"]) - float(moment["source_start_s"])) / rate,
             )
             source_max_frames = int(math.floor((source_span_s + 0.001) * fps + 1e-6))
             maximum_frames = min(
@@ -613,10 +718,18 @@ def _quantize_quick_mixed_timeline(
         moment["duration_s"] = round(duration_s, 6)
         moment["output_start_s"] = round(start_s, 6)
         moment["output_end_s"] = round(end_s, 6)
-        if moment["kind"] == "video" and frames > floor_video_frames[index]:
+        if moment["kind"] == "video" and moment.get("freeze_hold_s"):
+            frame_s = original_video_end_s[index]
+            moment["source_end_s"] = frame_s
+            moment["freeze_hold_s"] = round(
+                duration_s - (frame_s - float(moment["source_start_s"])), 6
+            )
+        elif moment["kind"] == "video" and frames > floor_video_frames[index]:
             moment["source_end_s"] = original_video_end_s[index]
         else:
-            moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s, 6)
+            # KRI-689: a retimed video moment consumes ``rate`` source seconds per output second.
+            rate = float(moment.get("playback_rate") or 1.0) if moment["kind"] == "video" else 1.0
+            moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s * rate, 6)
 
     windows_by_id = {window["beat_id"]: window for window in beat_windows}
     moments_by_beat: dict[str, list[dict[str, Any]]] = {}
@@ -2533,14 +2646,34 @@ def _compile_base_execution_plan_version(
                     f"Fast montage source window exceeds {ref.source_filename or ref.media_id}.",
                 )
             resolved_duration_s = round(end_s - start_s, 3)
+            resolved_source_start_s = float(cut.source_start_s)
             resolved_source_end_s = float(cut.source_end_s)
-            if ref.kind == "video":
-                resolved_source_end_s = float(cut.source_start_s) + resolved_duration_s
-                if resolved_source_end_s > float(cut.source_end_s) + 0.001:
+            hold_s = float(cut.freeze_hold_s or 0.0)
+            if ref.kind == "video" and hold_s:
+                # KRI-828: the frozen frame is the cut's last source frame and never moves;
+                # a beat that shortens the cut shortens the motion before it.
+                moving_s = round(resolved_duration_s - hold_s, 3)
+                if (
+                    moving_s < 0.1
+                    or moving_s > resolved_source_end_s - resolved_source_start_s + 0.001
+                ):
+                    raise GuidedStoryError(
+                        "guided_story_duration_impossible",
+                        "A freeze frame no longer fits its approved video source window.",
+                    )
+                resolved_source_start_s = resolved_source_end_s - moving_s
+            elif ref.kind == "video":
+                # KRI-689: a retimed cut consumes ``rate`` source seconds per output second.
+                # Millisecond rounding of the output scales with the rate, so the tolerance
+                # does too; the window is clamped to the cut's own edge, never past it.
+                rate = float(cut.playback_rate) if cut.playback_rate is not None else 1.0
+                resolved_source_end_s = float(cut.source_start_s) + resolved_duration_s * rate
+                if resolved_source_end_s > float(cut.source_end_s) + 0.001 * max(1.0, rate):
                     raise GuidedStoryError(
                         "guided_story_duration_impossible",
                         "Beat alignment cannot lengthen an approved video source window.",
                     )
+                resolved_source_end_s = min(resolved_source_end_s, float(cut.source_end_s))
             moments.append(
                 {
                     "moment_id": cut.cut_id,
@@ -2556,8 +2689,18 @@ def _compile_base_execution_plan_version(
                         if ref.kind == "image" and snapshot.image_layout is not None
                         else "fullscreen"
                     ),
-                    "source_start_s": round(float(cut.source_start_s), 3),
+                    "source_start_s": round(resolved_source_start_s, 3),
                     "source_end_s": round(resolved_source_end_s, 3),
+                    **(
+                        {"freeze_hold_s": round(hold_s, 3)}
+                        if ref.kind == "video" and hold_s
+                        else {}
+                    ),
+                    **(
+                        {"playback_rate": float(cut.playback_rate)}
+                        if ref.kind == "video" and cut.playback_rate is not None
+                        else {}
+                    ),
                     "output_start_s": start_s,
                     "output_end_s": end_s,
                     "duration_s": resolved_duration_s,
@@ -2608,6 +2751,7 @@ def _compile_base_execution_plan_version(
                 beat_windows,
                 target_s=target_duration_s,
                 mixed_media_timing=mixed_timing,
+                still_holds={hold.media_id: hold.hold_s for hold in snapshot.creator_still_holds},
             )
         normalized_track = (
             _music_payload(track, duration_s=cursor) if compiler_version < 6 else None
@@ -2785,6 +2929,7 @@ def _compile_base_execution_plan_version(
             beat_windows,
             target_s=cursor,
             mixed_media_timing=mixed_timing,
+            still_holds={hold.media_id: hold.hold_s for hold in snapshot.creator_still_holds},
         )
 
     normalized_track = _music_payload(track, duration_s=cursor) if compiler_version < 6 else None
@@ -3498,6 +3643,10 @@ def compile_guided_runtime_plan(
                         else {}
                     ),
                     **({"source_audio_muted": True} if segment.get("source_audio_muted") else {}),
+                    # KRI-828: the segment owns its freeze; never inherit a base moment's.
+                    "freeze_hold_s": (
+                        float(segment["freeze_hold_s"]) if segment.get("freeze_hold_s") else None
+                    ),
                     "output_start_s": start,
                     "output_end_s": end,
                     "duration_s": float(segment["duration_s"]),
@@ -3935,9 +4084,11 @@ def validate_guided_source_pool_generations(guided_snapshot: object) -> None:
             if str(current.generation) != snapshot.narration.generation:
                 raise ValueError("narration generation changed")
         except Exception as exc:  # noqa: BLE001 — exact audio identity is a render fence
-            raise GuidedStoryError(
+            raise guided_io_error(
                 "guided_story_media_missing",
+                GUIDED_MEDIA_UNAVAILABLE,
                 "The approved voiceover changed or is no longer available.",
+                exc,
             ) from exc
 
 
@@ -4034,9 +4185,11 @@ def _mix_pinned_narration(
             generation=narration.generation,
         )
     except Exception as exc:  # noqa: BLE001 — narration identity is an approval fence
-        raise GuidedStoryError(
+        raise guided_io_error(
             "guided_story_media_missing",
+            GUIDED_MEDIA_UNAVAILABLE,
             "The approved voiceover changed or is no longer available.",
+            exc,
         ) from exc
 
     result = subprocess.run(
@@ -4293,8 +4446,11 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
         try:
             download_generation_to_file(row["gcs_path"], local, generation=row["generation"])
         except Exception as exc:  # noqa: BLE001
-            raise GuidedStoryError(
-                "guided_story_media_missing", f"Approved media {media_id} could not be loaded."
+            raise guided_io_error(
+                "guided_story_media_missing",
+                GUIDED_MEDIA_UNAVAILABLE,
+                f"Approved media {media_id} could not be loaded.",
+                exc,
             ) from exc
         # Identity receipt hashes the UNTOUCHED download (bytes as approved in
         # GCS) — compute before any normalization mutates the local file.
@@ -4329,8 +4485,11 @@ def _download_selected(plan: dict[str, Any], tmpdir: str) -> tuple[dict[str, str
                 actual_kind = "image"
                 duration_s = None
         except Exception as exc:  # noqa: BLE001
-            raise GuidedStoryError(
-                "guided_story_media_replaced", f"Approved media {media_id} has the wrong format."
+            raise guided_io_error(
+                "guided_story_media_replaced",
+                GUIDED_MEDIA_UNAVAILABLE,
+                f"Approved media {media_id} has the wrong format.",
+                exc,
             ) from exc
         if actual_kind != row["kind"]:
             raise GuidedStoryError(
@@ -4569,9 +4728,11 @@ def _render_moments(
                 look_adjustments=moment.get("look_adjustments"),
             )
         else:
+            hold_s = float(moment.get("freeze_hold_s") or 0.0)
+            moving = os.path.join(tmpdir, f"moment_{index:02d}_moving.mp4") if hold_s else output
             _render_video_moment(
                 local_by_id[moment["media_id"]],
-                output,
+                moving,
                 start_s=float(moment["source_start_s"]),
                 end_s=float(moment["source_end_s"]),
                 layout=moment["layout"],
@@ -4583,6 +4744,13 @@ def _render_moments(
                 source_crop=moment.get("source_crop"),
                 playback_rate=float(moment.get("playback_rate") or 1.0),
             )
+            if hold_s:
+                # KRI-828: the creator's freeze clones the moment's last frame (its
+                # ``source_end_s``) for the hold. Video only: the take's own sound is
+                # restored later from the source window and stays silent under the hold.
+                output = _hold_final_frame_to_duration(
+                    moving, output, target_s=float(moment["duration_s"])
+                )
         probe = probe_video(output)
         if (
             probe.width != canvas.width
@@ -4608,6 +4776,11 @@ def _render_moments(
                 **(
                     {"playback_rate": float(moment["playback_rate"])}
                     if moment.get("playback_rate") is not None
+                    else {}
+                ),
+                **(
+                    {"freeze_hold_s": float(moment["freeze_hold_s"])}
+                    if moment.get("freeze_hold_s")
                     else {}
                 ),
                 "output_duration_s": round(float(probe.duration_s), 3),
@@ -5653,9 +5826,11 @@ def _mix_pinned_music(
             audio_gain=float(music.get("level", 1.0)),
         )
     except Exception as exc:  # noqa: BLE001
-        raise GuidedStoryError(
+        raise guided_io_error(
             "guided_story_music_missing",
+            GUIDED_MUSIC_UNAVAILABLE,
             "The exact approved music file is no longer available.",
+            exc,
         ) from exc
 
 

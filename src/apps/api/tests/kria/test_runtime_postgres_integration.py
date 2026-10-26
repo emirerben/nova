@@ -504,7 +504,8 @@ def test_turn_abandoned_three_times_fails_and_promotes_its_successor(
         event = db.get(CreationThreadEvent, stuck.observed_event_id)
         assert event is not None
         assert event.event_type == "assistant_error"
-        assert event.content.startswith("I couldn't finish that step")
+        # A3: say the request already stopped (and was re-run) several times.
+        assert event.content.startswith("This request stopped partway through several times")
         assert event.payload["code"] == "runtime_turn_claims_exhausted"
         queued = db.get(CreatorAgentTurn, queued_id)
         assert queued is not None
@@ -3711,8 +3712,10 @@ async def test_kri700_brighten_ask_is_a_couldnt_line_and_never_reaches_the_appro
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("brief_facts", [False, True], ids=["stored-brief", "brief-facts"])
 async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_no_cut(
     monkeypatch: pytest.MonkeyPatch,
+    brief_facts: bool,
 ) -> None:
     """Tigre night T1 (thread D2E99325, 2026-10-16): seven asks, a first reply that named two,
     and an approval card that said "İstenen kesmeleri yapıp ..." for a plan holding no cut.
@@ -3725,6 +3728,10 @@ async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_n
       4. the 28 s take vs "under 20 s" and the start cut (r1) get no line;
       5. a plain "can't" blocks the render (it is a format limit, not a simplification);
       6. English / Turkish copy drifts (the reply must be Turkish for a Turkish chat).
+
+    KRI-724 (`brief_facts`): the same brief as Main Creator v76 records it, r2 with
+    `speech_remove` and r5 with `noise_reduction`. The planned source cut and the unavailable
+    noise filter are answers too: neither holds the draft behind "a simpler version?".
     """
     from app.agents._schemas.creator_agent import (
         CapabilityAvailability,
@@ -3781,6 +3788,9 @@ async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_n
             kind="select",
             scope="global",
             description="İkinci “Neredesin”i kes, bir kere sorayım",
+            facts=(
+                {"speech_remove": {"quote": "Neredesin", "occurrence": 2}} if brief_facts else {}
+            ),
         ),
         BriefUpdate(
             kind="text",
@@ -3799,6 +3809,7 @@ async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_n
             kind="audio",
             scope="global",
             description="Motor sesini biraz kıs, sesim öne çıksın",
+            facts={"noise_reduction": "engine"} if brief_facts else {},
         ),
         BriefUpdate(kind="text", scope="title", literal="Gece 11, tekneyle Tigre'ye"),
         BriefUpdate(
@@ -3859,8 +3870,13 @@ async def test_kri705_phone_talking_t1_brief_names_all_seven_asks_and_promises_n
         # (1) + (4): every one of the seven asks has a checked line.
         assert set(receipts) == {f"r{i}" for i in range(1, 8)}, receipts.keys()
         assert all(r["verification"] == "checked" for r in receipts.values())
-        for plain_cant in ("r2", "r4", "r5"):
+        for plain_cant in ("r4", "r5") if brief_facts else ("r2", "r4", "r5"):
             assert receipts[plain_cant]["status"] == "not_possible", plain_cant
+        if brief_facts:
+            # The cut is planned from the source words, never claimed before render.
+            assert receipts["r2"]["status"] == "partial"
+            assert receipts["r2"]["reason"].startswith("Kesmeden önce istediğin tekrarı")
+            assert receipts["r5"]["reason"].startswith("Motor gürültüsü azaltma")
         assert receipts["r1"]["status"] == "partial"
         assert receipts["r6"]["status"] == "met"
         assert "28" in receipts["r7"]["reason"] and "20" in receipts["r7"]["reason"]

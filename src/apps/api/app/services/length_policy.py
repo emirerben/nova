@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Literal
 
 from app.kria.brief import BriefRequirement, CreativeBrief
@@ -18,11 +19,17 @@ from app.kria.freeze_ask import times_one_moment
 from app.schemas.edit_proposal import recognize_total_duration_s
 from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_HOLDS_VS_LENGTH,
     CONFLICT_LENGTH_VS_NATURAL,
     CONFLICT_VOICE_VS_DURATION,
 )
 
 LengthOwner = Literal["creator", "song", "voiceover", "take", "footage"]
+# KRI-847: "exact" is a creator-named length (+/- 10 %); "at_most" is a ceiling ("at most 10
+# seconds"): the same check without its lower side. The model records it on the timing
+# requirement as `facts["duration_bound"]`; anything else, or nothing, is exact. Exclusive
+# wording ("under N") is the strict whole-export cap below, which this fact never changes.
+DurationBound = Literal["exact", "at_most"]
 
 
 def strict_duration_matches(actual_s: float, max_s: float) -> bool:
@@ -146,6 +153,40 @@ def creator_duration_matches(actual_s: float, requested_s: float) -> bool:
     )
 
 
+def duration_bound(facts: Mapping[str, object] | None) -> DurationBound:
+    """The bound a timing requirement's facts record; anything unknown is exact."""
+    return "at_most" if facts is not None and facts.get("duration_bound") == "at_most" else "exact"
+
+
+def creator_duration_satisfied(
+    actual_s: float, requested_s: float, bound: DurationBound = "exact"
+) -> bool:
+    """Whether a finite measured length meets the creator's length ask.
+
+    ``exact`` is `creator_duration_matches`. ``at_most`` drops only its LOWER side
+    (0 < actual <= N + 10 %), so it can relax the exact check and never tighten it: a wrong or
+    stale fact cannot create a hard cap, and 7.5 s meets "at most 10 seconds".
+    """
+    if bound != "at_most":
+        return creator_duration_matches(actual_s, requested_s)
+    return bool(
+        math.isfinite(actual_s)
+        and math.isfinite(requested_s)
+        and actual_s > 0
+        and requested_s > 0
+        and actual_s <= requested_s * 1.10 + 1e-9
+    )
+
+
+def ceiling_miss_message(requested_s: float, actual_s: float) -> str:
+    """A render over a ceiling, naming the ceiling (KRI-492: say which ask was missed).
+
+    English like the exact-length decline beside it: a Turkish chat never shows a worker
+    sentence with numbers in it (`kria_runtime._worker_copy`).
+    """
+    return f"You asked for at most {requested_s:g} seconds; this edit is {actual_s:g} seconds."
+
+
 # This is intentionally a complete, hand-declared matrix rather than a
 # fallback rule over EDIT_FORMATS. Adding an edit format must name its natural
 # duration source here before it can render.
@@ -210,7 +251,12 @@ KNOWN_AUDIO_SOURCES: frozenset[str] = frozenset(
     {source for sources in NATURAL_OWNER_DECLARATION.values() for source in sources}
 )
 _DURATION_CONFLICTS: frozenset[str] = frozenset(
-    {CONFLICT_DURATION_VS_COUNT, CONFLICT_VOICE_VS_DURATION, CONFLICT_LENGTH_VS_NATURAL}
+    {
+        CONFLICT_DURATION_VS_COUNT,
+        CONFLICT_HOLDS_VS_LENGTH,
+        CONFLICT_VOICE_VS_DURATION,
+        CONFLICT_LENGTH_VS_NATURAL,
+    }
 )
 
 
@@ -267,6 +313,58 @@ def length_owner(
     return "creator" if creator_duration_proven else natural_length_owner(strategy)
 
 
+@dataclass(frozen=True)
+class CreatorDuration:
+    """A creator-proven length with how it is judged (KRI-847)."""
+
+    seconds: float
+    bound: DurationBound = "exact"
+
+
+def creator_duration(
+    *,
+    creator_texts: Iterable[str] = (),
+    brief: CreativeBrief | None = None,
+    authoritative_answers: Iterable[Mapping[str, object] | object] = (),
+    strategy: Mapping[str, object] | object | None = None,
+) -> CreatorDuration | None:
+    """Return a creator-proven target duration, never a model/client target.
+
+    ``strategy`` is accepted only to make callers explicit about untrusted data;
+    no model/client duration field or marker is inspected here.
+
+    Creator text and choice answers name a concrete length (exact). Only the brief can
+    record a ceiling, and only when every live length ask says so.
+    """
+
+    del strategy
+    for text in reversed(tuple(creator_texts)):
+        value = recognize_total_duration_s(text)
+        if value is not None:
+            return CreatorDuration(float(value))
+    if brief is not None:
+        # KRI-777: a freeze's or a moment's seconds ("freeze the frame for one second on the
+        # bite") are not the video's length, so they never make a real length ambiguous.
+        asks = [
+            requirement
+            for requirement in brief.live()
+            if requirement.kind == "timing"
+            and requirement.facts.get("duration_s") is not None
+            and not times_one_moment(requirement)
+        ]
+        values = [float(requirement.facts["duration_s"]) for requirement in asks]
+        if len(set(values)) == 1 and values:
+            ceiling = all(duration_bound(requirement.facts) == "at_most" for requirement in asks)
+            return CreatorDuration(values[0], "at_most" if ceiling else "exact")
+    for answer in authoritative_answers:
+        if _value(answer, "conflict") not in _DURATION_CONFLICTS:
+            continue
+        value = _value(answer, "duration_s")
+        if isinstance(value, (int, float)) and value > 0:
+            return CreatorDuration(float(value))
+    return None
+
+
 def creator_duration_s(
     *,
     creator_texts: Iterable[str] = (),
@@ -274,36 +372,15 @@ def creator_duration_s(
     authoritative_answers: Iterable[Mapping[str, object] | object] = (),
     strategy: Mapping[str, object] | object | None = None,
 ) -> float | None:
-    """Return a creator-proven target duration, never a model/client target.
+    """The seconds of ``creator_duration`` (its bound is read separately)."""
 
-    ``strategy`` is accepted only to make callers explicit about untrusted data;
-    no model/client duration field or marker is inspected here.
-    """
-
-    del strategy
-    for text in reversed(tuple(creator_texts)):
-        value = recognize_total_duration_s(text)
-        if value is not None:
-            return float(value)
-    if brief is not None:
-        # KRI-777: a freeze's or a moment's seconds ("freeze the frame for one second on the
-        # bite") are not the video's length, so they never make a real length ambiguous.
-        values = [
-            float(requirement.facts["duration_s"])
-            for requirement in brief.live()
-            if requirement.kind == "timing"
-            and requirement.facts.get("duration_s") is not None
-            and not times_one_moment(requirement)
-        ]
-        if len(set(values)) == 1 and values:
-            return values[0]
-    for answer in authoritative_answers:
-        if _value(answer, "conflict") not in _DURATION_CONFLICTS:
-            continue
-        value = _value(answer, "duration_s")
-        if isinstance(value, (int, float)) and value > 0:
-            return float(value)
-    return None
+    found = creator_duration(
+        creator_texts=creator_texts,
+        brief=brief,
+        authoritative_answers=authoritative_answers,
+        strategy=strategy,
+    )
+    return found.seconds if found is not None else None
 
 
 def has_creator_duration_proof(

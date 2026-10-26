@@ -707,8 +707,9 @@ project-test-only edits could select `smoke,projects`.
 Main pushes run build/unit/smoke. PRs run build and unit tests, and a PR with
 `ios_ui=true` also runs a bounded native UI subset before merge: the selector's
 `smoke,<group>` when exactly one feature group changed, or `smoke` alone when the
-selector reports `full` (the full suite itself runs nightly/manual; PRs use
-one Mac for the selected group and native journeys). This exists because a PR that was green on
+selector reports `full` (the full suite itself runs nightly/manual; PRs run
+the selected group on the `unit` leg of `iPhone validation`, and native
+journeys on its `creation`/`screens` legs). This exists because a PR that was green on
 build and unit tests broke creation-to-ready for every later merge (#1088); the
 smoke group contains that scenario. `smoke` is emitted only for main pushes;
 the final gate accepts it only on a push with exactly one native leg. PR and
@@ -804,7 +805,7 @@ more than one attempt as flaky, via `flaky_tests()`. Each flaky test surfaces
 in three places: a `::warning` GitHub annotation on the run, a
 `## Flaky UI tests (passed on retry)` section in the job summary, and
 `flaky-tests.json` (a JSON list, empty when nothing was flaky) written next to
-`ui.xcresult` inside the `ios-native-test-diagnostics` artifact. Retries keep
+`ui.xcresult` inside the `ios-native-test-diagnostics-<leg>` artifact. Retries keep
 `main` green; they are a safety net, not the fix. Every flaky warning still
 needs its own Linear issue to find and fix the underlying flake.
 
@@ -967,7 +968,9 @@ commit follows. A release no longer retains three Macs for a full regression.
 The complete UI suite runs at 03:23 UTC nightly and on manual iOS dispatch. Full
 fixture-backed native journeys run at 02:23 UTC nightly and on manual CI
 dispatch. Both are reportable regression checks and never dispatch TestFlight.
-PRs retain affected unit/UI/journey coverage in one compiled Mac build.
+PRs retain affected unit/UI/journey coverage across up to three Mac legs that
+compile from the shared cache (`unit`, `creation`, `screens`; see
+[change-based CI](change-based-ci.md)).
 
 Nightly/manual `ios-tests` uses three duration-balanced shards. Every leg
 computes the same partition; its coverage check requires exactly that part, and
@@ -1025,6 +1028,34 @@ open native rendering capability gates or change cloud render behavior.
 Validation: `pytest tests/routes/test_native_timeline_sources.py
  tests/routes/test_generative_timeline.py tests/routes/test_generative_jobs.py
  tests/routes/test_editor_commit.py` from `src/apps/api`.
+
+### Newer versions load automatically (KRI-935)
+
+The editor never asks the creator to reload, tap "newer version" or close and
+reopen. When the server says a newer version of the edit exists, the editor
+loads it and replays the creator's unsaved lanes on top; one Undo drops them.
+
+- **Save 409:** load the newest version, keep local lanes, resend the Save once.
+  A second 409 ends on the ordinary "Couldn't save" banner (Save again).
+- **Chat draft on a lane the creator also edited:** the chat edit is the newest
+  and the creator asked for it, so it wins that lane. One Undo restores the
+  creator's pre-chat state. Text, captions, SFX, overlays or cards the creator
+  deleted are not brought back.
+- **Newer render under unsaved edits (chat sync):** the render becomes the clean
+  baseline, local lanes replay on top, and a staged chat edit lands last.
+- **Preview 409:** load the newest version and rebuild the preview, at most once
+  per server generation. A server that keeps answering 409 ends on the preview
+  Retry card; Retry reloads once more.
+- **Phone render superseded:** `DeviceRenderSessions` reconciles against the
+  newest request by itself, once per superseded request. A relink that races a
+  newer request re-reads the targets and links the chosen file to the newest one.
+
+Not covered: a re-plan that renders a different job still uses the
+`newerJobPrompt` "Switch / Keep editing" choice. Its lanes belong to another
+job, so local edits cannot be replayed onto it.
+
+Guards: the conflict cases in `NativeEditorSessionTests`,
+`ChatDraftStagingTests`, `TextDeletionTests` and `DeviceRenderSessionTests`.
 
 ### Signup screen (KRI-161)
 

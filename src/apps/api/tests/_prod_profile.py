@@ -124,6 +124,10 @@ PROD_TRUE_FLAGS: tuple[str, ...] = (
 
 # `PHONE_RENDER_VERIFIED_FEATURES` as read from the production api machine on
 # 2026-10-02 (unchanged; a capability-name list, not a secret).
+# `behindSubject` (text behind people on the phone) is deliberately ABSENT until a
+# physical-device preview + export check adds it in prod; under this profile the phone
+# compile strips the flag (`test_text_behind_subject_phone.py::
+# test_the_production_profile_strips_the_flag`). Add it here only after the fly secret.
 PROD_VERIFIED_FEATURES: tuple[str, ...] = (
     "alphaOverlay",
     "animatedText",

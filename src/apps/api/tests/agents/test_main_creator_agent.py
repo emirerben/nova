@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-23-v75"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v95"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -553,6 +553,7 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         .replace("$brief_section", "")
         .replace("$user_song_section", "")
         .replace("$voice_mode_section", "")
+        .replace("$voiceover_script_section", "")
     )
     prompt_manifest = agent_input.capability_manifest.model_dump_json(
         exclude_none=True, exclude={"narration": True}
@@ -583,7 +584,15 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         # KRI-189: no clip carries facts, so the slot renders empty.
         clip_facts_note="",
     )
-    assert actual == expected
+    skills = (
+        main_creator_module.load_skill("edit-story")
+        + "\n\n"
+        + main_creator_module.load_skill("grounded-hook")
+        + "\n\n"
+        + main_creator_module.load_skill("meaningful-moment")
+        + "\n\n"
+    )
+    assert actual == skills + expected
 
 
 def test_reaction_beats_prompt_section_present_when_capability_available() -> None:

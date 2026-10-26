@@ -1,0 +1,42 @@
+{
+  "agent": "nova.plan.slide_post_composer",
+  "prompt_version": "synthetic-editorial-v1",
+  "input": {
+    "notes": "Show the process in order: ingredients, mixing, finished loaf. Use the loaf as cover. Leave the caption empty.",
+    "media": [
+      {
+        "id": "loaf",
+        "kind": "image",
+        "description": "Finished loaf."
+      },
+      {
+        "id": "mix",
+        "kind": "video",
+        "description": "Mixing ingredients."
+      },
+      {
+        "id": "ingredients",
+        "kind": "image",
+        "description": "Unmixed ingredients."
+      }
+    ]
+  },
+  "raw_text": "{\"order\": [\"ingredients\", \"mix\", \"loaf\"], \"cover_id\": \"loaf\", \"caption\": \"\"}",
+  "meta": {
+    "source": "hand_authored_synthetic_development",
+    "case": "Separate cover choice from slide progression while retaining all assets.",
+    "skills": [
+      "edit-story"
+    ],
+    "expected": {
+      "order": [
+        "ingredients",
+        "mix",
+        "loaf"
+      ],
+      "cover_id": "loaf",
+      "caption": ""
+    },
+    "wrong_raw_text": "{\"order\": [\"loaf\", \"mix\", \"ingredients\"], \"cover_id\": \"loaf\", \"caption\": \"\"}"
+  }
+}

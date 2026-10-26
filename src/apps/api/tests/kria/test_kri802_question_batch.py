@@ -244,19 +244,24 @@ async def test_nothing_else_to_ask_keeps_the_wording_question_alone_and_drafts_n
     assert plan.clip_question is None
 
 
-async def test_a_text_only_label_question_does_not_join_the_wording_card(
+async def test_a_label_with_a_plus_is_a_clip_question_that_joins_the_wording_card(
     prod_profile, monkeypatch
 ) -> None:
-    # Chat 2's first question: the planner read the sauce text as a LABEL, which cannot print "+".
+    # Chat 2's first question: the planner read the sauce text as a LABEL. Before KRI-826
+    # a label could not print "+", so it was a text-only question asked by itself. Now
+    # the "+" prints, and the only open question is which clips are the sauce bowls.
     rows = copy.deepcopy(CASE["clip_intent_rows"])
     rows[1] = {**rows[1], "intent_id": "label_sauce_bowls", "op": "label"}
 
     planned, _ = await _turn(monkeypatch, batch=True, rows=rows)
 
     plan = planned.plan
-    assert plan.response == WORDING_REPLY
+    assert plan.response.startswith(WORDING_REPLY)
+    assert "can't show" not in plan.response
     assert plan.choice_question["candidate"] == TITLE
-    assert plan.clip_question is None
+    assert plan.clip_question is not None
+    assert "label_sauce_bowls" in {c["intent_id"] for c in plan.clip_question["categories"]}
+    assert plan.diagnostics["question_batch"] == "wording+clips"
 
 
 async def test_both_titles_model_written_still_asks_one_wording_question(

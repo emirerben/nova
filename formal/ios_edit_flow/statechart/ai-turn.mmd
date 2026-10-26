@@ -1,0 +1,133 @@
+---
+title: "Kria chat turn: what happens when the AI fails"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+    direction TB
+
+    classDef working fill:#e8f0fe,stroke:#4a6fa5,color:#1b2631
+    classDef yourturn fill:#e6f4ea,stroke:#3d7a4f,color:#1b2631
+    classDef done fill:#d5f5e3,stroke:#1e8449,color:#145a32
+    classDef stuck fill:#fde7e9,stroke:#c0392b,stroke-width:3px,color:#641e16
+    classDef degraded fill:#fef5e7,stroke:#b9770e,stroke-width:2px,color:#6e2c00
+    classDef failed fill:#f4f6f7,stroke:#566573,color:#1b2631
+
+    %% src/apps/api/app/kria/runtime.py:651 (submit_turn) - you type in chat
+    state "You send a message" as Send
+    %% formal/kria_turns on branch origin/codex/kri-chat-turn-tla (already modeled)
+    state "Follow-up queue<br/>(modeled in kria_turns)" as Queue
+    %% src/apps/api/app/tasks/kria_runtime.py:6914-6950 (pending row, republished every 60s)
+    state "Waiting for a worker" as Pending
+    %% src/apps/api/app/tasks/kria_runtime.py:2608-2642 (_claim: 15s lease, 5s heartbeat)
+    state "Kria is planning" as Planning
+    %% src/apps/api/app/kria/planner.py:2258-2300 (_call_brief_extractor)
+    state "Reading your request<br/>(brief extractor)" as Extract
+    %% src/apps/api/app/kria/planner.py:2220-2255 (_call_main_creator); agents/main_creator.py:649-676 (130s, 3 tries)
+    state "Planning the edit<br/>(Main Creator)" as MainCreator
+    %% src/apps/api/app/kria/planner.py:3275-3330 (clip intent planner + resolver)
+    state "Matching your words to clips" as ClipMatch
+    %% src/apps/api/app/routes/_copilot.py:359-411; planner.py:1950-1964 (120s), 4722 (scoped update: 40s)
+    state "Quick edit by the copilot" as Copilot
+    %% src/apps/api/app/kria/planner.py:4087-4101,4138-4157 (_editor_target_recovery, defer_brief=True)
+    state "Says: still rendering or<br/>can't open your edit, ask again" as TargetRecovery
+    %% src/apps/api/app/services/clip_intent_resolution.py:1264-1282
+    state "Leave-out request silently<br/>ignored (resolver down)" as ExcludeIgnored
+    %% src/apps/api/app/kria/planner.py:3902-3975 (_serve_unextracted_edit, whole message kept as 1 requirement)
+    state "Reader failed: copilot does<br/>the one text edit anyway" as Unextracted
+    %% src/apps/api/app/tasks/kria_runtime.py:3247-3255,3409-3443 (extract_kria_brief, log only)
+    state "Your words never saved<br/>to the brief" as DeferredLost
+    %% src/apps/api/app/kria/planner.py:3821-3895 (_request_recovery request_extraction_failed)
+    state "Asks: couldn't read every<br/>change, which first?" as AskRead
+    %% src/apps/api/app/kria/planner.py:3841-3870 (_request_recovery creator_planning_failed)
+    state "Says: couldn't plan this<br/>time, try again" as SayRetry
+    %% src/apps/api/app/agents/_provider_errors.py:39-71 + kria/planner.py:2252-2255,5229-5246
+    state "Spend cap hit: every<br/>retry says 'try again'" as SpendCapLoop
+    %% src/apps/api/app/kria/planner.py:1054-1095,3310-3325 (provider_unavailable recovery)
+    state "Says: couldn't match clips,<br/>try again shortly" as SayClipRetry
+    %% src/apps/api/app/kria/planner.py:3876-3888 (mode respond, turn_value question)
+    state "Kria answers or asks<br/>a question" as Answer
+    %% src/apps/api/app/kria/plan_review.py:949,1297 (30 min approval TTL)
+    state "Draft ready: approve?" as Approve
+    %% src/apps/api/app/tasks/kria_runtime.py:6776-6808,6865-6868 (stash approvals skipped; lazy expiry in kria/runtime.py _expire_blocking_approval)
+    state "Old approval waits until<br/>you come back" as StashWait
+    %% src/apps/api/app/tasks/kria_runtime.py:6811-6911 (_expire_overdue_approval)
+    state "Approval expired:<br/>nothing was rendered" as Expired
+    %% src/apps/api/app/tasks/kria_runtime.py:5412-5480 (execute_kria_approval)
+    state "Handing render to queue" as Dispatch
+    %% src/apps/api/app/tasks/kria_runtime.py:5308-5350,5464-5471 (re-render of an existing video only; reconciler 6914-6990 ignores outcome_unknown)
+    state "Queue unsure it got it:<br/>promised check never runs" as DispatchUnknown
+    %% src/apps/api/app/tasks/kria_runtime.py:5305-5306 (dispatched)
+    state "Render started<br/>(see ai-render)" as Rendering
+    %% src/apps/api/app/tasks/kria_runtime.py:3343-3366, 2815-2880
+    state "Turn failed: 'Try the<br/>request again'" as TurnFailed
+    %% src/apps/api/app/tasks/kria_runtime.py:2838-2852,3355-3358 (runtime_provider_outcome_unknown)
+    state "AI never answered:<br/>'try again in a moment'" as OutcomeUnknown
+    %% src/apps/api/app/tasks/kria_runtime.py:6940-6950 (lease lapsed)
+    state "Worker died mid-plan" as WorkerDied
+    %% src/apps/api/app/tasks/kria_runtime.py:2633-2638, 6945 (abandoned_claims +1)
+    state "Silently re-planning<br/>(paid again, up to 3x)" as Replan
+    %% src/apps/api/app/tasks/kria_runtime.py:2884-2911 (runtime_turn_claims_exhausted)
+    state "Gave up after 3 tries:<br/>'Try the request again'" as Exhausted
+
+    [*] --> Send
+    Send --> Queue: another turn is running
+    Queue --> Pending: earlier turn finishes
+    Send --> Pending: nothing else running
+    Pending --> Planning: worker claims it
+    Planning --> Copilot: plain edit, brief off
+    Planning --> Extract: brief on, video exists
+    Planning --> MainCreator: first plan / replan
+    Extract --> MainCreator: request read
+    Extract --> Unextracted: reader failed, 1 text ask
+    Extract --> AskRead: reader failed
+    Unextracted --> Approve: draft from text edit
+    Copilot --> TargetRecovery: edit busy or not loadable
+    TargetRecovery --> DeferredLost: background save fails
+    TargetRecovery --> Send: you ask again
+    DeferredLost --> Send: you ask again
+    Copilot --> Answer: copilot replied
+    Copilot --> Approve: copilot made ops
+    Copilot --> TurnFailed: copilot error (502)
+    MainCreator --> ClipMatch: request names clips
+    MainCreator --> Approve: plan ready
+    MainCreator --> Answer: needs your input
+    MainCreator --> SayRetry: AI failed / quota (brief on)
+    MainCreator --> TurnFailed: AI failed (brief off)
+    MainCreator --> OutcomeUnknown: provider timed out
+    ClipMatch --> ExcludeIgnored: resolver down, excludes
+    ClipMatch --> SayClipRetry: resolver down
+    ClipMatch --> Approve: clips matched
+    ExcludeIgnored --> Approve: draft without exclusion
+    SayRetry --> SpendCapLoop: provider spend cap
+    SpendCapLoop --> Send: you retry
+    SayRetry --> Send: you retry
+    SayClipRetry --> Send: you retry
+    AskRead --> Send: you answer
+    Answer --> Send: you reply
+    Planning --> TurnFailed: 200s limit / any crash
+    Planning --> WorkerDied: OOM, deploy, SIGKILL
+    WorkerDied --> Replan: lease lapses, 60s sweep
+    Replan --> Planning: claims left
+    Replan --> Exhausted: 3rd lapsed claim
+    TurnFailed --> Send: you retry
+    OutcomeUnknown --> Send: you retry
+    Exhausted --> Send: you retry
+    Approve --> Dispatch: you approve
+    Approve --> Expired: 30 min, no decision
+    Approve --> StashWait: 30 min, media stashed
+    StashWait --> Expired: your next message
+    Expired --> Send: you ask again
+    Dispatch --> Rendering: job queued
+    Dispatch --> DispatchUnknown: queue hand-off throws
+    DispatchUnknown --> Send: you ask again (new draft)
+    Rendering --> [*]
+
+    class Send,Approve,Answer,AskRead,SayRetry,SayClipRetry,StashWait,TargetRecovery yourturn
+    class Queue,Pending,Planning,Extract,MainCreator,ClipMatch,Copilot,Dispatch,WorkerDied,Unextracted working
+    class Rendering done
+    class SpendCapLoop,Replan stuck
+    class ExcludeIgnored,DeferredLost degraded
+    class TurnFailed,OutcomeUnknown,Exhausted,Expired,DispatchUnknown failed

@@ -11,6 +11,7 @@ machine code the route used to raise as an HTTP 422 detail.
 from __future__ import annotations
 
 import copy
+import math
 import uuid
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -125,22 +126,78 @@ def build_guided_segments(
         # that effective rate instead of silently reverting it to 1x on an
         # otherwise conventional Save.  An explicit null is the clear/reset
         # operation and deliberately returns to 1x.
+        # KRI-828: a creator's freeze stays on its occurrence (and a split child of it) and
+        # on its frame: the saved ``source_end_s`` of a held segment IS the frozen frame. The
+        # slot plays from ``in_s`` up to that frame at 1x and holds it for the rest of its
+        # duration, so trimming the slot's end shortens (or lengthens) the hold and trimming
+        # its start shortens the motion before it -- the frame never moves. The editor's
+        # preview reads the same frame (``freeze_frame_s`` on the slot row). A slot that no
+        # longer reaches the frame with room to move (the leading half of a split, a trim
+        # into the hold's whole length) plays its own footage with no hold.
+        inherited_hold_s = (
+            float(inherited_segment.get("freeze_hold_s") or 0.0)
+            if isinstance(inherited_segment, dict) and source.get("kind") == "video"
+            else 0.0
+        )
+        # An occurrence that carried a hold plays at 1x whether or not it keeps it: its
+        # source span is shorter than its slot by the hold, which is not a slow retime.
+        inherited_hold = bool(inherited_hold_s)
+        freeze_hold = 0.0
+        if inherited_hold:
+            held_frame = float(inherited_segment.get("source_end_s") or 0.0)
+            motion = held_frame - float(slot.in_s)
+            hold = round(round((duration - motion) * GUIDED_FPS) / GUIDED_FPS, 6)
+            if not below_editor_minimum(motion) and hold >= 1 / GUIDED_FPS - 1e-6:
+                freeze_hold = hold
         playback_rate_set = "playback_rate" in slot.model_fields_set
         if playback_rate_set:
             playback_rate = float(slot.playback_rate or 1.0)
+        elif inherited_hold:
+            playback_rate = 1.0
         elif isinstance(inherited_segment, dict):
             inherited_duration = float(inherited_segment.get("duration_s") or 0.0)
             inherited_span = float(inherited_segment.get("source_end_s") or 0.0) - float(
                 inherited_segment.get("source_start_s") or 0.0
             )
-            playback_rate = inherited_span / inherited_duration if inherited_duration > 0 else 1.0
+            playback_rate = (
+                float(inherited_segment.get("playback_rate") or 1)
+                if inherited_segment.get("preserve_source_window")
+                else inherited_span / inherited_duration
+                if inherited_duration > 0
+                else 1.0
+            )
         else:
             playback_rate = 1.0
-        if source.get("kind") == "video" and source_duration is not None:
+        selected_end = getattr(slot, "source_end_s", None)
+        if (
+            selected_end is None
+            and isinstance(inherited_segment, dict)
+            and inherited_segment.get("preserve_source_window")
+        ):
+            same_window = (
+                abs(float(slot.in_s) - float(inherited_segment["source_start_s"])) < 1e-6
+                and abs(duration - float(inherited_segment["duration_s"])) < 1e-6
+                and abs(playback_rate - float(inherited_segment.get("playback_rate") or 1)) < 1e-6
+            )
+            if same_window:
+                selected_end = float(inherited_segment["source_end_s"])
+        preserve_window = selected_end is not None
+        if preserve_window:
+            if source.get("kind") != "video" or not math.isfinite(float(selected_end)):
+                raise GuidedTimelineError("TIMELINE_SOURCE_BOUNDS")
+            exact_duration = (float(selected_end) - float(slot.in_s)) / playback_rate
             if (
-                slot.in_s < 0
-                or slot.in_s + duration * playback_rate > float(source_duration) + 0.05
+                below_editor_minimum(exact_duration)
+                or abs(exact_duration - duration) > 1 / GUIDED_FPS + 1e-6
             ):
+                raise GuidedTimelineError("TIMELINE_INVALID_DURATION")
+            duration = round(round(exact_duration * GUIDED_FPS) / GUIDED_FPS, 6)
+        if source.get("kind") == "video" and source_duration is not None:
+            if slot.in_s < 0 or (
+                float(selected_end)
+                if preserve_window
+                else (held_frame if freeze_hold else slot.in_s + duration * playback_rate)
+            ) > float(source_duration) + (1e-6 if preserve_window else 0.05):
                 raise GuidedTimelineError("TIMELINE_SOURCE_BOUNDS")
         if order:
             cursor = max(0.0, cursor - effective[order - 1][1])
@@ -150,7 +207,11 @@ def build_guided_segments(
             "parent_segment_id": slot.parent_segment_id,
             "media_id": source["media_id"],
             "source_start_s": float(slot.in_s),
-            "source_end_s": float(slot.in_s) + duration * playback_rate,
+            "source_end_s": float(selected_end)
+            if preserve_window
+            else held_frame
+            if freeze_hold
+            else float(slot.in_s) + duration * playback_rate,
             "duration_s": round(duration, 3),
             "transition_after": transition,
             "transition_duration_s": transition_duration,
@@ -160,6 +221,10 @@ def build_guided_segments(
             else None,
             "output_start_s": round(cursor, 3),
         }
+        if preserve_window:
+            segment["preserve_source_window"] = True
+            segment["playback_rate"] = playback_rate
+            segment["duration_s"] = duration
         if "source_crop" in slot.model_fields_set:
             if slot.source_crop is not None:
                 segment["source_crop"] = slot.source_crop
@@ -182,6 +247,17 @@ def build_guided_segments(
             )
         if muted:
             segment["source_audio_muted"] = True
+        if freeze_hold and playback_rate == 1.0 and not preserve_window:
+            segment["freeze_hold_s"] = freeze_hold
+        elif freeze_hold:
+            # A speed change or a pinned source window on a held slot is a new program: the
+            # hold no longer applies, so the slot plays its whole length.
+            segment["source_end_s"] = float(slot.in_s) + duration * playback_rate
+            if (
+                source_duration is not None
+                and segment["source_end_s"] > float(source_duration) + 0.05
+            ):
+                raise GuidedTimelineError("TIMELINE_SOURCE_BOUNDS")
         # New clients send the occurrence's canonical fit. Older clients omit
         # it; preserve a layout already stored on this segment (including its
         # parent when a split child is being written) and otherwise retain the
@@ -200,6 +276,21 @@ def build_guided_segments(
                 segment["layout"] = inherited_layout
         segments.append(segment)
         cursor += duration
+    if any(segment.get("preserve_source_window") for segment in segments):
+        # Rebuilt editor slots are a continuous sequence. Snap each boundary
+        # once using the same frame clock as normalization, avoiding stale
+        # millisecond starts that become one-frame gaps after a speed change.
+        cursor = 0.0
+        for segment in segments:
+            segment["duration_s"] = round(round(segment["duration_s"] * GUIDED_FPS) / GUIDED_FPS, 6)
+            segment["output_start_s"] = round(cursor, 6)
+            segment["output_end_s"] = round(
+                round((cursor + segment["duration_s"]) * GUIDED_FPS) / GUIDED_FPS, 6
+            )
+            overlap = (
+                segment["transition_duration_s"] if segment["transition_after"] != "cut" else 0
+            )
+            cursor = segment["output_end_s"] - round(round(overlap * GUIDED_FPS) / GUIDED_FPS, 6)
     if cursor > max_total_s + 1e-6:
         raise GuidedTimelineError("TIMELINE_TOO_LONG")
     return segments
@@ -215,14 +306,18 @@ def _segment_window(segment: dict[str, Any]) -> tuple[float, float, float, float
 
 
 def make_time_projector(
-    old_segments: list[dict[str, Any]], new_segments: list[dict[str, Any]]
+    old_segments: list[dict[str, Any]],
+    new_segments: list[dict[str, Any]],
+    *,
+    interval_end: bool = False,
 ) -> Callable[[float], tuple[float, str] | None]:
     """Map an old output-clock time through source time onto the new segments.
 
     Returns ``(new_time_s, new_segment_id)`` or ``None`` when the anchor segment
     (and every descendant of it) is gone. Exact overlap boundaries are
     right-biased (later segments win), which callers that project an interval
-    END must compensate for by anchoring one frame earlier.
+    END can pass ``interval_end=True`` to use the preceding segment at a cut.
+    Legacy callers may instead retain their one-frame inset policy.
     """
     window = _segment_window
     fps = GUIDED_FPS
@@ -230,8 +325,19 @@ def make_time_projector(
     def old_anchor(time_s: float) -> tuple[dict[str, Any], float] | None:
         for segment in reversed(old_segments):
             output_start, output_end, source_start, source_end = window(segment)
-            if output_start <= time_s < output_end:
-                source_time = min(source_end, source_start + max(0.0, time_s - output_start))
+            contains = (
+                output_start < time_s <= output_end
+                if interval_end
+                else output_start <= time_s < output_end
+            )
+            if contains and output_end > output_start:
+                source_time = min(
+                    source_end,
+                    source_start
+                    + max(0.0, time_s - output_start)
+                    * (source_end - source_start)
+                    / (output_end - output_start),
+                )
                 return segment, source_time
         if old_segments and abs(time_s - window(old_segments[-1])[1]) <= 1e-6:
             segment = old_segments[-1]
@@ -265,7 +371,7 @@ def make_time_projector(
             if window(segment)[2] - 1e-6 <= source_time <= window(segment)[3] + 1e-6
         ]
         segment = (
-            containing[-1]
+            (containing[0] if interval_end else containing[-1])
             if containing
             else min(
                 candidates,
@@ -277,7 +383,13 @@ def make_time_projector(
         )
         output_start, output_end, source_start, source_end = window(segment)
         clamped_source = min(source_end, max(source_start, source_time))
-        projected = min(output_end, max(output_start, output_start + clamped_source - source_start))
+        source_span = source_end - source_start
+        offset = (
+            (clamped_source - source_start) * (output_end - output_start) / source_span
+            if source_span > 0
+            else 0
+        )
+        projected = min(output_end, max(output_start, output_start + offset))
         return round(round(projected * fps) / fps, 6), str(segment["segment_id"])
 
     return project
@@ -307,6 +419,14 @@ def project_lane_times(
     fps = GUIDED_FPS
     old_raw = copy.deepcopy(baseline_lanes if baseline_lanes is not None else raw)
     project = make_time_projector(old_segments, new_segments)
+    project_end = make_time_projector(old_segments, new_segments, interval_end=True)
+    # Preserve the existing frame-inset policy for unit-speed revisions. A
+    # retime must map the exact end, since one old frame is not one new frame.
+    retimed = any(
+        abs((window[3] - window[2]) - (window[1] - window[0])) > 1e-5
+        for segment in old_segments + new_segments
+        for window in [_segment_window(segment)]
+    )
     segment_end = {
         str(segment.get("segment_id")): float(segment.get("output_end_s") or 0.0)
         for segment in new_segments
@@ -370,7 +490,15 @@ def project_lane_times(
             # (authored text) keeps whatever part survives.
             ranged = end_value - start_value > 1e-6
             start = project(start_value)
-            end = project(max(start_value, end_value - 1.0 / fps)) if ranged else start
+            end = (
+                (
+                    project_end(end_value)
+                    if retimed
+                    else project(max(start_value, end_value - 1.0 / fps))
+                )
+                if ranged
+                else start
+            )
             if start is None or end is None:
                 tombstones.append(
                     {
@@ -386,7 +514,9 @@ def project_lane_times(
             updated[start_field] = start[0]
             if ranged:
                 end_cap = min(new_total, segment_end.get(end[1], new_total))
-                new_end = max(start[0], min(end_cap, round(end[0] + 1.0 / fps, 6)))
+                new_end = max(
+                    start[0], min(end_cap, round(end[0] + (0 if retimed else 1.0 / fps), 6))
+                )
                 if new_end - start[0] <= 0.5 / fps:
                     # An interval spanning clips that reorder projects inverted/tiny: fall
                     # back to the window of the clip it starts in (never a zero-length
@@ -458,7 +588,8 @@ def project_lane_times(
             projected_motion.append(value)
             continue
         start = project(float(value["start_frame"]) / fps)
-        end = project(float(value.get("end_frame_exclusive", value["start_frame"])) / fps)
+        end_mapper = project_end if retimed else project
+        end = end_mapper(float(value.get("end_frame_exclusive", value["start_frame"])) / fps)
         if start is None or end is None:
             tombstones.append(
                 {

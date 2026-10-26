@@ -19,25 +19,38 @@ from __future__ import annotations
 
 import ast
 import re
+from contextlib import ExitStack
 from pathlib import Path
+from unittest.mock import patch
 
 import app.services.choice_questions as cq
+from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.reply_language import reply_language_for
+from app.pipeline.caption_unclear import UnclearSpan
 from app.services.choice_questions import (
     CONFLICT_DURATION_VS_COUNT,
+    CONFLICT_FREEZE_FRAME,
     CONFLICT_LENGTH_VS_NATURAL,
     CONFLICT_ORDER_BASIS,
     CONFLICT_PRIORITY,
     CONFLICT_SOURCE_COVERAGE,
+    CONFLICT_TAKE_LINE_END,
+    CONFLICT_TAKE_LINE_START,
+    CONFLICT_UNCLEAR_WORD,
     CONFLICT_VOICE_VS_DURATION,
     CONFLICT_WHICH_VOICE,
     ChoiceCapability,
     build_choice_question,
     choice_question_text,
     collect_conflicts,
+    unclear_word_choice,
 )
 from tests.kria.test_choice_voice_gate import VOICE, _voice_rows
+from tests.kria.test_kri844_take_line_ask import CAP as _TAKE_CAP
+from tests.kria.test_kri844_take_line_ask import SNAP as _TAKE_SNAP
+from tests.kria.test_kri844_take_line_ask import STRATEGY as _TAKE_STRATEGY
+from tests.kria.test_kri844_take_line_ask import brief as _take_brief
 
 # Words only English uses. Quoted spans are the creator's own words and are skipped.
 _ENGLISH = frozenset(
@@ -176,6 +189,95 @@ def _cases() -> dict[str, tuple[str, list]]:
         {"clip_assignments": _voice_rows(voice_s=75)},
         _VOICE_CAP,
     )
+    # KRI-825: timed photos the creator's total cannot fit (extendable, and not).
+    for name, needed in (("holds_extend", 12.0), ("holds_keep_only", 400.0)):
+        add(
+            name,
+            "holds_vs_length",
+            {},
+            _brief(_timing(5)),
+            {
+                "still_hold_conflict": {
+                    "requested_s": 5.0,
+                    "needed_s": needed,
+                    "held_s": 6.0,
+                    "requirement_ids": [],
+                }
+            },
+        )
+    # KRI-724: which time a spoken word / line is meant, on a one-take Talking draft.
+    take = {
+        "clip_assignments": [
+            {
+                "media_id": "take",
+                "kind": "video",
+                "duration_s": 20.0,
+                "analysis": {
+                    "duration_s": 20.0,
+                    "understanding": {
+                        "speech": {
+                            "segments": [
+                                {
+                                    "text": "We are at Merope, thank you Karo.",
+                                    "start_s": 1.0,
+                                    "end_s": 5.0,
+                                },
+                                {
+                                    "text": "Merope is great, thank you Karo.",
+                                    "start_s": 8.0,
+                                    "end_s": 12.0,
+                                },
+                            ]
+                        }
+                    },
+                },
+            }
+        ]
+    }
+    talking = {"edit_format": "subtitled", "audio_strategy": "original_audio"}
+    occurrence_cap = ChoiceCapability(speech_occurrence=True)
+    add(
+        "speech_occurrence_text",
+        "speech_occurrence",
+        talking,
+        _brief(
+            BriefRequirement(
+                id="r7",
+                kind="text",
+                scope="global",
+                literal="MEROPE",
+                description="Show MEROPE the first time she says Merope",
+            )
+        ),
+        take,
+        occurrence_cap,
+    )
+    add(
+        "speech_occurrence_cut",
+        "speech_occurrence",
+        talking,
+        _brief(
+            BriefRequirement(
+                id="r8",
+                kind="audio",
+                scope="global",
+                description="Cut 'thank you Karo'",
+                facts={"speech_cleanup": True, "cut_lines": ["thank you Karo"]},
+            )
+        ),
+        take,
+        occurrence_cap,
+    )
+    # KRI-844: the quoted start / end line a Spanish take does not hold (a phone Talking edit).
+    with ExitStack() as pilot:
+        for name, value in (
+            ("phone_rendering_enabled", True),
+            ("phone_render_user_ids", []),
+            ("subtitled_archetype_enabled", True),
+        ):
+            pilot.enter_context(patch.object(settings, name, value))
+        for kind in (CONFLICT_TAKE_LINE_START, CONFLICT_TAKE_LINE_END):
+            add(kind, kind, _TAKE_STRATEGY, _take_brief(), _TAKE_SNAP, _TAKE_CAP)
     for code, strategy in (
         ("single_hero_order_conflict", {}),
         ("insufficient_media", {}),
@@ -197,6 +299,68 @@ def _cases() -> dict[str, tuple[str, list]]:
             _brief(),
             _coverage(code, **plan),
         )
+    # KRI-849: the unclear-word question. Built from a span the way the detector hands it over
+    # (the detector itself needs the phone-rendering settings; its end-to-end cases are in
+    # tests/kria/test_kri849_dj_t1_unclear_word_replay.py). The two heard texts are the clip's own
+    # words, not copy: no English function words in them, or they would sit in quotes.
+    span = UnclearSpan(
+        8.8, 9.7, "salma y limón", "sal marina", 0, 2, ("salma", "y", "limon", "|", "sal", "marina")
+    )
+    choice = unclear_word_choice(span, 0, ("r3",), ["take"], "the third sauce he names")
+    assert choice is not None and choice.kind == CONFLICT_UNCLEAR_WORD
+    cases["unclear_word"] = (CONFLICT_UNCLEAR_WORD, [choice])
+    # KRI-900: a freeze on a named moment asks which frame (one moment) or which moment (a
+    # tie), on a phone montage that can hold a frame.
+    freeze_strategy = {"edit_format": "montage", "audio_strategy": "original_audio"}
+    freeze_ask = BriefRequirement(
+        id="r3",
+        kind="timing",
+        scope="global",
+        description="Freeze the frame for one second on Atakan's bite",
+        facts={"freeze_frame": True},
+    )
+
+    def take(media_id: str, *descriptions: str) -> dict:
+        return {
+            "media_id": media_id,
+            "kind": "video",
+            "duration_s": 68.0,
+            "analysis": {
+                "best_moments": [
+                    {"start_s": 10.0 * i + 5, "end_s": 10.0 * i + 8, "description": text}
+                    for i, text in enumerate(descriptions)
+                ]
+            },
+        }
+
+    with (
+        patch.object(settings, "phone_rendering_enabled", True),
+        patch.object(settings, "phone_render_user_ids", []),
+        patch.object(
+            settings,
+            "phone_render_verified_features",
+            [*settings.phone_render_verified_features, "freezeFrame"],
+        ),
+    ):
+        for name, rows in (
+            ("freeze_one_moment", [take("a", "man takes first bite of dessert")]),
+            ("freeze_tied_moments", [take("a", "his bite"), take("b", "another bite")]),
+        ):
+            add(
+                name,
+                CONFLICT_FREEZE_FRAME,
+                freeze_strategy,
+                _brief(freeze_ask),
+                {
+                    "clip_assignments": rows,
+                    "clip_paths": [
+                        f"users/u/creation-threads/t/analysis-proxy-ios-{i}.mp4"
+                        for i in range(len(rows))
+                    ],
+                },
+                # KRI-898: sent from an app build that plays a freeze hold.
+                ChoiceCapability(creator_id="u", client_protocol=16),
+            )
     return cases
 
 

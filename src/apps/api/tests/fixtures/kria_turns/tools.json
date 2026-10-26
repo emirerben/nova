@@ -2323,6 +2323,19 @@
               "default": null,
               "title": "Source Duration S"
             },
+            "source_end_s": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source End S"
+            },
             "source_start_locked": {
               "anyOf": [
                 {
@@ -2864,6 +2877,102 @@
           "title": "MediaTransform",
           "type": "object"
         },
+        "MomentOrderAnswerIn": {
+          "additionalProperties": false,
+          "description": "KRI-723: the answer to a ``moment_order_question``; old clients omit it.",
+          "properties": {
+            "answers": {
+              "items": {
+                "$ref": "#/$defs/MomentPointIn"
+              },
+              "maxItems": 24,
+              "minItems": 1,
+              "title": "Answers",
+              "type": "array"
+            },
+            "question_id": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question_id",
+            "answers"
+          ],
+          "title": "MomentOrderAnswerIn",
+          "type": "object"
+        },
+        "MomentPointIn": {
+          "additionalProperties": false,
+          "description": "KRI-723: one row of a ``moment_order`` answer, in the creator's final order.\n\n``point``: the creator's window on the take, on the original's clock. ``skip``: \"this\nisn't in my clips\". ``delegate``: \"you pick\". The server checks the clip is this thread's\nand the window fits it; the storage generation is never the client's.",
+          "properties": {
+            "action": {
+              "enum": [
+                "point",
+                "skip",
+                "delegate"
+              ],
+              "title": "Action",
+              "type": "string"
+            },
+            "media_id": {
+              "anyOf": [
+                {
+                  "maxLength": 160,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Media Id"
+            },
+            "moment_key": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Moment Key",
+              "type": "string"
+            },
+            "source_end_s": {
+              "anyOf": [
+                {
+                  "maximum": 3600.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source End S"
+            },
+            "source_start_s": {
+              "anyOf": [
+                {
+                  "maximum": 3600.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source Start S"
+            }
+          },
+          "required": [
+            "moment_key",
+            "action"
+          ],
+          "title": "MomentPointIn",
+          "type": "object"
+        },
         "MontageBlock": {
           "properties": {
             "audio_policy": {
@@ -2960,6 +3069,58 @@
             "shots"
           ],
           "title": "MontageBlock",
+          "type": "object"
+        },
+        "ProtectedRegionIn": {
+          "additionalProperties": false,
+          "description": "KRI-827: the creator marks what to keep text off (\"the plate\"): a box on one frame of\none of their clips, normalized to the upright source frame. The server checks the clip\nis this thread's and stamps its generation; old clients omit it.",
+          "properties": {
+            "box": {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "title": "Box",
+              "type": "array"
+            },
+            "label": {
+              "maxLength": 60,
+              "minLength": 1,
+              "title": "Label",
+              "type": "string"
+            },
+            "media_id": {
+              "maxLength": 160,
+              "minLength": 1,
+              "title": "Media Id",
+              "type": "string"
+            },
+            "source_t_s": {
+              "maximum": 3600.0,
+              "minimum": 0.0,
+              "title": "Source T S",
+              "type": "number"
+            }
+          },
+          "required": [
+            "label",
+            "media_id",
+            "source_t_s",
+            "box"
+          ],
+          "title": "ProtectedRegionIn",
           "type": "object"
         },
         "SolidBackground": {
@@ -3558,6 +3719,28 @@
           "title": "Message",
           "type": "string"
         },
+        "moment_order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MomentOrderAnswerIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "protected_region": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProtectedRegionIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "scope": {
           "anyOf": [
             {
@@ -3782,6 +3965,18 @@
     },
     "TurnAccepted": {
       "properties": {
+        "recoverable_held_turn_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recoverable Held Turn Id"
+        },
         "replayed": {
           "default": false,
           "title": "Replayed",
@@ -4545,7 +4740,7 @@
               "image_hold_s": {
                 "anyOf": [
                   {
-                    "maximum": 0.8,
+                    "maximum": 10.0,
                     "minimum": 0.1,
                     "type": "number"
                   },

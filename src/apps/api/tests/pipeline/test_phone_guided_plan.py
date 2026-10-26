@@ -377,7 +377,23 @@ def test_shrunk_refit_timeline_clamps_text_layers_instead_of_failing_validation(
     recipe = compile_phone_guided_plan(plan, bindings)  # must not raise
     assert recipe.duration == pytest.approx(2.45)
     assert recipe.text_layers[0].end <= recipe.duration
-    assert recipe.text_layers[0].end == pytest.approx(2.4)  # 2.45 - the 0.05s safety margin
+    assert recipe.text_layers[0].end == pytest.approx(recipe.duration)
+    from app.services.creator_render_contract import (
+        CreatorRenderContract,
+        TextPlacementError,
+        TextRequirement,
+        verify_phone_recipe,
+    )
+
+    contract = CreatorRenderContract(
+        generation_id="refit-closing",
+        exact_texts=(TextRequirement(role="closing", text="Title"),),
+    )
+    assert verify_phone_recipe(contract, recipe)
+    early = recipe.model_copy(deep=True)
+    early.text_layers[0].end -= 0.05
+    with pytest.raises(TextPlacementError, match="wrong place"):
+        verify_phone_recipe(contract, early)
     assert recipe.text_layers[0].start == 0
 
 
@@ -399,7 +415,7 @@ def test_shrunk_refit_timeline_shrinks_a_layer_start_too_when_it_would_go_negati
     ]
     recipe = compile_phone_guided_plan(plan, bindings)  # must not raise
     layer = recipe.text_layers[0]
-    assert layer.end == pytest.approx(2.4)
+    assert layer.end == pytest.approx(recipe.duration)
     assert layer.end - layer.start == pytest.approx(1.0 / 30.0)
     assert layer.start < layer.end
 
@@ -918,7 +934,6 @@ def test_photo_output_window_must_still_match_the_approved_timeline(change):
         ("look_preset", "golden_hour"),
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
-        ("playback_rate", 2),
     ],
 )
 def test_photo_treatments_the_native_still_path_cannot_draw_fail_closed(field, value):
@@ -1020,7 +1035,6 @@ def test_supporting_card_photo_compiles_to_a_still_card_clip(monkeypatch):
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
         ("source_crop", {"x": 0, "y": 0, "width": 0.5, "height": 0.5}),
-        ("playback_rate", 2),
     ],
 )
 def test_supporting_card_still_rejects_treatments_the_card_cannot_draw(field, value):
@@ -1289,7 +1303,6 @@ def test_golden_hour_pool_video_compiles_only_exact_canvas_unrotated():
         ("image_motion", "subtle_zoom_in"),
         ("look_preset", "warm"),
         ("look_adjustments", {"brightness": 0.1}),
-        ("playback_rate", 2),
     ],
 )
 def test_pool_video_treatments_the_recipe_cannot_carry_fail_closed(field, value):
@@ -1309,7 +1322,9 @@ def test_bound_footage_retime_fails_closed_instead_of_silently_dropping():
     # Compiled before, rendering 1x footage the creator never approved.
     plan, bindings = fixture()
     plan.story_timeline[0] = plan.story_timeline[0].model_copy(update={"playback_rate": 2})
-    with pytest.raises(UnsupportedPhonePlan, match="unsupported phone moment treatment"):
+    with pytest.raises(
+        UnsupportedPhonePlan, match="phone moment timing must preserve its exact source window"
+    ):
         compile_phone_guided_plan(plan, bindings)
 
 

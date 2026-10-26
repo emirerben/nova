@@ -52,7 +52,7 @@
   "KriaUITests/CreationUITests/testWaitForRenderConflictKeepsCreateRetryable": 28.0,
   "KriaUITests/DeviceRenderUITests/testPhoneRenderReachesReadyWithPlaySaveAndShare": 33.0,
   "KriaUITests/DeviceRenderUITests/testTimedOutRenderRetriesToReady": 32.1,
-  "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForANewEditWithoutRetry": 30.7,
+  "KriaUITests/DeviceRenderUITests/testUnsupportedRecipeAsksForAChangeInChatWithoutRetry": 30.7,
   "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs": 26.5,
   "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability": 24.0,
   "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists": 38.5,

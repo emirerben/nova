@@ -32,6 +32,7 @@ from typing import ClassVar
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.agents._writing_context import turkish_audience_instruction, writing_voice
 from app.agents.intro_writer import (
     _creator_direction_block,
     _filming_guide_block,
@@ -123,12 +124,11 @@ def quote_structural_failures(quote: str) -> list[str]:
 _LANGUAGE_INSTRUCTIONS: dict[str, str] = {
     "en": "Write the quote in English.",
     "tr": (
-        "Write the quote in TURKISH (Türkçe). Use casual creator voice — second-person "
-        "singular 'sen' (informal), NEVER 'siz' (formal). Match how a Turkish creator "
-        "would voice their own montage on TikTok or Instagram. All other rules below "
-        "(sentence shape, word caps, no emojis, no #/@) still apply. Turkish diacritics "
-        "(ç ş ğ ı İ ö ü) MUST be written with the correct Unicode codepoint, NOT "
-        "ASCII-folded. Do NOT mix English and Turkish. Output Turkish only."
+        "Write the quote in TURKISH (Türkçe). "
+        + turkish_audience_instruction("tr")
+        + " Sentence shape, word caps, no emojis and no #/@ still apply. Turkish diacritics "
+        "(ç ş ğ ı İ ö ü) MUST retain their correct Unicode codepoints. "
+        "Do NOT mix English and Turkish. Output Turkish only."
     ),
 }
 
@@ -179,7 +179,7 @@ class SequenceQuoteWriterAgent(Agent[SequenceQuoteInput, SequenceQuoteOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.sequence_quote",
         prompt_id="sequence_quote",
-        prompt_version="1.1.0-creator-direction",
+        prompt_version="2026-10-25-source-voice-v2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -202,7 +202,7 @@ class SequenceQuoteWriterAgent(Agent[SequenceQuoteInput, SequenceQuoteOutput]):
         return load_prompt(
             "sequence_quote",
             language_instruction=_language_instruction(input.language),
-            tone=_sanitize_text(input.tone) or "neutral",
+            tone=writing_voice(input.tone),
             # Persona/preferences/filming-guide blocks reuse intro_writer's
             # renderers verbatim (duck-typed on the shared field names) so the
             # two brand-voice agents can never drift on sanitization rules.
