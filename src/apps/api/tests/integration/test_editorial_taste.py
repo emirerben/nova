@@ -643,6 +643,7 @@ async def test_wrong_facts_feedback_excludes_those_facts_from_the_next_research_
                             "moment_ids": ["m1"],
                             "research_fact_ids": [facts[0].id],
                             "content_plan": {
+                                "form": "factual_story",
                                 "audience": "Ferry passengers",
                                 "angle": "The terminal's history",
                                 "why_it_works": "History gives this crossing a point.",
