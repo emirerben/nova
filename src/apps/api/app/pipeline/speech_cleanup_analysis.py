@@ -642,68 +642,24 @@ def _word_rows(transcript: Any) -> list[dict[str, Any]]:
     return [word.model_dump() for word in _timed_words(transcript)]
 
 
-def mixed_reference_languages(reference_text: str | None) -> list[str]:
-    """The languages a MIXED reference speaks, the most evidenced first; [] otherwise.
-
-    The one predicate for "this take is mixed" (KRI-843): the kill switch
-    ``speech_cleanup_mixed_language_enabled`` on, a reference, and `reference_languages`
-    naming two or more. The preflight engine, the phone Talking writer's live branch
-    (`generative_build._run_phone_subtitled_job`), the preflight scheduler's redo and the
-    worker's late-reference re-run all ask it, so none of them can disagree on what mixed means.
-    """
-
-    if not settings.speech_cleanup_mixed_language_enabled:
-        return []
-    reference = (reference_text or "").strip()
-    if not reference:
-        return []
-    languages = reference_languages(reference)
-    return languages if len(languages) >= 2 else []
-
-
-def language_redo_reason(whisper_language: str, reference_text: str | None) -> str | None:
-    """Why a transcript made WITHOUT ``reference_text`` must be made again, or None.
-
-    ``"mixed"`` when the reference speaks two or more languages (the per-stretch merge was
-    never run), else the language to re-transcribe in on a clear EN/TR disagreement
-    (`crosscheck_detected_language`), else None. Read by the preflight scheduler
-    (`speech_cleanup_preflight._redo_for_misheard_language`) and the worker's late-reference
-    path (`tasks.speech_cleanup_analysis._run_engine`).
-    """
-
-    if mixed_reference_languages(reference_text):
-        return "mixed"
-    return crosscheck_detected_language(whisper_language, reference_text=reference_text)
-
-
-def merge_mixed_language_passes(
+def _mixed_language_transcript(
     transcript: Any,
-    *,
-    media_path: str,
-    reference_text: str,
-    languages: Sequence[str],
-    duration_s: float,
-    covers_s: float | None,
+    analysis_input: SpeechCleanupAnalysisInput,
     transcribe: _TranscriptFn,
-    verbatim_prompt: str | None,
     receipt: dict[str, Any],
+    languages: list[str],
 ) -> tuple[Any, dict[str, Any]]:
     """Per-stretch transcript of a take whose reference speaks several languages (KRI-843).
 
     No single whisper language is right for such a take (an English question, a Spanish answer
     and Turkish chatter in one clip): auto-detect translates two of the three, and the EN/TR
     cross-check can only force one language over all of it. So the take is transcribed once more
-    in each other language the reference shows (at most `MAX_EXTRA_PASSES`, the same
-    ``verbatim_prompt`` as the first pass) and `merge_passes` takes, stretch by stretch, the pass
-    the reference confirms. The first pass stands wherever no other pass replaces it: a stretch
-    nothing confirms is NOT dropped, because wordless sound reads as a pause to the cleanup cut,
-    which removes it. An extra pass that fails to transcribe or hears nothing is skipped (the
-    receipt lists ``failed`` and ``heard``); when no pass confirms anything the first pass
-    stands untouched. ``receipt`` must carry ``whisper_language`` (the first pass's label);
-    the returned receipt extends it with the mixed keys and ``segments``.
-
-    Shared by the preflight engine (`_crosschecked_transcript`) and the phone Talking writer's
-    live branch, so both paths pay the same passes and write the same evidence.
+    in each other language the reference shows (at most `MAX_EXTRA_PASSES`, same verbatim
+    prompt) and `merge_passes` takes, stretch by stretch, the pass the reference confirms. The
+    first pass stands wherever no other pass replaces it: a stretch nothing confirms is NOT
+    dropped, because wordless sound reads as a pause to the cleanup cut, which removes it.
+    An extra pass that fails to transcribe or hears nothing is skipped (the receipt lists
+    ``failed`` and ``heard``); when no pass confirms anything the first pass stands untouched.
     """
 
     first_language = str(receipt["whisper_language"]).lower()
@@ -713,7 +669,11 @@ def merge_mixed_language_passes(
     failed: list[str] = []
     for language in wanted:
         try:
-            again = transcribe(media_path, language=language, verbatim_prompt=verbatim_prompt)
+            again = transcribe(
+                analysis_input.local_media_path,
+                language=language,
+                verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT,
+            )
         except Exception as exc:  # noqa: BLE001 - only a transcription failure skips the pass
             if not _optional_pass_unavailable(exc):
                 raise
@@ -725,7 +685,7 @@ def merge_mixed_language_passes(
     receipt = {
         **receipt,
         "mixed": True,
-        "reference_languages": list(languages),
+        "reference_languages": languages,
         # Asked for / returned words / raised a transcription or provider error.
         "tried": wanted,
         "heard": [extra.language for extra in extras],
@@ -735,9 +695,9 @@ def merge_mixed_language_passes(
         merge_passes(
             MixedPass(first_language, _word_rows(transcript)),
             extras,
-            str(reference_text),
-            duration_s=duration_s,
-            covers_s=covers_s,
+            str(analysis_input.reference_transcript),
+            duration_s=analysis_input.duration_s,
+            covers_s=analysis_input.reference_covers_s,
         )
         if extras
         else None
@@ -763,29 +723,6 @@ def merge_mixed_language_passes(
     )
     segments = list(merged.segments)[:_MAX_RECEIPT_SEGMENTS]
     return combined, {**receipt, "applied": True, "segments": segments}
-
-
-def _mixed_language_transcript(
-    transcript: Any,
-    analysis_input: SpeechCleanupAnalysisInput,
-    transcribe: _TranscriptFn,
-    receipt: dict[str, Any],
-    languages: list[str],
-) -> tuple[Any, dict[str, Any]]:
-    """The preflight engine's call of `merge_mixed_language_passes` (same verbatim prompt as
-    its first pass; the reference's coverage from the analysis input)."""
-
-    return merge_mixed_language_passes(
-        transcript,
-        media_path=analysis_input.local_media_path,
-        reference_text=str(analysis_input.reference_transcript),
-        languages=languages,
-        duration_s=analysis_input.duration_s,
-        covers_s=analysis_input.reference_covers_s,
-        transcribe=transcribe,
-        verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT,
-        receipt=receipt,
-    )
 
 
 def _crosschecked_transcript(
@@ -819,11 +756,12 @@ def _crosschecked_transcript(
     }
     if analysis_input.reference_source is not None:
         receipt["reference_source"] = analysis_input.reference_source
-    languages = mixed_reference_languages(reference)
-    if languages and _timed_words(transcript):
-        return _mixed_language_transcript(
-            transcript, analysis_input, transcribe, receipt, languages
-        )
+    if settings.speech_cleanup_mixed_language_enabled:
+        languages = reference_languages(reference)
+        if len(languages) >= 2 and _timed_words(transcript):
+            return _mixed_language_transcript(
+                transcript, analysis_input, transcribe, receipt, languages
+            )
     heard_language = crosscheck_detected_language(whisper_language, reference_text=reference)
     if heard_language is None:
         return transcript, receipt

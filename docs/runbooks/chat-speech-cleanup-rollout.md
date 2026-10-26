@@ -281,42 +281,9 @@ pass replaced. `applied: false` with empty `segments` means no extra pass was co
 first pass was kept. A single-language reference takes the EN/TR path above, unchanged.
 
 Cost: at most 3 extra whisper-1 passes (about $0.006 per audio minute each), on mixed takes only.
-Apply: fly secret + api AND worker restart. Kill switch: `SPEECH_CLEANUP_MIXED_LANGUAGE_ENABLED=false`
-restores the EN/TR cross-check alone, byte for byte, on every path below.
-
-#### Where the merge runs (KRI-843 follow-up)
-
-The merge is one helper, `merge_mixed_language_passes` in `app/pipeline/speech_cleanup_analysis.py`,
-behind one predicate, `mixed_reference_languages` (flag on + two or more languages in the
-reference). It runs on:
-
-1. **The preflight engine** (`_crosschecked_transcript`, the worker): the merged words land in
-   the snapshot and reach the phone Talking writer's cleanup / quoted-line branch through
-   `source_words()`.
-2. **The phone Talking writer's live branch** (`_run_phone_subtitled_job`, cleanup declined
-   AND no quoted start/end line): the spoken pass is merged against the plan item's Gemini clip
-   transcript (`ClipMeta.transcript`, which heard the whole clip: no coverage cap) with the
-   beats vocabulary prompt, through `transcribe_whisper_cached`. The merged pass is the SPOKEN
-   pass: reaction beats, overlay grounding, spoken-text asks and `raw_words` read it; a KRI-838
-   requested caption language still runs its own hinted pass and text check on top, unchanged.
-   Evidence: the `caption_language_crosscheck` pipeline event (admin job-debug view) carries the
-   same mixed receipt as the preflight (`mixed`, `reference_languages`, `tried`, `heard`,
-   `failed`, `segments`); a single-language take's event is byte-identical to before.
-   Mixed-language captions therefore no longer depend on `SPEECH_CLEANUP_PREFLIGHT_MODE`
-   (default `off`): with preflight off and no snapshot on the job, the live branch does it.
-3. **The preflight scheduler's redo** (`_redo_for_misheard_language`): a settled, undecided run
-   that had no reference is redone when the late Gemini transcript is mixed (log
-   `speech_cleanup_analysis.language_redo` with `reference_language="mixed"`), not only on a
-   clear EN/TR contradiction. Bounded once per snapshot: the redone run has the reference, so the
-   engine always writes a `language_crosscheck` receipt, and a run with a receipt is never
-   redone. The worker's late-reference re-run (`_run_engine`) follows the same rule
-   (`language_redo_reason`).
-
-Not routed through the merge: the explicit word-removal path that transcribes with the
-requested caption language as the hint (`explicit_source_transcript`), and KRI-719 extra
-speakers' clips (each keeps its own single pass). Failure modes and their tests:
-`docs/reviews/kri-843-live-branch-failure-modes.md`; replay tests
-`tests/tasks/test_kri843_phone_live_branch.py`, `tests/services/test_kri843_mixed_reference_redo.py`.
+Apply: fly secret + worker restart. Kill switch: `SPEECH_CLEANUP_MIXED_LANGUAGE_ENABLED=false`
+restores the EN/TR cross-check alone, byte for byte (only the preflight worker reads it).
+Already-settled analyses are not redone.
 
 ## Local verification
 
