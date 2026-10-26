@@ -232,7 +232,8 @@ async def _event_history(db, owner, identifier, group, exclude_story_ids):
                         MediaCollectionStory.user_id == owner,
                         MediaCollectionStory.collection_id == identifier,
                         MediaCollectionStory.id.in_(exclude_story_ids),
-                    )
+                    ),
+                    execution_options={"populate_existing": True},
                 )
             ).all()
         )
@@ -248,7 +249,10 @@ async def _event_history(db, owner, identifier, group, exclude_story_ids):
     if group is not None:
         deleted = deleted.where(MediaCollectionStory.story_json["group"].astext == group)
     rows = (
-        await db.scalars(deleted.order_by(MediaCollectionStory.created_at.desc()).limit(50))
+        await db.scalars(
+            deleted.order_by(MediaCollectionStory.created_at.desc()).limit(50),
+            execution_options={"populate_existing": True},
+        )
     ).all()
     # Removing a whole event is not a judgment on its ideas, so only ideas the creator
     # deleted one by one are barred from coming back.
@@ -396,6 +400,11 @@ async def generate_stories(db, owner, identifier, body):
     require_requested_coverage(fresh, body)
     by_id = {str(value.id): value for value in fresh.moments}
     refused = await creator_editorial_taste.rejected_ideas(db, owner, identifier)
+    # Generation outlives the first read: an idea deleted while the provider ran must still
+    # be barred, so the history is read again under the same locks as the evidence.
+    offered_rows, deleted_rows = await _event_history(
+        db, owner, identifier, group, body.exclude_story_ids
+    )
     # Hard exclusions, unlike `refused` (which keeps the best idea rather than answer with
     # nothing): a deleted idea is never re-offered, and "another idea" never repeats the
     # wording or the exact footage of the ones the event already has.
@@ -486,6 +495,10 @@ async def owned_story(db, owner, identifier, story_id, body):
         ),
         None,
     )
+    # A replay of an event recorded before the delete still answers; anything new on a
+    # deleted idea is refused so a stale client cannot select, reject or edit it.
+    if duplicate is None and is_deleted(row):
+        raise HTTPException(404, "Story not found")
     if (
         duplicate is not None
         and duplicate["story_revision"] != body.expected_story_revision

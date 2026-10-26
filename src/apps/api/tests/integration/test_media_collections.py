@@ -2440,6 +2440,86 @@ async def test_deleting_an_idea_then_restoring_it_returns_the_same_idea(
     assert late.json()["detail"]["code"] == "restore_window_closed"
 
 
+async def test_a_deleted_idea_cannot_be_reviewed_corrected_rejected_or_selected(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: a stale client selecting, rejecting, exposing or correcting an idea
+    the creator just deleted; the response looking like a live idea; the refusal writing
+    taste feedback or events; a replay of an event recorded before the delete failing."""
+    from app.config import settings
+    from app.models import MediaCollectionStory
+
+    client, _, _, owner, _ = collection_world
+    path, _, _, _ = await _two_events(client, owner)
+    _stub_ideas(monkeypatch, lambda input: [("Crossing", "A point", "Opening", [0])])
+    idea = (await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Ferry"})).json()[
+        "stories"
+    ][0]
+    review = {"expected_revision": 1, "expected_story_revision": 1}
+    seen = await client.post(
+        f"{path}/stories/{idea['id']}/expose", json={**review, "client_event_id": "seen-1"}
+    )
+    assert seen.status_code == 200
+    assert (await client.delete(f"{path}/stories/{idea['id']}")).status_code == 200
+
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    url = f"{path}/stories/{idea['id']}"
+    attempts = [
+        client.post(f"{url}/reject", json={**review, "client_event_id": "reject-1"}),
+        client.post(f"{url}/expose", json={**review, "client_event_id": "seen-2"}),
+        client.patch(url, json={**review, "client_event_id": "fix-1", "audio_policy": "muted"}),
+        client.post(
+            f"{url}/select",
+            json={
+                **review,
+                "client_event_id": "select-1",
+                "thread_id": str(uuid.uuid4()),
+                "expected_thread_revision": 0,
+            },
+        ),
+    ]
+    assert [(await attempt).status_code for attempt in attempts] == [404] * 4
+    async with AsyncSessionLocal() as db:
+        row = await db.get(MediaCollectionStory, uuid.UUID(idea["id"]))
+        assert [event["type"] for event in row.events_json] == ["offered", "exposure", "deletion"]
+
+    replay = await client.post(f"{url}/expose", json={**review, "client_event_id": "seen-1"})
+    assert replay.status_code == 200, "a replay of an earlier event still answers"
+
+    restored = await client.post(f"{url}/restore")
+    assert restored.status_code == 200
+    again = await client.post(f"{url}/reject", json={**review, "client_event_id": "reject-2"})
+    assert again.status_code == 200, "a restored idea is reviewable again"
+
+
+async def test_an_idea_deleted_while_generation_runs_is_not_re_offered(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: the event history read before the provider call going stale, so an
+    idea deleted during the 25 to 115 s generation comes back as a new idea with the same copy."""
+    client, _, _, owner, _ = collection_world
+    path, _, _, _ = await _two_events(client, owner)
+    loop = asyncio.get_running_loop()
+    state = {"delete": None}
+
+    def make(input):
+        if state["delete"]:
+            asyncio.run_coroutine_threadsafe(
+                client.delete(f"{path}/stories/{state['delete']}"), loop
+            ).result(timeout=30)
+        return [("Crossing", "A point", "Opening", [0])]
+
+    _stub_ideas(monkeypatch, make)
+    body = {**EVENT_QUERY, "group": "Ferry"}
+    idea = (await client.post(f"{path}/stories", json=body)).json()["stories"][0]
+
+    state["delete"] = idea["id"]
+    again = await client.post(f"{path}/stories", json={**body, "query": "A different angle"})
+    assert again.status_code == 200, again.text
+    assert again.json()["stories"] == [], "the deleted idea's copy is barred, not re-offered"
+    assert await _saved(client, path, group="Ferry") == []
+
+
 async def test_another_idea_adds_one_and_never_repeats_or_replaces(collection_world, monkeypatch):
     """Failure catalogue: another idea replacing the existing ones; repeating an existing
     idea's exact footage; the same copy under a new title or in different case; adding more
