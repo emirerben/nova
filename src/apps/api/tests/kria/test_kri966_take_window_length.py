@@ -282,8 +282,9 @@ async def test_the_fixture_reproduces_both_prod_questions(monkeypatch: pytest.Mo
     first = await chat.turn()
     assert first.plan.choice_question["kind"] == "take_line_start"
     assert first.plan.choice_question["input_digest"] == PROD_PICKER["input_digest"]
-    assert [o["label"] for o in first.plan.choice_question["options"]] == [
-        o["label"] for o in PROD_PICKER["options"]
+    # Option keys, not labels: KRI-967 rewords the line options (same keys, same digest).
+    assert [o["key"] for o in first.plan.choice_question["options"]] == [
+        o["key"] for o in PROD_PICKER["options"]
     ]
 
     no_window = brief(2, start_line=None, end_line=None)
