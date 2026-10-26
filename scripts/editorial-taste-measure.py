@@ -159,7 +159,8 @@ def limiter(judged, weeks, eligible, blocked_by=None):
         parts.append(f"repeat-rejection rests on {eligible} eligible rejections")
     parts.append(
         "no control arm: week-to-week change is confounded with prompt, library and mood; "
-        "only the 2 newest judgments enter a prompt"
+        "only up to four judgments (two would_post, two others, ranked by similarity) "
+        "enter a prompt"
     )
     return "; ".join(parts)
 

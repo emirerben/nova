@@ -62,7 +62,7 @@ exclude copied footage across projects using canonical media identities. No
 independent holdout evaluation has run. The first ten are all development data.
 
 The bounded context uses a transparent lexical baseline over at most three
-positive examples, confirmed profile rules and up to two reviewed calibrations.
+positive examples, confirmed profile rules and up to four reviewed calibrations (two `would_post`, two others).
 It labels examples as evidence of taste, never as facts about the current footage.
 Inspect retrieval choices and measure them before choosing a more expensive
 retrieval or model approach. Do not interpret structural checks as creative wins.
@@ -138,7 +138,7 @@ confirming a newer profile. The service captures saved server metadata, not clie
 supplied post words. This is not pixel inspection or evidence of publication.
 
 The actual camera-roll proposer retrieves at most three examples against the
-query and outing descriptions. Confirmed rules and up to two recent judgments
+query and outing descriptions. Confirmed rules and up to four similarity-ranked judgments
 enter its bounded sensitive input. The prompt version and context bind its cache.
 Story history stores opaque version/source-hash receipts, not copied private words.
 Preferences and Memory pause are rechecked under an owner lock after generation;
@@ -257,8 +257,8 @@ and offered `MediaCollectionStory` rows through the app's DB session, in a
   receipt: the earlier judgment was in the prompt, was not, or the story predates
   receipts. The receipt is fixed when the story is offered, so an earlier judgment
   made after that moment gets its own bucket (`earlier_judgment_after_offer`) and is
-  not counted as the prompt dropping it. Only the two newest judgments reach a
-  prompt, so "not in the prompt" is expected for older reasons.
+  not counted as the prompt dropping it. Only up to four judgments (two `would_post`, two others, ranked by
+  similarity to the outing) reach a prompt, so "not in the prompt" is expected for older reasons.
 - wrong_facts rate: rows with `invented_experience` or `footage_mismatch`.
 - context diff for `--query`: `generation_context` with and without `reviewed_ideas`
   (sizes, hashes, verdicts/reasons and note lengths; no text).
