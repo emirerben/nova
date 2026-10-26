@@ -46,6 +46,7 @@ MODEL_HIDDEN = {
     "reaction_beats",
     "closing_media",
     "ending_clip",
+    "timed_cards",
     "song_sync",
     "voice_mode",
     "pinned_texts",

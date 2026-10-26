@@ -145,4 +145,68 @@ class EndingClip(BaseModel):
     keep_audio: bool = True
 
 
-__all__ = ["MAX_REACTION_BEATS", "BeatVisualRole", "ReactionBeat", "ClosingMedia", "EndingClip"]
+MAX_TIMED_CARDS = 12
+
+
+class TimedCard(BaseModel):
+    """A photo/video shown as a SMALL picture-in-picture card at an exact moment of a phone
+    Montage or Voiceover edit ("show the menu photo as a small card at 3 seconds for 2
+    seconds", "put the receipt in the corner during the second clip").
+
+    Unlike ``ReactionBeat`` this needs no spoken word: the anchor is either ``at_s`` on the
+    OUTPUT timeline, or ``clip_id`` + ``offset_s`` (seconds after that clip starts in the
+    finished video; the worker resolves the clip's real start on the compiled timeline, after
+    transitions and refits). Exactly one of the two anchors is set. ``visual_id`` is an opaque
+    manifest media id (a Visuals photo, or a Visuals video where the device draws video cards),
+    canonicalised by ``app.services.creator_capabilities.repair_creator_timed_cards``; ``label``
+    is the creator's own words for it, kept for the receipt only. The worker grounds each card
+    (`app.pipeline.phone_timed_cards.ground_timed_cards`) into a ``SubtitledOverlayCard``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    card_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,40}$")
+    visual_id: str = Field(min_length=1, max_length=200)
+    label: str | None = Field(default=None, max_length=80)
+    at_s: float | None = Field(default=None, ge=0.0, le=1800.0)
+    clip_id: str | None = Field(default=None, min_length=1, max_length=200)
+    offset_s: float = Field(default=0.0, ge=0.0, le=1800.0)
+    hold_s: float = Field(default=2.0, ge=0.5, le=8.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_label(cls, data: object) -> object:
+        if not isinstance(data, dict) or "label" not in data:
+            return data
+        cleaned = dict(data)
+        cleaned["label"] = _clean(cleaned["label"])
+        return cleaned
+
+    @model_validator(mode="after")
+    def _one_anchor(self) -> TimedCard:
+        if (self.at_s is None) == (self.clip_id is None):
+            raise ValueError("a timed card needs exactly one anchor: at_s or clip_id")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_defaults(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if self.label is None:
+            data.pop("label", None)
+        if self.at_s is None:
+            data.pop("at_s", None)
+        if self.clip_id is None:
+            data.pop("clip_id", None)
+            data.pop("offset_s", None)
+        return data
+
+
+__all__ = [
+    "MAX_REACTION_BEATS",
+    "MAX_TIMED_CARDS",
+    "BeatVisualRole",
+    "ReactionBeat",
+    "ClosingMedia",
+    "EndingClip",
+    "TimedCard",
+]

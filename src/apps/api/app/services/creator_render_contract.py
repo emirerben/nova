@@ -488,6 +488,30 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "timed_cards_grounding",
+        "timed_cards[]",
+        *(
+            f"timed_cards[].{leaf}"
+            for leaf in (
+                "card_id",
+                "visual_id",
+                "label",
+                "at_s",
+                "clip_id",
+                "offset_s",
+                "hold_s",
+            )
+        ),
+        note=(
+            "exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): kept or dropped by "
+            "creator_capabilities.repair_creator_timed_cards, grounded onto the compiled output "
+            "clock by the phone writers (app.pipeline.phone_timed_cards) and recorded on "
+            "variant['phone_timed_card_receipt'], which the brief receipts judge. The contract "
+            "itself does not verify placement"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "ending_clip_repair",
         "ending_clip",
         "ending_clip.media_id",

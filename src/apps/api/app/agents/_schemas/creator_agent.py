@@ -29,9 +29,11 @@ from pydantic.json_schema import SkipJsonSchema
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
     MAX_REACTION_BEATS,
+    MAX_TIMED_CARDS,
     ClosingMedia,
     EndingClip,
     ReactionBeat,
+    TimedCard,
 )
 from app.agents._schemas.sfx_intent import (
     CreatorSfxIntent,
@@ -502,6 +504,14 @@ class CreativeStrategy(_CreatorModel):
     # tool schema stays byte-identical), omitted from serialization when None, taught in the
     # creator prompt only where the manifest can render it.
     ending_clip: SkipJsonSchema[EndingClip | None] = Field(default=None)
+    # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): a Visuals photo/video shown
+    # picture-in-picture at a stated second or a stated clip of a phone Montage / Voiceover
+    # edit. Same pattern as `reaction_beats`: out of every derived JSON schema, omitted from
+    # serialization when None, taught in the creator prompt only where the manifest
+    # advertises `timed_cards`.
+    timed_cards: SkipJsonSchema[list[TimedCard] | None] = Field(
+        default=None, max_length=MAX_TIMED_CARDS
+    )
     # KRI-374 (creator-uploaded song). Same pattern as reaction_beats above:
     # SkipJsonSchema keeps both OUT of every derived JSON schema, default None
     # and the omit-when-None serializer below keep stored strategies and every
@@ -603,6 +613,7 @@ class CreativeStrategy(_CreatorModel):
             "reaction_beats",
             "closing_media",
             "ending_clip",
+            "timed_cards",
             "song_sync",
             "resolved_song_takes",
             "song_captions",

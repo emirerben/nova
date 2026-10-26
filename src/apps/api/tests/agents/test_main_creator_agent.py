@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v95"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-26-v96"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -645,6 +645,38 @@ def test_voiceover_reaction_beats_prompt_section_is_worded_for_the_voiceover() -
     assert 'edit_format: "subtitled"' not in prompt
     assert "never set `execution_contract` for it" in prompt
     assert "when I say the medal, show my medal photo" in prompt
+
+
+def test_timed_cards_prompt_section_follows_the_manifest_capability() -> None:
+    """Exact-timed small cards: taught ONLY when the manifest advertises `timed_cards`;
+    every other prompt (the default manifest, a Talking manifest with beats) stays as is."""
+    import app.agents.main_creator as main_creator_module
+
+    manifest = _manifest().model_copy(
+        update={
+            "capabilities": {
+                **_manifest().capabilities,
+                "timed_cards": CapabilityAvailability(available=True),
+            }
+        }
+    )
+    prompt = MainCreatorAgent(None).render_prompt(  # type: ignore[arg-type]
+        _input().model_copy(update={"capability_manifest": manifest})
+    )
+    assert "SMALL CARDS AT AN EXACT TIME" in prompt
+    assert '"at_s": seconds into the finished' in prompt
+    assert "REACTION BEATS" not in prompt
+    assert "\n\n" not in main_creator_module._TIMED_CARDS_PROMPT_SECTION
+
+    assert "SMALL CARDS AT AN EXACT TIME" not in MainCreatorAgent(None).render_prompt(  # type: ignore[arg-type]
+        _input()
+    )
+    beats_only = MainCreatorAgent(None).render_prompt(  # type: ignore[arg-type]
+        _input().model_copy(
+            update={"capability_manifest": _manifest_with_reaction_beats_available()}
+        )
+    )
+    assert "SMALL CARDS AT AN EXACT TIME" not in beats_only
 
 
 def test_voiceover_reaction_beats_share_the_talking_field_contract() -> None:
