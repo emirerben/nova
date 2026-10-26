@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.124.0] - 2026-10-26
+
+### Changed
+- feat(taste): read-only repeat-rejection measurement lever (#1826) <!-- release-pr: 1826 -->
+
 ## [0.81.123.0] - 2026-10-25
 
 ### Added
