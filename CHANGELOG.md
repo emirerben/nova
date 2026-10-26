@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.128.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): typed idea form with server-side evidence rules (#1828) <!-- release-pr: 1828 -->
+
 ## [0.81.127.0] - 2026-10-26
 
 ### Changed
