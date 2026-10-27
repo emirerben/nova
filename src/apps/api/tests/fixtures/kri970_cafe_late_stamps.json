@@ -1,0 +1,703 @@
+{
+ "about": "KRI-970 follow-up: Merope café take (KRI-790), first 29.4 s. `words` = the brief's live whisper-1 words (the KRI-790 fixture, 0-29.35 s), stamped 0.3-0.5 s late from 3.8 s to 12 s. `aligned_spans` = speech_cleanup_alignment.align_words (facebook/wav2vec2-base-960h @ 22aad52) on the source audio, one per word (null: no letters). `silences` = detect_silences_with_status(min_silence_s=0.1, ambient_adaptive=True) on a 16 kHz mono extraction of the same 29.4 s. `real_words` / `real_fillers` = where they were said: the aligner on the hand-checked transcript, cross-checked by faster-whisper small and the detected pauses. With whisper's stamps rule 1 cut 'we are with' (5.09-5.61) and 'tell' (8.80-9.00).",
+ "duration_s": 29.4,
+ "language": "en",
+ "words": [
+  {
+   "text": "Um",
+   "start_s": 0.05,
+   "end_s": 0.44
+  },
+  {
+   "text": "yes,",
+   "start_s": 0.82,
+   "end_s": 1.12
+  },
+  {
+   "text": "we",
+   "start_s": 1.12,
+   "end_s": 1.18
+  },
+  {
+   "text": "will",
+   "start_s": 1.25,
+   "end_s": 1.4
+  },
+  {
+   "text": "sure.",
+   "start_s": 1.4,
+   "end_s": 1.81
+  },
+  {
+   "text": "Um",
+   "start_s": 2.21,
+   "end_s": 2.45
+  },
+  {
+   "text": "Merhaba",
+   "start_s": 3.06,
+   "end_s": 3.48
+  },
+  {
+   "text": "arkadaşlar.",
+   "start_s": 3.48,
+   "end_s": 4.14
+  },
+  {
+   "text": "Hello",
+   "start_s": 4.14,
+   "end_s": 4.47
+  },
+  {
+   "text": "everyone.",
+   "start_s": 4.47,
+   "end_s": 5.09
+  },
+  {
+   "text": "Uh",
+   "start_s": 5.09,
+   "end_s": 5.58
+  },
+  {
+   "text": "we",
+   "start_s": 5.61,
+   "end_s": 5.69
+  },
+  {
+   "text": "are",
+   "start_s": 5.76,
+   "end_s": 5.9
+  },
+  {
+   "text": "with",
+   "start_s": 6.01,
+   "end_s": 6.22
+  },
+  {
+   "text": "Caro",
+   "start_s": 6.22,
+   "end_s": 6.55
+  },
+  {
+   "text": "today.",
+   "start_s": 6.55,
+   "end_s": 6.94
+  },
+  {
+   "text": "Caro,",
+   "start_s": 7.04,
+   "end_s": 7.37
+  },
+  {
+   "text": "can",
+   "start_s": 7.37,
+   "end_s": 7.5
+  },
+  {
+   "text": "you",
+   "start_s": 7.5,
+   "end_s": 7.63
+  },
+  {
+   "text": "describe",
+   "start_s": 7.63,
+   "end_s": 8.16
+  },
+  {
+   "text": "can",
+   "start_s": 8.16,
+   "end_s": 8.35
+  },
+  {
+   "text": "you",
+   "start_s": 8.62,
+   "end_s": 8.8
+  },
+  {
+   "text": "um",
+   "start_s": 8.8,
+   "end_s": 8.88
+  },
+  {
+   "text": "just",
+   "start_s": 9.07,
+   "end_s": 9.24
+  },
+  {
+   "text": "tell",
+   "start_s": 9.24,
+   "end_s": 9.39
+  },
+  {
+   "text": "about",
+   "start_s": 9.39,
+   "end_s": 9.6
+  },
+  {
+   "text": "yourself",
+   "start_s": 9.6,
+   "end_s": 10.02
+  },
+  {
+   "text": "two",
+   "start_s": 10.02,
+   "end_s": 10.15
+  },
+  {
+   "text": "sentences",
+   "start_s": 10.15,
+   "end_s": 10.59
+  },
+  {
+   "text": "maybe,",
+   "start_s": 10.59,
+   "end_s": 10.96
+  },
+  {
+   "text": "who",
+   "start_s": 11.02,
+   "end_s": 11.23
+  },
+  {
+   "text": "you",
+   "start_s": 11.23,
+   "end_s": 11.41
+  },
+  {
+   "text": "are,",
+   "start_s": 11.41,
+   "end_s": 11.64
+  },
+  {
+   "text": "where",
+   "start_s": 11.64,
+   "end_s": 11.83
+  },
+  {
+   "text": "you're",
+   "start_s": 11.83,
+   "end_s": 11.97
+  },
+  {
+   "text": "from?",
+   "start_s": 11.97,
+   "end_s": 12.18
+  },
+  {
+   "text": "Hi,",
+   "start_s": 12.35,
+   "end_s": 12.63
+  },
+  {
+   "text": "I'm",
+   "start_s": 12.63,
+   "end_s": 12.75
+  },
+  {
+   "text": "Carolina",
+   "start_s": 12.75,
+   "end_s": 13.25
+  },
+  {
+   "text": "from",
+   "start_s": 13.25,
+   "end_s": 13.43
+  },
+  {
+   "text": "Ecuador.",
+   "start_s": 13.43,
+   "end_s": 14.07
+  },
+  {
+   "text": "And",
+   "start_s": 14.77,
+   "end_s": 15.01
+  },
+  {
+   "text": "this",
+   "start_s": 15.01,
+   "end_s": 15.2
+  },
+  {
+   "text": "is",
+   "start_s": 15.2,
+   "end_s": 15.35
+  },
+  {
+   "text": "the",
+   "start_s": 15.65,
+   "end_s": 15.93
+  },
+  {
+   "text": "Ole",
+   "start_s": 16.14,
+   "end_s": 16.48
+  },
+  {
+   "text": "de",
+   "start_s": 16.48,
+   "end_s": 16.63
+  },
+  {
+   "text": "la",
+   "start_s": 16.63,
+   "end_s": 16.79
+  },
+  {
+   "text": "Casa.",
+   "start_s": 16.79,
+   "end_s": 17.2
+  },
+  {
+   "text": "It's",
+   "start_s": 17.3,
+   "end_s": 17.52
+  },
+  {
+   "text": "a",
+   "start_s": 17.52,
+   "end_s": 17.55
+  },
+  {
+   "text": "traditional",
+   "start_s": 17.55,
+   "end_s": 19.06
+  },
+  {
+   "text": "Colombian",
+   "start_s": 19.9,
+   "end_s": 20.46
+  },
+  {
+   "text": "dessert.",
+   "start_s": 20.46,
+   "end_s": 21.01
+  },
+  {
+   "text": "It's",
+   "start_s": 21.1,
+   "end_s": 21.36
+  },
+  {
+   "text": "wafer",
+   "start_s": 21.36,
+   "end_s": 21.73
+  },
+  {
+   "text": "cookie",
+   "start_s": 21.73,
+   "end_s": 22.18
+  },
+  {
+   "text": "with",
+   "start_s": 22.8,
+   "end_s": 23.01
+  },
+  {
+   "text": "red",
+   "start_s": 24.38,
+   "end_s": 24.97
+  },
+  {
+   "text": "no,",
+   "start_s": 25.04,
+   "end_s": 25.5
+  },
+  {
+   "text": "with",
+   "start_s": 25.5,
+   "end_s": 25.75
+  },
+  {
+   "text": "blackberry",
+   "start_s": 25.75,
+   "end_s": 26.33
+  },
+  {
+   "text": "jam,",
+   "start_s": 26.33,
+   "end_s": 26.97
+  },
+  {
+   "text": "cheese,",
+   "start_s": 27.52,
+   "end_s": 28.16
+  },
+  {
+   "text": "dulce",
+   "start_s": 28.16,
+   "end_s": 28.48
+  },
+  {
+   "text": "de",
+   "start_s": 28.48,
+   "end_s": 28.61
+  },
+  {
+   "text": "leche,",
+   "start_s": 28.61,
+   "end_s": 29.35
+  }
+ ],
+ "aligned_spans": [
+  [
+   0.64,
+   0.72
+  ],
+  [
+   0.86,
+   1.0
+  ],
+  [
+   1.06,
+   1.1400000000000001
+  ],
+  [
+   1.18,
+   1.28
+  ],
+  [
+   1.32,
+   1.44
+  ],
+  [
+   1.72,
+   1.8
+  ],
+  [
+   2.94,
+   3.18
+  ],
+  [
+   3.24,
+   3.72
+  ],
+  [
+   3.8000000000000003,
+   3.96
+  ],
+  [
+   4.04,
+   4.38
+  ],
+  [
+   4.8,
+   4.86
+  ],
+  [
+   5.28,
+   5.34
+  ],
+  [
+   5.4,
+   5.5
+  ],
+  [
+   5.54,
+   5.74
+  ],
+  [
+   5.96,
+   6.16
+  ],
+  [
+   6.26,
+   6.48
+  ],
+  [
+   6.640000000000001,
+   6.86
+  ],
+  [
+   6.96,
+   7.08
+  ],
+  [
+   7.12,
+   7.2
+  ],
+  [
+   7.24,
+   7.5
+  ],
+  [
+   7.66,
+   7.82
+  ],
+  [
+   7.9,
+   8.0
+  ],
+  [
+   8.34,
+   8.38
+  ],
+  [
+   8.620000000000001,
+   8.8
+  ],
+  [
+   8.82,
+   8.94
+  ],
+  [
+   8.98,
+   9.120000000000001
+  ],
+  [
+   9.14,
+   9.44
+  ],
+  [
+   9.6,
+   9.700000000000001
+  ],
+  [
+   9.8,
+   10.22
+  ],
+  [
+   10.3,
+   10.5
+  ],
+  [
+   10.700000000000001,
+   10.84
+  ],
+  [
+   10.86,
+   10.92
+  ],
+  [
+   11.06,
+   11.18
+  ],
+  [
+   11.26,
+   11.46
+  ],
+  [
+   11.52,
+   11.74
+  ],
+  [
+   11.76,
+   11.84
+  ],
+  [
+   12.08,
+   12.24
+  ],
+  [
+   12.34,
+   12.4
+  ],
+  [
+   12.48,
+   12.86
+  ],
+  [
+   12.98,
+   13.14
+  ],
+  [
+   13.22,
+   13.56
+  ],
+  [
+   14.64,
+   14.780000000000001
+  ],
+  [
+   14.86,
+   15.0
+  ],
+  [
+   15.08,
+   15.16
+  ],
+  [
+   15.24,
+   15.42
+  ],
+  [
+   15.64,
+   16.080000000000002
+  ],
+  [
+   16.32,
+   16.4
+  ],
+  [
+   16.46,
+   16.52
+  ],
+  [
+   16.580000000000002,
+   16.9
+  ],
+  [
+   17.240000000000002,
+   17.32
+  ],
+  [
+   17.42,
+   17.44
+  ],
+  [
+   17.5,
+   18.46
+  ],
+  [
+   19.56,
+   20.16
+  ],
+  [
+   20.2,
+   20.580000000000002
+  ],
+  [
+   21.12,
+   21.28
+  ],
+  [
+   21.46,
+   21.740000000000002
+  ],
+  [
+   21.82,
+   22.32
+  ],
+  [
+   22.580000000000002,
+   24.240000000000002
+  ],
+  [
+   24.580000000000002,
+   24.900000000000002
+  ],
+  [
+   25.400000000000002,
+   25.54
+  ],
+  [
+   25.580000000000002,
+   25.78
+  ],
+  [
+   25.88,
+   26.26
+  ],
+  [
+   26.36,
+   26.580000000000002
+  ],
+  [
+   27.42,
+   27.76
+  ],
+  [
+   28.04,
+   28.38
+  ],
+  [
+   28.46,
+   28.5
+  ],
+  [
+   28.52,
+   29.32
+  ]
+ ],
+ "aligned_median_score": 0.474,
+ "silences": [
+  [
+   0.0,
+   0.42
+  ],
+  [
+   1.98,
+   2.92025
+  ],
+  [
+   5.73,
+   5.92
+  ],
+  [
+   11.88,
+   12.02
+  ],
+  [
+   13.73,
+   14.27
+  ],
+  [
+   14.78,
+   15.17
+  ],
+  [
+   16.98,
+   17.27
+  ],
+  [
+   18.93,
+   19.72
+  ],
+  [
+   27.88,
+   28.02
+  ]
+ ],
+ "real_words": {
+  "we": [
+   5.284,
+   5.344
+  ],
+  "are": [
+   5.424,
+   5.504
+  ],
+  "with": [
+   5.544,
+   5.684
+  ],
+  "just": [
+   8.666,
+   8.806
+  ],
+  "tell": [
+   8.826,
+   8.946
+  ],
+  "about": [
+   8.986,
+   9.126
+  ],
+  "yes": [
+   0.861,
+   1.001
+  ],
+  "merhaba": [
+   2.942,
+   3.262
+  ]
+ },
+ "real_fillers": [
+  [
+   0.42,
+   0.82
+  ],
+  [
+   1.45,
+   1.98
+  ],
+  [
+   4.45,
+   4.95
+  ],
+  [
+   8.05,
+   8.55
+  ]
+ ]
+}

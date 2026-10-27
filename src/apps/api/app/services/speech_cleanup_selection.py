@@ -21,7 +21,9 @@ from app.services.speech_cleanup_identity import (
 # energy silence spans unioned into silencedetect (clip_speech.py). v4
 # (KRI-236): rule 0 carves the stretched tail of a sentence-final token. v5
 # (KRI-551): retake-aware preflight may add validated abandoned-take spans. v6
-# (KRI-970): rule 1 refuses a filler stamped next to a squeezed word.
+# (KRI-970): rule 1 refuses a filler stamped next to a squeezed word. v7 (KRI-970
+# follow-up): the filler check re-times filler cuts on the sound and drops filler cuts that
+# take a real word (speech_cleanup_analysis._filler_aligned_words / _relistened_plan).
 #
 # Two cohorts key off different things, and a bump moves only one of them. The
 # mixed-gap shadow/apply bucket below is salted with a FIXED literal over an
@@ -30,7 +32,7 @@ from app.services.speech_cleanup_identity import (
 # current_detector_policy() and therefore this constant - bumping it re-rolls
 # preflight membership (measured: 1979 of 2000 synthetic sources change
 # bucket), so a canary comparison must not be carried across the deploy.
-DETECTOR_VERSION = "mixed-gap-v6-squeeze"
+DETECTOR_VERSION = "mixed-gap-v7-filler-check"
 _MAX_ASR_SPANS = 128
 _MAX_SILENCE_SPANS = 128
 _MAX_LEXICAL_SPANS = 32

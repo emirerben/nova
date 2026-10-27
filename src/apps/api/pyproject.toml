@@ -115,6 +115,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Speech-cleanup filler check: forced alignment with facebook/wav2vec2-base-960h on the torch the
+# Dockerfile installs from the CPU index. The prod image installs this extra and bakes the model;
+# elsewhere app/pipeline/speech_cleanup_alignment.py raises AlignerUnavailable and cleanup keeps
+# whisper's word stamps.
+speech-align = [
+    "transformers>=4.46,<6",
+]
 local-whisper = [
     "faster-whisper>=1.0",
 ]

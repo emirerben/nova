@@ -964,6 +964,27 @@ def _removable_filler_indices(words: Sequence[_CutWord]) -> frozenset[int]:
     )
 
 
+def squeezed_filler_indices(words: Sequence[Any]) -> frozenset[int]:
+    """Indices into ``words`` (in order, unsorted) of the fillers the squeeze guard refuses.
+
+    The speech-cleanup filler check asks this on whisper's own stamps before it re-times
+    anything: once a forced aligner gives the squeezed word its real length, the guard can no
+    longer see that the filler was stamped over it (KRI-970 T1/T3).
+    """
+    cut_words = []
+    for word in words:
+        start = float(_field(word, ("start_s", "start")) or 0.0)
+        end = max(float(_field(word, ("end_s", "end")) or start), start)
+        cut_words.append(
+            _CutWord(str(_field(word, ("text", "word")) or ""), start, end, None, None, None)
+        )
+    return frozenset(
+        idx
+        for idx, word in enumerate(cut_words)
+        if is_filler_token(word.text) and _squeezed_neighbour(cut_words, idx)
+    )
+
+
 def _lexical_removals(words: list[_CutWord], duration_s: float) -> list[Removal]:
     """Rule 1: cut lexicon fillers, padded but never eating adjacent words."""
     removals: list[Removal] = []
