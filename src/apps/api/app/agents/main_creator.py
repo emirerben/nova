@@ -155,7 +155,10 @@ log = structlog.get_logger()
 # `sound_clip`, `sound_from_s`/`sound_to_s`, `sound_line`, `sound_except`) for montages.
 # v99 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
 # creator's own last voiceover words ("after my last words \"before we eat\"").
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-26-v99"
+# v100 (KRI-994): a select ask records the media kind it restricts to / includes
+# (`only_media_kind` "video", `include_media_kind` "photo"), so the server can judge "clips
+# only" on the finished timeline and withdraw an earlier photo ask a later clips-only ask replaces.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-27-v100"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -741,6 +744,15 @@ picks one of the alternatives you offered in your previous question, their origi
 changed to that alternative: record the superseded requirements with `change` or `remove`
 (exact `target_requirement_id` and `expected_version` from the contract) and plan the chosen
 alternative using the original request's exact words.
+A `select` requirement about WHICH KIND of media the edit may use records one typed fact,
+whatever language the creator wrote in. "Video clips only", "no photos", "sadece videolar" =>
+{"kind": "select", "scope": "global", "facts": {"only_media_kind": "video"}}. A request to
+INCLUDE a photo ("use my steak photo too", "fotoğrafı da kullan") => {"kind": "select",
+"scope": "global", "facts": {"include_media_kind": "photo"}}. Add neither key to any other
+select ask (which clips to use or skip, "only about the steak"), and add `only_media_kind` only
+when the creator asks for video clips ONLY: "also use the steak photo, the rest can stay video"
+is `include_media_kind` alone. When the creator withdraws an earlier ask ("forget the steak
+photo"), `remove` that requirement as described above.
 Also return a top-level boolean `delegates_all_choices`. Set it to true ONLY when the CURRENT
 USER MESSAGE states no requirement at all and hands every creative choice to you ("Make
 something great from my Troya trip", "Suggest an edit", "you decide", "Troya gezimden harika bir
@@ -971,6 +983,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = json.loads(raw_text)
             if not isinstance(data, dict):
                 raise ValueError("response is not an object")
+            data = _hoist_misplaced_declarations(data)
             data = _hoist_misplaced_brief_updates(data)
             data = _repair_creative_decision(data)
             raw_action = _repair_action_envelope(data.get("action"))
@@ -1754,6 +1767,42 @@ def _refile_take_trims(
     if moved:
         log.info("main_creator_take_trim_refiled", count=moved)
     return refiled
+
+
+_TOP_LEVEL_DECLARATIONS = ("delegates_all_choices", "starts_fresh")
+
+
+def _hoist_misplaced_declarations(data: dict) -> dict:
+    """Move the two typed brief declarations the model wrote inside `action` to the top level.
+
+    KRI-992 (prod 2026-10-27, 7 of 32 planner calls): the prompt asks for top-level booleans
+    `delegates_all_choices` / `starts_fresh`, but the model sometimes writes them inside the
+    `propose_strategy` object. The strict adapter rejects them as ``extra_forbidden`` and the
+    runtime spends a second full planner call. Both describe the creator's message, not the
+    action, so where they sit carries no meaning.
+
+    Only these two keys, only real booleans, from the action itself (not `strategy`). A key
+    already present at the top level wins, even when false, and the nested copy is dropped.
+    A nested non-boolean is left in place, so it still fails closed through the retry. Every
+    other unknown key still reaches the strict adapter.
+    """
+
+    action = data.get("action")
+    if not isinstance(action, dict):
+        return data
+    lifted: dict[str, bool] = {}
+    dropped: list[str] = []
+    for key in _TOP_LEVEL_DECLARATIONS:
+        if not isinstance(action.get(key), bool):
+            continue
+        dropped.append(key)
+        if key not in data:
+            lifted[key] = action[key]
+    if not dropped:
+        return data
+    log.info("main_creator_declarations_hoisted", keys=dropped, lifted=sorted(lifted))
+    repaired_action = {key: value for key, value in action.items() if key not in dropped}
+    return {**data, **lifted, "action": repaired_action}
 
 
 def _hoist_misplaced_brief_updates(data: dict) -> dict:

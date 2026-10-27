@@ -51,9 +51,15 @@ _EXCLUDE_BULLET = (
     '  "leave out the laundry", "don\'t use the blurry ones", "without the drone shot"\n'
     '  and "quad klibini kullanma" are one `exclude` intent per named subject,\n'
     '  `attribute` naming the clips as the creator described them ("quad bike clip").\n'
-    "  Leave `creator_text`, `caption_attribute` and `position` null."
+    "  Leave `creator_text`, `caption_attribute` and `position` null. When the generated\n"
+    "  Creative Brief lists the ask this exclusion carries out as a `select` requirement\n"
+    '  (`[r3] [select/global] ...`), set `requirement_id` to that id ("r3"); otherwise null.\n'
+    "  Never invent an id and never use one from another kind of requirement."
 )
 _EXCLUDE_OP = "|exclude"
+# KRI-994: lets an `exclude` name the Creative Brief ask it carries out, so the finished
+# video's receipt can settle that ask. "" with exclusions off (byte-identical prompt).
+_REQUIREMENT_FIELD = ',"requirement_id":"r1|null"'
 _EXCLUSION_RULES_ON = (
     "Leaving clips OUT is `exclude`, never `include`: include FORCES those clips into\n"
     "the edit, the opposite of skipping them. Never ask about an exclusion: when no\n"
@@ -1058,7 +1064,8 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # null, in the stated order (the prompt said that and, further down, the opposite).
         #
         # KRI-993: "only about X" is one `include` with `exclusive` true (same kill switch).
-        prompt_version="2026-10-27-subject-scope",
+        # KRI-994: an `exclude` names the brief `select` requirement it carries out.
+        prompt_version="2026-10-27-subject-scope-exclude-requirement-id",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -1136,6 +1143,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             exclude_op=_EXCLUDE_OP if input.clip_exclusions else "",
             exclusive_rules=f"\n\n{_EXCLUSIVE_RULES}" if input.clip_exclusions else "",
             exclusive_field=_EXCLUSIVE_FIELD if input.clip_exclusions else "",
+            requirement_field=_REQUIREMENT_FIELD if input.clip_exclusions else "",
         )
         # KRI-520: the reply-language instruction goes last. "" for English/unknown:
         # byte-identical prompt.
@@ -1334,6 +1342,9 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             # with her own voice, at the end" came back as a transcript order (KRI-531).
             data.pop("label_source", None)
             data.pop("transcript_kind", None)
+        if data.get("op") != "exclude" or not input.clip_exclusions:
+            # KRI-994: only an exclusion links back to a brief requirement.
+            data.pop("requirement_id", None)
         _repair_position(data)
         _repair_order_by(data)
         attribute = data.get("attribute")

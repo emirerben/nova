@@ -52,7 +52,9 @@ from app.pipeline.prompt_loader import load_prompt
 # v37 (KRI-942): the shared brief section records clip sound on / off (`clip_sound` "on"/"off").
 # v38 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
 # creator's own last voiceover words.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-26-v38"
+# v39 (KRI-994): the shared brief section records `only_media_kind` / `include_media_kind` on a
+# select ask.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-27-v39"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
