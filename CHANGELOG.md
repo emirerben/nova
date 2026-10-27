@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.157.0] - 2026-10-27
+
+### Changed
+- fix(ios): sideways scroll rows scroll themselves instead of dragging the projects drawer (KRI-985) (#1873) <!-- release-pr: 1873 -->
+
 ## [0.81.156.0] - 2026-10-27
 
 ### Changed
