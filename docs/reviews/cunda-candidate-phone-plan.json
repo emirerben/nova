@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "candidate_head": "518f41f9a72e6ef4662d636da1c0dbc86ec2e609",
+  "candidate_function": "app.pipeline.guided_story._song_reference",
+  "candidate_function_sha256": "50dd5396df7f956fbc14025e6a9783be045e47c7fe572c0af70cb3c7e5739476",
+  "method": "Isolated server process using the candidate helper, the deployed compiler and the saved Cunda approval. Database sessions were enforced READ ONLY. Source identities, storage paths, hashes and media stayed on the server.",
+  "observed": {
+    "compiled": true,
+    "duration_s": 28.804,
+    "video_bindings": 11,
+    "photo_bindings": 10,
+    "timeline_entries": 21,
+    "exact_text_requirements": 3,
+    "contract_receipts": 1,
+    "contract_verified": true,
+    "rendered_music": false,
+    "posting_reference": false
+  },
+  "limits": [
+    "This checks compatibility and contract executability. It is not deployment of the candidate.",
+    "No job or account state changed. No native MP4 or Photos save was produced.",
+    "Original-request fulfillment still needs inspected native output."
+  ]
+}

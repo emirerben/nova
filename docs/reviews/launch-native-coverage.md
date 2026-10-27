@@ -57,3 +57,13 @@ after the final drive.
 These checks establish fixture UI behavior. They do not establish original
 Troya, marathon, Tigre, Don Julio or Cunda fulfillment, a production render,
 a real Photos write, or public-launch clearance.
+
+## Cunda candidate compatibility
+
+An isolated read-only server process used the candidate song-reference helper
+with the deployed compiler and the saved Cunda approval. It bound all eleven
+original video identities and ten approved photos, compiled the 28.804-second
+phone recipe, and passed the contract check with three pinned text requirements.
+No account state changed. This is recipe compatibility proof, not deployment,
+a native MP4 or Photos proof. The sanitized result is in
+[cunda-candidate-phone-plan.json](cunda-candidate-phone-plan.json).
