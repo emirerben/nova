@@ -49,6 +49,53 @@ actual-export-publication matrix passes 36 checks. The collection test follows
 its bounded scan and response pages rather than assuming a single batch covers
 the scratch database. No production record was changed by these checks.
 
-Logs are private under `.dev/launch-hardening/outcome-counts-*`. Request lineage,
-assessment history and durable Photos acknowledgements remain implementation
-work; these passing counts do not close KRI-728.
+Logs are private under `.dev/launch-hardening/outcome-counts-*`.
+
+## Request and revision identity
+
+Optional typed metadata now lives on the existing user event. The original
+request, parent turn and intent revision use opaque identifiers. A retry keeps
+the revision; a revision or explicitly accepted recovery starts another one.
+Missing, foreign and legacy parents remain unknown. Transport replay retains
+the first committed link and cannot append another request event.
+
+The iPhone sends the metadata only when the server advertises support. Structured
+answers continue the request. Only the matching offered simpler-version choice
+is classified as recovery. Client build, version, protocol and the existing Fly
+deployment revision accompany the link. Existing request digests remain stable.
+
+The five real Postgres journeys and runtime neighbors pass 58 checks. The native
+context, structured-answer and suggestion suites pass 46 tests with no skips.
+The chat fixture also passes after the typed submission change. Result bundles
+are private under `.dev/outcome-ios/`.
+
+## Historical assessments and report
+
+Human reviews specify whether they judged the original request, a revision or a
+recovery. A known basis requires a server-owned turn and render execution for
+the exact current owned artifact. Legacy reviews remain unknown. Compact
+assessment history retains artifact identity, expectation digest and fixed
+verdicts without copying notes or creator text. Identical assessments deduplicate.
+Superseding a capture preserves prior assessments, and revoked eligibility hides
+the entire history.
+
+The existing daily report now groups linked original requests and distinguishes
+original fulfillment, revision fulfillment and recovery success. It reports
+request and attempt denominators, first-attempt unknowns, pre-job failures,
+historically failed jobs, correction effort, observed latency and deduplicated
+settled costs. It preserves unknown costs, versions and cohorts. An incomplete
+capture or multiple uninspected export attempts cannot establish first-attempt
+fulfillment. The report describes a selected eligible sample, not all customers.
+
+Six HTTP/Postgres acceptance cases fail against the parent PR. Two further
+controls reproduced older captures overwriting new attempt counts and a ready
+retry hiding an earlier failure on the same job. The integration matrix covers
+these controls, consent withdrawal, duplicate reviews, legacy unknowns and actual
+export publication. Logs are private under `.dev/launch-hardening/outcome-*`.
+
+Actual exports continue to use the existing generation-bound device completion
+and verification receipts. Their repeated, delayed and rejected callbacks retain
+the existing publication checks. Photos-library save callbacks, result acceptance
+and abandonment remain explicitly unknown. They are never inferred from an
+approval, ready job, Save tap, share sheet or missing feedback. No additional
+Photos telemetry pipeline is introduced by this measurement change.

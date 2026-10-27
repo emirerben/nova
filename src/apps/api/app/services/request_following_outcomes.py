@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -17,7 +18,13 @@ from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from app import storage
-from app.models import CreationThread, RequestFollowingCase
+from app.models import (
+    CreationThread,
+    CreationThreadEvent,
+    CreatorAgentExecution,
+    CreatorAgentTurn,
+    RequestFollowingCase,
+)
 from app.services.request_following_cases import digest, failed_pre_job_turns
 from app.services.request_following_collection import eligible_case, source_capture
 
@@ -99,6 +106,8 @@ class OutcomeReview(BaseModel):
     watched: bool = False
     listened: bool = False
     outcomes: list[RequirementOutcome] = Field(min_length=1, max_length=50)
+    basis: Literal["unknown", "original", "current_revision", "recovery"] = "unknown"
+    turn_id: UUID | None = None
 
 
 def activity_at(case):
@@ -238,6 +247,58 @@ async def validate_outcome(db, case, body):
     actual = await current_export(db, case, value.artifact.variant_id, sign=False)
     if actual.get("artifact") != value.artifact.model_dump():
         raise HTTPException(409, "export_changed_reload")
+    if value.basis == "unknown":
+        return None
+    from app.services.request_following_lineage import RequestOutcomeLink
+
+    if value.turn_id is None:
+        raise HTTPException(422, "known_outcome_requires_request_lineage")
+    payload = await db.scalar(
+        select(CreationThreadEvent.payload)
+        .join(CreatorAgentTurn, CreatorAgentTurn.source_event_id == CreationThreadEvent.id)
+        .join(CreatorAgentExecution, CreatorAgentExecution.turn_id == CreatorAgentTurn.id)
+        .where(
+            CreatorAgentTurn.id == value.turn_id,
+            CreatorAgentTurn.thread_id == case.thread_id,
+            CreationThreadEvent.thread_id == case.thread_id,
+            CreatorAgentExecution.target_job_id == UUID(value.artifact.job_id),
+            CreatorAgentExecution.target_variant_id.in_([value.artifact.variant_id])
+            | CreatorAgentExecution.target_variant_id.is_(None),
+        )
+        .limit(1)
+    )
+    try:
+        link = RequestOutcomeLink.model_validate((payload or {}).get("request_outcome_link"))
+    except ValidationError as exc:
+        raise HTTPException(422, "known_outcome_requires_request_lineage") from exc
+    if not link.original_known or link.link_status != "known":
+        raise HTTPException(422, "known_outcome_requires_request_lineage")
+    if value.basis == "recovery" and link.relation != "recovery":
+        raise HTTPException(422, "recovery_requires_accepted_recovery")
+    return link.model_dump(mode="json", exclude_none=True)
+
+
+def outcome_history(previous, body, link, *, reviewed_at):
+    history = list((previous or {}).get("outcome_history") or [])
+    if body.outcome_review is None:
+        return history
+    value = body.outcome_review
+    entry = {
+        "artifact": value.artifact.model_dump(),
+        "basis": value.basis,
+        "request_link": link,
+        "expectation_digest": digest([e.model_dump() for e in body.expectations]),
+        "outcomes": [
+            {"expectation_index": o.expectation_index, "category": o.category, "verdict": o.verdict}
+            for o in value.outcomes
+        ],
+        "watched": value.watched,
+        "listened": value.listened,
+    }
+    identity = digest(entry)
+    if not any(row.get("assessment_id") == identity for row in history):
+        history.append({**entry, "assessment_id": identity, "reviewed_at": reviewed_at})
+    return history
 
 
 async def daily_report(db):
@@ -249,7 +310,6 @@ async def daily_report(db):
             await db.scalars(
                 select(RequestFollowingCase)
                 .where(
-                    RequestFollowingCase.superseded.is_(False),
                     RequestFollowingCase.expires_at > now,
                     RequestFollowingCase.split == "development",
                     RequestFollowingCase.capture.is_not(None),
@@ -287,8 +347,12 @@ async def daily_report(db):
         unfulfilled_reviewed_sessions=0,
         creator_changed_sessions=0,
     )
+    request_cases = []
     for case in rows[:1000]:
         if not await eligible_case(db, case):
+            continue
+        request_cases.append(case)
+        if case.superseded:
             continue
         counts["captured_sessions"] += 1
         activity = activity_at(case)
@@ -396,15 +460,21 @@ async def daily_report(db):
         - delivery["fulfilled_reviewed_sessions"]
         - delivery["unfulfilled_reviewed_sessions"]
     )
+    from app.services.request_following_report import request_outcome_report
+
+    request_outcomes = request_outcome_report(request_cases, since=since, until=now)
     return {
         "schema_version": 1,
         "generated_at": now.isoformat(),
         "window_days": 14,
         "truncated": len(rows) > 1000,
         "counts": counts,
+        "request_outcomes": request_outcomes,
         "delivery": {
             **delivery,
-            "first_attempt_fulfillment": None,
+            "first_attempt_fulfillment": request_outcomes["first_attempt"]
+            if request_outcomes["requests"]
+            else None,
             "photos_save_acknowledgements": None,
             "scope": "eligible recent captured sessions; original-request retry lineage is unknown",
         },
