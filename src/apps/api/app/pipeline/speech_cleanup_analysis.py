@@ -15,7 +15,14 @@ candidate and the status-bearing silence pass are both ready.
 from __future__ import annotations
 
 import math
+import os
+import re
+import subprocess
+import tempfile
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from difflib import SequenceMatcher
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -28,7 +35,10 @@ from app.pipeline.silence_cut import (
     Removal,
     build_cut_plan,
     build_cut_plan_comparison,
+    is_filler_token,
+    squeezed_filler_indices,
 )
+from app.pipeline.speech_cleanup_alignment import AlignerUnavailable, align_words
 from app.pipeline.transcribe import TranscribeError, Transcript, Word
 from app.services.mixed_language_transcript import (
     MAX_EXTRA_PASSES,
@@ -220,6 +230,10 @@ class SpeechCleanupAnalysisInput(_FrozenModel):
     # MIN_OUTPUT_S as the only rail, which is what explicit consent asks for;
     # an operator can restore a fraction cap without touching the detector.
     max_removal_frac_required: float = Field(default=1.0, gt=0, le=1, allow_inf_nan=False)
+    # Re-time filler cuts on the sound and drop a filler cut that takes a real word with it
+    # (``_filler_aligned_words`` / ``_relistened_plan``). The worker passes
+    # settings.speech_cleanup_filler_check_enabled; off keeps every plan as before.
+    filler_check: bool = False
     retake_spans: tuple[tuple[int, int], ...] = ()
     forced_removals: tuple[SpeechCleanupRemovalInput, ...] = ()
     # Gemini's transcript of the same narration: the clip's clip_metadata
@@ -775,6 +789,275 @@ def _crosschecked_transcript(
     return retranscribed, {**receipt, "applied": True}
 
 
+# ---------------------------------------------------------------------------------
+# Filler check: where a filler was said, and what its cut takes with it
+# ---------------------------------------------------------------------------------
+# whisper-1 can stamp a whole stretch late (Merope café, KRI-790: every word from 3.8 s to 12 s
+# sits 0.3-0.5 s after its sound), so rule 1 cut "we are" and "tell" and left the "uh"/"um" in.
+# ``filler_check`` re-times the words with a forced aligner before planning, then re-listens around
+# every filler cut and drops a cut that takes a real word with it.
+FILLER_ALIGN_MIN_ROOM_S = 0.12  # audio a filler needs between its aligned real neighbours
+FILLER_ALIGN_WORD_MARGIN_S = 0.06  # CTC word edges are tight; without this a cut clips a word end
+FILLER_ALIGN_MIN_SCORE = 0.15  # median word confidence under this: the alignment is not trusted
+RELISTEN_PAD_S = 1.5  # audio kept on each side of a cut when re-listening
+RELISTEN_JUDGE_S = 0.5  # only words this close to the cut are judged (farther ones are half-heard)
+RELISTEN_MATCH_RATIO = 0.75  # a judged word survives when the cut window has a word this similar
+RELISTEN_MAX_CUTS = 8  # bounds the paid transcription: two short calls per checked cut
+_RELISTEN_WORKERS = 4
+_RELISTEN_FFMPEG_TIMEOUT_S = 60
+_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
+    "seven": "7", "eight": "8", "nine": "9", "ten": "10", "twenty": "20",
+}  # fmt: skip
+
+
+def _filler_aligned_words(
+    words: tuple[SpeechCleanupTimedWord, ...],
+    *,
+    audio_path: str,
+    duration_s: float,
+    language: str,
+) -> tuple[tuple[SpeechCleanupTimedWord, ...], dict[str, Any]]:
+    """The words re-timed on the sound for planning, or ``words`` unchanged and why.
+
+    Only the times change: the same tokens in the same order, so retake spans (word indices)
+    and the stored transcript stay consistent with the plan built from them.
+    """
+
+    report: dict[str, Any] = {"aligned": False}
+    if not any(is_filler_token(word.text) for word in words):
+        report["reason"] = "no_fillers"
+        return words, report
+    if not language.lower().startswith("en"):
+        report["reason"] = "not_english"  # the aligner is an English-only model
+        return words, report
+    if squeezed_filler_indices(words):
+        # KRI-970: a filler stamped over a squeezed word is not there. Re-timing would give the
+        # word its real length, hide that evidence, and put the cut on "the" instead.
+        report["reason"] = "squeezed_filler"
+        return words, report
+    try:
+        aligned = align_words(
+            audio_path,
+            [word.text for word in words],
+            model_dir=settings.speech_cleanup_aligner_model_dir,
+        )
+    except AlignerUnavailable:
+        report["reason"] = "aligner_unavailable"
+        return words, report
+    except (RuntimeError, OSError) as exc:  # AlignmentFailed, torch runtime errors
+        report["reason"] = f"aligner_error:{type(exc).__name__}"[:64]
+        return words, report
+    report["median_score"] = round(aligned.median_score, 3)
+    if aligned.median_score < FILLER_ALIGN_MIN_SCORE:
+        report["reason"] = "low_alignment_score"
+        return words, report
+
+    is_filler = [is_filler_token(word.text) for word in words]
+    spans: list[tuple[float, float] | None] = list(aligned.spans)
+    real = [i for i, span in enumerate(spans) if span is not None and not is_filler[i]]
+    for n, i in enumerate(real):
+        start, end = spans[i]  # type: ignore[misc]
+        lo = spans[real[n - 1]][1] if n else 0.0  # type: ignore[index]
+        hi = spans[real[n + 1]][0] if n + 1 < len(real) else duration_s  # type: ignore[index]
+        spans[i] = (
+            min(start, max(start - FILLER_ALIGN_WORD_MARGIN_S, (lo + start) / 2)),
+            max(end, min(end + FILLER_ALIGN_WORD_MARGIN_S, (end + hi) / 2)),
+        )
+    for i in range(len(words)):  # a token with no letters ("20") sits in the gap around it
+        if spans[i] is None and not is_filler[i]:
+            lo = next((spans[j][1] for j in range(i - 1, -1, -1) if spans[j]), 0.0)  # type: ignore[index]
+            hi = next(
+                (spans[j][0] for j in range(i + 1, len(words)) if spans[j] and not is_filler[j]), lo
+            )  # type: ignore[index]
+            spans[i] = (lo, max(lo, hi))
+    moved: list[list[float]] = []
+    for i, word in enumerate(words):
+        if not is_filler[i]:
+            continue
+        lo = next((spans[j][1] for j in range(i - 1, -1, -1) if not is_filler[j]), 0.0)  # type: ignore[index]
+        hi = next((spans[j][0] for j in range(i + 1, len(words)) if not is_filler[j]), duration_s)  # type: ignore[index]
+        if hi - lo < FILLER_ALIGN_MIN_ROOM_S:
+            report["reason"] = "filler_without_room"
+            return words, report
+        spans[i] = (lo + 0.02, hi - 0.02)
+        moved.append([round(word.start_s, 2), round(lo + 0.02, 2)])
+    starts = [span[0] for span in spans]  # type: ignore[index]
+    if any(b < a - 1e-6 for a, b in zip(starts, starts[1:], strict=False)) or any(
+        span[1] < span[0] or span[1] > duration_s + 1e-6
+        for span in spans  # type: ignore[index]
+    ):
+        report["reason"] = "non_monotonic"
+        return words, report
+    report.update(aligned=True, reason="aligned", fillers_moved=moved[:20])
+    retimed = tuple(
+        word.model_copy(update={"start_s": round(span[0], 3), "end_s": round(span[1], 3)})  # type: ignore[index]
+        for word, span in zip(words, spans, strict=True)
+    )
+    return retimed, report
+
+
+def _relisten_key(text: str) -> str:
+    key = re.sub(r"[^\w']", "", text.lower())
+    return _NUMBER_WORDS.get(key, key)
+
+
+def _window_words(
+    audio_path: str,
+    start: float,
+    end: float,
+    cut: tuple[float, float] | None,
+    *,
+    language: str,
+    transcribe: _TranscriptFn,
+    workdir: str,
+) -> list[tuple[str, float]]:
+    """(key, middle) of every word heard in ``[start, end)`` of the source, minus ``cut``."""
+
+    if cut is None:
+        graph = f"[0:a]atrim={start:.3f}:{end:.3f},asetpts=PTS-STARTPTS[o]"
+    else:
+        graph = (
+            f"[0:a]atrim={start:.3f}:{cut[0]:.3f},asetpts=PTS-STARTPTS[x];"
+            f"[0:a]atrim={cut[1]:.3f}:{end:.3f},asetpts=PTS-STARTPTS[y];[x][y]concat=n=2:v=0:a=1[o]"
+        )
+    path = os.path.join(workdir, f"{start:.3f}-{'cut' if cut else 'orig'}.wav")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            audio_path,
+            "-filter_complex",
+            graph,
+            "-map",
+            "[o]",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            path,
+        ],
+        capture_output=True,
+        check=True,
+        timeout=_RELISTEN_FFMPEG_TIMEOUT_S,
+    )
+    transcript = transcribe(
+        path, language=language or None, verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT
+    )
+    heard = ((_relisten_key(w.text), (w.start_s + w.end_s) / 2) for w in _timed_words(transcript))
+    return [(key, middle) for key, middle in heard if key]
+
+
+def _words_lost(
+    original: list[tuple[str, float]], after_cut: list[tuple[str, float]], lo: float, hi: float
+) -> list[str]:
+    """Real words heard near the cut in ``original`` with no close match left in ``after_cut``.
+
+    Fillers are never judged: the verbatim prompt makes whisper write a real "um" as "um", and
+    removing it is the point of the cut.
+    """
+
+    pool = [key for key, _ in after_cut if not is_filler_token(key)]
+    lost: list[str] = []
+    for key, middle in original:
+        if is_filler_token(key) or not lo <= middle <= hi:
+            continue
+        best = max(pool, key=lambda other: SequenceMatcher(a=key, b=other).ratio(), default=None)
+        if best is None or SequenceMatcher(a=key, b=best).ratio() < RELISTEN_MATCH_RATIO:
+            lost.append(key)
+        else:
+            pool.remove(best)
+    return lost
+
+
+def _relistened_plan(
+    plan: CutPlan,
+    words: Sequence[SpeechCleanupTimedWord],
+    *,
+    audio_path: str,
+    duration_s: float,
+    language: str,
+    transcribe: _TranscriptFn,
+) -> tuple[CutPlan, dict[str, Any]]:
+    """``plan`` without the filler cuts that take a real word with them.
+
+    Dropping a removal only grows the keep segments around it, so no other cut moves, no
+    micro-fragment appears and the budget can only loosen.
+    """
+
+    fillers = [(w.start_s, w.end_s) for w in words if is_filler_token(w.text)]
+    targets = [
+        removal
+        for removal in plan.removed
+        if removal.reason.startswith("filler")
+        or any(a < removal.end_s and b > removal.start_s for a, b in fillers)
+    ]
+    report: dict[str, Any] = {
+        "checked": 0,
+        "dropped": [],
+        "unchecked": max(0, len(targets) - RELISTEN_MAX_CUTS),
+    }
+    if not targets:
+        return plan, report
+
+    def check(removal: Removal) -> tuple[Removal, list[str] | None]:
+        start = max(0.0, removal.start_s - RELISTEN_PAD_S)
+        end = min(duration_s, removal.end_s + RELISTEN_PAD_S)
+        kwargs = {"language": language, "transcribe": transcribe, "workdir": workdir}
+        try:
+            original = _window_words(audio_path, start, end, None, **kwargs)
+            after = _window_words(
+                audio_path, start, end, (removal.start_s, removal.end_s), **kwargs
+            )
+        except subprocess.SubprocessError:
+            return removal, None
+        except Exception as exc:
+            if not _optional_pass_unavailable(exc):
+                raise
+            return removal, None  # unheard: keep the cut, as before this check
+        lo = removal.start_s - start - RELISTEN_JUDGE_S
+        hi = removal.end_s - start + RELISTEN_JUDGE_S
+        return removal, _words_lost(original, after, lo, hi)
+
+    with tempfile.TemporaryDirectory(prefix="speech-relisten-") as workdir:
+        with ThreadPoolExecutor(max_workers=_RELISTEN_WORKERS) as pool:
+            verdicts = list(pool.map(check, targets[:RELISTEN_MAX_CUTS]))
+    drop: list[Removal] = []
+    for removal, lost in verdicts:
+        if lost is None:
+            report["unchecked"] += 1
+            continue
+        report["checked"] += 1
+        if lost:
+            drop.append(removal)
+            report["dropped"].append(
+                {"start_s": removal.start_s, "end_s": removal.end_s, "lost": lost[:6]}
+            )
+    if not drop:
+        return plan, report
+    removed = [removal for removal in plan.removed if removal not in drop]
+    spans = sorted([*plan.keep_segments, *((r.start_s, r.end_s) for r in drop)])
+    keep: list[tuple[float, float]] = []
+    for start, end in spans:
+        if keep and start <= keep[-1][1] + 1e-9:
+            keep[-1] = (keep[-1][0], max(keep[-1][1], end))
+        else:
+            keep.append((start, end))
+    return (
+        replace(
+            plan,
+            removed=removed,
+            keep_segments=keep,
+            time_saved_s=sum(r.end_s - r.start_s for r in removed),
+        ),
+        report,
+    )
+
+
 def analyze_speech_cleanup(
     analysis_input: SpeechCleanupAnalysisInput,
     *,
@@ -816,6 +1099,15 @@ def analyze_speech_cleanup(
     silence_status = str(_value(silence_result, "status") or "parse_failed")
     if silence_status not in _SILENCE_DETECTION_STATUSES:
         silence_status = "parse_failed"
+    language = str(_value(transcript, "language") or "")[:32]
+    filler_report: dict[str, Any] | None = None
+    if analysis_input.filler_check:
+        words, filler_report = _filler_aligned_words(
+            words,
+            audio_path=analysis_input.local_media_path,
+            duration_s=analysis_input.duration_s,
+            language=language,
+        )
     silences = tuple(_value(silence_result, "spans") or ())
 
     forced = tuple(
@@ -878,6 +1170,15 @@ def analyze_speech_cleanup(
         else:
             plan = comparison.baseline
 
+    if filler_report is not None:
+        plan, filler_report["relisten"] = _relistened_plan(
+            plan,
+            words,
+            audio_path=analysis_input.local_media_path,
+            duration_s=analysis_input.duration_s,
+            language=language,
+            transcribe=transcribe,
+        )
     serializable_plan = _serializable_plan(plan)
     findings = _findings(plan)
     window_end = (
@@ -885,10 +1186,11 @@ def analyze_speech_cleanup(
         if analysis_input.source_window_end_s is not None
         else analysis_input.source_window_start_s + analysis_input.duration_s
     )
-    language = str(_value(transcript, "language") or "")[:32]
     diagnostics = _diagnostics(diagnostic_plan, candidate_error_class=candidate_error_class)
     if language_crosscheck is not None:
         diagnostics["language_crosscheck"] = language_crosscheck
+    if filler_report is not None:
+        diagnostics["filler_check"] = filler_report
     return SpeechCleanupAnalysisResult(
         source_fingerprint=analysis_input.source_fingerprint,
         detector_version=analysis_input.detector_version,

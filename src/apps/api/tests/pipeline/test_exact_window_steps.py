@@ -155,7 +155,8 @@ class TestExactWindowPlanning:
 
         windows1 = [(p.start_s, p.end_s, p.end_s - p.start_s) for p in plans1]
         windows2 = [(p.start_s, p.end_s, p.end_s - p.start_s) for p in plans2]
-        assert windows2 == pytest.approx(windows1)
+        for actual_window, expected_window in zip(windows2, windows1, strict=True):
+            assert actual_window == pytest.approx(expected_window)
 
     def test_unflagged_steps_unchanged_byte_identity_guard(self, tmp_path):
         """Regression pin for music/template jobs: steps WITHOUT
