@@ -629,6 +629,16 @@
       ]
     },
     {
+      "id": "kri-962-voiceover-tie-question",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri962_voiceover_tie_question.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri692_spoken_text_is_not_a_clip_question.py",
+      "paths": [
+        "src/apps/api/app/kria/clip_ties.py",
+        "src/apps/api/tests/fixtures/kri962_voiceover_tie_jobs.json",
+        "src/apps/api/tests/kria/test_kri962_voiceover_tie_question.py"
+      ]
+    },
+    {
       "id": "kri-947-951-same-moment-picker",
       "needs_native": false,
       "api_tests": "tests/services/test_kri947_kri951_m2_picker_rows.py tests/services/test_clip_selection.py tests/services/test_kri696_picker_creator_caption.py tests/kria/test_kri802_question_batch.py tests/kria/test_kri807_unmatched_exclusion_picker.py",
