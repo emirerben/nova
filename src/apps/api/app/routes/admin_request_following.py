@@ -28,6 +28,7 @@ from app.services.request_following_outcomes import (
     activity_at,
     current_export,
     daily_report,
+    outcome_history,
     validate_outcome,
 )
 
@@ -343,11 +344,14 @@ async def save_review(case_id: uuid.UUID, body: ReviewIn, db: DB):
         validate_intent(case.capture, body.model_dump())
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
-    await validate_outcome(db, case, body)
+    link = await validate_outcome(db, case, body)
+    reviewed_at = datetime.now(UTC).isoformat()
+    history = outcome_history(case.review, body, link, reviewed_at=reviewed_at)
     case.review_version += 1
     case.review = {
-        **body.model_dump(),
-        "reviewed_at": datetime.now(UTC).isoformat(),
+        **body.model_dump(mode="json"),
+        "reviewed_at": reviewed_at,
+        "outcome_history": history,
         "version": case.review_version,
     }
     await db.commit()

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "deployed_revision": "e98ca6c1e428c52f62716574714da807c6942d50",
+  "deployment_workflow": "https://github.com/emirerben/nova/actions/runs/40541618668",
+  "landed_tree": "864c6b95b78335c2f99d2f9ae563bf541e5d51ca",
+  "landed_tree_matches_tested_merge": true,
+  "method": "The unmodified deployed compiler was run in an isolated process against the saved Cunda approval. Every database session was enforced READ ONLY. Only counts, revision identity and pass/fail were returned. Media and sensitive storage metadata stayed on the server.",
+  "observed": {
+    "compiled": true,
+    "duration_s": 28.804,
+    "video_bindings": 11,
+    "photo_bindings": 10,
+    "timeline_entries": 21,
+    "exact_text_requirements": 3,
+    "contract_receipts": 1,
+    "contract_verified": true,
+    "rendered_music": false,
+    "posting_reference": false,
+    "deployed_revision": "e98ca6c1e428c52f62716574714da807c6942d50",
+    "deployed_helper_matches_candidate": true
+  },
+  "limits": [
+    "No job or account state was changed.",
+    "No native video file or Photos save was produced by this check.",
+    "Source-bound recipe compilation does not establish inspected original-request fulfillment."
+  ]
+}
