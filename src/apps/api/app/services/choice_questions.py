@@ -710,6 +710,7 @@ CONFLICT_LENGTH_VS_NATURAL = "length_vs_natural"
 CONFLICT_SOURCE_COVERAGE = "source_coverage"
 # KRI-825: the photos the creator gave a length cannot all play inside their total.
 CONFLICT_HOLDS_VS_LENGTH = "holds_vs_length"
+CONFLICT_MUSIC_VS_VISUALS = "music_vs_visuals"
 # KRI-724: which of the times a word / line is said in a one-take Talking video the creator
 # means ("the first time SHE says Merope"; "cut 'thank you Karo'" said twice). Same value as
 # `opening_cut_ask.SPEECH_OCCURRENCE_KIND`, which the worker reads the answer by.
@@ -734,6 +735,7 @@ CONFLICT_PRIORITY = (
     CONFLICT_SPEECH_OCCURRENCE,
     CONFLICT_FREEZE_FRAME,
     CONFLICT_SOURCE_COVERAGE,
+    CONFLICT_MUSIC_VS_VISUALS,
     CONFLICT_HOLDS_VS_LENGTH,
     CONFLICT_DURATION_VS_COUNT,
     CONFLICT_VOICE_VS_DURATION,
@@ -1134,6 +1136,110 @@ def _photo_length_only(profile: Mapping[str, Any]) -> bool:
         return sets_photo_length_only(MixedMediaTimingProfile.model_validate(dict(profile)))
     except ValueError:
         return False
+
+
+def _music_vs_visuals(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    rows: list[Any],
+    cap: ChoiceCapability,
+    *,
+    snapshot: Mapping[str, Any] | None,
+) -> UnresolvedChoice | None:
+    conflict = (snapshot or {}).get("music_visual_conflict")
+    section = strategy.get("selected_music_section")
+    if not isinstance(conflict, Mapping) or not isinstance(section, Mapping):
+        return None
+    if _number(strategy.get("creator_duration_s")) is not None:
+        return None
+    seconds, needed = _number(conflict.get("section_s")), _number(conflict.get("needed_s"))
+    videos = list(conflict.get("video_ids") or ())
+    photos = list(conflict.get("photo_ids") or ())
+    if seconds is None or needed is None or not videos or not photos:
+        return None
+    selected = set(strategy.get("selected_media_ids") or ())
+    if strategy.get("media_scope") == "selected" and not selected.intersection(photos):
+        return None
+    asked, shown = _clean_seconds(seconds), _clean_seconds(needed)
+    options = [
+        _option(
+            "videos_only",
+            label=(f"Keep {asked} seconds, videos only", f"{asked} saniye kalsın, sadece videolar"),
+            description=(
+                "Keep the selected song section and leave the photos out of this edit.",
+                "Seçili müzik bölümünü koru, fotoğrafları bu düzenlemeden çıkar.",
+            ),
+        ),
+    ]
+    effects: dict[str, Mapping[str, Any]] = {
+        "videos_only": {"strategy": {"media_scope": "selected", "selected_media_ids": videos}},
+    }
+    catalog, start = _number(section.get("catalog_duration_s")), _number(section.get("start_s"))
+    can_extend = (
+        catalog is not None and start is not None and needed <= min(catalog, cap.max_duration_s)
+    )
+    if can_extend:
+        new_start = max(0.0, min(start, catalog - needed))
+        options.insert(
+            0,
+            _option(
+                OPT_EXTEND,
+                label=(
+                    f"Make it {shown} seconds, keep all media",
+                    f"{shown} saniye yap, hepsi kalsın",
+                ),
+                description=(
+                    "Use a longer section of the same song so the videos and photos fit.",
+                    "Video ve fotoğraflar sığsın diye aynı şarkının daha uzun bölümünü kullan.",
+                ),
+                recommended=True,
+            ),
+        )
+        effects[OPT_EXTEND] = {
+            "strategy": {
+                "target_duration_s": shown,
+                "target_duration_requested": True,
+                "creator_duration_s": shown,
+                "selected_music_section": {
+                    **section,
+                    "start_s": round(new_start, 3),
+                    "end_s": round(new_start + needed, 3),
+                },
+            }
+        }
+    else:
+        options.append(
+            _option(
+                "without_song",
+                label=("Keep all media, skip the song", "Hepsi kalsın, şarkıyı atla"),
+                description=(
+                    "Keep the videos and photos at their own pace, without this song section.",
+                    "Bu şarkı bölümü olmadan video ve fotoğrafları kendi hızında tut.",
+                ),
+                recommended=True,
+            )
+        )
+        effects["without_song"] = {
+            "strategy": {"audio_strategy": "original_audio", "selected_music_section": None}
+        }
+    return UnresolvedChoice(
+        kind=CONFLICT_MUSIC_VS_VISUALS,
+        conflict_id=CONFLICT_MUSIC_VS_VISUALS,
+        field_path="selected_music_section",
+        requirement_ids=(),
+        intro=say(
+            en="The photos need time alongside your videos.",
+            tr="Fotoğraflar videoların yanında süre istiyor.",
+        ),
+        reason=say(
+            en=f"All this media needs about {shown} seconds; "
+            f"the selected song section is {asked} seconds.",
+            tr=f"Tüm içerik yaklaşık {shown} saniye istiyor; seçili şarkı bölümü {asked} saniye.",
+        ),
+        options=tuple(options),
+        input_digest=_digest(CONFLICT_MUSIC_VS_VISUALS, section, videos, photos, needed),
+        effects=effects,
+    )
 
 
 def _holds_vs_length(
@@ -3873,6 +3979,7 @@ def collect_conflicts(
         functools.partial(_speech_occurrence, snapshot=media_snapshot),
         functools.partial(_freeze_frame, clip_paths=clip_paths, snapshot=media_snapshot),
         functools.partial(_source_coverage, snapshot=media_snapshot),
+        functools.partial(_music_vs_visuals, snapshot=media_snapshot),
         functools.partial(_holds_vs_length, snapshot=media_snapshot),
         _duration_vs_count,
         _which_voice,
@@ -4336,6 +4443,7 @@ class ChoiceResolution:
 def length_inputs_waiting(resolution: ChoiceResolution) -> str | None:
     """An unanswered timing choice or required media update never becomes a draft."""
     timing_kinds = {
+        CONFLICT_MUSIC_VS_VISUALS,
         CONFLICT_HOLDS_VS_LENGTH,
         CONFLICT_DURATION_VS_COUNT,
         CONFLICT_VOICE_VS_DURATION,
@@ -4547,6 +4655,7 @@ def _answer_superseded(
 
 _TIMING_KINDS = frozenset(
     {
+        CONFLICT_MUSIC_VS_VISUALS,
         CONFLICT_DURATION_VS_COUNT,
         CONFLICT_VOICE_VS_DURATION,
         CONFLICT_LENGTH_VS_NATURAL,
@@ -5171,6 +5280,7 @@ def _asks_cleanup_besides(req: Any, line: str) -> bool:
 # approval pins, so nothing a model writes on that turn adds a length.
 LENGTH_ANSWER_KINDS = frozenset(
     {
+        CONFLICT_MUSIC_VS_VISUALS,
         CONFLICT_LENGTH_VS_NATURAL,
         CONFLICT_VOICE_VS_DURATION,
         CONFLICT_DURATION_VS_COUNT,

@@ -959,11 +959,14 @@ def _song_reference(track: dict[str, Any] | None, *, duration_s: float) -> dict[
             raise GuidedStoryError(
                 "guided_story_music_section_invalid", "The approved music section is unreadable."
             ) from exc
-        if not math.isfinite(selected_end) or end_s > selected_end + 0.001:
+        if not math.isfinite(selected_end) or max(1, round(duration_s / _FRAME_S)) > round(
+            (selected_end - start_s) / _FRAME_S
+        ):
             raise GuidedStoryError(
                 "guided_story_music_section_exceeded",
                 "This edit needs a length choice before it can extend the selected music section.",
             )
+        end_s = min(end_s, selected_end)
     if end_s > catalog_duration + 0.001:
         return None
     return GuidedStorySongReference(
