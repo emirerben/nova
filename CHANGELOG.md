@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.149.0] - 2026-10-27
+
+### Fixed
+- fix(kria): a finished Voiceover video no longer says its drawn title is missing (KRI-963) (#1856) <!-- release-pr: 1856 -->
+
 ## [0.81.148.0] - 2026-10-27
 
 ### Changed
