@@ -7748,7 +7748,6 @@ def _run_phone_subtitled_job(
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.silence_cut import (  # noqa: PLC0415
         is_filler_token,
-        plan_summary,
         remap_words,
     )
     from app.pipeline.transcribe import Word, transcribe_whisper_cached  # noqa: PLC0415
@@ -9915,16 +9914,21 @@ def _run_phone_subtitled_job(
             new_entry["phone_overlay_receipt"] = overlay_receipt
         if beats_enabled:
             new_entry["phone_beat_receipt"] = beat_receipt
-        if cut_plan is not None and not opening_cut_only:
-            # Admin/debug parity with the cloud `required_v1` render
-            # (`base["silence_cut"]`/`base["silence_cut_outcome"]`), and the
-            # source `_speech_cleanup_outcome_context` the device-export
-            # completion route (`app.routes.device_render.
-            # _device_speech_cleanup_outcome`) reads to publish the public
-            # "applied"/"checked_no_change" receipt once the device uploads.
-            new_entry["silence_cut"] = plan_summary(
-                cut_plan, original_duration_s=float(probe.duration_s)
+        if cut_plan is not None:
+            # Admin/debug parity with the cloud `required_v1` render (`base["silence_cut"]`).
+            # KRI-965: also the cut the editor rebuilds this take from (iOS
+            # `NativePhoneTalkingSource.removedSpans`, server `editor_deletion_timeline`), so a
+            # start/end or named cut with cleanup off is written too; without it the editor
+            # played and exported the whole take under captions timed for the cut.
+            new_entry["silence_cut"] = _phone_cut_summary(
+                cut_plan,
+                probe_s=float(probe.duration_s),
+                original_s=float(binding.original.duration_s),
             )
+        if cut_plan is not None and not opening_cut_only:
+            # The source `_speech_cleanup_outcome_context` the device-export completion route
+            # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
+            # public "applied"/"checked_no_change" receipt once the device uploads.
             # A start/end cut is not speech cleanup: only cleanup's own removals count.
             cleanup_removed = cleanup_cut_plan is not None and bool(cleanup_cut_plan.removed)
             new_entry["silence_cut_outcome"] = "applied" if cleanup_removed else "no_change"
@@ -9961,6 +9965,25 @@ def _run_phone_subtitled_job(
             ),
         },
     )
+
+
+def _phone_cut_summary(cut_plan: CutPlan, *, probe_s: float, original_s: float) -> dict[str, Any]:
+    """The persisted ``silence_cut`` of a phone Talking cut, the record the editor rebuilds the
+    take from (KRI-965).
+
+    The cut is planned on the probed analysis proxy, but the editor plays the original, which
+    can be a hair longer (T1: 26.934 s vs 26.933 s). A removal that runs to the proxy's end
+    runs to the original's end too, or the editor keeps a sliver of the take's last moment after
+    an end cut. Readers clamp each span to the source they play, so it never overshoots."""
+    from app.pipeline.silence_cut import plan_summary  # noqa: PLC0415
+
+    summary = plan_summary(cut_plan, original_duration_s=probe_s)
+    take_end_s = round(probe_s, 3)
+    if original_s > probe_s:
+        for row in summary["removed"]:
+            if row["end_s"] >= take_end_s:
+                row["end_s"] = round(original_s, 3)
+    return summary
 
 
 def _phone_speech_cut_asks(snapshot: dict) -> tuple:
