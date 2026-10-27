@@ -531,6 +531,7 @@ def _licensed_music(render: dict) -> dict:
         "track_id": "kri723-bed",
         "start_s": 10.0,
         "end_s": 22.0,
+        "catalog_duration_s": 120.0,
     }
     return render
 

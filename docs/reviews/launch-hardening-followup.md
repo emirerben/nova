@@ -70,4 +70,6 @@ The initial source and persistence replay failed four checks. The old-approval t
 
 ## Delivery units
 
+CI exposed two missing neighbors on the first PR head. The new choice kind now participates in the Turkish fixture sweep for both a usable and unavailable song. A legacy Merope brief also exposed a duration-scope bug: its one-second photo hold competed with its global fourteen-second edit length. Both the length owner and render contract now read only global timing requirements for whole-video duration. The Merope song fixture includes its catalog capacity, so the existing creator-approved fourteen seconds fits without another timing question. The unchanged pointed moments, photo-hold journeys, Cunda alternatives and length-owner flows pass 200 focused checks. This is a code correction, not a CI flake retry.
+
 Land the verified research, fresh Cunda timing and legacy-order boundary fixes as one narrow PR while continuing outcome instrumentation and the verification-map work. Keep first-request fulfillment, actual Photos acknowledgement, release-build exposure and full original-media acceptance separate. The user's no-delegation instruction overrides skill requests for another review agent; the current agent owns code review and no independent-agent verdict is claimed.

@@ -1275,6 +1275,7 @@ def build_render_contract(
         for requirement in brief.live():
             if (
                 requirement.kind == "timing"
+                and requirement.scope == "global"
                 and requirement.facts.get("duration_s") is not None
                 # KRI-777: a freeze's or a moment's seconds are not the video's length.
                 and not times_one_moment(requirement)

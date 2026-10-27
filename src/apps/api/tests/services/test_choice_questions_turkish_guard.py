@@ -47,6 +47,8 @@ from app.services.choice_questions import (
     unclear_word_choice,
 )
 from tests.kria.test_choice_voice_gate import VOICE, _voice_rows
+from tests.kria.test_cunda_mixed_music_journey import snapshot as _mixed_snapshot
+from tests.kria.test_cunda_mixed_music_journey import strategy as _mixed_strategy
 from tests.kria.test_kri844_take_line_ask import CAP as _TAKE_CAP
 from tests.kria.test_kri844_take_line_ask import SNAP as _TAKE_SNAP
 from tests.kria.test_kri844_take_line_ask import STRATEGY as _TAKE_STRATEGY
@@ -193,6 +195,10 @@ def _cases() -> dict[str, tuple[str, list]]:
         {"clip_assignments": _voice_rows(voice_s=75)},
         _VOICE_CAP,
     )
+    for name, catalog in (("mixed_music_extend", 260.976), ("mixed_music_unknown", None)):
+        strategy = _mixed_strategy()
+        strategy["selected_music_section"]["catalog_duration_s"] = catalog
+        add(name, "music_vs_visuals", strategy, _brief(), _mixed_snapshot(strategy))
     # KRI-825: timed photos the creator's total cannot fit (extendable, and not).
     for name, needed in (("holds_extend", 12.0), ("holds_keep_only", 400.0)):
         add(
