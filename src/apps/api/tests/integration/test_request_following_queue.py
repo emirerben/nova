@@ -503,8 +503,19 @@ async def test_all_users_scope_still_requires_recorded_eligibility(journey, monk
     try:
         result = await collect()
         assert result["status"] == "complete"
+        while result["scanned"] == collection.BATCH_SIZE:
+            result = await collect()
+            assert result["status"] == "complete"
         response = (await client.get("/admin/request-following?limit=50")).json()
         ids = {item["thread_id"] for item in response["items"]}
+        page = response
+        while page.get("next_cursor"):
+            page = (
+                await client.get(
+                    "/admin/request-following", params={"limit": 50, "cursor": page["next_cursor"]}
+                )
+            ).json()
+            ids.update(item["thread_id"] for item in page["items"])
         assert str(original) in ids
         assert str(threads[eligible]) in ids
         assert str(threads[ineligible]) not in ids
@@ -697,6 +708,91 @@ async def test_ready_job_without_review_remains_unknown_fulfillment(output_journ
     assert data["delivery"]["unknown_fulfillment_sessions"] == 1
     assert data["delivery"]["fulfilled_reviewed_sessions"] == 0
     assert data["delivery"]["verified_device_exports"] == 0
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+async def test_ready_jobs_do_not_hide_completed_planning_failures(output_journey, duplicate):
+    from app.models import CreatorAgentTurn
+
+    client, case, _, _, _ = output_journey
+    thread_id, turn_id = uuid.UUID(case["thread_id"]), uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        thread = await db.get(CreationThread, thread_id)
+        source = await db.scalar(
+            select(CreationThreadEvent)
+            .where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.event_type == "user_message",
+            )
+            .order_by(CreationThreadEvent.sequence)
+            .limit(1)
+        )
+        ended = source.created_at + timedelta(milliseconds=1)
+        db.add(
+            CreatorAgentTurn(
+                id=turn_id,
+                thread_id=thread_id,
+                source_event_id=source.id,
+                client_event_id=f"failed-plan-{turn_id}",
+                request_digest="a" * 64,
+                status="completed",
+                created_at=source.created_at,
+                completed_at=ended,
+                plan_json={"mode": "respond", "turn_value": "question", "intents": []},
+            )
+        )
+        for index in range(2 if duplicate else 1):
+            db.add(
+                CreationThreadEvent(
+                    thread_id=thread_id,
+                    sequence=2 + index,
+                    revision=2 + index,
+                    event_type="assistant_response",
+                    role="assistant",
+                    created_at=ended,
+                    content="The request could not be planned.",
+                    payload={
+                        "turn_id": str(turn_id),
+                        "brief_coverage": {
+                            "stage": "planning",
+                            "reason": "creator_planning_failed",
+                            "cause": {"cause_type": "TerminalError", "error_type": "RuntimeError"},
+                        },
+                    },
+                )
+            )
+        thread.revision = 3 if duplicate else 2
+        await db.commit()
+    await collect()
+    response = await client.get(
+        "/request-following-report", headers={"X-Report-Token": "report-read-only"}
+    )
+    assert response.status_code == 200, response.text
+    delivery = response.json()["delivery"]
+    assert delivery["ready_job_sessions"] == 1
+    assert delivery["pre_job_failure_sessions"] == 1
+    assert delivery["pre_job_failure_attempts"] == 1
+    assert delivery["fulfilled_reviewed_sessions"] == 0
+    assert delivery["unknown_fulfillment_sessions"] == 1
+    assert (await first(client))["diagnostics"]["failed_turns"] == [str(turn_id)]
+
+
+@pytest.mark.parametrize("status", ["failed", "processing_failed"])
+async def test_real_render_failure_statuses_enter_the_report(output_journey, status):
+    from app.models import Job
+
+    client, _, _, _, job_id = output_journey
+    async with AsyncSessionLocal() as db:
+        job = await db.get(Job, job_id)
+        job.status = status
+        await db.commit()
+    await collect()
+    response = await client.get(
+        "/request-following-report", headers={"X-Report-Token": "report-read-only"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["delivery"]["failed_jobs"] == 1
+    assert response.json()["delivery"]["fulfilled_reviewed_sessions"] == 0
 
 
 async def test_complete_human_review_is_separate_from_device_export_ack(output_journey):
