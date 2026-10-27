@@ -155,7 +155,10 @@ log = structlog.get_logger()
 # `sound_clip`, `sound_from_s`/`sound_to_s`, `sound_line`, `sound_except`) for montages.
 # v99 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
 # creator's own last voiceover words ("after my last words \"before we eat\"").
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-26-v99"
+# v100 (KRI-994): a select ask records the media kind it restricts to / includes
+# (`only_media_kind` "video", `include_media_kind` "photo"), so the server can judge "clips
+# only" on the finished timeline and withdraw an earlier photo ask a later clips-only ask replaces.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-27-v100"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -741,6 +744,15 @@ picks one of the alternatives you offered in your previous question, their origi
 changed to that alternative: record the superseded requirements with `change` or `remove`
 (exact `target_requirement_id` and `expected_version` from the contract) and plan the chosen
 alternative using the original request's exact words.
+A `select` requirement about WHICH KIND of media the edit may use records one typed fact,
+whatever language the creator wrote in. "Video clips only", "no photos", "sadece videolar" =>
+{"kind": "select", "scope": "global", "facts": {"only_media_kind": "video"}}. A request to
+INCLUDE a photo ("use my steak photo too", "fotoğrafı da kullan") => {"kind": "select",
+"scope": "global", "facts": {"include_media_kind": "photo"}}. Add neither key to any other
+select ask (which clips to use or skip, "only about the steak"), and add `only_media_kind` only
+when the creator asks for video clips ONLY: "also use the steak photo, the rest can stay video"
+is `include_media_kind` alone. When the creator withdraws an earlier ask ("forget the steak
+photo"), `remove` that requirement as described above.
 Also return a top-level boolean `delegates_all_choices`. Set it to true ONLY when the CURRENT
 USER MESSAGE states no requirement at all and hands every creative choice to you ("Make
 something great from my Troya trip", "Suggest an edit", "you decide", "Troya gezimden harika bir
