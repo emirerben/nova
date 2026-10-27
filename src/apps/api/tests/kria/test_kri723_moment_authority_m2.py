@@ -531,7 +531,6 @@ def _licensed_music(render: dict) -> dict:
         "track_id": "kri723-bed",
         "start_s": 10.0,
         "end_s": 22.0,
-        "catalog_duration_s": 120.0,
     }
     return render
 
@@ -544,17 +543,6 @@ async def test_a_licensed_music_montage_plays_the_pointed_windows(
     first = await gate(monkeypatch, render)
     question = question_of(first)
     result = await gate(monkeypatch, render, events=answered_events(question, answer_for(question)))
-    timing = result.plan.choice_question
-    assert timing is not None and timing["kind"] == "music_vs_visuals"
-    events = [
-        *answered_events(question, answer_for(question)),
-        ("assistant", {"choice_question": timing, "turn_value": "question"}),
-        (
-            "user",
-            {"choice_selection": {"question_id": timing["question_id"], "option_key": "extend"}},
-        ),
-    ]
-    result = await gate(monkeypatch, render, events=events)
     assert result.plan.mode == "act", result.plan.response
     plan = gate_media(result)["length_plan"]
     assert plan["natural_owner"] == "song", plan["natural_owner"]

@@ -461,24 +461,6 @@ def _enrich_best_parts_snapshot(
             length_plan = plain
     enriched = dict(media_snapshot)
     enriched["length_plan"] = length_plan
-    enriched.pop("music_visual_conflict", None)
-    if creator_target_s is None and budget.total_s and length_plan.get("owner") == "song":
-        section_s = length_plan.get("natural_duration_s")
-        footage_s = sum(
-            float(row["source_end_s"]) - float(row["source_start_s"])
-            for row in length_plan["windows"]
-        )
-        if isinstance(section_s, (int, float)) and footage_s + budget.total_s > section_s + 1 / 30:
-            enriched["music_visual_conflict"] = {
-                "section_s": section_s,
-                "needed_s": math.ceil(footage_s + budget.total_s),
-                "photo_ids": list(visual_photo_ids or ()),
-                "video_ids": [
-                    str(row["media_id"])
-                    for row in clip_rows
-                    if row.get("kind") != "image" and (not selected or row["media_id"] in selected)
-                ],
-            }
     if hold_conflict is not None:
         enriched["still_hold_conflict"] = hold_conflict
     else:

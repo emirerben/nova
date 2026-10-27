@@ -664,6 +664,8 @@ async def test_typed_facts_are_ready_only_where_the_writer_draws_them(
     assert next(req.literal for req in brief.live() if req.scope == "global") == FACTS_TEXT
     assert ("any", FACTS_TEXT) in {(row.role, row.text) for row in contract.exact_texts}
     assert {"ready": chat.readiness().get("ready"), "r1": chat.unready().get("r1")} == expected
+    receipts = {r["requirement_id"]: r for r in chat.replies[-1].payload["requirement_receipts"]}
+    assert receipts["r1"]["status"] == ("met" if expected["ready"] else "partial")
 
 
 async def test_a_per_clip_caption_ask_stays_on_its_clip(monkeypatch: pytest.MonkeyPatch) -> None:

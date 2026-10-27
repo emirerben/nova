@@ -167,7 +167,7 @@ def _phone_route(
     return str(resolution.route) if resolution is not None and resolution.route else None
 
 
-def _contract_drawn_texts(
+def contract_drawn_texts(
     contract: Any,
     strategy: Mapping[str, Any],
     *,
@@ -295,7 +295,7 @@ def assess_readiness(
         if editor_payload is not None
         else dataclasses.replace(
             plan_facts_from_strategy(strategy, clip_ids=ids, manifest=manifest),
-            contract_drawn_texts=_contract_drawn_texts(
+            contract_drawn_texts=contract_drawn_texts(
                 contract, strategy, media=media, manifest=manifest, creator_id=creator_id
             ),
             research=dict(prepared_research) if prepared_research is not None else None,
