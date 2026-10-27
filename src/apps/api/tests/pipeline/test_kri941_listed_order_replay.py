@@ -169,17 +169,10 @@ def test_prods_recorded_one_row_strategy_reproduces_prods_cut_order() -> None:
     assert set(prod.values()) == {"landed"}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KRI-941 known gap: a listed order the planner writes as ONE row is indistinguishable "
-        "from a plain group (no listed order of its own), so r2 still reads met. Fixing it needs "
-        "a model-emitted structured field, never a wording parser (KRI-667)."
-    ),
-)
-def test_a_listed_order_collapsed_into_one_row_still_reads_met_known_gap() -> None:
+def test_a_saved_list_without_ordering_certainty_cannot_claim_checked_order() -> None:
     receipt = _receipts(_plan(_recorded_strategy()))["r2"]
-    assert receipt.status != "met"
+    assert receipt.status == "partial"
+    assert "order" in receipt.reason.casefold() and "saved" in receipt.reason.casefold()
 
 
 # -- the fix: one row per subject -----------------------------------------------------------
