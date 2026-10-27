@@ -129,3 +129,9 @@ Before correction, the item link admitted that account's synthetic cost into
 the report. Cost capture now independently checks each item's current plan owner,
 excludes the foreign run and marks that cost evidence incomplete. The replay
 passes alongside the owned-item and owned-job positive controls.
+
+Full API CI also caught one stale HTTP boundary expectation that omitted the
+new optional outcome field's `None` default. The existing assertion now includes
+that additive default. All 37 runtime route checks pass; the real Postgres
+lineage cases retain their legacy digest and no-metadata checks. No runtime
+behavior changed for this test correction.
