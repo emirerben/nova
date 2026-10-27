@@ -138,7 +138,7 @@ import KriaMediaEngine
             session.placeTextBlock(id: id, .left)
             var block = try drawnBlock(session, id: id)
             XCTAssertEqual(block.minX, safe().minX, accuracy: Self.pixel, "left lands on the safe rect")
-            XCTAssertEqual(block.midY, start.midY, accuracy: Self.pixel, "a horizontal placement leaves the vertical position alone")
+            XCTAssertEqual(block.midY, start.midY, accuracy: Self.pixel, "a horizontal placement leaves the vertical position alone (\(id))")
 
             session.placeTextBlock(id: id, .right)
             block = try drawnBlock(session, id: id)
