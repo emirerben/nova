@@ -538,7 +538,10 @@ def test_required_preflight_snapshot_is_the_only_cut_and_caption_source(monkeypa
     assert result["ok"] is True
     assert calls["transcribe"] == []
     assert calls["detect"] == []
-    assert calls["reframe"][0]["keep_segments"] == pytest.approx(snapshot.cut_plan.keep_segments)
+    for actual_window, expected_window in zip(
+        calls["reframe"][0]["keep_segments"], snapshot.cut_plan.keep_segments, strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert [word.text for word in calls["cues"][0]] == [
         "so",
         "today",
@@ -1105,7 +1108,10 @@ def test_happy_path_cuts_captions_and_persists(monkeypatch, tmp_path):
     # The cut executes inside the reframe: exact plan segments + the punch-in
     # CONSTANT (never a literal 1.08).
     reframe = calls["reframe"][0]
-    assert reframe["keep_segments"] == pytest.approx([(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)])
+    for actual_window, expected_window in zip(
+        reframe["keep_segments"], [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert reframe["keep_segments_punch_in"] == KEEP_SEGMENTS_PUNCH_IN
 
     # Caption input == remap_words(words, plan) on the cut render's frame
@@ -1164,7 +1170,10 @@ def test_turkish_elongated_filler_is_cut_from_video_and_captions(monkeypatch, tm
     res = _render(monkeypatch, tmp_path)
 
     assert res["ok"] is True
-    assert calls["reframe"][0]["keep_segments"] == pytest.approx([(0.0, 1.08), (2.12, 8.0)])
+    for actual_window, expected_window in zip(
+        calls["reframe"][0]["keep_segments"], [(0.0, 1.08), (2.12, 8.0)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert [word.text for word in calls["cues"][0]] == [
         "Herkese",
         "merhaba",
@@ -1317,9 +1326,10 @@ def test_smart_v2_captions_land_on_the_cut_grid(monkeypatch, tmp_path):
 
     assert res["ok"] is True
     assert encodes_before_cues == [0]  # the v2 path: cues before the cut encode
-    assert calls["reframe"][0]["keep_segments"] == pytest.approx(
-        [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)]
-    )
+    for actual_window, expected_window in zip(
+        calls["reframe"][0]["keep_segments"], [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     (cue_words,) = calls["cues"]
     assert [w.text for w in cue_words] == ["so", "today", "we", "built", "the", "thing."]
     assert [w.start_s for w in cue_words] == pytest.approx(
@@ -1419,9 +1429,10 @@ def test_retake_failure_isolated_cut_still_applies(monkeypatch, tmp_path):
     assert res["ok"] is True
     assert _events_named(calls, "retake_detector_failed")
     # Zero retake cuts, but the silence/filler plan still applied in full.
-    assert calls["reframe"][0]["keep_segments"] == pytest.approx(
-        [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)]
-    )
+    for actual_window, expected_window in zip(
+        calls["reframe"][0]["keep_segments"], [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert res["silence_cut"] is not None
     assert all(r["reason"] != "retake" for r in res["silence_cut"]["removed"])
 
@@ -1451,7 +1462,10 @@ def test_retake_spans_merge_into_plan(monkeypatch, tmp_path):
     assert [w.text for w in seen["input"].words] == [w.text for w in RETAKE_WORDS]
     # The span became a "retake" removal merged into the SAME plan/apply.
     assert res["silence_cut"]["removed"] == [{"start_s": 0.0, "end_s": 1.88, "reason": "retake"}]
-    assert calls["reframe"][0]["keep_segments"] == pytest.approx([(1.88, 12.0)])
+    for actual_window, expected_window in zip(
+        calls["reframe"][0]["keep_segments"], [(1.88, 12.0)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert not _events_named(calls, "retake_detector_failed")
 
 
@@ -1476,7 +1490,10 @@ def test_retake_only_flag_executes_without_silence_detection(monkeypatch, tmp_pa
 
     assert res["silence_cut"]["removed"] == [{"start_s": 0.0, "end_s": 1.88, "reason": "retake"}]
     assert calls["detect"] == []
-    assert calls["reframe"][0]["keep_segments"] == pytest.approx([(1.88, 12.0)])
+    for actual_window, expected_window in zip(
+        calls["reframe"][0]["keep_segments"], [(1.88, 12.0)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
 
 
 def test_review_candidate_id_is_stable_across_temporary_render_roots(monkeypatch, tmp_path):
@@ -2116,7 +2133,10 @@ def test_talking_head_preflight_snapshot_bypasses_every_detector(monkeypatch, tm
     assert calls["transcribe"] == []
     assert calls["detect"] == []
     spine = next(call for call in calls["reframe"] if call["input"].endswith("a.mp4"))
-    assert spine["keep_segments"] == pytest.approx(snapshot.cut_plan.keep_segments)
+    for actual_window, expected_window in zip(
+        spine["keep_segments"], snapshot.cut_plan.keep_segments, strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert result["_speech_cleanup_outcome_context"] == snapshot.outcome_context(
         analysis_view="talking_head_spine_capped"
     )
@@ -2172,7 +2192,10 @@ def test_talking_head_happy_path_cuts_spine_and_anchors_broll(monkeypatch, tmp_p
     # the b-roll reframe is untouched (never cut).
     spine = next(c for c in calls["reframe"] if c["input"].endswith("a.mp4"))
     broll = next(c for c in calls["reframe"] if c["input"].endswith("b.mp4"))
-    assert spine["keep_segments"] == pytest.approx([(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)])
+    for actual_window, expected_window in zip(
+        spine["keep_segments"], [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert spine["keep_segments_punch_in"] == KEEP_SEGMENTS_PUNCH_IN
     assert "keep_segments" not in broll
 
@@ -2521,7 +2544,10 @@ def test_talking_head_retake_failure_isolated_cut_still_applies(monkeypatch, tmp
     assert _events_named(calls, "retake_detector_failed")
     # Zero retake cuts, but the silence/filler plan still applied to the spine.
     spine = next(c for c in calls["reframe"] if c["input"].endswith("a.mp4"))
-    assert spine["keep_segments"] == pytest.approx([(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)])
+    for actual_window, expected_window in zip(
+        spine["keep_segments"], [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert res["silence_cut"] is not None
     assert all(r["reason"] != "retake" for r in res["silence_cut"]["removed"])
 
