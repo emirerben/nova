@@ -258,6 +258,19 @@ def _held_visual_pool(manifest: Any, strategy: Mapping[str, Any]) -> tuple[str, 
     )
 
 
+def _attached_visual_ids(manifest: Any) -> tuple[str, ...]:
+    """KRI-989: every Visual (``asset-*`` pool media, any kind) the manifest attaches.
+
+    The attachment authority for the length plan: "is this id attached", not "does this
+    format place it" (``_held_visual_pool`` answers that, for the budget). Tolerates no manifest.
+    """
+    return tuple(
+        media.media_id
+        for media in getattr(manifest, "media", None) or ()
+        if str(media.media_id).startswith("asset-")
+    )
+
+
 def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | None:
     """The strategy's server-read photo/video timing (``recognize_mixed_media_timing``)."""
     raw = strategy.get("mixed_media_timing")
@@ -290,6 +303,7 @@ def _enrich_best_parts_snapshot(
     named_lines: Sequence[Mapping[str, Any]] | None = None,
     camera_sound: bool = False,
     visual_photo_ids: Sequence[str] | None = None,
+    attached_visual_ids: Sequence[str] = (),
     moment_pins: Any = None,
 ) -> dict | None:
     """Attach source-bounded footage capacity before the choice collector runs.
@@ -308,6 +322,8 @@ def _enrich_best_parts_snapshot(
     closing clip that only introduces someone plays its stretch without words.
     ``visual_photo_ids`` (``_held_visual_pool``, KRI-824): the pool stills this format
     places beside the footage; a creator-held one is budgeted off the creator's total.
+    ``attached_visual_ids`` (``_attached_visual_ids``, KRI-989): every manifest Visual, so a
+    selected pool photo is attached rather than reported as a missing clip.
     """
     if not isinstance(media_snapshot, dict):
         return media_snapshot
@@ -431,6 +447,7 @@ def _enrich_best_parts_snapshot(
             spoken_order=seats.record() if seats is not None else None,
             named_lines=named,
             still_holds=still_holds,
+            attached_visual_ids=attached_visual_ids,
             pinned_moments=(
                 [pin.json() for pin in moment_pins.pins] if moment_pins is not None else None
             ),
@@ -4699,6 +4716,7 @@ async def _gate_unresolved_choices(
         named_lines=named_lines,
         camera_sound=camera_sound,
         visual_photo_ids=_held_visual_pool(planned.brief_manifest, strategy),
+        attached_visual_ids=_attached_visual_ids(planned.brief_manifest),
         moment_pins=moments,
     )
     if enriched_snapshot is not planned.media_snapshot:
@@ -4843,6 +4861,7 @@ async def _gate_unresolved_choices(
         named_lines=named_lines,
         camera_sound=camera_sound,
         visual_photo_ids=_held_visual_pool(planned.brief_manifest, resolution.strategy),
+        attached_visual_ids=_attached_visual_ids(planned.brief_manifest),
         moment_pins=moments,
     )
     return _with_narration_note(

@@ -503,7 +503,23 @@ async def test_unanswered_length_question_waits_without_a_second_card(
     waiting = await _gate(
         monkeypatch, _planned(seconds=REQUESTED_SECONDS), rows=rows, brief=brief, events=events
     )
-    assert waiting.plan.turn_value == "progress" and not waiting.plan.intents
+    _assert_waiting_card(first, waiting)
+
+
+def _assert_waiting_card(first: PlannedKriaTurn, waiting: PlannedKriaTurn) -> None:
+    """KRI-990: the wait is a live card, never a plain line with nothing to tap.
+
+    The KRI-492 invariants stay (no default, no draft, no intents); what changed is how the
+    wait is shown. The phone makes an older card read-only after any later user message and a
+    plain progress line closed the question, so the same question (same conflict and
+    input_digest, new question_id) comes back with a "still waiting" lead.
+    """
+    assert waiting.plan.turn_value == "question" and not waiting.plan.intents
+    before, after = first.plan.choice_question, waiting.plan.choice_question
+    assert after["conflict"] == before["conflict"]
+    assert after["input_digest"] == before["input_digest"]
+    assert after["question_id"] != before["question_id"]
+    assert waiting.plan.response.startswith("Your length choice is still waiting.")
 
 
 @pytest.mark.asyncio
@@ -514,12 +530,12 @@ async def test_repeating_the_request_is_not_an_answer_and_never_triggers_a_defau
     first = await _gate(monkeypatch, _planned(seconds=REQUESTED_SECONDS), rows=rows, brief=brief)
     asked = _asked(first)
     # The creator repeats the request as the next message: no choice_selection, so the
-    # question simply stays unanswered and the gate waits.
+    # question simply stays unanswered and the gate waits (as a live card, KRI-990).
     events = (asked, ("user", {}))
     again = await _gate(
         monkeypatch, _planned(seconds=REQUESTED_SECONDS), rows=rows, brief=brief, events=events
     )
-    assert again.plan.turn_value == "progress" and not again.plan.intents
+    _assert_waiting_card(first, again)  # still unanswered, still no default (KRI-990 card)
 
 
 @pytest.mark.asyncio

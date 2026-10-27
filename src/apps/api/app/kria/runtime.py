@@ -518,8 +518,9 @@ async def _free_text_choice_selection(
     recommended option, flagged ``delegated``). Anything else returns ``None`` and goes to
     the Creator agent like any message. The question is open only while it is the live
     last assistant turn (``latest_open_choice_question``), so a later text question's
-    answer is never read as this one's; the planner gate re-asks at most once
-    (``MAX_ASKS_PER_QUESTION``), never in a loop.
+    answer is never read as this one's; a timing question comes back
+    as a fresh card after every non-answer (KRI-990, so there is always one to tap); other
+    kinds are asked at most twice (``MAX_ASKS_PER_QUESTION``).
 
     Returns ``(selection, delegated, reanswer)``. ``reanswer`` (KRI-794): the message
     named another option of an already-answered, closed gate question

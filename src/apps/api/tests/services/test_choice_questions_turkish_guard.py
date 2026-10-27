@@ -121,10 +121,11 @@ def _cases() -> dict[str, tuple[str, list]]:
 
     cases: dict[str, tuple[str, list]] = {}
 
-    def add(name: str, kind: str, *args: object, **kwargs: object) -> None:
+    def add(name: str, kind: str, *args: object, **kwargs: object) -> list:
         found = [c for c in collect_conflicts(*args, **kwargs) if c.kind == kind]  # type: ignore[arg-type]
         assert found, f"fixture {name} no longer produces a {kind} question"
         cases[name] = (kind, found)
+        return found
 
     add(
         "order_basis",
@@ -297,6 +298,29 @@ def _cases() -> dict[str, tuple[str, list]]:
                 _WINDOW_SNAP,
                 ChoiceCapability(creator_id=_WINDOW_CREATOR),
             )
+    # KRI-990: the clips the server can name get a leave-out exit (label, description,
+    # disclosure); a photo-only selection has its own reason and no exit.
+    leave_out = add(
+        "coverage_leave_out",
+        CONFLICT_SOURCE_COVERAGE,
+        {"selected_media_ids": ["a", "gone"]},
+        _brief(),
+        {
+            "length_plan": {
+                "conflicts": [{"code": "no_usable_sources"}],
+                "sources": [{"media_id": "a", "duration_s": 6}],
+                "missing_source_ids": ["gone"],
+            }
+        },
+    )
+    assert any(o.key == cq.OPT_LEAVE_OUT_SOURCES for o in leave_out[0].options)
+    add(
+        "coverage_no_video_sources",
+        CONFLICT_SOURCE_COVERAGE,
+        {"selected_media_ids": ["asset-1"]},
+        _brief(),
+        _coverage("no_video_sources"),
+    )
     for code, strategy in (
         ("single_hero_order_conflict", {}),
         ("insufficient_media", {}),
@@ -418,9 +442,17 @@ def test_turkish_chat_gets_no_english_sentence_from_any_choice() -> None:
         # Built under Turkish: the builders pick their copy when they run.
         for name, (_kind, found) in _cases().items():
             for choice in found:
-                for text in _creator_text(choice):
+                texts = _creator_text(choice)
+                if choice.kind in cq._WAITING_KINDS:
+                    # KRI-990: the same question again, with the "still waiting" lead.
+                    texts += _creator_text(cq._waiting_reask(choice))
+                for text in texts:
                     if _english_words(text):
                         leaks.append((name, _english_words(text), text))
+        # The leave-out exit's disclosure, on the answered question.
+        note = cq._disclosure(CONFLICT_SOURCE_COVERAGE, cq.OPT_LEAVE_OUT_SOURCES)
+        if _english_words(note):
+            leaks.append(("leave_out_disclosure", _english_words(note), note))
     assert not leaks, leaks
 
 

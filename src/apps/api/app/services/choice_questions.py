@@ -760,6 +760,8 @@ TAKE_LINE_KINDS = frozenset({CONFLICT_TAKE_LINE_START, CONFLICT_TAKE_LINE_END})
 # KRI-849: "if you can't tell what he says, ask me instead of guessing" (see ``_unclear_word``).
 CONFLICT_UNCLEAR_WORD = "unclear_word"
 OPT_UPDATE_FOOTAGE = "update_footage"
+# KRI-990: the no-footage way forward of a source-coverage question that can name the clips to drop.
+OPT_LEAVE_OUT_SOURCES = "leave_out_sources"
 # Fixed priority: an answer can change a later detector's inputs, so exactly one question
 # is asked per turn, in this order. The take lines come before any length question: the part
 # of the take they keep is what a length is judged against.
@@ -3174,6 +3176,38 @@ _COVERAGE_LABELS_TR = {
 }
 
 
+def _clips_without_unusable(
+    strategy: Mapping[str, Any], envelope: Mapping[str, Any], codes: set[Any]
+) -> list[str] | None:
+    """KRI-990: the clip ids the edit keeps when the clips the server can name are left out.
+
+    The named clips are the selected ids with no clip row (``missing_source_ids``, code
+    ``no_usable_sources``) and the clip rows under 0.1 s (``source_below_minimum``). ``None``
+    when nothing can be named, nothing would be left, or the selection is empty ("everything",
+    pool photos included: an explicit list built from clip rows would silently drop them), so
+    the question never offers an exit that guesses or leaves an empty edit.
+    """
+    sources = [row for row in envelope.get("sources") or [] if isinstance(row, Mapping)]
+    named: set[str] = set()
+    if "no_usable_sources" in codes:
+        named.update(str(m) for m in envelope.get("missing_source_ids") or [] if m)
+    if "source_below_minimum" in codes:
+        named.update(
+            str(row["media_id"])
+            for row in sources
+            if row.get("media_id") and (_number(row.get("duration_s")) or 0) < 0.1
+        )
+    if not named:
+        return None
+    selected = [str(m) for m in strategy.get("selected_media_ids") or [] if m]
+    if not selected:
+        # An empty selection means "everything" (clips AND pool photos); an explicit list built
+        # from clip rows alone would silently drop every photo, so no exit is offered.
+        return None
+    kept = [m for m in dict.fromkeys(selected) if m not in named]
+    return kept or None
+
+
 def _source_coverage(
     strategy: Mapping[str, Any],
     brief: Any,
@@ -3212,6 +3246,7 @@ def _source_coverage(
             "snapshot_min_duration",
             "cap_below_coverage",
             "no_usable_sources",
+            "no_video_sources",
             "source_count_limit",
             "natural_source_capacity",
             "authored_hold_coverage",
@@ -3222,7 +3257,21 @@ def _source_coverage(
         }
     ):
         return None
-    if "named_moments_unplaceable" in codes:
+    can_leave_out = False
+    if "no_video_sources" in codes:
+        # KRI-990: only photos are selected; there is no clip to plan the edit around.
+        reason = say(
+            en=(
+                "You picked only photos. A montage needs at least one of your video clips "
+                "too. Pick a clip, or add footage."
+            ),
+            tr=(
+                "Yalnızca fotoğraf seçtin. Bir montaj için videolarından en az biri de "
+                "gerekiyor. Bir klip seç ya da çekim ekle."
+            ),
+        )
+        label = "Update the selected clips"
+    elif "named_moments_unplaceable" in codes:
         # KRI-723: the creator's pointed moments leave no room for the rest at this length.
         reason = say(
             en=(
@@ -3350,6 +3399,7 @@ def _source_coverage(
             ),
         )
         label = "Update the selected clips"
+        can_leave_out = True
     elif "source_below_minimum" in codes:
         reason = say(
             en=(
@@ -3362,6 +3412,7 @@ def _source_coverage(
             ),
         )
         label = "Update the selected clips"
+        can_leave_out = True
     else:
         reason = say(
             en=(
@@ -3371,6 +3422,7 @@ def _source_coverage(
             tr="Seçili klipler tekrar olmadan en az 3 saniye sağlayabilsin diye çekim ekle.",
         )
         label = "Add longer footage"
+    kept = _clips_without_unusable(strategy, envelope, codes) if can_leave_out else None
     return UnresolvedChoice(
         kind=CONFLICT_SOURCE_COVERAGE,
         conflict_id=CONFLICT_SOURCE_COVERAGE,
@@ -3389,12 +3441,48 @@ def _source_coverage(
                     "I will wait for your updated footage before making this edit.",
                     "Bu düzenlemeyi yapmadan önce güncel çekimlerini bekleyeceğim.",
                 ),
-                recommended=True,
+                recommended=kept is None,
                 aliases=("update footage", "add footage", "choose fewer clips"),
+            ),
+            *(
+                (
+                    _option(
+                        OPT_LEAVE_OUT_SOURCES,
+                        label=("Leave those clips out", "O klipleri dışarıda bırak"),
+                        description=(
+                            "I will make this edit from the clips that are still attached.",
+                            "Bu düzenlemeyi hâlâ bağlı olan kliplerle yapacağım.",
+                        ),
+                        recommended=True,
+                        aliases=(
+                            "leave them out",
+                            "without them",
+                            "skip those clips",
+                            "continue without them",
+                        ),
+                        tr_aliases=(
+                            "onları dışarıda bırak",
+                            "onlar olmadan devam et",
+                            "o klipleri atla",
+                            "onlarsız devam et",
+                        ),
+                    ),
+                )
+                if kept is not None
+                else ()
             ),
         ),
         input_digest=_digest(
             CONFLICT_SOURCE_COVERAGE, envelope.get("sources"), source_limit, sorted(codes)
+        ),
+        effects=(
+            {
+                OPT_LEAVE_OUT_SOURCES: {
+                    "strategy": {"selected_media_ids": kept, "media_scope": "selected"}
+                }
+            }
+            if kept is not None
+            else {}
         ),
     )
 
@@ -4390,7 +4478,12 @@ def length_inputs_waiting(resolution: ChoiceResolution) -> str | None:
             tr="Uzunluk seçimin hâlâ bekliyor. Önerilen seçeneklerden birini seç ya da "
             "çekimlerini güncelle.",
         )
-    if any(answer.get("kind") == CONFLICT_SOURCE_COVERAGE for answer in resolution.answers):
+    if any(
+        answer.get("kind") == CONFLICT_SOURCE_COVERAGE
+        # Only the exit that continues without those clips (KRI-990) goes on to a draft.
+        and answer.get("option") != OPT_LEAVE_OUT_SOURCES
+        for answer in resolution.answers
+    ):
         return say(
             en="Add or update the selected footage, and I will continue with those clips.",
             tr="Seçtiğin çekimleri ekle ya da güncelle, ben de o kliplerle devam edeyim.",
@@ -4423,6 +4516,7 @@ _DISCLOSURES = {
     ),
     (CONFLICT_UNCLEAR_WORD, OPT_LEAVE_OUT): "I'm leaving that word out of the captions.",
     (CONFLICT_VOICE_VS_DURATION, OPT_MATCH_VOICE): "I ended the edit where your voice ends.",
+    (CONFLICT_SOURCE_COVERAGE, OPT_LEAVE_OUT_SOURCES): ("I left those clips out."),
     (CONFLICT_VOICE_VS_DURATION, OPT_SILENT_TAIL): (
         "I kept your length: the last seconds play without voice."
     ),
@@ -4450,6 +4544,7 @@ _DISCLOSURES_TR = {
     (CONFLICT_TITLE_TEXT, OPT_NO_TITLE): ("Kelimeleri söylemediğin için başlığı koymuyorum."),
     (CONFLICT_UNCLEAR_WORD, OPT_LEAVE_OUT): "O kelimeyi altyazıdan çıkarıyorum.",
     (CONFLICT_VOICE_VS_DURATION, OPT_MATCH_VOICE): "Düzenlemeyi sesinin bittiği yerde bitirdim.",
+    (CONFLICT_SOURCE_COVERAGE, OPT_LEAVE_OUT_SOURCES): ("O klipleri dışarıda bıraktım."),
     (CONFLICT_VOICE_VS_DURATION, OPT_SILENT_TAIL): (
         "Süreni korudum: son saniyeler sesin olmadan oynuyor."
     ),
@@ -4594,6 +4689,11 @@ _TIMING_KINDS = frozenset(
 )
 
 
+# KRI-990: kinds whose unanswered question comes back as a live card instead of a bare "still
+# waiting" line (every timing kind, plus the photo-hold length question, which keeps 2 asks).
+_WAITING_KINDS = _TIMING_KINDS | {CONFLICT_HOLDS_VS_LENGTH}
+
+
 def _ask_limit(choice: UnresolvedChoice) -> int:
     """How many times this conflict may be asked: once for a length, else the question and
     one re-ask."""
@@ -4640,6 +4740,20 @@ def _refusal_reask(choice: UnresolvedChoice, refused: str) -> UnresolvedChoice:
         intro=f"{lead} {choice.intro}",
         options=tuple(replace(option, recommended=option.key == pick) for option in choice.options),
     )
+
+
+def _waiting_reask(choice: UnresolvedChoice) -> UnresolvedChoice:
+    """KRI-990: a timing question past its ask limit, offered again as a live card.
+
+    A plain "still waiting" reply closed the open question and left nothing to tap or type, so
+    the same question (same conflict and inputs, new ``question_id``) comes back with a lead.
+    """
+
+    lead = say(
+        en="Your length choice is still waiting.",
+        tr="Uzunluk seçimin hâlâ bekliyor.",
+    )
+    return replace(choice, intro=f"{lead} {choice.intro}")
 
 
 def _answered_earlier(history: Sequence[tuple[str, Any]], prior: ScopedAnswer) -> bool:
@@ -4829,6 +4943,17 @@ def resolve_choices(
             choice.conflict_id,
             choice.input_digest,
         ) >= _ask_limit(choice):
+            if choice.kind in _WAITING_KINDS:
+                # KRI-990: never a dead end. A bare "still waiting" text left no card to tap
+                # and closed the question; the live conflict is offered again instead.
+                return ChoiceResolution(
+                    data,
+                    tuple(answers),
+                    _waiting_reask(choice),
+                    tuple(notices),
+                    tuple(exhausted),
+                    tuple(superseded),
+                )
             exhausted.append(choice)
             continue
         else:
