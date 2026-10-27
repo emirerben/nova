@@ -18,7 +18,7 @@ Ways it could go wrong, written down before the code (each has a case below):
 7. Consent is sticky: one earlier "yes" waives every later refusal in the thread.
 8. The receipts path's question (same conflict id) waives a policy refusal it never described,
    or a refusal about MORE than was offered is waived.
-9. "Try a different approach" is taken for consent.
+9. "Change my request" (formerly "Try a different approach") is taken for consent.
 10. The drafted strategy is not a fixed point of the check (the post-planner re-check refuses).
 11. Flag off (choice questions): the refusal stays text-only, byte-identical to before.
 """
@@ -184,7 +184,9 @@ def test_a_policy_refusals_question_takes_a_yes_the_receipts_question_does_not()
 
     for typed in ("Evet daha sade surumu hazirla", "Evet", "yes", "Daha basit sürümü hazırla"):
         assert match_open_choice(refusal, typed) == "simpler_version", typed
-    assert match_open_choice(refusal, "Farklı bir yol dene") == "different_approach"
+    # KRI-983: the old label, typed from memory, still means "change my request".
+    for typed in ("İsteğimi değiştir", "Farklı bir yol dene"):
+        assert match_open_choice(refusal, typed) == "change_request", typed
     # Nothing else is consent, and the two-way receipts question never reads a bare yes.
     assert match_open_choice(refusal, "Hayır") is None
     assert match_open_choice(refusal, "20 saniye olsun") is None
@@ -211,7 +213,7 @@ def test_acceptance_is_this_turns_answer_to_the_open_policy_question() -> None:
     assert simpler_version_accepted([_asked(question), _answer(question)], fields)
     # 9: the other button is not consent.
     assert not simpler_version_accepted(
-        [_asked(question), _answer(question, "different_approach")], fields
+        [_asked(question), _answer(question, "change_request")], fields
     )
     # No answer yet: the creator's last message is a plain one.
     assert not simpler_version_accepted([_asked(question), ("user", {})], fields)
@@ -348,7 +350,7 @@ async def test_the_m1_refusal_names_the_cap_and_carries_the_buttons(prod_profile
         assert "clip 12" in plan.response and "20 seconds" in plan.response
         question = plan.choice_question
         assert question["conflict"] == SIMPLER_VERSION_REASON
-        assert [o["key"] for o in question["options"]] == ["different_approach", "simpler_version"]
+        assert [o["key"] for o in question["options"]] == ["change_request", "simpler_version"]
         assert question["dropped_fields"] == ["target_duration_s"]
     finally:
         await async_engine.dispose()
@@ -422,19 +424,45 @@ async def test_typing_yes_in_the_creators_words_drafts_it_too(prod_profile) -> N
 
 
 @pytest.mark.asyncio
-async def test_the_other_button_asks_again_with_a_new_question(prod_profile) -> None:
-    user_id, thread_id, item_id = _seed_runtime_project()
+@pytest.mark.parametrize(
+    ("key", "typed"),
+    [
+        ("change_request", "İsteğimi değiştir"),
+        # A card stored before KRI-983 offered "Try a different approach" under this key.
+        ("different_approach", "Farklı bir yol dene"),
+    ],
+)
+async def test_the_other_button_asks_what_to_change_without_a_model_call(
+    prod_profile, monkeypatch, key, typed
+) -> None:
+    """KRI-983: re-planning made the same plan and asked the same question again."""
+    user_id, thread_id, _session_id = _seed_runtime_project()
     try:
-        question = _persist_assistant_question(
-            thread_id, await _plan(thread_id, item_id, "20 saniye olsun")
+        refused = await _plan(thread_id, _session_id, "20 saniye olsun")
+        if key == "different_approach":
+            refused.plan.choice_question["options"][0] = {
+                "key": key,
+                "label": "Try a different approach",
+                "recommended": False,
+            }
+        question = _persist_assistant_question(thread_id, refused)
+        selection = {"question_id": question["question_id"], "option_key": key}
+        await _send(user_id, thread_id, typed, selection)
+        calls: list[str] = []
+        monkeypatch.setattr(planner, "default_client", lambda: calls.append("model"))
+        with sync_session() as db:
+            item_id = db.get(CreationThread, thread_id).active_plan_item_id
+        async with AsyncSessionLocal() as db:
+            planned = await planner.plan_live_turn(
+                db, thread_id=thread_id, item_id=item_id, creator_id=user_id, user_message=typed
+            )
+        observed = (calls, planned.plan.mode, planned.plan.choice_question, planned.plan.response)
+        assert observed == (
+            [],
+            "respond",
+            None,
+            "Nothing is made yet. Tell me what to do differently.",
         )
-        selection = {"question_id": question["question_id"], "option_key": "different_approach"}
-        await _send(user_id, thread_id, "Farklı bir yol dene", selection)
-
-        planned = await _plan(thread_id, item_id, "Farklı bir yol dene")
-
-        assert planned.plan.mode == "respond"
-        assert planned.plan.choice_question["question_id"] != question["question_id"]
     finally:
         await async_engine.dispose()
 

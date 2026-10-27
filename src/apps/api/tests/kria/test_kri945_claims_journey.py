@@ -47,7 +47,7 @@ from tests.kria.test_kri945_global_text_journey import (
 )
 
 NEW_HOOK = "Cunda after dark: sunsets over the Aegean"
-NOT_RENDERED = "I haven't established how to render this change yet."
+NOT_RENDERED = "I can't confirm this draft does it yet."
 
 
 @pytest.fixture(autouse=True)

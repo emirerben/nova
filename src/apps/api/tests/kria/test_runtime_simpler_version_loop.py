@@ -76,7 +76,7 @@ from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, 
 
 _REAL_AUTOMATIC_OMISSION_IDS = kria_runtime._automatic_omission_ids
 _SUMMARY = "a summary of the match day event"
-_ASK = "Should I try a different approach, or make this simpler version?"
+_ASK = "Should I make it without these, or do you want to change your request?"
 
 
 @pytest.fixture(autouse=True)

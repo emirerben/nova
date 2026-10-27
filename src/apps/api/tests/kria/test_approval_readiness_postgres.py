@@ -224,35 +224,89 @@ async def prepare(
         return user_id, thread_id, approvals, events
 
 
+UNVERIFIED = {
+    "en": "I can't check this before the video is made; I'll point it out after.",
+    "tr": "Bunu video hazırlanmadan önce kontrol edemiyorum; sonra sana göstereceğim.",
+}
+LOOK = {"en": "Have a look at these in the video:", "tr": "Bunlara videoda bir göz at:"}
+
+
+def _head_readiness(thread_id) -> dict:  # noqa: ANN001
+    with sync_session() as db:
+        draft = db.scalars(
+            select(CreatorEditDraft).where(
+                CreatorEditDraft.thread_id == thread_id, CreatorEditDraft.is_head.is_(True)
+            )
+        ).one()
+        return draft.snapshot_json["brief_coverage"]["approval_readiness"]
+
+
+async def _approve_over_http(monkeypatch, user_id, thread_id, approval) -> httpx.Response:  # noqa: ANN001
+    with sync_session() as db:
+        body = {
+            "expected_thread_revision": db.get(CreationThread, thread_id).revision,
+            "expected_draft_revision": approval.draft_revision,
+            "expected_approval_fingerprint": approval_fingerprint(approval),
+        }
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        id=user_id, email="qa@test.local"
+    )
+    monkeypatch.setattr("app.routes.kria_runtime._publish_approval", lambda _id: None)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        return await client.post(
+            f"/creation-threads/{thread_id}/approvals/{approval.id}/approve", json=body
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("language", ["en", "tr"])
 @pytest.mark.parametrize("phone", [False, True])
 @pytest.mark.parametrize(
-    "extra",
+    ("extra", "outcome"),
     [
-        {"kind": "audio", "scope": "global", "description": "Remove only the wind noise"},
-        {"kind": "audio", "scope": "global", "description": "original camera audio"},
-        {
-            "kind": "audio",
-            "scope": "global",
-            "description": "Keep the clips' original sound",
-            "facts": {"audio_intent": "noise_removal"},
-        },
-        {
-            "kind": "style",
-            "scope": "global",
-            "description": "Lift the shadows in the footage",
-            "facts": {"footage_light": "brighter"},
-        },
-        {
-            "kind": "select",
-            "scope": "clip:clip-1",
-            "description": "Use the exact moment when the flag unfolds",
-        },
+        # An English reader owns "remove ... noise" and cannot show it on this draft, so it
+        # holds; nothing reads the Turkish wording, so there it is checked after render.
+        (
+            {"kind": "audio", "scope": "global", "description": "Remove only the wind noise"},
+            {"en": "held", "tr": "unverified"},
+        ),
+        # KRI-983: no draft check owns these, so they are approved and named for a look.
+        (
+            {"kind": "audio", "scope": "global", "description": "original camera audio"},
+            {"en": "unverified", "tr": "unverified"},
+        ),
+        (
+            {
+                "kind": "audio",
+                "scope": "global",
+                "description": "Keep the clips' original sound",
+                "facts": {"audio_intent": "noise_removal"},
+            },
+            {"en": "unverified", "tr": "unverified"},
+        ),
+        (
+            {
+                "kind": "style",
+                "scope": "global",
+                "description": "Lift the shadows in the footage",
+                "facts": {"footage_light": "brighter"},
+            },
+            {"en": "simpler", "tr": "simpler"},
+        ),
+        (
+            {
+                "kind": "select",
+                "scope": "clip:clip-1",
+                "description": "Use the exact moment when the flag unfolds",
+            },
+            {"en": "unverified", "tr": "unverified"},
+        ),
     ],
 )
-async def test_unknown_requests_block_but_unsupported_style_gets_simpler_draft(
-    monkeypatch, language, extra, phone
+async def test_each_unproven_request_is_held_simplified_or_left_to_check_after_render(
+    monkeypatch, language, extra, outcome, phone
 ):
     if language == "tr":
         extra = {
@@ -266,7 +320,7 @@ async def test_unknown_requests_block_but_unsupported_style_gets_simpler_draft(
     _, thread_id, approvals, events = await prepare(
         monkeypatch, language=language, extra=extra, phone=phone
     )
-    if extra["kind"] == "style":
+    if outcome[language] == "simpler":
         assert len(approvals) == 1
         reply = next(event for event in events if event.event_type == "draft_applied")
         assert extra["description"] in reply.content
@@ -285,6 +339,21 @@ async def test_unknown_requests_block_but_unsupported_style_gets_simpler_draft(
             assert report["ready"] is True
             assert {r["requirement_id"] for r in report["requirements"]} == {"r1", "r2"}
             assert approvals[0].consequence_summary.endswith(reply.content)
+        return
+    if outcome[language] == "unverified":
+        assert len(approvals) == 1
+        reply = next(event for event in events if event.event_type == "draft_applied")
+        assert f"{LOOK[language]}\n" in reply.content
+        assert f"- {extra['description']}" in reply.content.split(LOOK[language], 1)[1]
+        report = _head_readiness(thread_id)
+        assert report["ready"] is True
+        rows = {row["requirement_id"]: row for row in report["requirements"]}
+        assert {key: row["disposition"] for key, row in rows.items()} == {
+            "r1": "executable",
+            "r2": "executable",
+            "r3": "unverified",
+        }
+        assert rows["r3"]["reason"] == UNVERIFIED[language]
         return
     assert not approvals, "An unproven requested change was offered for approval"
     response = events[-1]
@@ -314,6 +383,60 @@ async def test_unknown_requests_block_but_unsupported_style_gets_simpler_draft(
                 )
             )
         )
+
+
+DREAMY = {"kind": "style", "scope": "global", "description": "Make it feel dreamy"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["en", "tr"])
+@pytest.mark.parametrize("phone", [False, True])
+async def test_an_ask_nothing_checks_before_render_is_approved_and_named_for_a_look(
+    monkeypatch, language, phone
+):
+    """KRI-983: "make it feel dreamy" has no draft check; it is approved, not dead-ended."""
+    user_id, thread_id, approvals, events = await prepare(
+        monkeypatch, language=language, extra=DREAMY, phone=phone
+    )
+    assert len(approvals) == 1, events[-1].content
+    reply = next(event for event in events if event.event_type == "draft_applied")
+    assert f"- {DREAMY['description']}" in reply.content.split(LOOK[language], 1)[1]
+    report = _head_readiness(thread_id)
+    r3 = next(row for row in report["requirements"] if row["requirement_id"] == "r3")
+    assert (report["ready"], r3["disposition"], r3["reason"]) == (
+        True,
+        "unverified",
+        UNVERIFIED[language],
+    )
+    result = await _approve_over_http(monkeypatch, user_id, thread_id, approvals[0])
+    assert (result.status_code, result.json()["status"]) == (200, "approved"), result.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phone", [False, True])
+async def test_a_known_miss_still_holds_beside_an_unchecked_ask(monkeypatch, phone):
+    """Negative control: the freeze checker says no before render, so the draft holds."""
+    freeze = {"kind": "style", "scope": "global", "description": "Freeze the last frame"}
+    _, _, approvals, events = await prepare(
+        monkeypatch, updates_override=[DREAMY, freeze], phone=phone
+    )
+    assert not approvals
+    rows = {
+        row["requirement_id"]: row["disposition"]
+        for row in events[-1].payload["brief_coverage"]["approval_readiness"]["requirements"]
+    }
+    assert rows == {"r1": "unverified", "r2": "unsupported"}
+
+
+@pytest.mark.asyncio
+async def test_an_unchecked_ask_never_outweighs_a_policy_problem(monkeypatch):
+    """Negative control: the edit's renderer is gone at approval; nothing unverified passes."""
+    user_id, thread_id, approvals, _ = await prepare(monkeypatch, extra=DREAMY)
+    assert len(approvals) == 1
+    monkeypatch.setattr(settings, "edit_format_day_vlog_enabled", False)
+    result = await _approve_over_http(monkeypatch, user_id, thread_id, approvals[0])
+    assert result.status_code == 409, result.text
+    assert result.json()["problem"]["code"] == "approval_requirements_not_ready"
 
 
 @pytest.mark.asyncio
