@@ -1,0 +1,2809 @@
+{
+ "note": "KRI-984 prod job cecdc8d9 (thread e3e91b35), redacted: user, item and device identities renamed, footage descriptions, transcripts, on-screen text and file names dropped, media and text-composition digests recomputed for the renames, song beats trimmed to the frozen section's neighbourhood.",
+ "incident": {
+  "job": "cecdc8d9",
+  "thread": "e3e91b35",
+  "date": "2026-10-27",
+  "failure_reason": "phone_plan_failed",
+  "trace": [
+   {
+    "event": "requirement_recovery",
+    "data": {
+     "notes": [],
+     "stage": "compile",
+     "decision": "render_with_notes",
+     "generation_id": "8f9bf93691074321b96eabae104f5481",
+     "requirement_receipts": [
+      {
+       "stage": "checked",
+       "reason": "That exact text isn't in this draft.",
+       "status": "partial",
+       "inferred": [],
+       "verification": "checked",
+       "brief_version": 3,
+       "generation_id": "8f9bf93691074321b96eabae104f5481",
+       "requirement_id": "r1",
+       "inferred_labels": [],
+       "target_media_ids": []
+      }
+     ]
+    }
+   },
+   {
+    "event": "phone_plan_failed",
+    "data": {
+     "kind": "typed",
+     "error_tail": "This edit needs a length choice before it can extend the selected music section.",
+     "error_class": "GuidedStoryError",
+     "cause_classes": [],
+     "failure_reason": "phone_plan_failed"
+    }
+   }
+  ]
+ },
+ "generation_id": "8f9bf93691074321b96eabae104f5481",
+ "creator_route": {
+  "route": "unified_montage",
+  "platform": "phone",
+  "contract_digest": "8ec923de6ff876db235dd4b7cb398ab96be9f16d06c4d0970925ba3dd774d23c"
+ },
+ "contract": {
+  "digest": "8ec923de6ff876db235dd4b7cb398ab96be9f16d06c4d0970925ba3dd774d23c",
+  "version": 1,
+  "order_ids": [],
+  "duration_s": null,
+  "unresolved": [],
+  "exact_texts": [
+   {
+    "role": "opening",
+    "text": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.",
+    "media_id": null,
+    "duration_s": null,
+    "shot_index": null
+   },
+   {
+    "role": "any",
+    "text": "Cunda is home to historical building, old churches, great restaurants and amazing beaches",
+    "media_id": null,
+    "duration_s": null,
+    "shot_index": null
+   },
+   {
+    "role": "any",
+    "text": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.",
+    "media_id": null,
+    "duration_s": null,
+    "shot_index": null
+   }
+  ],
+  "order_basis": null,
+  "brief_digest": "c1116543170385c9a66acaa5634a95c3703ded5585bfb026acad8deef42fd597",
+  "generation_id": "8f9bf93691074321b96eabae104f5481",
+  "order_required": false,
+  "original_audio": null,
+  "strategy_digest": "4a994bd7161621e0c3fbdd902728f686f1e8b295915a64bd4ef5b83d260dc674",
+  "audio_source_ids": [],
+  "require_voiceover": false
+ },
+ "length_policy": {
+  "owner": "song",
+  "version": 1,
+  "check_mode": "log_only",
+  "generation_id": "8f9bf93691074321b96eabae104f5481",
+  "natural_owner": "song",
+  "contract_digest": "8ec923de6ff876db235dd4b7cb398ab96be9f16d06c4d0970925ba3dd774d23c",
+  "requested_duration_s": null
+ },
+ "brief": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "Cunda is home to historical building, old churches, great restaurants and amazing beaches",
+    "description": "introductory explanation and facts about Cunda",
+    "source_turn_id": "50da977b-7b0a-4c8e-b633-d37b009e2f1d"
+   },
+   {
+    "id": "r2",
+    "kind": "text",
+    "facts": {
+     "approved_copy": {
+      "text": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.",
+      "target": "opening_title"
+     }
+    },
+    "scope": "title",
+    "status": "open",
+    "literal": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.",
+    "description": "a hook about it being a must visit spot with great food, town and sea",
+    "source_turn_id": "a3e94f45-346e-45c6-a69f-ea01a4d9bbc1"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "text_explainer",
+  "edit_format": "montage",
+  "media_scope": "all",
+  "caption_style": "auto",
+  "opening_title": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.",
+  "audio_strategy": "licensed_music",
+  "render_program": "guided",
+  "target_duration_s": 35,
+  "selected_media_ids": [],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "selected_music_section": {
+   "end_s": 149.99,
+   "title": "Santana - Maria Maria (Official Video) ft. The Product G&B",
+   "artist": "Santana",
+   "status": "selected",
+   "start_s": 133.19,
+   "track_id": "dc58f92f-7233-4b46-b18b-7a0e81eddbe0",
+   "beat_timestamps_s": [
+    132.807,
+    132.977667,
+    133.297667,
+    133.575,
+    133.873667,
+    134.065667,
+    134.641667,
+    134.983,
+    135.260333,
+    135.857667,
+    136.028333,
+    136.327,
+    136.497667,
+    137.095,
+    137.713667,
+    138.247,
+    138.481667,
+    138.780333,
+    139.527,
+    140.167,
+    140.657667,
+    140.913667,
+    141.084333,
+    141.980333,
+    142.620333,
+    142.791,
+    143.111,
+    143.367,
+    143.559,
+    143.729667,
+    144.433667,
+    145.052333,
+    145.223,
+    145.564333,
+    145.820333,
+    146.140333,
+    146.887,
+    147.057667,
+    147.228333,
+    147.505667,
+    147.719,
+    148.017667,
+    148.273667,
+    148.593667,
+    148.785667,
+    149.340333,
+    149.980333,
+    150.151,
+    150.556333,
+    150.727,
+    151.025667,
+    151.196333,
+    151.793667,
+    152.412333,
+    152.583,
+    153.009667,
+    153.223,
+    153.479,
+    153.649667,
+    154.247,
+    154.865667,
+    155.036333,
+    155.335,
+    155.655,
+    155.825667,
+    156.103,
+    156.380333,
+    156.700333,
+    156.935,
+    157.148333,
+    157.319,
+    157.489667,
+    157.788333,
+    157.959,
+    158.279,
+    158.492333,
+    159.132333,
+    159.495,
+    159.772333,
+    160.284333,
+    160.540333,
+    160.711,
+    160.945667,
+    161.585667,
+    162.225667,
+    162.439,
+    162.695,
+    162.865667
+   ],
+   "catalog_duration_s": 260.976
+  }
+ },
+ "candidates": {
+  "creator_render_shape": {
+   "landscape_fit": "fill",
+   "output_orientation": "landscape"
+  },
+  "creator_client_protocol": 22,
+  "landscape_fit": "fit",
+  "language": "en",
+  "variant_policy": "content_plan_primary",
+  "edit_format": "montage",
+  "creator_plan_authority_version": 1,
+  "creator_render_requirements_version": 1,
+  "creator_render_contract_version": "2026-09-03-v1",
+  "creator_request": "Full creator request (chronological):\nWe went to Cunda Island in Turkey and we should include some facts about Cunda to show why people should go there, an introductory explanation. Add a hook about it being a must visit spot with great food, town and sea\nRevise it\nUse this wording\nDo a web search about cunda\nCunda is home to historical building, old churches, great restaurants and amazing beaches\nMake this simpler version\nSkip, decide for me\nTry again\n\nCreative brief v3 (everything the creator has asked for, still in force):\n- [r1] [text/global] introductory explanation and facts about Cunda (\"Cunda is home to historical building, old churches, great restaurants and amazing beaches\")\n- [r2] [text/title] a hook about it being a must visit spot with great food, town and sea (\"Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.\") facts={approved_copy: {\"target\":\"opening_title\",\"text\":\"Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.\"}}\nLatest message: Try again"
+ },
+ "clip_paths": [
+  "users/00000000-0000-4000-8000-00000000a984/media-library/350ea3b2-6399-5629-a9f2-6b2b80d87c9d/analysis-proxy-350ea3b2-6399-5629-a9f2-6b2b80d87c9d.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4/analysis-proxy-bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/257d0cfd-dccc-59b0-aa76-c5d720e8c1cc/analysis-proxy-257d0cfd-dccc-59b0-aa76-c5d720e8c1cc.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/22652cad-a4e5-5506-a602-1ba8287ef6f2/analysis-proxy-22652cad-a4e5-5506-a602-1ba8287ef6f2.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/8e780129-d23f-5b6a-839c-f0b732f3288e/analysis-proxy-8e780129-d23f-5b6a-839c-f0b732f3288e.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/5ade018d-563c-5fa8-b4ca-a1400735eab4/analysis-proxy-5ade018d-563c-5fa8-b4ca-a1400735eab4.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/acb82ebb-f85b-5c83-a387-37d793b4a519/analysis-proxy-acb82ebb-f85b-5c83-a387-37d793b4a519.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/8ab9e33c-7d16-5a95-94ca-61b53b21c27d/analysis-proxy-8ab9e33c-7d16-5a95-94ca-61b53b21c27d.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/3fca8655-ae70-5544-90c6-617c15c91246/analysis-proxy-3fca8655-ae70-5544-90c6-617c15c91246.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/b3df373f-1e48-5a74-9ed2-011267132da0/analysis-proxy-b3df373f-1e48-5a74-9ed2-011267132da0.mp4",
+  "users/00000000-0000-4000-8000-00000000a984/media-library/5b82fb47-fa88-5f0e-a5c3-b3c913b678eb/analysis-proxy-5b82fb47-fa88-5f0e-a5c3-b3c913b678eb.mp4"
+ ],
+ "clip_assignments": [
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 7.7,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 9,
+     "version": 1,
+     "mean_luma": 120.6,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 5.0,
+      "energy": 6.0
+     },
+     {
+      "start_s": 6.0,
+      "end_s": 10.0,
+      "energy": 5.0
+     },
+     {
+      "start_s": 10.5,
+      "end_s": 14.0,
+      "energy": 4.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/350ea3b2-6399-5629-a9f2-6b2b80d87c9d/analysis-proxy-350ea3b2-6399-5629-a9f2-6b2b80d87c9d.mp4",
+   "media_id": "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+   "has_audio": true,
+   "duration_s": 7.7,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc1",
+      "has_audio": true,
+      "byte_count": 10001,
+      "duration_s": 7.68,
+      "orientation_degrees": 0
+     },
+     "duration_s": 7.7,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "a745f823-bec8-5f78-a1b3-95a7114536b6",
+   "library_source_id": "66f90eea-58e8-5214-a011-40dc2f4b19f1",
+   "manifest_identity": "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+   "storage_generation": "1793002457640445"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 3.838345,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 8,
+     "version": 1,
+     "mean_luma": 100.2,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "energy": 4.0
+     },
+     {
+      "start_s": 3.0,
+      "end_s": 7.0,
+      "energy": 6.0
+     },
+     {
+      "start_s": 7.0,
+      "end_s": 10.0,
+      "energy": 5.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4/analysis-proxy-bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4.mp4",
+   "media_id": "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+   "has_audio": true,
+   "duration_s": 3.838345,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc2",
+      "has_audio": true,
+      "byte_count": 10002,
+      "duration_s": 3.84,
+      "orientation_degrees": 0
+     },
+     "duration_s": 3.8383333333333334,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "37f2e6dd-2a05-5e77-b75d-cf862ddbcdf8",
+   "library_source_id": "c37fec95-cb07-5edb-b5e5-eb60218b039b",
+   "manifest_identity": "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+   "storage_generation": "1793002453566239"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 3.84,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 8,
+     "version": 1,
+     "mean_luma": 96.6,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.5,
+      "energy": 3.0
+     },
+     {
+      "start_s": 2.0,
+      "end_s": 3.0,
+      "energy": 2.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/257d0cfd-dccc-59b0-aa76-c5d720e8c1cc/analysis-proxy-257d0cfd-dccc-59b0-aa76-c5d720e8c1cc.mp4",
+   "media_id": "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+   "has_audio": true,
+   "duration_s": 3.84,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc3",
+      "has_audio": true,
+      "byte_count": 10003,
+      "duration_s": 3.84,
+      "orientation_degrees": 0
+     },
+     "duration_s": 3.84,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "0104105e-10f2-5b4a-8958-1cf4ca4e83bf",
+   "library_source_id": "a9e6aa96-85d7-5a77-b952-fb9a1663c078",
+   "manifest_identity": "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+   "storage_generation": "1793002450503398"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 1.933333,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 4,
+     "version": 1,
+     "mean_luma": 115.5,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 1.0,
+      "energy": 3.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/22652cad-a4e5-5506-a602-1ba8287ef6f2/analysis-proxy-22652cad-a4e5-5506-a602-1ba8287ef6f2.mp4",
+   "media_id": "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+   "has_audio": true,
+   "duration_s": 1.933333,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc4",
+      "has_audio": true,
+      "byte_count": 10004,
+      "duration_s": 1.92,
+      "orientation_degrees": 0
+     },
+     "duration_s": 1.9333333333333333,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "ba7833fa-fcc6-55bb-bb5e-60cb43adcf61",
+   "library_source_id": "c1ba66a3-9aae-5f8f-9262-46e40bdec25a",
+   "manifest_identity": "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+   "storage_generation": "1793002447557167"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 3.838345,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 8,
+     "version": 1,
+     "mean_luma": 114.3,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "energy": 5.0
+     },
+     {
+      "start_s": 3.0,
+      "end_s": 6.0,
+      "energy": 4.0
+     },
+     {
+      "start_s": 6.0,
+      "end_s": 9.49,
+      "energy": 3.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/8e780129-d23f-5b6a-839c-f0b732f3288e/analysis-proxy-8e780129-d23f-5b6a-839c-f0b732f3288e.mp4",
+   "media_id": "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+   "has_audio": true,
+   "duration_s": 3.838345,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc5",
+      "has_audio": true,
+      "byte_count": 10005,
+      "duration_s": 3.84,
+      "orientation_degrees": 0
+     },
+     "duration_s": 3.8383333333333334,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "ef613bee-7fda-5aff-916c-225d23ab3b41",
+   "library_source_id": "0512b820-f019-550b-96d8-880d17ba1e9f",
+   "manifest_identity": "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+   "storage_generation": "1793002442118022"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 2.4,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 5,
+     "version": 1,
+     "mean_luma": 89.9,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.0,
+      "energy": 3.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/5ade018d-563c-5fa8-b4ca-a1400735eab4/analysis-proxy-5ade018d-563c-5fa8-b4ca-a1400735eab4.mp4",
+   "media_id": "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+   "has_audio": true,
+   "duration_s": 2.4,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc6",
+      "has_audio": true,
+      "byte_count": 10006,
+      "duration_s": 2.4,
+      "orientation_degrees": 0
+     },
+     "duration_s": 2.4,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "8acf47f2-d10f-54d3-bf5e-b48515a32b77",
+   "library_source_id": "0017f8ba-3f3b-52d9-b71d-21a2c76dd841",
+   "manifest_identity": "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+   "storage_generation": "1793002437802693"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 1.933333,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 4,
+     "version": 1,
+     "mean_luma": 124.1,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 6.0,
+      "energy": 5.0
+     },
+     {
+      "start_s": 8.0,
+      "end_s": 14.0,
+      "energy": 4.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/acb82ebb-f85b-5c83-a387-37d793b4a519/analysis-proxy-acb82ebb-f85b-5c83-a387-37d793b4a519.mp4",
+   "media_id": "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+   "has_audio": true,
+   "duration_s": 1.933333,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc7",
+      "has_audio": true,
+      "byte_count": 10007,
+      "duration_s": 1.92,
+      "orientation_degrees": 0
+     },
+     "duration_s": 1.9333333333333333,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "8f7b839f-7c8c-572d-a190-12f933705852",
+   "library_source_id": "e08ef63b-3d5a-5619-8745-bc198f1fa4e5",
+   "manifest_identity": "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+   "storage_generation": "1793002434334561"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 2.4,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 5,
+     "version": 1,
+     "mean_luma": 114.4,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "energy": 3.0
+     },
+     {
+      "start_s": 3.0,
+      "end_s": 6.0,
+      "energy": 2.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/8ab9e33c-7d16-5a95-94ca-61b53b21c27d/analysis-proxy-8ab9e33c-7d16-5a95-94ca-61b53b21c27d.mp4",
+   "media_id": "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+   "has_audio": true,
+   "duration_s": 2.4,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 3840,
+      "height": 2160,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc8",
+      "has_audio": true,
+      "byte_count": 10008,
+      "duration_s": 2.4,
+      "orientation_degrees": 0
+     },
+     "duration_s": 2.4,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "51c58dc2-9ecc-59d8-bea3-e1056602781a",
+   "library_source_id": "2a611ea7-e15a-5e20-af65-9a822bab4ea6",
+   "manifest_identity": "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+   "storage_generation": "1793002444905265"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 7.7,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 8,
+     "version": 1,
+     "mean_luma": 115.0,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 4.0,
+      "energy": 5.0
+     },
+     {
+      "start_s": 4.5,
+      "end_s": 8.0,
+      "energy": 6.0
+     },
+     {
+      "start_s": 8.5,
+      "end_s": 14.0,
+      "energy": 5.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/3fca8655-ae70-5544-90c6-617c15c91246/analysis-proxy-3fca8655-ae70-5544-90c6-617c15c91246.mp4",
+   "media_id": "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+   "has_audio": true,
+   "duration_s": 7.7,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc9",
+      "has_audio": true,
+      "byte_count": 10009,
+      "duration_s": 7.68,
+      "orientation_degrees": 0
+     },
+     "duration_s": 7.7,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "a7eccc0a-92ad-58e3-8ab9-5ce561bf5fbc",
+   "library_source_id": "5133be6a-68ca-5e76-8354-3f96192c98db",
+   "manifest_identity": "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+   "storage_generation": "1793002400612761"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 3.366667,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 7,
+     "version": 1,
+     "mean_luma": 117.0,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 3.0,
+      "energy": 3.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/b3df373f-1e48-5a74-9ed2-011267132da0/analysis-proxy-b3df373f-1e48-5a74-9ed2-011267132da0.mp4",
+   "media_id": "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+   "has_audio": true,
+   "duration_s": 3.366667,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccca",
+      "has_audio": true,
+      "byte_count": 10010,
+      "duration_s": 3.36,
+      "orientation_degrees": 0
+     },
+     "duration_s": 3.3666666666666667,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "30522863-5e78-5fb8-9a7a-11de5d12f05a",
+   "library_source_id": "7df2155e-df0b-5890-afc0-734d62631518",
+   "manifest_identity": "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+   "storage_generation": "1793002395482184"
+  },
+  {
+   "kind": "video",
+   "shot_id": null,
+   "analysis": {
+    "width": 568,
+    "height": 320,
+    "aspect": 1.775,
+    "display_width": 568,
+    "display_height": 320,
+    "rotation_degrees": 0,
+    "duration_s": 3.838345,
+    "pix_fmt": "yuv420p",
+    "video_codec": "h264",
+    "source": "clip_metadata",
+    "analysis_version": 8,
+    "exposure": {
+     "frames": 8,
+     "version": 1,
+     "mean_luma": 117.6,
+     "near_black_share": 0.0
+    },
+    "best_moments": [
+     {
+      "start_s": 0.0,
+      "end_s": 2.0,
+      "energy": 3.0
+     },
+     {
+      "start_s": 2.0,
+      "end_s": 4.0,
+      "energy": 3.0
+     }
+    ]
+   },
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/5b82fb47-fa88-5f0e-a5c3-b3c913b678eb/analysis-proxy-5b82fb47-fa88-5f0e-a5c3-b3c913b678eb.mp4",
+   "media_id": "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652",
+   "has_audio": true,
+   "duration_s": 3.838345,
+   "source_filename": "",
+   "upload_contract": {
+    "proxy": {
+     "width": 568,
+     "height": 320,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccb",
+      "has_audio": true,
+      "byte_count": 10011,
+      "duration_s": 3.84,
+      "orientation_degrees": 0
+     },
+     "duration_s": 3.8383333333333334,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "library_asset_id": "5e73dd11-c91d-5753-b7d4-68e20ccd06f5",
+   "library_source_id": "7a59710a-eb29-5240-8999-6f1ab38faa87",
+   "manifest_identity": "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652",
+   "storage_generation": "1793002389168420"
+  }
+ ],
+ "visuals": [
+  {
+   "id": "23711c74-afc7-5702-9537-04b8a1d88c05",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/23711c74-afc7-5702-9537-04b8a1d88c05-IMG_0001.HEIC",
+   "gcs_generation": "1793002887837637",
+   "duration_s": null,
+   "aspect": 0.75,
+   "analysis": {
+    "width": 3024,
+    "height": 4032,
+    "aspect": 0.75,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "14f5ad90-ea85-5123-85b0-9b886fc9bf1a",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/14f5ad90-ea85-5123-85b0-9b886fc9bf1a-IMG_0002.HEIC",
+   "gcs_generation": "1793002891603627",
+   "duration_s": null,
+   "aspect": 0.75,
+   "analysis": {
+    "width": 3024,
+    "height": 4032,
+    "aspect": 0.75,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "44b03850-320c-5b7f-bcc4-2cf838f1a2c0",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/44b03850-320c-5b7f-bcc4-2cf838f1a2c0-IMG_0003.HEIC",
+   "gcs_generation": "1793002895327576",
+   "duration_s": null,
+   "aspect": 0.75,
+   "analysis": {
+    "width": 3024,
+    "height": 4032,
+    "aspect": 0.75,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "0abf4fd6-42ae-599b-8693-c04c7361828a",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/0abf4fd6-42ae-599b-8693-c04c7361828a-IMG_0004.HEIC",
+   "gcs_generation": "1793002899020076",
+   "duration_s": null,
+   "aspect": 0.75,
+   "analysis": {
+    "width": 3024,
+    "height": 4032,
+    "aspect": 0.75,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "643a682e-7982-5bbc-a31b-f179933a9a6f",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/643a682e-7982-5bbc-a31b-f179933a9a6f-IMG_0005.HEIC",
+   "gcs_generation": "1793002903068028",
+   "duration_s": null,
+   "aspect": 0.75,
+   "analysis": {
+    "width": 3024,
+    "height": 4032,
+    "aspect": 0.75,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "13880435-647c-5b65-9064-fa8ccde500f4",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/13880435-647c-5b65-9064-fa8ccde500f4-IMG_0006.HEIC",
+   "gcs_generation": "1793002413713394",
+   "duration_s": null,
+   "aspect": 1.4963,
+   "analysis": {
+    "width": 1616,
+    "height": 1080,
+    "aspect": 1.4963,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1-IMG_0007.HEIC",
+   "gcs_generation": "1793002409424763",
+   "duration_s": null,
+   "aspect": 1.4963,
+   "analysis": {
+    "width": 1616,
+    "height": 1080,
+    "aspect": 1.4963,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "ab9f5601-ef8d-517b-a2fd-af70fb1d57a2",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/ab9f5601-ef8d-517b-a2fd-af70fb1d57a2-IMG_0008.HEIC",
+   "gcs_generation": "1793002418135804",
+   "duration_s": null,
+   "aspect": 1.4963,
+   "analysis": {
+    "width": 1616,
+    "height": 1080,
+    "aspect": 1.4963,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "cc9a0880-bcbf-513f-b5b1-4f093f4dacca",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/cc9a0880-bcbf-513f-b5b1-4f093f4dacca-IMG_0009.HEIC",
+   "gcs_generation": "1793002422066005",
+   "duration_s": null,
+   "aspect": 1.4963,
+   "analysis": {
+    "width": 1616,
+    "height": 1080,
+    "aspect": 1.4963,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  },
+  {
+   "id": "963c4858-448a-576c-8fbc-5ef6eeebd726",
+   "kind": "image",
+   "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/963c4858-448a-576c-8fbc-5ef6eeebd726-IMG_0010.HEIC",
+   "gcs_generation": "1793002879195790",
+   "duration_s": null,
+   "aspect": 0.75,
+   "analysis": {
+    "width": 3024,
+    "height": 4032,
+    "aspect": 0.75,
+    "source": "image_metadata",
+    "analysis_version": 8,
+    "kind_hint": "photo",
+    "has_alpha": false
+   }
+  }
+ ],
+ "length_plan": {
+  "owner": "song",
+  "sources": [
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/350ea3b2-6399-5629-a9f2-6b2b80d87c9d/analysis-proxy-350ea3b2-6399-5629-a9f2-6b2b80d87c9d.mp4",
+    "media_id": "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+    "duration_s": 7.68,
+    "generation": null,
+    "storage_generation": "1793002457640445"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4/analysis-proxy-bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4.mp4",
+    "media_id": "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+    "duration_s": 3.84,
+    "generation": null,
+    "storage_generation": "1793002453566239"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/257d0cfd-dccc-59b0-aa76-c5d720e8c1cc/analysis-proxy-257d0cfd-dccc-59b0-aa76-c5d720e8c1cc.mp4",
+    "media_id": "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+    "duration_s": 3.84,
+    "generation": null,
+    "storage_generation": "1793002450503398"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/22652cad-a4e5-5506-a602-1ba8287ef6f2/analysis-proxy-22652cad-a4e5-5506-a602-1ba8287ef6f2.mp4",
+    "media_id": "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+    "duration_s": 1.92,
+    "generation": null,
+    "storage_generation": "1793002447557167"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/8e780129-d23f-5b6a-839c-f0b732f3288e/analysis-proxy-8e780129-d23f-5b6a-839c-f0b732f3288e.mp4",
+    "media_id": "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+    "duration_s": 3.84,
+    "generation": null,
+    "storage_generation": "1793002442118022"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/5ade018d-563c-5fa8-b4ca-a1400735eab4/analysis-proxy-5ade018d-563c-5fa8-b4ca-a1400735eab4.mp4",
+    "media_id": "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+    "duration_s": 2.4,
+    "generation": null,
+    "storage_generation": "1793002437802693"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/acb82ebb-f85b-5c83-a387-37d793b4a519/analysis-proxy-acb82ebb-f85b-5c83-a387-37d793b4a519.mp4",
+    "media_id": "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+    "duration_s": 1.92,
+    "generation": null,
+    "storage_generation": "1793002434334561"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/8ab9e33c-7d16-5a95-94ca-61b53b21c27d/analysis-proxy-8ab9e33c-7d16-5a95-94ca-61b53b21c27d.mp4",
+    "media_id": "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+    "duration_s": 2.4,
+    "generation": null,
+    "storage_generation": "1793002444905265"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/3fca8655-ae70-5544-90c6-617c15c91246/analysis-proxy-3fca8655-ae70-5544-90c6-617c15c91246.mp4",
+    "media_id": "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+    "duration_s": 7.68,
+    "generation": null,
+    "storage_generation": "1793002400612761"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/b3df373f-1e48-5a74-9ed2-011267132da0/analysis-proxy-b3df373f-1e48-5a74-9ed2-011267132da0.mp4",
+    "media_id": "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+    "duration_s": 3.36,
+    "generation": null,
+    "storage_generation": "1793002395482184"
+   },
+   {
+    "kind": "video",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/5b82fb47-fa88-5f0e-a5c3-b3c913b678eb/analysis-proxy-5b82fb47-fa88-5f0e-a5c3-b3c913b678eb.mp4",
+    "media_id": "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652",
+    "duration_s": 3.84,
+    "generation": null,
+    "storage_generation": "1793002389168420"
+   }
+  ],
+  "version": 1,
+  "windows": [
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+    "source_end_s": 3.84,
+    "source_start_s": 3.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+    "source_end_s": 1.5,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+    "source_end_s": 1.0,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 5.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 5.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+    "source_end_s": 6.183,
+    "source_start_s": 4.5
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   }
+  ],
+  "conflicts": [],
+  "capacity_s": 25.84,
+  "natural_owner": "song",
+  "capacity_raw_s": 42.72,
+  "licensed_music": {
+   "end_s": 149.99,
+   "title": "Santana - Maria Maria (Official Video) ft. The Product G&B",
+   "artist": "Santana",
+   "status": "selected",
+   "start_s": 133.19,
+   "track_id": "dc58f92f-7233-4b46-b18b-7a0e81eddbe0",
+   "beat_timestamps_s": [
+    132.807,
+    132.977667,
+    133.297667,
+    133.575,
+    133.873667,
+    134.065667,
+    134.641667,
+    134.983,
+    135.260333,
+    135.857667,
+    136.028333,
+    136.327,
+    136.497667,
+    137.095,
+    137.713667,
+    138.247,
+    138.481667,
+    138.780333,
+    139.527,
+    140.167,
+    140.657667,
+    140.913667,
+    141.084333,
+    141.980333,
+    142.620333,
+    142.791,
+    143.111,
+    143.367,
+    143.559,
+    143.729667,
+    144.433667,
+    145.052333,
+    145.223,
+    145.564333,
+    145.820333,
+    146.140333,
+    146.887,
+    147.057667,
+    147.228333,
+    147.505667,
+    147.719,
+    148.017667,
+    148.273667,
+    148.593667,
+    148.785667,
+    149.340333,
+    149.980333,
+    150.151,
+    150.556333,
+    150.727,
+    151.025667,
+    151.196333,
+    151.793667,
+    152.412333,
+    152.583,
+    153.009667,
+    153.223,
+    153.479,
+    153.649667,
+    154.247,
+    154.865667,
+    155.036333,
+    155.335,
+    155.655,
+    155.825667,
+    156.103,
+    156.380333,
+    156.700333,
+    156.935,
+    157.148333,
+    157.319,
+    157.489667,
+    157.788333,
+    157.959,
+    158.279,
+    158.492333,
+    159.132333,
+    159.495,
+    159.772333,
+    160.284333,
+    160.540333,
+    160.711,
+    160.945667,
+    161.585667,
+    162.225667,
+    162.439,
+    162.695,
+    162.865667
+   ],
+   "catalog_duration_s": 260.976
+  },
+  "window_eligible": true,
+  "max_source_count": 80,
+  "target_duration_s": null,
+  "natural_duration_s": 16.80000000000001
+ },
+ "guided_edit": {
+  "media_digest": "34061cbce488994d945eab17f5f6190b8368d2aa6cf5b0838a0b0238966d3d7e",
+  "media_identities": [
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/350ea3b2-6399-5629-a9f2-6b2b80d87c9d/analysis-proxy-350ea3b2-6399-5629-a9f2-6b2b80d87c9d.mp4",
+    "media_id": "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+    "generation": "1793002457640445"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/23711c74-afc7-5702-9537-04b8a1d88c05-IMG_0001.HEIC",
+    "media_id": "23711c74-afc7-5702-9537-04b8a1d88c05",
+    "generation": "1793002887837637"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4/analysis-proxy-bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4.mp4",
+    "media_id": "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+    "generation": "1793002453566239"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/14f5ad90-ea85-5123-85b0-9b886fc9bf1a-IMG_0002.HEIC",
+    "media_id": "14f5ad90-ea85-5123-85b0-9b886fc9bf1a",
+    "generation": "1793002891603627"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/257d0cfd-dccc-59b0-aa76-c5d720e8c1cc/analysis-proxy-257d0cfd-dccc-59b0-aa76-c5d720e8c1cc.mp4",
+    "media_id": "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+    "generation": "1793002450503398"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/44b03850-320c-5b7f-bcc4-2cf838f1a2c0-IMG_0003.HEIC",
+    "media_id": "44b03850-320c-5b7f-bcc4-2cf838f1a2c0",
+    "generation": "1793002895327576"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/22652cad-a4e5-5506-a602-1ba8287ef6f2/analysis-proxy-22652cad-a4e5-5506-a602-1ba8287ef6f2.mp4",
+    "media_id": "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+    "generation": "1793002447557167"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/0abf4fd6-42ae-599b-8693-c04c7361828a-IMG_0004.HEIC",
+    "media_id": "0abf4fd6-42ae-599b-8693-c04c7361828a",
+    "generation": "1793002899020076"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/8e780129-d23f-5b6a-839c-f0b732f3288e/analysis-proxy-8e780129-d23f-5b6a-839c-f0b732f3288e.mp4",
+    "media_id": "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+    "generation": "1793002442118022"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/643a682e-7982-5bbc-a31b-f179933a9a6f-IMG_0005.HEIC",
+    "media_id": "643a682e-7982-5bbc-a31b-f179933a9a6f",
+    "generation": "1793002903068028"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/5ade018d-563c-5fa8-b4ca-a1400735eab4/analysis-proxy-5ade018d-563c-5fa8-b4ca-a1400735eab4.mp4",
+    "media_id": "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+    "generation": "1793002437802693"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/13880435-647c-5b65-9064-fa8ccde500f4-IMG_0006.HEIC",
+    "media_id": "13880435-647c-5b65-9064-fa8ccde500f4",
+    "generation": "1793002413713394"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/acb82ebb-f85b-5c83-a387-37d793b4a519/analysis-proxy-acb82ebb-f85b-5c83-a387-37d793b4a519.mp4",
+    "media_id": "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+    "generation": "1793002434334561"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1-IMG_0007.HEIC",
+    "media_id": "9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1",
+    "generation": "1793002409424763"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/8ab9e33c-7d16-5a95-94ca-61b53b21c27d/analysis-proxy-8ab9e33c-7d16-5a95-94ca-61b53b21c27d.mp4",
+    "media_id": "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+    "generation": "1793002444905265"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/ab9f5601-ef8d-517b-a2fd-af70fb1d57a2-IMG_0008.HEIC",
+    "media_id": "ab9f5601-ef8d-517b-a2fd-af70fb1d57a2",
+    "generation": "1793002418135804"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/3fca8655-ae70-5544-90c6-617c15c91246/analysis-proxy-3fca8655-ae70-5544-90c6-617c15c91246.mp4",
+    "media_id": "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+    "generation": "1793002400612761"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/cc9a0880-bcbf-513f-b5b1-4f093f4dacca-IMG_0009.HEIC",
+    "media_id": "cc9a0880-bcbf-513f-b5b1-4f093f4dacca",
+    "generation": "1793002422066005"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/b3df373f-1e48-5a74-9ed2-011267132da0/analysis-proxy-b3df373f-1e48-5a74-9ed2-011267132da0.mp4",
+    "media_id": "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+    "generation": "1793002395482184"
+   },
+   {
+    "kind": "image",
+    "lane": "asset",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/963c4858-448a-576c-8fbc-5ef6eeebd726-IMG_0010.HEIC",
+    "media_id": "963c4858-448a-576c-8fbc-5ef6eeebd726",
+    "generation": "1793002879195790"
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/5b82fb47-fa88-5f0e-a5c3-b3c913b678eb/analysis-proxy-5b82fb47-fa88-5f0e-a5c3-b3c913b678eb.mp4",
+    "media_id": "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652",
+    "generation": "1793002389168420"
+   }
+  ],
+  "proposal_version": 1,
+  "approved_proposal": {
+   "goal": "",
+   "pace": "fast",
+   "media": [
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 7.7,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 9,
+       "version": 1,
+       "mean_luma": 120.6,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 5.0,
+        "energy": 6.0
+       },
+       {
+        "start_s": 6.0,
+        "end_s": 10.0,
+        "energy": 5.0
+       },
+       {
+        "start_s": 10.5,
+        "end_s": 14.0,
+        "energy": 4.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/350ea3b2-6399-5629-a9f2-6b2b80d87c9d/analysis-proxy-350ea3b2-6399-5629-a9f2-6b2b80d87c9d.mp4",
+     "media_id": "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+     "duration_s": 7.68,
+     "generation": "1793002457640445",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 0.75,
+     "analysis": {
+      "width": 3024,
+      "height": 4032,
+      "aspect": 0.75,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/23711c74-afc7-5702-9537-04b8a1d88c05-IMG_0001.HEIC",
+     "media_id": "23711c74-afc7-5702-9537-04b8a1d88c05",
+     "duration_s": null,
+     "generation": "1793002887837637",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 3.838345,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 8,
+       "version": 1,
+       "mean_luma": 100.2,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "energy": 4.0
+       },
+       {
+        "start_s": 3.0,
+        "end_s": 7.0,
+        "energy": 6.0
+       },
+       {
+        "start_s": 7.0,
+        "end_s": 10.0,
+        "energy": 5.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4/analysis-proxy-bb35ad7d-940d-56bb-b2f5-d0c1fe54eba4.mp4",
+     "media_id": "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+     "duration_s": 3.84,
+     "generation": "1793002453566239",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 0.75,
+     "analysis": {
+      "width": 3024,
+      "height": 4032,
+      "aspect": 0.75,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/14f5ad90-ea85-5123-85b0-9b886fc9bf1a-IMG_0002.HEIC",
+     "media_id": "14f5ad90-ea85-5123-85b0-9b886fc9bf1a",
+     "duration_s": null,
+     "generation": "1793002891603627",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 3.84,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 8,
+       "version": 1,
+       "mean_luma": 96.6,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "energy": 3.0
+       },
+       {
+        "start_s": 2.0,
+        "end_s": 3.0,
+        "energy": 2.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/257d0cfd-dccc-59b0-aa76-c5d720e8c1cc/analysis-proxy-257d0cfd-dccc-59b0-aa76-c5d720e8c1cc.mp4",
+     "media_id": "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+     "duration_s": 3.84,
+     "generation": "1793002450503398",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 0.75,
+     "analysis": {
+      "width": 3024,
+      "height": 4032,
+      "aspect": 0.75,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/44b03850-320c-5b7f-bcc4-2cf838f1a2c0-IMG_0003.HEIC",
+     "media_id": "44b03850-320c-5b7f-bcc4-2cf838f1a2c0",
+     "duration_s": null,
+     "generation": "1793002895327576",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 1.933333,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 4,
+       "version": 1,
+       "mean_luma": 115.5,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 1.0,
+        "energy": 3.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/22652cad-a4e5-5506-a602-1ba8287ef6f2/analysis-proxy-22652cad-a4e5-5506-a602-1ba8287ef6f2.mp4",
+     "media_id": "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+     "duration_s": 1.92,
+     "generation": "1793002447557167",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 0.75,
+     "analysis": {
+      "width": 3024,
+      "height": 4032,
+      "aspect": 0.75,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/0abf4fd6-42ae-599b-8693-c04c7361828a-IMG_0004.HEIC",
+     "media_id": "0abf4fd6-42ae-599b-8693-c04c7361828a",
+     "duration_s": null,
+     "generation": "1793002899020076",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 3.838345,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 8,
+       "version": 1,
+       "mean_luma": 114.3,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "energy": 5.0
+       },
+       {
+        "start_s": 3.0,
+        "end_s": 6.0,
+        "energy": 4.0
+       },
+       {
+        "start_s": 6.0,
+        "end_s": 9.49,
+        "energy": 3.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/8e780129-d23f-5b6a-839c-f0b732f3288e/analysis-proxy-8e780129-d23f-5b6a-839c-f0b732f3288e.mp4",
+     "media_id": "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+     "duration_s": 3.84,
+     "generation": "1793002442118022",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 0.75,
+     "analysis": {
+      "width": 3024,
+      "height": 4032,
+      "aspect": 0.75,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/643a682e-7982-5bbc-a31b-f179933a9a6f-IMG_0005.HEIC",
+     "media_id": "643a682e-7982-5bbc-a31b-f179933a9a6f",
+     "duration_s": null,
+     "generation": "1793002903068028",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 2.4,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 5,
+       "version": 1,
+       "mean_luma": 89.9,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "energy": 3.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/5ade018d-563c-5fa8-b4ca-a1400735eab4/analysis-proxy-5ade018d-563c-5fa8-b4ca-a1400735eab4.mp4",
+     "media_id": "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+     "duration_s": 2.4,
+     "generation": "1793002437802693",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 1.4963,
+     "analysis": {
+      "width": 1616,
+      "height": 1080,
+      "aspect": 1.4963,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/13880435-647c-5b65-9064-fa8ccde500f4-IMG_0006.HEIC",
+     "media_id": "13880435-647c-5b65-9064-fa8ccde500f4",
+     "duration_s": null,
+     "generation": "1793002413713394",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 1.933333,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 4,
+       "version": 1,
+       "mean_luma": 124.1,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 6.0,
+        "energy": 5.0
+       },
+       {
+        "start_s": 8.0,
+        "end_s": 14.0,
+        "energy": 4.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/acb82ebb-f85b-5c83-a387-37d793b4a519/analysis-proxy-acb82ebb-f85b-5c83-a387-37d793b4a519.mp4",
+     "media_id": "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+     "duration_s": 1.92,
+     "generation": "1793002434334561",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 1.4963,
+     "analysis": {
+      "width": 1616,
+      "height": 1080,
+      "aspect": 1.4963,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1-IMG_0007.HEIC",
+     "media_id": "9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1",
+     "duration_s": null,
+     "generation": "1793002409424763",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 2.4,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 5,
+       "version": 1,
+       "mean_luma": 114.4,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "energy": 3.0
+       },
+       {
+        "start_s": 3.0,
+        "end_s": 6.0,
+        "energy": 2.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/8ab9e33c-7d16-5a95-94ca-61b53b21c27d/analysis-proxy-8ab9e33c-7d16-5a95-94ca-61b53b21c27d.mp4",
+     "media_id": "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+     "duration_s": 2.4,
+     "generation": "1793002444905265",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 1.4963,
+     "analysis": {
+      "width": 1616,
+      "height": 1080,
+      "aspect": 1.4963,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/ab9f5601-ef8d-517b-a2fd-af70fb1d57a2-IMG_0008.HEIC",
+     "media_id": "ab9f5601-ef8d-517b-a2fd-af70fb1d57a2",
+     "duration_s": null,
+     "generation": "1793002418135804",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 7.7,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 8,
+       "version": 1,
+       "mean_luma": 115.0,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 4.0,
+        "energy": 5.0
+       },
+       {
+        "start_s": 4.5,
+        "end_s": 8.0,
+        "energy": 6.0
+       },
+       {
+        "start_s": 8.5,
+        "end_s": 14.0,
+        "energy": 5.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/3fca8655-ae70-5544-90c6-617c15c91246/analysis-proxy-3fca8655-ae70-5544-90c6-617c15c91246.mp4",
+     "media_id": "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+     "duration_s": 7.68,
+     "generation": "1793002400612761",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 1.4963,
+     "analysis": {
+      "width": 1616,
+      "height": 1080,
+      "aspect": 1.4963,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/cc9a0880-bcbf-513f-b5b1-4f093f4dacca-IMG_0009.HEIC",
+     "media_id": "cc9a0880-bcbf-513f-b5b1-4f093f4dacca",
+     "duration_s": null,
+     "generation": "1793002422066005",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 3.366667,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 7,
+       "version": 1,
+       "mean_luma": 117.0,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "energy": 3.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/b3df373f-1e48-5a74-9ed2-011267132da0/analysis-proxy-b3df373f-1e48-5a74-9ed2-011267132da0.mp4",
+     "media_id": "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+     "duration_s": 3.36,
+     "generation": "1793002395482184",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "image",
+     "lane": "asset",
+     "aspect": 0.75,
+     "analysis": {
+      "width": 3024,
+      "height": 4032,
+      "aspect": 0.75,
+      "source": "image_metadata",
+      "analysis_version": 8,
+      "kind_hint": "photo",
+      "has_alpha": false
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/plan/00000000-0000-4000-8000-00000000b984/pool/963c4858-448a-576c-8fbc-5ef6eeebd726-IMG_0010.HEIC",
+     "media_id": "963c4858-448a-576c-8fbc-5ef6eeebd726",
+     "duration_s": null,
+     "generation": "1793002879195790",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    },
+    {
+     "kind": "video",
+     "lane": "clip",
+     "aspect": 1.7777777777777777,
+     "analysis": {
+      "width": 568,
+      "height": 320,
+      "aspect": 1.775,
+      "display_width": 568,
+      "display_height": 320,
+      "rotation_degrees": 0,
+      "duration_s": 3.838345,
+      "pix_fmt": "yuv420p",
+      "video_codec": "h264",
+      "source": "clip_metadata",
+      "analysis_version": 8,
+      "exposure": {
+       "frames": 8,
+       "version": 1,
+       "mean_luma": 117.6,
+       "near_black_share": 0.0
+      },
+      "best_moments": [
+       {
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "energy": 3.0
+       },
+       {
+        "start_s": 2.0,
+        "end_s": 4.0,
+        "energy": 3.0
+       }
+      ]
+     },
+     "gcs_path": "users/00000000-0000-4000-8000-00000000a984/media-library/5b82fb47-fa88-5f0e-a5c3-b3c913b678eb/analysis-proxy-5b82fb47-fa88-5f0e-a5c3-b3c913b678eb.mp4",
+     "media_id": "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652",
+     "duration_s": 3.84,
+     "generation": "1793002389168420",
+     "content_hash": null,
+     "user_context": "",
+     "source_filename": ""
+    }
+   ],
+   "title": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.",
+   "direction": "fast_montage",
+   "fast_cuts": [
+    {
+     "role": "hook",
+     "cut_id": "unified-cut-1",
+     "media_id": "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.683,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.683
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-2",
+     "media_id": "23711c74-afc7-5702-9537-04b8a1d88c05",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-3",
+     "media_id": "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 3.84,
+     "source_start_s": 3.0,
+     "output_duration_s": 0.8399999999999999
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-4",
+     "media_id": "14f5ad90-ea85-5123-85b0-9b886fc9bf1a",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-5",
+     "media_id": "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.5,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.5
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-6",
+     "media_id": "44b03850-320c-5b7f-bcc4-2cf838f1a2c0",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-7",
+     "media_id": "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.0,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.0
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-8",
+     "media_id": "0abf4fd6-42ae-599b-8693-c04c7361828a",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-9",
+     "media_id": "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.683,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.683
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-10",
+     "media_id": "643a682e-7982-5bbc-a31b-f179933a9a6f",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-11",
+     "media_id": "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.683,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.683
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-12",
+     "media_id": "13880435-647c-5b65-9064-fa8ccde500f4",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-13",
+     "media_id": "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.683,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.683
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-14",
+     "media_id": "9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-15",
+     "media_id": "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.683,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.683
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-16",
+     "media_id": "ab9f5601-ef8d-517b-a2fd-af70fb1d57a2",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-17",
+     "media_id": "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 6.183,
+     "source_start_s": 4.5,
+     "output_duration_s": 1.6829999999999998
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-18",
+     "media_id": "cc9a0880-bcbf-513f-b5b1-4f093f4dacca",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-19",
+     "media_id": "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.683,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.683
+    },
+    {
+     "role": "build",
+     "cut_id": "unified-cut-20",
+     "media_id": "963c4858-448a-576c-8fbc-5ef6eeebd726",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.2,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.2
+    },
+    {
+     "role": "payoff",
+     "cut_id": "unified-cut-21",
+     "media_id": "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652",
+     "beat_align": false,
+     "transition": "none",
+     "source_end_s": 1.683,
+     "source_start_s": 0.0,
+     "output_duration_s": 1.683
+    }
+   ],
+   "duration_s": 28.803999999999995,
+   "clip_labels": [],
+   "media_scope": "all",
+   "story_beats": [
+    {
+     "topic": "Fast montage",
+     "layout": "fullscreen",
+     "beat_id": "fast-beat-1",
+     "thought": "",
+     "media_ids": [
+      "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+      "23711c74-afc7-5702-9537-04b8a1d88c05",
+      "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+      "14f5ad90-ea85-5123-85b0-9b886fc9bf1a"
+     ],
+     "duration_s": 4.923,
+     "thought_source": "ai_draft"
+    },
+    {
+     "topic": "Fast montage",
+     "layout": "fullscreen",
+     "beat_id": "fast-beat-2",
+     "thought": "",
+     "media_ids": [
+      "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+      "44b03850-320c-5b7f-bcc4-2cf838f1a2c0",
+      "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+      "0abf4fd6-42ae-599b-8693-c04c7361828a"
+     ],
+     "duration_s": 4.9,
+     "thought_source": "ai_draft"
+    },
+    {
+     "topic": "Fast montage",
+     "layout": "fullscreen",
+     "beat_id": "fast-beat-3",
+     "thought": "",
+     "media_ids": [
+      "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+      "643a682e-7982-5bbc-a31b-f179933a9a6f",
+      "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+      "13880435-647c-5b65-9064-fa8ccde500f4"
+     ],
+     "duration_s": 5.766,
+     "thought_source": "ai_draft"
+    },
+    {
+     "topic": "Fast montage",
+     "layout": "fullscreen",
+     "beat_id": "fast-beat-4",
+     "thought": "",
+     "media_ids": [
+      "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+      "9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1",
+      "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+      "ab9f5601-ef8d-517b-a2fd-af70fb1d57a2"
+     ],
+     "duration_s": 5.766,
+     "thought_source": "ai_draft"
+    },
+    {
+     "topic": "Fast montage",
+     "layout": "fullscreen",
+     "beat_id": "fast-beat-5",
+     "thought": "",
+     "media_ids": [
+      "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+      "cc9a0880-bcbf-513f-b5b1-4f093f4dacca",
+      "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+      "963c4858-448a-576c-8fbc-5ef6eeebd726"
+     ],
+     "duration_s": 5.766,
+     "thought_source": "ai_draft"
+    },
+    {
+     "topic": "Fast montage",
+     "layout": "fullscreen",
+     "beat_id": "fast-beat-6",
+     "thought": "",
+     "media_ids": [
+      "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652"
+     ],
+     "duration_s": 1.683,
+     "thought_source": "ai_draft"
+    }
+   ],
+   "montage_audio": null,
+   "opening_title": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.",
+   "text_composition": {
+    "version": 1,
+    "operations": [
+     {
+      "op": "add_text",
+      "text": "Cunda is home to historical building, old churches, great restaurants and amazing beaches",
+      "end_s": 8.62,
+      "patch": {
+       "position": "bottom",
+       "size_scale": 0.6
+      },
+      "start_s": 2.2,
+      "style_from": "title"
+     }
+    ],
+    "base_digest": "0db446eb8043a4a59ba8622521294767a561428e0f988d12a7e92718f3ec3327",
+    "copy_constraints": {
+     "guided-title": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea."
+    }
+   },
+   "mixed_media_timing": null,
+   "output_orientation": "landscape",
+   "selected_media_ids": [
+    "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+    "23711c74-afc7-5702-9537-04b8a1d88c05",
+    "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+    "14f5ad90-ea85-5123-85b0-9b886fc9bf1a",
+    "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+    "44b03850-320c-5b7f-bcc4-2cf838f1a2c0",
+    "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+    "0abf4fd6-42ae-599b-8693-c04c7361828a",
+    "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+    "643a682e-7982-5bbc-a31b-f179933a9a6f",
+    "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+    "13880435-647c-5b65-9064-fa8ccde500f4",
+    "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+    "9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1",
+    "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+    "ab9f5601-ef8d-517b-a2fd-af70fb1d57a2",
+    "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+    "cc9a0880-bcbf-513f-b5b1-4f093f4dacca",
+    "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+    "963c4858-448a-576c-8fbc-5ef6eeebd726",
+    "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652"
+   ],
+   "video_reuse_policy": "once",
+   "montage_text_bindings": [],
+   "output_orientation_reason": "The creator selected this output format."
+  }
+ },
+ "unified_montage": {
+  "route": {},
+  "title": "Why Cunda Island is a must-visit for amazing food, historic streets, and the sea.",
+  "labels": [],
+  "version": 1,
+  "clip_ids": [
+   "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+   "23711c74-afc7-5702-9537-04b8a1d88c05",
+   "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+   "14f5ad90-ea85-5123-85b0-9b886fc9bf1a",
+   "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+   "44b03850-320c-5b7f-bcc4-2cf838f1a2c0",
+   "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+   "0abf4fd6-42ae-599b-8693-c04c7361828a",
+   "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+   "643a682e-7982-5bbc-a31b-f179933a9a6f",
+   "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+   "13880435-647c-5b65-9064-fa8ccde500f4",
+   "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+   "9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1",
+   "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+   "ab9f5601-ef8d-517b-a2fd-af70fb1d57a2",
+   "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+   "cc9a0880-bcbf-513f-b5b1-4f093f4dacca",
+   "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+   "963c4858-448a-576c-8fbc-5ef6eeebd726",
+   "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652"
+  ],
+  "best_parts": [
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78",
+    "source_end_s": 3.84,
+    "source_start_s": 3.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8",
+    "source_end_s": 1.5,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697",
+    "source_end_s": 1.0,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 5.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 5.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4",
+    "source_end_s": 6.183,
+    "source_start_s": 4.5
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 3.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652",
+    "source_end_s": 1.683,
+    "source_start_s": 0.0
+   }
+  ],
+  "duration_s": 28.803999999999995,
+  "visual_ids": [
+   "23711c74-afc7-5702-9537-04b8a1d88c05",
+   "14f5ad90-ea85-5123-85b0-9b886fc9bf1a",
+   "44b03850-320c-5b7f-bcc4-2cf838f1a2c0",
+   "0abf4fd6-42ae-599b-8693-c04c7361828a",
+   "643a682e-7982-5bbc-a31b-f179933a9a6f",
+   "13880435-647c-5b65-9064-fa8ccde500f4",
+   "9c6c9120-b0c0-5ca6-b62a-87abfd3ee5b1",
+   "ab9f5601-ef8d-517b-a2fd-af70fb1d57a2",
+   "cc9a0880-bcbf-513f-b5b1-4f093f4dacca",
+   "963c4858-448a-576c-8fbc-5ef6eeebd726"
+  ],
+  "title_source": "creator",
+  "brief_version": 3,
+  "generation_id": "8f9bf93691074321b96eabae104f5481",
+  "ordering_basis": "attachment",
+  "endpoint_places": {},
+  "clip_durations_s": {
+   "analysis-proxy-CDB29BE2-707C-5AD8-8EAB-5E0ED43681A9": 1.92,
+   "analysis-proxy-C8BB8441-C2EC-5956-B46E-B32277D5ACED": 3.36,
+   "analysis-proxy-DB6C46A5-09F2-5682-B27D-09B1DF0E0B85": 2.4,
+   "analysis-proxy-ACAE8297-6D0A-5C2A-A93C-F07D5FAE0BC4": 7.68,
+   "analysis-proxy-F648CCEB-6549-5238-8409-24B9A96F7697": 1.92,
+   "analysis-proxy-03445239-EBF6-5245-9081-791D7267A652": 3.84,
+   "analysis-proxy-4DC87005-F723-51A8-8D30-2E98FD52CEF8": 3.84,
+   "analysis-proxy-E2D945AC-9178-5A09-AE61-CC4E6B537C78": 3.84,
+   "analysis-proxy-C540C022-A3DB-598A-9292-081CE056138E": 2.4,
+   "analysis-proxy-B57F9923-9794-5435-824E-36F5F4A28CA4": 3.84,
+   "analysis-proxy-83995FEA-5272-5A87-9438-02878AA4EBC0": 7.68
+  },
+  "wants_per_clip_text": false,
+  "requirement_receipts": [
+   {
+    "stage": "checked",
+    "reason": "That exact text isn't in this draft.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "8f9bf93691074321b96eabae104f5481",
+    "requirement_id": "r1",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "8f9bf93691074321b96eabae104f5481",
+    "requirement_id": "r2",
+    "inferred_labels": [],
+    "target_media_ids": []
+   }
+  ],
+  "short_label_clip_ids": [],
+  "dropped_label_reasons": {},
+  "dropped_label_clip_ids": [],
+  "ordering_fallback_clip_ids": []
+ }
+}

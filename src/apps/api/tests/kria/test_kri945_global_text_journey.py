@@ -628,11 +628,20 @@ async def test_the_researched_explanation_is_sourced_and_ready_before_approval(
 @pytest.mark.parametrize(
     ("speaking", "montage_audio", "expected"),
     [
-        pytest.param(False, None, {"ready": True, "r1": None}, id="unified-montage-draws-it"),
+        pytest.param(
+            False,
+            None,
+            {"ready": True, "r1": None, "reply_r1": ("met", None)},
+            id="unified-montage-draws-it",
+        ),
         pytest.param(
             True,
             _CAMERA_VOICE,
-            {"ready": False, "r1": ("needs_choice", LITERAL_MISS)},
+            {
+                "ready": False,
+                "r1": ("needs_choice", LITERAL_MISS),
+                "reply_r1": ("partial", LITERAL_MISS),
+            },
             id="spoken-excerpt-montage-cannot",
         ),
     ],
@@ -663,7 +672,18 @@ async def test_typed_facts_are_ready_only_where_the_writer_draws_them(
     )
     assert next(req.literal for req in brief.live() if req.scope == "global") == FACTS_TEXT
     assert ("any", FACTS_TEXT) in {(row.role, row.text) for row in contract.exact_texts}
-    assert {"ready": chat.readiness().get("ready"), "r1": chat.unready().get("r1")} == expected
+    # KRI-984: the draft reply's receipt is judged like readiness, so the creator is not told
+    # "Partly: That exact text isn't in this draft" about words the render draws.
+    reply_r1 = next(
+        (row["status"], row["reason"])
+        for row in (chat.replies[-1].payload or {}).get("requirement_receipts") or []
+        if row["requirement_id"] == "r1"
+    )
+    assert {
+        "ready": chat.readiness().get("ready"),
+        "r1": chat.unready().get("r1"),
+        "reply_r1": reply_r1,
+    } == expected
 
 
 async def test_a_per_clip_caption_ask_stays_on_its_clip(monkeypatch: pytest.MonkeyPatch) -> None:
