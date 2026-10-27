@@ -135,8 +135,9 @@ struct ClipSelectionCard: View {
 
 // MARK: - Picker sheet
 
-/// Full-height grid of 9:16 clip tiles with number badges. Tap selects, tap-and-hold (or the corner control)
-/// previews. A sticky bar carries the count, "None of these" and the primary "Done", which sends the answer.
+/// Full-height grid of 9:16 clip tiles with number badges. A tap opens the clip (`ClipPreviewPager`); the circle on a
+/// tile, or a slide across tiles, selects. A sticky bar carries the count, "None of these" and the main button:
+/// "Next" while another group still needs an answer, then "Done", which sends every group's answer at once.
 struct ClipPickerSheet: View {
     let question: ClipQuestion
     @Binding var state: ClipSelectionState
@@ -199,6 +200,8 @@ struct ClipPickerSheet: View {
                 }
                 .padding(.horizontal, 16).padding(.top, 4).padding(.bottom, 20)
             }
+            // A new group starts at the top of its grid, like a new page.
+            .id(category.key)
             .accessibilityIdentifier("clip-grid")
             bottomBar
         }
@@ -208,6 +211,7 @@ struct ClipPickerSheet: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("clip-sheet")
         .sensoryFeedback(.selection, trigger: state.selectedCount)
+        .sensoryFeedback(.selection, trigger: categoryKey)
         .sensoryFeedback(.success, trigger: doneToken)
         .sheet(item: $previewing) { target in
             ClipPreviewPager(
@@ -224,6 +228,7 @@ struct ClipPickerSheet: View {
                     .font(KriaFont.headline(22)).foregroundStyle(KriaColor.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("clip-sheet-title")
                 Spacer(minLength: 8)
                 Button { dismiss() } label: {
                     Image(systemName: "xmark").font(.system(size: 15, weight: .semibold)).foregroundStyle(KriaColor.ink)
@@ -233,7 +238,7 @@ struct ClipPickerSheet: View {
                 .accessibilityIdentifier("clip-sheet-close")
             }
             HStack(spacing: 8) {
-                Text("Tap clips, or slide across them to select. Hold one to watch it.")
+                Text("Tap a clip to watch it. Tap its circle, or slide across clips, to select.")
                     .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
@@ -271,8 +276,9 @@ struct ClipPickerSheet: View {
         let info = ClipTileInfo(mediaID: mediaID, position: position, question: question, media: media.first { $0.id == mediaID })
         let isOn = state.isSelected(mediaID, in: category.key)
         let suggested = category.suggestedMediaIDs.contains(mediaID)
-        return ZStack(alignment: .topTrailing) {
-            Button { state.toggle(mediaID, in: category.key) } label: {
+        let open = { previewing = PreviewTarget(index: category.candidateMediaIDs.firstIndex(of: mediaID) ?? 0) }
+        return ZStack(alignment: .bottomTrailing) {
+            Button(action: open) {
                 Color.clear
                     .aspectRatio(9.0 / 16.0, contentMode: .fit)
                     .overlay { ClipThumbnailView(media: attached(mediaID), position: position, projectID: projectID, name: info.name) }
@@ -295,14 +301,8 @@ struct ClipPickerSheet: View {
                                     .background(KriaColor.butter, in: Capsule())
                             }
                         }
-                        .padding(6)
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        if isOn {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 26)).foregroundStyle(Color.white, KriaColor.ink)
-                                .padding(5)
-                        }
+                        // Clear of the select circle in the bottom-right corner.
+                        .padding(.leading, 6).padding(.vertical, 6).padding(.trailing, 38)
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -312,23 +312,27 @@ struct ClipPickerSheet: View {
             }
             .buttonStyle(.plain)
             .disabled(isSending)
-            .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in previewing = PreviewTarget(index: category.candidateMediaIDs.firstIndex(of: mediaID) ?? 0) })
             .accessibilityLabel(info.name + (suggested ? ", suggested" : ""))
             .accessibilityValue(isOn ? "Selected" : "Not selected")
             .accessibilityAddTraits(isOn ? .isSelected : [])
-            .accessibilityAction(named: "Preview clip") { previewing = PreviewTarget(index: category.candidateMediaIDs.firstIndex(of: mediaID) ?? 0) }
+            .accessibilityHint(info.isPhoto ? "Opens the photo" : "Opens the clip")
+            .accessibilityAction(named: isOn ? "Deselect" : "Select") { state.toggle(mediaID, in: category.key) }
             .accessibilityIdentifier("clip-thumb-\(category.key)-\(mediaID)")
-            Button { previewing = PreviewTarget(index: category.candidateMediaIDs.firstIndex(of: mediaID) ?? 0) } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 11, weight: .bold)).foregroundStyle(Color.white)
-                    .frame(width: 26, height: 26)
-                    .background(KriaColor.ink.opacity(0.78), in: Circle())
-                    .frame(width: 44, height: 44)
+            Button { state.toggle(mediaID, in: category.key) } label: {
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 26)).foregroundStyle(Color.white, KriaColor.ink)
+                    // A dim disc keeps the empty circle visible on a bright poster.
+                    .background(Circle().fill(KriaColor.ink.opacity(isOn ? 0 : 0.3)).padding(2))
+                    .padding(5)
+                    .frame(width: 44, height: 44, alignment: .bottomTrailing)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(info.isPhoto ? "Preview \(info.name)" : "Preview clip \(position)")
-            .accessibilityIdentifier("clip-preview-\(mediaID)")
+            .disabled(isSending)
+            .accessibilityLabel("Select \(info.name)")
+            .accessibilityValue(isOn ? "Selected" : "Not selected")
+            .accessibilityAddTraits(isOn ? .isSelected : [])
+            .accessibilityIdentifier("clip-select-\(category.key)-\(mediaID)")
         }
     }
 
@@ -369,16 +373,23 @@ struct ClipPickerSheet: View {
                     .accessibilityIdentifier("clip-none-\(category.key)")
                 }
             }
+            let answered = state.isAnswered(category.key)
+            let next = answered ? state.nextUnanswered(after: category.key) : nil
             Button {
+                if let next {
+                    categoryKey = next.key
+                    return
+                }
                 let submission = state.submission
                 doneToken += 1
                 submit(submission, submission.message(question: question, positions: positions, language: language))
                 dismiss()
             } label: {
-                Text(state.canSend ? "Done" : "Pick a clip or None of these").frame(maxWidth: .infinity)
+                Text(!answered ? "Pick a clip or None of these" : next == nil ? "Done" : "Next").frame(maxWidth: .infinity)
             }
             .buttonStyle(KriaPrimaryButtonStyle(minHeight: 48))
-            .disabled(!state.canSend || isSending)
+            .disabled(!answered || isSending)
+            .accessibilityHint(next.map { "Shows \($0.label)" } ?? "")
             .accessibilityIdentifier("clip-done")
         }
         .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
@@ -439,10 +450,10 @@ struct ClipThumbnailView: View {
 
 // MARK: - Preview pager
 
-/// Full preview opened by press-and-hold (or the corner control) on a tile: a horizontal pager over the same
-/// candidate list in grid order, starting at the held clip. Each page autoplays muted and loops while it is the
-/// current one (tap the video to unmute); the toggle selects or deselects the clip being shown, so the creator
-/// can pick while browsing. Swipe down or Close dismisses.
+/// Full preview opened by tapping a tile: a horizontal pager over the same candidate list in grid order, starting at
+/// the tapped clip. Each page autoplays muted and loops while it is the current one (the speaker control unmutes).
+/// "Use this clip" picks the clip being shown and goes back to the grid; on a picked clip the button removes it
+/// and stays. Swipe down or Close dismisses.
 struct ClipPreviewPager: View {
     let ids: [String]
     @Binding var state: ClipSelectionState
@@ -509,15 +520,18 @@ struct ClipPreviewPager: View {
                 .accessibilityIdentifier("clip-preview-index")
             Button {
                 state.toggle(currentID, in: categoryKey)
+                if !isOn { dismiss() }
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                    Text(isOn ? "Selected" : "Select this clip")
+                    Image(systemName: isOn ? "checkmark.circle.fill" : "plus.circle")
+                    Text(isOn ? "Selected" : "Use this clip")
                 }
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(KriaPrimaryButtonStyle(fill: isOn ? KriaColor.ink : KriaColor.butter, usesLightText: isOn, minHeight: 48))
+            .accessibilityLabel(isOn ? "Selected" : "Use this clip")
             .accessibilityValue(isOn ? "Selected" : "Not selected")
+            .accessibilityHint(isOn ? "Removes this clip" : "Picks this clip and goes back to the grid")
             .accessibilityIdentifier("clip-preview-toggle")
         }
         .padding(16)
@@ -551,8 +565,8 @@ struct ClipPreviewPage: View {
         ZStack {
             ClipThumbnailView(media: media, position: position, projectID: projectID, name: name)
             if let player, isCurrent {
-                VideoPlayer(player: player.player)
-                    .disabled(true)
+                // A bare layer: `VideoPlayer`'s hidden controls stall XCUITest (see `SongOrderPlayerSurface`).
+                SongOrderPlayerSurface(player: player.player)
                     .onAppear { if !reduceMotion { player.player.play() } }
                     .onDisappear { player.player.pause() }
                     .overlay(alignment: .topTrailing) {
@@ -584,6 +598,7 @@ struct ClipPreviewPage: View {
                         .font(KriaFont.body(12)).foregroundStyle(Color.white).multilineTextAlignment(.center)
                         .padding(8).background(KriaColor.ink.opacity(0.7), in: RoundedRectangle(cornerRadius: 8))
                         .padding(10)
+                        .accessibilityIdentifier("clip-preview-not-on-device")
                 }
             }
         }
@@ -595,7 +610,7 @@ struct ClipPreviewPage: View {
             // A photo has no video to play: its poster is the whole picture, so there is no "poster only" note.
             guard media.kind != "image" else { return }
             if player == nil {
-                if let projectID, let url = CreationMediaPreview.localOriginal(mediaID: media.id, projectID: projectID) {
+                if let url = ClipPreviewSource.localURL(mediaID: media.id, projectID: projectID) {
                     player = LoopingPlayer(url: url)
                     hasLocalVideo = true
                 } else {
@@ -608,6 +623,21 @@ struct ClipPreviewPage: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(previewLabel)
         .accessibilityIdentifier("clip-preview-player-\(media.id)")
+    }
+}
+
+/// A clip's original on this iPhone, for the preview (phone projects keep originals in the project directory).
+@MainActor enum ClipPreviewSource {
+    static func localURL(mediaID: String, projectID: UUID?) -> URL? {
+        #if DEBUG
+        // `KRIA_CHAT_CLIP_QUESTION=1`: the first fixture clip has a local original (a generated clip), the others
+        // do not, so a UI test sees both the playing and the poster-only page.
+        if ProcessInfo.processInfo.environment["KRIA_CHAT_CLIP_QUESTION"] == "1", mediaID == "fixture-clip" {
+            return SongTimelineFixture.clipURL(mediaID: mediaID, force: true)
+        }
+        #endif
+        guard let projectID else { return nil }
+        return CreationMediaPreview.localOriginal(mediaID: mediaID, projectID: projectID)
     }
 }
 
