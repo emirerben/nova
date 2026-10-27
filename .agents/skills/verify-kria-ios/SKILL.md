@@ -1,6 +1,6 @@
 ---
 name: verify-kria-ios
-description: Drive Kria iPhone creation, attachments, editor, delivery and slides with existing XCUITests. Use for launch checks and maintaining the native feature map.
+description: Drive Kria iPhone creation, media, editor, delivery, slides, account, camera recovery and retention warnings. Record billing and publication gaps separately.
 ---
 
 # Verify Kria on iPhone
@@ -38,10 +38,15 @@ bash .agents/skills/verify-kria-ios/scripts/verify.sh drive media
 bash .agents/skills/verify-kria-ios/scripts/verify.sh drive editor
 bash .agents/skills/verify-kria-ios/scripts/verify.sh drive delivery
 bash .agents/skills/verify-kria-ios/scripts/verify.sh drive slides
+bash .agents/skills/verify-kria-ios/scripts/verify.sh drive account
+bash .agents/skills/verify-kria-ios/scripts/verify.sh drive camera
+bash .agents/skills/verify-kria-ios/scripts/verify.sh drive retention
 ```
 
 Each drive launches through XCUITest and checks visible actions and results. Read
 [the feature index](features/README.md) for selectors, source and proof limits.
+`drive billing` and `drive publication` retain a missing-product-flow artifact and
+exit 3. They are gaps, not passing tests. No purchase or public post is made.
 The transport fixtures replace backend and provider responses. In the delivery
 UI fixture the exporter/upload are stand-ins. Use real native export checks too:
 
