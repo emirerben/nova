@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.158.0] - 2026-10-27
+
+### Changed
+- fix(kria): lip-sync reaches approval; unchecked asks no longer dead-end (KRI-983) (#1870) <!-- release-pr: 1870 -->
+
 ## [0.81.157.0] - 2026-10-27
 
 ### Changed
