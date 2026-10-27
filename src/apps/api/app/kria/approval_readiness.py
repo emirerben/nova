@@ -299,6 +299,7 @@ def assess_readiness(
                 contract, strategy, media=media, manifest=manifest, creator_id=creator_id
             ),
             research=dict(prepared_research) if prepared_research is not None else None,
+            user_song_attached=bool(media.get("song_path")),
         )
     )
     # Use the existing source-bounded execution plan, never the model's duration
