@@ -353,6 +353,20 @@ struct EditorTimedEffect: Codable, Equatable, Sendable {
     init(id: String, startS: Double, endS: Double, pointS: Double? = nil, kind: String? = nil, raw: [String: JSONValue] = [:]) {
         self.id = id; self.startS = startS; self.endS = endS; self.pointS = pointS; self.kind = kind; self.raw = raw
     }
+
+    /// A sound effect's block spans the audio it keeps: `trim_end_s ?? duration_s`
+    /// minus `trim_start_s`, from its `at_s`. Playback and export read the same fields.
+    static func soundEffectDisplayEnd(pointS: Double, raw: [String: JSONValue]) -> Double {
+        let trimStart = raw["trim_start_s"]?.numberValue ?? 0
+        let trimEnd = raw["trim_end_s"]?.numberValue ?? raw["duration_s"]?.numberValue ?? 0.1
+        return pointS + max(0.1, trimEnd - trimStart)
+    }
+
+    mutating func syncSoundEffectDisplay() {
+        guard let pointS else { return }
+        startS = pointS
+        endS = Self.soundEffectDisplayEnd(pointS: pointS, raw: raw)
+    }
 }
 
 struct EditorVisualBlock: Codable, Equatable, Sendable {
@@ -911,16 +925,7 @@ private extension EditorDocument {
             guard let o = object(value), let id = string(o["id"]) else { return nil }
             let pointS = number(o["at_s"])
             if let pointS {
-                // SFX placements are anchored at `at_s`; trim metadata describes
-                // the source slice, not a second timeline window. Give the
-                // timeline a visible (but conservative) display span while
-                // retaining the canonical point and trim fields for encoding.
-                let trimStart = number(o["trim_start_s"]) ?? 0
-                let trimEnd = number(o["trim_end_s"])
-                let duration = number(o["duration_s"])
-                let sourceSpan = (trimEnd ?? duration ?? 0.1) - trimStart
-                let displayEnd = pointS + max(0.1, sourceSpan)
-                return EditorTimedEffect(id: id, startS: pointS, endS: displayEnd, pointS: pointS, kind: string(o["kind"] ?? o["type"]), raw: o)
+                return EditorTimedEffect(id: id, startS: pointS, endS: EditorTimedEffect.soundEffectDisplayEnd(pointS: pointS, raw: o), pointS: pointS, kind: string(o["kind"] ?? o["type"]), raw: o)
             }
             guard let start = number(o["start_s"] ?? o["start"] ?? o["at_s"]),
                   let end = number(o["end_s"] ?? o["end"] ?? o["at_s"]) else { return nil }

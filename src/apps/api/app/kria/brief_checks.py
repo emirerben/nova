@@ -71,6 +71,7 @@ from app.pipeline.caption_language import (
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.explicit_speech_cut import speech_cut_tokens
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
+from app.pipeline.song_captions import mentions_lipsync
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
     LABEL_ANCHORS,
@@ -78,7 +79,12 @@ from app.schemas.text_style_intent import (
     normalize_title_animation,
 )
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
-from app.services.clip_order_sequence import row_relations, sequence_rows
+from app.services.clip_order_sequence import (
+    row_relations,
+    sequence_rows,
+    unconfirmed_order_groups,
+    unconfirmed_order_reason,
+)
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import (
     creator_duration_satisfied,
@@ -341,6 +347,7 @@ class PlanFacts:
     # as the creator's own words and the spot ("the video that is blue (first)"). Read off
     # the finished order like `sequence_statuses`; empty = every stated group landed.
     sequence_unmet: tuple[str, ...] = ()
+    sequence_unconfirmed: tuple[str, ...] = ()
     # ... and the stated groups none of whose clips are in the edit (deselected, or no match):
     # absent, not misplaced. A group made only of clips an earlier group already seated, or of
     # Visuals-pool items, is neither (the planner outcome's ``code`` says which).
@@ -480,6 +487,10 @@ class PlanFacts:
     capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
     # The strategy's audio strategy ("voiceover", "original_audio", ...); None = unknown.
     audio_strategy: str | None = None
+    # KRI-983: how a `user_song` strategy plays the creator's song ("lipsync" / "background"),
+    # and whether their song is attached to the draft's pinned media. None = unknown.
+    song_sync: str | None = None
+    user_song_attached: bool | None = None
     # The strategy's render program ("native", "guided"); None = unknown. KRI-889: a
     # guided story's voiceover is not cut around named lines.
     render_program: str | None = None
@@ -871,23 +882,39 @@ def plan_facts_from_strategy(
     (the caller's cohort check); None keeps the cleanup receipt from promising it.
     """
     strategy = strategy or {}
-    per_clip: dict[str, str] = {}
-    inferred: dict[str, str] = {}
+    per_clip_parts: dict[str, list[str]] = {}
+    inferred_parts: dict[str, list[str]] = {}
+    label_texts: list[str] = []
     for intent in strategy.get("resolved_clip_intents") or []:
-        if not isinstance(intent, Mapping) or intent.get("op") != "label":
+        if not isinstance(intent, Mapping) or intent.get("status", "resolved") != "resolved":
+            continue
+        if intent.get("op") not in {"label", "caption"}:
             continue
         for assignment in intent.get("assignments") or []:
             if not isinstance(assignment, Mapping):
                 continue
             media_id = str(assignment.get("media_id") or "")
-            value = assignment.get("value")
+            value = (
+                intent.get("caption_text")
+                if intent.get("op") == "caption"
+                else assignment.get("value")
+            )
+            grounding = (
+                intent.get("caption_grounding")
+                if intent.get("op") == "caption"
+                else assignment.get("grounding")
+            )
             if not media_id or not value:
                 continue
-            per_clip[media_id] = str(value)
+            per_clip_parts.setdefault(media_id, []).append(str(value))
+            if intent.get("op") == "label":
+                label_texts.append(str(value))
             # Only the creator's own words are "read"; everything the server
             # matched from footage or the record is reported as inferred.
-            if assignment.get("grounding") not in {"creator_text", "placeholder"}:
-                inferred[media_id] = str(value)
+            if grounding not in {"creator_text", "placeholder"}:
+                inferred_parts.setdefault(media_id, []).append(str(value))
+    per_clip = {media: "\n".join(dict.fromkeys(parts)) for media, parts in per_clip_parts.items()}
+    inferred = {media: "\n".join(dict.fromkeys(parts)) for media, parts in inferred_parts.items()}
     labels = tuple(str(x) for x in (strategy.get("shot_labels") or []) if str(x).strip())
     title = strategy.get("opening_title")
     texts = [
@@ -896,7 +923,7 @@ def plan_facts_from_strategy(
             title,
             strategy.get("closing_title"),
             *labels,
-            *per_clip.values(),
+            *label_texts,
             *_pinned_text_values(strategy.get("pinned_texts")),
         )
         if value
@@ -943,12 +970,21 @@ def plan_facts_from_strategy(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
         ),
         sequence_conflicts=_strategy_sequence_conflicts(strategy),
+        sequence_unconfirmed=tuple(
+            sorted(
+                name
+                for _position, name, _members in unconfirmed_order_groups(
+                    strategy.get("resolved_clip_intents")
+                )
+            )
+        ),
         texts=tuple(texts),
         edit_format=str(edit_format) if edit_format else None,
         speech_cleanup_enabled=speech_cleanup_enabled,
         speech_cleanup_offered=speech_cleanup_offered,
         caption_style=str(caption_style) if caption_style else None,
         audio_strategy=str(audio_strategy) if audio_strategy else None,
+        song_sync=str(strategy["song_sync"]) if strategy.get("song_sync") else None,
         speech_occurrence_answers=tuple(
             dict(a)
             for a in strategy.get("choice_answers") or []
@@ -1119,6 +1155,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             if isinstance(row, Mapping) and row.get("op") == "order" and row.get("status") == "met"
         ),
         sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
+        sequence_unconfirmed=_sequence_problems(record, ("member_order_unknown",)),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         sequence_conflicts=_sequence_problems(record, ("conflict",)),
         sequence_unlocated=tuple(
@@ -1907,6 +1944,27 @@ def _ending_clip_receipt_fact(receipt: object) -> EndingClipFact | None:
     )
 
 
+def _with_narrated_text_rows(variant: Mapping[str, Any]) -> Mapping[str, Any]:
+    """``variant`` with its phone Voiceover text rows as ordinary text lanes (KRI-963).
+
+    A phone Narrated render keeps the title it drew (and text placed at a spoken word, or
+    added in the editor) in ``narrated_title_text_elements``, the one store an editor Save
+    rewrites, never in ``text_elements``. A row the creator removed is not on screen.
+    """
+    rows = variant.get("narrated_title_text_elements")
+    if not isinstance(rows, list) or not rows:
+        return variant
+    current = variant.get("text_elements")
+    lanes = list(current) if isinstance(current, list) else []
+    shown = {row.get("id") for row in lanes if isinstance(row, Mapping)}
+    extra = [
+        row
+        for row in rows
+        if isinstance(row, Mapping) and not row.get("removed") and row.get("id") not in shown
+    ]
+    return {**variant, "text_elements": lanes + extra} if extra else variant
+
+
 def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFacts:
     """Facts off a rendered phone variant (KRI-537).
 
@@ -1918,7 +1976,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     """
     if not isinstance(variant, Mapping):
         return PlanFacts()
-    base = plan_facts_from_editor_payload(variant)
+    base = plan_facts_from_editor_payload(_with_narrated_text_rows(variant))
     changes = _phone_receipt_facts(
         variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
     )
@@ -2173,6 +2231,7 @@ _MONTAGE_ORDER_FIELDS = (
     "ordering_choice",
     "sequence_statuses",
     "sequence_unmet",
+    "sequence_unconfirmed",
     "sequence_absent",
     "sequence_conflicts",
     "sequence_unlocated",
@@ -2775,6 +2834,8 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     laid out yet (its order is judged when it renders)."""
     if facts.narrated_steps is not None:
         return _check_narrated_order(req, facts)
+    if facts.sequence_unconfirmed:
+        return _receipt(req, "partial", unconfirmed_order_reason())
     if facts.sequence_conflicts and not (facts.sequence_unmet or facts.sequence_absent):
         # KRI-764: one clip asked to be first AND last. The earlier ask stands and the edit
         # still renders, so say so (before approval too) instead of refusing the render.
@@ -3977,6 +4038,12 @@ _SPEED_NO_FOOTAGE = (
     "I can't speed these clips up: the video already shows each one whole, so there's no "
     "footage left to speed through"
 )
+# KRI-983: a lip-sync ask the draft does not carry out.
+_SONG_NOT_ATTACHED = "Add your song first and I'll use it."
+_SONG_NOT_USED = "This draft doesn't use your song."
+_SONG_IN_BACKGROUND = (
+    "This draft plays your song in the background; your clips aren't matched to its words."
+)
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
 _BED_STILL_PLAYS = "The footage sound still plays"
@@ -4219,6 +4286,11 @@ _REASON_TR: dict[str, str] = {
     _NO_CLIP_SPEED_SONG: (
         "Bu düzenlemede klip hızını değiştiremiyorum çünkü klipler şarkını takip ediyor, "
         "o yüzden normal hızda oynuyorlar"
+    ),
+    _SONG_NOT_ATTACHED: "Önce şarkını ekle, ben de onu kullanayım.",
+    _SONG_NOT_USED: "Bu taslak şarkını kullanmıyor.",
+    _SONG_IN_BACKGROUND: (
+        "Bu taslak şarkını arka planda çalıyor; klipler sözlerine göre yerleştirilmedi."
     ),
     _NO_SPEED_ON_FREEZE: (
         "Donmuş kare tutan bir klibin hızını değiştiremiyorum, o yüzden normal hızda oynuyor"
@@ -5108,8 +5180,23 @@ def _speech_cue(req_text: str, pattern: re.Pattern[str]) -> bool:
     return bool(pattern.search(req_text) or pattern.search(loose_text(req_text)))
 
 
+def _records_caption_ask(req: BriefRequirement) -> bool:
+    """The model recorded this requirement as a captions ask (``captions``,
+    ``caption_language`` or ``spellings``) and recorded no spoken triggers."""
+    return (
+        _caption_fact(req) is not None
+        or _caption_language_fact(req) is not None
+        or bool(_spellings_fact(req))
+    ) and not _fact_triggers(req)
+
+
 def _wants_speech(req: BriefRequirement) -> bool:
-    return req.kind in _BEAT_KINDS and _speech_cue(_req_text(req), _SPEECH_EXCERPT_RE)
+    # KRI-961: the recorded captions facts decide (KRI-667). "English captions on my voice"
+    # names the voice the captions are on; read as a speech-excerpt ask it lost its captions
+    # check and the spellings the render applies (`brief_caption_spellings`).
+    if req.kind not in _BEAT_KINDS or _records_caption_ask(req):
+        return False
+    return _speech_cue(_req_text(req), _SPEECH_EXCERPT_RE)
 
 
 def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -7395,6 +7482,13 @@ def asks_caption_language(req: BriefRequirement) -> bool:
     return _wants_captions(req) and _requested_caption_language(req) is not None
 
 
+def asks_caption_spelling(req: BriefRequirement) -> bool:
+    """KRI-961: True for a captions ask that lists words to spell. Only the caption lines
+    can settle it, so a record without them (the Voiceover alignment record) leaves it to
+    the finished captions instead of answering for its language alone."""
+    return _wants_captions(req) and not _wants_no_captions(req) and bool(_spelled_names(req))
+
+
 # ------------------------------------------------------------- caption words (KRI-549)
 # "altyazılar Türkçe olsun; Moda, Bahariye, Yeldeğirmeni ve Kadıköy doğru yazılsın" on a
 # finished phone render: the language is judged against the variant's `caption_language`
@@ -7748,9 +7842,10 @@ def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool,
                 and _GLUED_SUFFIX_RE.fullmatch(squashed[len(want) :])
             ):
                 other = shown
-            elif other is None and size == name_words and is_mishearing(shown, name):
+            elif other is None and abs(size - name_words) <= 1 and is_mishearing(shown, name):
                 # KRI-793: the same name heard another way ("Meropa" for Merope, "Ole de
-                # la Casa" for Oblea de la Casa): the rule the render's respelling uses.
+                # la Casa" for Oblea de la Casa), KRI-961 with a word more or fewer
+                # ("Olloda bife" for ojo de bife): the rule the render's respelling uses.
                 other = shown
     return exact, other
 
@@ -8878,6 +8973,42 @@ def _wants_source_sound_kept(req: BriefRequirement) -> bool:
     )
 
 
+def wants_lipsync(req: BriefRequirement) -> bool:
+    """KRI-983: "lipsync to the uploaded song", read by `song_captions.mentions_lipsync`.
+
+    Asks another audio reader already owns (a typed `audio_intent`, the footage's own sound, a
+    voice bed, beats, speech, captions) keep their checker."""
+    if (
+        req.kind not in _BEAT_KINDS
+        or "audio_intent" in req.facts
+        or _wants_captions(req)
+        or _wants_source_sound_kept(req)
+        or _wants_beats(req)
+        or _wants_closing(req)
+        or _wants_speech(req)
+        or _wants_bed_under_voice(req)
+        or _wants_bed_muted(req)
+        or _wants_cleanup(req)
+        or wants_engine_noise_reduction(req)
+        or requirement_clip_sound(req) is not None
+        or requirement_sound_toggle(req) is not None
+    ):
+        return False
+    return mentions_lipsync(" ".join(x for x in (req.description, req.literal) if x))
+
+
+def _check_lipsync(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if facts.user_song_attached is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if not facts.user_song_attached:
+        return _receipt(req, "not_possible", _loc(_SONG_NOT_ATTACHED))
+    if facts.audio_strategy != "user_song":
+        return _receipt(req, "not_possible", _loc(_SONG_NOT_USED))
+    if facts.song_sync != "lipsync":
+        return _receipt(req, "not_possible", _loc(_SONG_IN_BACKGROUND))
+    return _receipt(req, "met", None)
+
+
 # KRI-700: brightening or darkening the footage itself. No draft can carry it: a strategy has
 # no exposure field, and the phone plans only take the warm `golden_hour` look, which adds
 # contrast and so makes near-black night clips darker, not brighter. The model that read the
@@ -9049,6 +9180,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if _wants_source_sound_kept(req):
         return True
+    if wants_lipsync(req):
+        return True  # KRI-983
     if req.kind in _BEAT_KINDS:
         return (
             _wants_beats(req)
@@ -9529,6 +9662,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         and not (facts.rendered_variant and _wants_captions(req))
     ):
         return _check_style(req, facts)
+    elif wants_lipsync(req):
+        return _check_lipsync(req, facts)
     elif req.kind in _BEAT_KINDS and _wants_speech(req) and facts.speech_sections is not None:
         return _check_speech_excerpts(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _closing_photo_ask(req, facts)):
@@ -9993,6 +10128,9 @@ _OUTCOME_REASON_TR = {
     "its clips are already in an earlier group": "klipleri zaten önceki bir grupta",
     "its clips are already placed at another spot": "klipleri zaten başka bir yerde",
     "the clips did not end up there": "klipler oraya gelmedi",
+    "the order inside this saved group wasn't recorded": (
+        "kaydedilmiş bu grubun iç sırası belirtilmemiş"
+    ),
     # KRI-723 (``unified_montage.MOMENT_*``).
     "I couldn't find this moment in your clip, so I can't confirm it's the one playing": (
         "Bu anı klipte bulamadım, o yüzden oynayanın o an olduğunu doğrulayamıyorum"
@@ -10202,6 +10340,7 @@ __all__ = [
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "asks_caption_spelling",
     "brief_caption_spellings",
     "keeps_model_summary",
     "wants_light_change",
@@ -10232,4 +10371,5 @@ __all__ = [
     "render_block_recovery",
     "reply_from_receipts",
     "speech_cleanup_review_note",
+    "wants_lipsync",
 ]

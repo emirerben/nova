@@ -2,6 +2,71 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.160.0] - 2026-10-27
+
+### Changed
+- feat(metrics): preserve request outcomes and expand iPhone verification (#1876) <!-- release-pr: 1876 -->
+
+## [0.81.159.0] - 2026-10-27
+
+### Changed
+- fix(kria): unblock Cunda compilation and report saved drafts honestly (#1869) <!-- release-pr: 1869 -->
+
+## [0.81.158.0] - 2026-10-27
+
+### Changed
+- fix(kria): lip-sync reaches approval; unchecked asks no longer dead-end (KRI-983) (#1870) <!-- release-pr: 1870 -->
+
+## [0.81.157.0] - 2026-10-27
+
+### Changed
+- fix(ios): sideways scroll rows scroll themselves instead of dragging the projects drawer (KRI-985) (#1873) <!-- release-pr: 1873 -->
+
+## [0.81.156.0] - 2026-10-27
+
+### Changed
+- fix(launch): recover Photos interruptions and strengthen request replays (#1854) <!-- release-pr: 1854 -->
+
+## [0.81.155.0] - 2026-10-27
+
+### Changed
+- fix(ios): SFX trim resizes the timeline block; first tap selects for trim (KRI-977) (#1867) <!-- release-pr: 1867 -->
+
+## [0.81.154.0] - 2026-10-27
+
+### Changed
+- fix(ios): text alignment keeps the block still; add safe-area Position buttons (KRI-976) (#1866) <!-- release-pr: 1866 -->
+
+## [0.81.153.0] - 2026-10-27
+
+### Fixed
+- fix(kria): the simpler version names what it leaves out (KRI-968) (#1863) <!-- release-pr: 1863 -->
+
+## [0.81.152.0] - 2026-10-27
+
+### Fixed
+- fix(kria): open where an unheard quote head was said, not on the heard tail (KRI-967) (#1862) <!-- release-pr: 1862 -->
+
+## [0.81.151.0] - 2026-10-27
+
+### Fixed
+- fix(phone): editor plays the quoted Talking window, not the whole take (KRI-965) (#1860) <!-- release-pr: 1860 -->
+
+## [0.81.150.0] - 2026-10-27
+
+### Fixed
+- fix(phone): hear a creator-named phrase spoken as one word more or fewer (KRI-961) (#1858) <!-- release-pr: 1858 -->
+
+## [0.81.149.0] - 2026-10-27
+
+### Fixed
+- fix(kria): a finished Voiceover video no longer says its drawn title is missing (KRI-963) (#1856) <!-- release-pr: 1856 -->
+
+## [0.81.148.0] - 2026-10-27
+
+### Changed
+- fix(ci): main green — picker tests expect each other's fix; camera-roll iPhone step runs tests that exist (#1865) <!-- release-pr: 1865 -->
+
 ## [0.81.147.0] - 2026-10-26
 
 ### Changed

@@ -389,12 +389,15 @@ def test_behind_subject_45s_window_not_clamped_at_long_running_ceiling(tmp_workd
         assert call.args[0] != "skia_long_running_text_duration_clamped"
 
 
-@pytest.mark.timeout(180)
 def test_behind_subject_window_past_ceiling_clamps_with_warning(tmp_workdir, monkeypatch):
     """A window past BEHIND_SUBJECT_FRAME_CEILING must clamp to exactly that
     many frames and log the existing truncation warning."""
     monkeypatch.setattr(tos, "_write_rgba_array_png", lambda arr, out_path: None)
     monkeypatch.setattr(tos, "_apply_subject_mask", lambda rgba, mask: rgba)
+    # Same clamp path with a small ceiling: the real 14,400 frames took 78-180+ s
+    # on a loaded CI shard. The real ceiling's size is pinned in
+    # test_text_overlay_skia.py.
+    monkeypatch.setattr(tos, "BEHIND_SUBJECT_FRAME_CEILING", 90)
 
     ceiling_s = tos.BEHIND_SUBJECT_FRAME_CEILING / tos.FPS
     duration_s = ceiling_s + 30.0

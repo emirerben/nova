@@ -39,6 +39,7 @@ struct NativeEditorView: View {
     private struct DrawMode: Equatable { var appendingTo: String? }
     @State private var showsEmptyAddClip = false
     @State private var selectedTextForActions: String?
+    @State private var selectedSoundEffectForActions: String?
     /// KRI-185: a block opened from the Text tab's list edits its words first and
     /// returns to that list; one opened from the timeline keeps the old behaviour.
     @State private var textEditOrigin: TextEditOrigin = .timeline
@@ -860,8 +861,10 @@ struct NativeEditorView: View {
         guard let selection = session.selection else {
             if case .text = panel { changePanel(to: nil) }
             selectedTextForActions = nil
+            selectedSoundEffectForActions = nil
             return
         }
+        if selection.kind != .soundEffect { selectedSoundEffectForActions = nil }
         if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
             changePanel(to: .visuals)
             return
@@ -872,6 +875,11 @@ struct NativeEditorView: View {
             return
         }
         if selection.kind == .soundEffect {
+            guard panel == .sounds || selectedSoundEffectForActions == selection.id else {
+                changePanel(to: nil)
+                selectedSoundEffectForActions = selection.id
+                return
+            }
             panelDrafts.soundsTab = .effects
             panelDrafts.sfxScreen = .home
             changePanel(to: .sounds)

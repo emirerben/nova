@@ -32,6 +32,12 @@ KRI-550: an `occurrence: "every"` beat that placed something but was heard
 more often than the caps below allow ALSO gets one `unplaced` entry per
 dropped hit (reason `"occurrence_cap"`, with its `at_s`), so a receipt can
 say "N of M" instead of claiming every hit landed.
+
+KRI-961: a trigger is matched exactly after folding first. Only when it is never heard
+exactly is it looked for as the creator named it heard another way -- one word more or
+fewer, by `app.pipeline.caption_spelling.find_named_phrase`, the matcher the captions
+respell with ("Olloda bife" for "ojo de bife") -- and the placed entry then carries the
+heard words as `heard_as`.
 """
 
 from __future__ import annotations
@@ -220,10 +226,11 @@ def trigger_vocabulary_prompt(beats: list, closing: dict | None) -> str | None:
     """The creator's trigger phrases, spelled as they typed them, as a whisper
     bias prompt -- None when there are none.
 
-    Matching is exact after folding, and whisper misspells names it has no
-    context for ("Mason Grumet", "Bileovic", "Trossart"), so every misspelled
-    name is a missed beat. Job 385e3b13's audio heard 5/13 triggers without
-    this prompt and 13/13 with it.
+    Matching is exact after folding (with only a narrow near-hearing fallback,
+    KRI-961), and whisper misspells names it has no context for ("Mason
+    Grumet", "Bileovic", "Trossart"), so a misspelled name is mostly a missed
+    beat. Job 385e3b13's audio heard 5/13 triggers without this prompt and
+    13/13 with it.
     """
     candidates: list[object] = []
     for beat in beats or []:
@@ -304,16 +311,60 @@ def _find_all(stream_tokens: list[str], target: list[str]) -> list[int]:
     return [i for i in range(n - m + 1) if stream_tokens[i : i + m] == target]
 
 
+# (start_s, end_s, the heard words when the phrase was heard another way, else None)
+_Heard = tuple[float, float, str | None]
+_HEARD_AS_EDGES = " \t\n,.;:!?\"'“”‘’«»()[]"
+
+
+def _named_phrase_windows(words: list[dict], phrase: str) -> list[_Heard]:
+    """KRI-961: where the voice says ``phrase`` heard another way ("Olloda bife" for "ojo de
+    bife"), by the creator-named phrase matcher the captions respell with
+    (`caption_spelling.find_named_phrase`), so a word the captions write the creator's way
+    is a word the card hears."""
+    from app.pipeline.caption_spelling import find_named_phrase  # noqa: PLC0415
+
+    timed = [word for word in words or [] if isinstance(word, dict)]
+    texts = [str(word.get("text") or "") for word in timed]
+    out: list[_Heard] = []
+    for hit in find_named_phrase(texts, phrase):
+        start_s = _coerce_float(timed[hit.start].get("start_s"), 0.0)
+        end_s = _coerce_float(timed[hit.stop - 1].get("end_s"), start_s)
+        heard = " ".join(texts[hit.start : hit.stop]).strip(_HEARD_AS_EDGES)
+        out.append((start_s, end_s, None if hit.exact else heard[:_MAX_LABEL_LEN]))
+    return out
+
+
+def _phrase_windows(stream: list[_Token], words: list[dict] | None, phrase: str) -> list[_Heard]:
+    """Every spoken occurrence of ``phrase``, in time order: the exact folded-token matches;
+    only when there are none, the creator-named phrase matcher's hearings (KRI-961, when the
+    caller passes the raw ``words``). A phrase heard exactly is never also placed on a
+    near-hearing of it elsewhere."""
+    tokens = fold_tokens(phrase)
+    if not tokens:
+        return []
+    starts = _find_all([t.text for t in stream], tokens)
+    if starts or words is None:
+        return [(stream[i].start_s, stream[i + len(tokens) - 1].end_s, None) for i in starts]
+    return _named_phrase_windows(words, phrase)
+
+
 @dataclass(frozen=True)
 class _MatchResult:
     windows: list[tuple[float, float]] = field(default_factory=list)
     reason: str | None = None
     # KRI-550: qualifying "every" hits past MAX_REACTION_OCCURRENCES, in time order.
     capped: list[tuple[float, float]] = field(default_factory=list)
+    # KRI-961: per window, the heard words when the trigger was heard another way.
+    heard_as: tuple[str | None, ...] = ()
 
 
 def _match_trigger(
-    stream: list[_Token], trigger: str, after: str | None, occurrence: str
+    stream: list[_Token],
+    trigger: str,
+    after: str | None,
+    occurrence: str,
+    *,
+    words: list[dict] | None = None,
 ) -> _MatchResult:
     """Find qualifying spoken occurrences of ``trigger`` in ``stream``.
 
@@ -322,39 +373,35 @@ def _match_trigger(
     never heard, or every ``trigger`` match falls before/at it, the whole
     lookup fails with reason ``"after_not_heard"`` rather than silently
     falling back to "any occurrence".
+
+    ``words`` (KRI-961, the raw transcript words): a trigger or ``after`` never heard
+    exactly is looked for as the creator named it heard another way
+    (`_named_phrase_windows`). Without it the match stays exact.
     """
 
-    trigger_tokens = fold_tokens(trigger)
-    if not trigger_tokens:
-        return _MatchResult(reason="never_heard")
-    stream_tokens = [t.text for t in stream]
-    starts = _find_all(stream_tokens, trigger_tokens)
-    if not starts:
+    hits = _phrase_windows(stream, words, trigger)
+    if not hits:
         return _MatchResult(reason="never_heard")
 
     after_end_s: float | None = None
     if after:
-        after_tokens = fold_tokens(after)
-        after_starts = _find_all(stream_tokens, after_tokens) if after_tokens else []
-        if not after_starts:
+        after_hits = _phrase_windows(stream, words, after)
+        if not after_hits:
             return _MatchResult(reason="after_not_heard")
-        after_end_s = stream[after_starts[0] + len(after_tokens) - 1].end_s
+        after_end_s = after_hits[0][1]
 
-    windows: list[tuple[float, float]] = []
-    for start_index in starts:
-        match_start_s = stream[start_index].start_s
-        match_end_s = stream[start_index + len(trigger_tokens) - 1].end_s
-        if after_end_s is not None and not (match_start_s > after_end_s):
-            continue
-        windows.append((match_start_s, match_end_s))
-    if not windows:
+    qualifying = [hit for hit in hits if after_end_s is None or hit[0] > after_end_s]
+    if not qualifying:
         return _MatchResult(reason="after_not_heard")
+    windows = [(start_s, end_s) for start_s, end_s, _heard in qualifying]
+    heard_as = tuple(heard for _start_s, _end_s, heard in qualifying)
     if occurrence == "every":
         return _MatchResult(
             windows=windows[:MAX_REACTION_OCCURRENCES],
             capped=windows[MAX_REACTION_OCCURRENCES:],
+            heard_as=heard_as[:MAX_REACTION_OCCURRENCES],
         )
-    return _MatchResult(windows=windows[:1])
+    return _MatchResult(windows=windows[:1], heard_as=heard_as[:1])
 
 
 # --- pool asset / sfx resolution ---------------------------------------------
@@ -475,6 +522,8 @@ class _Occurrence:
     sound_label: str | None = None
     failed: bool = False
     reason: str | None = None
+    # KRI-961: the heard words when the trigger was heard another way ("Olloda bife").
+    heard_as: str | None = None
 
 
 def _slot_defaults(slot: str) -> dict[str, float]:
@@ -656,7 +705,7 @@ def ground_phone_reaction_beats(
                 # They neither use PiP slots nor face/caption-safe geometry.
                 slot = "fullscreen"
 
-            match = _match_trigger(stream, trigger, after, str(occurrence_mode))
+            match = _match_trigger(stream, trigger, after, str(occurrence_mode), words=words)
             if match.reason:
                 _record_beat_failure(beat_id, trigger, match.reason)
                 continue
@@ -705,6 +754,11 @@ def ground_phone_reaction_beats(
                     trigger=trigger,
                     match_start_s=match_start_s,
                     match_end_s=match_end_s,
+                    heard_as=(
+                        match.heard_as[occurrence_index - 1]
+                        if occurrence_index <= len(match.heard_as)
+                        else None
+                    ),
                 )
                 occurrences[(beat_id, occurrence_index)] = occ
 
@@ -804,12 +858,9 @@ def ground_phone_reaction_beats(
 
             from_s = max(0.0, duration_s - _CLOSING_DEFAULT_LOOKBACK_S)
             if from_trigger:
-                from_tokens = fold_tokens(str(from_trigger))
-                stream_tokens = [t.text for t in stream]
-                starts = _find_all(stream_tokens, from_tokens)
-                if starts:
-                    last_start = starts[-1]
-                    from_s = stream[last_start + len(from_tokens) - 1].end_s
+                from_hits = _phrase_windows(stream, words, str(from_trigger))
+                if from_hits:
+                    from_s = from_hits[-1][1]  # the end of its last spoken occurrence
 
             start_s = max(0.0, min(from_s, duration_s))
             end_s = duration_s
@@ -1071,6 +1122,8 @@ def ground_phone_reaction_beats(
                 entry["end_s"] = round(occ.match_end_s, 3)
             if occ.sound is not None:
                 entry["sound_label"] = occ.sound_label
+            if occ.heard_as:
+                entry["heard_as"] = occ.heard_as  # KRI-961: placed on a near hearing
             placed.append(entry)
         elif occ.reason and beat_id not in seen_unplaced_beats:
             unplaced.append(

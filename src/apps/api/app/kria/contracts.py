@@ -54,6 +54,12 @@ class KriaTurnPlan(_KriaModel):
     # KRI-282: thumbnail clip-picker payload for a "which clips show X?" question.
     # Omitted from the dump when unset so every other plan stays byte-identical.
     clip_question: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-950: the clip-intent planner's checked list behind that picker, so a turn whose only
+    # input is the tap reuses it instead of re-asking the model. Server-only: never copied into
+    # the chat event (creator words), summarized in the admin view. Same omit-when-unset rule.
+    clip_intent_inventory: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: not value
+    )
     # KRI-374: the "where do these takes sit in your song?" video-widget question.
     # Omitted from the dump when unset so every other plan stays byte-identical.
     song_order_question: SongOrderQuestion | None = Field(

@@ -184,7 +184,10 @@ def analysis_basis(
     from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan  # noqa: PLC0415
     from app.services.creation_text_composition import _lanes  # noqa: PLC0415
-    from app.services.phone_montage_preflight import preflight_montage_plan  # noqa: PLC0415
+    from app.services.phone_montage_preflight import (  # noqa: PLC0415
+        MontagePreflightSkip,
+        preflight_montage_plan,
+    )
 
     rows = list(visuals() if callable(visuals) else visuals or [])
     try:
@@ -200,7 +203,7 @@ def analysis_basis(
     except UnsupportedPhonePlan:
         planned = None
     slots = None
-    if planned is not None:
+    if planned is not None and planned is not MontagePreflightSkip.OTHER_WRITER:
         _texts, slots = _lanes(compile_proposal_execution_plan(planned[0].snapshot))
     return {"visuals": [_visual_identity(row) for row in rows], "slots": slots}
 
@@ -321,9 +324,8 @@ def _schema_failure(exc: BaseException) -> BaseException | None:
 def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> PreparedResearch | None:
     """Research the draft ``inputs`` describe, exactly as the render would.
 
-    ``None`` when the draft does not render through the unified phone montage (the render
-    keeps today's path). Raises ``ResearchNotFinished`` when the turn ran out of time;
-    every other limit is a ``failed`` result with the precise reason.
+    A selected different writer returns a precise failed result. An unresolved preflight
+    returns ``None``. Raises ``ResearchNotFinished`` when the turn ran out of time.
     """
     from app.agents._runtime import AgentError  # noqa: PLC0415
     from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
@@ -333,7 +335,10 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
         creation_model_snapshot,
         snapshot_copy_constraints,
     )
-    from app.services.phone_montage_preflight import preflight_montage_plan  # noqa: PLC0415
+    from app.services.phone_montage_preflight import (  # noqa: PLC0415
+        MontagePreflightSkip,
+        preflight_montage_plan,
+    )
     from app.services.researched_text import (  # noqa: PLC0415
         ResearchUnavailable,
         prepared_research_texts,
@@ -356,6 +361,24 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
         return None  # the planner declines; the KRI-775 check and the worker say why
     if planned is None:
         return None
+    if planned is MontagePreflightSkip.OTHER_WRITER:
+        return _failed(
+            request,
+            requirement.id,
+            basis,
+            say(
+                en=(
+                    "Before approval, this edit format cannot prepare sourced research text. "
+                    "I can show you sourced facts in a standard montage instead, or keep "
+                    "this format without the facts if you choose."
+                ),
+                tr=(
+                    "Bu kurgu türü onaydan önce kaynaklı araştırma metni hazırlayamıyor. "
+                    "İstersen kaynaklı bilgileri standart bir montajda gösterebilirim ya da "
+                    "bu türü bilgiler olmadan koruyabilirim."
+                ),
+            ),
+        )
     plan, _aliases = planned
     snapshot = plan.snapshot
     execution = compile_proposal_execution_plan(snapshot)

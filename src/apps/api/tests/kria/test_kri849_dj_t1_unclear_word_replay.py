@@ -336,9 +336,16 @@ async def answered(
     """Ask, tap ``key``, gate again: (the strategy approval would pin, the brief it pins)."""
     brief = brief or brief_for()
     first = await gate(monkeypatch, brief, row)
+    events: list[tuple] = []
+    length = first.plan.choice_question or {}
+    if length.get("kind") == "length_vs_natural":
+        # KRI-966: a start line that keeps less than "about 15 seconds" of the take is asked
+        # about first (the window card); the creator keeps the part their lines keep.
+        events = [question_event(length), tap_event(length, "accept_natural", "t-length")]
+        first = await gate(monkeypatch, brief, row, events)
     question = asked(first)
     assert question is not None, first.plan.response
-    events = [question_event(question), tap_event(question, key)]
+    events = [*events, question_event(question), tap_event(question, key)]
     second = await gate(monkeypatch, brief, row, events)
     assert second.plan.mode == "act", second.plan.response
     strategy = copy.deepcopy(second.plan.intents[0].arguments["strategy"])

@@ -1153,6 +1153,7 @@ def _build_resolver_input(
             creator_text=i.creator_text,
             caption_attribute=i.caption_attribute,
             position=i.position,
+            ordered_members=i.ordered_members,
         )
         for i in intents
     ]
@@ -1336,6 +1337,7 @@ async def resolve_clip_intents_for_turn(
                     creator_text=i.creator_text,
                     placeholder=i.placeholder,
                     position=i.position,
+                    ordered_members=i.ordered_members,
                     status="needs_creator",
                     assignments=[],
                     question=_generic_question(),
@@ -1958,6 +1960,30 @@ async def resolve_clip_intents_for_turn(
             creator_request=creator_request,
         )
 
+    take = (
+        _only_video(clips)
+        if settings.kria_clip_selection_questions_enabled and len(clips) == 1
+        else None
+    )
+    if take is not None:
+        for work in work_by_id.values():
+            if (
+                not work.kept
+                and not work.considered_media_ids
+                and work.intent.op != "exclude"
+                and picker_eligible(work.intent)
+            ):
+                vision_candidates.append(
+                    _VisionCandidate(
+                        media_id=take.media_id,
+                        intent_id=work.intent.intent_id,
+                        op=work.intent.op,
+                        attribute=work.intent.attribute,
+                        question=_fallback_question(work.intent),
+                        fallback_value=None,
+                        creator_text=work.intent.creator_text,
+                    )
+                )
     await run_candidates(vision_candidates, apply_membership)
 
     if soft_candidates:
@@ -2159,6 +2185,7 @@ async def resolve_clip_intents_for_turn(
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
+                    ordered_members=intent.ordered_members,
                     status="needs_creator",
                     assignments=work.kept,
                     question=None,  # set on the turn-level question below
@@ -2176,6 +2203,7 @@ async def resolve_clip_intents_for_turn(
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
+                    ordered_members=intent.ordered_members,
                     status="resolved",
                     assignments=work.kept,
                     caption_text=work.caption_text,
@@ -2273,6 +2301,8 @@ async def resolve_clip_intents_for_turn(
                 for c in clip_question["categories"]
             )
             turn_question = clip_question_text(clip_question["categories"], only_video=in_the_video)
+            if in_the_video:
+                clip_question = None
             leftover = [w for w in creator_work if not picker_eligible(w.intent)]
             if leftover:
                 # Mixed case: picker for the tappable intents, text for the rest.

@@ -287,6 +287,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             colorControl
             propertyRow("Outline", key: "stroke_width", range: 0...20, unit: "px", colorKey: "stroke_color")
             propertyRow("Shadow", key: "shadow_opacity", range: 0...1, unit: "%", colorKey: "shadow_color")
+            placementControl
             positionControl("Horizontal position", key: "x_frac")
             positionControl("Vertical position", key: "y_frac")
             rotationControl
@@ -485,6 +486,61 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             }
             ColorPicker("Custom color", selection: colorBinding("color", fallback: "#FFFFFF"), supportsOpacity: false)
                 .labelsHidden().frame(minWidth: 44, minHeight: 44).accessibilityLabel("Custom text color")
+        }
+    }
+
+    /// Flush buttons that put the whole text block against the Reels / TikTok safe area, one axis per tap.
+    @ViewBuilder private var placementControl: some View {
+        if session.supportsTextPlacement {
+            let selected: Set<NativeTextBlockPlacement> = session.textBlockPlacements(id: id)
+            let groups: [[NativeTextBlockPlacement]] = [[.left, .center, .right], [.top, .middle, .bottom]]
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Position")
+                if usesAccessibilityLayout {
+                    VStack(spacing: 8) { ForEach(groups, id: \.first) { placementButtons($0, selected: selected, expanded: true) } }
+                } else {
+                    HStack(spacing: 10) { ForEach(groups, id: \.first) { placementButtons($0, selected: selected, expanded: false) } }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func placementButtons(_ group: [NativeTextBlockPlacement], selected: Set<NativeTextBlockPlacement>, expanded: Bool) -> some View {
+        HStack(spacing: 0) {
+            ForEach(group, id: \.self) { placement in
+                Button { session.placeTextBlock(id: id, placement) } label: {
+                    Image(systemName: Self.placementSymbol(placement))
+                        .frame(minWidth: 44, maxWidth: expanded ? .infinity : nil, minHeight: 44)
+                        .background(selected.contains(placement) ? KriaColor.selectionSoft : KriaColor.softZinc)
+                }
+                .accessibilityLabel(Self.placementLabel(placement))
+                .accessibilityIdentifier("native-editor-text-placement-" + placement.rawValue)
+                .accessibilityAddTraits(selected.contains(placement) ? .isSelected : [])
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private static func placementSymbol(_ placement: NativeTextBlockPlacement) -> String {
+        switch placement {
+        case .left: "align.horizontal.left"
+        case .center: "align.horizontal.center"
+        case .right: "align.horizontal.right"
+        case .top: "align.vertical.top"
+        case .middle: "align.vertical.center"
+        case .bottom: "align.vertical.bottom"
+        }
+    }
+
+    private static func placementLabel(_ placement: NativeTextBlockPlacement) -> String {
+        switch placement {
+        case .left: "Place text at the left edge"
+        case .center: "Center text horizontally"
+        case .right: "Place text at the right edge"
+        case .top: "Place text at the top"
+        case .middle: "Center text vertically"
+        case .bottom: "Place text at the bottom"
         }
     }
 

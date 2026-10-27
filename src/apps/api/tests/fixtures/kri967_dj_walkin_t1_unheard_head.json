@@ -1,0 +1,453 @@
+{
+  "provenance": {
+    "ticket": "KRI-967",
+    "parent": "KRI-964",
+    "thread_id": "F0F3D5FB-A207-4F1F-8340-D1FAAA2B1A04",
+    "job_id": "ac91bb4f-fea6-4f9e-a429-67e8b8507f85",
+    "prod_sha": "a2426885d",
+    "client_protocol": 22,
+    "date": "2026-10-26",
+    "sources": {
+      "take.speech": "job debug: assembly_plan.creator_brief_binding.media_snapshot.clip_assignments[0].analysis.understanding.speech (the snapshot approval pinned; the round-1 question digest below is reproduced from exactly these segment texts, so it is the record the question read)",
+      "question_round1": "thread event #6 (assistant_response, choice_question take_line_start), verbatim",
+      "answer_round1": "thread event #7 (the tap), verbatim",
+      "prod_receipts": "job debug: variants[0].opening_cut / end_cut, verbatim",
+      "prod_caption_cues": "plan_block 'captions' payload (cut-timeline seconds), verbatim",
+      "reference_listener": "plan-item proposal trace: agent run nova.audio.transcript (gemini-2.5-flash, speech-cleanup language cross-check, 14:39:44Z, before the prompt), verbatim"
+    }
+  },
+  "prompt": "Talking-to-camera edit from this raw clip. Start at my question “Parrilla Don Julio, what do you think?” and end right after “Nice!” — drop the dining room before it and the “Zoom” and the table after it. Captions for both voices: I’m off camera, the guy in the black T-shirt is Atakan. Spell “Parrilla Don Julio” right. Put an “ATAKAN” name tag when he first appears and “SUPER EXCITED” in big letters on his words. Title: “Before the meat”. No text on faces. About 7 seconds.",
+  "take": {
+    "media_id": "analysis-proxy-ios-EA851A43-50B2-469B-BC02-C25A3D276A3A.mp4",
+    "gcs_path_shape": "users/<creator>/creation-threads/<thread>/<media_id>",
+    "duration_s": 26.933333,
+    "speech": {
+      "language": "en",
+      "segments": [
+        {
+          "text": "So, what do you think?",
+          "end_s": 16.74,
+          "start_s": 15.0
+        },
+        {
+          "text": "Are you excited for the meet?",
+          "end_s": 17.8,
+          "start_s": 16.74
+        },
+        {
+          "text": "Super excited.",
+          "end_s": 18.96,
+          "start_s": 18.28
+        },
+        {
+          "text": "Nice.",
+          "end_s": 20.04,
+          "start_s": 20.0
+        },
+        {
+          "text": "Zoom.",
+          "end_s": 24.88,
+          "start_s": 24.28
+        }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Parilla Don Julio. What do you think? Are you excited for the meat? Super excited. Nice. Zoom. Oh."
+    }
+  },
+  "brief_round1": {
+    "reconstructed": true,
+    "note": "The round-1 brief is not in the run folder. The quote, the requirement id and the segments are proven by the reproduced question digest; end_line and duration_s are r1's facts in the pinned v4 brief (the creator's \"Nice!\" and \"About 7 seconds\"); the description is v4's.",
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "timing",
+        "scope": "global",
+        "description": "drop the dining room before it and the “Zoom” and the table after it",
+        "facts": {
+          "start_line": "Parrilla Don Julio, what do you think?",
+          "end_line": "Nice!",
+          "duration_s": 7
+        }
+      }
+    ]
+  },
+  "strategy_round1": {
+    "reconstructed": true,
+    "note": "The Main Creator's round-1 draft is redacted in the trace; this is the pinned final strategy with the prompt's 7-second target and without the story beats it wrote after the tap.",
+    "strategy": {
+      "pacing": "balanced",
+      "direction": "native",
+      "rationale": "A talking edit of the question and Atakan's answer.",
+      "edit_format": "subtitled",
+      "media_scope": "selected",
+      "caption_style": "auto",
+      "opening_title": "Before the meat",
+      "audio_strategy": "original_audio",
+      "render_program": "native",
+      "target_duration_s": 7,
+      "selected_media_ids": [
+        "analysis-proxy-ios-EA851A43-50B2-469B-BC02-C25A3D276A3A.mp4"
+      ],
+      "video_reuse_policy": "once",
+      "optional_treatments": []
+    }
+  },
+  "question_round1": {
+    "content": "I couldn't find “Parrilla Don Julio, what do you think?” in what's said in your video. Which line should it open on?\n1. “So,”\n2. “what do you think?” (recommended)\n3. “Are you excited for the meet?”\n4. “Super excited.”\n5. “Nice.”\n6. None of these — keep it from the start\nTap an option, or tell me in your own words.",
+    "choice_question": {
+      "kind": "take_line_start",
+      "options": [
+        {
+          "key": "line_0",
+          "label": "“So,”",
+          "aliases": [
+            "So,"
+          ],
+          "recommended": false
+        },
+        {
+          "key": "line_1",
+          "label": "“what do you think?”",
+          "aliases": [
+            "what do you think?"
+          ],
+          "recommended": true
+        },
+        {
+          "key": "line_2",
+          "label": "“Are you excited for the meet?”",
+          "aliases": [
+            "Are you excited for the meet?"
+          ],
+          "recommended": false
+        },
+        {
+          "key": "line_3",
+          "label": "“Super excited.”",
+          "aliases": [
+            "Super excited."
+          ],
+          "recommended": false
+        },
+        {
+          "key": "line_4",
+          "label": "“Nice.”",
+          "aliases": [
+            "Nice."
+          ],
+          "recommended": false
+        },
+        {
+          "key": "no_line",
+          "label": "None of these — keep it from the start",
+          "aliases": [
+            "none",
+            "none of these",
+            "none of them",
+            "neither",
+            "skip",
+            "skip it",
+            "no",
+            "keep it from the start",
+            "from the start",
+            "keep the start",
+            "hiçbiri",
+            "hiçbirini",
+            "hiçbiri değil",
+            "hayır",
+            "yok",
+            "atla",
+            "baştan",
+            "baştan başlasın",
+            "başından"
+          ],
+          "description": "The video still opens at the start of your take.",
+          "recommended": false
+        }
+      ],
+      "version": 1,
+      "conflict": "take_line_start",
+      "question_id": "66179e46-06b5-4f73-be93-3ee8d94b54b7",
+      "input_digest": "f1017fed1df5aefc1d17c0cb",
+      "allow_free_text": true
+    }
+  },
+  "answer_round1": {
+    "content": "“what do you think?”",
+    "choice_selection": {
+      "option_key": "line_1",
+      "question_id": "66179e46-06b5-4f73-be93-3ee8d94b54b7"
+    }
+  },
+  "prod_receipts": {
+    "opening_cut": {
+      "exact": true,
+      "quote": "what do you think?",
+      "status": "applied",
+      "start_s": 16.05,
+      "version": 1,
+      "removed_s": 16.05,
+      "requirement_ids": [
+        "r1"
+      ]
+    },
+    "end_cut": {
+      "end_s": 20.27,
+      "exact": true,
+      "quote": "Nice!",
+      "status": "applied",
+      "version": 1,
+      "removed_s": 6.663,
+      "requirement_ids": [
+        "r1"
+      ]
+    },
+    "caption_cues": [
+      {
+        "id": "cue-0",
+        "kind": "cue",
+        "text": "What do you think?",
+        "end_s": 0.69,
+        "start_s": 0.15
+      },
+      {
+        "id": "cue-1",
+        "kind": "cue",
+        "text": "Are you excited for the meet?",
+        "end_s": 1.77,
+        "start_s": 0.89
+      },
+      {
+        "id": "cue-2",
+        "kind": "cue",
+        "text": "Super excited.",
+        "end_s": 2.89,
+        "start_s": 2.31
+      },
+      {
+        "id": "cue-3",
+        "kind": "cue",
+        "text": "Nice.",
+        "end_s": 3.97,
+        "start_s": 3.49
+      }
+    ]
+  },
+  "reference_listener": {
+    "agent": "nova.audio.transcript",
+    "model": "gemini-2.5-flash",
+    "prompt_version": "2026-05-09",
+    "created_at": "2026-10-26T14:39:44.666705Z",
+    "full_text": "Parella Don Julio. What do you think? Are you excited for the meet? Super excited. Nice. Zoom. Oh. Thank you.",
+    "words": [
+      {
+        "text": "Parella",
+        "start_s": 15.013,
+        "end_s": 15.423
+      },
+      {
+        "text": "Don",
+        "start_s": 15.543,
+        "end_s": 15.763
+      },
+      {
+        "text": "Julio.",
+        "start_s": 15.763,
+        "end_s": 16.123
+      },
+      {
+        "text": "What",
+        "start_s": 16.483,
+        "end_s": 16.633
+      },
+      {
+        "text": "do",
+        "start_s": 16.633,
+        "end_s": 16.713
+      },
+      {
+        "text": "you",
+        "start_s": 16.713,
+        "end_s": 16.823
+      },
+      {
+        "text": "think?",
+        "start_s": 16.923,
+        "end_s": 17.213
+      },
+      {
+        "text": "Are",
+        "start_s": 17.263,
+        "end_s": 17.413
+      },
+      {
+        "text": "you",
+        "start_s": 17.413,
+        "end_s": 17.513
+      },
+      {
+        "text": "excited",
+        "start_s": 17.783,
+        "end_s": 18.063
+      },
+      {
+        "text": "for",
+        "start_s": 18.103,
+        "end_s": 18.233
+      },
+      {
+        "text": "the",
+        "start_s": 18.233,
+        "end_s": 18.293
+      },
+      {
+        "text": "meet?",
+        "start_s": 18.423,
+        "end_s": 18.663
+      },
+      {
+        "text": "Super",
+        "start_s": 18.823,
+        "end_s": 19.063
+      },
+      {
+        "text": "excited.",
+        "start_s": 19.063,
+        "end_s": 19.533
+      },
+      {
+        "text": "Nice.",
+        "start_s": 19.793,
+        "end_s": 20.083
+      },
+      {
+        "text": "Zoom.",
+        "start_s": 24.673,
+        "end_s": 25.043
+      },
+      {
+        "text": "Oh.",
+        "start_s": 25.333,
+        "end_s": 25.543
+      },
+      {
+        "text": "Thank",
+        "start_s": 25.663,
+        "end_s": 25.933
+      },
+      {
+        "text": "you.",
+        "start_s": 25.933,
+        "end_s": 26.063
+      }
+    ]
+  },
+  "worker_words": {
+    "reconstructed": true,
+    "note": "The worker's own word timings (speech-cleanup preflight words) are not in the run folder. Each kept line's bounds are the prod caption cues + the 16.05 s opening cut (real); words inside a line are spread by character share; 'So,' is placed at 15.00-15.40 s, inside the stored segment 'So, what do you think?' (15.00-16.74) and consistent with the prod cut (a cut at 16.05 s before 'what' at 16.20 s needs the previous word to end by 15.90 s). Whether the worker's words hold 'So,' at all is unknown; the tests also run the cut on words without it and on the reference listener's words.",
+    "words": [
+      {
+        "text": "So,",
+        "start_s": 15.0,
+        "end_s": 15.4
+      },
+      {
+        "text": "What",
+        "start_s": 16.2,
+        "end_s": 16.32
+      },
+      {
+        "text": "do",
+        "start_s": 16.35,
+        "end_s": 16.41
+      },
+      {
+        "text": "you",
+        "start_s": 16.44,
+        "end_s": 16.53
+      },
+      {
+        "text": "think?",
+        "start_s": 16.56,
+        "end_s": 16.74
+      },
+      {
+        "text": "Are",
+        "start_s": 16.94,
+        "end_s": 17.031
+      },
+      {
+        "text": "you",
+        "start_s": 17.061,
+        "end_s": 17.152
+      },
+      {
+        "text": "excited",
+        "start_s": 17.183,
+        "end_s": 17.395
+      },
+      {
+        "text": "for",
+        "start_s": 17.426,
+        "end_s": 17.517
+      },
+      {
+        "text": "the",
+        "start_s": 17.547,
+        "end_s": 17.638
+      },
+      {
+        "text": "meet?",
+        "start_s": 17.668,
+        "end_s": 17.82
+      },
+      {
+        "text": "Super",
+        "start_s": 18.36,
+        "end_s": 18.567
+      },
+      {
+        "text": "excited.",
+        "start_s": 18.609,
+        "end_s": 18.94
+      },
+      {
+        "text": "Nice.",
+        "start_s": 19.54,
+        "end_s": 20.02
+      },
+      {
+        "text": "Zoom.",
+        "start_s": 24.28,
+        "end_s": 24.88
+      }
+    ]
+  },
+  "audio_measured_s": {
+    "method": "ffmpeg astats RMS level of the uploaded original (T1_01_footage.mp4, sha256 8abe7467405273ba9dd023c5019fe5be644437bb01b773ea03f2e6ccd15f2f35 = upload_contract.original.sha256), band-passed 150-4000 Hz, in 5 / 20 / 100 ms windows. Street ambience sits near -32 dB; the creator's near-mic speech near -12 dB.",
+    "head_onset": [
+      14.85,
+      14.855
+    ],
+    "head_end": 15.73,
+    "tail_onset": 16.14,
+    "note": "The head ('Parrilla Don Julio') is the loud run 14.85-15.73 s; 15.74-16.13 s is silence; 'What do you think?' starts at 16.14 s. The kit's hand transcript (~13.0 s) is approximate; the two ASRs put the head at 15.0 s (whisper segment) / 15.013 s (reference listener)."
+  },
+  "kit_ground_truth": {
+    "source": "kit README (hand transcript, approximate): T1_atakan_tail_take_talking/README.md",
+    "parrilla_don_julio_s": [
+      13.0,
+      15.5
+    ],
+    "what_do_you_think_s": [
+      16.2,
+      17.0
+    ],
+    "nice_s": [
+      19.2,
+      20.1
+    ],
+    "no_speech_before_s": 13.0
+  }
+}

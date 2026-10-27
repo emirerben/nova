@@ -128,15 +128,21 @@ from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     PinnedText,
 )
-from app.schemas.user_song import SONG_ALIGNMENT_VERSION
+from app.schemas.user_song import (
+    SONG_ALIGNMENT_VERSION,
+    SONG_ORDER_ANSWER_KEY,
+    SONG_RANGE_ANSWER_KEY,
+)
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
+    SIMPLER_OMITTED_IDS_KEY,
     SIMPLER_VERSION_REASON,
     ChoiceCapability,
     answered_brief,
     ask_user_choice,
     build_choice_question,
+    change_request_selected,
     choice_question_text,
     detect_order_vs_group,
     fold_choice_answers,
@@ -145,6 +151,7 @@ from app.services.choice_questions import (
     simpler_version_accepted,
     simpler_version_question,
     tag_event,
+    without_length_answer_echo,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import (
@@ -1166,6 +1173,7 @@ def _clip_intent_resolution_plan(
     diagnostics: dict[str, Any] | None = None,
     clip_question: dict[str, Any] | None = None,
     reply_options: Sequence[str] = (),
+    clip_intent_inventory: dict[str, Any] | None = None,
 ) -> KriaTurnPlan:
     if status == "needs_creator":
         return KriaTurnPlan(
@@ -1178,6 +1186,8 @@ def _clip_intent_resolution_plan(
             ),
             diagnostics=_safe_diagnostics(status, diagnostics),
             clip_question=clip_question,
+            # KRI-950: the checked list behind the picker, reused when the tap is all that comes.
+            clip_intent_inventory=clip_intent_inventory if clip_question else None,
             # KRI-804: tappable answers, e.g. "Keep ... exactly as written" for a label.
             reply_options=list(reply_options) or None,
         )
@@ -1362,6 +1372,60 @@ async def _load_thread_events(
     return [
         tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
     ]
+
+
+# KRI-950: answers that can change what the creator asked for; a tap riding with one re-plans.
+_OTHER_ANSWER_KEYS = frozenset(
+    {
+        "choice_selection",
+        "protected_region",
+        "moment_order",
+        SONG_ORDER_ANSWER_KEY,
+        SONG_RANGE_ANSWER_KEY,
+    }
+)
+
+
+def _picker_answer_turn_id(events: Sequence[tuple[str, Any]]) -> str | None:
+    """The turn whose clip picker the latest creator event answers, when it ONLY answers it.
+
+    The latest creator event must be a ``clip_selection`` (a tap or "Skip") with no other
+    answer, for the picker in the reply just before it; events the server wrote on its own
+    after the tap (a finished render, a review) are not the creator's. A typed line after that
+    reply means new words, so this returns None and the turn re-plans (KRI-950)."""
+    latest = next((i for i in range(len(events) - 1, -1, -1) if events[i][0] == "user"), None)
+    if latest is None:
+        return None
+    payload = events[latest][1] if isinstance(events[latest][1], dict) else {}
+    selection = payload.get("clip_selection")
+    if not isinstance(selection, dict) or _OTHER_ANSWER_KEYS & payload.keys():
+        return None
+    for role, earlier in reversed(events[:latest]):
+        if role == "user":
+            return None
+        question = earlier.get("clip_question") if isinstance(earlier, dict) else None
+        if isinstance(question, dict):
+            if question.get("question_id") != selection.get("question_id"):
+                return None
+            turn_id = earlier.get("turn_id")
+            return turn_id if isinstance(turn_id, str) else None
+    return None
+
+
+async def _load_checked_inventory(db: AsyncSession, turn_id: str) -> Any:
+    """KRI-950: the clip-intent list the asking turn kept (``clip_intent_inventory``), or None."""
+    try:
+        plan = (
+            await db.execute(
+                select(CreatorAgentTurn.plan_json).where(CreatorAgentTurn.id == uuid.UUID(turn_id))
+            )
+        ).scalar_one_or_none()
+    except Exception as exc:  # noqa: BLE001 - a lost list only means a re-plan, as before
+        log.warning("kria_checked_inventory_unreadable", error_type=type(exc).__name__)
+        return None
+    finally:
+        await db.rollback()  # no connection pinned across the model calls that follow
+    return plan.get("clip_intent_inventory") if isinstance(plan, dict) else None
 
 
 async def _song_order_gate(
@@ -2990,6 +3054,37 @@ def title_hold_grounded(
     return False
 
 
+async def _change_request_turn(db: AsyncSession, thread_id: uuid.UUID) -> PlannedKriaTurn | None:
+    """KRI-983: "Change my request" on a held draft. Nothing was made, so the reply asks what
+    to change about the asks that held it, with no model call; re-planning here only made the
+    same plan and asked the same question again."""
+    if not settings.kria_choice_questions_enabled:
+        return None
+    question = change_request_selected(await _load_thread_events(db, thread_id, release=False))
+    if question is None:
+        return None
+    held = {str(req_id) for req_id in question.get(SIMPLER_OMITTED_IDS_KEY) or ()}
+    brief = await load_latest_brief(db, thread_id) if held else None
+    listed = "; ".join(req.text() for req in brief.live() if req.id in held) if brief else ""
+    response = (
+        say(
+            en=f"Nothing is made yet. Tell me what to do differently for: {listed}.",
+            tr=f"Henüz bir şey yapılmadı. Şunlar için neyi farklı yapmamı istersin: {listed}.",
+        )
+        if listed
+        else say(
+            en="Nothing is made yet. Tell me what to do differently.",
+            tr="Henüz bir şey yapılmadı. Neyi farklı yapmamı istediğini söyle.",
+        )
+    )
+    log.info("kria_change_request_selected", thread_id=str(thread_id))
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(mode="respond", turn_value="question", response=response),
+        manifest_hash=None,
+        context_hash=None,
+    )
+
+
 async def _simpler_version_accepted(
     db: AsyncSession, thread_id: uuid.UUID, fields: Sequence[str]
 ) -> bool:
@@ -3400,8 +3495,14 @@ async def _plan_creator_action(
         thread_events: list[tuple[str, dict[str, Any] | None]] = []
         if settings.kria_clip_selection_questions_enabled or settings.kria_choice_questions_enabled:
             thread_events = await _load_thread_events(db, thread_id)
+        checked_inventory = None
         if settings.kria_clip_selection_questions_enabled:
             clip_selections = fold_clip_selections(thread_events)
+            # KRI-950: a tap is an answer, not a new request: reuse the list the picker's turn
+            # checked rather than ask the planner model again for the same words.
+            asking_turn = _picker_answer_turn_id(thread_events)
+            if asking_turn is not None:
+                checked_inventory = await _load_checked_inventory(db, asking_turn)
         # KRI-766: the texts the creator dictated for a described shot, which this turn's
         # inventory may not repeat, and the labels the draft already placed.
         brief_labels = brief_label_asks(
@@ -3457,6 +3558,7 @@ async def _plan_creator_action(
                 **({} if shot_captions else {"shot_captions": False}),
                 # KRI-945: a caption for the brief's researched text or title is never asked.
                 **({"whole_video_texts": whole_video_texts} if whole_video_texts else {}),
+                **({"checked_inventory": checked_inventory} if checked_inventory else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
@@ -3627,6 +3729,7 @@ async def _plan_creator_action(
                     ),
                     diagnostics=_resolution_diagnostics(planned.resolution),
                     clip_question=clip_question,
+                    clip_intent_inventory=planned.inventory,
                     reply_options=(
                         planned.resolution.reply_options if planned.resolution.needs_creator else ()
                     ),
@@ -3663,6 +3766,7 @@ async def _plan_creator_action(
                             ),
                         },
                         clip_question=asked[1],
+                        clip_intent_inventory=planned.inventory,
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
@@ -5099,6 +5203,9 @@ async def _plan_live_turn(
             manual_edits=manual_edits or [],
             editor_state=editor_state,
         )
+    changing = await _change_request_turn(db, thread_id)
+    if changing is not None:
+        return changing
     pending_analysis_ids: list[str] = []
     if settings.brief_binding_for(creator_id) and settings.kria_clip_understanding_enabled:
         from app.services.clip_intent_planning import wait_for_clip_understanding  # noqa: PLC0415
@@ -5562,6 +5669,19 @@ async def _plan_live_turn(
         updates=updates,
         states=inputs.creative_copy_state or {},
     )
+    if answers_clip_question and updates:
+        # KRI-966: a tapped length answer is the server's own option label, already applied by
+        # the gate; the model's restatement of it is never the creator's length ask.
+        echo_free = without_length_answer_echo(
+            prior_brief, updates, await _load_thread_events(db, thread_id)
+        )
+        if echo_free != updates:
+            log.info(
+                "kria_length_answer_echo_dropped",
+                thread_id=str(thread_id),
+                dropped=len(updates) - len(echo_free),
+            )
+        updates = echo_free
     delegated = (
         extracted_delegation if extraction_complete else _declares_delegation(outputs, updates)
     )

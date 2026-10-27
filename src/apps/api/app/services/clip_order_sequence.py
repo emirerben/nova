@@ -22,6 +22,9 @@ from app.kria.brief_route import loose_text
 
 # (position, name, member ids, status): the order intents, listed order.
 SequenceRow = tuple[str | None, str, list[str], str]
+SequenceGroupKey = tuple[str | None, str, tuple[str, ...]]
+
+UNCONFIRMED_MEMBER_ORDER = "the order inside this saved group wasn't recorded"
 
 T = TypeVar("T")
 
@@ -121,8 +124,40 @@ def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
             continue
         status = str(intent.get("status") or "resolved")
         members = _members(intent) if status == "resolved" else []
-        rows.append((position, _nfc(intent.get("attribute")), members, status))
+        name = _nfc(intent.get("attribute"))
+        if intent.get("ordered_members") is True and members:
+            rows.extend((position, name, [member], status) for member in dict.fromkeys(members))
+        else:
+            rows.append((position, name, members, status))
     return rows
+
+
+def unconfirmed_order_groups(resolved_intents: object) -> frozenset[SequenceGroupKey]:
+    legacy = [
+        intent
+        for intent in _sequence(resolved_intents)
+        if isinstance(intent, Mapping) and intent.get("ordered_members") is None
+    ]
+    return frozenset(
+        (position, name, tuple(members))
+        for position, name, members, status in sequence_rows(legacy)
+        if status == "resolved" and len(set(members)) > 1
+    )
+
+
+def unconfirmed_order_reason() -> str:
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    return say(
+        en=(
+            "The order inside this saved group wasn't recorded. Choose the order, "
+            "or confirm that any order within the group is fine."
+        ),
+        tr=(
+            "Kaydedilmiş bu grubun iç sırası belirtilmemiş. Sırayı seç ya da grup içindeki "
+            "herhangi bir sıranın uygun olduğunu onayla."
+        ),
+    )
 
 
 def row_relations(rows: Sequence[SequenceRow], present: Collection[str] | None = None) -> list[str]:

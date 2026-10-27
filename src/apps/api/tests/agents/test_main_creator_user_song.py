@@ -65,10 +65,12 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # re-pinned; clip-intents-off unchanged (the exception renders only with clip intents).
 # v98 (KRI-942) adds clip sound on / off (`clip_sound` "on"/"off") to the brief section: brief-on
 # hashes re-pinned; brief-off unchanged.
+# v99 (KRI-957) teaches that an after-voice `triggers` line is said in the clip, never the
+# creator's own last voiceover words: brief-on hashes re-pinned; brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "b28772274e91708395975ba7a0cdbcea260779cc9d3a378a5244db9bc656cb06",
+    (True, True): "cb7e3d67341fbcf48653a3d0cd4b5ee4418b405aa4d48056b4df0c030731b713",
     (True, False): "08ca6790e63f9522dff8b85d4c84906c0b1e784b9fc21dc1f812d753dbc6fe9d",
-    (False, True): "e0ad9f0b8667b91e83c305596a55a112aeabaf277e664769f237ea86dded89ea",
+    (False, True): "8ab843aa62e33607747571eed9a3b5640c96d5bc74e83d746b8ddfde4a62e810",
     (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
 }
 
@@ -150,7 +152,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-26-v98"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-26-v99"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

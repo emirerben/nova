@@ -88,6 +88,13 @@ group, city labels, and activity labels. Do not use any category allowlist.
 Pure style, timing, transitions, titles, music, or duration requests produce an
 empty intents list.
 
+For a sequence listing several different subjects inside one order intent, set
+`ordered_members` true. This means its resolved members must play in the listed
+order. Prefer one order intent per subject. For a group such as "the volleyball
+clips" with no requested internal sequence, explicitly set `ordered_members`
+false. Omission means the internal ordering was not recorded; it does not confirm
+that the creator accepts any order within a multi-clip group.
+
 Asking to cut or remove parts of the creator's own recorded speech is speech
 cleanup, which another step handles: "cut my long pauses", "remove the ums",
 "cut the part where I restart the sentence", "uzun duraklamaları kes", "cümleyi

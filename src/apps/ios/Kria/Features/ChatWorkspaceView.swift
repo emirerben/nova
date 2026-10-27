@@ -203,6 +203,21 @@ private final class DrawerGestureTracking {
     }
 
     func reset() { previous = nil; latest = nil }
+
+    /// Whether a touch began on a sideways scroller (a horizontal `ScrollView` or a paging `TabView`), which keeps
+    /// its own drag. Asking UIKit means a new row works without remembering to opt out.
+    @MainActor static func startsInSidewaysScroller(at point: CGPoint) -> Bool {
+        let windows = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows }.flatMap { $0 }
+        guard let window = windows.first(where: { $0.isKeyWindow }), var view = window.hitTest(point, with: nil) else { return false }
+        while true {
+            if let scroll = view as? UIScrollView, scroll.isScrollEnabled,
+               scroll.contentSize.width + scroll.adjustedContentInset.left + scroll.adjustedContentInset.right > scroll.bounds.width + 0.5 {
+                return true
+            }
+            guard let parent = view.superview else { return false }
+            view = parent
+        }
+    }
 }
 
 /// Owns the per-frame drag state. `drawer` and `content` arrive as stored values (built
@@ -290,7 +305,8 @@ private struct ProjectsDrawerContainer<Drawer: View, Content: View>: View {
             .onChanged { value in
                 // Choose an axis once, without a 20-point dead zone at touch-down.
                 if horizontalDrawerDrag == nil {
-                    let startsInScroller = !isOpen && tracking.exclusions.contains { $0.contains(value.startLocation) }
+                    let startsInScroller = !isOpen && (tracking.exclusions.contains { $0.contains(value.startLocation) }
+                        || DrawerGestureTracking.startsInSidewaysScroller(at: value.startLocation))
                     horizontalDrawerDrag = !startsInScroller && abs(value.translation.width) > abs(value.translation.height)
                     drawerDragStartTime = value.time
                     tracking.reset()
@@ -1292,11 +1308,6 @@ private struct CreationWorkspaceView: View {
                 }
             }
         }
-        .background {
-            GeometryReader { geometry in
-                Color.clear.preference(key: DrawerGestureExclusionPreference.self, value: [geometry.frame(in: .global)])
-            }
-        }
     }
 
     /// Presents the editor with no slide-up animation; `WorkspaceCrossfade` fades it in.
@@ -2145,12 +2156,21 @@ private struct CreationWorkspaceView: View {
         }
         let accepted: TurnAccepted
         do {
-            accepted = try await model.api.submitTurn(
-                threadID: project.id, message: message,
-                expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
-                editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
+            var request = SubmitTurnRequest(
+                message: message, clientEventID: submission.clientEventID,
+                expectedThreadRevision: submission.expectedRevision, editorState: editorState,
+                clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
                 songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: momentOrder
             )
+            if capabilities?.requestOutcomeContext == true {
+                request.outcomeContext = .forSubmission(
+                    events: events,
+                    continuation: clipSelection != nil || songOrder != nil || choiceSelection != nil
+                        || songRange != nil || protectedRegion != nil || momentOrder != nil,
+                    choice: choiceSelection
+                )
+            }
+            accepted = try await model.api.submitTurn(threadID: project.id, request: request)
         } catch let error as APIError where error == .conflict {
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }

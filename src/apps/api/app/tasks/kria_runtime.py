@@ -15,7 +15,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from fastapi import HTTPException
@@ -125,6 +125,7 @@ from app.services.choice_questions import (
     CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
+    SIMPLER_OMITTED_IDS_KEY,
     SIMPLER_VERSION_REASON,
     ChoiceCapability,
     answered_brief,
@@ -133,6 +134,7 @@ from app.services.choice_questions import (
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_version_ask,
     simpler_version_question,
     tag_event,
 )
@@ -915,22 +917,135 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
     )
 
 
-def _simpler_version_already_offered(
+SimplerConsent = Literal["named", "unnamed"]
+# `KriaTurnPlan.response` max_length: the held-draft reply must fit it whole.
+_MAX_TURN_RESPONSE_CHARS = 1200
+# A "leaves out" sentence longer than this is not shown (and not recorded): the offer then
+# consents to nothing by name, and the draft says "in the simpler version", not "as agreed".
+_MAX_LEAVES_OUT_CHARS = 600
+
+
+def _simpler_version_offer(
+    brief: CreativeBrief | None, requirement_ids: Sequence[str]
+) -> tuple[str, dict[str, Any]]:
+    """KRI-968: the sentence naming what the simpler version leaves out, and the question
+    that records exactly those ids (brief order, the order the sentence names them in) and
+    the brief revision it named them at. ``("", plain question)`` when nothing can be named.
+    """
+    question = simpler_version_question()
+    if brief is None:
+        return "", question
+    wanted = set(requirement_ids)
+    named = [req for req in brief.live() if req.id in wanted]
+    if not named:
+        return "", question
+    listed = "; ".join(req.text() for req in named)
+    sentence = say(
+        en=f"The simpler version leaves out: {listed}.",
+        tr=f"Daha basit sürümde çıkarılacak: {listed}.",
+    )
+    if len(sentence) > _MAX_LEAVES_OUT_CHARS:
+        return "", question
+    named_ids = [req.id for req in named]
+    for option in question["options"]:
+        if option["key"] == "simpler_version":
+            option["description"] = say(en=f"Leaves out: {listed}", tr=f"Çıkarılacak: {listed}")
+    # An unmet id with no live row has nothing to drop; it is still part of the set the
+    # creator answers, so a changed set is offered again.
+    question[SIMPLER_OMITTED_IDS_KEY] = [
+        *named_ids,
+        *(req_id for req_id in dict.fromkeys(requirement_ids) if req_id not in named_ids),
+    ]
+    question["brief_version"] = brief.version
+    return sentence, question
+
+
+def _fit_reply(body: str, tail: str) -> str:
+    """``body``, then ``tail`` on its own line, within the turn plan's response limit. The
+    tail (what is held back, what the simpler version leaves out, the question) stays whole;
+    the receipt lines above it are shortened first."""
+    room = _MAX_TURN_RESPONSE_CHARS - len(tail) - 1
+    if len(body) > room:
+        body = body[: max(0, room - 1)].rstrip() + "…"
+    return f"{body}\n{tail}"
+
+
+def _left_out_line(req: BriefRequirement, *, agreed: bool) -> str:
+    """One requirement the simpler version left out. "As agreed" only when the answered
+    offer named it (KRI-968); an older offer that named nothing says what happened."""
+    if agreed:
+        return say(
+            en=f"- Left out as agreed: {req.text()}",
+            tr=f"- Kararlaştırdığımız gibi çıkarıldı: {req.text()}",
+        )
+    return say(
+        en=f"- Left out in the simpler version: {req.text()}",
+        tr=f"- Daha basit sürümde çıkarıldı: {req.text()}",
+    )
+
+
+def _with_left_out(text: str, lines: str) -> str:
+    """``lines`` go with the Done/Partly lines, above "Have a look at these in the video:"
+    (the `reply_from_receipts` header), so a drop never reads as something to check."""
+    if not lines:
+        return text
+    if not text:
+        return lines
+    header = say(en="Have a look at these in the video:", tr="Bunlara videoda bir göz at:")
+    if text.startswith(header):
+        return f"{lines}\n{text}"
+    head, separator, tail = text.partition(f"\n{header}")
+    if separator:
+        return f"{head}\n{lines}{separator}{tail}"
+    return f"{text}\n{lines}"
+
+
+def _left_out_lines(brief: CreativeBrief, coverage: Mapping[str, Any]) -> list[str]:
+    """The approved draft's simpler-version omissions, for the after-render review (KRI-968).
+
+    Only ids the approved brief really superseded: an id live again (restored later) or
+    unknown to the brief says nothing.
+    """
+    agreed = {str(req_id) for req_id in coverage.get("agreed_omission_ids") or ()}
+    by_id = {req.id: req for req in brief.requirements}
+    lines = []
+    for req_id in coverage.get("accepted_omission_ids") or ():
+        req = by_id.get(str(req_id))
+        if req is not None and not req.live:
+            lines.append(_left_out_line(req, agreed=req.id in agreed))
+    return list(dict.fromkeys(lines))
+
+
+def _approved_draft_coverage(db: Any, execution: Any) -> Mapping[str, Any]:
+    """The ``brief_coverage`` of the draft a render execution approved ({} when unknown)."""
+    draft_id = getattr(execution, "target_draft_id", None)
+    if db is None or draft_id is None:
+        return {}
+    draft = db.get(CreatorEditDraft, draft_id)
+    coverage = (draft.snapshot_json or {}).get("brief_coverage") if draft is not None else None
+    return coverage if isinstance(coverage, Mapping) else {}
+
+
+def _simpler_version_consent(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
     requirement_ids: list[str],
     *,
     brief: CreativeBrief | None,
     source_event: CreationThreadEvent | None,
-) -> bool:
+) -> SimplerConsent | None:
     """Explicit acceptance of these exact omissions at the offered brief revision.
+
+    ``"named"``: the offer's reply named exactly these requirements as left out (KRI-968).
+    ``"unnamed"``: a legacy offer (no list) that blocked exactly these; it is still honoured,
+    but nothing may say the creator agreed to a list they were never shown.
 
     Legacy offers have receipt versions but no choice card. They use the same exact
     label/alias matcher, preserving KRI-610's text fallback without treating silence,
     refusal, another question, or an old stable requirement ID as consent (KRI-698).
     """
     if not requirement_ids or brief is None or source_event is None:
-        return False
+        return None
     rows = db.execute(
         select(CreationThreadEvent.event_type, CreationThreadEvent.payload)
         .where(
@@ -942,7 +1057,7 @@ def _simpler_version_already_offered(
     ).all()
     for event_type, payload in rows:
         if event_type == "draft_applied":
-            return False
+            return None
         payload = payload if isinstance(payload, Mapping) else {}
         coverage = payload.get("brief_coverage")
         if not isinstance(coverage, Mapping) or coverage.get("reason") not in {
@@ -950,37 +1065,28 @@ def _simpler_version_already_offered(
             "approval_requirements_not_ready",
         }:
             continue
-        readiness = coverage.get("approval_readiness")
-        blocked_ids = (
-            {
-                row.get("requirement_id")
-                for row in readiness.get("requirements", [])
-                if row.get("disposition") not in {"executable", "delegated"}
-            }
-            if isinstance(readiness, Mapping)
-            else None
-        )
-        receipts = [
-            receipt
-            for receipt in payload.get("requirement_receipts") or []
-            if isinstance(receipt, Mapping)
-            and (
-                receipt.get("requirement_id") in blocked_ids
-                if blocked_ids is not None
-                else needs_creator_choice(receipt)
-            )
-        ]
-        offered = {str(receipt.get("requirement_id")) for receipt in receipts}
-        if set(requirement_ids) != offered or {r.get("brief_version") for r in receipts} != {
-            brief.version
-        }:
-            return False
         question = payload.get("choice_question") or simpler_version_question()
+        named = question.get(SIMPLER_OMITTED_IDS_KEY)
+        if isinstance(named, list):
+            # KRI-968: consent covers exactly what the reply named, at that revision. A
+            # changed set (a new miss, a different draft) is offered again, never dropped.
+            if (
+                set(requirement_ids) != {str(req_id) for req_id in named}
+                or question.get("brief_version") != brief.version
+            ):
+                return None
+            consent: SimplerConsent = "named"
+        elif not _legacy_offer_matches(payload, coverage, requirement_ids, brief):
+            return None
+        else:
+            consent = "unnamed"
         selection = (source_event.payload or {}).get("choice_selection")
         if isinstance(selection, Mapping):
             return (
-                selection.get("question_id") == question.get("question_id")
+                consent
+                if selection.get("question_id") == question.get("question_id")
                 and selection.get("option_key") == "simpler_version"
+                else None
             )
         # A bare number may answer an intervening clip question. Only the live
         # card's validated selection can use its ordinal; a text fallback must
@@ -988,8 +1094,48 @@ def _simpler_version_already_offered(
         named_option = {
             "options": [o for o in question.get("options", []) if o.get("key") == "simpler_version"]
         }
-        return match_open_choice(named_option, source_event.content) == "simpler_version"
-    return False
+        return (
+            consent
+            if match_open_choice(named_option, source_event.content) == "simpler_version"
+            else None
+        )
+    return None
+
+
+def _legacy_offer_matches(
+    payload: Mapping[str, Any],
+    coverage: Mapping[str, Any],
+    requirement_ids: list[str],
+    brief: CreativeBrief,
+) -> bool:
+    """An offer stored before KRI-968 named nothing: it blocked these exact ids, at this
+    brief revision, judging by its own receipts / readiness rows."""
+    from app.kria.approval_readiness import APPROVABLE  # noqa: PLC0415
+
+    readiness = coverage.get("approval_readiness")
+    blocked_ids = (
+        {
+            row.get("requirement_id")
+            for row in readiness.get("requirements", [])
+            if row.get("disposition") not in APPROVABLE
+        }
+        if isinstance(readiness, Mapping)
+        else None
+    )
+    receipts = [
+        receipt
+        for receipt in payload.get("requirement_receipts") or []
+        if isinstance(receipt, Mapping)
+        and (
+            receipt.get("requirement_id") in blocked_ids
+            if blocked_ids is not None
+            else needs_creator_choice(receipt)
+        )
+    ]
+    offered = {str(receipt.get("requirement_id")) for receipt in receipts}
+    return set(requirement_ids) == offered and {r.get("brief_version") for r in receipts} == {
+        brief.version
+    }
 
 
 def _policy_text_omission_reason(
@@ -1563,6 +1709,31 @@ def _complete_draft_turn(
                     # KRI-776: a moment ask is judged against the windows the approved length
                     # plan will cut, so the card never promises moments the plan doesn't hold.
                     facts = with_planned_cuts(facts, planned.media_snapshot)
+                    from app.kria.approval_readiness import contract_drawn_texts  # noqa: PLC0415
+                    from app.services.creator_render_contract import (  # noqa: PLC0415
+                        build_render_contract,
+                    )
+
+                    contract_media = planned.media_snapshot or _draft_media(item)
+                    facts = replace(
+                        facts,
+                        contract_drawn_texts=contract_drawn_texts(
+                            (
+                                build_render_contract(
+                                    document.strategy,
+                                    generation_id="draft-receipt",
+                                    brief=brief,
+                                    media_snapshot=contract_media,
+                                )
+                                if settings.brief_binding_for(thread.creator_id)
+                                else None
+                            ),
+                            document.strategy,
+                            media=contract_media,
+                            manifest=planned.brief_manifest,
+                            creator_id=thread.creator_id,
+                        ),
+                    )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -1743,6 +1914,7 @@ def _complete_draft_turn(
             ]
         if readiness_required:
             from app.kria.approval_readiness import (  # noqa: PLC0415
+                APPROVABLE,
                 assess_readiness,
                 readiness_reply,
             )
@@ -1823,7 +1995,7 @@ def _complete_draft_turn(
             unmet_ids = [
                 row["requirement_id"]
                 for row in readiness_report["requirements"]
-                if row["disposition"] not in {"executable", "delegated"}
+                if row["disposition"] not in APPROVABLE
             ]
         automatic_omission_ids = _automatic_omission_ids(
             brief,
@@ -1850,6 +2022,14 @@ def _complete_draft_turn(
         automatic_omission_ids = tuple(
             req_id for req_id in automatic_omission_ids if req_id in unmet_ids
         )
+        # KRI-983: under approval readiness a version without the unmet asks must still make
+        # something they asked for. Elsewhere KRI-610 keeps "simpler version" able to drop a
+        # sole unmet ask the creator gave up on.
+        simpler_keeps_an_ask = (
+            not readiness_required
+            or brief is None
+            or any(req.id not in unmet_ids for req in brief.live())
+        )
         automatic_omission = (
             bool(automatic_omission_ids)
             and set(automatic_omission_ids) == set(unmet_ids)
@@ -1865,22 +2045,29 @@ def _complete_draft_turn(
             and wants_light_change(req)
             and _policy_text_omission_reason(req, planned.policy_omitted_texts) is None
         }
-        simpler_version_chosen = (
-            bool(unmet_ids)
-            and apply_intent.tool_name == "draft.apply_strategy"
-            and settings.brief_binding_for(thread.creator_id)
-            # A concurrent/new instruction needs its own offer, even if its stable
-            # requirement IDs happen to be the same. Never waive model-authored updates.
-            and not planned.brief_updates
-            and not (readiness_report or {}).get("policy_problem")
-            and _simpler_version_already_offered(
+        simpler_consent = (
+            _simpler_version_consent(
                 db,
                 thread.id,
                 unmet_ids,
                 brief=brief,
                 source_event=db.get(CreationThreadEvent, turn.source_event_id),
             )
+            if (
+                bool(unmet_ids)
+                and simpler_keeps_an_ask
+                and apply_intent.tool_name == "draft.apply_strategy"
+                and settings.brief_binding_for(thread.creator_id)
+                # A concurrent/new instruction needs its own offer, even if its stable
+                # requirement IDs happen to be the same. Never waive model-authored updates.
+                and not planned.brief_updates
+                and not (readiness_report or {}).get("policy_problem")
+            )
+            else None
         )
+        simpler_version_chosen = simpler_consent is not None
+        # KRI-968: only an offer that named these requirements lets a reply say "as agreed".
+        agreed_omission_ids = list(unmet_ids) if simpler_consent == "named" else []
         if simpler_version_chosen or automatic_omission:
             omitted = [req for req in brief.live() if req.id in unmet_ids]
             omission_reasons = {
@@ -1995,16 +2182,14 @@ def _complete_draft_turn(
                     en=(
                         f"- Left out: {omission_labels[req.id]} "
                         f"({omission_reasons.get(req.id, '')})"
-                        if automatic_omission
-                        else f"- Left out as agreed: {req.text()}"
                     ),
                     tr=(
                         f"- Çıkarıldı: {omission_labels[req.id]} "
                         f"({omission_reasons.get(req.id, '')})"
-                        if automatic_omission
-                        else f"- Kararlaştırdığımız gibi çıkarıldı: {req.text()}"
                     ),
                 )
+                if automatic_omission
+                else _left_out_line(req, agreed=req.id in agreed_omission_ids)
                 for req in omitted
             )
             kept = (
@@ -2016,7 +2201,9 @@ def _complete_draft_turn(
                 if checked
                 else ""
             )
-            reply_text = "\n".join(part for part in (lead, kept, omissions, speed_notice) if part)
+            reply_text = "\n".join(
+                part for part in (lead, _with_left_out(kept, omissions), speed_notice) if part
+            )
         mark_gate = _protected_region_gate_sync(
             db,
             thread=thread,
@@ -2084,37 +2271,37 @@ def _complete_draft_turn(
                     en="I held this first draft back.", tr="Bu ilk taslağı şimdilik beklettim."
                 )
             )
-            can_offer_simpler = (
-                not readiness_required
-                or bool(unmet_ids)
-                and not (readiness_report or {}).get("policy_problem")
+            policy_problem = (readiness_report or {}).get("policy_problem")
+            can_offer_simpler = simpler_keeps_an_ask and (
+                not readiness_required or bool(unmet_ids) and not policy_problem
+            )
+            # KRI-968: name what the simpler version leaves out before the creator picks it,
+            # and record those ids on the question so a tap consents to exactly them.
+            leaves_out, simpler_question = (
+                _simpler_version_offer(brief, unmet_ids) if can_offer_simpler else ("", None)
+            )
+            ask = (
+                simpler_version_ask()
+                if can_offer_simpler
+                else say(
+                    en="Please clarify the requested changes so I can prepare the edit again.",
+                    tr=(
+                        "Düzenlemeyi yeniden hazırlayabilmem için "
+                        "istediğin değişiklikleri netleştir."
+                    ),
+                )
+                if policy_problem
+                else say(
+                    en="Tell me what to change and I'll prepare it again.",
+                    tr="Neyi değiştirmemi istediğini söyle, yeniden hazırlayayım.",
+                )
             )
             recovery = KriaTurnPlan(
                 mode="respond",
                 turn_value="question",
-                choice_question=simpler_version_question() if can_offer_simpler else None,
-                response=(
-                    f"{reply_text}\n{draft_state} "
-                    + (
-                        say(
-                            en="Should I try a different approach, or make this simpler version?",
-                            tr=(
-                                "Farklı bir yol mu deneyeyim, yoksa bunun daha basit bir "
-                                "sürümünü mü hazırlayayım?"
-                            ),
-                        )
-                        if can_offer_simpler
-                        else say(
-                            en=(
-                                "Please clarify the requested changes "
-                                "so I can prepare the edit again."
-                            ),
-                            tr=(
-                                "Düzenlemeyi yeniden hazırlayabilmem için "
-                                "istediğin değişiklikleri netleştir."
-                            ),
-                        )
-                    )
+                choice_question=simpler_question,
+                response=_fit_reply(
+                    reply_text, " ".join(part for part in (draft_state, leaves_out, ask) if part)
                 ),
             )
             completed = _complete_response_turn(
@@ -2251,7 +2438,14 @@ def _complete_draft_turn(
                         **(planned.brief_coverage or {}),
                         "stage": "draft",
                         "reason": blocked_reason,
-                        **({"accepted_omission_ids": unmet_ids} if simpler_version_chosen else {}),
+                        **(
+                            {
+                                "accepted_omission_ids": unmet_ids,
+                                "agreed_omission_ids": agreed_omission_ids,
+                            }
+                            if simpler_version_chosen
+                            else {}
+                        ),
                     },
                     brief_expected_version=planned.brief_expected_version,
                 )
@@ -2282,6 +2476,7 @@ def _complete_draft_turn(
                 coverage["approval_readiness"] = readiness_report
             if simpler_version_chosen:
                 coverage["accepted_omission_ids"] = unmet_ids
+                coverage["agreed_omission_ids"] = agreed_omission_ids
                 coverage["applicable_ids"] = [req.id for req in brief.live()]
                 coverage["retrieved_ids"] = [
                     req_id
@@ -6412,8 +6607,13 @@ def _approved_generation_requirements_review(
         return _unified_montage_review(db, thread, job, default_text)
     binding = BriefBinding.model_validate(raw)
     brief = binding.resolve(thread.id)
-    if brief is None or not brief.live():
+    if brief is None:
         return default_text, []
+    # KRI-968: what the approved simpler version left out is said again on the finished
+    # video, so the review never reads as if everything else was done.
+    left_out = "\n".join(_left_out_lines(brief, _approved_draft_coverage(db, execution)))
+    if not brief.live():
+        return _with_left_out(default_text, left_out), []
     generation = str(variant.get("render_generation_id") or "") or None
     # An editor turn changed the cut those records describe: it keeps the exact id match.
     accepted = (
@@ -6493,7 +6693,7 @@ def _approved_generation_requirements_review(
         )
         for receipt in receipts
     ]
-    return reply_from_receipts(brief, receipts, summary=default_text), [
+    return _with_left_out(reply_from_receipts(brief, receipts, summary=default_text), left_out), [
         receipt.model_dump(mode="json") for receipt in receipts
     ]
 
