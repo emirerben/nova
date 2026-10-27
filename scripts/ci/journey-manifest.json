@@ -634,6 +634,16 @@
       ]
     },
     {
+      "id": "kri-968-simpler-version-names-drops",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py",
+      "paths": [
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri968_don_julio_walkin_t1_simpler.json",
+        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py"
+      ]
+    },
+    {
       "id": "kri-845-clip-detail-evidence",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri845_clip_detail_evidence.py tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/evals/test_clip_metadata_evals.py tests/evals/test_clip_request_resolver_evals.py tests/agents/test_clip_metadata.py tests/services/test_kri520_clip_intent_copy.py tests/pipeline/test_clip_cache.py tests/schemas/test_clip_intents.py",

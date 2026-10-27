@@ -3331,6 +3331,56 @@
         "Don Julio walk-in M2 iPhone re-send after KRI-947/948/949 deploy: no moment asked twice, no name repeated"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-968-simpler-version-names-drops",
+      "tickets": [
+        "KRI-968",
+        "KRI-964"
+      ],
+      "symptom": "Don Julio walk-in T1 (F0F3D5FB): the held first draft asked \"Should I try a different approach, or make this simpler version?\" without saying the simpler version drops the ATAKAN name tag; after the tap the draft and approval card said \"Left out as agreed\" (printed under \"Have a look at these in the video:\"), and the after-render review never mentioned the tag.",
+      "boundary": "reply",
+      "status": "open_pr",
+      "owner": "KRI-968",
+      "journey": "kri-968-simpler-version-names-drops",
+      "paths": [
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri968_don_julio_walkin_t1_simpler.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri968_simpler_version_names_drops_postgres.py",
+        "tests/kria/test_runtime_simpler_version_loop.py",
+        "tests/kria/test_runtime_automatic_simplification.py",
+        "tests/kria/test_kri759_simpler_version_refusal.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real runtime turns over scratch Postgres from prod's state before the held draft (brief v3, prod events 4-8, the take, the approved strategy); only the Main Creator model call is replayed. The held draft reproduces prod's receipts and reply word for word, plus \"The simpler version leaves out: name tag when he first appears (\\\"ATAKAN\\\").\" and the question's omitted_requirement_ids [r4]; the tap drops r4 \"as agreed\" above \"Have a look\"; the after-render review on prod's rendered variant equals prod's review plus that line. Prod's own stored offer (no list) is still accepted and says \"Left out in the simpler version\". Red before the change (8 of 10), green after; scratch mutations (offer names every live row, consent ignores the list, set check dropped, review line removed, line appended under \"Have a look\", live ids listed, \"as agreed\" for legacy offers) each turn a test red.",
+        "live_model": "Not run; no paid calls. The change adds no model call.",
+        "native_output": "unknown; text-only reply change plus one additive choice_question key (omitted_requirement_ids, brief_version) the iOS parser ignores; not device-checked.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "unmet set changed between the offer and the tap: offered again naming the new set, nothing dropped",
+        "prod's legacy offer without a list: accepted, copy says \"in the simpler version\", not \"as agreed\"",
+        "Turkish offer, agreed line and review line",
+        "a second offer in the same thread names only its own drop; the first offer's tap is stale",
+        "readiness offers (KRI-901 Merope) name every blocked row and stay within the 1200-char reply",
+        "automatic omissions (\"Left out: X (reason)\") and the KRI-759 policy refusal (dropped_fields) unchanged",
+        "review skips an omitted id that is live again or unknown to the approved brief"
+      ],
+      "neighbours_gap": [
+        "The Main Creator's own turn output on the two replayed turns was recorded only as hashes; the approved draft's strategy stands in (no brief updates, as the brief did not change).",
+        "An agreed omission whose acceptance turn was blocked by a later choice question (accepted_omission_ids on a response, not the draft) is not repeated on the next draft or the review.",
+        "An omission agreed in an earlier round is not repeated after a second simpler version replaces the draft.",
+        "The ATAKAN tag itself is still not drawn: a name tag timed \"when he first appears\" has no placement path on a one-take Talking edit."
+      ],
+      "follow_ups": [
+        "Don Julio walk-in T1 iPhone re-send after deploy: the held draft names the tag, the card says \"as agreed\", the review lists it",
+        "KRI-964: place a \"when <person> first appears\" name tag at the start of the cut"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

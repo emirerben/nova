@@ -166,12 +166,16 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     ),
     "tasks/kria_runtime.py": (
         "carry",
-        "approval claims / dispatch carry the request",
+        "approval claims / dispatch carry the request; KRI-968's simpler-version offer and "
+        "left-out lines quote a requirement's own wording unchanged into the reply, and the "
+        "offer's ids (not the words) decide what the simpler version drops",
         frozenset(
             {
                 "_ApprovalDispatchClaim",
                 "_claim_approval_dispatch",
                 "_complete_draft_turn",
+                "_left_out_line",
+                "_simpler_version_offer",
                 "execute_kria_approval",
             }
         ),
