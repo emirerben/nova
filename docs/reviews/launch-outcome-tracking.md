@@ -64,7 +64,7 @@ answers continue the request. Only the matching offered simpler-version choice
 is classified as recovery. Client build, version, protocol and the existing Fly
 deployment revision accompany the link. Existing request digests remain stable.
 
-The five real Postgres journeys and runtime neighbors pass 58 checks. The native
+The six real Postgres journeys and runtime neighbors pass 59 checks. The native
 context, structured-answer and suggestion suites pass 46 tests with no skips.
 The chat fixture also passes after the typed submission change. Result bundles
 are private under `.dev/outcome-ios/`.
@@ -91,10 +91,10 @@ Six HTTP/Postgres acceptance cases fail against the parent PR. Two further
 controls reproduced older captures overwriting new attempt counts and a ready
 retry hiding an earlier failure on the same job. The integration matrix covers
 these controls, consent withdrawal, duplicate reviews, legacy unknowns and actual
-export publication. The final focused matrix passes 49 checks. Another 56
+export publication. The final request/report/publication and plan-review matrix passes 78 checks. Another 56
 completion and actual-export verification checks passed before the final report
-correction. That correction changes only report projection, and the 49 checks
-were rerun afterwards. Logs are private under `.dev/launch-hardening/outcome-*`.
+correction. That correction changes only report projection, and the final matrix
+was rerun afterwards. Logs are private under `.dev/launch-hardening/outcome-*`.
 
 Actual exports continue to use the existing generation-bound device completion
 and verification receipts. Their repeated, delayed and rejected callbacks retain
@@ -102,3 +102,11 @@ the existing publication checks. Photos-library save callbacks, result acceptanc
 and abandonment remain explicitly unknown. They are never inferred from an
 approval, ready job, Save tap, share sheet or missing feedback. No additional
 Photos telemetry pipeline is introduced by this measurement change.
+
+The final review also reproduced two false-success paths. Recovery success now
+requires the matching server-stored simpler-version question and accepted
+selection, rather than a client label alone. Rejecting an intent review keeps
+its history but excludes its fulfillment claim. A future protocol number cannot
+block the requested action through analytics validation. The legacy request-id
+guard now pins the actual parent digest instead of reconstructing it from a
+newer schema. Those controls and neighboring plan-review checks pass together.

@@ -28,7 +28,7 @@ class RequestOutcomeLink(BaseModel):
     relation: Literal["original", "continuation", "retry", "revision", "recovery", "unclassified"]
     original_known: bool
     link_status: Literal["known", "legacy_parent", "parent_unavailable", "unclassified"]
-    client_protocol: int | None = Field(default=None, ge=0, le=9999)
+    client_protocol: int | None = Field(default=None, ge=0)
     client_build: str | None = Field(default=None, pattern=r"^[0-9]{1,10}$")
     client_version: str | None = Field(
         default=None, max_length=32, pattern=r"^[0-9]+(?:\.[0-9]+){0,3}$"

@@ -110,7 +110,10 @@ def request_outcome_report(cases, *, since, until):
                 job_id = execution.get("target_job_id")
                 if job_id and execution.get("tool_name") == "render.request":
                     root["executions"][str(execution["id"])] = job_id
-        for entry in (case.review or {}).get("outcome_history") or []:
+        review = case.review or {}
+        for entry in (
+            (review.get("outcome_history") or []) if review.get("decision") == "approved" else []
+        ):
             if entry.get("assessment_id"):
                 histories[entry["assessment_id"]] = entry
         if links:
@@ -157,7 +160,7 @@ def request_outcome_report(cases, *, since, until):
         failed_render_jobs=0,
         pending_render_jobs=0,
         assessments=0,
-        unfulfilled_artifacts=0,
+        unfulfilled_assessments=0,
     )
     first, segments, latencies = Counter(fulfilled=0, requests=len(roots), unknown=0), Counter(), []
     for root in roots.values():
@@ -173,7 +176,7 @@ def request_outcome_report(cases, *, since, until):
         )
         counts[f"original_{status}"] += 1
         counts["assessments"] += len(entries)
-        counts["unfulfilled_artifacts"] += sum(_verdict(e) == "unfulfilled" for e in entries)
+        counts["unfulfilled_assessments"] += sum(_verdict(e) == "unfulfilled" for e in entries)
         counts["revision_fulfilled"] += any(
             e.get("basis") == "current_revision" and _verdict(e) == "fulfilled" for e in entries
         )
@@ -228,12 +231,19 @@ def request_outcome_report(cases, *, since, until):
         if fulfilled_dates:
             latencies.append((min(fulfilled_dates) - root["at"]).total_seconds())
         meta = root["metadata"]
+        phone_only = bool(root["jobs"]) and all(
+            (job.get("assembly_plan") or {}).get("native_device_only") is True
+            or DEVICE_RENDER_FIELD in (job.get("assembly_plan") or {})
+            for job in root["jobs"].values()
+        )
         segments[
             (
                 root["cohort"],
                 meta.client_build or "unknown",
+                meta.client_version or "unknown",
                 meta.client_protocol,
                 meta.server_revision,
+                "phone" if phone_only else "unknown",
             )
         ] += 1
     known_cost = sum(
@@ -259,8 +269,11 @@ def request_outcome_report(cases, *, since, until):
             {
                 "cohort": key[0],
                 "client_build": key[1],
-                "client_protocol": key[2],
-                "server_revision": key[3],
+                "client_version": key[2],
+                "client_protocol": key[3],
+                "server_revision": key[4],
+                "adapter": key[5],
+                "capability_cohort": "unknown",
                 "requests": count,
             }
             for key, count in sorted(segments.items(), key=lambda item: str(item[0]))
@@ -270,7 +283,7 @@ def request_outcome_report(cases, *, since, until):
             "consent alone does not identify beta or customer cohorts"
         ),
         "scope": (
-            "known linked original requests in eligible captured sessions; "
+            "known original requests with linked activity in the date window; "
             "selected sample, not population"
         ),
         "first_attempt_limit": (

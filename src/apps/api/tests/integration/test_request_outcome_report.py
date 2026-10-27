@@ -31,7 +31,7 @@ from tests.integration.test_request_following_queue import (
 pytest_plugins = ("tests.integration.test_request_following_queue",)
 
 
-async def linked_case(fixture, *, relation="original", failed_first=False):
+async def linked_case(fixture, *, relation="original", failed_first=False, accepted_recovery=True):
     client, case, _, _, job_id = fixture
     thread_id = uuid.UUID(case["thread_id"])
     root, turn = uuid.uuid4(), uuid.uuid4()
@@ -60,6 +60,16 @@ async def linked_case(fixture, *, relation="original", failed_first=False):
                 content="PRIVATE-LINKED-REQUEST",
                 created_at=at + timedelta(milliseconds=sequence),
                 payload={
+                    **(
+                        {
+                            "choice_selection": {
+                                "question_id": "recovery-choice",
+                                "option_key": "simpler_version",
+                            }
+                        }
+                        if relation == "recovery" and accepted_recovery
+                        else {}
+                    ),
                     "turn_id": str(identifier),
                     "request_outcome_link": {
                         "schema_version": 1,
@@ -92,7 +102,26 @@ async def linked_case(fixture, *, relation="original", failed_first=False):
 
         if failed_first:
             await add_turn(root, "original", sequence=2, status="failed")
-        await add_turn(turn, relation, sequence=3 if failed_first else 2, status="completed")
+        sequence = 3 if failed_first else 2
+        if relation == "recovery" and accepted_recovery:
+            db.add(
+                CreationThreadEvent(
+                    thread_id=thread_id,
+                    sequence=sequence,
+                    revision=sequence,
+                    role="assistant",
+                    event_type="assistant_response",
+                    payload={
+                        "choice_question": {
+                            "question_id": "recovery-choice",
+                            "conflict": "simplification_requires_choice",
+                        }
+                    },
+                )
+            )
+            await db.flush()
+            sequence += 1
+        await add_turn(turn, relation, sequence=sequence, status="completed")
         db.add(
             CreatorAgentExecution(
                 session_id=session.id,
@@ -198,6 +227,7 @@ async def test_assessment_history_survives_duplicate_review_and_superseding_capt
     data = (await report(client))["request_outcomes"]
     assert data["requests"] == 1 and data["original_unfulfilled"] == 1
     assert data["assessments"] == 1
+    assert data["unfulfilled_assessments"] == 1
 
 
 async def test_legacy_export_cannot_be_reviewed_as_a_known_original(output_journey):
@@ -297,3 +327,30 @@ async def test_a_ready_retry_does_not_erase_the_same_jobs_failed_attempt(output_
     assert data["original_fulfilled"] == 1
     assert data["failed_render_jobs"] == 1
     assert data["render_attempts"] == 2
+
+
+async def test_client_declared_recovery_is_not_an_accepted_recovery(output_journey):
+    client, *_ = output_journey
+    case, turn = await linked_case(
+        output_journey, relation="recovery", failed_first=True, accepted_recovery=False
+    )
+    url, body = await outcome_body(client, case)
+    body["outcome_review"].update(basis="recovery", turn_id=str(turn))
+    for row in body["outcome_review"]["outcomes"]:
+        row["verdict"] = "met"
+    response = await client.post(url + "/review", json=body)
+    assert response.status_code == 422, response.text
+
+
+async def test_rejecting_the_intent_review_preserves_history_without_counting_fulfillment(
+    output_journey,
+):
+    client, *_ = output_journey
+    case, turn = await linked_case(output_journey)
+    saved, body = await assess(client, case, turn)
+    body.update(review_version=saved["review_version"], decision="rejected", outcome_review=None)
+    response = await client.post(f"/admin/request-following/{case['id']}/review", json=body)
+    assert response.status_code == 200, response.text
+    assert len(response.json()["review"]["outcome_history"]) == 1
+    result = (await report(client))["request_outcomes"]
+    assert result["original_fulfilled"] == 0 and result["original_unknown"] == 1

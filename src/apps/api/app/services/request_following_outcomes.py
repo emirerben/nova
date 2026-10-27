@@ -253,8 +253,8 @@ async def validate_outcome(db, case, body):
 
     if value.turn_id is None:
         raise HTTPException(422, "known_outcome_requires_request_lineage")
-    payload = await db.scalar(
-        select(CreationThreadEvent.payload)
+    source = await db.scalar(
+        select(CreationThreadEvent)
         .join(CreatorAgentTurn, CreatorAgentTurn.source_event_id == CreationThreadEvent.id)
         .join(CreatorAgentExecution, CreatorAgentExecution.turn_id == CreatorAgentTurn.id)
         .where(
@@ -267,14 +267,32 @@ async def validate_outcome(db, case, body):
         )
         .limit(1)
     )
+    payload = source.payload if source is not None else {}
     try:
         link = RequestOutcomeLink.model_validate((payload or {}).get("request_outcome_link"))
     except ValidationError as exc:
         raise HTTPException(422, "known_outcome_requires_request_lineage") from exc
     if not link.original_known or link.link_status != "known":
         raise HTTPException(422, "known_outcome_requires_request_lineage")
-    if value.basis == "recovery" and link.relation != "recovery":
-        raise HTTPException(422, "recovery_requires_accepted_recovery")
+    if value.basis == "recovery":
+        selection = (payload or {}).get("choice_selection") or {}
+        if link.relation != "recovery" or selection.get("option_key") != "simpler_version":
+            raise HTTPException(422, "recovery_requires_accepted_recovery")
+        question_payload = await db.scalar(
+            select(CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == case.thread_id,
+                CreationThreadEvent.role == "assistant",
+                CreationThreadEvent.sequence < source.sequence,
+                CreationThreadEvent.payload["choice_question"]["question_id"].astext
+                == selection.get("question_id"),
+            )
+            .order_by(CreationThreadEvent.sequence.desc())
+            .limit(1)
+        )
+        question = (question_payload or {}).get("choice_question") or {}
+        if question.get("conflict") != "simplification_requires_choice":
+            raise HTTPException(422, "recovery_requires_accepted_recovery")
     return link.model_dump(mode="json", exclude_none=True)
 
 

@@ -141,3 +141,14 @@ async def test_transport_replay_keeps_the_first_link_without_another_event(proje
             ).all()
         )
         assert len(events) == 1
+
+
+async def test_future_protocol_metadata_cannot_block_the_requested_action(project):
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    set_client_protocol(10000)
+    try:
+        accepted, _ = await submit(project, {"relation": "original"})
+        assert (await link(accepted))["client_protocol"] == 10000
+    finally:
+        clear_request_context()
