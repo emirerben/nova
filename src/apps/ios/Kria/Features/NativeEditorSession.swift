@@ -4445,6 +4445,8 @@ struct NativeEditorTemporaryVideo {
     }
     func setTextWidth(id: String, width: Double?) { setTextRaw(id: id, key: "max_width_frac", value: width.map { .number(min(max(0.2, $0), 1)) } ?? .null) }
     func setTextAlignment(id: String, alignment: String?) { setTextRaw(id: id, key: "alignment", value: alignment.map(JSONValue.string) ?? .null) }
+    func placeTextBlock(id: String, _ placement: NativeTextBlockPlacement) {}
+    func textBlockPlacements(id: String) -> Set<NativeTextBlockPlacement> { [] }
     func setTextAnimation(id: String, animation: String?) {
         let value = animation ?? "none"
         guard NativeEditorWireContract.textAnimations.contains(value) else { return }
