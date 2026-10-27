@@ -72,6 +72,9 @@ def current_detector_policy() -> str:
             # switch must therefore retire ready analyses and request consent
             # again instead of silently reusing a pause/filler-only snapshot.
             f"retakes={'enabled' if _speech_cleanup_retakes_enabled() else 'disabled'}",
+            # The filler check moves and drops filler cuts for identical media; its switch must
+            # retire analyses made under the other setting.
+            f"filler-check={'enabled' if settings.speech_cleanup_filler_check_enabled else 'off'}",
         )
     )
 
