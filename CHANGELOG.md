@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.159.0] - 2026-10-27
+
+### Changed
+- fix(kria): unblock Cunda compilation and report saved drafts honestly (#1869) <!-- release-pr: 1869 -->
+
 ## [0.81.158.0] - 2026-10-27
 
 ### Changed
