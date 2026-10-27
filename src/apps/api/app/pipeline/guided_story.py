@@ -928,7 +928,12 @@ def song_reference_variant_fields(plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def _song_reference(track: dict[str, Any] | None, *, duration_s: float) -> dict[str, Any] | None:
-    """Persist matched-song identity and timing without making it render input."""
+    """Persist matched-song identity and timing without making it render input.
+
+    The suggestion runs the video's length from the section's start, as the iOS editor
+    extends it after a longer edit. A frozen section's end never fails the render
+    (KRI-984): the song is not in the video, and only the catalog can end the suggestion.
+    """
     if track is None:
         return None
     track_id = str(track.get("track_id") or "")
@@ -952,20 +957,6 @@ def _song_reference(track: dict[str, Any] | None, *, duration_s: float) -> dict[
         return None
     start_s = requested_start
     end_s = start_s + duration_s
-    if track.get("end_s") is not None:
-        try:
-            selected_end = float(track["end_s"])
-        except (TypeError, ValueError) as exc:
-            raise GuidedStoryError(
-                "guided_story_music_section_invalid", "The approved music section is unreadable."
-            ) from exc
-        if not math.isfinite(selected_end) or end_s > selected_end + 0.001:
-            raise GuidedStoryError(
-                "guided_story_music_section_exceeded",
-                "This edit needs a length choice before it can extend the selected music section.",
-            )
-    if end_s > catalog_duration + 0.001:
-        return None
     return GuidedStorySongReference(
         track_id=track_id,
         title=title,

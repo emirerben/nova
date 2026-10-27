@@ -205,6 +205,14 @@ def contract_text_drawn(requirement, *, route: str | None) -> bool:  # noqa: ANN
     return route in CONTRACT_REPAIR_ROUTES and requirement.role in PLACED_WITHOUT_PLAN
 
 
+def contract_drawn_texts(contract, *, route: str | None) -> tuple[str, ...]:  # noqa: ANN001
+    """``PlanFacts.contract_drawn_texts`` for ``route``: one answer for readiness, the draft
+    reply and the montage writer's receipts (KRI-984)."""
+    if contract is None:
+        return ()
+    return tuple(row.text for row in contract.exact_texts if contract_text_drawn(row, route=route))
+
+
 _TITLE_ID = "guided-title"
 _TITLE_HOLD_S = 2.2
 _TITLE_Y = 0.16

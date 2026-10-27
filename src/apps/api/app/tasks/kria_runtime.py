@@ -1644,6 +1644,10 @@ def _complete_draft_turn(
                 brief = answered_brief(brief, document.strategy)
             if brief is not None:
                 if apply_intent.tool_name == "draft.apply_strategy":
+                    from app.kria.approval_readiness import (  # noqa: PLC0415
+                        draft_contract_drawn_texts,
+                    )
+
                     facts = plan_facts_from_strategy(
                         document.strategy,
                         clip_ids=planned.brief_clip_ids,
@@ -1701,6 +1705,17 @@ def _complete_draft_turn(
                             )
                             if phone_talking
                             else None
+                        ),
+                        # KRI-984: pinned text the render draws whatever the draft holds,
+                        # counted as readiness counts it.
+                        contract_drawn_texts=draft_contract_drawn_texts(
+                            brief,
+                            document.strategy,
+                            media=planned.media_snapshot
+                            if planned.media_snapshot is not None
+                            else _draft_media(item),
+                            manifest=planned.readiness_manifest,
+                            creator_id=thread.creator_id,
                         ),
                     )
                     # KRI-776: a moment ask is judged against the windows the approved length

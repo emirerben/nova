@@ -414,7 +414,10 @@ and sound effects remain independent. New variant payloads declare
 reference is copied into the strict render receipt. Editors and download surfaces
 show the section to select in TikTok or Instagram without claiming availability in
 those platforms' catalogs. Duration revisions must update the reference end while
-preserving the chosen start. Existing compiler versions 1–5 keep their persisted
+preserving the chosen start. A frozen licensed section (KRI-492) gives the start
+only: an approved edit longer than the section gets a reference that runs from that
+start for the edit's length, never a failed render (KRI-984); only a track that ends
+first drops the reference. Existing compiler versions 1–5 keep their persisted
 music and canonical replay behavior; ready historical outputs are not rewritten.
 For v6 edits that preserve original audio, the cloud renderer rebuilds the source
 audio from the approved source windows and timeline positions after visual

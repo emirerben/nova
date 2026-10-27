@@ -7194,9 +7194,16 @@ def _run_phone_unified_montage_job(
             needs_creator_choice,
             plan_facts_from_unified_montage,
         )
+        from app.pipeline.phone_plan_repair import contract_drawn_texts  # noqa: PLC0415
 
         record["generation_id"] = generation
         with _worker_reply_language(snapshot):
+            # KRI-984: `_run_phone_guided_job` repairs this plan toward the pinned contract,
+            # so its pinned whole-video texts are on screen, as readiness and the reply say.
+            facts = replace(
+                plan_facts_from_unified_montage(record),
+                contract_drawn_texts=contract_drawn_texts(contract, route="unified_montage"),
+            )
             record["requirement_receipts"] = [
                 {
                     **receipt.model_dump(mode="json"),
@@ -7205,7 +7212,7 @@ def _run_phone_unified_montage_job(
                 }
                 for receipt in build_receipts(
                     brief.live(),
-                    plan_facts_from_unified_montage(record),
+                    facts,
                     include_unchecked=bool(snapshot.get("creator_brief_binding")),
                 )
             ]

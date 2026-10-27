@@ -176,7 +176,7 @@ def _contract_drawn_texts(
     creator_id: object,
 ) -> tuple[str, ...]:
     """KRI-945: the pinned texts this draft's writer puts on screen whatever its plan holds."""
-    from app.pipeline.phone_plan_repair import contract_text_drawn  # noqa: PLC0415
+    from app.pipeline.phone_plan_repair import contract_drawn_texts  # noqa: PLC0415
 
     if contract is None or not contract.exact_texts or creator_id is None:
         return ()
@@ -187,7 +187,30 @@ def _contract_drawn_texts(
         edit_format=strategy.get("edit_format") or (manifest.edit_format if manifest else None),
         creator_id=creator_id,
     )
-    return tuple(row.text for row in contract.exact_texts if contract_text_drawn(row, route=route))
+    return contract_drawn_texts(contract, route=route)
+
+
+def draft_contract_drawn_texts(
+    brief: CreativeBrief | None,
+    strategy: Mapping[str, Any],
+    *,
+    media: Mapping[str, Any],
+    manifest: ResolvedCreatorManifest | None,
+    creator_id: object,
+) -> tuple[str, ...]:
+    """KRI-984: what readiness counts as drawn, for the draft reply's own receipts."""
+    try:
+        contract = build_render_contract(
+            generation_id="approval-readiness",
+            strategy=strategy,
+            brief=brief,
+            media_snapshot=media,
+        )
+    except ValueError:
+        return ()
+    return _contract_drawn_texts(
+        contract, strategy, media=media, manifest=manifest, creator_id=creator_id
+    )
 
 
 def assess_readiness(

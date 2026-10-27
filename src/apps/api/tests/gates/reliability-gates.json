@@ -3473,6 +3473,54 @@
         "KRI-964: place a \"when <person> first appears\" name tag at the start of the cut"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-984-cunda-song-suggestion-render",
+      "tickets": [
+        "KRI-984",
+        "KRI-945"
+      ],
+      "symptom": "Cunda Island montage (job cecdc8d9, thread e3e91b35): 11 videos and 10 pool photos, approved, then phone_plan_failed: \"This edit needs a length choice before it can extend the selected music section.\" The matched song is a posting suggestion (reference_only); its frozen section was 16.8 s (the footage windows' budget), the edit 28.8 s (plus ten 1.2 s photo holds). The draft reply and the render's requirement_recovery also said \"Partly: That exact text isn't in this draft\" for the typed intro the render draws.",
+      "boundary": "compiler",
+      "status": "open_pr",
+      "owner": "KRI-984",
+      "journey": "kri-984-cunda-song-suggestion-render",
+      "paths": [
+        "src/apps/api/app/pipeline/guided_story.py",
+        "src/apps/api/app/pipeline/phone_plan_repair.py",
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/tasks/generative_build.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri984_cunda_island_render.json"
+      ],
+      "regression_tests": [
+        "tests/tasks/test_kri984_cunda_render.py",
+        "tests/kria/test_kri945_global_text_journey.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The incident's approved inputs (redacted fixture) through the real dispatcher: montage writer, receipts, creation-text composer (provider answer replayed from the job's recorded operations), strict guided compile with the frozen song, contract repair, phone compile, pilot check and pin-time contract verification; database and storage are fixed values. The replay rebuilds prod's 21 cuts and text composition exactly and reproduced both prod trace events (r1 partial, phone_plan_failed GuidedStoryError) before the change; after it the job reaches awaiting_device with the song suggestion 133.19-161.994 s and the typed intro drawn 2.2-8.62 s, r1 met. The KRI-945 journey's draft reply receipt for r1 was partial while readiness said executable; now met, and the spoken-excerpt control stays partial.",
+        "live_model": "Not run; no paid calls. The change adds no model call.",
+        "native_output": "unknown; server-side plan and receipt change, recipe unchanged except the song_reference end; not device-checked.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "retry of the failed job's own pinned guided_edit renders",
+        "text lane omits the typed intro: the contract repair draws it and the receipt still agrees",
+        "song section longer than the video: reference unchanged",
+        "track that ends before the video: no reference, render proceeds (unchanged)",
+        "creator's own song (rendered) shorter than the approved window still fails closed",
+        "spoken-excerpt montage still holds the typed text as partial"
+      ],
+      "neighbours_gap": [
+        "The length plan still budgets a song-owned montage's footage to the whole section without the placed pool photos (planner._enrich_best_parts_snapshot subtracts the Visuals budget only from a creator total), so the approved length_plan.natural_duration_s understates the edit; harmless now that the section end is not a render limit.",
+        "No iPhone re-send yet."
+      ],
+      "follow_ups": [
+        "Cunda Island iPhone re-send after deploy: the montage renders with the song suggestion and the intro receipt says Done"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
