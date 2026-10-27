@@ -115,6 +115,8 @@ which runs from `src/apps/ios/Packages/KriaMediaEngine`.
 | Mobile/tool/OpenAPI contract check | Unchanged, all three match their checked artifacts. |
 | Full `make verify-kria` after the receipt correction | 6,573 passed, 6 skipped, 3 expected failures before the final rebase. |
 | Simulator approved-hook export and source recovery | 3 passed, 0 skipped. Exported MP4 and inspected Unicode/emoji frame retained. |
+| Physical iPhone source admission over Wi-Fi | 9 passed, 0 failed, 0 skipped. Synthetic offset/trim/hold/speed/cleanup and missing-source controls, with exported MP4s retained. |
+| Installed build 1759 save and Photos export | Existing changes saved with the user's approval. First Photos import failed with error 3301; one retry succeeded. One new 2:15 video was independently opened in Photos. |
 
 The two expected failures include the legacy unmarked collapsed-list limitation.
 A new marker cannot establish the meaning of old rows that never stored it.
@@ -132,9 +134,49 @@ Live prompt compliance remains unverified. No paid model run was started.
 | KRI-954 research | Resolved caption receipt fixed. Live Cunda replay, non-unified research refusal and the suspected source trigger are still open. |
 | KRI-728 complete outcome measurement | Current-session counters added. Original request/recovery lineage, Photos acknowledgement and version/cost cohorts remain incomplete. |
 | KRI-56 closed beta | Requires real participants and recorded outcomes. No invitations or team messages sent. |
-| Release candidate | Physical phone was offline. Candidate build is awaiting the user's answer. No deploy or merge performed. |
+| Release candidate | Wi-Fi checks exercised installed build 1759. Save and Photos delivery recovered after an interrupted first import. Original incident replay, deployed revisions/flags and release approval remain open. No deploy or merge performed. |
 
 The verification map is a tested seed with five journeys, not complete product
 coverage. Account deletion/sign-in, camera capture, billing, retention and
 publication still require additional mapped journeys. No independent agent review
 was run because the user's standing instruction disables delegation.
+
+## Physical continuation, 27 October
+
+The iPhone 13 Pro connected through CoreDevice over Wi-Fi without USB or
+Mirroring. Separate QA applications preserved the installed Kria app. The native
+source-admission suite ran nine existing regressions with no failures or skips.
+The phone's MP4s were copied back, and the inspected offset export begins with
+the expected source picture; its video and audio tracks start at zero. These are
+synthetic sources, not the exact retained Troya original.
+
+After the user enabled UI Automation, the installed-app inspector passed. The
+client had advanced from 0.1.0 (1754) to 0.1.0 (1759). Successful TestFlight run
+[40397013091](https://github.com/emirerben/nova/actions/runs/40397013091) maps 1759
+to `f3f1aa44e438114bf2b92af9554e0ef739911f38`. No engine/exporter/header source
+diff was present between that revision and this branch. The installed binary's
+signature was not independently checked.
+
+The open project contained unsaved changes. Export correctly explained that a
+save was required. The user explicitly approved saving those existing changes
+and exporting a copy. The app reached **Saved**. The first Photos attempt failed
+at 07:13 UTC with `PHPhotosErrorDomain` 3301. Apple's installed `PHError.h` names
+this `operationInterrupted`, a transient error. Photos still contained 12,695
+items afterward. A single controlled retry reached **Saved to Photos** at
+07:21 UTC. The refreshed Photos library contained 12,696 items, including a new
+2:15 video dated 07:20. That new item was opened and its playback inspected.
+
+The interruption's cause is unproven. A later memory-pressure log does not
+establish a cause. No automatic retry or idle-timer patch was added on that
+evidence. This is an observed recovery, not proof of reliable first-attempt
+delivery. The full video's sound and request fidelity were not inspected, and
+this existing project does not replace the original compound incident replays.
+API/worker revisions, effective flags and exposure to this unmerged branch were
+not established by this UI check.
+
+Retained local evidence is in `.dev/launch-proof/wireless-runner/`:
+`native-offset-01.xcresult`, `inspect-03.xcresult`, `save-01.xcresult`,
+`save-photos-01.xcresult`, `save-photos-02.xcresult`, and
+`photos-open-video-01.xcresult`, with extracted screenshots, accessibility trees,
+the failed screen recording and native MP4s. The isolated XcodeGen project and
+test sources are retained there. No private footage is committed.
