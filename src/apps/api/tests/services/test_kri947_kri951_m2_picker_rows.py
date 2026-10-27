@@ -187,9 +187,9 @@ def test_prod_round_3_asks_the_butcher_once_in_one_row() -> None:
     ]
     assert "also_answers" not in rows[1]
     assert clip_question_text(rows, only_video=True) == (
-        'I couldn\'t find "the butcher holding a cut of beef", '
-        '"the queue under the striped awning" in your video. '
-        "Tap the video for each one that's in it, or mark the ones that aren't."
+        'About when do "the butcher holding a cut of beef", '
+        '"the queue under the striped awning" appear in your video? '
+        "Give a rough time for each, or tell me which aren't there."
     )
 
 
@@ -211,13 +211,13 @@ def test_prod_round_4_asks_the_photo_once_in_one_row_in_both_languages() -> None
         "creator_text": "Ojo de bife 🥩",
     }
     assert clip_question_text([row], only_video=True) == (
-        'I couldn\'t find "the ribeye photo" in your video. '
-        "Tap the video if it's in there, or tell me it isn't."
+        'About when does "the ribeye photo" appear in your video? '
+        "Give a rough time, such as near the start or 30 seconds, or tell me it isn't there."
     )
     with reply_language_for("tr"):
         assert clip_question_text([row], only_video=True) == (
-            'Videonda "the ribeye photo" olan yeri bulamadım. '
-            "Varsa videoya dokun, yoksa olmadığını söyle."
+            'Videonda "the ribeye photo" yaklaşık ne zaman görünüyor? '
+            "Başlara doğru veya 30. saniye gibi yaklaşık bir zaman ver ya da olmadığını söyle."
         )
 
 
@@ -312,13 +312,13 @@ def test_wording_counts_moments_not_rows() -> None:
         return [{"label": label} for label in labels]
 
     assert clip_question_text(rows("the ribeye photo", "The ribeye photo."), only_video=True) == (
-        'I couldn\'t find "the ribeye photo" in your video. '
-        "Tap the video if it's in there, or tell me it isn't."
+        'About when does "the ribeye photo" appear in your video? '
+        "Give a rough time, such as near the start or 30 seconds, or tell me it isn't there."
     )
     many = rows("sign", "cook", "Sign", "flowers", "cook", "plaques")
     assert clip_question_text(many, only_video=True) == (
-        'I couldn\'t find "sign", "cook", "flowers", "plaques" in your video. '
-        "Tap the video for each one that's in it, or mark the ones that aren't."
+        'About when do "sign", "cook", "flowers", "plaques" appear in your video? '
+        "Give a rough time for each, or tell me which aren't there."
     )
     assert clip_question_text(rows("sign", "Sign!")) == (
         'I couldn\'t tell which of your clips show "sign". '

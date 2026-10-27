@@ -264,6 +264,8 @@ class ClipIntent(BaseModel):
             raise ValueError("transcript_kind requires label_source=transcript")
         if self.order_by is not None and (self.op != "order" or self.position is not None):
             raise ValueError("order_by requires op=order and no position")
+        if self.ordered_members and (self.op != "order" or self.order_by is not None):
+            raise ValueError("ordered_members requires a described order")
         if self.placeholder and (
             self.op != "label"
             or self.label_source != "clip"
@@ -297,6 +299,7 @@ class ClipIntent(BaseModel):
     position: ClipOrderPosition | None = None
     # Only for op="order", and never together with `position`.
     order_by: ClipOrderBy | None = Field(default=None, exclude_if=lambda value: value is None)
+    ordered_members: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("intent_id", mode="before")
     @classmethod

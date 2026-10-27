@@ -208,12 +208,8 @@ async def test_a_video_only_project_keeps_the_plain_question(monkeypatch) -> Non
 
     result = await _resolve(intents, _clips(), request=REQUEST)
 
-    (category,) = result.clip_question["categories"]
-    assert category["candidate_media_ids"] == [TAKE]
-    assert result.question == (
-        'I couldn\'t find "the ribeye photo" in your video. '
-        "Tap the video if it's in there, or tell me it isn't."
-    )
+    assert result.clip_question is None
+    assert 'About when does "the ribeye photo" appear' in result.question
 
 
 async def test_a_moment_the_resolver_put_on_the_take_still_settles_there(monkeypatch) -> None:

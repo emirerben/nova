@@ -2969,21 +2969,3 @@ struct UploadCoordinator: Sendable {
     }
 }
 
-protocol PhotoLibrarySaving: Sendable {
-    func saveVideo(at url: URL) async throws
-}
-
-struct PhotoLibrarySaver: PhotoLibrarySaving {
-    func saveVideo(at url: URL) async throws {
-        let authorization = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard authorization == .authorized || authorization == .limited else { throw PhotoLibraryError.notAuthorized }
-        try await PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
-        }
-    }
-}
-
-enum PhotoLibraryError: Error, LocalizedError {
-    case notAuthorized
-    var errorDescription: String? { "Kria needs Photos access to save this video." }
-}

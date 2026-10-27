@@ -1045,7 +1045,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # KRI-945: an intro, explanation or facts for the whole video is never a caption.
         # KRI-941: "in this order: A, B, C" is one `order` intent per named subject, position
         # null, in the stated order (the prompt said that and, further down, the opposite).
-        prompt_version="2026-10-26.2",
+        prompt_version="2026-10-27-launch-integration",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
