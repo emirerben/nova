@@ -587,6 +587,7 @@ def _run_engine_once(
         include_silence_and_fillers=True,
         over_budget_policy=SPEECH_CLEANUP_OVER_BUDGET_POLICY,
         max_removal_frac_required=settings.speech_cleanup_max_removal_frac_required,
+        filler_check=settings.speech_cleanup_filler_check_enabled,
         reference_transcript=reference_transcript,
         reference_source=reference_source,
         # Gemini only listened to the narration's opening (`_transcribe_reference_sample`).
