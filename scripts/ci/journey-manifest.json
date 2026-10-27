@@ -721,6 +721,7 @@
         "src/apps/api/app/kria/speed_ask.py",
         "src/apps/api/tests/kria/test_kri689_chat_speed_spec.py",
         "src/apps/api/app/pipeline/reframe.py",
+        "src/apps/api/app/pipeline/audio_layout.py",
         "src/apps/api/app/pipeline/phone_guided_plan.py",
         "src/apps/api/app/pipeline/phone_authored_timeline.py",
         "src/apps/api/app/services/guided_timeline.py",

@@ -40,8 +40,10 @@ def test_exact_duration_adds_output_cap_after_cfr(monkeypatch, tmp_path) -> None
 
     command = calls[0]
     duration_options = [index for index, value in enumerate(command) if value == "-t"]
-    assert len(duration_options) == 2
-    assert duration_options[-1] > command.index("-i")
+    last_input = max(index for index, value in enumerate(command) if value == "-i")
+    # Source window, silent-pad bound, then the output cap after every input.
+    assert len(duration_options) == 3
+    assert duration_options[-1] > last_input
     assert command[duration_options[-1] + 1] == "2.000000"
 
 
