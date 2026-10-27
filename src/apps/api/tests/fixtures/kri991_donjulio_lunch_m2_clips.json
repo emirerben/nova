@@ -1,0 +1,577 @@
+{
+ "source": "Don Julio lunch M2, thread 4C536AFE, 2026-10-27 (KRI-991). Clip records = job_debug creator_brief_binding.media_snapshot.clip_assignments[*].analysis (analysis_version 8, KRI-845 props/actions live).",
+ "creator_request": "10-second montage, only about the steak. Skip the clip where he cuts the cheese, I only want the steak being cut. Use my steak photo too. End on the dessert. Quick cuts.\nWe didn't film dessert. End on my friend smiling.",
+ "photos": [
+  {
+   "media_id": "asset-1fee46bd-54f6-4a3b-a963-d7f8eb8af6d3",
+   "note": "provoleta photo (record not captured in prod evidence)"
+  },
+  {
+   "media_id": "asset-cfb745e0-513a-4ade-b2c0-8b1b34e54585",
+   "note": "steak photo (record not captured in prod evidence)"
+  }
+ ],
+ "clips": [
+  {
+   "media_id": "analysis-proxy-ios-2D17ECD4-3882-42FA-9E3B-2C806B773C27.mp4",
+   "file_name": "M2_05",
+   "duration_s": 4.668345,
+   "analysis": {
+    "width": 320,
+    "aspect": 0.5634,
+    "brands": [],
+    "height": 568,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "subject": "waiter and customer",
+    "exposure": {
+     "frames": 9,
+     "version": 1,
+     "mean_luma": 79.8,
+     "near_black_share": 0.0
+    },
+    "duration_s": 4.668345,
+    "transcript": "No, no worries, no worries.",
+    "description": "waiter holds cutlery customer smiles and nods",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "end_s": 1.7,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "waiter holds cutlery"
+     },
+     {
+      "end_s": 4.1,
+      "energy": 4.0,
+      "start_s": 2.5,
+      "description": "customer smiles and nods"
+     }
+    ],
+    "display_width": 320,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "wooden tree trunk with roots",
+      "wooden chair",
+      "glass bottle of water",
+      "white table cloth",
+      "red outdoor umbrella",
+      "waiter's serving tray"
+     ],
+     "brands": [],
+     "people": {
+      "note": "a male waiter in a black uniform and a male customer in a white t-shirt and black hoodie",
+      "count": 2,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "No worries, no worries.",
+        "end_s": 3.1,
+        "start_s": 0.0
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "No, no worries, no worries."
+     },
+     "actions": [
+      "waiter handles cutlery",
+      "customer turns his head"
+     ],
+     "setting": "outdoor restaurant patio next to a building",
+     "subject": "waiter and customer",
+     "summary": "A waiter stands behind a seated customer, who speaks a few words. The waiter is preparing cutlery or other items on a tray.",
+     "activity": "waiter preparing for service, customer chatting",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 1.7,
+       "start_s": 0.0,
+       "description": "waiter holds cutlery"
+      },
+      {
+       "end_s": 4.1,
+       "start_s": 2.5,
+       "description": "customer smiles and nods"
+      }
+     ]
+    },
+    "display_height": 568,
+    "on_screen_text": "No, no worries, no worries.",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-1F22B95A-845E-46C2-A48A-FD19B5F7D570.mp4",
+   "file_name": "M2_04",
+   "duration_s": 9.0,
+   "analysis": {
+    "width": 320,
+    "aspect": 0.5634,
+    "brands": [],
+    "height": 568,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "subject": "waiter serving food",
+    "exposure": {
+     "frames": 10,
+     "version": 1,
+     "mean_luma": 68.9,
+     "near_black_share": 0.0
+    },
+    "duration_s": 9.0,
+    "transcript": "We ain't paper napkin. Yes. He's paper napkin. Six of six, thank you.",
+    "description": "waiter holds plates of food waiter adjusts food with tongs waiter repositions food on boards",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "end_s": 2.5,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "waiter holds plates of food"
+     },
+     {
+      "end_s": 5.4,
+      "energy": 6.0,
+      "start_s": 2.9,
+      "description": "waiter adjusts food with tongs"
+     },
+     {
+      "end_s": 9.4,
+      "energy": 5.0,
+      "start_s": 6.9,
+      "description": "waiter repositions food on boards"
+     }
+    ],
+    "display_width": 320,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "two small wooden serving boards",
+      "two small plates of food",
+      "silver serving tongs",
+      "black apron with utility pockets",
+      "glass bottles on table"
+     ],
+     "brands": [
+      "DONJULIO"
+     ],
+     "people": {
+      "note": "a man in a waiter's uniform",
+      "count": 1,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "We ain't paying very much.",
+        "end_s": 2.54,
+        "start_s": 1.2
+       },
+       {
+        "text": "Yes?",
+        "end_s": 4.0,
+        "start_s": 3.68
+       },
+       {
+        "text": "We ain't paying very much.",
+        "end_s": 5.04,
+        "start_s": 4.38
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "We ain't paper napkin. Yes. He's paper napkin. Six of six, thank you."
+     },
+     "actions": [
+      "waiter holds two wooden serving boards",
+      "waiter uses serving tongs to adjust food on plate"
+     ],
+     "setting": "restaurant with large window and decorative tree",
+     "subject": "waiter serving food",
+     "summary": "A waiter wearing glasses and a black uniform serves two small wooden plates of food to a table, using a serving utensil to adjust them.",
+     "activity": "waiter serving small plates of food",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 2.5,
+       "start_s": 0.0,
+       "description": "waiter holds plates of food"
+      },
+      {
+       "end_s": 5.4,
+       "start_s": 2.9,
+       "description": "waiter adjusts food with tongs"
+      },
+      {
+       "end_s": 9.4,
+       "start_s": 6.9,
+       "description": "waiter repositions food on boards"
+      }
+     ]
+    },
+    "display_height": 568,
+    "on_screen_text": "We ain't paper napkin. Yes. He's paper napkin. Six of six, thank you.",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-848442EC-CBD2-4937-8AE3-3903EDE52B27.mp4",
+   "file_name": "M2_03",
+   "duration_s": 3.0,
+   "analysis": {
+    "width": 320,
+    "aspect": 0.5634,
+    "brands": [],
+    "height": 568,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "subject": "waiter presenting food",
+    "exposure": {
+     "frames": 6,
+     "version": 1,
+     "mean_luma": 88.5,
+     "near_black_share": 0.0
+    },
+    "duration_s": 3.0,
+    "transcript": "Dividimos en ocho.",
+    "description": "man looks up and speaks",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "end_s": 2.0,
+      "energy": 6.0,
+      "start_s": 0.5,
+      "description": "man looks up and speaks"
+     }
+    ],
+    "display_width": 320,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "silver knife",
+      "silver fork",
+      "black apron",
+      "metal tray with food",
+      "small glass bottles"
+     ],
+     "brands": [
+      "Don Julio"
+     ],
+     "people": {
+      "note": "a man in a black waiter's uniform",
+      "count": 1,
+      "speaks_to_camera": true
+     },
+     "speech": {
+      "language": "es",
+      "segments": [
+       {
+        "text": "¿Dividimos el ocho?",
+        "end_s": 2.02,
+        "start_s": 1.22
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "Dividimos en ocho."
+     },
+     "actions": [
+      "man holds a knife and fork",
+      "man gestures with hands while speaking"
+     ],
+     "setting": "restaurant or outdoor dining area",
+     "subject": "waiter presenting food",
+     "summary": "A waiter in a black uniform stands behind a counter, holding a knife and fork, and speaks to the camera about dividing food.",
+     "activity": "presenting food with cutlery",
+     "audio_type": "dialogue",
+     "content_type": "talking_head",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 2.0,
+       "start_s": 0.5,
+       "description": "man looks up and speaks"
+      }
+     ]
+    },
+    "display_height": 568,
+    "on_screen_text": "Dividimos en ocho.",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-56C108AD-2C8E-4446-9DA2-4DB9E86BB1C1.mp4",
+   "file_name": "M2_02",
+   "duration_s": 11.0,
+   "analysis": {
+    "width": 320,
+    "aspect": 0.5634,
+    "brands": [],
+    "height": 568,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "subject": "waiter slicing steak",
+    "exposure": {
+     "frames": 12,
+     "version": 1,
+     "mean_luma": 83.6,
+     "near_black_share": 0.0
+    },
+    "duration_s": 11.0,
+    "transcript": "Do you like steak? Do you have beef hacks?",
+    "description": "waiter slices steak on left tray waiter slices steak on right tray waiter slices second piece of steak",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "end_s": 1.76,
+      "energy": 6.0,
+      "start_s": 0.0,
+      "description": "waiter slices steak on left tray"
+     },
+     {
+      "end_s": 5.66,
+      "energy": 7.0,
+      "start_s": 3.79,
+      "description": "waiter slices steak on right tray"
+     },
+     {
+      "end_s": 10.15,
+      "energy": 6.0,
+      "start_s": 8.01,
+      "description": "waiter slices second piece of steak"
+     }
+    ],
+    "display_width": 320,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "two rectangular metal hot trays with steak",
+      "wooden serving board",
+      "silver carving knife",
+      "silver serving fork",
+      "glass bottle of sparkling water",
+      "glass bottle of still water"
+     ],
+     "brands": [
+      "DONJULIO"
+     ],
+     "people": {
+      "note": "a young man in a black waiter uniform and glasses",
+      "count": 1,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "I mean, if they don't touch it, I don't know why.",
+        "end_s": 2.38,
+        "start_s": 0.0
+       },
+       {
+        "text": "It's only in my bank account.",
+        "end_s": 4.04,
+        "start_s": 2.48
+       },
+       {
+        "text": "Do you care?",
+        "end_s": 6.06,
+        "start_s": 5.38
+       },
+       {
+        "text": "I don't care.",
+        "end_s": 6.72,
+        "start_s": 6.26
+       },
+       {
+        "text": "You think it's like that?",
+        "end_s": 7.88,
+        "start_s": 7.02
+       },
+       {
+        "text": "Think that.",
+        "end_s": 8.7,
+        "start_s": 8.2
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Do you like steak? Do you have beef hacks?"
+     },
+     "actions": [
+      "waiter slices steak on the left tray",
+      "waiter slices steak on the right tray",
+      "waiter lifts a slice of steak with the fork"
+     ],
+     "setting": "restaurant dining area with large windows",
+     "subject": "waiter slicing steak",
+     "summary": "A waiter in a black uniform and glasses uses a knife and fork to expertly slice pieces of cooked meat from two hot trays on a wooden board. He looks up briefly at the camera during the process.",
+     "activity": "slicing cooked steak on hot trays",
+     "audio_type": "dialogue",
+     "content_type": "action",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 1.76,
+       "start_s": 0.0,
+       "description": "waiter slices steak on left tray"
+      },
+      {
+       "end_s": 5.66,
+       "start_s": 3.79,
+       "description": "waiter slices steak on right tray"
+      },
+      {
+       "end_s": 10.15,
+       "start_s": 8.01,
+       "description": "waiter slices second piece of steak"
+      }
+     ]
+    },
+    "display_height": 568,
+    "on_screen_text": "Do you like steak? Do you have beef hacks?",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-98E88D32-BFD6-45DD-8FB4-99389BB0CEB0.mp4",
+   "file_name": "M2_01",
+   "duration_s": 12.0,
+   "analysis": {
+    "width": 320,
+    "aspect": 0.5634,
+    "brands": [],
+    "height": 568,
+    "source": "clip_metadata",
+    "pix_fmt": "yuv420p",
+    "subject": "waiter cutting food",
+    "exposure": {
+     "frames": 13,
+     "version": 1,
+     "mean_luma": 65.7,
+     "near_black_share": 0.0
+    },
+    "duration_s": 12.0,
+    "transcript": "No, I can't get it. It's America's. It's what everyone's cooking. It's.",
+    "description": "waiter cutting first piece of toast waiter cutting second piece of toast waiter places knife and fork down",
+    "video_codec": "h264",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "waiter cutting first piece of toast"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 6.0,
+      "start_s": 4.0,
+      "description": "waiter cutting second piece of toast"
+     },
+     {
+      "end_s": 12.0,
+      "energy": 4.0,
+      "start_s": 9.0,
+      "description": "waiter places knife and fork down"
+     }
+    ],
+    "display_width": 320,
+    "understanding": {
+     "kind": "video",
+     "props": [
+      "two wooden serving boards",
+      "two slices of toasted bread",
+      "silver knife",
+      "silver fork",
+      "red Coca-Cola bottle",
+      "clear glass water bottle",
+      "black server apron with pen holder"
+     ],
+     "brands": [
+      "DONJULIO",
+      "Coca-Cola"
+     ],
+     "people": {
+      "note": "a man in a black uniform",
+      "count": 1,
+      "speaks_to_camera": false
+     },
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "Can I get a napkin, man?",
+        "end_s": 5.66,
+        "start_s": 3.74
+       },
+       {
+        "text": "A napkin?",
+        "end_s": 6.92,
+        "start_s": 6.58
+       },
+       {
+        "text": "Hold my napkin.",
+        "end_s": 10.62,
+        "start_s": 8.82
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "No, I can't get it. It's America's. It's what everyone's cooking. It's."
+     },
+     "actions": [
+      "man uses knife and fork to cut toast",
+      "man looks at the food he is cutting"
+     ],
+     "setting": "restaurant interior with large window",
+     "subject": "waiter cutting food",
+     "summary": "A waiter in a black uniform and glasses is shown cutting two pieces of toast or bread with toppings on a wooden board at a table.",
+     "activity": "slicing bread or toast",
+     "audio_type": "dialogue",
+     "content_type": "broll",
+     "on_screen_text": "",
+     "visual_quality": "sharp and steady",
+     "notable_moments": [
+      {
+       "end_s": 3.0,
+       "start_s": 0.0,
+       "description": "waiter cutting first piece of toast"
+      },
+      {
+       "end_s": 8.0,
+       "start_s": 4.0,
+       "description": "waiter cutting second piece of toast"
+      },
+      {
+       "end_s": 12.0,
+       "start_s": 9.0,
+       "description": "waiter places knife and fork down"
+      }
+     ]
+    },
+    "display_height": 568,
+    "on_screen_text": "No, I can't get it. It's America's. It's what everyone's cooking. It's.",
+    "analysis_version": 8,
+    "rotation_degrees": 0
+   }
+  }
+ ]
+}
