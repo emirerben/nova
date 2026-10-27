@@ -1917,7 +1917,13 @@ def _base_text_elements(
         return [
             *(
                 []
-                if snapshot.pinned_texts and not snapshot.opening_title
+                if not snapshot.opening_title
+                and (
+                    snapshot.pinned_texts
+                    # A lip-sync's title is the creator's own or none: its ``title`` without
+                    # one is the internal ``SNAPSHOT_FALLBACK_TITLE`` label (KRI-996).
+                    or (snapshot.user_song is not None and snapshot.user_song.mode == "lipsync")
+                )
                 else [
                     TextElement(
                         id="guided-title",

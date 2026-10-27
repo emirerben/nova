@@ -111,6 +111,8 @@ HOLE_CLOSE_SLIP_CAP_MS = 800
 FREEZE_BRIDGE_MAX_MS = 1500
 MAX_WINDOW_MS = 120 * 1000  # song-owned: not part of the 240 s spoken-edit cap
 MIN_TOTAL_MS = int(MIN_TOTAL_S * 1000)
+# One output frame at 30 fps, rounded up: a hold this short or shorter is not a freeze.
+_FRAME_MS = 34
 # Two candidate positions closer than this are the same position.
 _SAME_POSITION_MS = 50
 # Sync tolerance of the invariant source_start - output_start == window - delta.
@@ -830,7 +832,12 @@ def _window_blocks(blocks: list[_Block]) -> tuple[list[_Block], bool]:
         footage_end = min(end, block.end - block.hold)
         floor = MIN_SEGMENT_MS if block.placed is not None else MIN_BROLL_PIECE_MS
         if footage_end - start >= floor:
-            kept.append(_Block(block.clip, start, end, block.placed, end - footage_end))
+            hold = end - footage_end
+            if hold <= _FRAME_MS:
+                # The window ends inside a hold: a sliver of held frame is not a freeze the phone
+                # plays, so the window ends with the footage instead.
+                end, hold = footage_end, 0
+            kept.append(_Block(block.clip, start, end, block.placed, hold))
     return kept, True
 
 
@@ -846,6 +853,7 @@ def plan_lipsync_montage(
     font_covers: Callable[[str, str], bool] | None = None,
     output_orientation: str | None = None,
     creator_choices: Mapping[str, Mapping[str, Any]] | None = None,
+    freeze_frames: bool = False,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan that lays ``clips`` on the song's clock.
 
@@ -859,7 +867,9 @@ def plan_lipsync_montage(
     ``position_basis="creator_stack"``) and B-roll. ``strategy``/``view`` supply only the
     creator's title, closing title and typography. ``output_orientation`` is the
     creator's explicit finished-video shape (KRI-306); without it the snapshot
-    infers one from the footage.
+    infers one from the footage. ``freeze_frames`` (``freeze_frame_planned_for``: the phone
+    that approved can hold a frame) lets a short stretch of song nobody filmed be covered by
+    holding the earlier take's last frame; without it that stretch splits the montage.
 
     Raises ``LipsyncPlanError`` (``stale_alignment``, ``song_not_analyzed``,
     ``no_synced_takes``, ``span_too_short``) when no montage can be made.
@@ -949,7 +959,7 @@ def plan_lipsync_montage(
                 # the earlier one's last frame over what is left.
                 avail_prev, avail_next = own_footage(previous, island[0], DIP_MARGIN_MS)
                 hold = gap - avail_prev - avail_next
-                if hold > FREEZE_BRIDGE_MAX_MS or previous.hold:
+                if not freeze_frames or hold > FREEZE_BRIDGE_MAX_MS:
                     spans.append(list(island))
                     continue
                 island[0].start -= avail_next
@@ -1127,9 +1137,6 @@ def plan_lipsync_montage(
             opening_title=title,
             story_beats=_story_beats(cuts),
             fast_cuts=cuts,
-            # No per-clip text, but the labelled projection: it draws only the creator's own
-            # opening title, never the internal ``SNAPSHOT_FALLBACK_TITLE`` label.
-            clip_labels=[],
             **media_kwargs,
             video_reuse_policy="once",
             user_song=song_plan,

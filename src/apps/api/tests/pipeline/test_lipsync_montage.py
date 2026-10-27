@@ -39,13 +39,14 @@ from tests.pipeline.user_song_helpers import (
 )
 
 
-def plan(clips, rows, *, order=None, song=None):
+def plan(clips, rows, *, order=None, song=None, freeze_frames=True):
     return plan_lipsync_montage(
         clips,
         alignment(*rows),
         song or analysis(),
         confirmed_order=order,
         plan_item_id=SONG_ITEM_ID,
+        freeze_frames=freeze_frames,
     )
 
 
@@ -793,6 +794,14 @@ def test_a_filming_break_holds_the_last_frame_and_every_take_stays_in_sync():
     assert [clip.source_asset_id for clip in held] == _FIXTURE["expected"]["held_takes"]
 
 
+def test_a_phone_that_cannot_hold_a_frame_gets_the_split_montage():
+    clips = [take(media_id, duration) for media_id, duration, _ in SEQUENTIAL]
+    rows = [confident(media_id, delta) for media_id, _, delta in SEQUENTIAL]
+    result = plan(clips, rows, freeze_frames=False)
+    assert all(cut.freeze_hold_s is None for cut in result.snapshot.fast_cuts)
+    assert [cut.media_id for cut in result.snapshot.fast_cuts] == ["A"]
+
+
 def test_a_filming_break_longer_than_a_held_frame_still_splits():
     clips = [take("A", 12), take("B", 20)]
     # A's footage ends at 22.0, B's begins at 24.0: two seconds nobody filmed.
@@ -819,5 +828,12 @@ def test_a_lipsync_with_the_creators_title_draws_it():
         analysis(),
         strategy={"opening_title": "Saygı"},
         plan_item_id=SONG_ITEM_ID,
+        freeze_frames=True,
     )
-    assert _title_texts(result) == ["Saygı"]
+    (title,) = [
+        t
+        for t in compile_execution_plan(result.guided_edit(), track=None)["text_elements"]
+        if t["id"] == "guided-title"
+    ]
+    # The creator's title keeps the fast-montage title look.
+    assert (title["text"], title["size_px"]) == ("Saygı", 92.0)
