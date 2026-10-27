@@ -732,6 +732,14 @@ class Settings(BaseSettings):
     # answer as authoritative. Default TRUE; kill switch = false + restart (the field
     # is then dropped, questions are text-only, byte-identical to before).
     kria_clip_selection_questions_enabled: bool = True
+    # KRI-962 kill switch: in a Voiceover edit, a named shot two or more free footage clips
+    # match equally well (Don Julio N1: the window sign and Atakan at the plaque, both 0.9)
+    # is asked with the clip picker before the draft, the tied clips pre-ticked
+    # (`app.kria.clip_ties`). Needs the picker flag above. False: byte-identical to before --
+    # nothing is asked and the narrated alignment places the tied clips as it did. Apply:
+    # `fly secrets set KRIA_VOICEOVER_TIE_QUESTIONS_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (api).
+    kria_voiceover_tie_questions_enabled: bool = True
     # KRI-374: creator-uploaded song on phone montages (background music bed, or
     # lip-sync takes placed by song time). Default TRUE (no users yet); kill switch
     # = false + restart (api + worker): capabilities hide `media.song`, the policy

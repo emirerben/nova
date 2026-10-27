@@ -2565,6 +2565,53 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-962-voiceover-tie-question",
+      "tickets": [
+        "KRI-962",
+        "KRI-960"
+      ],
+      "symptom": "\"the DON JULIO sign while I say 'Don Julio'\" matched the window-sign clip and Atakan at the PARRILLA DON JULIO plaque, both at 0.9, and nothing asked: the Voiceover opened on Atakan (a whip-pan and his face at \"Don Julio\", no sign) and the real sign landed on the unrelated last line (Don Julio walk-in N1, thread 99627FBC, job bdb0c798).",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-962",
+      "journey": "kri-962-voiceover-tie-question",
+      "paths": [
+        "src/apps/api/app/kria/clip_ties.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/tests/fixtures/kri962_voiceover_tie_jobs.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri962_voiceover_tie_question.py",
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "tests/kria/test_kri692_spoken_text_is_not_a_clip_question.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": "kria_voiceover_tie_questions_enabled",
+      "evidence": {
+        "offline_replay": "N1's prod clip records (attachment order), message, approved strategy and the resolver's matches (the job's resolved intents) through the real clip-intent parse, resolver and runtime-v2 planner turn: the turn asks the picker for the sign with Atakan and the window sign pre-ticked, nothing else. Red with a no-op tie check (12 of 22 fail: the turn drafts without asking), green after. Ask -> tap the window sign -> next turn drafts with it as the shot; simpler version, keep-both and none-of-these never ask again. Over the recorded resolved intents of all 6 prod Voiceover jobs with an alignment record (2026-10-08..27), only N1 is asked (Troy: a clear 1.0 winner; the museum: an order ask and an every-clip include).",
+        "live_model": "Not run; no paid calls. The fix adds no model call.",
+        "native_output": "unknown; the picker card is the existing include category, not device-checked for a tie.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "a tie whose other clips are another ask's only match (N1's grill) is not asked",
+        "another ask using Atakan's clip leaves one free clip: not asked",
+        "a clear winner, order/group/caption asks and an every-clip include are not asked",
+        "photos never count; a clip left out is never counted, offered or pre-ticked",
+        "a tap or typed file name is never asked again; keep-both and none-of-these settle the shot",
+        "the tie rides in the resolver's own picker (the ribeye photo), one card",
+        "Montage never asks; either flag off asks nothing",
+        "a tie-check error fails open",
+        "Turkish copy"
+      ],
+      "neighbours_gap": [
+        "A resolver question that is text-only (no clip picker) does not carry the tie rows; they are asked on the next turn.",
+        "Talking cutaways and other formats are not asked (Voiceover only, as requested).",
+        "Thread events are stubbed in the turn tests; the tap path is the shared fold_clip_selections path."
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-845-clip-detail-evidence",
       "tickets": [
         "KRI-845",

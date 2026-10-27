@@ -89,6 +89,7 @@ from app.kria.clip_exclusions import (
     with_exclusion_categories,
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
+from app.kria.clip_ties import left_out, tie_question, voiceover_ties, with_tie_categories
 from app.kria.contracts import KriaTurnPlan
 from app.kria.draft_sound_carry import sound_asks_unchanged
 from app.kria.duplicate_send import is_duplicate_answer
@@ -1223,6 +1224,28 @@ def _is_voiceover_strategy(strategy: Any) -> bool:
         getattr(strategy, "edit_format", None) in NARRATED_EDIT_FORMATS
         and getattr(strategy, "audio_strategy", None) == "voiceover"
     )
+
+
+def _voiceover_tie_shots(
+    planned: Any, strategy: Any, clips: Sequence[Any], thread_id: Any
+) -> list[Any]:
+    """KRI-962: the Voiceover shots to ask about (``clip_ties``); [] when off, on another
+    format, or when the check itself fails (it never costs the turn)."""
+    if not (
+        settings.kria_voiceover_tie_questions_enabled
+        and settings.kria_clip_selection_questions_enabled
+        and _is_voiceover_strategy(strategy)
+    ):
+        return []
+    try:
+        return voiceover_ties(planned.resolution.intents, clips)
+    except Exception as exc:  # noqa: BLE001 -- a tie check never costs the turn
+        log.warning(
+            "kria_voiceover_tie_check_failed",
+            thread_id=str(thread_id),
+            error_type=type(exc).__name__,
+        )
+        return []
 
 
 def _narrated_renders_once_recorded(manifest: Any, strategy: Any) -> bool:
@@ -3672,6 +3695,10 @@ async def _plan_creator_action(
             and settings.kria_clip_selection_questions_enabled
             else []
         )
+        # KRI-962: a Voiceover shot two free footage clips match equally (N1's DON JULIO
+        # sign: the window sign and Atakan at the plaque, both 0.9) is the creator's pick.
+        ties = _voiceover_tie_shots(planned, action.strategy, intent_clips, thread_id)
+        skipped = left_out(planned.resolution.intents) if ties else set()
         if (
             planned.resolution.status != "resolved"
             or planned.resolution.needs_creator
@@ -3685,6 +3712,10 @@ async def _plan_creator_action(
                 # KRI-807: the skips ride in the resolver's picker, one card and one turn.
                 question, clip_question = with_exclusion_categories(
                     question, clip_question, contested, intent_clips
+                )
+            if clip_question is not None and ties:
+                question, clip_question = with_tie_categories(
+                    question, clip_question, ties, intent_clips, excluded=skipped
                 )
             return PlannedKriaTurn(
                 plan=_clip_intent_resolution_plan(
@@ -3720,6 +3751,8 @@ async def _plan_creator_action(
                     unmatched=sum(1 for c in contested if not c.matched),
                     suspected=sum(1 for c in contested if not c.matched and c.suggested),
                 )
+                if ties:
+                    asked = with_tie_categories(*asked, ties, intent_clips, excluded=skipped)
                 return PlannedKriaTurn(
                     plan=_clip_intent_resolution_plan(
                         question=asked[0],
@@ -3769,6 +3802,25 @@ async def _plan_creator_action(
                         update={"summary": " ".join([action.summary.strip(), notice]).strip()}
                     )
                     policy_notices = (*policy_notices, notice)
+        tie_asked = tie_question(ties, intent_clips, excluded=skipped)
+        if tie_asked is not None:
+            log.info(
+                "kria_voiceover_tie_asked",
+                thread_id=str(thread_id),
+                shots=len(ties),
+                clips=[len(tie.media_ids) for tie in ties],
+            )
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(
+                    question=tie_asked[0],
+                    status="needs_creator",
+                    diagnostics={"stage": "tie", "reason": "voiceover_tie"},
+                    clip_question=tie_asked[1],
+                    clip_intent_inventory=planned.inventory,
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
         ordering_choice: str | None = None
         if settings.kria_choice_questions_enabled:
             ordering_choice = fold_choice_answers(thread_events).get(CONFLICT_ORDER_VS_GROUP)
