@@ -174,7 +174,7 @@ def request_digest(body: SubmitTurnBody) -> str:
     # different request) but is excluded when absent so pre-existing digests hold.
     excluded = (
         # KRI-756: which chip a message came from is telemetry, never part of the request.
-        {"editor_state", "suggestion"}
+        {"editor_state", "suggestion", "outcome_context"}
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
@@ -1014,6 +1014,11 @@ async def submit_turn(
     if inert_response is not None:
         turn_value, message = inert_response
         turn_id = uuid.uuid4()
+        from app.services.request_following_lineage import request_outcome_payload  # noqa: PLC0415
+
+        outcome_payload = await request_outcome_payload(
+            db, thread_id=thread.id, turn_id=turn_id, context=body.outcome_context
+        )
         # KRI-552: marks both events as a copy of `duplicate.turn_id`'s message. The worker's
         # revision fence and the planner's reads skip them, so a copy never disturbs the turn
         # it repeats.
@@ -1030,6 +1035,7 @@ async def submit_turn(
                 "turn_id": str(turn_id),
                 "turn_status": "completed",
                 "inert": True,
+                **outcome_payload,
                 **copy_of,
             },
             client_event_id=body.client_event_id,
@@ -1106,6 +1112,11 @@ async def submit_turn(
         queued_replaces_turn_id = active.id
 
     turn_id = uuid.uuid4()
+    from app.services.request_following_lineage import request_outcome_payload  # noqa: PLC0415
+
+    outcome_payload = await request_outcome_payload(
+        db, thread_id=thread.id, turn_id=turn_id, context=body.outcome_context
+    )
     event = await _append_event(
         db,
         thread,
@@ -1117,6 +1128,7 @@ async def submit_turn(
             "runtime_version": 2,
             "turn_id": str(turn_id),
             "turn_status": turn_status,
+            **outcome_payload,
             # Flag off: dropped silently, nothing stored (byte-identical to old clients).
             **({"camera_roll_story": _camera_roll_story} if _camera_roll_story else {}),
             **(

@@ -10,9 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import (
+    AgentRun,
+    ContentPlan,
     CreationThread,
     CreationThreadDeletion,
     Job,
+    PlanItem,
     RequestFollowingCase,
     RequestFollowingCollector,
 )
@@ -125,9 +128,56 @@ async def source_capture(db: AsyncSession, thread: CreationThread):
                 "id": str(row.id),
                 "status": row.status,
                 "assembly_plan": row.assembly_plan,
+                "created_at": row.created_at.isoformat(),
+                "finished_at": row.finished_at.isoformat() if row.finished_at else None,
             }
         if len(jobs) != min(len(job_ids), 50):
             source["missing"]["jobs"] = "missing_or_unowned_jobs"
+    item_ids = (
+        {row.content_plan_item_id for row in jobs if row.content_plan_item_id} if job_ids else set()
+    )
+    if item is not None:
+        item_ids.add(item.id)
+    if item_ids:
+        owned_item_ids = set(
+            await db.scalars(
+                select(PlanItem.id)
+                .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+                .where(PlanItem.id.in_(item_ids), ContentPlan.user_id == thread.creator_id)
+            )
+        )
+        if owned_item_ids != item_ids:
+            source["missing"]["cost"] = "missing_or_unowned_plan_items"
+        item_ids = owned_item_ids
+    owned_job_ids = [row.id for row in jobs] if job_ids else []
+    runs = (
+        (
+            await db.scalars(
+                select(AgentRun)
+                .where(or_(AgentRun.job_id.in_(owned_job_ids), AgentRun.plan_item_id.in_(item_ids)))
+                .order_by(AgentRun.created_at, AgentRun.id)
+                .limit(1001)
+            )
+        ).all()
+        if job_ids or item_ids
+        else []
+    )
+    source["metrics"] = {
+        "agent_runs": [
+            {
+                "id": str(run.id),
+                "created_at": run.created_at.isoformat(),
+                "settled_cost_usd": float(run.settled_cost_usd)
+                if run.settled_cost_usd is not None
+                else None,
+                "estimated_cost_usd": float(run.cost_usd) if run.cost_usd is not None else None,
+                "outcome": "unknown" if run.outcome.startswith("terminal_unknown") else "recorded",
+            }
+            for run in runs[:1000]
+        ]
+    }
+    if len(runs) > 1000:
+        source["missing"]["cost"] = "bounded_capture_incomplete"
     # Scrub the complete envelope too: event content may itself contain URLs.
     source = _scrub(source)
     import json
