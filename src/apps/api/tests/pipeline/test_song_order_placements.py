@@ -410,6 +410,7 @@ def test_closing_the_holes_slides_each_take_a_fraction_of_a_second_and_keeps_its
 def test_without_hole_closing_the_same_arrangement_collapses_to_one_take(monkeypatch):
     """The regression this fixes: with the old behaviour the draft is the first take alone."""
     monkeypatch.setattr(lipsync_montage, "HOLE_CLOSE_MAX_MS", 0)
+    monkeypatch.setattr(lipsync_montage, "FREEZE_BRIDGE_MAX_MS", 0)
     clips, rows, placements = _user_arrangement()
     plan, _resolved, _ = _arrange(clips, rows, placements)
     assert len(plan.song_receipt["placed"]) == 1

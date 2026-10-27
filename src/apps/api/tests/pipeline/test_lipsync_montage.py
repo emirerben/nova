@@ -750,7 +750,12 @@ def test_the_stack_retry_is_dropped_when_it_does_not_help():
 # The creator filmed the song in four back-to-back takes; the aligner placed every
 # one confidently, with 0.68 s / 0.15 s / 0.99 s of song nobody filmed between them.
 # Positions are the prod job's, shifted 40 s earlier to fit the test song.
-SEQUENTIAL = [("A", 22.6148, 22.645), ("B", 8.3113, 45.943), ("C", 20.7804, 54.399), ("D", 7.9862, 76.167)]
+SEQUENTIAL = [
+    ("A", 22.6148, 22.645),
+    ("B", 8.3113, 45.943),
+    ("C", 20.7804, 54.399),
+    ("D", 7.9862, 76.167),
+]
 
 
 def _sequential_plan():
@@ -771,7 +776,7 @@ def test_a_filming_break_holds_the_last_frame_and_every_take_stays_in_sync():
     result = _sequential_plan()
     cuts = {cut.media_id: cut for cut in result.snapshot.fast_cuts}
     # Each hold only covers song nobody filmed: the next take starts on its own position.
-    assert cuts["A"].freeze_hold_s and cuts["C"].freeze_hold_s
+    assert [cuts[m].freeze_hold_s for m in "ABCD"] == [0.884, 0.345, 1.188, None]
     for cut in result.snapshot.fast_cuts:
         assert cut.source_end_s <= dict((m, d) for m, d, _ in SEQUENTIAL)[cut.media_id] + 1e-6
     assert_in_sync(result, compiled_plan(result))
@@ -779,7 +784,7 @@ def test_a_filming_break_holds_the_last_frame_and_every_take_stays_in_sync():
     recipe = compile_phone_guided_plan(compiled_plan(result), footage, visuals, song=song_bed())
     assert recipe.duration == pytest.approx(result.snapshot.duration_s, abs=0.04)
     held = [clip for track in recipe.tracks for clip in track.clips if clip.hold_duration]
-    assert len(held) == 2
+    assert [clip.source_asset_id for clip in held] == ["A", "B", "C"]
 
 
 def test_a_filming_break_longer_than_a_held_frame_still_splits():
