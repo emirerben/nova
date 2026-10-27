@@ -95,11 +95,7 @@ enum NativeEditorRenderError: Error, Equatable {
             #endif
             throw NativeEditorRenderError.unsupportedLane("unknown")
         }
-        let canvas: KriaMediaEngine.Canvas = switch EditorDocument.canonicalOrientation(document.orientation) {
-        case "landscape": .init(width: 1920, height: 1080)
-        case "square": .init(width: 1080, height: 1080)
-        default: .init(width: 1080, height: 1920)
-        }
+        let canvas = Self.canvas(for: document)
         var assets: [String: MediaAsset] = [:]
         var references: [String: RenderAssetReference] = [:]
         var urls: [String: URL] = [:]
@@ -554,12 +550,7 @@ enum NativeEditorRenderError: Error, Equatable {
         // KRI-785: one glyph-safe face per requested family across the video (the
         // union of its texts), like the cloud's `glyph_safe_overlays`, so a Turkish
         // lyric track never flips fonts line by line.
-        var familyTexts: [String: [String]] = [:]
-        for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
-            let element = rawElement.isCaption ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
-            familyTexts[element.fontFamily, default: []].append(Self.displayText(element))
-        }
-        let glyphSafeFamilies = familyTexts.mapValues { $0.joined(separator: " ") }
+        let glyphSafeFamilies = Self.glyphSafeFamilyTexts(renderedTextElements, captionMeta: captionMeta)
         for rawElement in renderedTextElements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
             if rawElement.isCaption {
                 if captionsGloballyDisabled { continue }
@@ -630,34 +621,7 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             let phases = try JSONDecoder().decode(TextAnimationPhases.self,
                 from: JSONEncoder().encode(NativeEditorSession.textPhases(for: element)))
-            var shadows: [TextBlurLayer] = []
-            if raw["shadow_enabled"] != .bool(false) {
-                if raw["shadow_style"]?.stringValue == "high_visibility" && ["stroke_color", "shadow_color", "shadow_opacity"].allSatisfy({ raw[$0] == nil || raw[$0] == .null }) {
-                    shadows = [TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 115.0 / 255), sigma: 14, dx: 0, dy: 8),
-                               TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 200.0 / 255), sigma: 3, dx: 0, dy: 2)]
-                } else {
-                    shadows.append(TextBlurLayer(color: try ink(raw["shadow_color"], fallback: "#000000",
-                        alpha: ((raw["shadow_opacity"]?.numberValue ?? (160.0 / 255)) * 255).rounded(.toNearestOrEven) / 255), sigma: 12, dx: 0, dy: 6))
-                }
-            }
-            if let strength = raw["glow_strength"]?.numberValue, strength > 0, let glow = raw["glow_color"]?.stringValue {
-                for (sigma, alpha) in [(8.0, 120.0), (20.0, 220.0)] {
-                    shadows.append(TextBlurLayer(color: try ink(.string(glow), fallback: "#FFFFFF",
-                        alpha: (alpha * min(1, strength)).rounded(.toNearestOrEven) / 255), sigma: sigma, dx: 0, dy: 0))
-                }
-            }
-            let anchor = element.anchor
-            let style = AuthoredTextLayout.Style(fontAssetID: fontID, size: NativeEditorSession.textSize(for: element),
-                widthFraction: raw["max_width_frac"]?.numberValue ?? 0.9,
-                xFraction: anchor.x, yFraction: anchor.y,
-                rotation: raw["rotation_deg"]?.numberValue ?? 0,
-                alignment: AuthoredTextLayout.Alignment(rawValue: raw["alignment"]?.stringValue ?? "center") ?? .center,
-                color: try ink(raw["color"], fallback: "#FFFFFF"),
-                stroke: try ink(raw["stroke_color"], fallback: "#000000"),
-                strokeWidth: raw["stroke_width"]?.numberValue ?? 0, shadows: shadows,
-                background: try raw["background_color"]?.stringValue.map { try ink(.string($0), fallback: "#FFFFFF") },
-                fontVariations: fontInstances[family] ?? [:], letterSpacing: raw["letter_spacing"]?.numberValue ?? 0, lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15, wrapsLines: raw["wrap_lines"] != .bool(false),
-                bend: raw["bend"]?.numberValue ?? 0)
+            let style = try authoredStyle(for: element, fontID: fontID, family: family)
             let explicitPhases = raw["animation_phases"]?.objectValue != nil
             if legacy == "handwriting" && !explicitPhases {
                 var handwriting = try handwritingLayout.compile(id: element.id, text: displayText, start: item.start, end: item.end,
@@ -1075,6 +1039,79 @@ enum NativeEditorRenderError: Error, Equatable {
         default: break
         }
         return patched
+    }
+
+    /// The layout style of one authored text row. The render loop and the block measurement both read it from
+    /// here, so what the editor measures is what the recipe draws.
+    private func authoredStyle(for element: EditorTextElement, fontID: String, family: String) throws -> AuthoredTextLayout.Style {
+        let raw = element.raw
+        var shadows: [TextBlurLayer] = []
+        if raw["shadow_enabled"] != .bool(false) {
+            if raw["shadow_style"]?.stringValue == "high_visibility" && ["stroke_color", "shadow_color", "shadow_opacity"].allSatisfy({ raw[$0] == nil || raw[$0] == .null }) {
+                shadows = [TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 115.0 / 255), sigma: 14, dx: 0, dy: 8),
+                           TextBlurLayer(color: try ink(nil, fallback: "#000000", alpha: 200.0 / 255), sigma: 3, dx: 0, dy: 2)]
+            } else {
+                shadows.append(TextBlurLayer(color: try ink(raw["shadow_color"], fallback: "#000000",
+                    alpha: ((raw["shadow_opacity"]?.numberValue ?? (160.0 / 255)) * 255).rounded(.toNearestOrEven) / 255), sigma: 12, dx: 0, dy: 6))
+            }
+        }
+        if let strength = raw["glow_strength"]?.numberValue, strength > 0, let glow = raw["glow_color"]?.stringValue {
+            for (sigma, alpha) in [(8.0, 120.0), (20.0, 220.0)] {
+                shadows.append(TextBlurLayer(color: try ink(.string(glow), fallback: "#FFFFFF",
+                    alpha: (alpha * min(1, strength)).rounded(.toNearestOrEven) / 255), sigma: sigma, dx: 0, dy: 0))
+            }
+        }
+        let anchor = element.anchor
+        return AuthoredTextLayout.Style(fontAssetID: fontID, size: NativeEditorSession.textSize(for: element),
+            widthFraction: raw["max_width_frac"]?.numberValue ?? 0.9,
+            xFraction: anchor.x, yFraction: anchor.y,
+            rotation: raw["rotation_deg"]?.numberValue ?? 0,
+            alignment: AuthoredTextLayout.Alignment(rawValue: raw["alignment"]?.stringValue ?? "center") ?? .center,
+            color: try ink(raw["color"], fallback: "#FFFFFF"),
+            stroke: try ink(raw["stroke_color"], fallback: "#000000"),
+            strokeWidth: raw["stroke_width"]?.numberValue ?? 0, shadows: shadows,
+            background: try raw["background_color"]?.stringValue.map { try ink(.string($0), fallback: "#FFFFFF") },
+            fontVariations: fontInstances[family] ?? [:], letterSpacing: raw["letter_spacing"]?.numberValue ?? 0, lineSpacing: raw["line_spacing"]?.numberValue ?? 1.15, wrapsLines: raw["wrap_lines"] != .bool(false),
+            bend: raw["bend"]?.numberValue ?? 0)
+    }
+
+    static func canvas(for document: EditorDocument) -> KriaMediaEngine.Canvas {
+        switch EditorDocument.canonicalOrientation(document.orientation) {
+        case "landscape": .init(width: 1920, height: 1080)
+        case "square": .init(width: 1080, height: 1080)
+        default: .init(width: 1080, height: 1920)
+        }
+    }
+
+    private static func glyphSafeFamilyTexts(_ elements: [EditorTextElement], captionMeta: [String: JSONValue]) -> [String: String] {
+        var familyTexts: [String: [String]] = [:]
+        for rawElement in elements where rawElement.raw["enabled"] != .bool(false) && rawElement.raw["removed"] != .bool(true) {
+            let element = rawElement.isCaption ? Self.applyingCaptionMeta(captionMeta, to: rawElement) : rawElement
+            familyTexts[element.fontFamily, default: []].append(Self.displayText(element))
+        }
+        return familyTexts.mapValues { $0.joined(separator: " ") }
+    }
+
+    /// Where the block of `element` is drawn, in canvas fractions, from the same face, style and `compile` call the
+    /// recipe uses. Nil when the row draws nothing or its face cannot be laid out.
+    func textBlockRect(for rawElement: EditorTextElement, in document: EditorDocument) -> CGRect? {
+        let element = rawElement.isCaption ? Self.applyingCaptionMeta(document.captionMeta, to: rawElement) : rawElement
+        let text = Self.displayText(element)
+        guard element.raw["enabled"] != .bool(false), element.raw["removed"] != .bool(true),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let canvas = Self.canvas(for: document)
+        let rendered = Self.projectSentenceCaptions(document.textElements, captionMeta: document.captionMeta)
+        let glyphSafe = Self.glyphSafeFamilyTexts(rendered, captionMeta: document.captionMeta)
+        do {
+            let family = glyphFallback.family(element.fontFamily, for: glyphSafe[element.fontFamily] ?? text)
+            let font = try resolveFont(family)
+            let style = try authoredStyle(for: element, fontID: "measure-" + font.lastPathComponent, family: family)
+            let layer = try AuthoredTextLayout.compile(id: element.id, text: text, start: 0, end: 1,
+                style: style, fontURL: font, canvas: canvas)
+            guard let bounds = AuthoredTextLayout.blockBounds(of: layer, fontURL: font) else { return nil }
+            return CGRect(x: bounds.minX / Double(canvas.width), y: bounds.minY / Double(canvas.height),
+                          width: bounds.width / Double(canvas.width), height: bounds.height / Double(canvas.height))
+        } catch { return nil }
     }
 
     private func resolveFont(_ family: String) throws -> URL {

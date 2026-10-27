@@ -209,6 +209,26 @@ public enum AuthoredTextLayout {
             rotationDegrees: style.rotation, runs: runs, effect: layerEffect, motion: motion, revealBounds: inkBounds,
             discreteReveal: reveal, smoothReveal: smooth, animationPhases: phases, background: background, bend: bend)
     }
+    /// The laid-out block of a layer `compile` produced, in canvas pixels: the leftmost line start to the rightmost
+    /// line end, first ascent to last descent. Every run's `x` is its line's left edge whatever the alignment, so only
+    /// the widths are measured again, with the font and kerning `compile` shaped each run with.
+    public static func blockBounds(of layer: PortableTextLayer, fontURL: URL) -> CGRect? {
+        guard let first = layer.runs.first, let last = layer.runs.last,
+              let provider = CGDataProvider(url: fontURL as CFURL), let graphics = CGFont(provider) else { return nil }
+        var left = Double.infinity, right = -Double.infinity
+        for run in layer.runs {
+            let font = NativeFontIdentity.font(graphics, size: run.fontSize, variations: run.fontVariations)
+            let width = AuthoredTextFit.width(run.text, attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): font,
+                NSAttributedString.Key(kCTKernAttributeName as String): run.letterSpacing])
+            left = min(left, run.x); right = max(right, run.x + width)
+        }
+        let font = NativeFontIdentity.font(graphics, size: first.fontSize, variations: first.fontVariations)
+        let top = first.baselineY - CTFontGetAscent(font)
+        let bottom = last.baselineY + CTFontGetDescent(font)
+        return CGRect(x: left, y: top, width: right - left, height: bottom - top)
+    }
+
     /// One-word-at-a-time caption for a cue (`KaraokeContent.singleWord`; see its wire contract). Every word is laid
     /// out STANDALONE with `compile`, so it is positioned exactly as a one-word caption layer of this style would
     /// be, and the layer carries all of them as runs. `starts` are layer-local, one per word. A cue of more than 100

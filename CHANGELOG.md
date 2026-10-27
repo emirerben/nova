@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.154.0] - 2026-10-27
+
+### Changed
+- fix(ios): text alignment keeps the block still; add safe-area Position buttons (KRI-976) (#1866) <!-- release-pr: 1866 -->
+
 ## [0.81.153.0] - 2026-10-27
 
 ### Fixed
