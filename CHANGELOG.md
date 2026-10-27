@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.156.0] - 2026-10-27
+
+### Changed
+- fix(launch): recover Photos interruptions and strengthen request replays (#1854) <!-- release-pr: 1854 -->
+
 ## [0.81.155.0] - 2026-10-27
 
 ### Changed

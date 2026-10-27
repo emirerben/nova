@@ -121,7 +121,11 @@ def sequence_rows(resolved_intents: object) -> list[SequenceRow]:
             continue
         status = str(intent.get("status") or "resolved")
         members = _members(intent) if status == "resolved" else []
-        rows.append((position, _nfc(intent.get("attribute")), members, status))
+        name = _nfc(intent.get("attribute"))
+        if intent.get("ordered_members") is True and members:
+            rows.extend((position, name, [member], status) for member in dict.fromkeys(members))
+        else:
+            rows.append((position, name, members, status))
     return rows
 
 
