@@ -136,6 +136,7 @@
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
       "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss",
+      "KriaUITests/CreationUITests/testOpenEditorInsideTheEditorsKriaSheetReturnsToTheEditor",
       "KriaUITests/SavedUploadsUITests/testReuseAcrossTwoPostsWithoutAnotherUpload",
       "KriaUITests/SavedUploadsUITests/testSearchPaginationAndRetry",
       "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts",
