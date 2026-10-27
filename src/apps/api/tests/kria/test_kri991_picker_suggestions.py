@@ -51,14 +51,13 @@ from app.kria import planner
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
     CREATOR_EVIDENCE,
-    ClipAssignment,
     ClipIntent,
-    ResolvedClipIntent,
 )
 from app.services import clip_intent_planning as planning
 from app.services import clip_intent_resolution as resolution
 from app.services.clip_intent_resolution import IntentClip, resolve_clip_intents_for_turn
 from app.services.creator_capabilities import resolve_creator_manifest
+from tests.services.test_kri779_single_take_moments import _patch
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 CASE: dict[str, Any] = json.loads((FIXTURES / "kri991_donjulio_lunch_m2_clips.json").read_text())
@@ -416,7 +415,9 @@ async def test_a_flapping_resolver_does_not_re_ask_the_order_after_the_tap(
     by_op = {i["op"]: [a["media_id"] for a in i["assignments"]] for i in resolved}
     assert by_op["order"] == [FRIEND]  # carried from the asking turn, not asked again
     assert by_op["exclude"] == [CHEESE_CUT]  # d: the tap stays the tap
-    assert "unexpected" not in provider.calls
+    # The tap reused the planner list and the asking turn's matches stand (the steak include
+    # and the friend order), the skip is the tap's: nothing is left for the resolver.
+    assert provider.calls == []
 
 
 async def test_a_typed_change_of_mind_is_not_overridden_by_the_carried_match(
@@ -430,7 +431,7 @@ async def test_a_typed_change_of_mind_is_not_overridden_by_the_carried_match(
     typed = "Actually end on the waiter who looks up instead."
     events = [*events, ("assistant", {"turn_id": str(uuid.uuid4())}), ("user", {"turn_id": "x"})]
 
-    _provider(monkeypatch, "nothing")
+    provider = _provider(monkeypatch, "nothing")
     planned = await _turn(
         monkeypatch,
         events,
@@ -439,6 +440,7 @@ async def test_a_typed_change_of_mind_is_not_overridden_by_the_carried_match(
         raw_request=f"{REQUEST}\n{tap}\n{typed}",
     )
 
+    assert provider.calls == ["planner", "resolver"]  # re-planned, resolved once
     assert (planned.plan.mode, planned.plan.turn_value) == ("respond", "question")
     [category] = planned.plan.clip_question["categories"]
     assert category["intent_id"] == "order_friend_last"
@@ -455,15 +457,10 @@ def _saved(**row: Any) -> dict[str, Any]:
     return {"matches": [{**base, **row}]}
 
 
-def _carry(saved: Any, *, intent: dict[str, Any] | None = None, attached=EVERYTHING, now=()):
+def _carry(saved: Any, *, intent: dict[str, Any] | None = None, attached=EVERYTHING):
     wanted = {k: v for k, v in {**FRIEND_LAST, **(intent or {})}.items() if k != "source_quote"}
     clips = [c for c in _intent_clips() if c.media_id in attached]
-    return planning.carried_matches(
-        saved,
-        [ClipIntent(**wanted)],
-        resolution.IntentResolution(status="needs_creator", intents=list(now)),
-        clips,
-    )
+    return planning.carried_matches(saved, [ClipIntent(**wanted)], clips)
 
 
 def test_a_carried_match_is_the_same_unmatched_ask_on_a_still_attached_clip() -> None:
@@ -476,13 +473,12 @@ def test_a_carried_match_is_the_same_unmatched_ask_on_a_still_attached_clip() ->
 
 @pytest.mark.parametrize(
     "case",
-    ["other_id", "attribute", "position", "op", "detached", "matched_now", "no_record", "junk"],
+    ["other_id", "attribute", "position", "op", "detached", "no_record", "junk"],
 )
 def test_a_match_is_not_carried_to_anything_else(case: str) -> None:
     saved: Any = _saved()
     intent: dict[str, Any] = {}
     attached = EVERYTHING
-    now: list[Any] = []
     if case == "other_id":
         intent = {"intent_id": "order_someone_else"}
     elif case == "attribute":
@@ -493,19 +489,74 @@ def test_a_match_is_not_carried_to_anything_else(case: str) -> None:
         intent = {"op": "exclude", "position": None}
     elif case == "detached":
         attached = [m for m in EVERYTHING if m != FRIEND]
-    elif case == "matched_now":
-        now = [
-            ResolvedClipIntent(
-                intent_id="order_friend_last",
-                op="order",
-                attribute="my friend smiling",
-                position="last",
-                status="resolved",
-                assignments=[ClipAssignment(media_id=BOARDS, confidence=0.9)],
-            )
-        ]
     elif case == "no_record":
         saved = {"matches": []}
     else:
         saved = {"matches": ["junk", {"intent_id": "order_friend_last", "assignments": [{}]}]}
-    assert _carry(saved, intent=intent, attached=attached, now=now) == []
+    assert _carry(saved, intent=intent, attached=attached) == []
+
+
+async def test_only_the_rest_is_resolved_when_some_matches_are_carried(
+    prod_profile, monkeypatch, no_vision
+) -> None:
+    # One resolver call for what is left, never a second one for the whole list.
+    _provider(monkeypatch, "match")
+    asked = await _turn(monkeypatch)
+    inventory = copy.deepcopy(asked.plan.clip_intent_inventory)
+    inventory["matches"] = [m for m in inventory["matches"] if m["op"] == "order"]
+    events, tap = _answered(asked, {"media_ids": [CHEESE_CUT]})
+
+    provider = _provider(monkeypatch, "nothing")
+    planned = await _turn(
+        monkeypatch,
+        events,
+        checked_inventory=inventory,
+        user_message=tap,
+        raw_request=f"{REQUEST}\n{tap}",
+    )
+
+    assert provider.calls == ["resolver"]
+    assert planned.plan.mode == "act", planned.plan.response
+    resolved = planned.plan.intents[0].arguments["strategy"]["resolved_clip_intents"]
+    by_op = {i["op"]: [a["media_id"] for a in i["assignments"]] for i in resolved}
+    assert by_op["order"] == [FRIEND] and len(by_op["include"]) == 1
+
+
+# -- a clip a check confidently ruled out is not a suggestion (Fix 1) -----------------------
+
+
+async def _order_with_vision(monkeypatch, verdict: tuple[str, float, str]) -> Any:
+    _patch(
+        monkeypatch,
+        {
+            "intents": [
+                {
+                    "intent_id": "order_friend_last",
+                    "needs_vision": [{"media": "m001", "question": "Is the friend smiling?"}],
+                }
+            ]
+        },
+        vision={"my friend smiling": verdict},
+    )
+    return await resolve_clip_intents_for_turn(
+        intents=[ClipIntent(**{k: v for k, v in FRIEND_LAST.items() if k != "source_quote"})],
+        creator_request=REQUEST,
+        clips=_intent_clips(),
+        run_context=RunContext(),
+        max_vision_requeries=18,
+        vision_deadline_s=30.0,
+    )
+
+
+async def test_a_clip_the_check_confidently_ruled_out_is_not_pre_ticked(monkeypatch) -> None:
+    result = await _order_with_vision(monkeypatch, ("no", 1.0, "nobody smiles"))
+    assert result.status == "needs_creator"
+    [category] = result.clip_question["categories"]
+    assert category["suggested_media_ids"] == []
+    assert FRIEND in category["candidate_media_ids"]  # still tappable
+
+
+async def test_a_clip_the_check_could_not_settle_is_pre_ticked(monkeypatch) -> None:
+    result = await _order_with_vision(monkeypatch, ("unknown", 0.0, ""))
+    [category] = result.clip_question["categories"]
+    assert category["suggested_media_ids"] == [FRIEND]

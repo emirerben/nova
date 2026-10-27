@@ -912,36 +912,31 @@ def _inventory_with_matches(
 
 
 def carried_matches(
-    saved: Any,
-    intents: Sequence[ClipIntent],
-    resolution: IntentResolution,
-    clips: Sequence[IntentClip],
+    saved: Any, intents: Sequence[ClipIntent], clips: Sequence[IntentClip]
 ) -> list[ResolvedClipIntent]:
-    """The asking turn's matches for the intents this turn's resolver left unmatched.
+    """The asking turn's matches for the intents this turn would otherwise re-resolve.
 
     ``saved`` is the asking turn's inventory, passed only when the planner list was reused (the
     tap was the turn's only new input, so no new words could have changed an ask). Applied only
-    to the same intent (id, op, attribute and position all unchanged), only while unmatched this
-    turn, and only to clips still attached. Reads no words.
+    to the same intent (id, op, attribute and position all unchanged) and only to clips still
+    attached. The creator's own taps never come here (they settle their intents first).
+    Reads no words.
     """
     rows = saved.get("matches") if isinstance(saved, Mapping) else None
-    if not isinstance(rows, list) or resolution.status not in {"needs_creator", "resolved"}:
+    if not isinstance(rows, list):
         return []
     attached = {clip.media_id for clip in clips}
-    now = {intent.intent_id: intent for intent in resolution.intents}
     out: list[ResolvedClipIntent] = []
     for intent in intents:
         row = next(
             (r for r in rows if isinstance(r, Mapping) and r.get("intent_id") == intent.intent_id),
             None,
         )
-        current = now.get(intent.intent_id)
         if (
             row is None
             or intent.op not in _CARRIED_OPS
             or (row.get("op"), row.get("attribute"), row.get("position"))
             != (intent.op, intent.attribute, intent.position)
-            or (current is not None and current.status == "resolved" and current.assignments)
         ):
             continue
         try:
@@ -1296,22 +1291,22 @@ async def plan_and_resolve_clip_intents(
             ),
         )
 
-    resolution = await _resolve(visual_intents)
-    # KRI-991: the resolver is not deterministic and re-reads the whole list every turn. A
-    # match the asking turn already found holds for an intent that now comes back unmatched.
+    # KRI-991: the resolver is not deterministic and re-reads the whole list every turn, so a
+    # match the asking turn already found stands and only the rest is resolved (once, or not at
+    # all when nothing remains).
     carried = carried_matches(
-        checked_inventory if reused is not None else None, visual_intents, resolution, clips
+        checked_inventory if reused is not None else None, visual_intents, clips
     )
     if carried:
         carried_ids = {c.intent_id for c in carried}
-        log.info("clip_intent_matches_carried", carried=len(carried))
-        earlier = resolution
-        pending_intents = [i for i in visual_intents if i.intent_id not in carried_ids]
-        resolution = await _resolve(pending_intents) if pending_intents else IntentResolution()
-        resolution = replace(
-            resolution, vision_answers={**earlier.vision_answers, **resolution.vision_answers}
-        )
+        visual_intents = [i for i in visual_intents if i.intent_id not in carried_ids]
         resolved_orders = [*resolved_orders, *carried]
+        log.info(
+            "clip_intent_matches_carried",
+            carried=len(carried),
+            skipped_resolver=not visual_intents,
+        )
+    resolution = await _resolve(visual_intents) if visual_intents else IntentResolution()
     if order_by_intents:
         kept, dropped = keep_chapters_in_filming_order(resolution.intents, clips, creator_request)
         if dropped:
