@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.164.0] - 2026-10-27
+
+### Changed
+- feat(kria): ask which clip when two clips tie for one Voiceover shot (KRI-962) (#1871) <!-- release-pr: 1871 -->
+
 ## [0.81.163.0] - 2026-10-27
 
 ### Changed
