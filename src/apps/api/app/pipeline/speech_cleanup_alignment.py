@@ -16,13 +16,14 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+
+from app.text_fold import loose_case
 
 MODEL_ID = "facebook/wav2vec2-base-960h"
 MODEL_REVISION = "22aad52d435eb6dbaf354bdad9b0da84ce7d6156"
@@ -52,9 +53,7 @@ class AlignedWords:
 def letters(text: str) -> str:
     """The model's alphabet for one token: A-Z and apostrophe, accents folded ("ş" -> "S")."""
 
-    folded = unicodedata.normalize("NFKD", text.replace("ı", "i").replace("İ", "I"))
-    folded = "".join(ch for ch in folded if not unicodedata.combining(ch)).upper()
-    return re.sub(r"[^A-Z']", "", folded)
+    return re.sub(r"[^A-Z']", "", loose_case(text).upper())
 
 
 @lru_cache(maxsize=1)
