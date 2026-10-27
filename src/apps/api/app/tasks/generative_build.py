@@ -7194,6 +7194,7 @@ def _run_phone_unified_montage_job(
             needs_creator_choice,
             plan_facts_from_unified_montage,
         )
+        from app.kria.select_asks import exclusion_facts  # noqa: PLC0415
 
         record["generation_id"] = generation
         from app.pipeline.phone_plan_repair import contract_text_drawn  # noqa: PLC0415
@@ -7201,6 +7202,8 @@ def _run_phone_unified_montage_job(
         with _worker_reply_language(snapshot):
             receipt_facts = replace(
                 plan_facts_from_unified_montage(record),
+                # KRI-994: the creator's tapped skips, judged against the clips this plan plays.
+                exclusions=exclusion_facts(strategy if isinstance(strategy, dict) else None, brief),
                 contract_drawn_texts=tuple(
                     row.text
                     for row in (contract.exact_texts if contract is not None else ())
