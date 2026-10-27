@@ -1109,12 +1109,14 @@ def _legacy_offer_matches(
 ) -> bool:
     """An offer stored before KRI-968 named nothing: it blocked these exact ids, at this
     brief revision, judging by its own receipts / readiness rows."""
+    from app.kria.approval_readiness import APPROVABLE  # noqa: PLC0415
+
     readiness = coverage.get("approval_readiness")
     blocked_ids = (
         {
             row.get("requirement_id")
             for row in readiness.get("requirements", [])
-            if row.get("disposition") not in {"executable", "delegated"}
+            if row.get("disposition") not in APPROVABLE
         }
         if isinstance(readiness, Mapping)
         else None
@@ -1886,6 +1888,7 @@ def _complete_draft_turn(
             ]
         if readiness_required:
             from app.kria.approval_readiness import (  # noqa: PLC0415
+                APPROVABLE,
                 assess_readiness,
                 readiness_reply,
             )
@@ -1966,7 +1969,7 @@ def _complete_draft_turn(
             unmet_ids = [
                 row["requirement_id"]
                 for row in readiness_report["requirements"]
-                if row["disposition"] not in {"executable", "delegated"}
+                if row["disposition"] not in APPROVABLE
             ]
         automatic_omission_ids = _automatic_omission_ids(
             brief,

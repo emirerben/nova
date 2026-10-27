@@ -39,6 +39,9 @@ from app.services.length_planning import read_length_plan
 
 READINESS_KEY = "approval_readiness"
 NOT_READY = "approval_requirements_not_ready"
+# The dispositions approval may go ahead with. KRI-983: `unverified` is an ask nothing can
+# settle before the video is made; it is named for the creator to look at after render.
+APPROVABLE = frozenset({"executable", "delegated", "unverified"})
 
 
 def _json(value: Any) -> Any:
@@ -188,6 +191,22 @@ def _contract_drawn_texts(
         creator_id=creator_id,
     )
     return tuple(row.text for row in contract.exact_texts if contract_text_drawn(row, route=route))
+
+
+def _no_pre_render_checker(req: Any) -> bool:
+    """KRI-983: no draft check can settle this ask: none owns it, or its only check reads the
+    finished video (`judged_at_render`). A researched-text ask and a keep-text-off mark are
+    proven outside `_has_checker` (research preview, the mark route), so they still block."""
+    from app.kria.brief_checks import judged_at_render  # noqa: PLC0415
+    from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
+    from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
+
+    if (req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping)) or _fact_entries(
+        req.facts.get(KEEP_TEXT_OFF_KEY)
+    ):
+        return False
+    # A text ask's words are checked on the draft even when its look is judged at render.
+    return not _has_checker(req) or (req.kind != "text" and judged_at_render(req))
 
 
 def assess_readiness(
@@ -377,6 +396,7 @@ def assess_readiness(
             and not strategy.get("licensed_music")
         ):
             proven, owner = True, FIELD_MATRIX["audio_strategy"].owner
+        checked = receipt is not None and receipt.verification == "checked"
         disposition = (
             "unsupported"
             if policy_problem
@@ -385,16 +405,25 @@ def assess_readiness(
             else "executable"
             if proven
             else "unsupported"
-            if receipt is not None
-            and receipt.verification == "checked"
-            and receipt.status == "not_possible"
+            if checked and receipt.status == "not_possible"
             else "needs_choice"
-            if receipt is not None and receipt.verification == "checked"
+            if checked
+            else "unverified"
+            if receipt is not None
+            and not is_story_requirement
+            # An editor draft is its own change set: what its ops did not do is not done.
+            and editor_payload is None
+            and _no_pre_render_checker(req)
             else "evidence_missing"
         )
         reason = policy_problem or (
             receipt.reason
-            if receipt is not None and receipt.verification == "checked"
+            if checked
+            else say(
+                en="I can't check this before the video is made; I'll point it out after.",
+                tr="Bunu video hazırlanmadan önce kontrol edemiyorum; sonra sana göstereceğim.",
+            )
+            if disposition == "unverified"
             else say(
                 en="I haven't established how to render this change yet.",
                 tr="Bu değişikliği nasıl oluşturacağımı henüz belirleyemedim.",
@@ -439,8 +468,7 @@ def assess_readiness(
         )
     report = {
         "schema_version": 1,
-        "ready": not policy_problem
-        and all(r["disposition"] in {"executable", "delegated"} for r in rows),
+        "ready": not policy_problem and all(r["disposition"] in APPROVABLE for r in rows),
         "brief_version": brief.version if brief else 0,
         "brief_digest": digest(brief.model_dump(mode="json") if brief else None),
         "strategy_digest": digest(
@@ -594,7 +622,7 @@ def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
         )
     ]
     for row in report["requirements"]:
-        if row["disposition"] not in {"executable", "delegated"}:
+        if row["disposition"] not in APPROVABLE:
             lines.append(f"- {by_id[row['requirement_id']].text()}: {row['reason']}")
     if len(lines) == 1 and report.get("policy_problem"):
         lines.append(str(report["policy_problem"]))
