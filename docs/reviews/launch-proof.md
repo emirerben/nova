@@ -233,6 +233,7 @@ The before-fix commit is `80c6bbfae`. The fix is `2ca366c1b`. Its source SHA-256
 | Patched saver, full Kria app test target | 7 passed, 0 failed, 0 skipped. Full app builds with the extracted adapter. |
 | Patched saver, physical iPhone 13 Pro | 7 passed, 0 failed, 0 skipped. External Photos authorization and transaction results are injected. |
 | Real simulator Photos library after injected 3301 | One successful transaction after two attempts. One actual library video, with the exact exported-file SHA-256 and inspected red first frame. |
+| Real physical Photos library after injected 3301 | Two attempts, one successful transaction, library count 12,696 to 12,697. Saved acknowledgement and actual video independently inspected; read-only checks pass. |
 | Retained hook, Tigre caption, Don Julio picker/order/audio, Cunda research and receipt replays | 308 passed, 1 expected failure, no skips. No paid provider calls. |
 | Actual-export verifier, publication and recovery controls | 73 passed, no skips or expected failures. Real generated media and isolated PostgreSQL. |
 | Corrected verification-skill replay command | 44 passed. Replaces the deleted KRI-950 test path with upstream full-turn and PostgreSQL checks. |
@@ -304,12 +305,11 @@ uses source revision `34f06bb203ca7018eb4bee25d3cc609c5c5c4b8c`. The native engi
 source matches this branch; the new Photos saver is still unmerged. This QA
 source equivalence does not establish deployment of the Photos fix.
 
-The real physical Photos recovery check reached its add-only permission prompt,
-then subsequent attempts found denied access in the disposable QA app. Its own
-status records add-only `denied` and read/write `notDetermined`; these attempts
-are failed permission prerequisites, not successful recovery evidence. The
-production app's Photos permission was not changed. A future successful write
-must still be independently inspected in Photos before that physical gate closes.
+The initial real physical Photos recovery check reached its add-only permission
+prompt, then subsequent attempts found denied access in the disposable QA app.
+Its own status recorded add-only `denied` and read/write `notDetermined`; those
+attempts remain failed prerequisites. The continuation below supersedes this
+permission blocker. The production app's Photos permission was not changed.
 
 The successful physical files were copied back and inspected. Troya's sampled
 frames show its source scenes and timed captions. The marathon frame shows the
@@ -319,3 +319,45 @@ for Troya and `59bed8dfa2d2138a11dfe54af8ab57a7f171fcb0fc5c9fa6e60c4adef68f0e63`
 for marathon. Both are H.264/AAC at 1080×1920, with picture and audio starting at
 zero. Their video durations are 27.388333 and 5.7 seconds, including the outro.
 These artifacts remain local; no original footage or rendered media is committed.
+
+
+## Physical Photos recovery verified after permission
+
+On 27 October 2026 the user enabled add-only access for the disposable QA app.
+Its live status then reported add-only `authorized` and read/write
+`notDetermined`. The fresh Photos baseline contained **12,696 items**.
+
+At **10:38:03 UTC**, the patched shared saver received an injected
+`PHPhotosErrorDomain/3301` at the external Photos transaction boundary. It retried
+with the same exported URL and bytes. The retained receipt records **2 attempts,
+1 successful real Photos transaction**, and SHA-256
+`e32c26069297057ac80af4b4c865b9d2008d412712505876526bd1db700c53c3`.
+The app displayed **Saved to Photos after interruption**. Independent Photos UI
+inspection showed **12,697 items**, an increase of exactly one.
+
+The new two-second asset was opened in Apple Photos and its solid red video frame
+was inspected. Its Photos date is 26 October at 23:05, matching the source file's
+embedded creation time; the save occurred on 27 October. The source is the
+retained synthetic native export. The first error is injected; the retry uses the
+real Photos framework. This verifies bounded recovery on the physical iPhone,
+without attributing a cause to the earlier operating-system interruption.
+
+The authorized composite test reached the saved acknowledgement and new library count,
+then failed while trying to capture the background QA app after switching to
+Photos. That failure remains in `photos-real-library-device-complete-04.xcresult`.
+The harness now captures the active app. The non-mutating re-drive
+`photos-real-library-device-inspect-05.xcresult` passed **1/1**, and opening the
+actual asset in `photos-recovered-asset-open-06.xcresult` also passed **1/1**.
+Neither inspection invoked another Photos write. The earlier baseline navigation
+failure was a missing Back button because Photos already showed its library;
+its retained hierarchy supplies the fresh baseline count.
+
+Local evidence also includes `photos-real-device-report04.json`,
+`photos-device-authorization-after-grant.json`, the library hierarchies and the
+saved-video screenshot. No private screenshots or media are committed. The test
+clip remains in Photos for inspection. Temporary task QA apps are removed after
+evidence collection; the installed Kria app and its data remain in place.
+
+This closes the patched saver's physical Photos recovery gate. A release build
+containing the fix, original compound-request production acceptance, Yasin's
+Tigre/Don Julio footage and the real beta remain separate launch requirements.
