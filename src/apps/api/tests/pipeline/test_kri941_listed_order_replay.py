@@ -13,9 +13,9 @@ as the job stored it (its resolved clip intents), the clip records the plan read
 order) and prod's own cut order and receipts, with every path, hash and transcript stripped.
 No model call and no network: the real ``plan_unified_montage`` and ``build_receipts``.
 
-* the recorded one-row strategy reproduces prod's cut order and its "met" receipt
-* that receipt is a KNOWN GAP (``xfail(strict=True)``): from ids alone the server cannot tell a
-  list from a group, and wording is never parsed (KRI-667). Closing it needs a structured field
+* the recorded one-row strategy reproduces prod's cut order but reports missing certainty
+* an absent ordering marker cannot distinguish a list from a group, and wording is never
+  parsed (KRI-667); an explicit marker records the distinction
 * the same asks written one row per subject (what the planner prompt now says) land in the
   listed order and read "met"
 * negative control: the same five rows with two of them swapped in the final cut read NOT met
