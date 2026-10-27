@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.150.0] - 2026-10-27
+
+### Fixed
+- fix(phone): hear a creator-named phrase spoken as one word more or fewer (KRI-961) (#1858) <!-- release-pr: 1858 -->
+
 ## [0.81.149.0] - 2026-10-27
 
 ### Fixed
