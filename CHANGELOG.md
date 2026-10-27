@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.165.0] - 2026-10-27
+
+### Fixed
+- fix(kria): lift planner flags written inside the action instead of retrying (KRI-992) (#1881) <!-- release-pr: 1881 -->
+
 ## [0.81.164.0] - 2026-10-27
 
 ### Changed
