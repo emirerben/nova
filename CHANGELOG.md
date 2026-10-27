@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.152.0] - 2026-10-27
+
+### Fixed
+- fix(kria): open where an unheard quote head was said, not on the heard tail (KRI-967) (#1862) <!-- release-pr: 1862 -->
+
 ## [0.81.151.0] - 2026-10-27
 
 ### Fixed
