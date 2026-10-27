@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.153.0] - 2026-10-27
+
+### Fixed
+- fix(kria): the simpler version names what it leaves out (KRI-968) (#1863) <!-- release-pr: 1863 -->
+
 ## [0.81.152.0] - 2026-10-27
 
 ### Fixed
