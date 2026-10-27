@@ -302,6 +302,7 @@ def test_create_turn_returns_202_and_publishes_committed_turn(
     # `editor_state` is the new optional field (None unless the client sends it).
     assert submit.await_args.kwargs["body"].model_dump() == {
         **_body(),
+        "outcome_context": None,
         "editor_state": None,
         "clip_selection": None,
         "song_order": None,

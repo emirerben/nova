@@ -104,6 +104,7 @@ def _intent(position: str | None, name: str, *indices: int, status: str = "resol
         "status": status,
         "intent_id": f"order_{name.replace(' ', '_')}",
         "attribute": name,
+        "ordered_members": False,
         "assignments": [
             {"media_id": _id(i) if isinstance(i, int) else i, "confidence": 0.9} for i in indices
         ],

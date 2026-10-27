@@ -382,33 +382,10 @@ def test_request_digest_is_unchanged_when_scope_is_absent_and_sensitive_when_pre
     other = SubmitTurnBody(
         message="hi", client_event_id="e1", expected_thread_revision=1, scope=["music"]
     )
-    import hashlib
-    import json
-
-    legacy = hashlib.sha256(
-        json.dumps(
-            plain.model_dump(
-                mode="json",
-                exclude={
-                    "editor_state",
-                    "clip_selection",
-                    "choice_selection",
-                    "song_order",
-                    "song_range",
-                    "scope",
-                    "manual_edits",
-                    "suggestion",
-                    # KRI-827: a field added after this digest existed; absent, it is excluded.
-                    "protected_region",
-                    # KRI-723: the same (additive, excluded when absent).
-                    "moment_order",
-                },
-            ),
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    assert request_digest(plain) == legacy
+    # Verified against the pre-metadata parent, rather than rebuilt from today's schema.
+    assert (
+        request_digest(plain) == "b94913df11c85497295f8c4c32bb5ec4b30642d1dbe9d4a440d30be47652d33c"
+    )
     assert len({request_digest(plain), request_digest(scoped), request_digest(other)}) == 3
 
 

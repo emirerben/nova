@@ -147,4 +147,6 @@ async def test_a_dropped_caption_ask_still_asks_and_says_there_is_no_draft_yet(m
     assert "I held this first draft back." in content
     assert "I haven't started a draft yet." not in content
     assert "Your current draft is unchanged" not in content
-    assert content.endswith("Should I try a different approach, or make this simpler version?")
+    assert content.endswith(
+        "Should I make it without these, or do you want to change your request?"
+    )

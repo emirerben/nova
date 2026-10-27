@@ -174,7 +174,7 @@ def request_digest(body: SubmitTurnBody) -> str:
     # different request) but is excluded when absent so pre-existing digests hold.
     excluded = (
         # KRI-756: which chip a message came from is telemetry, never part of the request.
-        {"editor_state", "suggestion"}
+        {"editor_state", "suggestion", "outcome_context"}
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
@@ -1014,6 +1014,11 @@ async def submit_turn(
     if inert_response is not None:
         turn_value, message = inert_response
         turn_id = uuid.uuid4()
+        from app.services.request_following_lineage import request_outcome_payload  # noqa: PLC0415
+
+        outcome_payload = await request_outcome_payload(
+            db, thread_id=thread.id, turn_id=turn_id, context=body.outcome_context
+        )
         # KRI-552: marks both events as a copy of `duplicate.turn_id`'s message. The worker's
         # revision fence and the planner's reads skip them, so a copy never disturbs the turn
         # it repeats.
@@ -1030,6 +1035,7 @@ async def submit_turn(
                 "turn_id": str(turn_id),
                 "turn_status": "completed",
                 "inert": True,
+                **outcome_payload,
                 **copy_of,
             },
             client_event_id=body.client_event_id,
@@ -1106,6 +1112,11 @@ async def submit_turn(
         queued_replaces_turn_id = active.id
 
     turn_id = uuid.uuid4()
+    from app.services.request_following_lineage import request_outcome_payload  # noqa: PLC0415
+
+    outcome_payload = await request_outcome_payload(
+        db, thread_id=thread.id, turn_id=turn_id, context=body.outcome_context
+    )
     event = await _append_event(
         db,
         thread,
@@ -1117,6 +1128,7 @@ async def submit_turn(
             "runtime_version": 2,
             "turn_id": str(turn_id),
             "turn_status": turn_status,
+            **outcome_payload,
             # Flag off: dropped silently, nothing stored (byte-identical to old clients).
             **({"camera_roll_story": _camera_roll_story} if _camera_roll_story else {}),
             **(
@@ -2732,7 +2744,14 @@ async def decide_approval(
         expected_readiness = (
             (execution.result or {}).get("approval_readiness_digest") if execution else None
         )
-        if expected_readiness is not None or saved_readiness is not None:
+        from app.services.clip_order_sequence import unconfirmed_order_groups  # noqa: PLC0415
+
+        recheck_legacy_order = (
+            settings.approval_readiness_for(creator_id)
+            and copy_document is not None
+            and bool(unconfirmed_order_groups(copy_document.strategy.get("resolved_clip_intents")))
+        )
+        if expected_readiness is not None or saved_readiness is not None or recheck_legacy_order:
             from app.kria.approval_readiness import (  # noqa: PLC0415
                 NOT_READY,
                 assess_readiness,
@@ -3115,6 +3134,39 @@ async def read_creative_brief(
         str(session.target_generation_id) if session and session.target_generation_id else None
     )
     live = {req.id: req for req in brief.live()}
+    from app.services.clip_order_sequence import (  # noqa: PLC0415
+        unconfirmed_order_groups,
+        unconfirmed_order_reason,
+    )
+
+    draft_ids: set[uuid.UUID] = set()
+    for event in events:
+        try:
+            draft_ids.add(uuid.UUID(str((event.payload or {}).get("draft_id"))))
+        except ValueError:
+            continue
+    drafts = (
+        (
+            await db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.id.in_(draft_ids),
+                    CreatorEditDraft.thread_id == thread.id,
+                    CreatorEditDraft.creator_id == creator_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+        if draft_ids
+        else []
+    )
+    unconfirmed_drafts = {
+        str(row.id)
+        for row in drafts
+        if unconfirmed_order_groups(
+            ((row.snapshot_json or {}).get("strategy") or {}).get("resolved_clip_intents")
+        )
+    }
     newest: dict[str, RequirementReceipt] = {}
     for event in events:
         for raw in (event.payload or {}).get("requirement_receipts") or []:
@@ -3135,6 +3187,20 @@ async def read_creative_brief(
             # Older events can hold a "can't verify" receipt that judged nothing;
             # it is never a requirement's outcome, so the requirement stays open.
             rid = receipt.requirement_id
+            if (
+                receipt.status == "met"
+                and getattr(live.get(rid), "kind", None) == "order"
+                and str((event.payload or {}).get("draft_id")) in unconfirmed_drafts
+            ):
+                with reply_language_for(thread_reply_language(thread)):
+                    receipt = receipt.model_copy(
+                        update={
+                            "status": "partial",
+                            "verification": "checked",
+                            "stage": "applied",
+                            "reason": unconfirmed_order_reason(),
+                        }
+                    )
             if rid not in newest and (
                 is_judged(live.get(rid), receipt) or receipt.verification == "unchecked"
             ):

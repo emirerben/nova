@@ -1,0 +1,105 @@
+{
+  "_source": "KRI-983. Prod thread 953a5265 (\"Lipsync Creation\", montage), 2026-10-27 12:21 UTC; the account is the one creator enrolled in KRI-721 approval readiness. Kept from prod: the creator's message, the media shape (4 analysis-proxy videos plus an uploaded song), the stored brief (v1 r1 = {kind: audio, scope: global, facts: {}, description: \"Create a lipsync to the uploaded song\"}) and the held reply (prod_reply). Prod agent_run rows keep only keys and a sha256, so the Main Creator answer is AUTHORED from prompts/main_creator.txt and app/agents/main_creator.py (the _USER_SONG_PROMPT_SECTION teaches audio_strategy user_song with song_sync lipsync); the clip records, durations, song lyrics and the ready per-take alignment are authored too. The Oct 7 and Oct 11 lip-sync jobs' assembly_plan was not re-read for this fixture.",
+  "message": "Create a lipsync",
+  "prod_reply": "I need to resolve these changes before you approve:\n- Create a lipsync to the uploaded song: I haven't established how to render this change yet.\nI held this first draft back. The simpler version leaves out: Create a lipsync to the uploaded song. Should I try a different approach, or make this simpler version?",
+  "brief_update": {
+    "operation": "add",
+    "kind": "audio",
+    "scope": "global",
+    "literal": null,
+    "description": "Create a lipsync to the uploaded song",
+    "facts": {}
+  },
+  "title_update": {
+    "operation": "add",
+    "kind": "text",
+    "scope": "title",
+    "literal": "Sing along",
+    "description": "The opening title"
+  },
+  "strategy": {
+    "pacing": "balanced",
+    "direction": "fast_montage",
+    "edit_format": "montage",
+    "render_program": "guided",
+    "rationale": "Each take is cut to the part of the song the creator sings in it, in song order.",
+    "caption_style": "none",
+    "audio_strategy": "user_song",
+    "song_sync": "lipsync",
+    "target_duration_s": 25.0,
+    "selected_media_ids": [],
+    "media_scope": "all",
+    "video_reuse_policy": "once",
+    "optional_treatments": []
+  },
+  "summary": {
+    "lipsync": "I'll lip-sync your takes to your song, placing each one where it fits the music.",
+    "background": "I'll use your song as the background music and cut to its beat."
+  },
+  "clips": [
+    {
+      "uuid": "3E0C1F52-6B7A-4D1E-9C2B-7F14A9D0B111",
+      "duration_s": 6.4,
+      "song_delta_s": 2.0,
+      "subject": "a woman singing into the phone camera in a kitchen",
+      "summary": "Close-up of her singing the first line to the camera.",
+      "setting": "kitchen",
+      "activity": "singing"
+    },
+    {
+      "uuid": "8A41D7E3-2C95-4B60-A3F8-0E6B5C7D2222",
+      "duration_s": 5.8,
+      "song_delta_s": 9.0,
+      "subject": "a woman singing while walking down a street",
+      "summary": "She sings the second line walking toward the camera.",
+      "setting": "street",
+      "activity": "singing"
+    },
+    {
+      "uuid": "C7B2E9A0-41F3-4D8C-B5E6-9A1F3C4D3333",
+      "duration_s": 7.1,
+      "song_delta_s": 15.5,
+      "subject": "a woman singing in a car",
+      "summary": "She sings the chorus from the passenger seat.",
+      "setting": "car",
+      "activity": "singing"
+    },
+    {
+      "uuid": "F19D4A6B-0E72-4C3A-8B5D-2E7C6A9B4444",
+      "duration_s": 6.0,
+      "song_delta_s": 23.0,
+      "subject": "a woman singing on a balcony at sunset",
+      "summary": "She sings the last line on a balcony, then smiles.",
+      "setting": "balcony",
+      "activity": "singing"
+    }
+  ],
+  "song": {
+    "gcs_path": "users/test/creation-threads/lipsync/song.m4a",
+    "filename": "my-song.m4a",
+    "generation": 1761567660000000,
+    "duration_s": 32.0,
+    "lines": [
+      {
+        "start_s": 2.0,
+        "end_s": 7.5,
+        "text": "I wake up and the light is gold"
+      },
+      {
+        "start_s": 9.0,
+        "end_s": 14.0,
+        "text": "every street sings back to me"
+      },
+      {
+        "start_s": 15.5,
+        "end_s": 21.5,
+        "text": "so turn it up and let it go"
+      },
+      {
+        "start_s": 23.0,
+        "end_s": 28.5,
+        "text": "this is how it's meant to be"
+      }
+    ]
+  }
+}
