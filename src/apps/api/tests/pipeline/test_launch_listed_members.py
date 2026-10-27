@@ -48,7 +48,13 @@ def test_a_wrong_order_inside_the_group_cannot_read_met(monkeypatch):
 
 
 def test_an_unordered_group_preserves_its_previous_order():
-    assert _plan(_recorded_strategy()).clip_ids == PROD_CUT
+    strategy = _recorded_strategy()
+    for intent in strategy["resolved_clip_intents"]:
+        if intent["intent_id"] == "order_sequence_between":
+            intent["ordered_members"] = False
+    plan = _plan(strategy)
+    assert plan.clip_ids == PROD_CUT
+    assert _receipts(plan)["r2"].status == "met"
 
 
 def test_the_order_contract_keeps_the_list_marker():
@@ -63,6 +69,26 @@ def test_the_order_contract_keeps_the_list_marker():
     assert intent.model_dump()["ordered_members"] is True
     legacy = ClipIntent(intent_id="group", op="order", attribute="the volleyball clips")
     assert "ordered_members" not in legacy.model_dump()
+
+
+def test_an_explicitly_unordered_group_keeps_its_certainty_when_saved():
+    group = ClipIntent(
+        intent_id="group", op="order", attribute="the volleyball clips", ordered_members=False
+    )
+    saved = group.model_dump(mode="json")
+    assert saved["ordered_members"] is False
+    assert ClipIntent.model_validate(saved).ordered_members is False
+
+
+def test_reconfirming_a_saved_list_recovers_the_order_receipt():
+    saved = _recorded_strategy()
+    assert _receipts(_plan(saved))["r2"].status == "partial"
+    for intent in saved["resolved_clip_intents"]:
+        if intent["intent_id"] == "order_sequence_between":
+            intent["ordered_members"] = True
+    recovered = _plan(saved)
+    assert recovered.clip_ids == LISTED_CUT
+    assert _receipts(recovered)["r2"].status == "met"
 
 
 @pytest.mark.asyncio

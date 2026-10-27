@@ -103,11 +103,14 @@ from app.services.clip_facts import (
     order_by_capture_time,
 )
 from app.services.clip_order_sequence import (
+    UNCONFIRMED_MEMBER_ORDER,
     MomentSeats,
+    SequenceGroupKey,
     apply_sequence,
     moment_seats,
     row_relations,
     sequence_rows,
+    unconfirmed_order_groups,
 )
 from app.services.length_policy import natural_length_owner
 from app.services.spoken_quotes import is_outro_hallucination
@@ -1139,6 +1142,7 @@ def _sequence_outcomes(
     cuts: Sequence[tuple[str, float]] = (),
     spans: Sequence[tuple[str, float, float]] = (),
     moment_record: Sequence[Mapping[str, Any]] | None = None,
+    unconfirmed_groups: frozenset[SequenceGroupKey] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Did each described group land where the creator said? Read off the finished order.
 
@@ -1156,9 +1160,9 @@ def _sequence_outcomes(
     edit, named or not: a ``first`` group leads the whole cut, a ``last`` group closes it, and
     a ``then`` group plays after the clips ``first`` rows seat and after the clips of the
     ``then`` rows listed before it, and before the clips ``last`` rows seat. Rows are in the
-    creator's listed order; clips no row names may sit anywhere between the groups. A group's
-    own clips keep no order of their own, so a list the planner wrote as ONE row is judged as
-    a group (``test_kri941_listed_order_replay``).
+    creator's listed order; clips no row names may sit anywhere between the groups. Explicit
+    lists expand into ordered rows. Old multi-member rows without ordering certainty cannot
+    claim their internal order was checked (``test_kri941_listed_order_replay``).
 
     ``seats`` (KRI-796) are the rows read as moments of one take (``moment_seats``) and
     ``cuts`` the finished cut order as (clip ref, source start): those rows are judged off
@@ -1245,6 +1249,11 @@ def _sequence_outcomes(
                 "reason": None if met else "the clips did not end up there",
             }
         )
+    for (position, name, members, _status), result in zip(rows, out, strict=True):
+        if (position, name, tuple(members)) in unconfirmed_groups and result["status"] == "met":
+            result.update(
+                status="partial", code="member_order_unknown", reason=UNCONFIRMED_MEMBER_ORDER
+            )
     return out
 
 
@@ -3558,6 +3567,7 @@ def _intent_outcomes(
         cuts=cuts,
         spans=spans,
         moment_record=moment_record,
+        unconfirmed_groups=unconfirmed_order_groups(strategy.get("resolved_clip_intents")),
     )
     position = {clip.ref_id: i for i, clip in enumerate(ordered)}
     printed = {

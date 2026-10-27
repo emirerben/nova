@@ -20,8 +20,8 @@ What it judges, and why only that:
   creation-text lane) only write text and are skipped here, so a text verdict would be a
   guess. The render's own receipts still judge text.
 
-Cheap and safe: no model call, no storage call, no write. It returns ``None`` (nothing to
-say) wherever the worker would not run this planner, and fails open: any error is logged
+Cheap and safe: no model call, no storage call, no write. Blockers return ``None`` (nothing
+to say) wherever the worker would not run this planner, and fail open: any error is logged
 and the draft goes on exactly as before, with the worker's check as the last word.
 Kill switch: ``KRIA_PHONE_MONTAGE_PREFLIGHT_ENABLED=false`` + restart (api + worker).
 """
@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping, Sequence
+from enum import Enum
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -46,6 +47,10 @@ log = structlog.get_logger()
 # The requirement kinds the deterministic phone plan settles on its own (see above).
 PREFLIGHT_KINDS = frozenset({"order", "timing"})
 _GENERATION = "approval-preflight"
+
+
+class MontagePreflightSkip(Enum):
+    OTHER_WRITER = "other_writer"
 
 
 def phone_montage_blockers(
@@ -145,7 +150,7 @@ def montage_blockers(
         visuals=visuals,
         client_protocol=client_protocol,
     )
-    if planned is None:
+    if planned is None or planned is MontagePreflightSkip.OTHER_WRITER:
         return None
     plan, aliases = planned
     record = plan.record()
@@ -170,9 +175,8 @@ def preflight_montage_plan(
     media_snapshot: Mapping[str, Any] | None,
     visuals: Sequence[Any] | Callable[[], Sequence[Any]],
     client_protocol: int | None = None,
-) -> tuple[Any, dict] | None:
-    """The worker's own phone montage plan for a draft, before approval, or ``None`` when
-    the draft does not render through the unified phone montage.
+) -> tuple[Any, dict] | MontagePreflightSkip | None:
+    """The worker's phone montage plan, a selected other writer, or unresolved inputs.
 
     Returns ``(UnifiedMontagePlan, duplicate aliases)``. Shared by the KRI-775 blockers and
     the KRI-881 research preview, so both judge the one plan the worker will build.
@@ -216,9 +220,10 @@ def preflight_montage_plan(
     media = dict(media_snapshot)
     edit_format = strategy.get("edit_format") or edit_format
     clip_paths = [str(path) for path in media.get("clip_paths") or []]
-    if not clip_paths or media.get("song_path") or media.get("voiceover_path"):
-        # No footage (a Visuals-only plan), a creator song or a recorded voice: another writer.
+    if not clip_paths:
         return None
+    if media.get("song_path") or media.get("voiceover_path"):
+        return MontagePreflightSkip.OTHER_WRITER
     if not defers_to_unified_montage(
         creator_id=creator_id,
         edit_format=edit_format,
@@ -273,8 +278,10 @@ def preflight_montage_plan(
         contract=contract,
     )
     resolution = resolve_route(inputs) if inputs is not None else None
-    if resolution is None or resolution.route is not Route.UNIFIED_MONTAGE:
+    if resolution is None:
         return None
+    if resolution.route is not Route.UNIFIED_MONTAGE:
+        return MontagePreflightSkip.OTHER_WRITER
 
     placed_visuals = list(visuals() if callable(visuals) else visuals)
     drawable = phone_drawable_visual_kinds()

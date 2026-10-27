@@ -90,8 +90,10 @@ empty intents list.
 
 For a sequence listing several different subjects inside one order intent, set
 `ordered_members` true. This means its resolved members must play in the listed
-order. Prefer one order intent per subject. A group such as "the volleyball
-clips" has no internal listed sequence and leaves `ordered_members` false.
+order. Prefer one order intent per subject. For a group such as "the volleyball
+clips" with no requested internal sequence, explicitly set `ordered_members`
+false. Omission means the internal ordering was not recorded; it does not confirm
+that the creator accepts any order within a multi-clip group.
 
 Asking to cut or remove parts of the creator's own recorded speech is speech
 cleanup, which another step handles: "cut my long pauses", "remove the ums",

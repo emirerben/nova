@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.160.0] - 2026-10-27
+
+### Changed
+- feat(metrics): preserve request outcomes and expand iPhone verification (#1876) <!-- release-pr: 1876 -->
+
+## [0.81.159.0] - 2026-10-27
+
+### Changed
+- fix(kria): unblock Cunda compilation and report saved drafts honestly (#1869) <!-- release-pr: 1869 -->
+
+## [0.81.158.0] - 2026-10-27
+
+### Changed
+- fix(kria): lip-sync reaches approval; unchecked asks no longer dead-end (KRI-983) (#1870) <!-- release-pr: 1870 -->
+
+## [0.81.157.0] - 2026-10-27
+
+### Changed
+- fix(ios): sideways scroll rows scroll themselves instead of dragging the projects drawer (KRI-985) (#1873) <!-- release-pr: 1873 -->
+
 ## [0.81.156.0] - 2026-10-27
 
 ### Changed

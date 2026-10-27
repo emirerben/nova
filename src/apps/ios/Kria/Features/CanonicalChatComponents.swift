@@ -384,7 +384,8 @@ private struct AssistantHeading: View {
     }
 }
 
-/// Descendant horizontal scrollers retain their own drags while the drawer is closed.
+/// Custom drag surfaces (not scroll views) that keep their own drags while the drawer is closed. Sideways scroll views
+/// are found by `DrawerGestureTracking.startsInSidewaysScroller`.
 struct DrawerGestureExclusionPreference: PreferenceKey {
     static var defaultValue: [CGRect] { [] }
     static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) { value += nextValue() }
@@ -432,11 +433,6 @@ struct FormatStage: View {
             }
             .contentMargins(.horizontal, 0, for: .scrollContent)
             .accessibilityIdentifier("format-carousel")
-            .background {
-                GeometryReader { geometry in
-                    Color.clear.preference(key: DrawerGestureExclusionPreference.self, value: [geometry.frame(in: .global)])
-                }
-            }
         }
     }
 }
