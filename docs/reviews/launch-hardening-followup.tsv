@@ -1,0 +1,3 @@
+ts	phase	decision	why	evidence	result
+2026-10-27T12:38:39Z	frame	Isolated remaining launch work from fetched main	Preserve the merged launch-proof work and verify each changed boundary separately	docs/reviews/launch-hardening-followup.md	acceptance recorded
+2026-10-27T12:41:29Z	cunda	Reproduced unsupported research as missing evidence in two full-turn replays	Writer selection information is lost before the draft receipt is built	.dev/launch-hardening/cunda-before.log	2 expected baseline failures

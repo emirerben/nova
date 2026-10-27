@@ -199,3 +199,44 @@ async def test_research_preview_off_keeps_the_researched_ask_held(
     chat = await _approved(monkeypatch)
     assert chat.models.calls["search"] == 0
     assert chat.unready() == {"r1": ("evidence_missing", NOT_RENDERED)}
+
+
+async def test_speaking_clip_research_is_a_precise_limit_not_missing_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = await journey._approve_hook(
+        monkeypatch,
+        {
+            "main_creator": _propose(intents=[], montage_audio=journey._CAMERA_VOICE),
+            "clip_intent_planner": [],
+        },
+        speaking=True,
+    )
+    disposition, reason = chat.unready()["r1"]
+    assert disposition == "unsupported"
+    assert "research" in reason.casefold() and "montage" in reason.casefold()
+    assert chat.models.calls["search"] == 0
+    assert chat.readiness()["ready"] is False
+
+
+async def test_a_researched_montage_can_recover_after_a_writer_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chat = await journey._approve_hook(
+        monkeypatch,
+        {
+            "main_creator": _propose(intents=[], montage_audio=journey._CAMERA_VOICE),
+            "clip_intent_planner": [],
+        },
+        speaking=True,
+    )
+    assert chat.unready()["r1"][0] == "unsupported"
+    await _dismiss_card(chat)
+    await chat.send(
+        "Use a montage instead. Keep the approved hook and the sourced Cunda introduction.",
+        {"main_creator": _propose(intents=[]), "clip_intent_planner": []},
+    )
+    assert chat.models.calls["search"] == 1
+    assert chat.readiness()["ready"] is True
+    assert chat.unready() == {}
+    assert journey.SOURCED_TEXT in str(chat.replies[-1].content)
