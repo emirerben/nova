@@ -89,9 +89,35 @@ def build_candidate(source, *, case_id, session_id, source_sha256, tickets):
     return candidate
 
 
+def failed_pre_job_turns(source):
+    sections = source.get("sections") or {}
+    turns = {str(t["id"]): t for t in sections.get("turns") or [] if isinstance(t, dict)}
+    failed = {
+        key
+        for key, turn in turns.items()
+        if turn.get("status") == "failed" and not turn.get("job_ids")
+    }
+    for event in sections.get("events") or []:
+        payload = event.get("payload") or {}
+        coverage = payload.get("brief_coverage") or {}
+        turn_id = str(payload.get("turn_id") or "")
+        if (
+            event.get("actor") == "assistant"
+            and event.get("kind") == "assistant_response"
+            and coverage.get("reason")
+            in {"creator_planning_failed", "editor_planning_failed", "request_extraction_failed"}
+            and turn_id in turns
+            and not turns[turn_id].get("job_ids")
+        ):
+            failed.add(turn_id)
+    return frozenset(failed)
+
+
 def diagnostics(source):
     turns = source["sections"].get("turns", [])
-    failed = [t["id"] for t in turns if t["status"] == "failed"]
+    failed = sorted(
+        {t["id"] for t in turns if t["status"] == "failed"} | failed_pre_job_turns(source)
+    )
     broken = [
         name
         for name, edge in source["sections"].get("integrity", {}).get("edges", {}).items()
