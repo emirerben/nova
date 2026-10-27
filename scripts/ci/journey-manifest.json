@@ -1814,6 +1814,15 @@
       ]
     },
     {
+      "id": "kri-992-planner-flag-placement",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_main_creator_flag_placement.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri992_planner_flag_placement.json",
+        "src/apps/api/tests/agents/test_main_creator_flag_placement.py"
+      ]
+    },
+    {
       "id": "kri-942-clip-sound-toggle",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",
