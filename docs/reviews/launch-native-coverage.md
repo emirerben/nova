@@ -52,7 +52,7 @@ after the final drive.
 - Wi-Fi app metadata identified installed Kria build 1763. The successful
   TestFlight workflow for that build is run 40495234435, source
   `19dd554d7953ee02b224637ce4cdb1362fe92b33`. This does not establish a physical
-  export or exposure to the unmerged Cunda fix in PR #1869.
+  export or exposure to the Cunda fix, which had not merged at that inspection.
 
 These checks establish fixture UI behavior. They do not establish original
 Troya, marathon, Tigre, Don Julio or Cunda fulfillment, a production render,
@@ -67,3 +67,10 @@ phone recipe, and passed the contract check with three pinned text requirements.
 No account state changed. This is recipe compatibility proof, not deployment,
 a native MP4 or Photos proof. The sanitized result is in
 [cunda-candidate-phone-plan.json](cunda-candidate-phone-plan.json).
+
+The Cunda fix subsequently merged as `e98ca6c1` and the automatic Fly Deploy
+workflow passed. Its landed tree exactly matches the tested main/candidate
+merge, which passed 89 focused checks and 2,373 mapped checks. The unmodified
+deployed compiler then passed the same real saved-recipe check without replacing
+a function. The sanitized [deployed result](cunda-deployed-phone-plan.json)
+records the revision and its limits. A fresh native output remains uninspected.

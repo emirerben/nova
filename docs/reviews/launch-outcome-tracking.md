@@ -64,7 +64,7 @@ answers continue the request. Only the matching offered simpler-version choice
 is classified as recovery. Client build, version, protocol and the existing Fly
 deployment revision accompany the link. Existing request digests remain stable.
 
-The six real Postgres journeys and runtime neighbors pass 59 checks. The native
+The seven real Postgres lineage journeys pass alongside the runtime neighbors. The native
 context, structured-answer and suggestion suites pass 46 tests with no skips.
 The chat fixture also passes after the typed submission change. Result bundles
 are private under `.dev/outcome-ios/`.
@@ -91,7 +91,7 @@ Six HTTP/Postgres acceptance cases fail against the parent PR. Two further
 controls reproduced older captures overwriting new attempt counts and a ready
 retry hiding an earlier failure on the same job. The integration matrix covers
 these controls, consent withdrawal, duplicate reviews, legacy unknowns and actual
-export publication. The final request/report/publication and plan-review matrix passes 78 checks. Another 56
+export publication. The final request/report/publication and plan-review matrix passes 91 checks after refreshing main. Another 56
 completion and actual-export verification checks passed before the final report
 correction. That correction changes only report projection, and the final matrix
 was rerun afterwards. Logs are private under `.dev/launch-hardening/outcome-*`.
@@ -110,3 +110,8 @@ its history but excludes its fulfillment claim. A future protocol number cannot
 block the requested action through analytics validation. The legacy request-id
 guard now pins the actual parent digest instead of reconstructing it from a
 newer schema. Those controls and neighboring plan-review checks pass together.
+
+A legacy thread cannot create a known original merely by restarting client
+metadata. Server-marked duplicate messages do not count as correction effort.
+Both controls failed before correction and pass in the final 91-check matrix
+alongside the latest lip-sync and Cunda main-branch journeys.

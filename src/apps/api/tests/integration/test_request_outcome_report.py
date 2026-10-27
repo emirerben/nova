@@ -354,3 +354,50 @@ async def test_rejecting_the_intent_review_preserves_history_without_counting_fu
     assert len(response.json()["review"]["outcome_history"]) == 1
     result = (await report(client))["request_outcomes"]
     assert result["original_fulfilled"] == 0 and result["original_unknown"] == 1
+
+
+async def test_a_server_marked_duplicate_does_not_count_as_correction_effort(output_journey):
+    client, *_ = output_journey
+    case, turn = await linked_case(output_journey)
+    copy_id = uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        source = await db.scalar(
+            select(CreationThreadEvent).where(
+                CreationThreadEvent.thread_id == uuid.UUID(case["thread_id"]),
+                CreationThreadEvent.payload["turn_id"].astext == str(turn),
+            )
+        )
+        event = CreationThreadEvent(
+            thread_id=source.thread_id,
+            sequence=3,
+            revision=3,
+            role="user",
+            event_type="user_message",
+            content="PRIVATE-LINKED-REQUEST",
+            payload={
+                "turn_id": str(copy_id),
+                "duplicate_of": str(turn),
+                "request_outcome_link": {
+                    **source.payload["request_outcome_link"],
+                    "relation": "revision",
+                    "parent_turn_id": str(turn),
+                    "intent_revision_turn_id": str(copy_id),
+                },
+            },
+        )
+        db.add(event)
+        await db.flush()
+        db.add(
+            CreatorAgentTurn(
+                id=copy_id,
+                thread_id=event.thread_id,
+                source_event_id=event.id,
+                client_event_id=str(copy_id),
+                request_digest="d" * 64,
+                status="completed",
+            )
+        )
+        await db.commit()
+    await collect()
+    result = (await report(client))["request_outcomes"]
+    assert result["requests"] == 1 and result["corrections"] == 0

@@ -48,6 +48,11 @@ async def request_outcome_payload(
     request_id, revision_id = turn_id, turn_id
     parent_id = None
     known = context.relation == "original"
+    if known:
+        previous_turn = await db.scalar(
+            select(CreatorAgentTurn.id).where(CreatorAgentTurn.thread_id == thread_id).limit(1)
+        )
+        known = previous_turn is None
     status = "known" if known else "unclassified"
     if context.parent_turn_id is not None:
         parent = (

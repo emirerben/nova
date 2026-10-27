@@ -152,3 +152,12 @@ async def test_future_protocol_metadata_cannot_block_the_requested_action(projec
         assert (await link(accepted))["client_protocol"] == 10000
     finally:
         clear_request_context()
+
+
+async def test_a_legacy_thread_cannot_invent_a_known_original_by_restarting_metadata(project):
+    legacy, _ = await submit(project)
+    await finish(legacy)
+    accepted, _ = await submit(project, {"relation": "original"})
+    record = await link(accepted)
+    assert record["original_known"] is False
+    assert record["link_status"] == "unclassified"

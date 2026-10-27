@@ -47,6 +47,8 @@ def request_outcome_report(cases, *, since, until):
             if event.get("actor") != "user" or event.get("kind") != "user_message":
                 continue
             payload = event.get("payload") or {}
+            if payload.get("duplicate_of"):
+                continue
             try:
                 link = RequestOutcomeLink.model_validate(payload.get("request_outcome_link"))
             except ValidationError:
