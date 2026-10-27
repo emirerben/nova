@@ -540,7 +540,10 @@ def test_assemble_spine_cut_happy_path():
     spine = reframe_calls[0]
     assert spine["input"] == "a.mp4"
     assert spine["end"] == pytest.approx(6.5)
-    assert spine["keep_segments"] == pytest.approx([(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)])
+    for actual_window, expected_window in zip(
+        spine["keep_segments"], [(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     assert spine["keep_segments_punch_in"] == KEEP_SEGMENTS_PUNCH_IN
     # B-roll is NEVER cut.
     assert "keep_segments" not in reframe_calls[1]
@@ -832,7 +835,10 @@ def test_assemble_spine_precap_bounds_detection_and_cut(tmp_path):
     # The cut reframe operates on the CAPPED window, not the 400s spine.
     spine = reframe_calls[0]
     assert spine["end"] == pytest.approx(120.0)
-    assert spine["keep_segments"] == pytest.approx([(0.0, 50.0), (60.0, 120.0)])
+    for actual_window, expected_window in zip(
+        spine["keep_segments"], [(0.0, 50.0), (60.0, 120.0)], strict=True
+    ):
+        assert actual_window == pytest.approx(expected_window)
     # usable_s = min(cut duration 110, target 60) → the composite trims to 60.
     assert "trim=0:60.000" in " ".join(cmds[1])
     assert out_ctx["summary"]["time_saved_s"] == 10.0
