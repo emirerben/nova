@@ -171,6 +171,16 @@ def test_unavailable_music_cannot_be_offered_as_a_longer_section(catalog):
     assert "extend" not in {o.key for o in choice(draft).options}
 
 
+@pytest.mark.parametrize("catalog", [None, 20.0])
+def test_skipping_unavailable_music_keeps_all_media_and_compiles(catalog):
+    draft = strategy(selected_music_section={**SECTION, "catalog_duration_s": catalog})
+    answered = answer(draft, choice(draft), "without_song")
+    assert collect_conflicts(answered, CreativeBrief(), snapshot(answered)) == []
+    plan, execution, _recipe = compile_draft(answered)
+    assert len(plan.snapshot.fast_cuts) == 21
+    assert execution.get("song_reference") is None
+
+
 def test_a_video_only_edit_does_not_ask_about_photos():
     draft = strategy(media_scope="selected", selected_media_ids=[c.media_id for c in CLIPS])
     assert collect_conflicts(draft, CreativeBrief(), snapshot(draft)) == []
