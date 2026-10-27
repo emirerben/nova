@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.pipeline.guided_story import GuidedStoryError, GuidedStoryExecutionPlan
+from app.pipeline.guided_story import (
+    GuidedStoryError,
+    GuidedStoryExecutionPlan,
+    compile_execution_plan,
+)
 from app.pipeline.lipsync_montage import (
     MAX_WINDOW_MS,
     LipsyncPlanError,
@@ -793,3 +797,25 @@ def test_a_filming_break_longer_than_a_held_frame_still_splits():
     result = plan(clips, [confident("A", 10), confident("B", 24)])
     assert [cut.media_id for cut in result.snapshot.fast_cuts] == ["B"]
     assert {"media_id": "A", "reason": "gap_unfillable"} in result.song_receipt["dropped"]
+
+
+def _title_texts(result):
+    compiled = compile_execution_plan(result.guided_edit(), track=None)
+    return [t["text"] for t in compiled["text_elements"] if t["id"] == "guided-title"]
+
+
+def test_a_lipsync_without_a_title_ask_draws_no_title():
+    # Job 3bf4116e: "Create a lipsync" burned the internal "Montage" label over the first 2 s.
+    assert _title_texts(_sequential_plan()) == []
+
+
+def test_a_lipsync_with_the_creators_title_draws_it():
+    clips = [take(media_id, duration) for media_id, duration, _ in SEQUENTIAL]
+    result = plan_lipsync_montage(
+        clips,
+        alignment(*[confident(media_id, delta) for media_id, _, delta in SEQUENTIAL]),
+        analysis(),
+        strategy={"opening_title": "Saygı"},
+        plan_item_id=SONG_ITEM_ID,
+    )
+    assert _title_texts(result) == ["Saygı"]
