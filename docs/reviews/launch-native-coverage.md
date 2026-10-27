@@ -33,6 +33,14 @@ bundles remain, including those failures.
 
 ## Boundaries and remaining checks
 
+After adding request-outcome metadata, all eight drives passed again with 19
+tests, zero failures and zero skips. The request-context, structured-answer and
+suggestion suites also passed 46 tests without skips. This build's fingerprint
+is `1af5c1907466daff0059608c148dea1b054ca89b01cffb68346ca109029f33c4`, which
+still matches after rebasing onto the corrected Cunda parent. Nine result
+bundles remain under private `.dev/outcome-ios/`. Its owned simulator was deleted
+after the final drive.
+
 - Real Google identity, session refresh and server erasure are separate from
   fixture consent and deletion controls.
 - The physical camera test remains opt-in. Camera/microphone capture,

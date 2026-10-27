@@ -91,7 +91,10 @@ Six HTTP/Postgres acceptance cases fail against the parent PR. Two further
 controls reproduced older captures overwriting new attempt counts and a ready
 retry hiding an earlier failure on the same job. The integration matrix covers
 these controls, consent withdrawal, duplicate reviews, legacy unknowns and actual
-export publication. Logs are private under `.dev/launch-hardening/outcome-*`.
+export publication. The final focused matrix passes 49 checks. Another 56
+completion and actual-export verification checks passed before the final report
+correction. That correction changes only report projection, and the 49 checks
+were rerun afterwards. Logs are private under `.dev/launch-hardening/outcome-*`.
 
 Actual exports continue to use the existing generation-bound device completion
 and verification receipts. Their repeated, delayed and rejected callbacks retain
