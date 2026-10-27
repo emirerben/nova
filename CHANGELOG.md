@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.151.0] - 2026-10-27
+
+### Fixed
+- fix(phone): editor plays the quoted Talking window, not the whole take (KRI-965) (#1860) <!-- release-pr: 1860 -->
+
 ## [0.81.150.0] - 2026-10-27
 
 ### Fixed
