@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.162.0] - 2026-10-27
+
+### Fixed
+- fix(speech-cleanup): keep fillers stamped over squeezed words; cut fillers where they were said (KRI-970) (#1868) <!-- release-pr: 1868 -->
+
 ## [0.81.161.0] - 2026-10-27
 
 ### Fixed
