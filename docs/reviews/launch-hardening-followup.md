@@ -47,3 +47,9 @@ Keep writer selection in preflight. Add a typed `other_writer` result and migrat
 The required failure cases are an unsupported speaking writer, a supported montage recovery, unresolved plan inputs, rejected source evidence, research cached for another draft or media basis, repeated deferred work, and a disabled preview flag. Preserve the existing hold on unresolved inputs and the approved hook. Do not charge for research on an unsupported writer.
 
 Old order failure cases include absent ordering markers, a marked list, a real unordered group, a single member, first and last groups, duplicate members, changed attachment order, and a wrong finished cut with the right members. No wording parser can recover missing ordering certainty.
+
+## Research evidence
+
+Two new full-turn Cunda replays fail before the change with `evidence_missing` in place of `unsupported`. With the typed writer result, the unsupported route performs no search, preserves the unmet research requirement, and offers a supported alternative. A later standard-montage request produces sourced text and an approvable draft. A Turkish follow-up receives the Turkish limitation rather than a cached English result.
+
+The combined Cunda, phone-montage preflight, research-before-approval, and ready-Talking research journeys pass 55 checks. The ready-Talking editor path remains supported. The limitation wording is explicitly about preparing sourced text before approval. Provider responses are recorded transports; there were no paid model calls. Logs are retained in `.dev/launch-hardening/`.

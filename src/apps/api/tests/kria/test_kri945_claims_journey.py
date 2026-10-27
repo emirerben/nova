@@ -240,3 +240,22 @@ async def test_a_researched_montage_can_recover_after_a_writer_limit(
     assert chat.readiness()["ready"] is True
     assert chat.unready() == {}
     assert journey.SOURCED_TEXT in str(chat.replies[-1].content)
+
+
+async def test_the_writer_limit_follows_the_creators_turkish_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    answer = {
+        "main_creator": _propose(intents=[], montage_audio=journey._CAMERA_VOICE),
+        "clip_intent_planner": [],
+    }
+    chat = await journey._approve_hook(monkeypatch, answer, speaking=True)
+    await chat.send(
+        "Kaynaklı Cunda bilgilerini de istiyorum. Konuşmaları ve onayladığım başlığı koru.",
+        answer,
+    )
+    disposition, reason = chat.unready()["r1"]
+    assert disposition == "unsupported"
+    assert "araştırma" in reason and "montaj" in reason
+    assert "This edit format" not in reason
+    assert chat.models.calls["search"] == 0
