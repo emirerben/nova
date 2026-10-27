@@ -11,9 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models import (
     AgentRun,
+    ContentPlan,
     CreationThread,
     CreationThreadDeletion,
     Job,
+    PlanItem,
     RequestFollowingCase,
     RequestFollowingCollector,
 )
@@ -136,6 +138,17 @@ async def source_capture(db: AsyncSession, thread: CreationThread):
     )
     if item is not None:
         item_ids.add(item.id)
+    if item_ids:
+        owned_item_ids = set(
+            await db.scalars(
+                select(PlanItem.id)
+                .join(ContentPlan, ContentPlan.id == PlanItem.content_plan_id)
+                .where(PlanItem.id.in_(item_ids), ContentPlan.user_id == thread.creator_id)
+            )
+        )
+        if owned_item_ids != item_ids:
+            source["missing"]["cost"] = "missing_or_unowned_plan_items"
+        item_ids = owned_item_ids
     owned_job_ids = [row.id for row in jobs] if job_ids else []
     runs = (
         (

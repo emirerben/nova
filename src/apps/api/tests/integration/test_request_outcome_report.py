@@ -11,15 +11,19 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
 
+from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models import (
     AgentRun,
+    ContentPlan,
     CreationThreadEvent,
     CreatorAgentExecution,
     CreatorAgentSession,
     CreatorAgentTurn,
     InternalAccountGrant,
     Job,
+    Persona,
+    PlanItem,
     RequestFollowingCase,
     User,
 )
@@ -476,5 +480,65 @@ async def test_unowned_job_marks_capture_incomplete_without_capturing_foreign_co
             )
             await db.execute(delete(AgentRun).where(AgentRun.job_id == foreign_job))
             await db.execute(delete(Job).where(Job.id == foreign_job))
+            await db.execute(delete(User).where(User.id == foreign))
+            await db.commit()
+
+
+async def test_owned_job_with_foreign_item_cannot_capture_that_items_cost(
+    output_journey, monkeypatch
+):
+    client, *_ = output_journey
+    case, _ = await linked_case(output_journey)
+    job_id = output_journey[-1]
+    foreign, foreign_plan, foreign_item = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    monkeypatch.setattr(settings, "creation_thread_degraded_projection_enabled", True)
+    async with AsyncSessionLocal() as db:
+        job = await db.get(Job, job_id)
+        original_item = job.content_plan_item_id
+        db.add(User(id=foreign, email=f"{foreign}@outcome.test"))
+        await db.flush()
+        persona = Persona(user_id=foreign)
+        db.add(persona)
+        await db.flush()
+        db.add(ContentPlan(id=foreign_plan, user_id=foreign, persona_id=persona.id))
+        await db.flush()
+        db.add(
+            PlanItem(
+                id=foreign_item,
+                content_plan_id=foreign_plan,
+                idea="FOREIGN-ITEM-MUST-NOT-BE-CAPTURED",
+                position=0,
+            )
+        )
+        await db.flush()
+        db.add(
+            AgentRun(
+                plan_item_id=foreign_item,
+                agent_name="foreign-fixture",
+                prompt_version="1",
+                model="fixture",
+                outcome="ok",
+                attempts=1,
+                settled_cost_usd=99.0,
+                cost_usd=99.0,
+            )
+        )
+        job.content_plan_item_id = foreign_item
+        await db.commit()
+    try:
+        await collect()
+        case = await first(client)
+        detail = await client.get(f"/admin/request-following/{case['id']}")
+        assert "FOREIGN-ITEM-MUST-NOT-BE-CAPTURED" not in detail.text
+        assert detail.json()["capture"]["missing"]["cost"] == "missing_or_unowned_plan_items"
+        data = (await report(client))["request_outcomes"]
+        assert data["known_cost_usd"] == 0.25 and data["cost_runs"] == 1
+    finally:
+        async with AsyncSessionLocal() as db:
+            job = await db.get(Job, job_id)
+            job.content_plan_item_id = original_item
+            await db.flush()
+            await db.execute(delete(AgentRun).where(AgentRun.plan_item_id == foreign_item))
+            await db.execute(delete(ContentPlan).where(ContentPlan.id == foreign_plan))
             await db.execute(delete(User).where(User.id == foreign))
             await db.commit()

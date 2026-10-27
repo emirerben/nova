@@ -91,7 +91,7 @@ Six HTTP/Postgres acceptance cases fail against the parent PR. Two further
 controls reproduced older captures overwriting new attempt counts and a ready
 retry hiding an earlier failure on the same job. The integration matrix covers
 these controls, consent withdrawal, duplicate reviews, legacy unknowns and actual
-export publication. The final request/report/publication and plan-review matrix passes 92 checks after refreshing main. Another 56
+export publication. The final request/report/publication and plan-review matrix passes 93 checks after refreshing main. Another 56
 completion and actual-export verification checks passed before the final report
 correction. That correction changes only report projection, and the final matrix
 was rerun afterwards. Logs are private under `.dev/launch-hardening/outcome-*`.
@@ -113,7 +113,7 @@ newer schema. Those controls and neighboring plan-review checks pass together.
 
 A legacy thread cannot create a known original merely by restarting client
 metadata. Server-marked duplicate messages do not count as correction effort.
-Both controls failed before correction and pass in the final 92-check matrix
+Both controls failed before correction and pass in the final 93-check matrix
 alongside the latest lip-sync and Cunda main-branch journeys.
 
 Final collector review reproduced a missing-job completeness error introduced
@@ -123,3 +123,9 @@ collector/HTTP/Postgres replay showed that this allowed an incomplete capture
 to acquire a fulfilled first-attempt assessment. Job completeness is now checked
 independently of cost truncation. The replay verifies the assessment is refused,
 first-attempt fulfillment stays unknown, and foreign media and cost stay absent.
+
+A second collector replay pinned an owned job to another account's plan item.
+Before correction, the item link admitted that account's synthetic cost into
+the report. Cost capture now independently checks each item's current plan owner,
+excludes the foreign run and marks that cost evidence incomplete. The replay
+passes alongside the owned-item and owned-job positive controls.
