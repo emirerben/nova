@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.164.0] - 2026-10-27
+
+### Changed
+- feat(kria): ask which clip when two clips tie for one Voiceover shot (KRI-962) (#1871) <!-- release-pr: 1871 -->
+
+## [0.81.163.0] - 2026-10-27
+
+### Changed
+- fix(ci): preserve timing-window checks with pytest 9.2 (KRI-577) (#1886) <!-- release-pr: 1886 -->
+
+## [0.81.162.0] - 2026-10-27
+
+### Fixed
+- fix(speech-cleanup): keep fillers stamped over squeezed words; cut fillers where they were said (KRI-970) (#1868) <!-- release-pr: 1868 -->
+
+## [0.81.161.0] - 2026-10-27
+
+### Fixed
+- feat(ios): clip picker Next between questions and tap to watch a clip (KRI-995) (#1877) <!-- release-pr: 1877 -->
+
 ## [0.81.160.0] - 2026-10-27
 
 ### Changed

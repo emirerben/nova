@@ -732,6 +732,14 @@ class Settings(BaseSettings):
     # answer as authoritative. Default TRUE; kill switch = false + restart (the field
     # is then dropped, questions are text-only, byte-identical to before).
     kria_clip_selection_questions_enabled: bool = True
+    # KRI-962 kill switch: in a Voiceover edit, a named shot two or more free footage clips
+    # match equally well (Don Julio N1: the window sign and Atakan at the plaque, both 0.9)
+    # is asked with the clip picker before the draft, the tied clips pre-ticked
+    # (`app.kria.clip_ties`). Needs the picker flag above. False: byte-identical to before --
+    # nothing is asked and the narrated alignment places the tied clips as it did. Apply:
+    # `fly secrets set KRIA_VOICEOVER_TIE_QUESTIONS_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (api).
+    kria_voiceover_tie_questions_enabled: bool = True
     # KRI-374: creator-uploaded song on phone montages (background music bed, or
     # lip-sync takes placed by song time). Default TRUE (no users yet); kill switch
     # = false + restart (api + worker): capabilities hide `media.song`, the policy
@@ -1517,6 +1525,27 @@ class Settings(BaseSettings):
         "+ machine restart. Once on, never roll the image back past this change: "
         "older builds reject the provenance field on proposals already written, and "
         "turning the flag off does not repair those rows.",
+    )
+
+    speech_cleanup_filler_check_enabled: bool = Field(
+        default=True,
+        description="Speech-cleanup filler check (KRI-970 follow-up). whisper-1 can stamp a whole "
+        "stretch of words late (Merope café: 0.3-0.5 s), so a filler cut lands on the next words "
+        "and the real filler stays. On: the preflight analysis re-times English takes that have "
+        "lexicon fillers with a forced aligner (facebook/wav2vec2-base-960h, baked into the image "
+        "at speech_cleanup_aligner_model_dir) before planning, then re-listens around every filler "
+        "cut with the cleanup transcriber (two short whisper-1 calls per cut, at most "
+        "RELISTEN_MAX_CUTS) and drops a cut that takes a real word with it. Missing model or a "
+        "transcription error keeps today's cut. Part of the source policy fingerprint, so a flip "
+        "re-analyzes. Kill switch: `fly secrets set SPEECH_CLEANUP_FILLER_CHECK_ENABLED=false "
+        "--app nova-video` + api and worker restart (the fingerprint is computed in the API).",
+    )
+
+    speech_cleanup_aligner_model_dir: str = Field(
+        default="/opt/models/wav2vec2-base-960h",
+        description="Directory holding the pinned forced-aligner model (config.json, vocab.json, "
+        "model.safetensors). The production Dockerfile downloads it there; without it the filler "
+        "check keeps whisper's stamps and only re-listens.",
     )
 
     speech_cleanup_mixed_gap_mode: Literal["off", "shadow", "apply"] = Field(

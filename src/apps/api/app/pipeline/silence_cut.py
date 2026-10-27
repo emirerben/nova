@@ -76,7 +76,7 @@ from app.pipeline.cut_grid import (
     rendered_spans,
     snap_to_frame,
 )
-from app.text_fold import fold_case
+from app.text_fold import fold_case, strip_marks
 
 # Whisper bias prompt for the CUT path: passed as whisper-1's ``prompt`` /
 # faster-whisper's ``initial_prompt`` (transcribe(..., verbatim_prompt=…)) so the
@@ -218,6 +218,19 @@ MIN_KEEP_SPEECH_SEGMENT_S = 0.6
 _CONTAINER_EDGE_SNAP_S = 1.0 / 24.0
 AVG_LOGPROB_MIN = -1.0  # segment avg_logprob below this blocks lexical cuts
 NO_SPEECH_PROB_MAX = 0.5  # segment no_speech_prob above this blocks lexical cuts
+# KRI-970: whisper-1 can stamp a filler nobody said over the start of a real word and
+# squeeze that word into what is left (Don Julio T1: "uh," 3.02-3.48 over "the provo-",
+# "provolone" 3.58-3.76 = 22 syllables/s; T3: 0.28 s = 14 syllables/s). A filler next to
+# a word of SQUEEZE_MIN_SYLLABLES+ vowel groups stamped faster than this is not cut.
+# Normal speech runs ~4-8 syllables/s; whisper-1's coarse stamps put some ordinary words
+# past 12 too, so the guard can keep a real "uh" (prod jobs 2026-10: 5 of 61 lexicon
+# fillers sit next to such a word, 3 of them visibly misaligned). Keeping a filler costs
+# a beat; cutting the word mangles what the creator said under a caption that still
+# shows it, so the guard leans to keeping.
+SQUEEZE_MIN_SYLLABLES = 2
+SQUEEZE_MAX_SYLLABLES_PER_S = 12.0
+SQUEEZE_NEIGHBOUR_GAP_S = 0.15  # a word farther than this from the filler is not judged
+_SQUEEZE_MIN_DURATION_S = 1e-3  # a zero-length stamp counts as this long
 MIN_KEEP_SEGMENT_S = 0.25  # word-free keep fragments shorter than this are absorbed
 MAX_REMOVALS = 100  # ffmpeg -filter_complex arg-length defense; pathological stutter clips
 KEEP_SEGMENTS_PUNCH_IN = 1.08  # alternating punch-in factor — user-validated 2026-07-09;
@@ -884,7 +897,9 @@ def _segment_signals_allow(word: _CutWord) -> bool:
     2026-07-09 saw it protect 2/4 real "um"s (conf 0.03/0.46) that prod
     (confidence hardcoded 1.0) would have cut. For NON-LEXICAL vocalization
     tokens the mis-cut downside is one padded vocalization-length span;
-    hallucination protection stays with the segment signals above.
+    hallucination protection stays with the segment signals above. That holds only
+    while the token sits on its own sound: one stamped over a real word is refused
+    by ``_squeezed_neighbour`` (KRI-970).
     """
     if word.avg_logprob is not None and word.avg_logprob < AVG_LOGPROB_MIN:
         return False
@@ -893,14 +908,88 @@ def _segment_signals_allow(word: _CutWord) -> bool:
     return True
 
 
+def _syllables(text: str) -> int:
+    """Vowel groups in a token's letters: a rough syllable count ("provolone," -> 4).
+
+    Language-blind on purpose. It over-counts a silent English "e" ("grilled" -> 2), which
+    can only keep a filler; an English silent-e rule would under-count the Spanish and
+    Italian words these takes are full of ("provolone", "grande") and let the cut through.
+    """
+    count = 0
+    in_vowel = False
+    for ch in strip_marks(fold_case(text)):
+        if not ch.isalpha():
+            continue
+        vowel = ch in "aeiouy"
+        count += vowel and not in_vowel
+        in_vowel = vowel
+    return count
+
+
+def _squeezed_neighbour(words: Sequence[_CutWord], idx: int) -> bool:
+    """True when a word next to filler ``idx`` was stamped too short to have been said.
+
+    The signature of a filler token whisper laid over real speech (KRI-970): the word it
+    displaced is left with far less time than its syllables need. One-syllable words are
+    never judged (whisper stamps "we" at 80 ms all the time), nor other fillers, nor a
+    word across a gap wider than ``SQUEEZE_NEIGHBOUR_GAP_S``.
+    """
+    word = words[idx]
+    for other in (idx - 1, idx + 1):
+        if not 0 <= other < len(words):
+            continue
+        neighbour = words[other]
+        if is_filler_token(neighbour.text):
+            continue
+        gap = word.start - neighbour.end if other < idx else neighbour.start - word.end
+        if gap > SQUEEZE_NEIGHBOUR_GAP_S + _EPS:
+            continue
+        syllables = _syllables(neighbour.text)
+        if syllables < SQUEEZE_MIN_SYLLABLES:
+            continue
+        duration = max(neighbour.end - neighbour.start, _SQUEEZE_MIN_DURATION_S)
+        if syllables / duration > SQUEEZE_MAX_SYLLABLES_PER_S + _EPS:
+            return True
+    return False
+
+
+def _removable_filler_indices(words: Sequence[_CutWord]) -> frozenset[int]:
+    """Indices of the tokens rule 1 removes (one predicate for every rule that asks)."""
+    return frozenset(
+        idx
+        for idx, word in enumerate(words)
+        if is_filler_token(word.text)
+        and _segment_signals_allow(word)
+        and not _squeezed_neighbour(words, idx)
+    )
+
+
+def squeezed_filler_indices(words: Sequence[Any]) -> frozenset[int]:
+    """Indices into ``words`` (in order, unsorted) of the fillers the squeeze guard refuses.
+
+    The speech-cleanup filler check asks this on whisper's own stamps before it re-times
+    anything: once a forced aligner gives the squeezed word its real length, the guard can no
+    longer see that the filler was stamped over it (KRI-970 T1/T3).
+    """
+    cut_words = []
+    for word in words:
+        start = float(_field(word, ("start_s", "start")) or 0.0)
+        end = max(float(_field(word, ("end_s", "end")) or start), start)
+        cut_words.append(
+            _CutWord(str(_field(word, ("text", "word")) or ""), start, end, None, None, None)
+        )
+    return frozenset(
+        idx
+        for idx, word in enumerate(cut_words)
+        if is_filler_token(word.text) and _squeezed_neighbour(cut_words, idx)
+    )
+
+
 def _lexical_removals(words: list[_CutWord], duration_s: float) -> list[Removal]:
     """Rule 1: cut lexicon fillers, padded but never eating adjacent words."""
     removals: list[Removal] = []
-    for idx, word in enumerate(words):
-        if not is_filler_token(word.text):
-            continue
-        if not _segment_signals_allow(word):
-            continue
+    for idx in sorted(_removable_filler_indices(words)):
+        word = words[idx]
         lo = max(word.start - PAD_S, words[idx - 1].end if idx > 0 else 0.0)
         hi = min(word.end + PAD_S, words[idx + 1].start if idx + 1 < len(words) else duration_s)
         if hi - lo > _EPS:
@@ -961,13 +1050,18 @@ def _acoustic_removals_v2(
 
     removals: list[Removal] = []
     decisions: list[AcousticDecision] = []
-    windows: list[tuple[float, float, bool, _CutWord | None, _CutWord | None]] = [
-        (0.0, words[0].start, False, None, words[0])
+    # Window bounds carry the index of the word on each side (None at a clip edge).
+    removable = _removable_filler_indices(words)
+    last = len(words) - 1
+    windows: list[tuple[float, float, bool, int | None, int | None]] = [
+        (0.0, words[0].start, False, None, 0)
     ]
-    windows.extend((prev.end, nxt.start, True, prev, nxt) for prev, nxt in pairwise(words))
-    windows.append((words[-1].end, duration_s, False, words[-1], None))
+    windows.extend(
+        (words[idx].end, words[idx + 1].start, True, idx, idx + 1) for idx in range(last)
+    )
+    windows.append((words[-1].end, duration_s, False, last, None))
 
-    for window_lo, window_hi, allow_legacy_gap, lo_word, hi_word in windows:
+    for window_lo, window_hi, allow_legacy_gap, lo_idx, hi_idx in windows:
         if window_hi - window_lo <= _EPS:
             continue
         if not _overlaps_any(window_lo, window_hi, silence_spans):
@@ -986,8 +1080,8 @@ def _acoustic_removals_v2(
             window_lo,
             window_hi,
             silence_spans,
-            filler_lo_boundary=lo_word is not None and _removable_filler(lo_word),
-            filler_hi_boundary=hi_word is not None and _removable_filler(hi_word),
+            filler_lo_boundary=lo_idx in removable,
+            filler_hi_boundary=hi_idx in removable,
         )
         decisions.extend(window_decisions)
         for decision in window_decisions:
@@ -1008,11 +1102,6 @@ def _acoustic_removals_v2(
 # ---------------------------------------------------------------------------------
 # Rule 3 — pause tightening (dual-signal intersection)
 # ---------------------------------------------------------------------------------
-
-
-def _removable_filler(word: _CutWord) -> bool:
-    """True when rule 1 will remove this token (same predicate, one place)."""
-    return is_filler_token(word.text) and _segment_signals_allow(word)
 
 
 def _pause_removals(
@@ -1042,20 +1131,22 @@ def _pause_removals(
     """
     removals: list[Removal] = []
     first, last = words[0], words[-1]
+    removable = _removable_filler_indices(words) if edges_skip_fillers else frozenset()
     if edges_skip_fillers:
-        first = next((word for word in words if not _removable_filler(word)), first)
-        last = next((word for word in reversed(words) if not _removable_filler(word)), last)
+        kept = [word for idx, word in enumerate(words) if idx not in removable]
+        if kept:
+            first, last = kept[0], kept[-1]
     if first.start > LEAD_KEEP_S:
         for lo, hi in _intersect_span(0.0, first.start - LEAD_KEEP_S, silence_spans):
             removals.append(Removal(start_s=lo, end_s=hi, reason=REASON_SILENCE))
-    for prev, nxt in pairwise(words):
+    for idx, (prev, nxt) in enumerate(pairwise(words)):
         if nxt.start - prev.end < MAX_PAUSE_S - _EPS:
             continue
         # A neighbour rule 1 will cut takes its own PAD_S flank; keeping the
         # wider KEPT_GAP_S/2 residual against it strands a 5 ms silence sliver
         # between the two cuts, which later costs a whole cut to clean up.
-        keep_lo = PAD_S if edges_skip_fillers and _removable_filler(prev) else KEPT_GAP_S / 2
-        keep_hi = PAD_S if edges_skip_fillers and _removable_filler(nxt) else KEPT_GAP_S / 2
+        keep_lo = PAD_S if idx in removable else KEPT_GAP_S / 2
+        keep_hi = PAD_S if idx + 1 in removable else KEPT_GAP_S / 2
         window_lo = prev.end + keep_lo
         window_hi = nxt.start - keep_hi
         for lo, hi in _intersect_span(window_lo, window_hi, silence_spans):
