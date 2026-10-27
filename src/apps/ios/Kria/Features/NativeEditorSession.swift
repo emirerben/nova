@@ -5186,9 +5186,10 @@ struct NativeEditorTemporaryVideo {
         let editableEnd = timelineClips.map(\.end).max() ?? duration
         let at = min(max(0, currentTime), max(0, editableEnd - 0.1))
         let durationS = effect.durationS
-        let item = EditorTimedEffect(id: UUID().uuidString, startS: at, endS: at + max(0.1, durationS ?? 0.1), pointS: at, kind: "sfx",
+        var item = EditorTimedEffect(id: UUID().uuidString, startS: at, endS: at, pointS: at, kind: "sfx",
             raw: ["sound_effect_id": .string(effect.id), "src_gcs_path": .string(""), "source": .string("user"),
                   "gain": .number(1), "duration_s": durationS.map(JSONValue.number) ?? .null, "label": .string(effect.name)])
+        item.syncSoundEffectDisplay()
         transactDocument(section: .soundEffects) { $0.soundEffects.append(item) }
         select(.init(kind: .soundEffect, id: item.id))
     }
@@ -5708,9 +5709,17 @@ struct NativeEditorTemporaryVideo {
 
     func setSoundEffectTiming(id: String, atS: Double? = nil, startS: Double? = nil, endS: Double? = nil) {
         mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.timing", "sfx.timing", "sound_effects.timing", "lanes.sfx"]) { effect in
-            if let atS { effect.pointS = max(0, atS); effect.startS = max(0, atS) }
-            if let startS { effect.startS = max(0, startS); if effect.pointS != nil { effect.pointS = effect.startS } }
-            if let endS { effect.endS = max(effect.startS + minimumClipDuration, endS) }
+            if let atS { effect.pointS = max(0, atS) }
+            if let startS { if effect.pointS != nil { effect.pointS = max(0, startS) } else { effect.startS = max(0, startS) } }
+            if let endS {
+                if let pointS = effect.pointS {
+                    let window = Self.soundEffectTrimWindow(effect, minimum: minimumClipDuration)
+                    effect.raw["trim_end_s"] = .number(min(window.source, max(window.start + minimumClipDuration, window.start + endS - pointS)))
+                } else {
+                    effect.endS = endS
+                }
+            }
+            effect.syncSoundEffectDisplay()
             effect.endS = max(effect.startS + minimumClipDuration, effect.endS)
         }
     }
@@ -5719,20 +5728,23 @@ struct NativeEditorTemporaryVideo {
             let next = Self.clampedSoundEffectTrim(effect, start: trimStartS, end: trimEndS, minimum: Self.sfxMinimumTrim)
             effect.raw["trim_start_s"] = .number(next.start)
             effect.raw["trim_end_s"] = .number(next.end)
+            effect.syncSoundEffectDisplay()
         }
     }
     func resetSoundEffectTrim(id: String) {
         mutateTimedEffect(kind: .soundEffect, id: id, section: .soundEffects, operationKeys: ["lanes.sfx.trim", "sfx.trim", "sound_effects.trim", "lanes.sfx"]) { effect in
             effect.raw["trim_start_s"] = nil
             effect.raw["trim_end_s"] = nil
+            effect.syncSoundEffectDisplay()
         }
     }
     static let sfxMinimumTrim = 0.05
     /// Source-sound trim window (seconds into the catalog sound), clamped to `duration_s`
     /// with a minimum kept length.
     static func soundEffectTrimWindow(_ effect: EditorTimedEffect, minimum: Double = sfxMinimumTrim) -> (start: Double, end: Double, source: Double) {
-        let source = max(minimum, number(effect.raw["duration_s"]) ?? max(minimum, effect.endS - effect.startS))
-        let start = min(max(0, number(effect.raw["trim_start_s"]) ?? 0), source - minimum)
+        let trimStart = max(0, number(effect.raw["trim_start_s"]) ?? 0)
+        let source = max(minimum, number(effect.raw["duration_s"]) ?? number(effect.raw["trim_end_s"]) ?? trimStart + minimum)
+        let start = min(trimStart, source - minimum)
         let end = min(source, max(start + minimum, number(effect.raw["trim_end_s"]) ?? source))
         return (start, end, source)
     }
@@ -6785,10 +6797,14 @@ struct NativeEditorTemporaryVideo {
         let window = Self.soundEffectTrimWindow(effect, minimum: minimumClipDuration)
         switch edge {
         case .leading:
-            effect.raw["trim_start_s"] = .number(min(max(0, window.start + translation), window.end - minimumClipDuration))
+            let room = effect.pointS ?? .greatestFiniteMagnitude
+            let shift = min(max(translation, max(-window.start, -room)), window.end - minimumClipDuration - window.start)
+            effect.raw["trim_start_s"] = .number(window.start + shift)
+            if let pointS = effect.pointS { effect.pointS = pointS + shift }
         case .trailing:
             effect.raw["trim_end_s"] = .number(max(window.start + minimumClipDuration, min(window.source, window.end + translation)))
         }
+        effect.syncSoundEffectDisplay()
         document.soundEffects[index] = effect
     }
 
