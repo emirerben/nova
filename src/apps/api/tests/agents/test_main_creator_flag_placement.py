@@ -8,12 +8,12 @@ Failure modes (written before the fix):
 3. A nested flag that is not a real boolean (``"true"``) must not become a declaration.
 4. Any OTHER unknown key inside the action still fails closed (retry), flags or not.
 5. Brief off: the nested flag is still stripped (no retry) but declares nothing.
-6. `delegates_all_choices` beside real brief_updates still fails closed to False.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +21,11 @@ from app.agents._runtime import SchemaError
 from app.agents.main_creator import MainCreatorAgent
 from tests.agents.conftest import MockModelClient
 from tests.agents.test_main_creator_agent import _input, _raw
+
+# Expected outcomes live in a fixture, separate from this test (request-to-output evidence).
+_FIXTURE = json.loads(
+    (Path(__file__).parents[1] / "fixtures" / "kri992_planner_flag_placement.json").read_text()
+)
 
 
 def _bad_envelope(*, inside: dict, top: dict | None = None, extra: dict | None = None) -> str:
@@ -46,46 +51,28 @@ def _run(raw_first: str, *, brief_enabled: bool = True):
     return output, client
 
 
-def test_flags_inside_the_action_cost_no_second_planner_call() -> None:
-    output, client = _run(
-        _bad_envelope(inside={"delegates_all_choices": True, "starts_fresh": False})
-    )
-    assert len(client.invocations) == 1
-    assert output.delegates_all_choices is True
-    assert output.starts_fresh is False
-
-
-def test_starts_fresh_inside_the_action_is_read() -> None:
-    output, client = _run(
-        _bad_envelope(inside={"delegates_all_choices": False, "starts_fresh": True})
-    )
-    assert len(client.invocations) == 1
-    assert output.starts_fresh is True
-    assert output.delegates_all_choices is False
-
-
-def test_top_level_flag_wins_over_a_nested_copy() -> None:
-    output, client = _run(
-        _bad_envelope(
-            inside={"delegates_all_choices": True, "starts_fresh": True},
-            top={"delegates_all_choices": False, "starts_fresh": False},
-        )
-    )
-    assert len(client.invocations) == 1
-    assert output.delegates_all_choices is False
-    assert output.starts_fresh is False
+@pytest.mark.parametrize("case", _FIXTURE["placement_cases"], ids=lambda c: c["name"])
+def test_flags_inside_the_action_cost_no_second_planner_call(case: dict) -> None:
+    output, client = _run(_bad_envelope(inside=case["inside"], top=case["top"]))
+    expect = case["expect"]
+    assert len(client.invocations) == expect["invocations"]
+    assert output.delegates_all_choices is expect["delegates_all_choices"]
+    assert output.starts_fresh is expect["starts_fresh"]
 
 
 def test_a_nested_non_boolean_flag_is_never_a_declaration() -> None:
-    output, _ = _run(_bad_envelope(inside={"delegates_all_choices": "true"}))
+    output, client = _run(_bad_envelope(inside={"delegates_all_choices": "true"}))
+    assert len(client.invocations) == 2  # not lifted: still fails closed through the retry
     assert output.delegates_all_choices is False
 
 
 def test_other_unknown_action_keys_still_fail_closed() -> None:
+    control = _FIXTURE["unknown_key_control"]
+    assert control["expect"] == "schema_error"
     agent = MainCreatorAgent(None)  # type: ignore[arg-type]
     with pytest.raises(SchemaError):
         agent.parse(
-            _bad_envelope(inside={"delegates_all_choices": True}, extra={"mystery": 1}),
+            _bad_envelope(inside=control["inside"], extra=control["extra"]),
             _input().model_copy(update={"brief_enabled": True}),
         )
 
