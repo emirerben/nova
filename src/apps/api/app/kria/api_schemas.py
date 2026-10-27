@@ -152,10 +152,29 @@ class MomentOrderAnswerIn(_StrictBody):
     answers: list[MomentPointIn] = Field(min_length=1, max_length=24)
 
 
+class RequestOutcomeContext(_StrictBody):
+    relation: Literal["original", "continuation", "retry", "revision", "recovery", "unclassified"]
+    parent_turn_id: uuid.UUID | None = None
+    client_build: str | None = Field(default=None, pattern=r"^[0-9]{1,10}$")
+    client_version: str | None = Field(
+        default=None, pattern=r"^[0-9]+(?:\.[0-9]+){0,3}$", max_length=32
+    )
+
+    @model_validator(mode="after")
+    def parent_matches_relation(self):
+        if self.relation in {"original", "unclassified"}:
+            if self.parent_turn_id is not None:
+                raise ValueError("This relation has no parent")
+        elif self.parent_turn_id is None:
+            raise ValueError("This relation needs its parent turn")
+        return self
+
+
 class SubmitTurnBody(_StrictBody):
     message: str = Field(min_length=1, max_length=4000)
     client_event_id: str = Field(min_length=1, max_length=160)
     expected_thread_revision: int = Field(ge=0)
+    outcome_context: RequestOutcomeContext | None = None
     # Additive and dark (KRIA_EDITOR_STATE_TURNS_ENABLED); old clients omit it.
     editor_state: EditorStateIn | None = None
     # KRI-282: the answer to a thumbnail clip question; old clients omit it.

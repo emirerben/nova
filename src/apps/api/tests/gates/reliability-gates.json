@@ -3520,6 +3520,59 @@
         "KRI-964: place a \"when <person> first appears\" name tag at the start of the cut"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-983-lipsync-readiness",
+      "tickets": [
+        "KRI-983",
+        "KRI-721"
+      ],
+      "symptom": "Lipsync Creation (prod thread 953a5265, 2026-10-27): four videos, an uploaded song and \"Create a lipsync\" were held at approval with \"I need to resolve these changes before you approve: - Create a lipsync to the uploaded song: I haven't established how to render this change yet.\" No draft checker read a lip-sync ask, and readiness held every ask nothing checks before render; \"Make this simpler version\" would have dropped the only ask, and \"Try a different approach\" re-ran the planner into the same question.",
+      "boundary": "contract",
+      "status": "open_pr",
+      "owner": "KRI-983",
+      "paths": [
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri983_lipsync_song_turns.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri983_lipsync_song_journey.py",
+        "tests/kria/test_approval_readiness_postgres.py",
+        "tests/kria/test_kri759_simpler_version_refusal.py",
+        "tests/kria/test_kri945_claims_journey.py",
+        "tests/kria/test_kri968_simpler_version_names_drops_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The prod turn through submit_turn, run_kria_turn and the HTTP approve route over scratch Postgres; only the provider transport is recorded (Main Creator answer authored from the user-song prompt section, prod LLM I/O is hash-only). Red before the change: the reply equals prod's held reply word for word, r1 evidence_missing; a background-song draft is held with the internal reason and an empty simpler version; the legacy \"different_approach\" tap made 1 provider call and asked a new question. Green after: r1 executable and approved over HTTP; the background draft holds with a plain reason and no card; \"Change my request\" (new and legacy key) answers with zero provider calls. Class pair: \"Make it feel dreamy\" is unverified, approved and named under \"Have a look at these in the video:\"; a freeze frame and a withdrawn renderer still hold.",
+        "live_model": "Not run; no paid calls. No prompt changed; the change adds no model call and removes one on \"Change my request\".",
+        "native_output": "unknown; the iOS choice card already renders option descriptions; not device-checked.",
+        "production": "Not deployed. Readiness is enrolled for one account in prod."
+      },
+      "neighbours_covered": [
+        "no song attached, song not used by the strategy, song only in the background: each a plain Couldn't",
+        "asks whose only check reads the finished video (judged_at_render, clip speed off the phone montage) are unverified",
+        "researched-text asks and keep-text-off marks keep blocking (KRI-945 research, KRI-901 marks)",
+        "an editor draft never gets unverified: its diff is the check (title red + glow still holds)",
+        "Turkish copy for every new reason, header, button and reply",
+        "the legacy path keeps KRI-610: a sole unmet ask can still be waived by \"simpler version\""
+      ],
+      "neighbours_gap": [
+        "A typed audio_intent noise_removal and Turkish wind-noise wording have no draft checker, so they are approved as unverified instead of held.",
+        "A text ask whose look only the finished video shows still blocks, because its words and its look share one receipt.",
+        "The after-render review does not re-judge a lip-sync ask: rendered montage facts carry no user_song_attached, so it reads \"Have a look\".",
+        "The Oct 7 and Oct 11 lip-sync jobs' assembly_plan was not re-read; the replayed strategy is authored from the prompt."
+      ],
+      "follow_ups": [
+        "Prod: the creator re-sends \"Create a lipsync\" after deploy; the turn reaches an approval card and the job renders lip-sync takes",
+        "A draft checker for audio_intent noise_removal off phone Talking"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

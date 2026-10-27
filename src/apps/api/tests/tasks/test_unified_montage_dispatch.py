@@ -292,6 +292,38 @@ def test_receipts_say_what_was_met_and_what_was_partial(harness):
     assert "r2" not in receipts
 
 
+def test_contract_repaired_intro_does_not_get_a_missing_text_recovery(harness, monkeypatch):
+    from app.services.creator_render_contract import CONTRACT_FIELD, build_render_contract
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(id="hook", kind="text", scope="title", literal="Visit this island"),
+            BriefRequirement(
+                id="intro",
+                kind="text",
+                scope="global",
+                literal="A quiet island with a long history.",
+            ),
+        ],
+    )
+    job, *_ = harness(brief=brief)
+    contract = build_render_contract(
+        generation_id="generation", strategy=job.all_candidates["creator_strategy"], brief=brief
+    )
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    # The render repair owns the missing literal even when copy composition omits it.
+    monkeypatch.setattr(
+        "app.services.creation_text_composition.compose_creation_text",
+        lambda snapshot, **kwargs: snapshot,
+    )
+    gb._run_generative_job(str(job.id))
+    record = job.assembly_plan["unified_montage"]
+    receipt = next(r for r in record["requirement_receipts"] if r["requirement_id"] == "intro")
+    assert receipt["status"] == "met"
+    assert not record.get("repair_notes")
+
+
 def test_without_capture_times_the_order_stays_attachment_and_says_so(harness):
     job, *_ = harness(brief=_brief(), capture=False)
     gb._run_generative_job(str(job.id))

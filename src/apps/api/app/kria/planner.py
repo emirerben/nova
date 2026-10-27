@@ -137,11 +137,13 @@ from app.schemas.user_song import (
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
+    SIMPLER_OMITTED_IDS_KEY,
     SIMPLER_VERSION_REASON,
     ChoiceCapability,
     answered_brief,
     ask_user_choice,
     build_choice_question,
+    change_request_selected,
     choice_question_text,
     detect_order_vs_group,
     fold_choice_answers,
@@ -3075,6 +3077,37 @@ def title_hold_grounded(
     return False
 
 
+async def _change_request_turn(db: AsyncSession, thread_id: uuid.UUID) -> PlannedKriaTurn | None:
+    """KRI-983: "Change my request" on a held draft. Nothing was made, so the reply asks what
+    to change about the asks that held it, with no model call; re-planning here only made the
+    same plan and asked the same question again."""
+    if not settings.kria_choice_questions_enabled:
+        return None
+    question = change_request_selected(await _load_thread_events(db, thread_id, release=False))
+    if question is None:
+        return None
+    held = {str(req_id) for req_id in question.get(SIMPLER_OMITTED_IDS_KEY) or ()}
+    brief = await load_latest_brief(db, thread_id) if held else None
+    listed = "; ".join(req.text() for req in brief.live() if req.id in held) if brief else ""
+    response = (
+        say(
+            en=f"Nothing is made yet. Tell me what to do differently for: {listed}.",
+            tr=f"Henüz bir şey yapılmadı. Şunlar için neyi farklı yapmamı istersin: {listed}.",
+        )
+        if listed
+        else say(
+            en="Nothing is made yet. Tell me what to do differently.",
+            tr="Henüz bir şey yapılmadı. Neyi farklı yapmamı istediğini söyle.",
+        )
+    )
+    log.info("kria_change_request_selected", thread_id=str(thread_id))
+    return PlannedKriaTurn(
+        plan=KriaTurnPlan(mode="respond", turn_value="question", response=response),
+        manifest_hash=None,
+        context_hash=None,
+    )
+
+
 async def _simpler_version_accepted(
     db: AsyncSession, thread_id: uuid.UUID, fields: Sequence[str]
 ) -> bool:
@@ -5222,6 +5255,9 @@ async def _plan_live_turn(
             manual_edits=manual_edits or [],
             editor_state=editor_state,
         )
+    changing = await _change_request_turn(db, thread_id)
+    if changing is not None:
+        return changing
     pending_analysis_ids: list[str] = []
     if settings.brief_binding_for(creator_id) and settings.kria_clip_understanding_enabled:
         from app.services.clip_intent_planning import wait_for_clip_understanding  # noqa: PLC0415

@@ -48,9 +48,30 @@ case "${1:-}" in
       editor) selection='KriaUITests/NativeEditorInspectorUITests/testApprovingACaptionLineCommitsItAndEnablesSaveOnceThePanelCloses' ;;
       delivery) selection='KriaUITests/DeviceRenderUITests/testPhoneRenderReachesReadyWithPlaySaveAndShare' ;;
       slides) selection='KriaUITests/SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching' ;;
-      *) echo 'Choose chat, media, editor, delivery or slides.' >&2; exit 2 ;;
+      account) selection='KriaUITests/AccountPrivacyUITests' ;;
+      camera) selection='KriaUITests/TeleprompterUITests' ;;
+      retention) selection='KriaUITests/SavedUploadsUITests/testExpiringCloudCopyWarnsAndRemainsReusableAcrossPosts' ;;
+      billing|publication)
+        attempt="$(mktemp -d "$EVIDENCE/${2}.XXXXXX")"
+        python3 - "$2" "$attempt/gap.json" <<'PY'
+import json, sys
+from pathlib import Path
+feature, target = sys.argv[1:]
+gaps = {
+    "billing": "No native purchase, subscription-management or StoreKit product flow exists.",
+    "publication": "Save and Share exist; no native external-platform publish completion exists.",
+}
+Path(target).write_text(json.dumps({"feature": feature, "status": "not_implemented", "reason": gaps[feature]}, indent=2) + "\n")
+PY
+        echo "Unverified product gap retained at $attempt/gap.json" >&2
+        exit 3
+        ;;
+      *) echo 'Choose chat, media, editor, delivery, slides, account, camera, retention, billing or publication.' >&2; exit 2 ;;
     esac
     attempt="$(mktemp -d "$EVIDENCE/${2}.XXXXXX")"
+    cp "$EVIDENCE/input-fingerprint" "$attempt/input-fingerprint"
+    cp "$EVIDENCE/build-head" "$attempt/build-head"
+    git diff --binary HEAD -- src/apps/ios > "$attempt/native-source.diff"
     simulator="$(cat "$STATE")"
     drive_status=0
     mkdir -p "$attempt/screenshots"
