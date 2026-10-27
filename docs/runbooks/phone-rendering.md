@@ -2838,16 +2838,6 @@ word. No model or prompt is involved:
   "none of these" and a pick the worker's words don't hold leave today's honest
   `not_found`. `length_vs_natural` still compares a length ask with the whole take,
   not the part the lines keep.
-- **A quote the take holds only part of (KRI-967).** "Parrilla Don Julio, what do you
-  think?" over whisper's "So," / "what do you think?" (Don Julio walk-in T1):
-  `take_lines.partly_heard` finds the line holding the said part and the card names
-  the words it could not find. When the clip record's Gemini transcript
-  (`speech.transcript`) hears those words right next to the said part, the adjacent
-  line (≤1 s away, ≤ their length + 2 tokens, neither quote words nor words that
-  transcript heard on their own) is recommended, shown and pinned joined to the said
-  line ("So, what do you think?"), so the cut opens where they were said. No such
-  evidence: the old recommendation stays. Option keys and the digest are unchanged.
-  Review: `docs/reviews/kri-967-unheard-quote-head.md`.
 
 Gap: cleanup off with no checked preflight snapshot still reports `cleanup_off`.
 Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` to
@@ -2857,6 +2847,18 @@ Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_op
 `tests/kria/test_kri837_one_word_end_line.py`,
 `tests/kria/test_kri844_take_line_ask.py`,
 `tests/kria/test_kri844_dj_t2_cross_language_replay.py` (fixture `kri844_dj_t2_take.json`).
+
+**A quote the take holds only part of (KRI-967).** "Parrilla Don Julio, what do you
+think?" over whisper's "So," / "what do you think?" (Don Julio walk-in T1):
+`take_lines.partly_heard` finds the line holding the said part and the card names
+the words it could not find. When the clip record's Gemini transcript
+(`speech.transcript`) hears those words right next to the said part, the adjacent
+line (≤1 s away, ≤ their length + 2 tokens, neither quote words nor words that
+transcript heard on their own) is recommended, shown and pinned joined to the said
+line ("So, what do you think?"), so the cut opens where they were said. No such
+evidence: the old recommendation stays. Option keys and the digest are unchanged.
+Review: `docs/reviews/kri-967-unheard-quote-head.md`; tests:
+`tests/kria/test_kri967_unheard_quote_head.py`.
 
 ### Text on a spoken word on phone Talking edits (KRI-707)
 
