@@ -968,6 +968,12 @@ def _build_clip_question(
     categories: list[dict[str, Any]] = []
     for work in creator_work:
         confirmed = {a.media_id for a in work.kept}
+        # KRI-991: the clips the resolver put forward below the bar, or a check could not
+        # settle, are the picker's pre-ticks. A clip a check confidently ruled out is not.
+        # Suggestions only: nothing is applied without the creator's tap.
+        near_misses = (work.failed_media_ids | work.considered_media_ids) - (
+            work.vision_no_media_ids - work.failed_media_ids
+        )
         live = _live_photo_ids(work, clips, records_by_id) if narrow_photos else set()
         candidates = [
             c.media_id
@@ -986,7 +992,7 @@ def _build_clip_question(
                 "creator_text": work.intent.creator_text,
                 "candidate_media_ids": candidates[:MAX_QUESTION_CLIPS],
                 "suggested_media_ids": sorted(
-                    (m for m in work.failed_media_ids if m in order and m not in confirmed),
+                    (m for m in near_misses if m in order and m not in confirmed),
                     key=order.__getitem__,
                 ),
             }

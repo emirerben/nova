@@ -49,7 +49,12 @@ from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
 from app.config import settings
 from app.kria import planner
 from app.pipeline.prompt_loader import load_prompt
-from app.schemas.clip_intents import ClipIntent
+from app.schemas.clip_intents import (
+    CREATOR_EVIDENCE,
+    ClipAssignment,
+    ClipIntent,
+    ResolvedClipIntent,
+)
 from app.services import clip_intent_planning as planning
 from app.services import clip_intent_resolution as resolution
 from app.services.clip_intent_resolution import IntentClip, resolve_clip_intents_for_turn
@@ -412,3 +417,95 @@ async def test_a_flapping_resolver_does_not_re_ask_the_order_after_the_tap(
     assert by_op["order"] == [FRIEND]  # carried from the asking turn, not asked again
     assert by_op["exclude"] == [CHEESE_CUT]  # d: the tap stays the tap
     assert "unexpected" not in provider.calls
+
+
+async def test_a_typed_change_of_mind_is_not_overridden_by_the_carried_match(
+    prod_profile, monkeypatch, no_vision
+) -> None:
+    # d: after the tap the creator types new words. The planner list is not reused (new words
+    # may change any ask), so nothing is carried and the order ask is resolved afresh.
+    _provider(monkeypatch, "match")
+    asked = await _turn(monkeypatch)
+    events, tap = _answered(asked, {"media_ids": [CHEESE_CUT]})
+    typed = "Actually end on the waiter who looks up instead."
+    events = [*events, ("assistant", {"turn_id": str(uuid.uuid4())}), ("user", {"turn_id": "x"})]
+
+    _provider(monkeypatch, "nothing")
+    planned = await _turn(
+        monkeypatch,
+        events,
+        checked_inventory=asked.plan.clip_intent_inventory,
+        user_message=typed,
+        raw_request=f"{REQUEST}\n{tap}\n{typed}",
+    )
+
+    assert (planned.plan.mode, planned.plan.turn_value) == ("respond", "question")
+    [category] = planned.plan.clip_question["categories"]
+    assert category["intent_id"] == "order_friend_last"
+
+
+def _saved(**row: Any) -> dict[str, Any]:
+    base = {
+        "intent_id": "order_friend_last",
+        "op": "order",
+        "attribute": "my friend smiling",
+        "position": "last",
+        "assignments": [{"media_id": FRIEND, "confidence": 0.9, "evidence": "smiles"}],
+    }
+    return {"matches": [{**base, **row}]}
+
+
+def _carry(saved: Any, *, intent: dict[str, Any] | None = None, attached=EVERYTHING, now=()):
+    wanted = {k: v for k, v in {**FRIEND_LAST, **(intent or {})}.items() if k != "source_quote"}
+    clips = [c for c in _intent_clips() if c.media_id in attached]
+    return planning.carried_matches(
+        saved,
+        [ClipIntent(**wanted)],
+        resolution.IntentResolution(status="needs_creator", intents=list(now)),
+        clips,
+    )
+
+
+def test_a_carried_match_is_the_same_unmatched_ask_on_a_still_attached_clip() -> None:
+    [carried] = _carry(_saved())
+    assert [(a.media_id, a.evidence) for a in carried.assignments] == [
+        (FRIEND, planning.ASKING_TURN_EVIDENCE)
+    ]
+    assert planning.ASKING_TURN_EVIDENCE not in CREATOR_EVIDENCE  # a tap outranks it
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["other_id", "attribute", "position", "op", "detached", "matched_now", "no_record", "junk"],
+)
+def test_a_match_is_not_carried_to_anything_else(case: str) -> None:
+    saved: Any = _saved()
+    intent: dict[str, Any] = {}
+    attached = EVERYTHING
+    now: list[Any] = []
+    if case == "other_id":
+        intent = {"intent_id": "order_someone_else"}
+    elif case == "attribute":
+        intent = {"attribute": "the waiter who looks up"}
+    elif case == "position":
+        intent = {"position": "first"}
+    elif case == "op":
+        intent = {"op": "exclude", "position": None}
+    elif case == "detached":
+        attached = [m for m in EVERYTHING if m != FRIEND]
+    elif case == "matched_now":
+        now = [
+            ResolvedClipIntent(
+                intent_id="order_friend_last",
+                op="order",
+                attribute="my friend smiling",
+                position="last",
+                status="resolved",
+                assignments=[ClipAssignment(media_id=BOARDS, confidence=0.9)],
+            )
+        ]
+    elif case == "no_record":
+        saved = {"matches": []}
+    else:
+        saved = {"matches": ["junk", {"intent_id": "order_friend_last", "assignments": [{}]}]}
+    assert _carry(saved, intent=intent, attached=attached, now=now) == []

@@ -31,6 +31,7 @@ from app.kria.reply_language import current_reply_language, say
 from app.kria.research_preview import RESEARCH_FACT
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
+    CREATOR_EVIDENCE,
     CREATOR_SELECTED_EVIDENCE,
     FILE_NAME_EVIDENCE,
     MAX_CLIP_INTENTS,
@@ -873,6 +874,97 @@ def _selected_assignments(
     return assignments
 
 
+# KRI-991: the evidence on a match the asking turn found and the answering turn kept. Not the
+# creator's word (``CREATOR_EVIDENCE``): a tap still outranks it.
+ASKING_TURN_EVIDENCE = "asking turn"
+_CARRIED_OPS = frozenset({"order", "include", "group"})
+
+
+def _inventory_with_matches(
+    inventory: dict[str, Any] | None, resolution: IntentResolution
+) -> dict[str, Any] | None:
+    """The checked list plus the confident order/include/group matches this turn found.
+
+    A picker turn keeps it (``KriaTurnPlan.clip_intent_inventory``); the tap's turn re-resolves
+    and ``carried_matches`` gives an intent that comes back unmatched the earlier match. The
+    creator's own taps are not kept: they come back from the thread's answers every turn.
+    """
+    if inventory is None:
+        return None
+    matches = [
+        {
+            "intent_id": intent.intent_id,
+            "op": intent.op,
+            "attribute": intent.attribute,
+            "position": intent.position,
+            "assignments": [
+                {"media_id": a.media_id, "confidence": a.confidence, "evidence": a.evidence}
+                for a in intent.assignments
+            ],
+        }
+        for intent in resolution.intents
+        if intent.op in _CARRIED_OPS
+        and intent.status == "resolved"
+        and intent.assignments
+        and not any(a.evidence in CREATOR_EVIDENCE for a in intent.assignments)
+    ]
+    return {**inventory, "matches": matches} if matches else inventory
+
+
+def carried_matches(
+    saved: Any,
+    intents: Sequence[ClipIntent],
+    resolution: IntentResolution,
+    clips: Sequence[IntentClip],
+) -> list[ResolvedClipIntent]:
+    """The asking turn's matches for the intents this turn's resolver left unmatched.
+
+    ``saved`` is the asking turn's inventory, passed only when the planner list was reused (the
+    tap was the turn's only new input, so no new words could have changed an ask). Applied only
+    to the same intent (id, op, attribute and position all unchanged), only while unmatched this
+    turn, and only to clips still attached. Reads no words.
+    """
+    rows = saved.get("matches") if isinstance(saved, Mapping) else None
+    if not isinstance(rows, list) or resolution.status not in {"needs_creator", "resolved"}:
+        return []
+    attached = {clip.media_id for clip in clips}
+    now = {intent.intent_id: intent for intent in resolution.intents}
+    out: list[ResolvedClipIntent] = []
+    for intent in intents:
+        row = next(
+            (r for r in rows if isinstance(r, Mapping) and r.get("intent_id") == intent.intent_id),
+            None,
+        )
+        current = now.get(intent.intent_id)
+        if (
+            row is None
+            or intent.op not in _CARRIED_OPS
+            or (row.get("op"), row.get("attribute"), row.get("position"))
+            != (intent.op, intent.attribute, intent.position)
+            or (current is not None and current.status == "resolved" and current.assignments)
+        ):
+            continue
+        try:
+            assignments = [
+                ClipAssignment(
+                    media_id=a["media_id"],
+                    confidence=a["confidence"],
+                    evidence=ASKING_TURN_EVIDENCE,
+                )
+                for a in row.get("assignments") or []
+                if a.get("media_id") in attached
+            ]
+        except (KeyError, TypeError, ValidationError):
+            continue
+        if assignments:
+            out.append(
+                ResolvedClipIntent(
+                    **intent.model_dump(), status="resolved", assignments=assignments
+                )
+            )
+    return out
+
+
 async def plan_and_resolve_clip_intents(
     *,
     creator_request: str,
@@ -1182,25 +1274,44 @@ async def plan_and_resolve_clip_intents(
                     },
                 ),
             )
-    resolution = await resolve_clip_intents_for_turn(
-        intents=visual_intents,
-        creator_request=creator_request,
-        clips=clips,
-        run_context=run_context,
-        background=background,
-        checkpoint=checkpoint,
-        max_vision_requeries=max_vision_requeries,
-        vision_deadline_s=vision_deadline_s,
-        # KRI-516: chapter captions under a filming-time order are stretches of the day.
-        # Omitted otherwise, so every other call is unchanged.
-        **({"filming_order": True} if order_by_intents else {}),
-        # KRI-692: a Turkish chat's picker row never shows a model-written English label.
-        **(
-            {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
-            if current_reply_language() == "tr"
-            else {}
-        ),
+
+    async def _resolve(pending: list[ClipIntent]) -> IntentResolution:
+        return await resolve_clip_intents_for_turn(
+            intents=pending,
+            creator_request=creator_request,
+            clips=clips,
+            run_context=run_context,
+            background=background,
+            checkpoint=checkpoint,
+            max_vision_requeries=max_vision_requeries,
+            vision_deadline_s=vision_deadline_s,
+            # KRI-516: chapter captions under a filming-time order are stretches of the day.
+            # Omitted otherwise, so every other call is unchanged.
+            **({"filming_order": True} if order_by_intents else {}),
+            # KRI-692: a Turkish chat's picker row never shows a model-written English label.
+            **(
+                {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
+                if current_reply_language() == "tr"
+                else {}
+            ),
+        )
+
+    resolution = await _resolve(visual_intents)
+    # KRI-991: the resolver is not deterministic and re-reads the whole list every turn. A
+    # match the asking turn already found holds for an intent that now comes back unmatched.
+    carried = carried_matches(
+        checked_inventory if reused is not None else None, visual_intents, resolution, clips
     )
+    if carried:
+        carried_ids = {c.intent_id for c in carried}
+        log.info("clip_intent_matches_carried", carried=len(carried))
+        earlier = resolution
+        pending_intents = [i for i in visual_intents if i.intent_id not in carried_ids]
+        resolution = await _resolve(pending_intents) if pending_intents else IntentResolution()
+        resolution = replace(
+            resolution, vision_answers={**earlier.vision_answers, **resolution.vision_answers}
+        )
+        resolved_orders = [*resolved_orders, *carried]
     if order_by_intents:
         kept, dropped = keep_chapters_in_filming_order(resolution.intents, clips, creator_request)
         if dropped:
@@ -1216,5 +1327,8 @@ async def plan_and_resolve_clip_intents(
             resolution, intents=_as_listed([*resolution.intents, *resolved_orders], intents)
         )
     return PlannedIntentResolution(
-        intents, resolution, dropped_exclusions=dropped_exclusions, inventory=inventory
+        intents,
+        resolution,
+        dropped_exclusions=dropped_exclusions,
+        inventory=_inventory_with_matches(inventory, resolution),
     )
