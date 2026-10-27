@@ -337,6 +337,7 @@ struct NativeEditorTemporaryVideo {
     private var finishedRenderIsCurrent = true
     private var sourcePreview: LivePreviewComposition?
     private var sourceCompiler: NativeEditorRenderCompiler?
+    private var textMeasurer: NativeEditorRenderCompiler?
     private var sourceResolver: NativeEditorSourceResolver?
     private var resolvedAudio: [String: ResolvedEditorSource] = [:]
     /// A device recipe may intentionally have no narration. Remember that
@@ -4444,9 +4445,54 @@ struct NativeEditorTemporaryVideo {
         transformText(from: baseline, scale: sizePX / Self.textSize(for: baseline), rotationDelta: 0)
     }
     func setTextWidth(id: String, width: Double?) { setTextRaw(id: id, key: "max_width_frac", value: width.map { .number(min(max(0.2, $0), 1)) } ?? .null) }
-    func setTextAlignment(id: String, alignment: String?) { setTextRaw(id: id, key: "alignment", value: alignment.map(JSONValue.string) ?? .null) }
-    func placeTextBlock(id: String, _ placement: NativeTextBlockPlacement) {}
-    func textBlockPlacements(id: String) -> Set<NativeTextBlockPlacement> { [] }
+    /// Every renderer reads `x_frac` as the block's left edge, centre or right edge by alignment, so switching
+    /// alignment alone would swing the block around its old anchor. Re-anchor from the drawn block instead, and
+    /// free a preset `position` row (whose fracs are ignored) at the spot it was drawn.
+    func setTextAlignment(id: String, alignment: String?) {
+        guard canEditSection(.text), let element = textElement(id: id), !element.isReadOnly else { return }
+        let block = textBlockRect(id: id)
+        let drawnAt = element.anchor
+        mutateText(id: id) {
+            $0.raw["alignment"] = alignment.map(JSONValue.string) ?? .null
+            guard let block else { return }
+            $0.raw["x_frac"] = .number(NativeTextBlockGeometry.anchorX(keeping: block, alignment: alignment))
+            if element.raw["position"]?.stringValue.flatMap({ EditorTextElement.presetY[$0] }) != nil {
+                $0.raw["y_frac"] = .number(drawnAt.y)
+                $0.raw["position"] = .string("custom")
+            }
+        }
+    }
+
+    /// Flush the drawn block against the safe area (or the frame's centre) on one axis; alignment stays. Moving the
+    /// anchor changes the room a text has to wrap in, so the block is measured again at each trial position.
+    func placeTextBlock(id: String, _ placement: NativeTextBlockPlacement) {
+        guard canEditSection(.text), let element = textElement(id: id), !element.isReadOnly,
+              var block = textBlockRect(id: id) else { return }
+        var trial = element
+        var anchor = element.anchor
+        for _ in 0..<4 {
+            let target = NativeTextBlockGeometry.anchor(placing: block, anchor: anchor, at: placement)
+            if hypot(target.x - anchor.x, target.y - anchor.y) < 0.0005 { break }
+            anchor = target
+            trial.raw["position"] = .string("custom")
+            trial.raw["x_frac"] = .number(anchor.x); trial.raw["y_frac"] = .number(anchor.y)
+            guard let next = textMeasurer?.textBlockRect(for: trial, in: document) else { break }
+            block = next
+        }
+        setTextPosition(id: id, x: anchor.x, y: anchor.y)
+    }
+
+    func textBlockPlacements(id: String) -> Set<NativeTextBlockPlacement> {
+        textBlockRect(id: id).map(NativeTextBlockGeometry.placements(of:)) ?? []
+    }
+
+    private func textBlockRect(id: String) -> CGRect? {
+        guard let element = textElement(id: id) else { return nil }
+        if textMeasurer == nil, let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) {
+            textMeasurer = try? NativeEditorRenderCompiler(fontDirectory: fonts)
+        }
+        return textMeasurer?.textBlockRect(for: element, in: document)
+    }
     func setTextAnimation(id: String, animation: String?) {
         let value = animation ?? "none"
         guard NativeEditorWireContract.textAnimations.contains(value) else { return }

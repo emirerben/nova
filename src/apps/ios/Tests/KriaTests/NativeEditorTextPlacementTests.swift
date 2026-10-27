@@ -11,7 +11,14 @@ import KriaMediaEngine
     private static let pixel = 1.0 / 1080
 
     private static let freeJSON = """
-    {"id": "free", "text": "Short\\nA much longer second line here", "start_s": 0.0, "end_s": 3.0,
+    {"id": "free", "text": "Short\\nA second line", "start_s": 0.0, "end_s": 3.0,
+     "position": "custom", "x_frac": 0.35, "y_frac": 0.55, "size_px": 64.0, "font_family": "Inter",
+     "alignment": "center", "wrap_lines": false, "effect": "none"}
+    """
+    /// Wide enough that its line breaks depend on where it sits (the authored-text width rule: room to the
+    /// frame margins), so moving or re-aligning it can re-wrap it.
+    private static let reflowJSON = """
+    {"id": "reflow", "text": "Short\\nA much longer second line here", "start_s": 0.0, "end_s": 3.0,
      "position": "custom", "x_frac": 0.35, "y_frac": 0.55, "size_px": 64.0, "font_family": "Inter",
      "alignment": "center", "wrap_lines": false, "effect": "none"}
     """
@@ -107,10 +114,22 @@ import KriaMediaEngine
         try assertAlignmentKeepsBlock(try self.session(Self.presetJSON), id: "preset")
     }
 
+    func testAlignmentOnTextThatReflowsKeepsTheEdgeItIsAnchoredTo() throws {
+        let session = try session(Self.reflowJSON)
+        let original = try drawnBlock(session, id: "reflow")
+        session.setTextAlignment(id: "reflow", alignment: "left")
+        XCTAssertEqual(try drawnBlock(session, id: "reflow").minX, original.minX, accuracy: Self.pixel)
+        session.setTextAlignment(id: "reflow", alignment: "center")
+        session.setTextAlignment(id: "reflow", alignment: "right")
+        let right = try drawnBlock(session, id: "reflow")
+        session.setTextAlignment(id: "reflow", alignment: "center")
+        XCTAssertEqual(try drawnBlock(session, id: "reflow").midX, right.midX, accuracy: Self.pixel)
+    }
+
     private func safe() -> CGRect { NativePreviewDangerZones.safeRect(in: CGSize(width: 1, height: 1)) }
 
     func testPlacementButtonsLandTheBlockFlushOnTheSafeRect() throws {
-        for json in [Self.freeJSON, Self.presetJSON] {
+        for json in [Self.freeJSON, Self.presetJSON, Self.reflowJSON] {
             let session = try session(json)
             let id = try XCTUnwrap(session.document.textElements.first?.id)
             let alignment = session.document.textElements.first?.raw["alignment"]
@@ -119,7 +138,7 @@ import KriaMediaEngine
             session.placeTextBlock(id: id, .left)
             var block = try drawnBlock(session, id: id)
             XCTAssertEqual(block.minX, safe().minX, accuracy: Self.pixel, "left lands on the safe rect")
-            XCTAssertEqual(block.minY, start.minY, accuracy: Self.pixel, "a horizontal placement leaves the vertical position alone")
+            XCTAssertEqual(block.midY, start.midY, accuracy: Self.pixel, "a horizontal placement leaves the vertical position alone")
 
             session.placeTextBlock(id: id, .right)
             block = try drawnBlock(session, id: id)
