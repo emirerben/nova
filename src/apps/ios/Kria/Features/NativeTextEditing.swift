@@ -36,9 +36,17 @@ import SwiftUI
     func setTextAnimationSpeed(id: String, speed: Double)
     /// KRI-646: whether the Text panel offers Bend (the server advertises it; the phone must be able to draw it).
     var supportsTextBend: Bool { get }
+    /// Whether the Text panel offers the safe-area Position buttons (the video editor measures its drawn text).
+    var supportsTextPlacement: Bool { get }
+    func placeTextBlock(id: String, _ placement: NativeTextBlockPlacement)
+    func textBlockPlacements(id: String) -> Set<NativeTextBlockPlacement>
 }
 
 extension NativeTextEditing {
+    var supportsTextPlacement: Bool { false }
+    func placeTextBlock(id: String, _ placement: NativeTextBlockPlacement) {}
+    func textBlockPlacements(id: String) -> Set<NativeTextBlockPlacement> { [] }
+
     /// Move the text along one axis; the other stays where the text is drawn,
     /// so a row on a named preset keeps that spot rather than stale fracs.
     func moveText(id: String, x: Double? = nil, y: Double? = nil) {
@@ -49,6 +57,7 @@ extension NativeTextEditing {
 
 extension NativeEditorSession: NativeTextEditing {
     var supportsTextBend: Bool { canEdit("text_bend") && canEdit(.text) }
+    var supportsTextPlacement: Bool { canEdit(.text) }
     func textElement(id: String) -> EditorTextElement? { document.textElements.first { $0.id == id } }
     func textAnchor(id: String) -> CGPoint? { textElement(id: id)?.anchor }
 }
