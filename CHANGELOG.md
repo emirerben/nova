@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.161.0] - 2026-10-27
+
+### Fixed
+- feat(ios): clip picker Next between questions and tap to watch a clip (KRI-995) (#1877) <!-- release-pr: 1877 -->
+
 ## [0.81.160.0] - 2026-10-27
 
 ### Changed

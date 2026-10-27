@@ -272,6 +272,23 @@ struct ClipSelectionState: Equatable {
     /// Send needs at least one decision (a tick or a "None of these").
     var canSend: Bool { !submission.answers.isEmpty || !submission.noneKeys.isEmpty }
 
+    /// A category is answered once it has a tick or "None of these".
+    func isAnswered(_ key: String) -> Bool { count(in: key) > 0 || isNone(key) }
+
+    /// The first unanswered category after `key`, wrapping round to the start; nil once every other category is
+    /// answered. The picker's main button moves here ("Next") instead of sending, so a question with two groups
+    /// never goes out with only the first one answered.
+    func nextUnanswered(after key: String) -> ClipQuestion.Category? {
+        let categories = question.categories
+        guard !categories.isEmpty else { return nil }
+        let start = categories.firstIndex { $0.key == key } ?? categories.count - 1
+        for step in 1...categories.count {
+            let category = categories[(start + step) % categories.count]
+            if category.key != key, !isAnswered(category.key) { return category }
+        }
+        return nil
+    }
+
     var selectedCount: Int { selected.values.reduce(0) { $0 + $1.count } }
 
     /// Candidate order is preserved so the message and payload are deterministic.
