@@ -8959,10 +8959,11 @@ def wants_lipsync(req: BriefRequirement) -> bool:
     """KRI-983: "lipsync to the uploaded song", read by `song_captions.mentions_lipsync`.
 
     Asks another audio reader already owns (a typed `audio_intent`, the footage's own sound, a
-    voice bed, beats, speech) keep their checker."""
+    voice bed, beats, speech, captions) keep their checker."""
     if (
         req.kind not in _BEAT_KINDS
         or "audio_intent" in req.facts
+        or _wants_captions(req)
         or _wants_source_sound_kept(req)
         or _wants_beats(req)
         or _wants_closing(req)
