@@ -6,6 +6,29 @@ final class SavedUploadsUITests: XCTestCase {
     private static let evening = "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"
     private static let horse = "DDDDDDDD-0000-4000-8000-000000000822"
 
+    func testExpiringCloudCopyWarnsAndRemainsReusableAcrossPosts() {
+        continueAfterFailure = false
+        let app = launch(warning: true)
+        app.buttons["fixture-open-saved"].tap()
+        let tile = self.tile(app, Self.morning)
+        XCTAssertTrue(tile.waitForExistence(timeout: 10))
+        XCTAssertTrue(value(tile).contains("Cloud copy expires soon."))
+        attach(app, "Expiring cloud copy warns before selection")
+        tile.tap()
+        app.buttons["saved-uploads-done"].tap()
+        XCTAssertTrue(app.staticTexts["Post 1: 1 saved attachment"].waitForExistence(timeout: 8))
+        app.buttons["fixture-second-post"].tap()
+        app.buttons["fixture-open-saved"].tap()
+        XCTAssertTrue(tile.waitForExistence(timeout: 8))
+        XCTAssertTrue(value(tile).contains("Cloud copy expires soon."))
+        tile.tap()
+        app.buttons["saved-uploads-done"].tap()
+        XCTAssertTrue(app.staticTexts["Post 2: 1 saved attachment"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["Post 1: 1 saved attachment"].exists)
+        XCTAssertTrue(app.staticTexts["Reuse used no upload requests"].exists)
+        attach(app, "Warned cloud copy reused without replacing the first post")
+    }
+
     func testReuseAcrossTwoPostsWithoutAnotherUpload() {
         let app = launch()
         app.buttons["fixture-open-saved"].tap()
@@ -151,11 +174,12 @@ final class SavedUploadsUITests: XCTestCase {
         shot.lifetime = .keepAlways
         add(shot)
     }
-    private func launch(failFirst: Bool = false, mode: String? = nil) -> XCUIApplication {
+    private func launch(failFirst: Bool = false, mode: String? = nil, warning: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-saved-uploads"]
         if failFirst { app.launchEnvironment["KRIA_SAVED_UPLOADS_FAIL_FIRST"] = "1" }
         if let mode { app.launchEnvironment["KRIA_SAVED_UPLOADS_MODE"] = mode }
+        if warning { app.launchEnvironment["KRIA_SAVED_UPLOADS_WARNING"] = "1" }
         app.launch()
         XCTAssertTrue(app.buttons["fixture-open-saved"].waitForExistence(timeout: 10))
         return app

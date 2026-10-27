@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.160.0] - 2026-10-27
+
+### Changed
+- feat(metrics): preserve request outcomes and expand iPhone verification (#1876) <!-- release-pr: 1876 -->
+
 ## [0.81.159.0] - 2026-10-27
 
 ### Changed
