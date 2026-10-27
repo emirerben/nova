@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.pipeline.guided_story import (
@@ -754,12 +757,10 @@ def test_the_stack_retry_is_dropped_when_it_does_not_help():
 # The creator filmed the song in four back-to-back takes; the aligner placed every
 # one confidently, with 0.68 s / 0.15 s / 0.99 s of song nobody filmed between them.
 # Positions are the prod job's, shifted 40 s earlier to fit the test song.
-SEQUENTIAL = [
-    ("A", 22.6148, 22.645),
-    ("B", 8.3113, 45.943),
-    ("C", 20.7804, 54.399),
-    ("D", 7.9862, 76.167),
-]
+_FIXTURE = json.loads(
+    (Path(__file__).parents[1] / "fixtures" / "kri996_lipsync_back_to_back_takes.json").read_text()
+)
+SEQUENTIAL = [(t["media_id"], t["duration_s"], t["delta_s"]) for t in _FIXTURE["takes"]]
 
 
 def _sequential_plan():
@@ -769,7 +770,8 @@ def _sequential_plan():
 
 def test_back_to_back_takes_with_filming_breaks_all_play_in_song_order():
     result = _sequential_plan()
-    assert [cut.media_id for cut in result.snapshot.fast_cuts] == ["A", "B", "C", "D"]
+    played = [cut.media_id for cut in result.snapshot.fast_cuts]
+    assert played == _FIXTURE["expected"]["takes_played"]
     assert result.song_receipt["dropped"] == []
     assert result.song_receipt["placed_outside_ids"] == []
     assert result.user_song.window_start_s == pytest.approx(22.945)
@@ -788,7 +790,7 @@ def test_a_filming_break_holds_the_last_frame_and_every_take_stays_in_sync():
     recipe = compile_phone_guided_plan(compiled_plan(result), footage, visuals, song=song_bed())
     assert recipe.duration == pytest.approx(result.snapshot.duration_s, abs=0.04)
     held = [clip for track in recipe.tracks for clip in track.clips if clip.hold_duration]
-    assert [clip.source_asset_id for clip in held] == ["A", "B", "C"]
+    assert [clip.source_asset_id for clip in held] == _FIXTURE["expected"]["held_takes"]
 
 
 def test_a_filming_break_longer_than_a_held_frame_still_splits():
