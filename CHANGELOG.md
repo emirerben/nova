@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.148.0] - 2026-10-27
+
+### Changed
+- fix(ci): main green — picker tests expect each other's fix; camera-roll iPhone step runs tests that exist (#1865) <!-- release-pr: 1865 -->
+
 ## [0.81.147.0] - 2026-10-26
 
 ### Changed
