@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.163.0] - 2026-10-27
+
+### Changed
+- fix(ci): preserve timing-window checks with pytest 9.2 (KRI-577) (#1886) <!-- release-pr: 1886 -->
+
 ## [0.81.162.0] - 2026-10-27
 
 ### Fixed
