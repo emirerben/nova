@@ -502,6 +502,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
                     HStack(spacing: 10) { ForEach(groups, id: \.first) { placementButtons($0, selected: selected, expanded: false) } }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
