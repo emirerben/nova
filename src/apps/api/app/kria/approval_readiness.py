@@ -425,8 +425,8 @@ def assess_readiness(
             )
             if disposition == "unverified"
             else say(
-                en="I haven't established how to render this change yet.",
-                tr="Bu değişikliği nasıl oluşturacağımı henüz belirleyemedim.",
+                en="I can't confirm this draft does it yet.",
+                tr="Bu taslağın bunu yaptığını henüz doğrulayamıyorum.",
             )
         )
         if proven and owner == "prepared_collection_story":
@@ -615,12 +615,7 @@ def readiness_matches(saved: object, current: dict[str, Any]) -> bool:
 def readiness_reply(brief: CreativeBrief | None, report: dict[str, Any]) -> str:
     """Display identified blocked requirements; never derive execution from prose."""
     by_id = {r.id: r for r in brief.live()} if brief else {}
-    lines = [
-        say(
-            en="I need to resolve these changes before you approve:",
-            tr="Onaylamadan önce şu değişiklikleri netleştirmem gerekiyor:",
-        )
-    ]
+    lines = [say(en="I can't make this yet:", tr="Bunu henüz yapamıyorum:")]
     for row in report["requirements"]:
         if row["disposition"] not in APPROVABLE:
             lines.append(f"- {by_id[row['requirement_id']].text()}: {row['reason']}")
