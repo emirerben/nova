@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import storage
 from app.models import CreationThread, RequestFollowingCase
-from app.services.request_following_cases import digest
+from app.services.request_following_cases import digest, failed_pre_job_turns
 from app.services.request_following_collection import eligible_case, source_capture
 
 Category = Literal[
@@ -129,7 +129,7 @@ def delivery_counts(capture: dict) -> dict[str, int]:
     )
     for job in jobs.values():
         counts["ready_jobs"] += int(job.get("status") in {"ready", "variants_ready"})
-        counts["failed_jobs"] += int(job.get("status") == "failed")
+        counts["failed_jobs"] += int(job.get("status") in {"failed", "processing_failed"})
         assembly = job.get("assembly_plan") or {}
         variants = {
             v.get("variant_id"): v for v in assembly.get("variants") or [] if isinstance(v, dict)
@@ -153,12 +153,13 @@ def delivery_counts(capture: dict) -> dict[str, int]:
                 record, status, published
             ):
                 counts["verified_device_exports"] += 1
-    failed_before_job = not jobs and any(
-        row.get("status") == "failed" and not row.get("job_ids")
-        for row in sections.get("turns") or []
-        if isinstance(row, dict)
-    )
-    return {**counts, "render_jobs": len(jobs), "pre_job_failure": int(failed_before_job)}
+    pre_job_failures = failed_pre_job_turns(capture)
+    return {
+        **counts,
+        "render_jobs": len(jobs),
+        "pre_job_failure": int(bool(pre_job_failures)),
+        "pre_job_failure_attempts": len(pre_job_failures),
+    }
 
 
 async def current_export(db, case, variant_id=None, *, sign=True):
@@ -277,6 +278,8 @@ async def daily_report(db):
         ready_job_sessions=0,
         pre_job_failure_sessions=0,
         render_jobs=0,
+        failed_jobs=0,
+        pre_job_failure_attempts=0,
         device_export_attempts=0,
         acknowledged_device_exports=0,
         verified_device_exports=0,
@@ -307,6 +310,8 @@ async def daily_report(db):
         delivery["pre_job_failure_sessions"] += observed["pre_job_failure"]
         for key in (
             "render_jobs",
+            "failed_jobs",
+            "pre_job_failure_attempts",
             "device_export_attempts",
             "acknowledged_device_exports",
             "verified_device_exports",
