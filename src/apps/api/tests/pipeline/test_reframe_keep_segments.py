@@ -438,7 +438,10 @@ class TestKeepSegmentsCommand:
             first, end = (round(float(value) * fps + 0.25) for value in match.groups())
             trimmed.append((first / fps, end / fps))
             i += 1
-        assert trimmed == pytest.approx(rendered_spans(segments, cut_frame_grid(start_s, end_s)))
+        for actual_window, expected_window in zip(
+            trimmed, rendered_spans(segments, cut_frame_grid(start_s, end_s)), strict=True
+        ):
+            assert actual_window == pytest.approx(expected_window)
 
     def test_sub_frame_segment_is_dropped(self) -> None:
         # (5.02, 5.04) snaps to no frame (both ends snap to frame 151).
