@@ -1,10 +1,11 @@
 # Cunda library-original device grants (KRI-835)
 
 Cunda's newly approved device-test render passed planning but stopped before
-export. Five of its ten ready photos used their linked original-library objects.
+export. All ten ready photos used verified, linked original-library objects;
+the final read-only audit found four outside the current upload folder.
 The worker validated those owned, available originals at their exact generations.
 The device-download route still required every visual to use the current
-project's upload-folder prefix and returned409 for those five library objects.
+project's upload-folder prefix and returned409 for those out-of-folder objects.
 The phone reported a generic changed-elsewhere conflict. Photos was never reached.
 
 ## Acceptance and repair
