@@ -368,6 +368,9 @@ class TakeSpeech:
     duration_s: float
     segments: tuple[Mapping[str, Any], ...]
     words: list[dict[str, Any]]
+    # KRI-967: Gemini's untimed transcript of the same clip (``speech.transcript``, KRI-808's
+    # independent listener); "" when the record has none.
+    reference: str = ""
 
 
 def single_take_speech(
@@ -391,7 +394,14 @@ def single_take_speech(
     words = segment_words(rows)
     if not duration or not words:
         return None
-    return TakeSpeech(str(row.get("media_id") or ""), duration, rows, words)
+    reference = speech.get("transcript") if isinstance(speech, Mapping) else None
+    return TakeSpeech(
+        str(row.get("media_id") or ""),
+        duration,
+        rows,
+        words,
+        reference if isinstance(reference, str) else "",
+    )
 
 
 # KRI-724's name for the same take speech.

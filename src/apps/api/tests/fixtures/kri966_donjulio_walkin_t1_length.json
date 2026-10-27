@@ -1,0 +1,1211 @@
+{
+ "_source": "Prod thread F0F3D5FB-A207-4F1F-8340-D1FAAA2B1A04 (Don Julio walk-in T1, 2026-10-26, prod a2426885d, iPhone protocol 22, Main Creator 2026-10-26-v98). `media_snapshot` and `brief_v4` are the approval's BriefBinding (GET /admin/jobs/ac91bb4f-.../debug, job.assembly_plan.creator_brief_binding), unchanged. `events` are thread events #4 and #6-#11 plus #20 (GET /admin/creation-threads/{id}/events), unchanged. `turn_briefs` is each turn's brief_version (GET .../turns). `variant` is variants[0] of the job without its signed URL and storage paths. Brief v1/v2/v3 are not stored separately; they are derived from brief_v4 by source turn (r1 rewritten on turn 2, r7 added on turn 3, r4 superseded on turn 4) and checked against prod: brief v2 + this snapshot reproduce the prod length card's input_digest (b6f6cc0a...), and r1.start_line \"Parrilla Don Julio, what do you think?\" (v1, RECONSTRUCTED from the picker's own text) reproduces the start-line picker's digest (f1017fed...).",
+ "prompt": "Talking-to-camera edit from this raw clip. Start at my question “Parrilla Don Julio, what do you think?” and end right after “Nice!” — drop the dining room before it and the “Zoom” and the table after it. Captions for both voices: I’m off camera, the guy in the black T-shirt is Atakan. Spell “Parrilla Don Julio” right. Put an “ATAKAN” name tag when he first appears and “SUPER EXCITED” in big letters on his words. Title: “Before the meat”. No text on faces. About 7 seconds.",
+ "v1_start_line": "Parrilla Don Julio, what do you think?",
+ "turn_ids": {
+  "t1": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee",
+  "t2": "9c434e51-f8f2-46d5-a51c-46ac3103a22b",
+  "t3": "00c91b75-991e-4a6a-bc24-1c599f3c8433",
+  "t4": "018d5dd1-3dd6-4858-8506-caee7b634b06"
+ },
+ "turn_briefs": {
+  "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee": 1,
+  "9c434e51-f8f2-46d5-a51c-46ac3103a22b": 2,
+  "00c91b75-991e-4a6a-bc24-1c599f3c8433": 3,
+  "018d5dd1-3dd6-4858-8506-caee7b634b06": null
+ },
+ "media_snapshot": {
+  "song_path": null,
+  "voiceover": null,
+  "clip_paths": [
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/f0f3d5fb-a207-4f1f-8340-d1faaa2b1a04/analysis-proxy-ios-EA851A43-50B2-469B-BC02-C25A3D276A3A.mp4"
+  ],
+  "song_analysis": null,
+  "song_alignment": null,
+  "voiceover_path": null,
+  "song_duration_s": null,
+  "song_generation": null,
+  "clip_assignments": [
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-25T15:19:07Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "restaurant patrons",
+     "exposure": {
+      "frames": 24,
+      "version": 1,
+      "mean_luma": 91.9,
+      "near_black_share": 0.0
+     },
+     "duration_s": 26.933333,
+     "transcript": "Parilla Don Julio. What do you think? Are you excited for the meat? Super excited. Nice. Zoom. Oh.",
+     "description": "people moving through restaurant entrance restaurant exterior view from inside man poses with restaurant sign and speaks patrons seated at outdoor tables",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 3.0,
+       "energy": 5.0,
+       "start_s": 0.0,
+       "description": "people moving through restaurant entrance"
+      },
+      {
+       "end_s": 7.5,
+       "energy": 6.0,
+       "start_s": 4.0,
+       "description": "restaurant exterior view from inside"
+      },
+      {
+       "end_s": 19.0,
+       "energy": 7.0,
+       "start_s": 15.0,
+       "description": "man poses with restaurant sign and speaks"
+      },
+      {
+       "end_s": 26.0,
+       "energy": 5.5,
+       "start_s": 22.0,
+       "description": "patrons seated at outdoor tables"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "white tablecloths",
+       "green striped awnings",
+       "red patio umbrellas",
+       "Parrilla Don Julio sign"
+      ],
+      "brands": [
+       "Don Julio",
+       "STAR"
+      ],
+      "people": {
+       "note": "diverse group of diners and restaurant staff",
+       "count": 20,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "So, what do you think?",
+         "end_s": 16.74,
+         "start_s": 15.0
+        },
+        {
+         "text": "Are you excited for the meet?",
+         "end_s": 17.8,
+         "start_s": 16.74
+        },
+        {
+         "text": "Super excited.",
+         "end_s": 18.96,
+         "start_s": 18.28
+        },
+        {
+         "text": "Nice.",
+         "end_s": 20.04,
+         "start_s": 20.0
+        },
+        {
+         "text": "Zoom.",
+         "end_s": 24.88,
+         "start_s": 24.28
+        }
+       ],
+       "to_camera": false,
+       "has_speech": true,
+       "transcript": "Parilla Don Julio. What do you think? Are you excited for the meat? Super excited. Nice. Zoom. Oh."
+      },
+      "actions": [
+       "person walks into restaurant",
+       "person films restaurant interior",
+       "person films restaurant exterior"
+      ],
+      "setting": "restaurant with indoor and outdoor seating",
+      "subject": "restaurant patrons",
+      "summary": "A person walks into a bustling restaurant, captures interior and exterior views of the eatery, and asks a companion about their excitement for the meal. The video showcases both indoor and outdoor seating areas with many people dining.",
+      "activity": "dining at a restaurant, filming restaurant interior and exterior",
+      "audio_type": "dialogue",
+      "content_type": "broll",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": [
+       {
+        "end_s": 3.0,
+        "start_s": 0.0,
+        "description": "people moving through restaurant entrance"
+       },
+       {
+        "end_s": 7.5,
+        "start_s": 4.0,
+        "description": "restaurant exterior view from inside"
+       },
+       {
+        "end_s": 19.0,
+        "start_s": 15.0,
+        "description": "man poses with restaurant sign and speaks"
+       },
+       {
+        "end_s": 26.0,
+        "start_s": 22.0,
+        "description": "patrons seated at outdoor tables"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "Parilla Don Julio. What do you think? Are you excited for the meat? Super excited. Nice. Zoom. Oh.",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/f0f3d5fb-a207-4f1f-8340-d1faaa2b1a04/analysis-proxy-ios-EA851A43-50B2-469B-BC02-C25A3D276A3A.mp4",
+    "media_id": "analysis-proxy-ios-EA851A43-50B2-469B-BC02-C25A3D276A3A.mp4",
+    "has_audio": true,
+    "duration_s": 26.933333,
+    "source_filename": "BE2EC559-F414-4A2E-9752-1CEEC75F4460-T1_01_footage.mp4",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1080,
+       "height": 1920,
+       "sha256": "8abe7467405273ba9dd023c5019fe5be644437bb01b773ea03f2e6ccd15f2f35",
+       "has_audio": true,
+       "byte_count": 37836000,
+       "duration_s": 26.934,
+       "orientation_degrees": 0
+      },
+      "duration_s": 26.933333333333334,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "2589fe58-4d99-48ab-a9b6-09918415f92d",
+    "library_source_id": "cdcb137e-552b-4967-bd24-182f023b6914",
+    "manifest_identity": "analysis-proxy-ios-EA851A43-50B2-469B-BC02-C25A3D276A3A.mp4",
+    "storage_generation": "1793025574588251"
+   }
+  ],
+  "voiceover_duration_s": null,
+  "voiceover_generation": null
+ },
+ "brief_v4": {
+  "version": 4,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "timing",
+    "facts": {
+     "end_line": "Nice!",
+     "duration_s": 7,
+     "start_line": "what do you think?"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "drop the dining room before it and the “Zoom” and the table after it",
+    "source_turn_id": "9c434e51-f8f2-46d5-a51c-46ac3103a22b"
+   },
+   {
+    "id": "r2",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Before the meat",
+    "description": "Title",
+    "source_turn_id": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "captions": "on",
+     "spellings": [
+      "Parrilla Don Julio"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Captions for both voices",
+    "source_turn_id": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "superseded",
+    "literal": "ATAKAN",
+    "description": "name tag when he first appears",
+    "source_turn_id": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {
+     "triggers": [
+      "Super excited"
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": "SUPER EXCITED",
+    "description": "in big letters on his words",
+    "source_turn_id": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee"
+   },
+   {
+    "id": "r6",
+    "kind": "style",
+    "facts": {
+     "keep_text_off": [
+      {
+       "kind": "face"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "No text on faces",
+    "source_turn_id": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee"
+   },
+   {
+    "id": "r7",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 10.2
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Use the available 10.2 seconds",
+    "source_turn_id": "00c91b75-991e-4a6a-bc24-1c599f3c8433"
+   }
+  ]
+ },
+ "events": {
+  "4": {
+   "sequence": 4,
+   "kind": "user_message",
+   "actor": "user",
+   "content": "Talking-to-camera edit from this raw clip. Start at my question “Parrilla Don Julio, what do you think?” and end right after “Nice!” — drop the dining room before it and the “Zoom” and the table after it. Captions for both voices: I’m off camera, the guy in the black T-shirt is Atakan. Spell “Parrilla Don Julio” right. Put an “ATAKAN” name tag when he first appears and “SUPER EXCITED” in big letters on his words. Title: “Before the meat”. No text on faces. About 7 seconds.",
+   "payload": {
+    "turn_id": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee",
+    "turn_status": "pending",
+    "request_digest": "f2bb419676a32982359872b3801d2e6b28e36e6755cf00989e155abe271db34f",
+    "client_protocol": 22,
+    "runtime_version": 2,
+    "marks_protected_regions": true,
+    "answers_moment_questions": true,
+    "answers_batched_questions": true
+   },
+   "turn_id": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee",
+   "brief_version": 1
+  },
+  "6": {
+   "sequence": 6,
+   "kind": "assistant_response",
+   "actor": "assistant",
+   "content": "I couldn't find “Parrilla Don Julio, what do you think?” in what's said in your video. Which line should it open on?\n1. “So,”\n2. “what do you think?” (recommended)\n3. “Are you excited for the meet?”\n4. “Super excited.”\n5. “Nice.”\n6. None of these — keep it from the start\nTap an option, or tell me in your own words.",
+   "payload": {
+    "turn_id": "86d1e94b-a3a6-4d9f-9bee-cbba9f8585ee",
+    "turn_value": "question",
+    "receipt_ids": [],
+    "next_actions": [],
+    "brief_coverage": {
+     "enforced_ids": [],
+     "retrieved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6"
+     ],
+     "applicable_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6"
+     ],
+     "unresolved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6"
+     ]
+    },
+    "schema_version": 2,
+    "choice_question": {
+     "kind": "take_line_start",
+     "options": [
+      {
+       "key": "line_0",
+       "label": "“So,”",
+       "aliases": [
+        "So,"
+       ],
+       "recommended": false
+      },
+      {
+       "key": "line_1",
+       "label": "“what do you think?”",
+       "aliases": [
+        "what do you think?"
+       ],
+       "recommended": true
+      },
+      {
+       "key": "line_2",
+       "label": "“Are you excited for the meet?”",
+       "aliases": [
+        "Are you excited for the meet?"
+       ],
+       "recommended": false
+      },
+      {
+       "key": "line_3",
+       "label": "“Super excited.”",
+       "aliases": [
+        "Super excited."
+       ],
+       "recommended": false
+      },
+      {
+       "key": "line_4",
+       "label": "“Nice.”",
+       "aliases": [
+        "Nice."
+       ],
+       "recommended": false
+      },
+      {
+       "key": "no_line",
+       "label": "None of these — keep it from the start",
+       "aliases": [
+        "none",
+        "none of these",
+        "none of them",
+        "neither",
+        "skip",
+        "skip it",
+        "no",
+        "keep it from the start",
+        "from the start",
+        "keep the start",
+        "hiçbiri",
+        "hiçbirini",
+        "hiçbiri değil",
+        "hayır",
+        "yok",
+        "atla",
+        "baştan",
+        "baştan başlasın",
+        "başından"
+       ],
+       "description": "The video still opens at the start of your take.",
+       "recommended": false
+      }
+     ],
+     "version": 1,
+     "conflict": "take_line_start",
+     "question_id": "66179e46-06b5-4f73-be93-3ee8d94b54b7",
+     "input_digest": "f1017fed1df5aefc1d17c0cb",
+     "allow_free_text": true
+    }
+   },
+   "turn_id": null,
+   "brief_version": null
+  },
+  "7": {
+   "sequence": 7,
+   "kind": "user_message",
+   "actor": "user",
+   "content": "“what do you think?”",
+   "payload": {
+    "turn_id": "9c434e51-f8f2-46d5-a51c-46ac3103a22b",
+    "turn_status": "pending",
+    "request_digest": "658df8746ab2560bc3d50bdee352fece9d595681f4bd2c88e6268a568bc13237",
+    "client_protocol": 22,
+    "runtime_version": 2,
+    "choice_selection": {
+     "option_key": "line_1",
+     "question_id": "66179e46-06b5-4f73-be93-3ee8d94b54b7"
+    },
+    "marks_protected_regions": true,
+    "answers_moment_questions": true,
+    "answers_batched_questions": true
+   },
+   "turn_id": "9c434e51-f8f2-46d5-a51c-46ac3103a22b",
+   "brief_version": 2
+  },
+  "8": {
+   "sequence": 8,
+   "kind": "assistant_response",
+   "actor": "assistant",
+   "content": "Your brief says \"drop the dining room before it and the “Zoom” and the table after it\", but the available spoken take is 10.2 seconds. Unfortunately that spoken take cannot make a 7-second edit without changing the source timing. The most I can do is: Use the available 10.2 seconds. Reply \"Use the available 10.2 seconds\" to go with that, or change your request.",
+   "payload": {
+    "turn_id": "9c434e51-f8f2-46d5-a51c-46ac3103a22b",
+    "turn_value": "question",
+    "receipt_ids": [],
+    "next_actions": [],
+    "brief_coverage": {
+     "enforced_ids": [],
+     "retrieved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6"
+     ],
+     "applicable_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6"
+     ],
+     "unresolved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6"
+     ]
+    },
+    "schema_version": 2,
+    "choice_question": {
+     "kind": "length_vs_natural",
+     "options": [
+      {
+       "key": "accept_natural",
+       "label": "Use the available 10.2 seconds",
+       "aliases": [
+        "use available length",
+        "use the available length",
+        "match the source"
+       ],
+       "description": "The video follows the spoken take without reuse or a silent extension.",
+       "recommended": false
+      }
+     ],
+     "version": 1,
+     "conflict": "length_vs_natural",
+     "question_id": "9cdaad9c-d406-403c-8d80-61d638bed4d4",
+     "input_digest": "b6f6cc0a2378cdc9e74e8125",
+     "allow_free_text": true
+    }
+   },
+   "turn_id": null,
+   "brief_version": null
+  },
+  "9": {
+   "sequence": 9,
+   "kind": "user_message",
+   "actor": "user",
+   "content": "Use the available 10.2 seconds",
+   "payload": {
+    "turn_id": "00c91b75-991e-4a6a-bc24-1c599f3c8433",
+    "turn_status": "pending",
+    "request_digest": "64bada872d53a0378db87a46d3b181fd0cd644879992f46c6d31b15a66dab582",
+    "client_protocol": 22,
+    "runtime_version": 2,
+    "choice_selection": {
+     "option_key": "accept_natural",
+     "question_id": "9cdaad9c-d406-403c-8d80-61d638bed4d4"
+    },
+    "marks_protected_regions": true,
+    "answers_moment_questions": true,
+    "answers_batched_questions": true
+   },
+   "turn_id": "00c91b75-991e-4a6a-bc24-1c599f3c8433",
+   "brief_version": 3
+  },
+  "10": {
+   "sequence": 10,
+   "kind": "assistant_response",
+   "actor": "assistant",
+   "content": "- Partly: drop the dining room before it and the “Zoom” and the table after it (I'll keep your take from “what do you think?” (0:15) to right after “Nice!” (0:20), if I find those lines)\n- Done: Title (\"Before the meat\")\n- Partly: Captions for both voices (Every voice in your take gets captions, off-camera ones too; I'll spell Parrilla Don Julio the way you wrote it and check it in the finished video)\n- Partly: name tag when he first appears (\"ATAKAN\") (That exact text isn't in this draft)\n- Partly: in big letters on his words (\"SUPER EXCITED\") (I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear)\nHave a look at these in the video:\n- No text on faces\n- Use the available 10.2 seconds\nI held this first draft back. Should I try a different approach, or make this simpler version?",
+   "payload": {
+    "turn_id": "00c91b75-991e-4a6a-bc24-1c599f3c8433",
+    "turn_value": "question",
+    "receipt_ids": [],
+    "next_actions": [],
+    "brief_coverage": {
+     "stage": "draft",
+     "reason": "simplification_requires_choice",
+     "enforced_ids": [],
+     "retrieved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ],
+     "applicable_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ],
+     "unresolved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7"
+     ]
+    },
+    "schema_version": 2,
+    "choice_question": {
+     "options": [
+      {
+       "key": "different_approach",
+       "label": "Try a different approach",
+       "recommended": false
+      },
+      {
+       "key": "simpler_version",
+       "label": "Make this simpler version",
+       "aliases": [
+        "simpler version",
+        "make it more basic",
+        "skip, decide for me",
+        "Make this simpler version",
+        "Daha basit sürümü hazırla"
+       ],
+       "recommended": false
+      }
+     ],
+     "version": 1,
+     "conflict": "simplification_requires_choice",
+     "question_id": "323ef69b-1c27-464b-ab24-751fc50849d2",
+     "allow_free_text": true
+    },
+    "requirement_receipts": [
+     {
+      "stage": "checked",
+      "reason": "I'll keep your take from “what do you think?” (0:15) to right after “Nice!” (0:20), if I find those lines",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 3,
+      "generation_id": null,
+      "requirement_id": "r1",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 3,
+      "generation_id": null,
+      "requirement_id": "r2",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "Every voice in your take gets captions, off-camera ones too; I'll spell Parrilla Don Julio the way you wrote it and check it in the finished video",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 3,
+      "generation_id": null,
+      "requirement_id": "r3",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "That exact text isn't in this draft.",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 3,
+      "generation_id": null,
+      "requirement_id": "r4",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "I'll show it the moment you say that word in your take; if I don't hear the word, it won't appear",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 3,
+      "generation_id": null,
+      "requirement_id": "r5",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "understood",
+      "reason": "I can't verify this one automatically yet.",
+      "status": "partial",
+      "inferred": [],
+      "verification": "unchecked",
+      "brief_version": 3,
+      "generation_id": null,
+      "requirement_id": "r6",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "understood",
+      "reason": "I can't confirm this draft's length yet.",
+      "status": "partial",
+      "inferred": [],
+      "verification": "unchecked",
+      "brief_version": 3,
+      "generation_id": null,
+      "requirement_id": "r7",
+      "inferred_labels": [],
+      "target_media_ids": []
+     }
+    ]
+   },
+   "turn_id": null,
+   "brief_version": null
+  },
+  "11": {
+   "sequence": 11,
+   "kind": "user_message",
+   "actor": "user",
+   "content": "Make this simpler version",
+   "payload": {
+    "turn_id": "018d5dd1-3dd6-4858-8506-caee7b634b06",
+    "turn_status": "pending",
+    "request_digest": "a4a33fc181fec729c30710f0c61774c517c1ac1d0dad791152dac2332b34af34",
+    "client_protocol": 22,
+    "runtime_version": 2,
+    "choice_selection": {
+     "option_key": "simpler_version",
+     "question_id": "323ef69b-1c27-464b-ab24-751fc50849d2"
+    },
+    "marks_protected_regions": true,
+    "answers_moment_questions": true,
+    "answers_batched_questions": true
+   },
+   "turn_id": "018d5dd1-3dd6-4858-8506-caee7b634b06",
+   "brief_version": 4
+  },
+  "20": {
+   "sequence": 20,
+   "kind": "assistant_review",
+   "actor": "assistant",
+   "content": "- Done: drop the dining room before it and the “Zoom” and the table after it\n- Done: Title (\"Before the meat\")\n- Partly: Captions for both voices (Parrilla Don Julio doesn't appear in the captions, so I couldn't check its spelling)\n- Done: in big letters on his words (\"SUPER EXCITED\")\n- Partly: Use the available 10.2 seconds (This draft is about 4.2s (plus a 1.6s outro on the finished video); you asked for 10.2s)\nHave a look at these in the video:\n- No text on faces",
+   "payload": {
+    "job_id": "ac91bb4f-fea6-4f9e-a429-67e8b8507f85",
+    "turn_id": "018d5dd1-3dd6-4858-8506-caee7b634b06",
+    "turn_value": "review",
+    "variant_id": "subtitled",
+    "receipt_ids": [
+     "992778ba-ff5a-42b8-97e5-730e7d5d0a69"
+    ],
+    "execution_id": "992778ba-ff5a-42b8-97e5-730e7d5d0a69",
+    "next_actions": [
+     "review_cut",
+     "request_revision"
+    ],
+    "schema_version": 2,
+    "render_generation_id": "1316933b-7470-4220-b78d-625e83c89582",
+    "requirement_receipts": [
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 4,
+      "generation_id": "1316933b-7470-4220-b78d-625e83c89582",
+      "requirement_id": "r1",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 4,
+      "generation_id": "1316933b-7470-4220-b78d-625e83c89582",
+      "requirement_id": "r2",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "Parrilla Don Julio doesn't appear in the captions, so I couldn't check its spelling.",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 4,
+      "generation_id": "1316933b-7470-4220-b78d-625e83c89582",
+      "requirement_id": "r3",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 4,
+      "generation_id": "1316933b-7470-4220-b78d-625e83c89582",
+      "requirement_id": "r5",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "understood",
+      "reason": null,
+      "status": "met",
+      "inferred": [],
+      "verification": "unchecked",
+      "brief_version": 4,
+      "generation_id": "1316933b-7470-4220-b78d-625e83c89582",
+      "requirement_id": "r6",
+      "inferred_labels": [],
+      "target_media_ids": []
+     },
+     {
+      "stage": "checked",
+      "reason": "This draft is about 4.2s (plus a 1.6s outro on the finished video); you asked for 10.2s.",
+      "status": "partial",
+      "inferred": [],
+      "verification": "checked",
+      "brief_version": 4,
+      "generation_id": "1316933b-7470-4220-b78d-625e83c89582",
+      "requirement_id": "r7",
+      "inferred_labels": [],
+      "target_media_ids": []
+     }
+    ]
+   },
+   "turn_id": null,
+   "brief_version": null
+  }
+ },
+ "variant": {
+  "ok": true,
+  "rank": 1,
+  "end_cut": {
+   "end_s": 20.27,
+   "exact": true,
+   "quote": "Nice!",
+   "status": "applied",
+   "version": 1,
+   "removed_s": 6.663,
+   "requirement_ids": [
+    "r1"
+   ]
+  },
+  "duration_s": 5.8199999999999985,
+  "variant_id": "subtitled",
+  "opening_cut": {
+   "exact": true,
+   "quote": "what do you think?",
+   "status": "applied",
+   "start_s": 16.05,
+   "version": 1,
+   "removed_s": 16.05,
+   "requirement_ids": [
+    "r1"
+   ]
+  },
+  "brand_tail_s": 1.6,
+  "caption_cues": [
+   {
+    "text": "What do you think?",
+    "end_s": 0.69,
+    "words": [
+     {
+      "text": "What",
+      "end_s": 0.27,
+      "start_s": 0.15
+     },
+     {
+      "text": "do",
+      "end_s": 0.37,
+      "start_s": 0.27
+     },
+     {
+      "text": "you",
+      "end_s": 0.43,
+      "start_s": 0.37
+     },
+     {
+      "text": "think?",
+      "end_s": 0.69,
+      "start_s": 0.43
+     }
+    ],
+    "start_s": 0.15
+   },
+   {
+    "text": "Are you excited for the meet?",
+    "end_s": 1.77,
+    "words": [
+     {
+      "text": "Are",
+      "end_s": 0.91,
+      "start_s": 0.89
+     },
+     {
+      "text": "you",
+      "end_s": 1.11,
+      "start_s": 0.91
+     },
+     {
+      "text": "excited",
+      "end_s": 1.25,
+      "start_s": 1.11
+     },
+     {
+      "text": "for",
+      "end_s": 1.49,
+      "start_s": 1.25
+     },
+     {
+      "text": "the",
+      "end_s": 1.69,
+      "start_s": 1.49
+     },
+     {
+      "text": "meet?",
+      "end_s": 1.77,
+      "start_s": 1.69
+     }
+    ],
+    "start_s": 0.89
+   },
+   {
+    "text": "Super excited.",
+    "end_s": 2.89,
+    "words": [
+     {
+      "text": "Super",
+      "end_s": 2.53,
+      "start_s": 2.31
+     },
+     {
+      "text": "excited.",
+      "end_s": 2.89,
+      "start_s": 2.53
+     }
+    ],
+    "start_s": 2.31
+   },
+   {
+    "text": "Nice.",
+    "end_s": 3.97,
+    "words": [
+     {
+      "text": "Nice.",
+      "end_s": 3.97,
+      "start_s": 3.49
+     }
+    ],
+    "start_s": 3.49
+   }
+  ],
+  "render_status": "ready",
+  "text_elements": [
+   {
+    "id": "opening-title",
+    "role": "generative_intro",
+    "text": "Before the meat",
+    "end_s": 1.27,
+    "effect": "fade-in",
+    "x_frac": 0.5,
+    "y_frac": 0.15,
+    "removed": false,
+    "size_px": 120.0,
+    "start_s": 0.0,
+    "position": "custom",
+    "alignment": "center",
+    "size_class": "large",
+    "font_family": "Playfair Display",
+    "source_params": {
+     "source": "opening_title"
+    },
+    "behind_subject": false
+   },
+   {
+    "id": "spoken-text-r5",
+    "role": "generative_intro",
+    "text": "SUPER EXCITED",
+    "end_s": 4.22,
+    "effect": "fade-in",
+    "x_frac": 0.5,
+    "y_frac": 0.15,
+    "removed": false,
+    "size_px": 120.0,
+    "start_s": 2.31,
+    "position": "custom",
+    "alignment": "center",
+    "size_class": "large",
+    "font_family": "Playfair Display",
+    "source_params": {
+     "source": "spoken_text",
+     "requirement_id": "r5"
+    },
+    "behind_subject": false
+   }
+  ],
+  "edit_duration_s": 4.219999999999999,
+  "caption_language": "en",
+  "overlay_transcript": [
+   {
+    "text": "Farille",
+    "end_s": 15.15999984741211,
+    "start_s": 14.680000305175781,
+    "confidence": 1.0
+   },
+   {
+    "text": "Don",
+    "end_s": 15.479999542236328,
+    "start_s": 15.15999984741211,
+    "confidence": 1.0
+   },
+   {
+    "text": "Julio,",
+    "end_s": 15.720000267028809,
+    "start_s": 15.479999542236328,
+    "confidence": 1.0
+   },
+   {
+    "text": "what",
+    "end_s": 16.31999969482422,
+    "start_s": 16.200000762939453,
+    "confidence": 1.0
+   },
+   {
+    "text": "do",
+    "end_s": 16.420000076293945,
+    "start_s": 16.31999969482422,
+    "confidence": 1.0
+   },
+   {
+    "text": "you",
+    "end_s": 16.479999542236328,
+    "start_s": 16.420000076293945,
+    "confidence": 1.0
+   },
+   {
+    "text": "think?",
+    "end_s": 16.739999771118164,
+    "start_s": 16.479999542236328,
+    "confidence": 1.0
+   },
+   {
+    "text": "Are",
+    "end_s": 16.959999084472656,
+    "start_s": 16.940000534057617,
+    "confidence": 1.0
+   },
+   {
+    "text": "you",
+    "end_s": 17.15999984741211,
+    "start_s": 16.959999084472656,
+    "confidence": 1.0
+   },
+   {
+    "text": "excited",
+    "end_s": 17.299999237060547,
+    "start_s": 17.15999984741211,
+    "confidence": 1.0
+   },
+   {
+    "text": "for",
+    "end_s": 17.540000915527344,
+    "start_s": 17.299999237060547,
+    "confidence": 1.0
+   },
+   {
+    "text": "the",
+    "end_s": 17.739999771118164,
+    "start_s": 17.540000915527344,
+    "confidence": 1.0
+   },
+   {
+    "text": "meet?",
+    "end_s": 17.81999969482422,
+    "start_s": 17.739999771118164,
+    "confidence": 1.0
+   },
+   {
+    "text": "Super",
+    "end_s": 18.579999923706055,
+    "start_s": 18.360000610351562,
+    "confidence": 1.0
+   },
+   {
+    "text": "excited.",
+    "end_s": 18.940000534057617,
+    "start_s": 18.579999923706055,
+    "confidence": 1.0
+   },
+   {
+    "text": "Nice.",
+    "end_s": 20.020000457763672,
+    "start_s": 19.540000915527344,
+    "confidence": 1.0
+   },
+   {
+    "text": "Zoom!",
+    "end_s": 24.899999618530273,
+    "start_s": 24.420000076293945,
+    "confidence": 1.0
+   }
+  ],
+  "phone_beat_receipt": null,
+  "phone_lane_receipt": {
+   "applied": [],
+   "dropped": []
+  },
+  "render_destination": "device",
+  "render_finished_at": "2026-10-26T14:47:01.096878+00:00",
+  "resolved_archetype": "subtitled",
+  "render_generation_id": "1316933b-7470-4220-b78d-625e83c89582",
+  "phone_overlay_receipt": {
+   "placed": [],
+   "matcher": "none",
+   "version": 1,
+   "unplaced": [],
+   "wishlist": [],
+   "face_sampling": "skipped"
+  },
+  "spoken_text_placement": {
+   "rows": [
+    {
+     "text": "SUPER EXCITED",
+     "end_s": 4.22,
+     "status": "placed",
+     "start_s": 2.31,
+     "trigger": "Super excited",
+     "triggers": [
+      "Super excited"
+     ],
+     "placement": {
+      "faces": "detected",
+      "status": "preset",
+      "anchors": 6,
+      "decoded": 6,
+      "objects": [],
+      "coverage": 0.0,
+      "detected": 5,
+      "face_boxes": 5,
+      "text_overlap": false,
+      "chosen_y_frac": 0.15,
+      "face_sampling": "ok",
+      "default_y_frac": 0.15,
+      "face_collision": false,
+      "object_coverage": 0.0,
+      "object_collision": false,
+      "objects_verified": false
+     },
+     "element_id": "spoken-text-r5",
+     "face_collision": false,
+     "requirement_id": "r5",
+     "object_collision": false
+    }
+   ],
+   "version": 1
+  },
+  "protected_text_regions": {
+   "texts": {
+    "title": "unverified",
+    "captions": "clear",
+    "spoken:r5": "unverified"
+   },
+   "targets": [
+    {
+     "kind": "face",
+     "label": "face",
+     "status": "clear",
+     "grounding": "face_sampler",
+     "requirement_ids": [
+      "r6"
+     ]
+    }
+   ],
+   "verdict": "clear",
+   "version": 1,
+   "face_texts": {
+    "title": "clear",
+    "captions": "clear",
+    "spoken:r5": "clear"
+   },
+   "keep_segments": [
+    [
+     16.05,
+     20.27
+    ]
+   ],
+   "landscape_fit": "fit",
+   "text_overlaps": [],
+   "speaker_media_id": "analysis-proxy-ios-EA851A43-50B2-469B-BC02-C25A3D276A3A.mp4",
+   "speaker_position_x": null,
+   "measured_fingerprint": "c36eecce7ec24685d9720927"
+  },
+  "opening_title_placement": {
+   "faces": "detected",
+   "status": "preset",
+   "anchors": 6,
+   "decoded": 6,
+   "objects": [],
+   "coverage": 0.0,
+   "detected": 6,
+   "face_boxes": 6,
+   "text_overlap": false,
+   "chosen_y_frac": 0.15,
+   "face_sampling": "ok",
+   "default_y_frac": 0.15,
+   "face_collision": false,
+   "object_coverage": 0.0,
+   "object_collision": false,
+   "objects_verified": false
+  },
+  "voiceover_caption_style": "sentence",
+  "text_elements_user_edited": true,
+  "text_elements_materialized_from": "opening_title"
+ }
+}

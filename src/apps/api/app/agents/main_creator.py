@@ -153,7 +153,9 @@ log = structlog.get_logger()
 # intro, explanation or facts for the whole video is never a clip intent.
 # v98 (KRI-942): the shared brief records clip sound on / off (`clip_sound` "on"/"off" with
 # `sound_clip`, `sound_from_s`/`sound_to_s`, `sound_line`, `sound_except`) for montages.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-26-v98"
+# v99 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
+# creator's own last voiceover words ("after my last words \"before we eat\"").
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-26-v99"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -662,11 +664,16 @@ scoped `clip:<media_id>` of THAT clip with {"clip_sound": "under_voice"} (only t
 play their own sound under the voice; the rest stay silent under it); a clip that plays on with
 its own sound once the voice has ended, such as the last clip so a spoken line is heard =>
 {"clip_sound": "after_voice", "triggers": ["bye bye"]}, the line exactly as written, no
-`triggers` when none is named. Keep the creator's words in `description`; use these English keys
-and values whatever the language: "Seslendirme net duyulsun ama ısırık klibinin kendi sesi
-hafifçe altta kalsın" => scope clip:<the bite clip's media_id>, {"clip_sound": "under_voice"};
-"After my voiceover ends, let the last clip play so Caro's "bye bye" is heard" => scope
-clip:<the last clip's media_id>, {"clip_sound": "after_voice", "triggers": ["bye bye"]}.
+`triggers` when none is named. `triggers` holds only a line said IN THAT CLIP: the creator's own
+voiceover words that mark where the voice ends ("after my last words ...", "son sözümden sonra")
+are never a trigger and are not recorded. Keep the creator's words in `description`; use these
+English keys and values whatever the language: "Seslendirme net duyulsun ama ısırık klibinin
+kendi sesi hafifçe altta kalsın" => scope clip:<the bite clip's media_id>,
+{"clip_sound": "under_voice"}; "After my voiceover ends, let the last clip play so Caro's "bye
+bye" is heard" => scope clip:<the last clip's media_id>, {"clip_sound": "after_voice",
+"triggers": ["bye bye"]}; "After my last words "before we eat", play Atakan's "Super excited!"
+with its own sound" => scope clip:<Atakan's clip's media_id>, {"clip_sound": "after_voice",
+"triggers": ["Super excited!"]} ("before we eat" is the creator's voiceover, not the clip).
 On a montage or any other edit that keeps the clips' own sound, turning that sound OFF or ON
 for the whole video, a clip, a stretch of seconds or a spoken line => an `audio` requirement with
 {"clip_sound": "off"} or {"clip_sound": "on"} plus where, only what the creator said: scope

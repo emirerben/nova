@@ -119,16 +119,20 @@ from app.models import (
     Persona,
     PlanItem,
 )
+from app.pipeline.best_parts import edit_cap_s
 from app.pipeline.pinned_text import pin_range_grounded
 from app.routes._copilot import CopilotTurnBody, is_overlay_display_ask, run_copilot_turn
 from app.routes.generative_jobs import variant_render_baseline
 from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
-    MAX_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     PinnedText,
 )
-from app.schemas.user_song import SONG_ALIGNMENT_VERSION
+from app.schemas.user_song import (
+    SONG_ALIGNMENT_VERSION,
+    SONG_ORDER_ANSWER_KEY,
+    SONG_RANGE_ANSWER_KEY,
+)
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
@@ -145,6 +149,7 @@ from app.services.choice_questions import (
     simpler_version_accepted,
     simpler_version_question,
     tag_event,
+    without_length_answer_echo,
 )
 from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import (
@@ -157,8 +162,7 @@ from app.services.clip_intent_planning import (
     whole_video_text_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
-from app.services.clip_picker_inventory import answered_inventory
-from app.services.clip_selection import fold_clip_selections
+from app.services.clip_selection import answered_rows, fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
     CreativeCopyState,
@@ -263,6 +267,16 @@ def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | No
         return MixedMediaTimingProfile.model_validate(raw)
     except ValueError:
         return None
+
+
+def _edit_cap_s(strategy: Mapping[str, Any]) -> float:
+    """The longest edit this strategy can be planned to: spoken sources run longer."""
+    from app.services.length_policy import natural_length_owner  # noqa: PLC0415
+
+    try:
+        return edit_cap_s(natural_length_owner(strategy))
+    except ValueError:
+        return edit_cap_s(None)
 
 
 def _enrich_best_parts_snapshot(
@@ -1157,6 +1171,7 @@ def _clip_intent_resolution_plan(
     diagnostics: dict[str, Any] | None = None,
     clip_question: dict[str, Any] | None = None,
     reply_options: Sequence[str] = (),
+    clip_intent_inventory: dict[str, Any] | None = None,
 ) -> KriaTurnPlan:
     if status == "needs_creator":
         return KriaTurnPlan(
@@ -1169,6 +1184,8 @@ def _clip_intent_resolution_plan(
             ),
             diagnostics=_safe_diagnostics(status, diagnostics),
             clip_question=clip_question,
+            # KRI-950: the checked list behind the picker, reused when the tap is all that comes.
+            clip_intent_inventory=clip_intent_inventory if clip_question else None,
             # KRI-804: tappable answers, e.g. "Keep ... exactly as written" for a label.
             reply_options=list(reply_options) or None,
         )
@@ -1353,6 +1370,60 @@ async def _load_thread_events(
     return [
         tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
     ]
+
+
+# KRI-950: answers that can change what the creator asked for; a tap riding with one re-plans.
+_OTHER_ANSWER_KEYS = frozenset(
+    {
+        "choice_selection",
+        "protected_region",
+        "moment_order",
+        SONG_ORDER_ANSWER_KEY,
+        SONG_RANGE_ANSWER_KEY,
+    }
+)
+
+
+def _picker_answer_turn_id(events: Sequence[tuple[str, Any]]) -> str | None:
+    """The turn whose clip picker the latest creator event answers, when it ONLY answers it.
+
+    The latest creator event must be a ``clip_selection`` (a tap or "Skip") with no other
+    answer, for the picker in the reply just before it; events the server wrote on its own
+    after the tap (a finished render, a review) are not the creator's. A typed line after that
+    reply means new words, so this returns None and the turn re-plans (KRI-950)."""
+    latest = next((i for i in range(len(events) - 1, -1, -1) if events[i][0] == "user"), None)
+    if latest is None:
+        return None
+    payload = events[latest][1] if isinstance(events[latest][1], dict) else {}
+    selection = payload.get("clip_selection")
+    if not isinstance(selection, dict) or _OTHER_ANSWER_KEYS & payload.keys():
+        return None
+    for role, earlier in reversed(events[:latest]):
+        if role == "user":
+            return None
+        question = earlier.get("clip_question") if isinstance(earlier, dict) else None
+        if isinstance(question, dict):
+            if question.get("question_id") != selection.get("question_id"):
+                return None
+            turn_id = earlier.get("turn_id")
+            return turn_id if isinstance(turn_id, str) else None
+    return None
+
+
+async def _load_checked_inventory(db: AsyncSession, turn_id: str) -> Any:
+    """KRI-950: the clip-intent list the asking turn kept (``clip_intent_inventory``), or None."""
+    try:
+        plan = (
+            await db.execute(
+                select(CreatorAgentTurn.plan_json).where(CreatorAgentTurn.id == uuid.UUID(turn_id))
+            )
+        ).scalar_one_or_none()
+    except Exception as exc:  # noqa: BLE001 - a lost list only means a re-plan, as before
+        log.warning("kria_checked_inventory_unreadable", error_type=type(exc).__name__)
+        return None
+    finally:
+        await db.rollback()  # no connection pinned across the model calls that follow
+    return plan.get("clip_intent_inventory") if isinstance(plan, dict) else None
 
 
 async def _song_order_gate(
@@ -2751,9 +2822,10 @@ def _with_wording_question(wording: PlannedKriaTurn, planned: PlannedKriaTurn) -
     plan = planned.plan
     title = _pin_key(str((wording.plan.choice_question or {}).get("candidate") or ""))
     words = [
-        _pin_key(str(category.get("creator_text") or ""))
+        _pin_key(str(row.get("creator_text") or ""))
         for category in (plan.clip_question or {}).get("categories") or []
         if isinstance(category, dict)
+        for row in answered_rows(category)  # KRI-951: and the rows joined behind it
     ]
     if (
         plan.mode != "respond"
@@ -3390,8 +3462,14 @@ async def _plan_creator_action(
         thread_events: list[tuple[str, dict[str, Any] | None]] = []
         if settings.kria_clip_selection_questions_enabled or settings.kria_choice_questions_enabled:
             thread_events = await _load_thread_events(db, thread_id)
+        checked_inventory = None
         if settings.kria_clip_selection_questions_enabled:
             clip_selections = fold_clip_selections(thread_events)
+            # KRI-950: a tap is an answer, not a new request: reuse the list the picker's turn
+            # checked rather than ask the planner model again for the same words.
+            asking_turn = _picker_answer_turn_id(thread_events)
+            if asking_turn is not None:
+                checked_inventory = await _load_checked_inventory(db, asking_turn)
         # KRI-766: the texts the creator dictated for a described shot, which this turn's
         # inventory may not repeat, and the labels the draft already placed.
         brief_labels = brief_label_asks(
@@ -3440,11 +3518,6 @@ async def _plan_creator_action(
                 ),
                 understanding_wait_until=_clip_understanding_wait_until(),
                 **({"clip_selections": clip_selections} if clip_selections else {}),
-                **(
-                    {"picker_inventory": inventory}
-                    if (inventory := answered_inventory(thread_events, intent_clips)) is not None
-                    else {}
-                ),
                 # KRI-612: "explain the footages" puts a line from the footage on each clip.
                 **({"describe_clips": True} if describe_clips else {}),
                 **({"brief_labels": brief_labels} if brief_labels else {}),
@@ -3452,6 +3525,7 @@ async def _plan_creator_action(
                 **({} if shot_captions else {"shot_captions": False}),
                 # KRI-945: a caption for the brief's researched text or title is never asked.
                 **({"whole_video_texts": whole_video_texts} if whole_video_texts else {}),
+                **({"checked_inventory": checked_inventory} if checked_inventory else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
@@ -3622,6 +3696,7 @@ async def _plan_creator_action(
                     ),
                     diagnostics=_resolution_diagnostics(planned.resolution),
                     clip_question=clip_question,
+                    clip_intent_inventory=planned.inventory,
                     reply_options=(
                         planned.resolution.reply_options if planned.resolution.needs_creator else ()
                     ),
@@ -3658,6 +3733,7 @@ async def _plan_creator_action(
                             ),
                         },
                         clip_question=asked[1],
+                        clip_intent_inventory=planned.inventory,
                     ),
                     manifest_hash=manifest.manifest_hash,
                     context_hash=manifest.context_hash,
@@ -4660,7 +4736,7 @@ async def _gate_unresolved_choices(
         enriched_snapshot,
         events,
         ChoiceCapability(
-            max_duration_s=float(MAX_PROPOSAL_DURATION_S),
+            max_duration_s=_edit_cap_s(strategy),
             creator_id=creator_id,
             voice_route=settings.voice_behind_footage_enabled,
             speech_occurrence=settings.speech_occurrence_question_enabled,
@@ -5557,6 +5633,19 @@ async def _plan_live_turn(
         updates=updates,
         states=inputs.creative_copy_state or {},
     )
+    if answers_clip_question and updates:
+        # KRI-966: a tapped length answer is the server's own option label, already applied by
+        # the gate; the model's restatement of it is never the creator's length ask.
+        echo_free = without_length_answer_echo(
+            prior_brief, updates, await _load_thread_events(db, thread_id)
+        )
+        if echo_free != updates:
+            log.info(
+                "kria_length_answer_echo_dropped",
+                thread_id=str(thread_id),
+                dropped=len(updates) - len(echo_free),
+            )
+        updates = echo_free
     delegated = (
         extracted_delegation if extraction_complete else _declares_delegation(outputs, updates)
     )

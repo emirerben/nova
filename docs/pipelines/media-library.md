@@ -195,6 +195,19 @@ Partial-consent reuse requires the same excluded-video IDs, not merely the same 
 changed coverage offers a fresh ready-video choice. Catalogue capacity remains 500;
 selected-story rendering keeps its separate bound.
 
+The native Camera roll is a full-screen surface in the projects drawer, not a set of sheets (KRI-944).
+Footage is a contact sheet grouped by event; every tile renders one `CameraRollItemState`
+(queued, uploading, analyzing, ready, needs retry, failed, excluded) from `GET .../items`, and
+**Find ideas**, **Another idea**, delete idea and delete event all work per event (`group`).
+Ideas persist per event on the server; the phone caches them per event (`ideasByGroup`) and re-reads
+`GET .../stories?group=` after any membership change. A rename changes only the local title, never the
+server group key, so it cannot orphan ideas; moving items between events does clear both events' ideas
+(the server drops what it can no longer stand behind) and the surface says so. Collections saved before
+this kept one `savedIdeas` object; that key is ignored on read, so the collection loads and its ideas come
+back from the server. Offline fixtures: `-camera-roll-collection -collection-mixed-states` (and
+`-collection-empty`, `-collection-access-notices`); under the real drawer, `-ui-testing-chat
+-camera-roll-surface-fixture`.
+
 Each idea carries an additive `content_plan.form` (`guide`, `factual_story`, `atmosphere`,
 `review`, `performance`). `FORM_EVIDENCE` in `schemas/media_collections.py` lists what a form
 needs: `guide` three distinct source clips, `factual_story` a selected research fact, the rest
@@ -235,6 +248,35 @@ hit or not, and only prefills the "Research an angle" field through the "Add bac
 chip. Public search still receives exactly the `research_topic` the creator sends. The idea card
 labels the footage section "From your footage" and research as "Background facts" with tappable
 source links; the research review gates are unchanged.
+
+Ideas are per event (KRI-944). `POST .../stories` takes `group`: evidence is limited to the
+members of that group, the story persists with `story_json.group`, and `GET .../stories?group=`
+lists one event's ideas. A non-empty `exclude_story_ids` means "another idea": it adds ONE idea
+beside the existing ones and drops anything with the same wording or the exact same moment set
+(the agent also receives them as `already_offered`). `DELETE .../stories/{id}` soft-deletes
+(`story_json.deleted_at`, restorable for `RESTORE_WINDOW`) and writes a `not_for_me` judgment
+through `record_deleted_idea` when personalization is on; deleted ideas are never re-offered
+for their event even when it is off. `POST .../stories/{id}/restore` undoes it.
+`DELETE .../groups` removes an event's members (revision bumps) and soft-deletes its ideas.
+Ideas are pinned to a collection revision, so a write that leaves an event's members identical
+re-stamps that event's ideas (`carry_forward_stories`); only rows from the revision being left
+move. No migration: group and deletion live in `story_json`.
+
+Photos (KRI-944). `index_collection` turns a photo's image analysis into ONE still moment held
+for `STILL_HOLD_S` (3 s; `start_s=0`, `evidence.media="still"`, `time_basis="still_hold"`), stamped
+with the image index spec (the hold is part of it). A photo whose analysis recorded nothing usable
+gets no moment: `metadata_json.moment_index` marks it, the items route reports
+`excluded(no_usable_moment)`, and it never holds back the rest of its event. The story agent
+sees such a candidate as `media: "still"` and its prompt gains the stills guidance only then
+(video-only requests keep their exact payload). **Ideas may cite photos only while
+`media_moments.stills_buildable()`**: the phone writer already renders a pinned still beside video
+cuts (asset-lane, `stillImages`), but a prepared story's export is verified against its sources
+and `actual_export_verification` reads original videos only, so a photo story would stop at
+`CreatorRenderContractError`. `VERIFIES_STILL_PICTURES` stays false until the verifier gets a
+still branch; `tests/pipeline/test_photo_story_gate.py` pins that coupling. Until then photos are
+analysed and shown, never offered. The preparation step also needs one more piece before it can
+accept them: a library photo reaches the render only as a ready Visuals-pool row of the item
+(`POST /plan-items/{id}/assets` with `library_asset_id`), since thread attach rejects images.
 
 Stories support review, exact-interval replacement/order/removal, original/muted audio,
 rejection and selection. Selection prepares the common revisioned draft, with a server-owned

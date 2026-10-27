@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.153.0] - 2026-10-27
+
+### Fixed
+- fix(kria): the simpler version names what it leaves out (KRI-968) (#1863) <!-- release-pr: 1863 -->
+
+## [0.81.152.0] - 2026-10-27
+
+### Fixed
+- fix(kria): open where an unheard quote head was said, not on the heard tail (KRI-967) (#1862) <!-- release-pr: 1862 -->
+
+## [0.81.151.0] - 2026-10-27
+
+### Fixed
+- fix(phone): editor plays the quoted Talking window, not the whole take (KRI-965) (#1860) <!-- release-pr: 1860 -->
+
+## [0.81.150.0] - 2026-10-27
+
+### Fixed
+- fix(phone): hear a creator-named phrase spoken as one word more or fewer (KRI-961) (#1858) <!-- release-pr: 1858 -->
+
+## [0.81.149.0] - 2026-10-27
+
+### Fixed
+- fix(kria): a finished Voiceover video no longer says its drawn title is missing (KRI-963) (#1856) <!-- release-pr: 1856 -->
+
+## [0.81.148.0] - 2026-10-27
+
+### Changed
+- fix(ci): main green — picker tests expect each other's fix; camera-roll iPhone step runs tests that exist (#1865) <!-- release-pr: 1865 -->
+
+## [0.81.147.0] - 2026-10-26
+
+### Changed
+- feat(ios): full-screen Camera roll surface, ideas per event, old sheets deleted (KRI-944) (#1855) <!-- release-pr: 1855 -->
+
+## [0.81.146.0] - 2026-10-26
+
+### Changed
+- feat(ios): camera roll per-item engine and state reducer (KRI-944) (#1841) <!-- release-pr: 1841 -->
+
+## [0.81.145.0] - 2026-10-26
+
+### Changed
+- feat(api): photos feed ideas behind a build gate (KRI-944) (#1848) <!-- release-pr: 1848 -->
+
+## [0.81.144.0] - 2026-10-26
+
+### Changed
+- feat(api): ideas per event with delete, restore, another idea and delete event (KRI-944) (#1845) <!-- release-pr: 1845 -->
+
+## [0.81.143.0] - 2026-10-26
+
+### Changed
+- feat(api): camera-roll analysis converges + per-item state route (KRI-944) (#1842) <!-- release-pr: 1842 -->
+
+## [0.81.142.0] - 2026-10-26
+
+### Fixed
+- fix(kria): one picker answer counts for every row about the same moment (KRI-947, KRI-951) (#1852) <!-- release-pr: 1852 -->
+
+## [0.81.141.0] - 2026-10-26
+
+### Changed
+- fix(kria): seat a listed middle order and judge every order row against the cut (KRI-941) (#1846) <!-- release-pr: 1846 -->
+
+## [0.81.140.0] - 2026-10-26
+
+### Changed
+- feat(kria): voiceover and talk-to-camera edits may run 240s (KRI-955) (#1850) <!-- release-pr: 1850 -->
+
 ## [0.81.139.0] - 2026-10-26
 
 ### Changed

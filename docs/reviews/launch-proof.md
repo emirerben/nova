@@ -70,17 +70,17 @@ API revision, worker revision and effective flags must be named for rollout proo
 
 - Reviewed and tested the existing fixes from PRs 1846, 1847 and 1849. After
   rebasing, the audio/photo fixes come from main and the listed-order commit
-  retains its original authorship. Main Creator remains at v98.
+  retains its original authorship. Upstream Main Creator changes are preserved.
 - KRI-948. Missing metadata in a video-only project now uses the existing bounded
   vision budget. An unresolved single-video question asks for a rough time and
   does not offer another identical picker. Provider/budget failure stays technical.
-- KRI-947. Include, group and order membership answers can stand in for each
-  other. Exclusion stays separate. This does not infer where inside a take a
-  moment occurs.
-- KRI-950. A picker carries its validated inventory and settled resolutions.
-  Answering it reuses those instructions. A changed media identity or later typed
-  request invalidates reuse. This prevents the demonstrated restatement path;
-  the redacted production provider output was unavailable for exact replay.
+- KRI-947 and KRI-951. Main's dedicated fix shares answers across matching
+  moments, including order and caption rows. Loose word-overlap matching stays
+  narrower and exclusion stays separate. This does not locate a moment in a take.
+- KRI-950. The integration uses main's server-held checked inventory from PR
+  1853. A pure picker answer reuses that validated list, while typed corrections
+  replan. The overlapping branch implementation was removed. Upstream full-turn
+  and PostgreSQL regressions retain the exact photo text and tapped clip.
 - KRI-941. `ordered_members` distinguishes an internally listed order from an
   unordered group. The common sequence projection and receipt checker consume
   the same expansion. Resolver/planner prompt versions were bumped.
@@ -118,7 +118,7 @@ which runs from `src/apps/ios/Packages/KriaMediaEngine`.
 | Physical iPhone source admission over Wi-Fi | 9 passed, 0 failed, 0 skipped. Synthetic offset/trim/hold/speed/cleanup and missing-source controls, with exported MP4s retained. |
 | Installed build 1759 save and Photos export | Existing changes saved with the user's approval. First Photos import failed with error 3301; one retry succeeded. One new 2:15 video was independently opened in Photos. |
 
-The two expected failures include the legacy unmarked collapsed-list limitation.
+The mapped expected failures include the legacy unmarked collapsed-list limitation.
 A new marker cannot establish the meaning of old rows that never stored it.
 Live prompt compliance remains unverified. No paid model run was started.
 
@@ -180,3 +180,26 @@ Retained local evidence is in `.dev/launch-proof/wireless-runner/`:
 `photos-open-video-01.xcresult`, with extracted screenshots, accessibility trees,
 the failed screen recording and native MP4s. The isolated XcodeGen project and
 test sources are retained there. No private footage is committed.
+
+## Integration with current main
+
+Current main `34f06bb203ca7018eb4bee25d3cc609c5c5c4b8c` includes the dedicated
+KRI-941, KRI-947/951 and KRI-950 fixes, plus later speech/receipt repairs. The
+integration preserves those implementations, removes this branch's duplicate
+picker record and test, and retains the additional single-take recovery,
+structured ordered-members, caption receipt and outcome-measurement changes.
+The upstream KRI-950 full-turn and PostgreSQL checks are included in this
+branch's launch gate. Both affected prompt versions are
+`2026-10-27-launch-integration` so earlier prompt checkpoints cannot be reused.
+The physical UI evidence above remains tied to installed build 1759; it is not
+an execution of this integrated backend branch.
+
+Integrated verification: 140 focused incident checks passed, followed by
+`make verify-kria` with 6,653 passed, 6 skipped and 3 expected failures. The
+single-take time question was restored during reconciliation; the upstream
+joined-row tests now assert that intentional wording while retaining their
+membership, exact-label and hidden-answer checks. There is no native product
+source diff from current main, so the earlier physical output remains evidence
+for the unchanged engine/export path. Free prompt replay passed with 2,264 passed, 15 skipped and 7 expected
+failures. No live provider or paid judge was enabled. Final preship is recorded
+separately after the merge commit.

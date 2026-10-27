@@ -1923,6 +1923,27 @@ def _ending_clip_receipt_fact(receipt: object) -> EndingClipFact | None:
     )
 
 
+def _with_narrated_text_rows(variant: Mapping[str, Any]) -> Mapping[str, Any]:
+    """``variant`` with its phone Voiceover text rows as ordinary text lanes (KRI-963).
+
+    A phone Narrated render keeps the title it drew (and text placed at a spoken word, or
+    added in the editor) in ``narrated_title_text_elements``, the one store an editor Save
+    rewrites, never in ``text_elements``. A row the creator removed is not on screen.
+    """
+    rows = variant.get("narrated_title_text_elements")
+    if not isinstance(rows, list) or not rows:
+        return variant
+    current = variant.get("text_elements")
+    lanes = list(current) if isinstance(current, list) else []
+    shown = {row.get("id") for row in lanes if isinstance(row, Mapping)}
+    extra = [
+        row
+        for row in rows
+        if isinstance(row, Mapping) and not row.get("removed") and row.get("id") not in shown
+    ]
+    return {**variant, "text_elements": lanes + extra} if extra else variant
+
+
 def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFacts:
     """Facts off a rendered phone variant (KRI-537).
 
@@ -1934,7 +1955,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     """
     if not isinstance(variant, Mapping):
         return PlanFacts()
-    base = plan_facts_from_editor_payload(variant)
+    base = plan_facts_from_editor_payload(_with_narrated_text_rows(variant))
     changes = _phone_receipt_facts(
         variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
     )
@@ -5124,8 +5145,23 @@ def _speech_cue(req_text: str, pattern: re.Pattern[str]) -> bool:
     return bool(pattern.search(req_text) or pattern.search(loose_text(req_text)))
 
 
+def _records_caption_ask(req: BriefRequirement) -> bool:
+    """The model recorded this requirement as a captions ask (``captions``,
+    ``caption_language`` or ``spellings``) and recorded no spoken triggers."""
+    return (
+        _caption_fact(req) is not None
+        or _caption_language_fact(req) is not None
+        or bool(_spellings_fact(req))
+    ) and not _fact_triggers(req)
+
+
 def _wants_speech(req: BriefRequirement) -> bool:
-    return req.kind in _BEAT_KINDS and _speech_cue(_req_text(req), _SPEECH_EXCERPT_RE)
+    # KRI-961: the recorded captions facts decide (KRI-667). "English captions on my voice"
+    # names the voice the captions are on; read as a speech-excerpt ask it lost its captions
+    # check and the spellings the render applies (`brief_caption_spellings`).
+    if req.kind not in _BEAT_KINDS or _records_caption_ask(req):
+        return False
+    return _speech_cue(_req_text(req), _SPEECH_EXCERPT_RE)
 
 
 def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -7411,6 +7447,13 @@ def asks_caption_language(req: BriefRequirement) -> bool:
     return _wants_captions(req) and _requested_caption_language(req) is not None
 
 
+def asks_caption_spelling(req: BriefRequirement) -> bool:
+    """KRI-961: True for a captions ask that lists words to spell. Only the caption lines
+    can settle it, so a record without them (the Voiceover alignment record) leaves it to
+    the finished captions instead of answering for its language alone."""
+    return _wants_captions(req) and not _wants_no_captions(req) and bool(_spelled_names(req))
+
+
 # ------------------------------------------------------------- caption words (KRI-549)
 # "altyazılar Türkçe olsun; Moda, Bahariye, Yeldeğirmeni ve Kadıköy doğru yazılsın" on a
 # finished phone render: the language is judged against the variant's `caption_language`
@@ -7764,9 +7807,10 @@ def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool,
                 and _GLUED_SUFFIX_RE.fullmatch(squashed[len(want) :])
             ):
                 other = shown
-            elif other is None and size == name_words and is_mishearing(shown, name):
+            elif other is None and abs(size - name_words) <= 1 and is_mishearing(shown, name):
                 # KRI-793: the same name heard another way ("Meropa" for Merope, "Ole de
-                # la Casa" for Oblea de la Casa): the rule the render's respelling uses.
+                # la Casa" for Oblea de la Casa), KRI-961 with a word more or fewer
+                # ("Olloda bife" for ojo de bife): the rule the render's respelling uses.
                 other = shown
     return exact, other
 
@@ -10218,6 +10262,7 @@ __all__ = [
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "asks_caption_spelling",
     "brief_caption_spellings",
     "keeps_model_summary",
     "wants_light_change",

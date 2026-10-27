@@ -83,6 +83,7 @@ from app.schemas.clip_understanding import ClipUnderstanding
 from app.services.clip_facts import order_by_capture_time
 from app.services.clip_selection import (
     MAX_QUESTION_CLIPS,
+    answered_rows,
     build_clip_question,
     category_label,
     clip_question_text,
@@ -945,7 +946,9 @@ def _build_clip_question(
     creator_words: Mapping[str, str] | None = None,
     records_by_id: Mapping[str, ClipUnderstanding] | None = None,
 ) -> dict[str, Any] | None:
-    """One picker category per TAPPABLE unresolved intent, or None when none can be tapped.
+    """One picker row per TAPPABLE unresolved attribute, or None when none can be tapped.
+
+    Intents about the same attribute that offer the same clips share one row (KRI-951).
 
     Intents the creator cannot answer by tapping (per-clip authored labels/captions) are
     skipped here and stay in the text part of the question (KRI-282: one such intent used
@@ -989,7 +992,10 @@ def _build_clip_question(
             }
         )
     question = build_clip_question(categories, media_kinds={c.media_id: c.kind for c in clips})
-    if question is None or len(question["categories"]) != len(creator_work):
+    # KRI-951: a row may carry other intents about the same attribute; count those too.
+    if question is None or sum(len(answered_rows(c)) for c in question["categories"]) != len(
+        creator_work
+    ):
         return None
     return question
 

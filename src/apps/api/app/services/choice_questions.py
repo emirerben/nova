@@ -52,7 +52,7 @@ from app.kria.freeze_ask import (
     times_one_moment,
 )
 from app.kria.reply_language import current_reply_language, say
-from app.pipeline.best_parts import MAX_BEST_PARTS_DURATION_S
+from app.pipeline.best_parts import edit_cap_s
 from app.services.clip_facts import (
     CAPTURE_ORDER_KEYS,
     capture_from_assignment,
@@ -2774,6 +2774,171 @@ def _asks_speech_cleanup(brief: Any) -> bool:
     return any(_wants_cleanup(req) for req in _live(brief))
 
 
+# KRI-966: what a length answer's recorded ``detail`` says when the take's lines set the length.
+TAKE_WINDOW_BASIS = "take_window"
+
+
+@dataclass(frozen=True)
+class _TakeWindow:
+    """KRI-966: the part of the one take the creator's start / end lines keep, as the phone
+    Talking worker will cut it (``kept_s`` None while a line is not found in the take)."""
+
+    start_line: str | None
+    end_line: str | None
+    kept_s: float | None
+    start_s: float | None
+    end_s: float | None
+    media_id: str
+
+
+def _take_window(
+    strategy: Mapping[str, Any],
+    brief: Any,
+    snapshot: Mapping[str, Any] | None,
+    cap: ChoiceCapability,
+) -> _TakeWindow | None:
+    """The window the creator's quoted start / end lines keep of a one-take phone Talking draft.
+
+    ``None`` when no line is asked, or when the draft does not render through the phone Talking
+    writer (whose `apply_take_window` is the only cut that keeps a line window; any other render
+    plays the whole take). The window is `estimate_take_window`'s: the worker's own cut on the
+    take's timed sentences, the creator's picked lines (KRI-844) grounded first, so the length
+    card, the draft card and the cut cannot disagree. Unknown whose draft this is: never.
+    """
+
+    if cap.creator_id is None or strategy.get("edit_format") not in _TALKING_FORMATS:
+        return None
+    from app.kria.brief_checks import defers_caption_words_to_phone_render  # noqa: PLC0415
+    from app.kria.opening_cut_ask import (  # noqa: PLC0415
+        estimate_take_window,
+        single_take_speech,
+        take_window_ask,
+    )
+
+    live = _live(brief)
+    ask = take_window_ask(live)
+    if ask is None or not defers_caption_words_to_phone_render(
+        creator_id=cap.creator_id,
+        edit_format=strategy.get("edit_format"),
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=(snapshot or {}).get("clip_paths") or (),
+    ):
+        return None
+    estimate = estimate_take_window(live, snapshot, strategy=strategy)
+    take = single_take_speech(snapshot, strategy)
+    return _TakeWindow(
+        start_line=ask.start_spoken or ask.start_quote,
+        end_line=ask.end_spoken or ask.end_quote,
+        kept_s=estimate.kept_s if estimate is not None else None,
+        start_s=estimate.start_s if estimate is not None else None,
+        end_s=estimate.end_s if estimate is not None else None,
+        media_id=take.media_id if take is not None else "",
+    )
+
+
+def _take_window_choice(
+    window: _TakeWindow,
+    *,
+    asked: float,
+    capacity: float,
+    ceiling: bool,
+    strict: bool,
+    requirement_ids: Sequence[str],
+) -> UnresolvedChoice:
+    """KRI-966: the honest length card when the creator's own lines set the take's length.
+
+    It names the lines and the seconds they keep. The one way forward keeps that part; trimming
+    or stretching it would mean other lines, which the creator can say in their own words.
+    ``capacity`` is what the answer sets (with a strict whole-video limit, the part plus the
+    phone's standard ending, as for a whole take); the copy says the part itself.
+    """
+
+    asked_s = _clean_seconds(asked)
+    kept_s = _clean_seconds(round(window.kept_s if window.kept_s is not None else capacity, 1))
+    target_s = kept_s if not strict else _clean_seconds(capacity)
+    start = _line_label(window.start_line) if window.start_line else None
+    end = _line_label(window.end_line) if window.end_line else None
+    if start and end:
+        subject_en, subject_tr = "Your start and end lines keep", "Başlangıç ve bitiş cümlelerin"
+        span_en = f"from {start} to right after {end}"
+        span_tr = f"{start} cümlesinden {end} cümlesinin hemen sonrasına kadar"
+        lines_en, lines_tr = "those lines", "bu cümleleri"
+    elif start:
+        subject_en, subject_tr = "Your start line keeps", "Başlangıç cümlen"
+        span_en, span_tr = f"from {start} to the end", f"{start} cümlesinden sona kadar"
+        lines_en, lines_tr = "that line", "bu cümleyi"
+    else:
+        subject_en, subject_tr = "Your end line keeps", "Bitiş cümlen"
+        span_en = f"from the start to right after {end}"
+        span_tr = f"baştan {end} cümlesinin hemen sonrasına kadar"
+        lines_en, lines_tr = "that line", "bu cümleyi"
+    effects = {
+        OPT_ACCEPT_NATURAL: {
+            "strategy": {
+                "target_duration_s": target_s,
+                "target_duration_requested": True,
+                "creator_duration_s": target_s,
+            }
+        }
+    }
+    return UnresolvedChoice(
+        kind=CONFLICT_LENGTH_VS_NATURAL,
+        conflict_id=CONFLICT_LENGTH_VS_NATURAL,
+        field_path="target_duration_s",
+        requirement_ids=tuple(requirement_ids),
+        intro=say(
+            en=f"{subject_en} about {kept_s} seconds of your take: {span_en}.",
+            tr=f"{subject_tr} çekiminin yaklaşık {kept_s} saniyesini tutuyor: {span_tr}.",
+        ),
+        reason=say(
+            en=(
+                f"With the standard ending that part runs to {asked_s} seconds or more, and I "
+                f"can't shorten it without changing {lines_en}."
+                if strict
+                else f"That part runs longer than {asked_s} seconds, and I can't shorten it "
+                f"without changing {lines_en}."
+                if ceiling
+                else f"That part can't make a {asked_s}-second edit without changing {lines_en}."
+            ),
+            tr=(
+                f"Standart kapanışla o kısım {asked_s} saniyeye ya da daha fazlasına çıkıyor ve "
+                f"{lines_tr} değiştirmeden kısaltamam."
+                if strict
+                else f"O kısım {asked_s} saniyeden uzun ve {lines_tr} değiştirmeden kısaltamam."
+                if ceiling
+                else f"{lines_tr.capitalize()} değiştirmeden {asked_s} saniyelik bir video yapamam."
+            ),
+        ),
+        options=(
+            _option(
+                OPT_ACCEPT_NATURAL,
+                label=(f"Keep those {kept_s} seconds", f"O {kept_s} saniyeyi kullan"),
+                description=(
+                    "The video plays just the part your lines keep, without reuse or a "
+                    "silent extension.",
+                    "Video yalnızca cümlelerinin tuttuğu kısmı oynatır; tekrar ya da sessiz "
+                    "uzatma yok.",
+                ),
+                recommended=asked > capacity,
+                aliases=("use available length", "use the available length", "match the source"),
+            ),
+        ),
+        # The window itself, never the whole snapshot: the planner pass and the approval
+        # backstop read snapshots that differ in keys this question does not depend on (F9).
+        input_digest=_digest(
+            CONFLICT_LENGTH_VS_NATURAL,
+            "take_window",
+            asked,
+            round(capacity, 3),
+            window.start_s,
+            window.end_s,
+            window.media_id,
+        ),
+        effects=effects,
+        answer_detail={OPT_ACCEPT_NATURAL: {"basis": TAKE_WINDOW_BASIS}},
+    )
+
+
 def _length_vs_natural(
     strategy: Mapping[str, Any],
     brief: Any,
@@ -2804,6 +2969,15 @@ def _length_vs_natural(
     if natural is None:
         return None
     owner, capacity, can_trim = natural
+    # KRI-966: the creator's own start / end lines decide what a one-take phone Talking edit
+    # plays, so the length is judged against the part they keep, never the whole take's speech
+    # ("the available spoken take is 10.2 seconds" for lines that keep 0:15 -> 0:20). A line the
+    # take's words don't hold leaves nothing to judge: the take-line picker asks about it first.
+    window = _take_window(strategy, brief, snapshot, cap) if owner == "take" else None
+    if window is not None:
+        if window.kept_s is None:
+            return None
+        capacity = window.kept_s
     if strict_max is not None and owner == "take":
         # Phone exports append the standard ending to a spoken-take edit. A strict
         # whole-file cap must compare against that final length, not the raw take.
@@ -2844,6 +3018,15 @@ def _length_vs_natural(
         # Ordinary source-window allocation supports this target. Coverage
         # conflicts have their own focused duration-vs-count question.
         return None
+    if window is not None:
+        return _take_window_choice(
+            window,
+            asked=asked,
+            capacity=capacity,
+            ceiling=ceiling,
+            strict=strict_max is not None,
+            requirement_ids=requirement_ids,
+        )
     source = {
         "song": "song",
         "voiceover": "voiceover with the selected footage",
@@ -3071,22 +3254,22 @@ def _source_coverage(
             tr=f"Her biri kurguya girebilsin diye bu video için en fazla {source_limit} klip seç.",
         )
         label = "Choose fewer clips"
-    elif (
-        "natural_source_capacity" in codes
-        and (envelope.get("natural_duration_s") or 0) > MAX_BEST_PARTS_DURATION_S
-    ):
+    elif "natural_source_capacity" in codes and (
+        envelope.get("natural_duration_s") or 0
+    ) > edit_cap_s(envelope.get("natural_owner")):
         # The edit cap, not the footage, is the limit: more footage cannot help.
         natural_owner = envelope.get("natural_owner")
         natural_duration = envelope.get("natural_duration_s")
+        edit_cap = edit_cap_s(natural_owner)
         reason = say(
             en=(
                 f"The selected {natural_owner} runs {natural_duration:g} seconds, but an edit "
-                f"can be at most {MAX_BEST_PARTS_DURATION_S:g} seconds. Use a shorter "
+                f"can be at most {edit_cap:g} seconds. Use a shorter "
                 f"{natural_owner}."
             ),
             tr=(
                 f"Seçili kaynak {natural_duration:g} saniye sürüyor ama bir video en fazla "
-                f"{MAX_BEST_PARTS_DURATION_S:g} saniye olabilir. Daha kısa bir kaynak kullan."
+                f"{edit_cap:g} saniye olabilir. Daha kısa bir kaynak kullan."
             ),
         )
         label = "Use a shorter voiceover"
@@ -3222,8 +3405,20 @@ def _take_line_choice(
     looked for after it, as the cut does (`apply_take_window`). Without one, the start the
     take holds for the creator's own quote bounds the lines instead. ``None`` when the take
     has no line to offer.
+
+    KRI-967: a quote the take says only PART of ("Parrilla Don Julio, what do you think?" over
+    whisper's "So," / "what do you think?") is named as such, and when the clip's independent
+    transcript heard the missing words right there (`take_lines.partly_heard`), the line they
+    were said as is recommended, shown and pinned together with the heard line ("So, what do
+    you think?"), so the cut opens / ends where the creator's words were said. Option keys,
+    the other options and the digest are unchanged, so an earlier answer keeps its meaning.
     """
-    from app.kria.take_lines import offer_lines, pinned_line_text  # noqa: PLC0415
+    from app.kria.take_lines import (  # noqa: PLC0415
+        offer_lines,
+        partly_heard,
+        pinned_line_text,
+        span_lines,
+    )
     from app.pipeline.phone_opening_cut import ground_take_line  # noqa: PLC0415
     from app.services.speech_segments import exact_line_count  # noqa: PLC0415
 
@@ -3238,24 +3433,46 @@ def _take_line_choice(
         )
         after_s = grounded.word_start_s if grounded is not None else None
     lines = ctx.start_lines if start else ctx.end_lines
-    offer = offer_lines(lines, quote, side=side, limit=MAX_CHOICE_OPTIONS - 1, after_s=after_s)
+    part = partly_heard(
+        [line for line in lines if after_s is None or line.start_s >= after_s - 1e-6],
+        ctx.words,
+        quote,
+        side=side,
+        reference=take.reference,
+    )
+    said_as = part.said_as if part is not None else None
+    offer = offer_lines(
+        lines, quote, side=side, limit=MAX_CHOICE_OPTIONS - 1, after_s=after_s, prefer=said_as
+    )
     if not offer.lines:
         return None
+
+    def shown(line: Any) -> Any:
+        """The line an option stands for: the said-as line joined to the heard one (KRI-967)."""
+        if part is None or said_as is None or line.index != said_as.index:
+            return line
+        return span_lines(line, part.line) if start else span_lines(part.line, line)
 
     def pinned(line: Any) -> str:
         # A start pick is looked for from the top of the take, an end pick from the start line.
         def count(text: str) -> int:
             return exact_line_count(take.words, text, min_after_s=after_s or 0.0)
 
-        return pinned_line_text(ctx.words, line, side=side, count=count, max_chars=_LINE_VALUE_MAX)
+        return pinned_line_text(
+            ctx.words, shown(line), side=side, count=count, max_chars=_LINE_VALUE_MAX
+        )
 
     conflict = CONFLICT_TAKE_LINE_START if start else CONFLICT_TAKE_LINE_END
     options = [
         ConflictOption(
             key=f"{_LINE_KEY}{line.index}",
-            label=_line_label(line.text),
+            label=_line_label(shown(line).text),
             recommended=offer.recommended is line,
-            aliases=(line.text,),
+            # The line's own text stays an alias: a typed reply that answered it still does.
+            aliases=(line.text,) if shown(line) is line else (line.text, shown(line).text),
+            description=(
+                None if shown(line) is line or part is None else _said_as_note(part, start)
+            ),
         )
         for line in offer.lines
     ]
@@ -3285,7 +3502,7 @@ def _take_line_choice(
             ),
         )
     )
-    shown = " ".join(quote.split())[:_QUOTE_SHOWN_MAX]
+    shown_quote = " ".join(quote.split())[:_QUOTE_SHOWN_MAX]
     reason = (
         say(en="Which line should it open on?", tr="Hangi cümleyle açılsın?")
         if start
@@ -3297,8 +3514,8 @@ def _take_line_choice(
         field_path="take_start_line" if start else "take_end_line",
         requirement_ids=ids,
         intro=say(
-            en=f"I couldn't find “{shown}” in what's said in your video.",
-            tr=f"“{shown}” cümlesini videonda söylenenler arasında bulamadım.",
+            en=_take_line_intro(part, shown_quote, start, tr=False),
+            tr=_take_line_intro(part, shown_quote, start, tr=True),
         ),
         reason=reason,
         options=tuple(options),
@@ -3314,6 +3531,48 @@ def _take_line_choice(
             start_pick if not start else None,
         ),
         effects={f"{_LINE_KEY}{line.index}": {"value": pinned(line)} for line in offer.lines},
+    )
+
+
+def _fragment(text: str) -> str:
+    """A line or quote fragment named inside a sentence, without its clause punctuation."""
+    return text.strip(" \"'“”‘’«»,;:.!?…¿¡—–-")
+
+
+def _take_line_intro(part: Any, quote: str, start: bool, *, tr: bool) -> str:
+    """The sentence that opens the take-line question, in English or Turkish.
+
+    KRI-967: for a quote the take says only part of (``part``), what it says, the words it
+    doesn't, and -- when the clip's independent transcript heard them there -- what the timed
+    transcript has in their place. Otherwise the KRI-844 sentence, unchanged."""
+    if part is None:
+        if tr:
+            return f"“{quote}” cümlesini videonda söylenenler arasında bulamadım."
+        return f"I couldn't find “{quote}” in what's said in your video."
+    heard, unheard = part.heard, part.unheard
+    if tr:
+        where = "öncesindeki" if start else "ardındaki"
+        found = f"Videonda “{heard}” cümlesini buldum ama {where} “{unheard}” kısmını bulamadım."
+    else:
+        where = "before" if start else "after"
+        found = f"I found “{heard}” in your video, but not “{unheard}” {where} it."
+    if part.said_as is None:
+        return found
+    said = _fragment(part.said_as.text)
+    there = f"Dökümde orada “{said}” yazıyor." if tr else f"The transcript has “{said}” there."
+    return f"{found} {there}"
+
+
+def _said_as_note(part: Any, start: bool) -> str:
+    """KRI-967: the description under the option that opens / ends where the words were said."""
+    if start:
+        return say(
+            en=f"Opens where “{part.unheard}” is said.",
+            tr=f"“{part.unheard}” denen yerden açılır.",
+        )
+    return say(
+        en=f"Ends right after “{part.unheard}” is said.",
+        tr=f"“{part.unheard}” dendiği yerin hemen ardından biter.",
     )
 
 
@@ -4462,7 +4721,36 @@ def resolve_choices(
     notices: list[str] = []
     exhausted: list[UnresolvedChoice] = []
     superseded: list[str] = []
-    for choice in collect_conflicts(data, brief, media_snapshot, capability):
+    pending = collect_conflicts(data, brief, media_snapshot, capability)
+    seen: set[str] = set()
+    picks_applied = False
+    while True:
+        if (
+            not picks_applied
+            and (not pending or _after_take_lines(pending[0]))
+            and _picked_lines(answers)
+        ):
+            # KRI-966: what the take's lines keep is what a later question judges (the length
+            # card above all). The lines the creator picked in THIS pass are not on ``brief`` yet
+            # (``answered_brief`` adds them after the pass), so the rest is collected again from
+            # the brief with them: as the approval backstop sees it, which reads the answered
+            # brief. Without this the pass misses the card, the backstop asks it, and its answer
+            # is never recorded (asked again on every turn, up to the cap).
+            picks_applied = True
+            pending = [
+                later
+                for later in collect_conflicts(
+                    data,
+                    answered_brief(brief, {"choice_answers": answers}),
+                    media_snapshot,
+                    capability,
+                )
+                if later.conflict_id not in seen and _after_take_lines(later)
+            ]
+        if not pending:
+            break
+        choice = pending.pop(0)
+        seen.add(choice.conflict_id)
         if choice.refine is not None:
             # KRI-844: depends on an answer given earlier in this very pass.
             refined = choice.refine(answers)
@@ -4538,6 +4826,19 @@ def resolve_choices(
     )
 
 
+def _after_take_lines(choice: UnresolvedChoice) -> bool:
+    """A question asked after the take-line pickers (`CONFLICT_PRIORITY`)."""
+
+    rank = {kind: i for i, kind in enumerate(CONFLICT_PRIORITY)}
+    return rank.get(choice.kind, len(rank)) > rank[CONFLICT_TAKE_LINE_END]
+
+
+def _picked_lines(answers: Sequence[Mapping[str, Any]]) -> bool:
+    """An answer of this pass picked a line of the take (KRI-844)."""
+
+    return any(answer.get("kind") in TAKE_LINE_KINDS and answer.get("value") for answer in answers)
+
+
 def _disclose(note: str, source: object) -> str:
     if source != "creator_delegated":
         return note
@@ -4583,6 +4884,7 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
         END_SPOKEN_FACT,
         OPENING_CUT_KINDS,
         START_SPOKEN_FACT,
+        wants_take_window,
     )
 
     spoken: dict[str, dict[str, str]] = {}  # KRI-844: requirement id -> picked-line facts
@@ -4712,9 +5014,34 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
                 # number (e.g. take 38.4 + standard 1.6 s tail = 40).
                 if abs(new - old) < 0.001 and strict_duration_limit_s(req) is None:
                     continue
+                facts = _facts_with_length(req.facts, data["target_duration_s"])
+                detail = answer.get("detail")
+                if isinstance(detail, Mapping) and detail.get("basis") == TAKE_WINDOW_BASIS:
+                    # KRI-966: the creator's own start / end lines set this length. Their row
+                    # keeps their words (its line receipt names the part kept); a separate
+                    # length row says where the seconds come from.
+                    changed[req.id] = req.model_copy(
+                        update={"facts": facts}
+                        if wants_take_window(req)
+                        else {
+                            "facts": facts,
+                            "description": say(
+                                en=(
+                                    f"Keep about {_clean_seconds(new)} seconds (the part your "
+                                    f"lines keep, instead of {_clean_seconds(old)})"
+                                ),
+                                tr=(
+                                    f"Yaklaşık {_clean_seconds(new)} saniye olsun "
+                                    f"({_clean_seconds(old)} saniye yerine, cümlelerinin "
+                                    "tuttuğu kısım)"
+                                ),
+                            ),
+                        }
+                    )
+                    continue
                 changed[req.id] = req.model_copy(
                     update={
-                        "facts": _facts_with_length(req.facts, data["target_duration_s"]),
+                        "facts": facts,
                         "description": say(
                             en=(
                                 f"Keep {_clean_seconds(new)} seconds (the available source "
@@ -4839,6 +5166,85 @@ def _asks_cleanup_besides(req: Any, line: str) -> bool:
     return bool(_CLEANUP_NOUN_RE.search(text))
 
 
+# KRI-966: the cards whose answer sets the edit's length. That answer is server-owned: it rides
+# ``choice_answers`` and ``answered_brief`` rewrites the creator's own length ask on the copy
+# approval pins, so nothing a model writes on that turn adds a length.
+LENGTH_ANSWER_KINDS = frozenset(
+    {
+        CONFLICT_LENGTH_VS_NATURAL,
+        CONFLICT_VOICE_VS_DURATION,
+        CONFLICT_DURATION_VS_COUNT,
+        CONFLICT_HOLDS_VS_LENGTH,
+    }
+)
+
+
+def answered_length_card(events: Events) -> dict[str, Any] | None:
+    """The length card this turn's message answers, else ``None``.
+
+    The turn's message is the thread's last user message (the planner reads the thread through
+    it). It answers a length card when it carries a ``choice_selection`` -- a tapped option, or a
+    reply the server matched to one -- naming a question of a length kind.
+    """
+
+    history = _event_list(events)
+    last = next(
+        (index for index in range(len(history) - 1, -1, -1) if history[index][0] == "user"),
+        None,
+    )
+    if last is None or not isinstance(history[last][1], Mapping):
+        return None
+    selection = history[last][1].get("choice_selection")
+    if not isinstance(selection, Mapping) or not selection.get("question_id"):
+        return None
+    for role, payload in reversed(history[:last]):
+        question = payload.get("choice_question") if isinstance(payload, Mapping) else None
+        if (
+            role == "assistant"
+            and isinstance(question, Mapping)
+            and question.get("question_id") == selection.get("question_id")
+        ):
+            kinds = {question.get("kind"), question.get("conflict")}
+            return dict(question) if kinds & LENGTH_ANSWER_KINDS else None
+    return None
+
+
+def without_length_answer_echo(prior: Any, updates: Iterable[Any], events: Events) -> tuple:
+    """``updates`` minus the length a model wrote from a tapped length answer (KRI-966).
+
+    The message of that turn is the option's label ("Use the available 10.2 seconds"), not the
+    creator's words. Filed as a requirement it came back as the creator's ask ("you asked for
+    10.2s" after a 4.2 s render), and as a second length beside the creator's own it stopped the
+    gate from recording the answer at all. On such a turn an update that adds a timing with a
+    length, or changes / removes a live timing that holds one, is dropped; everything else is
+    kept. Read from the thread's structured events only, never from the message's words.
+    """
+
+    updates = tuple(updates)
+    if not updates or answered_length_card(events) is None:
+        return updates
+    live = {req.id: req for req in _live(prior)}
+    lengths = {
+        req.id
+        for req in live.values()
+        if req.kind == "timing" and _number((req.facts or {}).get("duration_s")) is not None
+    }
+    kept = []
+    for update in updates:
+        # A partial change keeps its target's kind (KRI-805).
+        target = live.get(update.target_requirement_id or "")
+        kind = update.kind or (target.kind if target is not None else None)
+        sets_length = (
+            kind == "timing" and _number((update.facts or {}).get("duration_s")) is not None
+        )
+        if update.operation == "add" and sets_length:
+            continue
+        if update.operation != "add" and (update.target_requirement_id in lengths or sets_length):
+            continue
+        kept.append(update)
+    return tuple(kept)
+
+
 def choice_notices(strategy: Any) -> list[str]:
     """Plain-language disclosure of the decisions a strategy carries."""
 
@@ -4909,6 +5315,7 @@ __all__ = [
     "CONFLICT_VOICE_VS_DURATION",
     "CONFLICT_WHICH_VOICE",
     "KEEP_OPEN_REASON",
+    "LENGTH_ANSWER_KINDS",
     "MAX_ASKS_PER_QUESTION",
     "OPT_ATTACHMENT_ORDER",
     "OPT_EXTEND",
@@ -4930,6 +5337,7 @@ __all__ = [
     "UnresolvedChoice",
     "answered_brief",
     "answered_conflict_ids",
+    "answered_length_card",
     "ask_user_choice",
     "choice_notices",
     "collect_conflicts",
@@ -4960,4 +5368,5 @@ __all__ = [
     "TAKE_LINE_KINDS",
     "simpler_version_accepted",
     "simpler_version_question",
+    "without_length_answer_echo",
 ]
