@@ -31,6 +31,7 @@ def _intent(name, position, *ids, status="resolved"):
         "status": status,
         "intent_id": f"order_{name}",
         "attribute": name,
+        "ordered_members": False,
         "assignments": _assign(*ids),
     }
     if position:

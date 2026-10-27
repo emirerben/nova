@@ -113,7 +113,7 @@ class ResolverIntentIn(BaseModel):
     # ABOUT, as distinct from `attribute` (which clips it's for).
     caption_attribute: str | None = Field(default=None, max_length=160)
     position: Literal["first", "last"] | None = None
-    ordered_members: bool = False
+    ordered_members: bool | None = None
 
 
 class ResolverClipIn(BaseModel):
@@ -186,6 +186,8 @@ def _format_intent(intent: ResolverIntentIn) -> str:
             "ordered_members=true; return assignments in the listed subject order, "
             "not upload or filming order"
         )
+    elif intent.ordered_members is False:
+        bits.append("ordered_members=false; this group has no requested internal sequence")
     return f"- intent_id={intent.intent_id} | op={intent.op} | " + " | ".join(bits)
 
 
@@ -206,7 +208,7 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
         # KRI-766: a spoken mention of the label's own words never outweighs the described action.
         # KRI-845: clip records carry props / actions / visual_quality; the prompt says how to
         # use them (a blurry/shaky ask matches reported blur, never "stays sharp").
-        prompt_version="2026-10-27-launch-integration",
+        prompt_version="2026-10-27-order-certainty",
         # Text-only match against pre-computed clip records; flash + a small
         # thinking budget mirrors clip_plan_matcher's measured setting.
         model="gemini-2.5-flash",
