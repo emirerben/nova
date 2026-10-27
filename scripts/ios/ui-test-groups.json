@@ -139,6 +139,7 @@
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
       "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss",
       "KriaUITests/SavedUploadsUITests/testReuseAcrossTwoPostsWithoutAnotherUpload",
+      "KriaUITests/SavedUploadsUITests/testExpiringCloudCopyWarnsAndRemainsReusableAcrossPosts",
       "KriaUITests/SavedUploadsUITests/testSearchPaginationAndRetry",
       "KriaUITests/SavedUploadsUITests/testPhotoReuseAcrossPosts",
       "KriaUITests/SavedUploadsUITests/testDeviceOnlyVideoAddsToVisualsFromLocalOriginal",

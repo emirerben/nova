@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Literal
+from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -17,8 +18,14 @@ from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from app import storage
-from app.models import CreationThread, RequestFollowingCase
-from app.services.request_following_cases import digest
+from app.models import (
+    CreationThread,
+    CreationThreadEvent,
+    CreatorAgentExecution,
+    CreatorAgentTurn,
+    RequestFollowingCase,
+)
+from app.services.request_following_cases import digest, failed_pre_job_turns
 from app.services.request_following_collection import eligible_case, source_capture
 
 Category = Literal[
@@ -99,6 +106,8 @@ class OutcomeReview(BaseModel):
     watched: bool = False
     listened: bool = False
     outcomes: list[RequirementOutcome] = Field(min_length=1, max_length=50)
+    basis: Literal["unknown", "original", "current_revision", "recovery"] = "unknown"
+    turn_id: UUID | None = None
 
 
 def activity_at(case):
@@ -129,7 +138,7 @@ def delivery_counts(capture: dict) -> dict[str, int]:
     )
     for job in jobs.values():
         counts["ready_jobs"] += int(job.get("status") in {"ready", "variants_ready"})
-        counts["failed_jobs"] += int(job.get("status") == "failed")
+        counts["failed_jobs"] += int(job.get("status") in {"failed", "processing_failed"})
         assembly = job.get("assembly_plan") or {}
         variants = {
             v.get("variant_id"): v for v in assembly.get("variants") or [] if isinstance(v, dict)
@@ -153,12 +162,13 @@ def delivery_counts(capture: dict) -> dict[str, int]:
                 record, status, published
             ):
                 counts["verified_device_exports"] += 1
-    failed_before_job = not jobs and any(
-        row.get("status") == "failed" and not row.get("job_ids")
-        for row in sections.get("turns") or []
-        if isinstance(row, dict)
-    )
-    return {**counts, "render_jobs": len(jobs), "pre_job_failure": int(failed_before_job)}
+    pre_job_failures = failed_pre_job_turns(capture)
+    return {
+        **counts,
+        "render_jobs": len(jobs),
+        "pre_job_failure": int(bool(pre_job_failures)),
+        "pre_job_failure_attempts": len(pre_job_failures),
+    }
 
 
 async def current_export(db, case, variant_id=None, *, sign=True):
@@ -237,6 +247,76 @@ async def validate_outcome(db, case, body):
     actual = await current_export(db, case, value.artifact.variant_id, sign=False)
     if actual.get("artifact") != value.artifact.model_dump():
         raise HTTPException(409, "export_changed_reload")
+    if value.basis == "unknown":
+        return None
+    from app.services.request_following_lineage import RequestOutcomeLink
+
+    if value.turn_id is None:
+        raise HTTPException(422, "known_outcome_requires_request_lineage")
+    source = await db.scalar(
+        select(CreationThreadEvent)
+        .join(CreatorAgentTurn, CreatorAgentTurn.source_event_id == CreationThreadEvent.id)
+        .join(CreatorAgentExecution, CreatorAgentExecution.turn_id == CreatorAgentTurn.id)
+        .where(
+            CreatorAgentTurn.id == value.turn_id,
+            CreatorAgentTurn.thread_id == case.thread_id,
+            CreationThreadEvent.thread_id == case.thread_id,
+            CreatorAgentExecution.target_job_id == UUID(value.artifact.job_id),
+            CreatorAgentExecution.target_variant_id.in_([value.artifact.variant_id])
+            | CreatorAgentExecution.target_variant_id.is_(None),
+        )
+        .limit(1)
+    )
+    payload = source.payload if source is not None else {}
+    try:
+        link = RequestOutcomeLink.model_validate((payload or {}).get("request_outcome_link"))
+    except ValidationError as exc:
+        raise HTTPException(422, "known_outcome_requires_request_lineage") from exc
+    if not link.original_known or link.link_status != "known":
+        raise HTTPException(422, "known_outcome_requires_request_lineage")
+    if value.basis == "recovery":
+        selection = (payload or {}).get("choice_selection") or {}
+        if link.relation != "recovery" or selection.get("option_key") != "simpler_version":
+            raise HTTPException(422, "recovery_requires_accepted_recovery")
+        question_payload = await db.scalar(
+            select(CreationThreadEvent.payload)
+            .where(
+                CreationThreadEvent.thread_id == case.thread_id,
+                CreationThreadEvent.role == "assistant",
+                CreationThreadEvent.sequence < source.sequence,
+                CreationThreadEvent.payload["choice_question"]["question_id"].astext
+                == selection.get("question_id"),
+            )
+            .order_by(CreationThreadEvent.sequence.desc())
+            .limit(1)
+        )
+        question = (question_payload or {}).get("choice_question") or {}
+        if question.get("conflict") != "simplification_requires_choice":
+            raise HTTPException(422, "recovery_requires_accepted_recovery")
+    return link.model_dump(mode="json", exclude_none=True)
+
+
+def outcome_history(previous, body, link, *, reviewed_at):
+    history = list((previous or {}).get("outcome_history") or [])
+    if body.outcome_review is None:
+        return history
+    value = body.outcome_review
+    entry = {
+        "artifact": value.artifact.model_dump(),
+        "basis": value.basis,
+        "request_link": link,
+        "expectation_digest": digest([e.model_dump() for e in body.expectations]),
+        "outcomes": [
+            {"expectation_index": o.expectation_index, "category": o.category, "verdict": o.verdict}
+            for o in value.outcomes
+        ],
+        "watched": value.watched,
+        "listened": value.listened,
+    }
+    identity = digest(entry)
+    if not any(row.get("assessment_id") == identity for row in history):
+        history.append({**entry, "assessment_id": identity, "reviewed_at": reviewed_at})
+    return history
 
 
 async def daily_report(db):
@@ -248,7 +328,6 @@ async def daily_report(db):
             await db.scalars(
                 select(RequestFollowingCase)
                 .where(
-                    RequestFollowingCase.superseded.is_(False),
                     RequestFollowingCase.expires_at > now,
                     RequestFollowingCase.split == "development",
                     RequestFollowingCase.capture.is_not(None),
@@ -277,6 +356,8 @@ async def daily_report(db):
         ready_job_sessions=0,
         pre_job_failure_sessions=0,
         render_jobs=0,
+        failed_jobs=0,
+        pre_job_failure_attempts=0,
         device_export_attempts=0,
         acknowledged_device_exports=0,
         verified_device_exports=0,
@@ -284,8 +365,12 @@ async def daily_report(db):
         unfulfilled_reviewed_sessions=0,
         creator_changed_sessions=0,
     )
+    request_cases = []
     for case in rows[:1000]:
         if not await eligible_case(db, case):
+            continue
+        request_cases.append(case)
+        if case.superseded:
             continue
         counts["captured_sessions"] += 1
         activity = activity_at(case)
@@ -307,6 +392,8 @@ async def daily_report(db):
         delivery["pre_job_failure_sessions"] += observed["pre_job_failure"]
         for key in (
             "render_jobs",
+            "failed_jobs",
+            "pre_job_failure_attempts",
             "device_export_attempts",
             "acknowledged_device_exports",
             "verified_device_exports",
@@ -391,15 +478,21 @@ async def daily_report(db):
         - delivery["fulfilled_reviewed_sessions"]
         - delivery["unfulfilled_reviewed_sessions"]
     )
+    from app.services.request_following_report import request_outcome_report
+
+    request_outcomes = request_outcome_report(request_cases, since=since, until=now)
     return {
         "schema_version": 1,
         "generated_at": now.isoformat(),
         "window_days": 14,
         "truncated": len(rows) > 1000,
         "counts": counts,
+        "request_outcomes": request_outcomes,
         "delivery": {
             **delivery,
-            "first_attempt_fulfillment": None,
+            "first_attempt_fulfillment": request_outcomes["first_attempt"]
+            if request_outcomes["requests"]
+            else None,
             "photos_save_acknowledgements": None,
             "scope": "eligible recent captured sessions; original-request retry lineage is unknown",
         },

@@ -33,6 +33,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var voiceDictation: Bool? = nil
     /// KRI-756: the server offers footage-aware suggestion chips to this account. Missing = off (the old fixed chips stay).
     var suggestionChips: Bool? = nil
+    var requestOutcomeContext: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
@@ -124,6 +125,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case textBend = "text_bend"
         case voiceDictation = "voice_dictation"
         case suggestionChips = "suggestion_chips"
+        case requestOutcomeContext = "request_outcome_context"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
         case songOrderPlacements = "song_order_placements"
@@ -165,6 +167,7 @@ extension CreationCapabilities {
         textBend = try container.decodeIfPresent(Bool.self, forKey: .textBend)
         voiceDictation = try container.decodeIfPresent(Bool.self, forKey: .voiceDictation)
         suggestionChips = try container.decodeIfPresent(Bool.self, forKey: .suggestionChips)
+        requestOutcomeContext = try container.decodeIfPresent(Bool.self, forKey: .requestOutcomeContext)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)
