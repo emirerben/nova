@@ -543,6 +543,9 @@ private struct CreationWorkspaceView: View {
     @State private var reviewPresentation: ReviewPlanPresentation?
     @StateObject private var editorSession: NativeEditorSession
     @State private var conversationAcceptedID: UUID?
+    /// Bumped when "Open editor" is tapped in the editor's own Kria sheet: the editor is already
+    /// underneath, so the sheet closes instead.
+    @State private var editorConversationCloseID: UUID?
     /// KRI-756: the server's latest suggestion chips for this chat. Only read through `suggestionChips(for:)`.
     @State private var suggestionSet: SuggestionSet?
     /// The `suggestionScopeKey` that `suggestionSet` was fetched under; a set from another scope is never drawn.
@@ -1303,6 +1306,12 @@ private struct CreationWorkspaceView: View {
     private func openEditor() {
         // Format still unknown (thread not loaded): no editor entry at all.
         guard isFormatKnown else { return }
+        // The editor's Kria sheet shows this same chat, so its ready card offers "Open editor" while
+        // the editor is already open underneath: close the sheet to land back in it.
+        if showsResult || workspaceScreen == .slideWorkspace {
+            editorConversationCloseID = UUID()
+            return
+        }
         // A slide post has no video timeline: every "open editor" entry lands in the slide workspace.
         if SlidePostRouting.editorDestination(isSlidePost: isSlidePostProject) == .slideWorkspace {
             isChoosingFormat = false
@@ -1456,6 +1465,7 @@ private struct CreationWorkspaceView: View {
                     capabilitiesLoaded: capabilitiesAreAuthoritative,
                     conversation: { AnyView(editorConversation) },
                     conversationAcceptedID: conversationAcceptedID,
+                    conversationCloseID: editorConversationCloseID,
                     // Back returns to the chats drawer (where the user came from), never the format chooser.
                     onBack: openProjects,
                     onAddMedia: openAttachments
@@ -1630,6 +1640,7 @@ private struct CreationWorkspaceView: View {
                     project: currentProject,
                     sharedSession: editorSession,
                     conversationAcceptedID: conversationAcceptedID,
+                    conversationCloseID: editorConversationCloseID,
                     conversation: { AnyView(editorConversation) },
                     onBack: close
                 )
