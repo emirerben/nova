@@ -9,7 +9,7 @@ version/cost segments reveal private content or invent missing data.
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.database import AsyncSessionLocal
 from app.models import (
@@ -21,6 +21,7 @@ from app.models import (
     InternalAccountGrant,
     Job,
     RequestFollowingCase,
+    User,
 )
 from tests.integration.test_request_following_queue import (
     collect,
@@ -401,3 +402,79 @@ async def test_a_server_marked_duplicate_does_not_count_as_correction_effort(out
     await collect()
     result = (await report(client))["request_outcomes"]
     assert result["requests"] == 1 and result["corrections"] == 0
+
+
+async def test_unowned_job_marks_capture_incomplete_without_capturing_foreign_cost(output_journey):
+    client, *_ = output_journey
+    case, turn = await linked_case(output_journey)
+    foreign, foreign_job, execution_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    async with AsyncSessionLocal() as db:
+        original = await db.scalar(
+            select(CreatorAgentExecution).where(CreatorAgentExecution.turn_id == turn)
+        )
+        db.add(User(id=foreign, email=f"{foreign}@outcome.test"))
+        await db.flush()
+        db.add(
+            Job(
+                id=foreign_job,
+                user_id=foreign,
+                raw_storage_path="synthetic",
+                assembly_plan={"private_marker": "FOREIGN-JOB-MUST-NOT-BE-CAPTURED"},
+            )
+        )
+        await db.flush()
+        db.add(
+            CreatorAgentExecution(
+                id=execution_id,
+                session_id=original.session_id,
+                turn_id=turn,
+                idempotency_key=str(execution_id),
+                request_digest="e" * 64,
+                expected_revision=1,
+                tool_name="render.request",
+                target_thread_id=uuid.UUID(case["thread_id"]),
+                target_job_id=foreign_job,
+                status="failed",
+            )
+        )
+        db.add(
+            AgentRun(
+                job_id=foreign_job,
+                agent_name="foreign-fixture",
+                prompt_version="1",
+                model="fixture",
+                outcome="ok",
+                attempts=1,
+                settled_cost_usd=99.0,
+                cost_usd=99.0,
+            )
+        )
+        await db.commit()
+    try:
+        await collect()
+        case = await first(client)
+        _, body = await outcome_body(client, case)
+        body["outcome_review"].update(basis="original", turn_id=str(turn))
+        approval = await client.post(f"/admin/request-following/{case['id']}/review", json=body)
+        detail = await client.get(f"/admin/request-following/{case['id']}")
+        data = (await report(client))["request_outcomes"]
+        assert "FOREIGN-JOB-MUST-NOT-BE-CAPTURED" not in detail.text
+        assert data["known_cost_usd"] == 0.25 and data["cost_runs"] == 1
+        assert (
+            approval.status_code,
+            detail.json()["capture"]["missing"].get("jobs"),
+            data["first_attempt"],
+        ) == (
+            422,
+            "missing_or_unowned_jobs",
+            {"fulfilled": 0, "requests": 1, "unknown": 1},
+        )
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                delete(CreatorAgentExecution).where(CreatorAgentExecution.id == execution_id)
+            )
+            await db.execute(delete(AgentRun).where(AgentRun.job_id == foreign_job))
+            await db.execute(delete(Job).where(Job.id == foreign_job))
+            await db.execute(delete(User).where(User.id == foreign))
+            await db.commit()

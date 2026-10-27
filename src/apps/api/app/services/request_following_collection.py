@@ -129,6 +129,8 @@ async def source_capture(db: AsyncSession, thread: CreationThread):
                 "created_at": row.created_at.isoformat(),
                 "finished_at": row.finished_at.isoformat() if row.finished_at else None,
             }
+        if len(jobs) != min(len(job_ids), 50):
+            source["missing"]["jobs"] = "missing_or_unowned_jobs"
     item_ids = (
         {row.content_plan_item_id for row in jobs if row.content_plan_item_id} if job_ids else set()
     )
@@ -163,8 +165,6 @@ async def source_capture(db: AsyncSession, thread: CreationThread):
     }
     if len(runs) > 1000:
         source["missing"]["cost"] = "bounded_capture_incomplete"
-        if len(jobs) != min(len(job_ids), 50):
-            source["missing"]["jobs"] = "missing_or_unowned_jobs"
     # Scrub the complete envelope too: event content may itself contain URLs.
     source = _scrub(source)
     import json

@@ -91,7 +91,7 @@ Six HTTP/Postgres acceptance cases fail against the parent PR. Two further
 controls reproduced older captures overwriting new attempt counts and a ready
 retry hiding an earlier failure on the same job. The integration matrix covers
 these controls, consent withdrawal, duplicate reviews, legacy unknowns and actual
-export publication. The final request/report/publication and plan-review matrix passes 91 checks after refreshing main. Another 56
+export publication. The final request/report/publication and plan-review matrix passes 92 checks after refreshing main. Another 56
 completion and actual-export verification checks passed before the final report
 correction. That correction changes only report projection, and the final matrix
 was rerun afterwards. Logs are private under `.dev/launch-hardening/outcome-*`.
@@ -113,5 +113,13 @@ newer schema. Those controls and neighboring plan-review checks pass together.
 
 A legacy thread cannot create a known original merely by restarting client
 metadata. Server-marked duplicate messages do not count as correction effort.
-Both controls failed before correction and pass in the final 91-check matrix
+Both controls failed before correction and pass in the final 92-check matrix
 alongside the latest lip-sync and Cunda main-branch journeys.
+
+Final collector review reproduced a missing-job completeness error introduced
+while adding cost capture. With fewer than 1,001 agent runs, an unowned job was
+excluded correctly but its missing evidence was not marked. A real
+collector/HTTP/Postgres replay showed that this allowed an incomplete capture
+to acquire a fulfilled first-attempt assessment. Job completeness is now checked
+independently of cost truncation. The replay verifies the assessment is refused,
+first-attempt fulfillment stays unknown, and foreign media and cost stay absent.
