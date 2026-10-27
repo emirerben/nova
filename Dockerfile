@@ -79,16 +79,30 @@ RUN pip install --no-cache-dir --upgrade pip setuptools && \
 # Includes the [observability] optional-dependencies group (langfuse +
 # anthropic) so Loop A tracing + Loop B online judge are live in prod when
 # LANGFUSE_* / ANTHROPIC_API_KEY env vars are set; otherwise fail-open.
-# [dev] and [local-whisper] extras are intentionally excluded.
+# Also [speech-align] (transformers for the speech-cleanup filler check; it
+# reuses the CPU torch above). [dev] and [local-whisper] are intentionally excluded.
 # This layer only busts when pyproject.toml changes, not on source edits.
 COPY src/apps/api/pyproject.toml /tmp/pyproject.toml
 RUN python -c "import tomllib; \
       f = open('/tmp/pyproject.toml', 'rb'); \
       data = tomllib.load(f); \
-      deps = data['project']['dependencies'] + data['project']['optional-dependencies']['observability']; \
+      extras = data['project']['optional-dependencies']; \
+      deps = data['project']['dependencies'] + extras['observability'] + extras['speech-align']; \
       print('\n'.join(deps))" > /tmp/requirements.txt && \
     pip install --no-cache-dir -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt /tmp/pyproject.toml
+
+# ---------- speech-cleanup forced aligner (~360 MB) ----------
+# The filler check (app/pipeline/speech_cleanup_alignment.py) places transcript words on the
+# narration with facebook/wav2vec2-base-960h. Pinned to one revision and baked in so workers never
+# download at run time; MODEL_REVISION there must match. Without it the check keeps whisper's stamps.
+# Outside /app so the `chown -R /app` layer below does not copy the weights a second time.
+RUN python -c "from huggingface_hub import snapshot_download; \
+      snapshot_download('facebook/wav2vec2-base-960h', \
+        revision='22aad52d435eb6dbaf354bdad9b0da84ce7d6156', \
+        local_dir='/opt/models/wav2vec2-base-960h', \
+        allow_patterns=['config.json', 'vocab.json', 'model.safetensors', 'preprocessor_config.json'])" && \
+    test -s /opt/models/wav2vec2-base-960h/model.safetensors
 
 # ---------- application source ----------
 # uvicorn adds CWD to sys.path, so app.main resolves from /app/app/main.py

@@ -174,6 +174,23 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   starts ≥0.3 s into it, and the span runs to within 0.2 s of the next word. If a report
   says a sentence's LAST syllable was clipped, check `token_adjustments` for that kind
   first; it is the only edge trim rule 0 performs.
+- "cleanup cut part of a word" where the cut is a `filler_lexical` span → whisper stamped
+  a filler nobody said over the start of the word and squeezed the word next to it.
+  `mixed-gap-v6-squeeze` (KRI-970) refuses a lexicon filler next to a word of 2+ vowel
+  groups stamped faster than 12 syllables/s, within 0.15 s of it
+  (`_squeezed_neighbour`; `SQUEEZE_*` in `app/pipeline/silence_cut.py`). The refused
+  token counts as a word for every rule. It errs toward keeping a real "uh" (about 1 in
+  10 lexicon fillers in Oct 2026 prod transcripts). Do not loosen it to cut more fillers
+  without listening to the refused cases.
+- "the red cut says 'uh' but the 'uh' is still there and a word is gone" → whisper-1
+  stamped the stretch late. `SPEECH_CLEANUP_FILLER_CHECK_ENABLED` (default on) re-times
+  filler cuts with the pinned forced aligner (`app/pipeline/speech_cleanup_alignment.py`,
+  model in `/opt/models/wav2vec2-base-960h`) and re-listens around each filler cut, dropping
+  a cut that takes a word. `diagnostics.filler_check` on the analysis says why re-timing was
+  skipped (`no_fillers`, `not_english`, `squeezed_filler`, `aligner_unavailable`,
+  `low_alignment_score`, `filler_without_room`) and which cuts the re-listen dropped. Kill
+  switch: `fly secrets set SPEECH_CLEANUP_FILLER_CHECK_ENABLED=false --app nova-video` +
+  api and worker restart (it is part of the source policy fingerprint, so analyses redo).
 - "the cuts sound jumpy / the background drops out at every cut" on noisy footage →
   the render, not the detector. Cloud cuts crossfade up to 25 ms of removed audio
   from each side and cut audio on the video frame grid (`_CUT_CROSSFADE_HANDLE_S`,
