@@ -411,7 +411,7 @@ def assess_readiness(
             else "unverified"
             if receipt is not None
             and not is_story_requirement
-            # An editor draft is its own change set: what its ops did not do is not done.
+            # An editor draft is its own change set, so what its ops did not do is not done.
             and editor_payload is None
             and _no_pre_render_checker(req)
             else "evidence_missing"

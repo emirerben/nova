@@ -527,7 +527,7 @@ def simpler_version_question(refusal_fields: Sequence[str] | None = None) -> dic
 
 
 def simpler_version_ask() -> str:
-    """The held-draft reply's last sentence, the question the card above answers."""
+    """The held-draft reply's last sentence, which the card's two options answer."""
     return say(en=_SIMPLER_ASK[0], tr=_SIMPLER_ASK[1])
 
 
@@ -710,7 +710,7 @@ def simpler_version_accepted(events: Events, dropped_fields: Iterable[str]) -> b
 def change_request_selected(events: Events) -> dict[str, Any] | None:
     """The simpler-version question THIS turn answered with "Change my request" (KRI-983).
 
-    Same per-question consent as ``simpler_version_accepted``: the current turn's user
+    Same per-question consent as ``simpler_version_accepted``. The current turn's user
     message must carry the ``choice_selection`` for the question open just before it."""
     return _simpler_question_answered(events, _CHANGE_REQUEST_KEYS)
 
