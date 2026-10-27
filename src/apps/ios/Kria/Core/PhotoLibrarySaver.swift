@@ -20,9 +20,21 @@ struct PhotoLibrarySaver: PhotoLibrarySaving {
     }
 
     func saveVideo(at url: URL) async throws {
+        try Task.checkCancellation()
         let authorization = await authorize()
         guard authorization == .authorized || authorization == .limited else { throw PhotoLibraryError.notAuthorized }
-        try await writeVideo(url)
+        try Task.checkCancellation()
+        do {
+            try await writeVideo(url)
+        } catch {
+            let failure = error as NSError
+            guard failure.domain == PHPhotosErrorDomain,
+                  failure.code == PHPhotosError.Code.operationInterrupted.rawValue else { throw error }
+            // Photos defines 3301 as a failed, transient transaction. Keep the
+            // same export alive until its one recovery attempt completes.
+            try await Task.sleep(for: .milliseconds(500))
+            try await writeVideo(url)
+        }
     }
 
     static func writeVideo(at url: URL) async throws {
