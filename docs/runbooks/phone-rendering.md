@@ -2836,8 +2836,12 @@ word. No model or prompt is involved:
   land inside "muchas gracias"); a line said twice is the first for a start, the last for
   an end. Receipts keep the creator's quote (+ `spoken`). A found quote never asks;
   "none of these" and a pick the worker's words don't hold leave today's honest
-  `not_found`. `length_vs_natural` still compares a length ask with the whole take,
-  not the part the lines keep.
+  `not_found`. KRI-966: `length_vs_natural` compares a length ask with the part the lines
+  keep (`estimate_take_window`), names the lines, and asks nothing while a line is not
+  found; a pick from the same pass is seen (the later questions are collected again
+  with it). The answer keeps the creator's row words (`detail.basis = take_window`), and
+  on that answer turn the planner drops a model-written length restating the tapped label
+  (`without_length_answer_echo`). `docs/reviews/kri-966-take-window-length.md`.
 
 Gap: cleanup off with no checked preflight snapshot still reports `cleanup_off`.
 Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` to
@@ -2846,7 +2850,9 @@ tests/fixtures/kri790_merope_t1_take.json --video <take.mp4>`.
 Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`,
 `tests/kria/test_kri837_one_word_end_line.py`,
 `tests/kria/test_kri844_take_line_ask.py`,
-`tests/kria/test_kri844_dj_t2_cross_language_replay.py` (fixture `kri844_dj_t2_take.json`).
+`tests/kria/test_kri844_dj_t2_cross_language_replay.py` (fixture `kri844_dj_t2_take.json`),
+`tests/kria/test_kri966_take_window_length.py` + `test_kri966_t1_runtime_postgres.py`
+(fixture `kri966_donjulio_walkin_t1_length.json`).
 
 ### Text on a spoken word on phone Talking edits (KRI-707)
 

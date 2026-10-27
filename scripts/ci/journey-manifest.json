@@ -1872,6 +1872,18 @@
         "src/apps/api/tests/kria/test_kri945_claims_journey.py",
         "src/apps/api/tests/services/test_kri945_whole_video_captions.py"
       ]
+    },
+    {
+      "id": "kri-966-take-window-length",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri966_take_window_length.py tests/kria/test_kri966_t1_runtime_postgres.py tests/kria/test_kri844_take_line_ask.py tests/kria/test_kri844_dj_t2_cross_language_replay.py tests/kria/test_kri849_dj_t1_unclear_word_replay.py tests/services/test_choice_questions_turkish_guard.py tests/services/test_length_owner_choices.py tests/services/test_length_upper_bound_choices_kri847.py",
+      "paths": [
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/tests/fixtures/kri966_donjulio_walkin_t1_length.json",
+        "src/apps/api/tests/kria/test_kri966_take_window_length.py",
+        "src/apps/api/tests/kria/test_kri966_t1_runtime_postgres.py"
+      ]
     }
   ]
 }

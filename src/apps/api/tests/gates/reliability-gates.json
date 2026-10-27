@@ -3087,6 +3087,57 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-966-take-window-length",
+      "tickets": [
+        "KRI-966",
+        "KRI-964"
+      ],
+      "symptom": "Don Julio walk-in T1 (F0F3D5FB): with start/end lines that keep 0:15 -> 0:20 of a 26.9 s take and 'About 7 seconds', Kria asked 'the available spoken take is 10.2 seconds' (the whole take's speech) with one option; the model filed the tapped label as a new timing row (r7, 10.2 s), the approval card listed it and the review said 'you asked for 10.2s' after a 4.2 s render.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-966",
+      "journey": "kri-966-take-window-length",
+      "paths": [
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/tests/fixtures/kri966_donjulio_walkin_t1_length.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri966_take_window_length.py",
+        "tests/kria/test_kri966_t1_runtime_postgres.py",
+        "tests/kria/test_kri844_take_line_ask.py",
+        "tests/kria/test_kri844_dj_t2_cross_language_replay.py",
+        "tests/kria/test_kri849_dj_t1_unclear_word_replay.py",
+        "tests/services/test_choice_questions_turkish_guard.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "kria_choice_questions_enabled",
+      "evidence": {
+        "offline_replay": "The thread's real snapshot, brief and taps through the question gate, the approval backstop, the draft card and the after-render review of the real variant, plus the real runtime over scratch Postgres (only the Main Creator replaced: prod's turn-1 brief, its turn-2 start-line rewrite and its turn-3 echo of the tapped label). The fixture reproduces both prod question digests and prod's 'you asked for 10.2s' row. Red on 18a46b862 (15 tests), green after; eight scratch mutations (window ignored, no in-pass line picks, planner filter off, filter on any answer, whole-take capacity, window row reworded, partial-change kind, Turkish label in English) each turn a test red.",
+        "live_model": "Not run; no paid calls. The change adds no model call and no prompt edit.",
+        "native_output": "unknown; server-side question and brief only, no client change.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "prod's brief shape (model rewrote the start line) and the server-owned pick on the answer",
+        "a line not found: no whole-take card before or after the picker is declined",
+        "10 % tolerance both sides, a window shorter and longer than the ask (one option, no trim)",
+        "one line only (start / end), a strict whole-video limit, Turkish copy",
+        "no window: the prod whole-take card unchanged (same digest)",
+        "a typed length and the start-line tap keep their brief updates",
+        "a partial change with no kind (KRI-805) putting seconds on a timing row is dropped too"
+      ],
+      "neighbours_gap": [
+        "The Main Creator is replaced by recorded outputs; its draft strategy is reconstructed (prod kept its hash).",
+        "A window whose line is not found and was declined still compares nothing (no card); the receipt states the take length.",
+        "KRI-965 (iPhone editor plays the whole take) and KRI-967 (the quoted 'Parrilla Don Julio' is not in the forced-English words) stay open."
+      ],
+      "follow_ups": [
+        "Don Julio walk-in T1 iPhone re-send after deploy: the length card names the lines and ~5 s; no 'you asked for' row after the render"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-848-song-genre-honesty",
       "tickets": [
         "KRI-848",
