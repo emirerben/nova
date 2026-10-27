@@ -1,0 +1,46 @@
+{
+ "scenario": "Don Julio walk-in N1 (Voiceover, phone render), prod thread 99627FBC, job bdb0c798, 2026-10-26 (KRI-963).",
+ "provenance": "Admin job debug (variant narrated_title_text_elements, narrated_alignment receipts) and the thread's assistant_review event, read 2026-10-26. title_frames: the exported output.mp4 inspected at 0.5 s and 1.2 s (ffmpeg frame grabs, kit runs/2026-10-26_99627FBC/contact-sheet.jpg): the title is on screen in both.",
+ "requirement": {
+  "id": "r1",
+  "kind": "text",
+  "scope": "title",
+  "literal": "Don Julio, Palermo"
+ },
+ "variant_title_rows": [
+  {
+   "id": "narrated-title",
+   "role": "generative_intro",
+   "text": "Don Julio, Palermo",
+   "end_s": 1.6600000143051148,
+   "effect": "fade-in",
+   "x_frac": 0.5,
+   "y_frac": 0.15,
+   "removed": false,
+   "size_px": 120.0,
+   "start_s": 0.0,
+   "position": "custom",
+   "alignment": "center",
+   "size_class": "large",
+   "font_family": "Playfair Display",
+   "source_params": {
+    "narrated_storyboard": "intro"
+   },
+   "behind_subject": false
+  }
+ ],
+ "observed": {
+  "alignment_record_receipt": "That exact text isn't in this draft.",
+  "review_receipt": "That exact text isn't in this draft."
+ },
+ "title_frames": [
+  {
+   "t_s": 0.5,
+   "title_on_screen": true
+  },
+  {
+   "t_s": 1.2,
+   "title_on_screen": true
+  }
+ ]
+}

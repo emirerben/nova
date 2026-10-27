@@ -514,6 +514,15 @@
       ]
     },
     {
+      "id": "kri-963-narrated-title-receipt",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri963_narrated_title_receipt.py tests/tasks/test_narrated_alignment_receipts.py tests/kria/test_brief_checks_narrated_alignment.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri963_donjulio_n1_title.json",
+        "src/apps/api/tests/tasks/test_kri963_narrated_title_receipt.py"
+      ]
+    },
+    {
       "id": "kri-598-voiceover-planner",
       "needs_native": false,
       "api_tests": "tests/agents/test_n2_fullscreen_contract.py tests/evals/test_clip_intent_planner_evals.py tests/evals/test_main_creator_evals.py tests/kria/test_brief_marathon_receipts.py tests/kria/test_kri598_voiceover_planner.py tests/kria/test_voiceover_downgrade_losses.py tests/pipeline/test_phone_narrated_fullscreen.py tests/routes/test_phone_narrated_editor_commit.py tests/services/test_n2_fullscreen_grounding.py tests/tasks/test_n2_fullscreen_dispatch.py",
