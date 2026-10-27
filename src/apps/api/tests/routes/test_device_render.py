@@ -461,6 +461,8 @@ def visual_recipe(fixture, monkeypatch, visual_id=None, kind="image"):
         status="ready",
         kind=kind,
         gcs_generation="42",
+        library_asset_id=None,
+        library_source_id=None,
         gcs_path=f"users/{fixture.user.id}/plan/{item_id}/pool/{visual_id}"
         + (".mov" if kind == "video" else ".jpg"),
     )

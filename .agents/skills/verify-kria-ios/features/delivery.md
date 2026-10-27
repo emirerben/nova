@@ -18,6 +18,22 @@ Run `drive delivery`. The helper selects
 It checks Stop during work, then Play, Save and Share, sync completion and
 playback dismissal. No Retry control should remain on the finished result.
 
+## Real source grants
+
+Saved originals can back a project visual without being copied into its upload
+folder. Exercise the worker binding and actual HTTP grant on a migrated test
+PostgreSQL database:
+
+```bash
+bash scripts/check-api.sh test tests/kria/test_library_visual_device_grants_postgres.py -q
+```
+
+This replay covers owned library photos/videos, project uploads and rejected
+source replacements. GCS transport is substituted. It proves source authorization,
+not a native export or Photos write. For physical delivery, include a saved-library
+photo and a project-uploaded photo, inspect both in the finished video, then save
+to Photos on the named candidate. Record the approved recipe and output identity.
+
 ## Gotchas
 
 This UI test explicitly replaces the exporter and upload. It does not tap Save

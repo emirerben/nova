@@ -56,6 +56,7 @@ from app.limiter import limiter
 from app.models import (
     ContentPlan,
     Job,
+    MediaAssetSource,
     PlanItem,
     PlanItemAsset,
     TemporaryMediaUpload,
@@ -829,8 +830,9 @@ async def _visual_download_url(
 
     The recipe pinned one immutable generation; the device verifies the SHA-256.
     Here the row must still be this job's plan item's ready visual of the pinned
-    kind, at that exact generation, under its owner's pool prefix, so a removed
-    or replaced visual fails closed instead of rendering different bytes.
+    kind and exact generation. Library-linked visuals retain their owned original
+    source; unlinked uploads stay under the project's pool prefix. Removed or
+    replaced sources fail closed instead of rendering different bytes.
     """
     try:
         visual_id = uuid.UUID(asset.visual_id)
@@ -844,14 +846,35 @@ async def _visual_download_url(
         or row.plan_item_id != job.content_plan_item_id
     ):
         raise HTTPException(404, "Visual unavailable")
-    prefix = f"users/{user_id}/plan/{row.plan_item_id}/pool/"
     if (
         row.status != "ready"
         or row.kind != asset.media_kind
         or str(row.gcs_generation or "") != asset.generation
-        or not row.gcs_path.startswith(prefix)
-        or any(part in {"", ".", ".."} for part in row.gcs_path[len(prefix) :].split("/"))
     ):
+        raise HTTPException(409, "Visual changed; refresh the recipe")
+    if row.library_asset_id is not None or row.library_source_id is not None:
+        source = (
+            await db.get(MediaAssetSource, row.library_source_id, populate_existing=True)
+            if row.library_source_id is not None
+            else None
+        )
+        authorized = (
+            source is not None
+            and source.user_id == user_id
+            and source.asset_id == row.library_asset_id
+            and source.role == "original"
+            and source.status == "available"
+            and source.object_path == row.gcs_path
+            and source.object_generation == asset.generation
+            and source.uploaded_sha256 == asset.fingerprint.sha256
+            and source.byte_count == asset.fingerprint.byte_count
+        )
+    else:
+        prefix = f"users/{user_id}/plan/{row.plan_item_id}/pool/"
+        authorized = row.gcs_path.startswith(prefix) and not any(
+            part in {"", ".", ".."} for part in row.gcs_path[len(prefix) :].split("/")
+        )
+    if not authorized:
         raise HTTPException(409, "Visual changed; refresh the recipe")
     path = row.gcs_path
     await db.rollback()
