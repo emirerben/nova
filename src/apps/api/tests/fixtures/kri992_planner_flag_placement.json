@@ -1,0 +1,29 @@
+{
+  "source": "Prod 2026-10-27, thread 4C536AFE (Don Julio lunch M2), nova.creator.main prompt 2026-10-26-v99: 7 of 32 planner calls logged this error class and paid a second call. Raw model output is redacted (sensitive_io), so the envelopes below are authored in the recorded shape: the typed flags written inside the propose_strategy action.",
+  "prod_error_class": "propose_strategy:delegates_all_choices:extra_forbidden,propose_strategy:starts_f",
+  "placement_cases": [
+    {
+      "name": "delegates_inside_action",
+      "inside": {"delegates_all_choices": true, "starts_fresh": false},
+      "top": {},
+      "expect": {"invocations": 1, "delegates_all_choices": true, "starts_fresh": false}
+    },
+    {
+      "name": "starts_fresh_inside_action",
+      "inside": {"delegates_all_choices": false, "starts_fresh": true},
+      "top": {},
+      "expect": {"invocations": 1, "delegates_all_choices": false, "starts_fresh": true}
+    },
+    {
+      "name": "top_level_wins_over_nested_copy",
+      "inside": {"delegates_all_choices": true, "starts_fresh": true},
+      "top": {"delegates_all_choices": false, "starts_fresh": false},
+      "expect": {"invocations": 1, "delegates_all_choices": false, "starts_fresh": false}
+    }
+  ],
+  "unknown_key_control": {
+    "inside": {"delegates_all_choices": true},
+    "extra": {"mystery": 1},
+    "expect": "schema_error"
+  }
+}

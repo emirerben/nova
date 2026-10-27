@@ -528,6 +528,22 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   own judgment instead (`visual_quality`, with `props` / `actions`; see
   `docs/pipelines/clip-understanding.md`). Guard:
   `tests/kria/test_kri807_unmatched_exclusion_picker.py`.
+  *Voiceover ties (KRI-962, Don Julio walk-in N1)*: `app/kria/clip_ties.py`. In a
+  Voiceover edit (`_is_voiceover_strategy`) each named shot sits on one moment of the
+  voice, so a resolved `include` whose top-confidence footage matches are 2+ videos no
+  other ask needs is asked with the picker before the draft (N1: "the DON JULIO sign"
+  matched the window sign and Atakan at the plaque, both 0.9; both really show a Don
+  Julio sign). A video is needed elsewhere when it is another ask's only footage match
+  (N1's "the grill" matched three clips, two of them the only flowers and butcher clips:
+  no question). Photos, clips an exclude leaves out, an include matching every footage
+  clip (the whole set), order/group/caption asks and shots the creator already answered
+  never count. The tied clips come pre-ticked, every clip not left out is offered, and the
+  rows ride in the card the turn already asks (`with_tie_categories`). The tap settles the
+  shot through `fold_clip_selections` / `apply_creator_selections`; keeping both ticked
+  leaves the narrated alignment to place them, as before. Of the 6 prod Voiceover jobs with an
+  alignment record (2026-10-08..27), only N1 would have been asked. Kill switch
+  `KRIA_VOICEOVER_TIE_QUESTIONS_ENABLED` (default on; needs the picker flag). Guard:
+  `tests/kria/test_kri962_voiceover_tie_question.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains

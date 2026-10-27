@@ -1,0 +1,882 @@
+{
+ "provenance": {
+  "ticket": "KRI-962 follow-up (ask which clip on a Voiceover tie)",
+  "pulled": "2026-10-27, read-only admin.py --prod GET jobs?job_type=generative + jobs/<id>/debug",
+  "n1": "Don Julio walk-in N1: thread 99627FBC, job bdb0c798 (2026-10-26). creator_request = the kit's PROMPT.txt (the first message). clips = the job's clip_paths in attachment order with each clip's own clip_metadata fields (summary, subject, setting, activity, content_type, props, speaks_to_camera) in the stored `understanding` record shape; the Visuals photo's record is not in the job and is rebuilt from the resolver's evidence for it. model_strategy = the approved strategy without its resolved intents. resolved_clip_intents = what the resolver matched (approved draft).",
+  "jobs": "Every generative job since 2026-09-15 whose assembly_plan has a narrated_alignment record (the alignment record starts 2026-10-08): 6 phone Voiceover jobs. media_kinds: Visuals photos (reaction-beat visual_role photo) are images; analysis-proxy media are videos."
+ },
+ "n1": {
+  "creator_request": "Voiceover video, follow my recording word by word: the DON JULIO sign while I say \"Don Julio\", the queue on \"the queue\", the butcher on \"butcher\", the grill on \"grill\", the flowers on \"ceiling\", the plaques on \"Michelin\". Show the ribeye photo as a small corner card while I say \"ojo de bife\". Keep the clips quiet under my voice. After my last words \"before we eat\", play Atakan's \"Super excited!\" with its own sound and end right there. English captions on my voice, spell \"ojo de bife\" right. Title: \"Don Julio, Palermo\".",
+  "clips": [
+   {
+    "media_id": "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4",
+    "kind": "video",
+    "duration_s": 8.5,
+    "record": {
+     "subject": "man outside a restaurant",
+     "summary": "A man stands outside a restaurant called Parrilla Don Julio, expresses excitement for the meal, and makes a peace sign gesture.",
+     "setting": "restaurant entrance / outdoor seating area",
+     "activity": "walking, talking, and posing outside a restaurant",
+     "content_type": "talking_head",
+     "props": [
+      "white sign with black text 'PARRILLA DON JULIO'",
+      "red outdoor umbrella",
+      "baby stroller"
+     ],
+     "people": {
+      "speaks_to_camera": true
+     }
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4",
+    "kind": "video",
+    "duration_s": 7.0,
+    "record": {
+     "subject": "restaurant interior with awards and diners",
+     "summary": "The camera pans slowly across a brick wall adorned with Michelin plaques and a green award, showing parts of a restaurant interior with people seated at tables.",
+     "setting": "restaurant interior",
+     "activity": "dining and socializing",
+     "content_type": "ambience",
+     "props": [
+      "Michelin Guide 2024 plaque",
+      "Michelin Guide 2025 plaque",
+      "green clover-shaped award"
+     ],
+     "people": {
+      "speaks_to_camera": false
+     }
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+    "kind": "video",
+    "duration_s": 12.0,
+    "record": {
+     "subject": "restaurant interior with a chef",
+     "summary": "The video shows the interior of a restaurant with high ceilings, decorative dried flowers, and a visible kitchen area with a chef.",
+     "setting": "restaurant interior",
+     "activity": "panning across a restaurant interior, with a chef working at a grill",
+     "content_type": "ambience",
+     "props": [
+      "dried flowers",
+      "large oven with grill",
+      "wooden wall cabinets",
+      "round ceiling lights",
+      "large decorative wagon wheel chandelier",
+      "mirrors on the wall"
+     ],
+     "people": {
+      "speaks_to_camera": false
+     }
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4",
+    "kind": "video",
+    "duration_s": 8.0,
+    "record": {
+     "subject": "chef cooking on grill",
+     "summary": "A chef in a white chef's hat and black apron is working at a large indoor grill, placing and adjusting food items. Another person is briefly visible next to them.",
+     "setting": "restaurant kitchen or open-kitchen dining area",
+     "activity": "chef grilling food items on a rotating skewer grill",
+     "content_type": "action",
+     "props": [
+      "large stainless steel grill",
+      "black chef's apron",
+      "white chef's hat",
+      "long metal tongs",
+      "skewers with food"
+     ],
+     "people": {
+      "speaks_to_camera": false
+     }
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+    "kind": "video",
+    "duration_s": 10.0,
+    "record": {
+     "subject": "chef preparing meat",
+     "summary": "A female chef is seasoning raw cuts of meat with salt on a white cutting board, then places one piece onto a grill. Another chef is partially visible in the background.",
+     "setting": "restaurant kitchen / grill area",
+     "activity": "seasoning raw meat and placing it on a grill",
+     "content_type": "action",
+     "props": [
+      "raw beef ribs",
+      "large cuts of raw beef",
+      "small white salt shaker",
+      "stainless steel grill",
+      "white cutting board"
+     ],
+     "people": {
+      "speaks_to_camera": false
+     }
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4",
+    "kind": "video",
+    "duration_s": 4.5,
+    "record": {
+     "subject": "people outside restaurant",
+     "summary": "People are standing on a sidewalk outside a restaurant or cafe, some under a striped awning and others under red umbrellas, possibly waiting to enter or be seated.",
+     "setting": "sidewalk outside a restaurant/cafe",
+     "activity": "waiting outside a restaurant",
+     "content_type": "broll",
+     "props": [
+      "red umbrellas",
+      "striped awning",
+      "restaurant sign"
+     ],
+     "people": {
+      "speaks_to_camera": false
+     }
+    }
+   },
+   {
+    "media_id": "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4",
+    "kind": "video",
+    "duration_s": 4.0,
+    "record": {
+     "subject": "pedestrian walking past restaurant",
+     "summary": "A person walks past a restaurant called \"DON JULIO Parrilla\" with two people visible through its window, dining inside.",
+     "setting": "city sidewalk next to a restaurant",
+     "activity": "walking on sidewalk, dining in restaurant",
+     "content_type": "broll",
+     "props": [
+      "restaurant window",
+      "DON JULIO Parrilla sign"
+     ],
+     "people": {
+      "speaks_to_camera": false
+     }
+    }
+   },
+   {
+    "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+    "kind": "image",
+    "duration_s": null,
+    "record": {
+     "subject": "ribeye on a wooden board",
+     "summary": "A ribeye on a wooden board (Visuals photo; record not in the job, rebuilt from the resolver's evidence for it).",
+     "props": [
+      "raw meat cuts",
+      "grill in the background"
+     ],
+     "on_screen_text": "DON JULIO"
+    }
+   }
+  ],
+  "model_strategy": {
+   "pacing": "balanced",
+   "direction": "native",
+   "rationale": "Proceeding with the simpler approach. We will align your footage directly to the matching spoken cues from your recording and pop the ribeye photo in as a small corner card. The unmatchable post-voiceover audio trigger has been removed to ensure the edit renders cleanly.",
+   "edit_format": "narrated_planned",
+   "media_scope": "selected",
+   "clip_intents": [
+    {
+     "op": "include",
+     "attribute": "the DON JULIO sign",
+     "intent_id": "include_don_julio_sign"
+    },
+    {
+     "op": "include",
+     "attribute": "the queue",
+     "intent_id": "include_queue"
+    },
+    {
+     "op": "include",
+     "attribute": "the butcher",
+     "intent_id": "include_butcher"
+    },
+    {
+     "op": "include",
+     "attribute": "the grill",
+     "intent_id": "include_grill"
+    },
+    {
+     "op": "include",
+     "attribute": "the flowers",
+     "intent_id": "include_flowers"
+    },
+    {
+     "op": "include",
+     "attribute": "the plaques",
+     "intent_id": "include_plaques"
+    }
+   ],
+   "caption_style": "clean",
+   "opening_title": "Don Julio, Palermo",
+   "audio_strategy": "voiceover",
+   "reaction_beats": [
+    {
+     "beat_id": "ojo-de-bife",
+     "trigger": "ojo de bife",
+     "visual_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+     "occurrence": "first",
+     "visual_role": "photo"
+    }
+   ],
+   "render_program": "native",
+   "story_structure": [
+    "Open with the Don Julio sign on your cue",
+    "Follow the voiceover to the queue, butcher, grill, and interior details",
+    "Pop up the ribeye photo exactly when the cut is named"
+   ],
+   "target_duration_s": 25,
+   "selected_media_ids": [
+    "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4",
+    "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4",
+    "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+    "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4",
+    "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+    "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4",
+    "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4"
+   ],
+   "video_reuse_policy": "once",
+   "optional_treatments": [],
+   "selected_music_section": null
+  },
+  "resolved_clip_intents": [
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the DON JULIO sign",
+    "intent_id": "include_don_julio_sign",
+    "assignments": [
+     {
+      "evidence": "white restaurant sign with black text; man points to sign",
+      "media_id": "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4",
+      "confidence": 0.9
+     },
+     {
+      "evidence": "Don Julio Parrilla sign",
+      "media_id": "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4",
+      "confidence": 0.9
+     },
+     {
+      "evidence": "on_screen_text: DON JULIO",
+      "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the queue",
+    "intent_id": "include_queue",
+    "assignments": [
+     {
+      "evidence": "people waiting outside and entering a restaurant; people gather near a restaurant entrance",
+      "media_id": "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the butcher",
+    "intent_id": "include_butcher",
+    "assignments": [
+     {
+      "evidence": "chef prepares various cuts of raw meat by salting them",
+      "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+      "confidence": 0.8
+     },
+     {
+      "evidence": "Chef seasoning raw meat cuts",
+      "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+      "confidence": 0.8
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the grill",
+    "intent_id": "include_grill",
+    "assignments": [
+     {
+      "evidence": "chefs working at a grill; large silver grill",
+      "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+      "confidence": 0.9
+     },
+     {
+      "evidence": "chef working at a grill station; large stainless steel oven with grill",
+      "media_id": "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4",
+      "confidence": 0.9
+     },
+     {
+      "evidence": "preparing meat...before placing them on a grill; large metal grill",
+      "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+      "confidence": 0.9
+     },
+     {
+      "evidence": "a grill...in the background",
+      "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+      "confidence": 0.8
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the flowers",
+    "intent_id": "include_flowers",
+    "assignments": [
+     {
+      "evidence": "unique decor featuring dried flowers; bunches of dried yellow flowers; bunches of dried purple flowers",
+      "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the plaques",
+    "intent_id": "include_plaques",
+    "assignments": [
+     {
+      "evidence": "rustic brick wall decorated with Michelin plaques; red Michelin 2024 plaque; red Michelin 2025 plaque",
+      "media_id": "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4",
+      "confidence": 0.9
+     }
+    ]
+   }
+  ],
+  "alignment_placements": [
+   [
+    "files/1k1s31wtaxzp",
+    "w000000"
+   ],
+   [
+    "files/zvx0lpefz7pn",
+    "w000009"
+   ],
+   [
+    "files/xmw58vucyjmc",
+    "w000016"
+   ],
+   [
+    "files/xvxlw9ozu3t9",
+    "w000027"
+   ],
+   [
+    "files/f327yhvbka2w",
+    "w000031"
+   ],
+   [
+    "files/oqksh4n5dta1",
+    "w000038"
+   ],
+   [
+    "files/vta5fgsqumdg",
+    "w000045"
+   ]
+  ]
+ },
+ "jobs": [
+  {
+   "job_id": "05247978-6300-4a38-9a58-80ef8b938443",
+   "created_at": "2026-10-26T11:38:58.093135Z",
+   "edit_format": "narrated_planned",
+   "audio_strategy": "voiceover",
+   "media_kinds": {
+    "analysis-proxy-01537741-15F9-4365-91CC-F91C17004AFB": "video",
+    "analysis-proxy-049F96D0-56F8-4BD9-B138-0014F42E77C4": "video",
+    "analysis-proxy-16D8C3DE-27BF-4940-8AA5-18BD33F3E001": "video",
+    "analysis-proxy-17FA3ADF-A7C3-4CB2-9435-E33E9E38D10B": "video",
+    "analysis-proxy-5D58E0CC-A246-4848-AF06-66F51C85DB31": "video",
+    "analysis-proxy-9AD7A403-FB8E-45C0-81EF-577438D39EE6": "video",
+    "analysis-proxy-ACEF52EC-F321-4614-B0B3-7FFF7EA431AE": "video",
+    "analysis-proxy-AF0D40E6-708C-445F-A9F3-D04D55B4E7FB": "video",
+    "analysis-proxy-DCEA1333-49DA-4FCA-B562-2481CDEFE9CE": "video",
+    "analysis-proxy-E364340D-E7E8-4EFA-8375-18E20F3BF8C3": "video",
+    "analysis-proxy-EF0CADB7-875A-4E8A-B5B1-A011C82B9EDF": "video",
+    "analysis-proxy-FBE49554-BFCB-4746-B68A-1ED1FD8FD6D5": "video"
+   },
+   "resolved_clip_intents": [],
+   "aligned_labels": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "job_id": "8a0ced82-6b45-46ff-8b56-126b893a4617",
+   "created_at": "2026-10-08T15:03:05.235257Z",
+   "edit_format": "narrated_planned",
+   "audio_strategy": "voiceover",
+   "media_kinds": {
+    "analysis-proxy-ios-72A686C7-693E-4A8F-99AF-18F0D3C3B3B0.mp4": "video",
+    "analysis-proxy-ios-72D353FC-EF7A-4A86-ACF8-1C68FD91EC4A.mp4": "video",
+    "analysis-proxy-ios-E80D17F0-38D9-41E9-837A-96D802F078CD.mp4": "video",
+    "asset-badedb8a-cc94-4668-b079-a33085002c53": "image",
+    "asset-ee47431f-9279-45c3-a02f-1dae2885288c": "image"
+   },
+   "resolved_clip_intents": [
+    {
+     "intent_id": "order_medal_photo",
+     "op": "order",
+     "attribute": "my medal photo",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "A close-up photo shows a person's hand holding a gold medal with a runner design",
+       "media_id": "asset-badedb8a-cc94-4668-b079-a33085002c53",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "intent_id": "order_watch_photo",
+     "op": "order",
+     "attribute": "the watch photo",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "Close-up of a wet arm wearing a black Garmin sports watch displaying '4:12:37'",
+       "media_id": "asset-ee47431f-9279-45c3-a02f-1dae2885288c",
+       "confidence": 0.9
+      }
+     ]
+    }
+   ],
+   "aligned_labels": [
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "job_id": "b9e4c530-fb74-42ce-abd0-c38665693807",
+   "created_at": "2026-10-22T06:26:55.122799Z",
+   "edit_format": "narrated_planned",
+   "audio_strategy": "voiceover",
+   "media_kinds": {
+    "analysis-proxy-00783654-D117-4819-B5A3-E615CA92E522": "video",
+    "analysis-proxy-20D63F2C-621D-4923-A48D-949D5BABB165": "video",
+    "analysis-proxy-29F08CD0-8E26-429B-A084-5842DFF67B32": "video",
+    "analysis-proxy-47B4760E-FAD3-4E6A-97AF-EE51DF663D4E": "video",
+    "analysis-proxy-57D05D4C-C9CE-4499-BBAE-6C5019054094": "video",
+    "analysis-proxy-5FEB02BD-5F73-4B53-B46A-25450E1B04AD": "video",
+    "analysis-proxy-7180800E-D771-46F3-A0A9-16C831472AD2": "video",
+    "analysis-proxy-753DA9CC-899D-4B42-9C7F-2E681AE7A4D1": "video",
+    "analysis-proxy-87D51069-8DBB-44B8-8462-EC768FB13053": "video",
+    "analysis-proxy-AA48F5AF-9FA5-4D3C-B822-2D599BECC2E2": "video",
+    "analysis-proxy-AA6B2EDF-A404-4059-82F6-7C037E453627": "video",
+    "analysis-proxy-B65F3B1C-BFC5-43D5-A774-5FA7C4368B13": "video"
+   },
+   "resolved_clip_intents": [
+    {
+     "intent_id": "match_sarcophagus",
+     "op": "include",
+     "attribute": "sarcophagus",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "ancient sarcophagus displayed in museum",
+       "media_id": "analysis-proxy-5FEB02BD-5F73-4B53-B46A-25450E1B04AD",
+       "confidence": 1.0
+      }
+     ]
+    },
+    {
+     "intent_id": "match_sculptures",
+     "op": "include",
+     "attribute": "sculptures",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "ancient sculptures and artifacts",
+       "media_id": "analysis-proxy-00783654-D117-4819-B5A3-E615CA92E522",
+       "confidence": 1.0
+      }
+     ]
+    },
+    {
+     "intent_id": "match_excavated_layers",
+     "op": "include",
+     "attribute": "excavated layers",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "archaeological site with excavated layers",
+       "media_id": "analysis-proxy-AA6B2EDF-A404-4059-82F6-7C037E453627",
+       "confidence": 1.0
+      },
+      {
+       "evidence": "ancient stone ruins, ancient stone wall",
+       "media_id": "analysis-proxy-47B4760E-FAD3-4E6A-97AF-EE51DF663D4E",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "ancient ruins, stone structures",
+       "media_id": "analysis-proxy-7180800E-D771-46F3-A0A9-16C831472AD2",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "ancient ruins, amphitheater-like structure",
+       "media_id": "analysis-proxy-57D05D4C-C9CE-4499-BBAE-6C5019054094",
+       "confidence": 0.8
+      }
+     ]
+    }
+   ],
+   "aligned_labels": [
+    [],
+    [
+     "sarcophagus"
+    ],
+    [
+     "sculptures"
+    ],
+    [],
+    [
+     "excavated layers"
+    ],
+    [
+     "excavated layers"
+    ],
+    [
+     "excavated layers"
+    ],
+    [
+     "excavated layers"
+    ],
+    [],
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "job_id": "bdb0c798-c2e6-4f58-8a31-e50f9acdfdd7",
+   "created_at": "2026-10-26T12:45:56.479712Z",
+   "edit_format": "narrated_planned",
+   "audio_strategy": "voiceover",
+   "media_kinds": {
+    "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4": "video",
+    "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4": "video",
+    "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4": "video",
+    "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4": "video",
+    "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4": "video",
+    "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4": "video",
+    "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4": "video",
+    "asset-165823f4-8c5c-4081-a6a4-e88536996232": "image"
+   },
+   "resolved_clip_intents": [
+    {
+     "intent_id": "include_don_julio_sign",
+     "op": "include",
+     "attribute": "the DON JULIO sign",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "white restaurant sign with black text; man points to sign",
+       "media_id": "analysis-proxy-ios-6163F36C-EE16-4B4A-BC23-D2B67D7F1263.mp4",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "Don Julio Parrilla sign",
+       "media_id": "analysis-proxy-ios-B39B8BA0-9AE0-4BC0-82D7-3B2881098E96.mp4",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "on_screen_text: DON JULIO",
+       "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "intent_id": "include_queue",
+     "op": "include",
+     "attribute": "the queue",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "people waiting outside and entering a restaurant; people gather near a restaurant entrance",
+       "media_id": "analysis-proxy-ios-12992891-1F46-444F-A3C9-FEBEF66C8C4C.mp4",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "intent_id": "include_butcher",
+     "op": "include",
+     "attribute": "the butcher",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "chef prepares various cuts of raw meat by salting them",
+       "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "Chef seasoning raw meat cuts",
+       "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+       "confidence": 0.8
+      }
+     ]
+    },
+    {
+     "intent_id": "include_grill",
+     "op": "include",
+     "attribute": "the grill",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "chefs working at a grill; large silver grill",
+       "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "chef working at a grill station; large stainless steel oven with grill",
+       "media_id": "analysis-proxy-ios-BC642645-C149-42ED-B46B-4CB91BEFBD66.mp4",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "preparing meat...before placing them on a grill; large metal grill",
+       "media_id": "analysis-proxy-ios-02B705F5-A9FA-4BF8-9CEF-C6EA537B430C.mp4",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "a grill...in the background",
+       "media_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+       "confidence": 0.8
+      }
+     ]
+    },
+    {
+     "intent_id": "include_flowers",
+     "op": "include",
+     "attribute": "the flowers",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "unique decor featuring dried flowers; bunches of dried yellow flowers; bunches of dried purple flowers",
+       "media_id": "analysis-proxy-ios-23443478-189F-4D1B-A71C-7A7B23E307DF.mp4",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "intent_id": "include_plaques",
+     "op": "include",
+     "attribute": "the plaques",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "rustic brick wall decorated with Michelin plaques; red Michelin 2024 plaque; red Michelin 2025 plaque",
+       "media_id": "analysis-proxy-ios-FAEB4DA0-20AE-4A1B-BECD-0818F1F724F5.mp4",
+       "confidence": 0.9
+      }
+     ]
+    }
+   ],
+   "aligned_labels": [
+    [
+     "the DON JULIO sign"
+    ],
+    [
+     "the queue"
+    ],
+    [
+     "the butcher",
+     "the grill"
+    ],
+    [
+     "the grill"
+    ],
+    [
+     "the grill",
+     "the flowers"
+    ],
+    [
+     "the plaques"
+    ],
+    [
+     "the DON JULIO sign"
+    ]
+   ]
+  },
+  {
+   "job_id": "c15a8518-3bb8-48bd-b6aa-fe60b00ccf48",
+   "created_at": "2026-10-27T06:55:41.592608Z",
+   "edit_format": "narrated_planned",
+   "audio_strategy": "voiceover",
+   "media_kinds": {
+    "analysis-proxy-0306E6CF-F269-422E-8C68-B1D61331D1FF": "video",
+    "analysis-proxy-049F96D0-56F8-4BD9-B138-0014F42E77C4": "video",
+    "analysis-proxy-16D8C3DE-27BF-4940-8AA5-18BD33F3E001": "video",
+    "analysis-proxy-24A0B7E9-6A02-4EE2-AACF-05C0F51E07EA": "video",
+    "analysis-proxy-460E6388-5C0C-4D6C-B7B5-5A80681FB431": "video",
+    "analysis-proxy-5CE4F527-28EF-426D-B900-C5F6D1A54EA5": "video",
+    "analysis-proxy-914D9BC4-B13D-47A5-9159-16D65A09AA77": "video",
+    "analysis-proxy-9AD7A403-FB8E-45C0-81EF-577438D39EE6": "video",
+    "analysis-proxy-ACEF52EC-F321-4614-B0B3-7FFF7EA431AE": "video",
+    "analysis-proxy-AE0B6847-2003-4119-B2D3-646546D0530A": "video",
+    "analysis-proxy-AEC00C86-CC31-47D3-A283-0AC5C9A2C9EF": "video",
+    "analysis-proxy-FBE49554-BFCB-4746-B68A-1ED1FD8FD6D5": "video"
+   },
+   "resolved_clip_intents": [],
+   "aligned_labels": [
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    [],
+    []
+   ]
+  },
+  {
+   "job_id": "e573c56a-b094-4ee0-9f64-8ae90bdc08f8",
+   "created_at": "2026-10-21T15:25:42.902642Z",
+   "edit_format": "narrated_planned",
+   "audio_strategy": "voiceover",
+   "media_kinds": {
+    "analysis-proxy-1272A403-B9F9-4597-88F4-AF61A47A5B1F": "video",
+    "analysis-proxy-4BC43ACD-1E6C-4FB3-BD33-A261AEAE0FC4": "video",
+    "analysis-proxy-50CA4EA1-5F7E-4ECF-A1B2-D3D2BF1017CC": "video",
+    "analysis-proxy-62E80A29-E2CA-4AEC-868C-0660FE4BEE5B": "video",
+    "analysis-proxy-DA582C5B-8682-4358-AF3A-F1FBE3C0BD6E": "video"
+   },
+   "resolved_clip_intents": [
+    {
+     "intent_id": "include_horse",
+     "op": "include",
+     "attribute": "the horse",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "Trojan Horse replica, large, black, wooden replica of the Trojan Horse",
+       "media_id": "analysis-proxy-62E80A29-E2CA-4AEC-868C-0660FE4BEE5B",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "intent_id": "include_road",
+     "op": "include",
+     "attribute": "the road",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "paved area visible",
+       "media_id": "analysis-proxy-4BC43ACD-1E6C-4FB3-BD33-A261AEAE0FC4",
+       "confidence": 0.8
+      }
+     ]
+    },
+    {
+     "intent_id": "include_ruins",
+     "op": "include",
+     "attribute": "the ruins",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "ancient ruins, archaeological site with excavated layers and stone structures",
+       "media_id": "analysis-proxy-DA582C5B-8682-4358-AF3A-F1FBE3C0BD6E",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "intent_id": "order_museum_last",
+     "op": "order",
+     "attribute": "the museum",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "modern museum hall, museum interior, viewing museum exhibits",
+       "media_id": "analysis-proxy-50CA4EA1-5F7E-4ECF-A1B2-D3D2BF1017CC",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "interior of a museum exhibit, museum interior, displaying ancient artifacts",
+       "media_id": "analysis-proxy-1272A403-B9F9-4597-88F4-AF61A47A5B1F",
+       "confidence": 0.9
+      }
+     ],
+     "position": "last"
+    },
+    {
+     "intent_id": "include_all_five_clips",
+     "op": "include",
+     "attribute": "all five footage clips",
+     "status": "resolved",
+     "assignments": [
+      {
+       "evidence": "all five footage clips",
+       "media_id": "analysis-proxy-62E80A29-E2CA-4AEC-868C-0660FE4BEE5B",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "all five footage clips",
+       "media_id": "analysis-proxy-4BC43ACD-1E6C-4FB3-BD33-A261AEAE0FC4",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "all five footage clips",
+       "media_id": "analysis-proxy-DA582C5B-8682-4358-AF3A-F1FBE3C0BD6E",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "all five footage clips",
+       "media_id": "analysis-proxy-50CA4EA1-5F7E-4ECF-A1B2-D3D2BF1017CC",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "all five footage clips",
+       "media_id": "analysis-proxy-1272A403-B9F9-4597-88F4-AF61A47A5B1F",
+       "confidence": 0.9
+      }
+     ]
+    }
+   ],
+   "aligned_labels": [
+    [
+     "the horse",
+     "all five footage clips"
+    ],
+    [
+     "the road",
+     "all five footage clips"
+    ],
+    [
+     "the ruins",
+     "all five footage clips"
+    ],
+    [
+     "the museum",
+     "all five footage clips"
+    ],
+    [
+     "the museum",
+     "all five footage clips"
+    ]
+   ]
+  }
+ ]
+}

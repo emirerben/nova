@@ -523,6 +523,16 @@
       ]
     },
     {
+      "id": "kri-994-review-receipts",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri994_review_receipts.py tests/tasks/test_montage_render_ready_review.py tests/kria/test_brief_montage_render_asks.py tests/kria/test_creative_brief.py",
+      "paths": [
+        "src/apps/api/app/kria/select_asks.py",
+        "src/apps/api/tests/fixtures/kri994_don_julio_m2_review.json",
+        "src/apps/api/tests/kria/test_kri994_review_receipts.py"
+      ]
+    },
+    {
       "id": "kri-598-voiceover-planner",
       "needs_native": false,
       "api_tests": "tests/agents/test_n2_fullscreen_contract.py tests/evals/test_clip_intent_planner_evals.py tests/evals/test_main_creator_evals.py tests/kria/test_brief_marathon_receipts.py tests/kria/test_kri598_voiceover_planner.py tests/kria/test_voiceover_downgrade_losses.py tests/pipeline/test_phone_narrated_fullscreen.py tests/routes/test_phone_narrated_editor_commit.py tests/services/test_n2_fullscreen_grounding.py tests/tasks/test_n2_fullscreen_dispatch.py",
@@ -626,6 +636,16 @@
         "src/apps/api/app/kria/clip_exclusions.py",
         "src/apps/api/tests/fixtures/kri807_don_julio_m1_clips.json",
         "src/apps/api/tests/kria/test_kri807_unmatched_exclusion_picker.py"
+      ]
+    },
+    {
+      "id": "kri-962-voiceover-tie-question",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri962_voiceover_tie_question.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri692_spoken_text_is_not_a_clip_question.py",
+      "paths": [
+        "src/apps/api/app/kria/clip_ties.py",
+        "src/apps/api/tests/fixtures/kri962_voiceover_tie_jobs.json",
+        "src/apps/api/tests/kria/test_kri962_voiceover_tie_question.py"
       ]
     },
     {
@@ -1816,6 +1836,15 @@
       "paths": [
         "src/apps/api/tests/fixtures/kri957_donjulio_n1_after_voice.json",
         "src/apps/api/tests/tasks/test_kri957_after_voice_line.py"
+      ]
+    },
+    {
+      "id": "kri-992-planner-flag-placement",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_main_creator_flag_placement.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri992_planner_flag_placement.json",
+        "src/apps/api/tests/agents/test_main_creator_flag_placement.py"
       ]
     },
     {

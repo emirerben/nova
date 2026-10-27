@@ -300,6 +300,14 @@ class ClipIntent(BaseModel):
     # Only for op="order", and never together with `position`.
     order_by: ClipOrderBy | None = Field(default=None, exclude_if=lambda value: value is None)
     ordered_members: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-994: for op="exclude" only, the Creative Brief `select` requirement ("r3") this
+    # exclusion carries out, as the planner model declared it. Unverified here: the receipt
+    # reader (`app.kria.select_asks.exclusion_facts`) keeps it only when it names a live
+    # `select` requirement. Omitted from dumps when unset, so every intent persisted before
+    # this field loads and re-dumps byte-identically.
+    requirement_id: str | None = Field(
+        default=None, max_length=24, exclude_if=lambda value: value is None
+    )
 
     @field_validator("intent_id", mode="before")
     @classmethod
@@ -321,6 +329,11 @@ class ClipIntent(BaseModel):
     @classmethod
     def _caption_attribute(cls, v: object) -> str | None:
         return _clean(v, 160) or None
+
+    @field_validator("requirement_id", mode="before")
+    @classmethod
+    def _requirement_id(cls, v: object) -> str | None:
+        return _clean(v, 24) or None
 
 
 class ClipAssignment(BaseModel):

@@ -93,6 +93,7 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
+from app.kria.select_asks import exclusion_facts, only_video_ask
 from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
     CREATOR_AGENT_RUNNING_TURN_STATUSES,
@@ -6648,11 +6649,21 @@ def _approved_generation_requirements_review(
         facts = plan_facts_from_rendered_montage(
             variant, montage, fingerprints=_source_fingerprints(job)
         )
+        # KRI-994: the creator's tapped skips and a "video clips only" ask are judged against
+        # the finished timeline, whatever the plan record said when it was laid out.
+        facts = dataclasses.replace(
+            facts,
+            exclusions=exclusion_facts((job.all_candidates or {}).get("creator_strategy"), brief),
+        )
+        finished = {f.requirement_id for f in facts.exclusions} | {
+            req.id for req in live.values() if only_video_ask(req)
+        }
         receipts = [
             receipt
             for receipt in receipts
             if is_judged(live.get(receipt.requirement_id), receipt)
             and not judged_at_render(live[receipt.requirement_id])
+            and receipt.requirement_id not in finished
         ]
     else:
         # KRI-537: the variant's phone_beat_receipt and voiceover_bed_level are the render's

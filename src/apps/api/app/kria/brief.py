@@ -45,6 +45,7 @@ from app.kria.asset_holds import Authority, resolve_clip_scope, stamp_authority
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import detect_chat_language
+from app.kria.select_asks import withdrawn_photo_asks
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
@@ -629,12 +630,21 @@ def apply_updates(
             added.model_copy(update={"authority": stamp_authority(added, creator_text)})
         )
         counter += 1
+    # KRI-994: a later typed "video clips only" ask withdraws an earlier typed photo ask.
+    withdrawn = withdrawn_photo_asks(
+        prior.live(),
+        [*incoming, *changed.values()],
+        source_turn_id=source_turn_id,
+        same_batch_ids=[*changed, *removed],
+    )
     requirements = []
     for req in prior.requirements:
         if req.id in removed and req.live:
             requirements.append(req.model_copy(update={"status": "superseded"}))
         elif req.id in changed and req.live:
             requirements.append(changed[req.id])
+        elif req.id in withdrawn and req.live:
+            requirements.append(req.model_copy(update={"status": "superseded"}))
         else:
             requirements.append(req)
     requirements.extend(incoming)

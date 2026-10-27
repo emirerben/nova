@@ -1318,6 +1318,7 @@ async def resolve_clip_intents_for_turn(
                         intent_id=i.intent_id,
                         op=i.op,
                         attribute=i.attribute,
+                        requirement_id=i.requirement_id,
                         status="resolved",
                         assignments=[],
                     )
@@ -1338,6 +1339,7 @@ async def resolve_clip_intents_for_turn(
                     placeholder=i.placeholder,
                     position=i.position,
                     ordered_members=i.ordered_members,
+                    requirement_id=i.requirement_id,
                     status="needs_creator",
                     assignments=[],
                     question=_generic_question(),
@@ -2186,6 +2188,7 @@ async def resolve_clip_intents_for_turn(
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
                     ordered_members=intent.ordered_members,
+                    requirement_id=intent.requirement_id,
                     status="needs_creator",
                     assignments=work.kept,
                     question=None,  # set on the turn-level question below
@@ -2204,6 +2207,7 @@ async def resolve_clip_intents_for_turn(
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
                     ordered_members=intent.ordered_members,
+                    requirement_id=intent.requirement_id,
                     status="resolved",
                     assignments=work.kept,
                     caption_text=work.caption_text,
