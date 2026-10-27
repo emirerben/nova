@@ -2854,6 +2854,18 @@ Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_op
 `tests/kria/test_kri966_take_window_length.py` + `test_kri966_t1_runtime_postgres.py`
 (fixture `kri966_donjulio_walkin_t1_length.json`).
 
+**A quote the take holds only part of (KRI-967).** "Parrilla Don Julio, what do you
+think?" over whisper's "So," / "what do you think?" (Don Julio walk-in T1):
+`take_lines.partly_heard` finds the line holding the said part and the card names
+the words it could not find. When the clip record's Gemini transcript
+(`speech.transcript`) hears those words right next to the said part, the adjacent
+line (≤1 s away, ≤ their length + 2 tokens, neither quote words nor words that
+transcript heard on their own) is recommended, shown and pinned joined to the said
+line ("So, what do you think?"), so the cut opens where they were said. No such
+evidence: the old recommendation stays. Option keys and the digest are unchanged.
+Review: `docs/reviews/kri-967-unheard-quote-head.md`; tests:
+`tests/kria/test_kri967_unheard_quote_head.py`.
+
 ### Text on a spoken word on phone Talking edits (KRI-707)
 
 "“Atakan” dediğimde ekrana büyük “ATAKAN” yazısı gelsin" (boat kit T1, thread

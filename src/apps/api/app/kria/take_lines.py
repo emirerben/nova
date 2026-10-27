@@ -22,15 +22,26 @@ widened with its neighbours until it names one place (`pinned_line_text`).
 No times are shown to the creator: inside a merged segment a line's time is an estimate by
 character share (`opening_cut_ask.segment_words`), good enough to order lines and to bound
 "lines after the start", not to print.
+
+KRI-967: a quote can be PARTLY in the take. "Parrilla Don Julio, what do you think?" over
+whisper's "So," / "what do you think?": the question is the take's line, the name is not.
+`partly_heard` finds the line holding the part the take says and names the creator's words it
+does not. The line right before it (after it, for an end quote) is where those words were said
+only when an independent listener -- the clip record's own Gemini transcript, KRI-808's
+reference -- hears them right next to the heard part, the line sits right against it, is about
+as long as the words it stands for, and is neither words of the quote nor words that listener
+heard on their own. Without that evidence nothing is placed: a creator may misremember a line.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 from typing import Any, Literal
 
 from app.kria.opening_cut_ask import segment_words
+from app.services.speech_segments import LINE_MIN_RATIO
 from app.services.spoken_quotes import fold_tokens
 
 # A clause ends on one of these (after any closing quote / bracket)...
@@ -50,6 +61,17 @@ _I_FORMS = frozenset({"I", "I'm", "I'll", "I've", "I'd"})
 # "tradicionales" or a shared name or number are what it catches).
 RECOMMEND_MIN_SCORE = 0.2
 RECOMMEND_LEAD = 2.0
+
+# KRI-967: the part of a quote the take says is at least this many folded tokens (one common
+# word is no anchor)...
+MIN_HEARD_TOKENS = 2
+# ...and the neighbouring line the rest was said as starts / ends within this of it, with at
+# most this many more tokens than the words it stands for.
+NEIGHBOUR_MAX_GAP_S = 1.0
+NEIGHBOUR_EXTRA_TOKENS = 2
+# Punctuation trimmed off a quote fragment shown in a sentence ("Parrilla Don Julio," -> name).
+_FRAGMENT_EDGE = " \"'“”‘’«»,;:—–-"
+_FRAGMENT_END = _FRAGMENT_EDGE + ".!?…¿¡"
 
 
 @dataclass(frozen=True)
@@ -72,6 +94,21 @@ class LineOffer:
 
     lines: tuple[TakeLine, ...]
     recommended: TakeLine | None
+
+
+@dataclass(frozen=True)
+class PartlyHeard:
+    """A quote the take says only part of (KRI-967).
+
+    ``line`` is where the said part starts (start quote) / ends (end quote); ``heard`` and
+    ``unheard`` are the creator's own words of each part, trimmed for a sentence; ``said_as`` is
+    the neighbouring line the unheard words were said as, or None without evidence.
+    """
+
+    line: TakeLine
+    heard: str
+    unheard: str
+    said_as: TakeLine | None = None
 
 
 def _starts_clause(token: str) -> bool:
@@ -232,6 +269,7 @@ def offer_lines(
     side: Literal["start", "end"],
     limit: int,
     after_s: float | None = None,
+    prefer: TakeLine | None = None,
 ) -> LineOffer:
     """At most ``limit`` of ``lines`` to offer for ``quote``, in time order.
 
@@ -241,13 +279,25 @@ def offer_lines(
     it, e.g. "Thank you" over a Spanish "Gracias") goes to the earliest lines for a start and
     the latest for an end, where such a line usually is. ``recommended`` is set only when one
     line clearly beats the rest (`RECOMMEND_MIN_SCORE`, `RECOMMEND_LEAD`).
+
+    KRI-967: ``prefer`` (`PartlyHeard.said_as`, the line a partly heard quote's missing words
+    were said as) always stays and is the recommendation, however little it looks like the
+    quote ("So," for "Parrilla Don Julio").
     """
     pool = [line for line in lines if after_s is None or line.start_s >= after_s - 1e-6]
+    preferred = next(
+        (line for line in pool if prefer is not None and line.index == prefer.index), None
+    )
     scored = [(similarity(line.text, quote), line) for line in pool]
     if len(scored) > limit:
         late = side == "end"
         ranked = sorted(
-            scored, key=lambda pair: (-pair[0], -pair[1].index if late else pair[1].index)
+            scored,
+            key=lambda pair: (
+                pair[1] is not preferred,
+                -pair[0],
+                -pair[1].index if late else pair[1].index,
+            ),
         )
         keep = {line.index for _score, line in ranked[:limit]}
         scored = [pair for pair in scored if pair[1].index in keep]
@@ -262,15 +312,165 @@ def offer_lines(
         and best[0] >= RECOMMEND_LEAD * runner_up
         else None
     )
-    return LineOffer(lines=tuple(line for _score, line in scored), recommended=recommended)
+    return LineOffer(
+        lines=tuple(line for _score, line in scored),
+        recommended=preferred if preferred is not None else recommended,
+    )
+
+
+def span_lines(first: TakeLine, last: TakeLine) -> TakeLine:
+    """``first`` through ``last`` (adjacent lines) as one line, under ``first``'s index."""
+    return replace(
+        first,
+        text=f"{first.text} {last.text}",
+        end_s=last.end_s,
+        last=last.last,
+    )
+
+
+def _runs(tokens: Sequence[str], run: Sequence[str]) -> list[int]:
+    """Where ``run`` starts in ``tokens`` (every place)."""
+    width = len(run)
+    return [
+        i
+        for i in range(len(tokens) - width + 1)
+        if width and list(tokens[i : i + width]) == list(run)
+    ]
+
+
+def _reads_like(a: Sequence[str], b: Sequence[str]) -> bool:
+    """Do two token runs read alike (folded text, the bar `speech_segments.ground_line` uses)."""
+    if not a or not b:
+        return False
+    ratio = SequenceMatcher(None, " ".join(a), " ".join(b), autojunk=False).ratio()
+    return ratio >= LINE_MIN_RATIO
+
+
+def _evidence_span(
+    reference: Sequence[str], heard: Sequence[str], unheard: Sequence[str], *, start: bool
+) -> tuple[int, int] | None:
+    """Where ``reference`` says ``heard`` with ``unheard`` right before it (start) / after it
+    (end): the span of both, or None when it never does."""
+    size = len(unheard)
+    widths = range(max(1, size - 1), size + 2)
+    for at in _runs(reference, heard):
+        for width in widths:
+            if start and at - width >= 0 and _reads_like(unheard, reference[at - width : at]):
+                return at - width, at + len(heard)
+            after = at + len(heard)
+            said = reference[after : after + width]
+            if not start and len(said) == width and _reads_like(unheard, said):
+                return at, after + width
+    return None
+
+
+def _said_as(
+    lines: Sequence[TakeLine],
+    line: TakeLine,
+    quote_tokens: Sequence[str],
+    heard: Sequence[str],
+    unheard: Sequence[str],
+    reference: str | None,
+    *,
+    start: bool,
+) -> TakeLine | None:
+    """The line right before (start) / after (end) ``line`` that the unheard words were said
+    as, or None without the evidence the module docstring lists."""
+    neighbour = next(
+        (
+            other
+            for other in lines
+            if (other.last == line.first - 1 if start else other.first == line.last + 1)
+        ),
+        None,
+    )
+    if neighbour is None:
+        return None
+    gap = line.start_s - neighbour.end_s if start else neighbour.start_s - line.end_s
+    said = fold_tokens(neighbour.text)
+    if (
+        gap > NEIGHBOUR_MAX_GAP_S
+        or not said
+        or len(said) > len(unheard) + NEIGHBOUR_EXTRA_TOKENS
+        or _runs(quote_tokens, said)
+    ):
+        return None
+    tokens = fold_tokens(reference or "")
+    span = _evidence_span(tokens, heard, unheard, start=start)
+    if span is None:
+        return None
+    outside = (tokens[: span[0]], tokens[span[1] :])
+    if any(_runs(part, said) for part in outside):
+        return None  # the listener heard these words on their own: a line of its own
+    return neighbour
+
+
+def partly_heard(
+    lines: Sequence[TakeLine],
+    words: Sequence[Mapping[str, Any]],
+    quote: str,
+    *,
+    side: Literal["start", "end"],
+    reference: str | None = None,
+) -> PartlyHeard | None:
+    """The line holding the part of ``quote`` the take says, when it says only part (KRI-967).
+
+    For a start quote the creator's LAST words must be said from a line's first word on and the
+    words before them are not; for an end quote the FIRST words up to a line's last word, and the
+    words after them are not. The cut falls between the creator's words, the said part is at
+    least `MIN_HEARD_TOKENS` tokens, and the longest said part wins (then the earliest line).
+    ``words`` are `take_words` (what `TakeLine.first` / ``last`` point into); ``reference`` is
+    the clip's independent transcript (see `_said_as`). None when no line holds such a part.
+    """
+    start = side == "start"
+    quote_words = [(word, fold_tokens(word)) for word in str(quote or "").split()]
+    quote_tokens = [token for _word, folded in quote_words for token in folded]
+    stream: list[str] = []
+    first_token: list[int] = []
+    for word in words:
+        first_token.append(len(stream))
+        stream.extend(fold_tokens(word.get("text")))
+    first_token.append(len(stream))  # one past the last word
+    cuts = range(1, len(quote_words)) if start else range(len(quote_words) - 1, 0, -1)
+    for cut in cuts:
+        said_words, missing_words = (
+            (quote_words[cut:], quote_words[:cut])
+            if start
+            else (quote_words[:cut], quote_words[cut:])
+        )
+        heard = [token for _word, folded in said_words for token in folded]
+        unheard = [token for _word, folded in missing_words for token in folded]
+        if len(heard) < MIN_HEARD_TOKENS or not unheard:
+            continue
+        for line in lines:
+            if line.last + 1 >= len(first_token):
+                continue
+            if start:
+                at = first_token[line.first]
+                holds = stream[at : at + len(heard)] == heard
+            else:
+                end = first_token[line.last + 1]
+                holds = end - len(heard) >= 0 and stream[end - len(heard) : end] == heard
+            if not holds:
+                continue
+            return PartlyHeard(
+                line=line,
+                heard=" ".join(w for w, _f in said_words).strip(_FRAGMENT_EDGE),
+                unheard=" ".join(w for w, _f in missing_words).strip(_FRAGMENT_END),
+                said_as=_said_as(lines, line, quote_tokens, heard, unheard, reference, start=start),
+            )
+    return None
 
 
 __all__ = [
     "LineOffer",
+    "PartlyHeard",
     "TakeLine",
     "offer_lines",
+    "partly_heard",
     "pinned_line_text",
     "similarity",
+    "span_lines",
     "split_clauses",
     "take_lines",
     "take_words",

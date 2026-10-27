@@ -785,7 +785,7 @@
     {
       "id": "kri-628-opening-cut",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py tests/kria/test_kri844_take_line_ask.py tests/kria/test_kri844_dj_t2_cross_language_replay.py",
+      "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py tests/kria/test_kri844_take_line_ask.py tests/kria/test_kri844_dj_t2_cross_language_replay.py tests/kria/test_kri967_unheard_quote_head.py",
       "paths": [
         "src/apps/api/app/kria/opening_cut_ask.py",
         "src/apps/api/app/kria/take_lines.py",
@@ -798,7 +798,10 @@
         "src/apps/api/tests/pipeline/test_phone_take_window.py",
         "src/apps/api/tests/kria/test_kri837_one_word_end_line.py",
         "src/apps/api/tests/kria/test_kri844_take_line_ask.py",
-        "src/apps/api/tests/kria/test_kri844_dj_t2_cross_language_replay.py"
+        "src/apps/api/tests/kria/test_kri844_dj_t2_cross_language_replay.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/tests/fixtures/kri967_dj_walkin_t1_unheard_head.json",
+        "src/apps/api/tests/kria/test_kri967_unheard_quote_head.py"
       ]
     },
     {
