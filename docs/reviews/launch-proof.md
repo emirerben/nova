@@ -127,9 +127,9 @@ Live prompt compliance remains unverified. No paid model run was started.
 | Work | Disposition |
 | --- | --- |
 | KRI-940 butcher report | Corrected by the reporter in KRI-941 comments. No speculative fix. |
-| KRI-651 approved hook | Existing fix rechecked offline and by a simulator native export. Original TestFlight acceptance remains open. |
-| KRI-632 long captions | Existing bounded-cue/face-clearance checks pass. Original physical footage still needs inspection. |
-| KRI-810 and KRI-811 export/source admission | Existing verifier and native source-admission checks pass. Historical exact-file TestFlight acceptance remains open. |
+| KRI-651 approved hook | Original phone footage exported with the approved-hook compiler fixture on the physical iPhone. Fresh TestFlight planning and receipt acceptance remain open; the historical server records are missing. |
+| KRI-632 long captions | Existing bounded-cue/face-clearance checks pass. Yasin has the original footage needed for its exact replay. |
+| KRI-810 and KRI-811 export/source admission | Troya Talking exact source and saved recipe exported twice on the physical iPhone. Installed-app publication and Photos acceptance, plus the exact Montage replay, remain open. |
 | KRI-179 imported source index | Main already loads and resolves the fresh pool before changing the document. Existing missing-index/import recovery tests run in the simulator. |
 | KRI-954 research | Resolved caption receipt fixed. Live Cunda replay, non-unified research refusal and the suspected source trigger are still open. |
 | KRI-728 complete outcome measurement | Current-session counters added. Original request/recovery lineage, Photos acknowledgement and version/cost cohorts remain incomplete. |
@@ -153,8 +153,8 @@ synthetic sources, not the exact retained Troya original.
 After the user enabled UI Automation, the installed-app inspector passed. The
 client had advanced from 0.1.0 (1754) to 0.1.0 (1759). Successful TestFlight run
 [40397013091](https://github.com/emirerben/nova/actions/runs/40397013091) maps 1759
-to `f3f1aa44e438114bf2b92af9554e0ef739911f38`. No engine/exporter/header source
-diff was present between that revision and this branch. The installed binary's
+to `f3f1aa44e438114bf2b92af9554e0ef739911f38`. At that checkpoint, no
+engine/exporter/header source diff was present between that revision and this branch. The installed binary's
 signature was not independently checked.
 
 The open project contained unsaved changes. Export correctly explained that a
@@ -167,8 +167,8 @@ items afterward. A single controlled retry reached **Saved to Photos** at
 2:15 video dated 07:20. That new item was opened and its playback inspected.
 
 The interruption's cause is unproven. A later memory-pressure log does not
-establish a cause. No automatic retry or idle-timer patch was added on that
-evidence. This is an observed recovery, not proof of reliable first-attempt
+establish a cause. That initial check added no retry or idle-timer patch.
+The subsequent bounded Photos recovery is recorded below. This is an observed recovery, not proof of reliable first-attempt
 delivery. The full video's sound and request fidelity were not inspected, and
 this existing project does not replace the original compound incident replays.
 API/worker revisions, effective flags and exposure to this unmerged branch were
@@ -198,8 +198,124 @@ Integrated verification: 140 focused incident checks passed, followed by
 `make verify-kria` with 6,653 passed, 6 skipped and 3 expected failures. The
 single-take time question was restored during reconciliation; the upstream
 joined-row tests now assert that intentional wording while retaining their
-membership, exact-label and hidden-answer checks. There is no native product
-source diff from current main, so the earlier physical output remains evidence
-for the unchanged engine/export path. Free prompt replay passed with 2,264 passed, 15 skipped and 7 expected
+membership, exact-label and hidden-answer checks. At merge `ce61705ad`, there
+was no native product source diff from main. The subsequent Photos saver change
+below requires its own proof; the earlier installed release does not contain it. Free prompt replay passed with 2,264 passed, 15 skipped and 7 expected
 failures. No live provider or paid judge was enabled. Final preship is recorded
 separately after the merge commit.
+
+
+## Photos interruption fix and remaining replays
+
+On 27 October, the same-agent investigation found an unhandled legitimate Photos
+failure. Apple's installed SDK identifies error 3301 as `operationInterrupted`, a
+transient transaction failure. Why Photos interrupted the first real import is
+unknown. The fix handles that supported failure without attributing it to screen
+locking, memory pressure or malformed media.
+
+`PhotoLibrarySaver` now retries exactly once after that specific domain/code pair,
+using the same exported URL and bytes. Authorization is requested once. The saver
+checks cancellation before requesting permission and before the first transaction;
+cancellation during the short recovery pause prevents the second transaction.
+Other domains, invalid/missing resources, storage full, denied/restricted access
+and user cancellation are never retried. A second interruption is still an error.
+The editor already retains its temporary export until the save returns, so no
+second render or new editor state is needed. Editor, ready-video and teleprompter
+callers retain the existing shared `PhotoLibrarySaving` contract.
+
+The before-fix commit is `80c6bbfae`. The fix is `2ca366c1b`. Its source SHA-256 is
+`0d3552c15e69107124c8b990c9fcfaa136d790a033580a5a221fc0aae9807e8f`.
+
+| Check | Observed result |
+| --- | --- |
+| Unchanged saver, physical iPhone 13 Pro, iOS 27.0.1 | 3 passed, 4 failed, 0 skipped. Recovery, retry limit and cancellation controls reproduce the missing behavior. |
+| Patched saver, isolated iOS 26.5 simulator host | 7 passed, 0 failed, 0 skipped. Only external Photos calls are injected. |
+| Patched saver, full Kria app test target | 7 passed, 0 failed, 0 skipped. Full app builds with the extracted adapter. |
+| Patched saver, physical iPhone 13 Pro | 7 passed, 0 failed, 0 skipped. External Photos authorization and transaction results are injected. |
+| Real simulator Photos library after injected 3301 | One successful transaction after two attempts. One actual library video, with the exact exported-file SHA-256 and inspected red first frame. |
+| Retained hook, Tigre caption, Don Julio picker/order/audio, Cunda research and receipt replays | 308 passed, 1 expected failure, no skips. No paid provider calls. |
+| Actual-export verifier, publication and recovery controls | 73 passed, no skips or expected failures. Real generated media and isolated PostgreSQL. |
+| Corrected verification-skill replay command | 44 passed. Replaces the deleted KRI-950 test path with upstream full-turn and PostgreSQL checks. |
+
+The expected failure is the legacy collapsed listed-order row without structured
+member-order data. Current marked rows are covered; the old ambiguous record is
+not certified. These replays establish their retained fixture behavior, not fresh
+live-model compliance or exact original footage on a release candidate.
+
+At 09:28 UTC, all six started production machines used image revision
+`a406e44796d3b07cd2ecdbe1a2cd2ebd0f104be9`. Separate API and worker profile reads
+showed clip intents, clip-selection questions, phone rendering and smart captions
+enabled. Those snapshots describe each selected machine's effective configuration;
+they do not prove account eligibility or exposure to this unmerged branch.
+
+Fresh production reads still show Troya Montage `57602026` and Talking `c3e51ae5`
+awaiting a device, with their variants needing attention. The marathon thread
+`96b82e69` returns `thread_not_found`, and job `76bf6baf` returns `Job not found`.
+The recorded Tigre and Don Julio Downloads folders are absent. The user confirmed
+those originals are with Yasin. Troya and marathon footage were then recovered
+from Kria on the user's phone; the native replay below supersedes the earlier
+missing-footage finding for those two sources. Full original-case acceptance
+remains open for KRI-651, KRI-632, KRI-810/830, KRI-811 and KRI-946.
+Cunda live acceptance, complete outcome measurement and KRI-56's real closed beta
+also remain open. No Linear state was changed.
+
+The Fix Root Causes principle kept the recovery limited to Photos' documented
+transient failure. Prove It Works kept injected boundary checks, inspected native
+output and deployed release acceptance separate. The user's no-delegation rule
+was preserved. No merge, deploy or release approval was performed.
+
+
+## Retained originals recovered from the iPhone
+
+`retained-incidents-device-04.xcresult` reports **2 passed, 0 failed, 0 skipped**
+on the physical iPhone. The source manifests and files were read from the two
+specific incident projects. No production media binding or draft was edited.
+
+- Troya Talking. Source SHA-256 `b4d825ce0b381f2a66385815d77d51322de3f63e3b2d3871532840234e644ef2`
+  matches the saved recipe's original fingerprint. The exact saved native recipe
+  revision 2 and digest `430fe45a0118deb8b126f65981626f21217924d56912e16ada32ae8b3172aa17`
+  were exported twice, rebuilding the preview each time. The first non-empty
+  video segment starts at 21 ms while audio starts at zero. Both exports complete,
+  contain picture and audio, and include the shipped 1.6-second outro. The
+  retained source itself contains synthetic QA narration and labels over Troya
+  footage. This is the exact incident original, not the earlier solid-color proxy.
+- Marathon. Source SHA-256 `cf2692918db6eb9beee06ba4a7f1b00691871c51cf8f86cf8ebd28c6e14d9f59`
+  matches its phone manifest. The existing approved-hook compiler fixture was
+  bound to that original and exported on the phone. Structured text equals
+  `POV: 38k in and the free açaí was a lie 😤`, with one authored text layer.
+  This verifies native rendering on the original footage. It does not recreate
+  the missing server thread or prove a fresh provider/approval/receipt journey.
+
+Earlier retained-source attempts exposed QA expectation errors, not new product
+fixes. AVFoundation's track range includes its empty head; the non-empty segment
+is the correct observation. Its native time precision is milliseconds, so a
+10-microsecond assertion was invalid. The output duration includes the existing
+1.6-second brand outro. Styled title runs must be joined as in the existing
+approved-hook regression. Failed bundles and earlier MP4s remain retained.
+
+A raw FFmpeg audio comparison is inconclusive across this source's discontinuous
+AAC timestamps. Matched short windows retain the same speech waveform, but the
+comparison does not certify sample-exact audio timing or every spoken word.
+No audio implementation was changed on that evidence.
+
+The installed app automatically advanced to build 1761 during this run. Successful
+[TestFlight run 40468818912](https://github.com/emirerben/nova/actions/runs/40468818912)
+uses source revision `34f06bb203ca7018eb4bee25d3cc609c5c5c4b8c`. The native engine
+source matches this branch; the new Photos saver is still unmerged. This QA
+source equivalence does not establish deployment of the Photos fix.
+
+The real physical Photos recovery check reached its add-only permission prompt,
+then subsequent attempts found denied access in the disposable QA app. Its own
+status records add-only `denied` and read/write `notDetermined`; these attempts
+are failed permission prerequisites, not successful recovery evidence. The
+production app's Photos permission was not changed. A future successful write
+must still be independently inspected in Photos before that physical gate closes.
+
+The successful physical files were copied back and inspected. Troya's sampled
+frames show its source scenes and timed captions. The marathon frame shows the
+full approved wording, accented characters and color emoji on the actual source.
+The MP4 hashes are `7ca85b30a1de6a32d227157547aca4bf182851dd9afe8b019afb9cdab3162eef`
+for Troya and `59bed8dfa2d2138a11dfe54af8ab57a7f171fcb0fc5c9fa6e60c4adef68f0e63`
+for marathon. Both are H.264/AAC at 1080×1920, with picture and audio starting at
+zero. Their video durations are 27.388333 and 5.7 seconds, including the outro.
+These artifacts remain local; no original footage or rendered media is committed.

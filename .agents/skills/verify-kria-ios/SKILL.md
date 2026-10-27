@@ -47,7 +47,7 @@ UI fixture the exporter/upload are stand-ins. Use real native export checks too:
 
 ```bash
 swift test --package-path src/apps/ios/Packages/KriaMediaEngine
-bash scripts/check-api.sh test tests/services/test_launch_clarification_replay.py tests/services/test_kri948_single_take_resolution.py tests/services/test_kri950_picker_inventory.py tests/pipeline/test_launch_listed_members.py -q
+bash scripts/check-api.sh test tests/services/test_launch_clarification_replay.py tests/services/test_kri948_single_take_resolution.py tests/kria/test_kri950_tap_keeps_checked_list.py tests/kria/test_kri950_tap_keeps_checked_list_postgres.py tests/pipeline/test_launch_listed_members.py -q
 ```
 
 ## Evidence
