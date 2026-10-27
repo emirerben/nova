@@ -361,3 +361,27 @@ evidence collection; the installed Kria app and its data remain in place.
 This closes the patched saver's physical Photos recovery gate. A release build
 containing the fix, original compound-request production acceptance, Yasin's
 Tigre/Don Julio footage and the real beta remain separate launch requirements.
+
+
+## Merge readiness continuation
+
+Main advanced with KRI-976 iOS text placement while this PR's checks ran. It was
+merged into the task branch without conflicts before the final CI run. The API,
+Photos saver, Photos controls and verification-skill files did not change in that
+integration; their retained evidence remains applicable. The integrated iOS editor
+changes require the normal fresh iPhone CI checks.
+
+The preceding CI run failed one unchanged real-FFmpeg guided-story test
+(`test_real_ffmpeg_guided_v2_renders_image_and_video_looks`): its one-second video
+stream had a 1.392993-second container duration and was rejected. That shard
+otherwise recorded 15,146 passing tests, 33 skips and 3 expected failures. The
+same focused test passes locally (1/1). Neither this PR nor the newly integrated
+main changes the renderer or test. This is a suspected intermittent environment
+failure, not a proved root cause or a waived check. One fresh full CI build is
+required; a repeated failure must be investigated before merging. No unrelated
+cloud-renderer implementation or test tolerance was changed to make it pass.
+
+The user authorized an admin squash merge only after readiness. Missing reviewer
+approval may be overridden under that authorization; failed or pending checks
+must not be bypassed. Independent agent review was not run under the user's
+explicit no-delegation rule. Remaining launch acceptance above is unchanged.
