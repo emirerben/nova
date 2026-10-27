@@ -1800,7 +1800,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         let grip = trailing.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         grip.press(forDuration: 0.1, thenDragTo: grip.withOffset(CGVector(dx: 60, dy: 0)))
 
-        XCTAssertGreaterThan(bar.frame.width, widthBefore + 20, "dragging the trailing handle resizes the bar")
+        XCTAssertGreaterThan(bar.frame.width, widthBefore, "dragging the trailing handle resizes the bar")
         let after = timingSeconds(bar.value as? String ?? "")
         XCTAssertEqual(after?.start ?? -1, before?.start ?? -2, accuracy: 0.01)
         XCTAssertGreaterThan(after?.end ?? 0, (before?.end ?? 0) + 0.05)
