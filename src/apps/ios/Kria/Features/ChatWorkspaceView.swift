@@ -2156,12 +2156,21 @@ private struct CreationWorkspaceView: View {
         }
         let accepted: TurnAccepted
         do {
-            accepted = try await model.api.submitTurn(
-                threadID: project.id, message: message,
-                expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
-                editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
+            var request = SubmitTurnRequest(
+                message: message, clientEventID: submission.clientEventID,
+                expectedThreadRevision: submission.expectedRevision, editorState: editorState,
+                clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
                 songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: momentOrder
             )
+            if capabilities?.requestOutcomeContext == true {
+                request.outcomeContext = .forSubmission(
+                    events: events,
+                    continuation: clipSelection != nil || songOrder != nil || choiceSelection != nil
+                        || songRange != nil || protectedRegion != nil || momentOrder != nil,
+                    choice: choiceSelection
+                )
+            }
+            accepted = try await model.api.submitTurn(threadID: project.id, request: request)
         } catch let error as APIError where error == .conflict {
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }

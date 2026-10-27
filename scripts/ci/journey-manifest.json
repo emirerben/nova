@@ -1930,10 +1930,22 @@
     },
     {
       "id": "request-outcome-measurement",
-      "needs_native": false,
-      "api_tests": "tests/integration/test_request_following_queue.py tests/routes/test_actual_export_publication.py",
+      "needs_native": true,
+      "api_tests": "tests/integration/test_request_following_queue.py tests/integration/test_request_outcome_report.py tests/kria/test_request_outcome_lineage_postgres.py tests/routes/test_actual_export_publication.py",
+      "xctests": [
+        "KriaTests/RequestOutcomeContextTests/testOriginalRevisionAndStructuredContinuationAreDifferent",
+        "KriaTests/RequestOutcomeContextTests/testOnlyTheOfferedSimplerChoiceIsARecovery",
+        "KriaTests/RequestOutcomeContextTests/testLegacyMessagesNeverAcquireAKnownOriginal",
+        "KriaTests/RequestOutcomeContextTests/testBodyOmitsMetadataForOlderServersAndEncodesOpaqueIdentifiersOnly"
+      ],
       "paths": [
         "src/apps/api/app/services/request_following_outcomes.py",
+        "src/apps/api/app/services/request_following_lineage.py",
+        "src/apps/api/app/services/request_following_report.py",
+        "src/apps/api/tests/integration/test_request_outcome_report.py",
+        "src/apps/api/tests/kria/test_request_outcome_lineage_postgres.py",
+        "src/apps/ios/Kria/Core/RequestOutcomeContext.swift",
+        "src/apps/ios/Tests/KriaTests/RequestOutcomeContextTests.swift",
         "src/apps/api/tests/integration/test_request_following_queue.py",
         "src/apps/api/tests/routes/test_actual_export_publication.py"
       ]
