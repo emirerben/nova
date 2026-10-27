@@ -971,6 +971,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = json.loads(raw_text)
             if not isinstance(data, dict):
                 raise ValueError("response is not an object")
+            data = _hoist_misplaced_declarations(data)
             data = _hoist_misplaced_brief_updates(data)
             data = _repair_creative_decision(data)
             raw_action = _repair_action_envelope(data.get("action"))
@@ -1754,6 +1755,42 @@ def _refile_take_trims(
     if moved:
         log.info("main_creator_take_trim_refiled", count=moved)
     return refiled
+
+
+_TOP_LEVEL_DECLARATIONS = ("delegates_all_choices", "starts_fresh")
+
+
+def _hoist_misplaced_declarations(data: dict) -> dict:
+    """Move the two typed brief declarations the model wrote inside `action` to the top level.
+
+    KRI-992 (prod 2026-10-27, 7 of 32 planner calls): the prompt asks for top-level booleans
+    `delegates_all_choices` / `starts_fresh`, but the model sometimes writes them inside the
+    `propose_strategy` object. The strict adapter rejects them as ``extra_forbidden`` and the
+    runtime spends a second full planner call. Both describe the creator's message, not the
+    action, so where they sit carries no meaning.
+
+    Only these two keys, only real booleans, from the action itself (not `strategy`). A key
+    already present at the top level wins, even when false, and the nested copy is dropped.
+    A nested non-boolean is left in place, so it still fails closed through the retry. Every
+    other unknown key still reaches the strict adapter.
+    """
+
+    action = data.get("action")
+    if not isinstance(action, dict):
+        return data
+    lifted: dict[str, bool] = {}
+    dropped: list[str] = []
+    for key in _TOP_LEVEL_DECLARATIONS:
+        if not isinstance(action.get(key), bool):
+            continue
+        dropped.append(key)
+        if key not in data:
+            lifted[key] = action[key]
+    if not dropped:
+        return data
+    log.info("main_creator_declarations_hoisted", keys=dropped, lifted=sorted(lifted))
+    repaired_action = {key: value for key, value in action.items() if key not in dropped}
+    return {**data, **lifted, "action": repaired_action}
 
 
 def _hoist_misplaced_brief_updates(data: dict) -> dict:
