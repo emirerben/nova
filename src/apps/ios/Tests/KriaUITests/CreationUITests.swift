@@ -793,6 +793,11 @@ final class CreationUITests: XCTestCase {
         app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[n])"]
     }
 
+    /// The circle on a tile: picks or unpicks the clip without opening it.
+    private func tickButton(_ app: XCUIApplication, _ n: Int) -> XCUIElement {
+        app.buttons["clip-select-group:dodgeball-\(Self.realShapeIDs[n])"]
+    }
+
     private func centre(_ element: XCUIElement) -> XCUICoordinate {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
     }
@@ -802,8 +807,8 @@ final class CreationUITests: XCTestCase {
     }
 
     /// KRI-282 follow-up: press-and-slide selects (or deselects, by the first tile) every tile it crosses, while
-    /// tap and press-and-hold-to-preview keep working.
-    func testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsTapAndHold() {
+    /// the tile's circle still picks one clip and a tap still opens the clip.
+    func testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsCircleAndTapToWatch() {
         let app = openRealShapePicker()
         XCTAssertTrue(tileButton(app, 2).waitForExistence(timeout: 5))
         XCTAssertEqual(selectedCount(app), "0 of 48 selected")
@@ -819,11 +824,11 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(selectedCount(app), "1 of 48 selected", (0...3).map { "\($0):\(tileButton(app, $0).value as? String ?? "?")" }.joined(separator: " "))
         XCTAssertEqual(tileButton(app, 0).value as? String, "Selected")
         XCTAssertEqual(tileButton(app, 2).value as? String, "Not selected")
-        // A slide never leaves the sheet in a half state: tap still toggles a single tile.
-        tileButton(app, 4).tap()
+        // A slide never leaves the sheet in a half state: the circle still toggles a single tile.
+        tickButton(app, 4).tap()
         XCTAssertEqual(selectedCount(app), "2 of 48 selected")
-        // Hold without moving still opens the preview pager and does not select.
-        tileButton(app, 5).press(forDuration: 0.8)
+        // A tap opens the clip and does not select it.
+        tileButton(app, 5).tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-preview-title"].waitForExistence(timeout: 5))
         app.buttons["clip-preview-close"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-count"].waitForExistence(timeout: 5))
@@ -894,10 +899,10 @@ final class CreationUITests: XCTestCase {
         let first = app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[0])"]
         XCTAssertTrue(first.waitForExistence(timeout: 5))
         XCTAssertEqual(first.value as? String, "Not selected")
-        first.tap()
+        tickButton(app, 0).tap()
         XCTAssertEqual(first.value as? String, "Selected")
         shoot(app, "2a-sheet-open")
-        app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[1])"].tap()
+        tickButton(app, 1).tap()
         XCTAssertEqual(app.descendants(matching: .any)["clip-count"].label, "2 of 48 selected")
         shoot(app, "2-sheet-selected")
         // A tile with a cached poster has no placeholder.
@@ -917,8 +922,8 @@ final class CreationUITests: XCTestCase {
         app.buttons["clip-clear"].tap()
         XCTAssertEqual(app.descendants(matching: .any)["clip-count"].label, "0 of 48 selected")
         XCTAssertFalse(app.buttons["clip-done"].isEnabled, "needs a decision")
-        // Press-and-hold opens the pager at that clip; swipe sideways moves through the same list.
-        app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[2])"].press(forDuration: 0.8)
+        // A tap opens the pager at that clip; swipe sideways moves through the same list.
+        app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[2])"].tap()
         let title = app.descendants(matching: .any)["clip-preview-title"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertEqual(title.label, "Clip 3 of 48")
@@ -926,14 +931,13 @@ final class CreationUITests: XCTestCase {
         app.descendants(matching: .any)["clip-preview-pager"].swipeLeft()
         XCTAssertTrue(eventually { title.label == "Clip 4 of 48" })
         shoot(app, "3b-preview-next")
+        XCTAssertEqual(app.buttons["clip-preview-toggle"].value as? String, "Not selected", "the button follows the clip shown")
+        // "Use this clip" picks the clip being shown and goes back to the grid.
         app.buttons["clip-preview-toggle"].tap()
-        XCTAssertEqual(app.buttons["clip-preview-toggle"].value as? String, "Selected")
-        app.descendants(matching: .any)["clip-preview-pager"].swipeRight()
-        XCTAssertTrue(eventually { title.label == "Clip 3 of 48" })
-        XCTAssertEqual(app.buttons["clip-preview-toggle"].value as? String, "Not selected", "the toggle follows the clip shown")
-        app.buttons["clip-preview-close"].tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["clip-count"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any)["clip-count"].label, "1 of 48 selected", "selecting from the preview counts")
+        XCTAssertEqual(tileButton(app, 3).value as? String, "Selected", "the clip that was shown is the one picked")
         let done = app.buttons["clip-done"]
         XCTAssertTrue(done.isEnabled)
         done.tap()
@@ -956,14 +960,15 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(suggested.label.hasPrefix("Clip 2"))
         XCTAssertEqual(suggested.value as? String, "Selected", "suggested clips start ticked")
         let first = app.buttons["clip-thumb-dodgeball-fixture-clip"]
-        first.tap()
+        let firstCircle = app.buttons["clip-select-dodgeball-fixture-clip"]
+        firstCircle.tap()
         XCTAssertEqual(first.value as? String, "Selected")
-        first.tap()
+        firstCircle.tap()
         XCTAssertEqual(first.value as? String, "Not selected", "tapping twice unselects")
-        first.tap()
+        firstCircle.tap()
         // Second group via the segmented control.
         app.segmentedControls["clip-category-picker"].buttons.element(boundBy: 1).tap()
-        let football = app.buttons["clip-thumb-football-fixture-clip-4"]
+        let football = app.buttons["clip-select-football-fixture-clip-4"]
         XCTAssertTrue(football.waitForExistence(timeout: 3))
         football.tap()
         XCTAssertTrue(app.buttons["clip-done"].isEnabled)
@@ -976,6 +981,88 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any)["clip-card-answered"].label, "Dodgeball: 2 clips · Football: 1 clip")
         XCTAssertFalse(app.buttons["clip-choose"].exists)
+    }
+
+    /// Two questions in one picker: while another question is still unanswered the main button says Next and
+    /// moves there without sending; the last answer sends both on one turn. Done never sends half an answer.
+    func testTwoQuestionPickerNextShowsTheSecondQuestionAndDoneSendsBoth() {
+        let app = launchClipQuestionFixture(capability: "1")
+        XCTAssertTrue(app.buttons["clip-choose"].waitForExistence(timeout: 15))
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:"))
+        let sentBefore = sent.count
+        app.buttons["clip-choose"].tap()
+        let main = app.buttons["clip-done"]
+        XCTAssertTrue(main.waitForExistence(timeout: 5))
+        // The suggestion already answers the first question, so the button moves on instead of sending.
+        XCTAssertEqual(main.label, "Next")
+        XCTAssertTrue(main.isEnabled)
+        let title = app.staticTexts["clip-sheet-title"]
+        XCTAssertEqual(title.label, "Which clips are Dodgeball?")
+        attachScreenshot(app, "two-questions-next")
+        main.tap()
+        XCTAssertTrue(eventually { title.label == "Which clips are Football?" }, title.label)
+        XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].exists, "Next keeps the picker open")
+        XCTAssertEqual(sent.count, sentBefore, "Next sends nothing")
+        XCTAssertFalse(main.isEnabled, "the second question still needs an answer")
+        // Going back to the first question by its tab still offers Next, never a half-answer Done.
+        app.segmentedControls["clip-category-picker"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(eventually { title.label == "Which clips are Dodgeball?" }, title.label)
+        XCTAssertEqual(main.label, "Next")
+        main.tap()
+        XCTAssertTrue(eventually { title.label == "Which clips are Football?" }, title.label)
+        app.buttons["clip-select-football-fixture-clip-4"].tap()
+        XCTAssertEqual(main.label, "Done")
+        attachScreenshot(app, "two-questions-done")
+        main.tap()
+        XCTAssertTrue(app.staticTexts["You: Dodgeball: clip 2. Football: clip 4"].waitForExistence(timeout: 10))
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "answers[dodgeball=fixture-clip-2;football=fixture-clip-4]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "one turn carried both answers")
+        XCTAssertEqual(sent.count, sentBefore + 1, "one message for both questions")
+    }
+
+    /// A tap opens the clip full screen and playing, without picking it; "Use this clip" picks the clip being shown
+    /// and goes back to the grid; the circle on a tile picks without opening anything.
+    func testTappingAClipOpensItPlayingAndUseThisClipPicksIt() {
+        let app = launchClipQuestionFixture(capability: "1")
+        XCTAssertTrue(app.buttons["clip-choose"].waitForExistence(timeout: 15))
+        app.buttons["clip-choose"].tap()
+        let count = app.descendants(matching: .any)["clip-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        XCTAssertEqual(count.label, "1 of 3 selected")
+        let first = app.buttons["clip-thumb-dodgeball-fixture-clip"]
+        first.tap()
+        let title = app.descendants(matching: .any)["clip-preview-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "a tap opens the clip")
+        XCTAssertTrue(title.label.hasPrefix("Clip 1 of"), title.label)
+        // fixture-clip has a local original: its video is on screen (the mute control only shows on a video).
+        XCTAssertTrue(app.buttons["clip-preview-mute"].waitForExistence(timeout: 10), "the clip plays")
+        attachScreenshot(app, "tap-to-watch-playing")
+        let use = app.buttons["clip-preview-toggle"]
+        XCTAssertEqual(use.label, "Use this clip")
+        XCTAssertEqual(use.value as? String, "Not selected", "opening a clip does not pick it")
+        use.tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5), "Use this clip goes back to the grid")
+        XCTAssertEqual(count.label, "2 of 3 selected")
+        XCTAssertEqual(first.value as? String, "Selected")
+        // The circle picks and unpicks without opening the clip.
+        let thirdCircle = app.buttons["clip-select-dodgeball-fixture-clip-3"]
+        thirdCircle.tap()
+        XCTAssertEqual(count.label, "3 of 3 selected")
+        XCTAssertFalse(title.exists, "the circle never opens the clip")
+        thirdCircle.tap()
+        XCTAssertEqual(count.label, "2 of 3 selected")
+        // A picked clip opens as picked; the button then removes it and stays on the clip.
+        app.buttons["clip-thumb-dodgeball-fixture-clip-2"].tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertEqual(use.value as? String, "Selected")
+        // fixture-clip-2 is not on this device: its poster and a note, never a blank page.
+        XCTAssertTrue(app.staticTexts["clip-preview-not-on-device"].waitForExistence(timeout: 5))
+        use.tap()
+        XCTAssertEqual(use.value as? String, "Not selected")
+        XCTAssertTrue(title.exists, "removing a clip keeps it open")
+        app.buttons["clip-preview-close"].tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(count.label, "1 of 3 selected")
     }
 
     // MARK: reply UX: answer chips + one receipt
@@ -1136,7 +1223,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(sent.count, sentBefore, "the title answer waits for the clips")
         choose.tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
-        let redCap = app.buttons["clip-thumb-red_cap-fixture-clip-2"]
+        let redCap = app.buttons["clip-select-red_cap-fixture-clip-2"]
         XCTAssertTrue(redCap.waitForExistence(timeout: 3))
         redCap.tap()
         app.buttons["clip-done"].tap()
@@ -1156,7 +1243,7 @@ final class CreationUITests: XCTestCase {
         let sentBefore = sent.count
         choose.tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
-        app.buttons["clip-thumb-red_cap-fixture-clip-2"].tap()
+        app.buttons["clip-select-red_cap-fixture-clip-2"].tap()
         app.buttons["clip-done"].tap()
         XCTAssertTrue(app.staticTexts["clip-batch-note"].waitForExistence(timeout: 5))
         XCTAssertEqual(sent.count, sentBefore, "the clips wait for the title answer")
