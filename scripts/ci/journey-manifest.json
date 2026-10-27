@@ -605,6 +605,14 @@
       ]
     },
     {
+      "id": "kri-993-subject-scope",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri993_subject_scope.py tests/kria/test_kri993_subject_scope_pick.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri993_donjulio_lunch_m2_steak_only.json"
+      ]
+    },
+    {
       "id": "kri-766-label-bound",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri766_label_stays_bound.py tests/evals/test_clip_request_resolver_evals.py",

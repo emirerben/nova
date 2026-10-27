@@ -217,6 +217,7 @@ _CLIP_INTENT_LEAVES = (
     "position",
     "order_by",
     "ordered_members",
+    "exclusive",
 )
 
 FIELD_MATRIX: dict[str, FieldRule] = {

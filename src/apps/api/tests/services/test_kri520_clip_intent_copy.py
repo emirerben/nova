@@ -361,7 +361,7 @@ def test_resolver_prompt_gets_the_language_line_only_for_turkish() -> None:
 
 
 def test_prompt_versions_moved_with_the_new_prompt_tail() -> None:
-    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-27-order-certainty"
+    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-27-subject-scope"
     assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-27-order-certainty"
 
 

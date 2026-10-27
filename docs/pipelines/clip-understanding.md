@@ -154,6 +154,21 @@ Flow (flag on):
    changed the middle of a stated sequence. Clips attached before this change
    carry no name, so a creator testing it needs a new chat. Journey test:
    `tests/kria/test_kri614_file_name_clips.py`.
+   **"Only about X" limits the edit (KRI-993).** An `include` only guarantees its clips are
+   in the edit. When the creator limits the whole edit to a subject ("only about the steak",
+   "sadece biftek"), the planner states one `include` with `exclusive` true (typed flag, no
+   server-side word reading; rides `CLIP_INTENT_EXCLUDE_ENABLED`). After resolution,
+   `clip_scope.apply_subject_scope` (called beside the exclusions in `kria/planner.py`) limits
+   the VIDEO pick to the clips the intent matched at the resolver's membership bar (0.6,
+   vision re-query results included), adds a matched clip the model left out, and keeps any
+   clip another ask names or the strategy places plus every non-video item. A creator skip
+   beats a scope match (`excluded_clips` ignores exclusive includes when protecting). A scope
+   that matched nothing drops nothing: the existing include picker asks which clips show it.
+   Log: `kria_clip_subject_scope_applied kept= dropped= added=`. The receipt row is an
+   `include` outcome in `unified_montage._intent_outcomes` ("only about X": met / partial /
+   not_possible). The clip records alone often cannot tell look-alikes apart ("food" on a
+   board), so the vision re-query, not a text match, is what separates them. Tests:
+   `tests/kria/test_kri993_subject_scope*.py`.
    **File names beat attachment numbers (KRI-763).** A name with a trailing
    `_footage` ("M1_08_footage") is also named without it ("M1_08"); typed names may
    carry the iOS upload prefix; `exclude` intents that are only file names ("M1_05
