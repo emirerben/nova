@@ -553,6 +553,16 @@
       ]
     },
     {
+      "id": "kri-961-named-phrase-near-match",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_kri961_named_phrase_near_match.py tests/tasks/test_kri961_narrated_named_phrase.py tests/tasks/test_kri842_narrated_clip_sound.py tests/tasks/test_phone_subtitled_narrated_dispatch.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri961_don_julio_n1_narrated.json",
+        "src/apps/api/tests/pipeline/test_kri961_named_phrase_near_match.py",
+        "src/apps/api/tests/tasks/test_kri961_narrated_named_phrase.py"
+      ]
+    },
+    {
       "id": "kri-593-voiceover-clips",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri593_voiceover_keeps_every_clip.py",

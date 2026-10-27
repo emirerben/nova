@@ -11261,11 +11261,15 @@ def _narrated_alignment_receipts(
     caption receipts are reported, never blocking.
     """
     from app.kria.brief_checks import (  # noqa: PLC0415
+        asks_caption_spelling,
         build_receipts,
         plan_facts_from_narrated_alignment,
     )
 
     live = brief.live() if brief is not None else []
+    # KRI-961: the record has the captions' language, not their lines; a captions ask that
+    # lists words to spell is judged on the finished captions (the variant's review).
+    live = [req for req in live if not asks_caption_spelling(req)]
     if not live:
         return []
     kinds = {req.id: req.kind for req in live}
@@ -11821,6 +11825,9 @@ def _run_phone_narrated_job(
                     trusted_aliases=None,
                 )
                 cues = resplit_cues_into_sentences(cues)
+                # KRI-961: the creator's spellings (quoted asks + the approved brief's list),
+                # applied last as Talking does (KRI-793), so "Olloda bife" reads "ojo de bife".
+                cues = _apply_creator_spellings(cues, _caption_glossary(snapshot, all_candidates))
 
             # KRI-533: what the worker pinned, and the receipts it can judge from it
             # (a first/last clip, a clip-group timing, the caption language). Like the

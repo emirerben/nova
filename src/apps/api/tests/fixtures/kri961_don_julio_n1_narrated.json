@@ -1,0 +1,124 @@
+{
+ "provenance": {
+  "what": "Don Julio walk-in N1 (phone Voiceover edit), prod run 2026-10-26 (KRI-961)",
+  "job_id": "bdb0c798-c2e6-4f58-8a31-e50f9acdfdd7",
+  "brief_version": 2,
+  "whisper_words": "assembly_plan.variants[0].caption_cues[*].words: the words the render heard (cleaned voiceover timeline)",
+  "gemini_words": "nova.audio.transcript run 2026-10-26T12:35:56 on the raw voiceover (raw timeline), the sentence that says the phrase: it heard it right",
+  "rendered_caption": "Inside, the butcher cuts the Olloda bife right in front of you.",
+  "rendered_beat_receipt_unplaced": [
+   {
+    "reason": "never_heard",
+    "beat_id": "ojo-de-bife",
+    "trigger": "ojo de bife"
+   }
+  ]
+ },
+ "prompt": "Show the ribeye photo as a small corner card while I say \"ojo de bife\". ... English captions on my voice, spell \"ojo de bife\" right.",
+ "voiceover_duration_s": 20.5275,
+ "requirements": [
+  {
+   "id": "r2",
+   "kind": "style",
+   "facts": {
+    "captions": "on",
+    "spellings": [
+     "ojo de bife"
+    ],
+    "caption_language": "en"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "English captions on my voice"
+  },
+  {
+   "id": "r6",
+   "kind": "timing",
+   "facts": {
+    "triggers": [
+     "ojo de bife"
+    ],
+    "display_mode": "pip"
+   },
+   "scope": "global",
+   "status": "open",
+   "literal": null,
+   "description": "Show the ribeye photo as a small corner card while I say 'ojo de bife'"
+  }
+ ],
+ "reaction_beat": {
+  "beat_id": "ojo-de-bife",
+  "trigger": "ojo de bife",
+  "visual_id": "asset-165823f4-8c5c-4081-a6a4-e88536996232",
+  "occurrence": "first",
+  "visual_role": "photo"
+ },
+ "whisper_words": [
+  {"text": "This", "start_s": 0.3, "end_s": 0.66},
+  {"text": "is", "start_s": 0.66, "end_s": 1.1},
+  {"text": "Don", "start_s": 1.1, "end_s": 1.38},
+  {"text": "Julio", "start_s": 1.38, "end_s": 1.7},
+  {"text": "in", "start_s": 1.7, "end_s": 2.12},
+  {"text": "Palermo,", "start_s": 2.12, "end_s": 2.66},
+  {"text": "Buenos", "start_s": 3.128, "end_s": 3.328},
+  {"text": "Aires.", "start_s": 3.328, "end_s": 3.548},
+  {"text": "The", "start_s": 3.988, "end_s": 4.148},
+  {"text": "queue", "start_s": 4.148, "end_s": 4.408},
+  {"text": "starts", "start_s": 4.408, "end_s": 4.728},
+  {"text": "under", "start_s": 4.728, "end_s": 5.048},
+  {"text": "the", "start_s": 5.048, "end_s": 5.728},
+  {"text": "awning.", "start_s": 5.728, "end_s": 5.948},
+  {"text": "Inside,", "start_s": 6.568, "end_s": 6.608},
+  {"text": "the", "start_s": 7.128, "end_s": 7.508},
+  {"text": "butcher", "start_s": 7.508, "end_s": 7.788},
+  {"text": "cuts", "start_s": 7.788, "end_s": 8.168},
+  {"text": "the", "start_s": 8.168, "end_s": 8.848},
+  {"text": "Olloda", "start_s": 8.848, "end_s": 9.188},
+  {"text": "bife", "start_s": 9.188, "end_s": 9.548},
+  {"text": "right", "start_s": 9.548, "end_s": 10.268},
+  {"text": "in", "start_s": 10.268, "end_s": 10.568},
+  {"text": "front", "start_s": 10.568, "end_s": 10.708},
+  {"text": "of", "start_s": 10.708, "end_s": 10.948},
+  {"text": "you.", "start_s": 10.948, "end_s": 11.208},
+  {"text": "The", "start_s": 11.788, "end_s": 12.068},
+  {"text": "grill", "start_s": 12.068, "end_s": 12.228},
+  {"text": "never", "start_s": 12.228, "end_s": 12.668},
+  {"text": "stops.", "start_s": 12.668, "end_s": 13.048},
+  {"text": "Dried", "start_s": 13.448, "end_s": 13.468},
+  {"text": "flowers", "start_s": 13.468, "end_s": 14.068},
+  {"text": "hang", "start_s": 14.068, "end_s": 14.488},
+  {"text": "from", "start_s": 14.488, "end_s": 14.788},
+  {"text": "the", "start_s": 14.788, "end_s": 15.208},
+  {"text": "ceiling.", "start_s": 15.208, "end_s": 15.208},
+  {"text": "And", "start_s": 15.477, "end_s": 15.717},
+  {"text": "two", "start_s": 15.717, "end_s": 15.957},
+  {"text": "Michelin", "start_s": 15.957, "end_s": 16.438},
+  {"text": "plaques", "start_s": 16.438, "end_s": 16.778},
+  {"text": "sit", "start_s": 16.778, "end_s": 17.278},
+  {"text": "on", "start_s": 17.278, "end_s": 17.477},
+  {"text": "the", "start_s": 17.477, "end_s": 17.617},
+  {"text": "brick", "start_s": 17.617, "end_s": 17.818},
+  {"text": "wall.", "start_s": 17.818, "end_s": 18.057},
+  {"text": "One", "start_s": 18.307, "end_s": 18.588},
+  {"text": "question", "start_s": 18.588, "end_s": 19.028},
+  {"text": "before", "start_s": 19.028, "end_s": 19.508},
+  {"text": "we", "start_s": 19.508, "end_s": 19.887},
+  {"text": "eat.", "start_s": 19.887, "end_s": 20.028}
+ ],
+ "gemini_words": [
+  {"text": "Inside,", "start_s": 7.669, "end_s": 8.169},
+  {"text": "the", "start_s": 8.449, "end_s": 8.569},
+  {"text": "butcher", "start_s": 8.829, "end_s": 9.179},
+  {"text": "cuts", "start_s": 9.389, "end_s": 9.699},
+  {"text": "the", "start_s": 9.929, "end_s": 10.029},
+  {"text": "Ojo", "start_s": 10.069, "end_s": 10.399},
+  {"text": "de", "start_s": 10.429, "end_s": 10.579},
+  {"text": "Bife", "start_s": 10.749, "end_s": 11.239},
+  {"text": "right", "start_s": 11.379, "end_s": 11.669},
+  {"text": "in", "start_s": 11.759, "end_s": 11.839},
+  {"text": "front", "start_s": 12.019, "end_s": 12.249},
+  {"text": "of", "start_s": 12.309, "end_s": 12.379},
+  {"text": "you.", "start_s": 12.479, "end_s": 12.639}
+ ]
+}
