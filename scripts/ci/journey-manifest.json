@@ -1931,9 +1931,6 @@
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri984_cunda_render.py tests/kria/test_kri945_global_text_journey.py tests/pipeline/test_phone_song_lane.py tests/tasks/test_song_reference_build.py",
       "paths": [
-        "src/apps/api/app/pipeline/guided_story.py",
-        "src/apps/api/app/pipeline/phone_plan_repair.py",
-        "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/tests/fixtures/kri984_cunda_island_render.json",
         "src/apps/api/tests/tasks/test_kri984_cunda_render.py"
       ]
