@@ -49,7 +49,8 @@ authorized by this implementation record.
 
 `approval_readiness.py` assesses every live CreativeBrief ID with the existing
 receipt checkers, selected-format capability manifest, runtime strategy policy/compiler and
-render contract. An unchecked, missing or unsupported requirement blocks approval.
+render contract. A missing or unsupported requirement blocks approval. An unchecked
+one blocks too, unless no draft check can settle it (KRI-983 amendment below).
 A missing extracted brief also blocks; it is not an empty successful checklist.
 Duration evidence comes from the existing validated source-window plan, not the
 model's requested duration. Original camera sound uses the existing render-contract
@@ -81,10 +82,19 @@ unverified render adapters or replace KRI-722/723 execution preparation.
 | --- | --- | --- |
 | Exact title + six-second source-bounded cut | Approval without an extra question | EN/TR phone-source and cloud provider replay, real compiler/DB/HTTP approval |
 | Keep original camera sound | Explicit render-contract evidence | Provider replay, real contract |
-| Wind-only noise removal | Hold approval; name the missing change | Provider replay, real runtime |
+| Wind-only noise removal (English wording) | Hold approval; name the missing change | Provider replay, real runtime |
+| Wind-only noise removal (Turkish wording, no reader) | KRI-983: approve as `unverified`; named under "Have a look at these in the video:" | TR typed requirement replay |
 | Typed shadow brightening | Hold approval even when legacy receipt calls it a format limitation | EN/TR typed requirement replay |
-| Exact visual moment with no executable window | Hold approval | EN/TR typed requirement replay |
-| Existing-video title color + unsupported glow | Hold the entire partial edit | Real Copilot and extractor parsers, editor compiler, runtime/DB |
+| Exact visual moment with no executable window | KRI-983: approve as `unverified`; named for a look after render | EN/TR typed requirement replay |
+| "Original camera audio" with no keep verb or typed intent | KRI-983: approve as `unverified` | EN/TR typed requirement replay |
+| Typed `audio_intent: noise_removal` | KRI-983: approve as `unverified` (no draft checker reads that intent yet) | EN/TR typed requirement replay |
+| "Make it feel dreamy" (no checker anywhere) | KRI-983: approve as `unverified`; HTTP approve re-check passes | EN/TR provider replay, real HTTP approval |
+| An `unverified` ask beside a freeze frame the draft cannot hold | Hold approval on the freeze; the other ask stays `unverified` | Provider replay, real runtime |
+| An `unverified` ask when the renderer is withdrawn before approval | Reject at the HTTP approval re-check | Real HTTP approval endpoint |
+| Lip-sync to the uploaded song, strategy `user_song` + `lipsync` | KRI-983: `executable`; approval card; HTTP approve passes | Prod-thread replay (953a5265), real runtime/DB/HTTP |
+| Lip-sync asked, draft plays the song in the background | Hold with "This draft plays your song in the background; your clips aren't matched to its words."; no card when it is the only ask | Prod-thread replay, real runtime |
+| "Change my request" on a held draft (new and legacy key) | Deterministic reply naming the held asks; zero provider calls | Prod-thread replay, real runtime |
+| Existing-video title color + unsupported glow | Hold the entire partial edit (an editor draft never gets `unverified`: its diff is the check) | Real Copilot and extractor parsers, editor compiler, runtime/DB |
 | Source generation or capability withdrawn | Cancel direct/repeated approval; no dispatch | Real HTTP approval endpoint |
 | Report/requirement evidence removed | Reject even after enrollment is disabled | Real DB + HTTP approval |
 | Named omission vs generic agreement | Only exact offered choice supersedes that requirement | Real brief persistence and runtime |
@@ -159,3 +169,32 @@ replayed provider output and a real local API/database. Dispatch intentionally
 stopped after the approval boundary: **no new native export, live-model result or
 production deployment is claimed**. The phone was released after the QA app
 terminated; production remains unenrolled.
+
+## KRI-983 amendment: asks nothing can check before render
+
+Prod thread 953a5265 (2026-10-27) held "Create a lipsync" because no draft checker read a
+lip-sync ask. The same rule held every ask with no checker ("cinematic", "only the best
+clips", "make it feel dreamy"). KRI-774 and KRI-945 each patched one instance.
+
+- `brief_checks.wants_lipsync` checks a lip-sync ask against the draft. It is met when the
+  creator's song is pinned to the draft's media and the strategy plays it as `user_song`
+  with `song_sync: lipsync`. Otherwise it is a plain "Couldn't" (no song, song unused, song
+  only in the background).
+- A new disposition, `unverified`, covers an unchecked receipt on an ask no draft check
+  can settle. That is an ask with no checker, or one whose only checker reads the finished
+  video (`judged_at_render`). Approval goes ahead (`APPROVABLE`), the draft reply names it
+  under "Have a look at these in the video:", and the render-time review judges it again.
+- Still held: a checked miss, a policy problem, a prepared-story row, an editor draft, a
+  researched-text ask and a keep-text-off mark. The last two are proven outside
+  `_has_checker` (research preview, the mark route).
+- A held draft reads "I can't make this yet:" with one plain reason per ask. The card
+  offers "Make it without these" (its description lists what it leaves out) or "Change my
+  request". "Change my request" and the legacy `different_approach` key are answered
+  without a model call. Under readiness the card is not offered when leaving out the
+  unmet asks would leave none of the creator's asks.
+
+Known gaps, not fixed here: a typed `audio_intent: noise_removal` and the Turkish
+"rüzgâr sesini kaldır" have no draft checker, so they are now approved as `unverified`
+instead of held. A text ask whose look only the finished video shows still blocks,
+because its words and its look share one receipt.
+

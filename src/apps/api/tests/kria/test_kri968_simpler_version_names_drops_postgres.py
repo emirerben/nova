@@ -94,7 +94,9 @@ DRAFT = EVENTS[12]  # "Here's the simpler version." ... "Left out as agreed: ...
 CARD = EVENTS[13]  # the approval card
 REVIEW = EVENTS[20]  # the after-render review
 TAG = 'name tag when he first appears ("ATAKAN")'
-ASK = "Should I try a different approach, or make this simpler version?"
+# Prod asked the KRI-968 question in the words before KRI-983.
+PROD_ASK = "Should I try a different approach, or make this simpler version?"
+ASK = "Should I make it without these, or do you want to change your request?"
 LOOK = "Have a look at these in the video:"
 
 
@@ -388,7 +390,7 @@ async def test_the_held_draft_names_what_the_simpler_version_leaves_out(monkeypa
     assert held.payload["brief_coverage"]["reason"] == "simplification_requires_choice"
     # Prod's reply, plus one sentence naming the one requirement the simpler version drops.
     assert held.content == HELD["content"].replace(
-        f"I held this first draft back. {ASK}",
+        f"I held this first draft back. {PROD_ASK}",
         f"I held this first draft back. The simpler version leaves out: {TAG}. {ASK}",
     )
     question = held.payload["choice_question"]

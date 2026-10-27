@@ -441,9 +441,20 @@ def reasked_question_text(question: Mapping[str, Any]) -> str:
 
 
 SIMPLER_VERSION_REASON = "simplification_requires_choice"
+# KRI-983: "Change my request" on that question. A card stored before it offered
+# "Try a different approach" under the legacy key, which answers the same way.
+CHANGE_REQUEST_KEY = "change_request"
+_CHANGE_REQUEST_KEYS = frozenset({CHANGE_REQUEST_KEY, "different_approach"})
+# KRI-968: the receipts path's question records the requirements its "leaves out" sentence
+# named; the KRI-759 policy-refusal question records `dropped_fields` instead.
+SIMPLER_OMITTED_IDS_KEY = "omitted_requirement_ids"
 # Marks the question a server policy refusal asked (KRI-759), as opposed to the one the
 # receipts path asks: only this one carries the fields it offered to leave out.
 STRATEGY_REFUSAL_KIND = "strategy_refusal"
+_SIMPLER_ASK = (
+    "Should I make it without these, or do you want to change your request?",
+    "Bunlar olmadan mı hazırlayayım, yoksa isteğini mi değiştirmek istersin?",
+)
 _SIMPLER_YES_ALIASES = (
     "evet",
     "yes",
@@ -458,7 +469,7 @@ _SIMPLER_YES_ALIASES = (
 
 
 def simpler_version_question(refusal_fields: Sequence[str] | None = None) -> dict[str, Any]:
-    """ "Try a different approach" / "Make this simpler version" (exact-match options).
+    """ "Change my request" / "Make it without these" (exact-match options).
 
     ``refusal_fields`` is set by the planner when the server's own policy refused the
     strategy (KRI-759): the question then also records which fields the simpler version
@@ -476,24 +487,32 @@ def simpler_version_question(refusal_fields: Sequence[str] | None = None) -> dic
                 en="This edit cannot carry out that exact combination of requests.",
                 tr="Bu düzenleme istediklerinin bu birleşimini aynen yapamıyor.",
             ),
-            reason=say(
-                en="Should I try a different approach, or make this simpler version?",
-                tr="Farklı bir yol mu deneyeyim, yoksa bunun daha basit bir sürümünü mü "
-                "hazırlayayım?",
-            ),
+            reason=say(en=_SIMPLER_ASK[0], tr=_SIMPLER_ASK[1]),
             kind=STRATEGY_REFUSAL_KIND if refusal else None,
             options=(
                 ConflictOption(
-                    "different_approach",
-                    label=say(en="Try a different approach", tr="Farklı bir yol dene"),
+                    CHANGE_REQUEST_KEY,
+                    label=say(en="Change my request", tr="İsteğimi değiştir"),
+                    description=say(
+                        en="Nothing is made yet; tell me what to do differently.",
+                        tr="Henüz bir şey yapılmadı; neyi farklı yapmamı istediğini söyle.",
+                    ),
+                    aliases=(
+                        "Change my request",
+                        "İsteğimi değiştir",
+                        "Try a different approach",
+                        "Farklı bir yol dene",
+                    ),
                 ),
                 ConflictOption(
                     "simpler_version",
-                    label=say(en="Make this simpler version", tr="Daha basit sürümü hazırla"),
+                    label=say(en="Make it without these", tr="Bunlar olmadan hazırla"),
                     aliases=(
                         "simpler version",
                         "make it more basic",
                         "skip, decide for me",
+                        "Make it without these",
+                        "Bunlar olmadan hazırla",
                         "Make this simpler version",
                         "Daha basit sürümü hazırla",
                         *(_SIMPLER_YES_ALIASES if refusal else ()),
@@ -505,6 +524,11 @@ def simpler_version_question(refusal_fields: Sequence[str] | None = None) -> dic
     if refusal:
         question["dropped_fields"] = sorted(set(refusal_fields or ()))
     return question
+
+
+def simpler_version_ask() -> str:
+    """The held-draft reply's last sentence, which the card's two options answer."""
+    return say(en=_SIMPLER_ASK[0], tr=_SIMPLER_ASK[1])
 
 
 # ── Replaying thread events ───────────────────────────────────────────────────
@@ -675,26 +699,41 @@ def simpler_version_accepted(events: Events, dropped_fields: Iterable[str]) -> b
     question: an older "yes", the receipts path's question, or a refusal about something
     else never counts.
     """
+    question = _simpler_question_answered(events, {"simpler_version"})
+    if question is None:
+        return False
+    offered = {str(name) for name in question.get("dropped_fields") or ()}
+    dropping = set(dropped_fields)
+    return bool(dropping) and dropping <= offered
+
+
+def change_request_selected(events: Events) -> dict[str, Any] | None:
+    """The simpler-version question THIS turn answered with "Change my request" (KRI-983).
+
+    Same per-question consent as ``simpler_version_accepted``. The current turn's user
+    message must carry the ``choice_selection`` for the question open just before it."""
+    return _simpler_question_answered(events, _CHANGE_REQUEST_KEYS)
+
+
+def _simpler_question_answered(events: Events, option_keys: Iterable[str]) -> dict[str, Any] | None:
     rows = [(role, payload) for role, payload in events if isinstance(payload, dict)]
     last_user = next(
         (i for i in range(len(rows) - 1, -1, -1) if rows[i][0] == "user"),
         None,
     )
     if last_user is None:
-        return False
+        return None
     selection = rows[last_user][1].get("choice_selection")
-    if not isinstance(selection, dict) or selection.get("option_key") != "simpler_version":
-        return False
+    if not isinstance(selection, dict) or selection.get("option_key") not in set(option_keys):
+        return None
     question = latest_open_choice_question(rows[:last_user])
     if (
         question is None
         or question.get("question_id") != selection.get("question_id")
         or question.get("conflict") != SIMPLER_VERSION_REASON
     ):
-        return False
-    offered = {str(name) for name in question.get("dropped_fields") or ()}
-    dropping = set(dropped_fields)
-    return bool(dropping) and dropping <= offered
+        return None
+    return question
 
 
 # ── The collector (KRI-476 / PR-C) ────────────────────────────────────────────
@@ -5363,10 +5402,14 @@ __all__ = [
     "fold_choice_answers",
     "latest_open_choice_question",
     "split_groups",
+    "CHANGE_REQUEST_KEY",
+    "SIMPLER_OMITTED_IDS_KEY",
     "SIMPLER_VERSION_REASON",
     "STRATEGY_REFUSAL_KIND",
     "TAKE_LINE_KINDS",
+    "change_request_selected",
     "simpler_version_accepted",
+    "simpler_version_ask",
     "simpler_version_question",
     "without_length_answer_echo",
 ]

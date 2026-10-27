@@ -1163,7 +1163,7 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/planner.py",
@@ -1177,7 +1177,9 @@
         "src/apps/api/tests/kria/test_runtime_automatic_simplification.py",
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/prompts/brief_extractor.txt",
-        "src/apps/api/tests/kria/test_natural_delegation_readiness_postgres.py"
+        "src/apps/api/tests/kria/test_natural_delegation_readiness_postgres.py",
+        "src/apps/api/tests/kria/test_kri983_lipsync_song_journey.py",
+        "src/apps/api/tests/fixtures/kri983_lipsync_song_turns.json"
       ]
     },
     {

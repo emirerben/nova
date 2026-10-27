@@ -71,6 +71,7 @@ from app.pipeline.caption_language import (
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.explicit_speech_cut import speech_cut_tokens
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
+from app.pipeline.song_captions import mentions_lipsync
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
     LABEL_ANCHORS,
@@ -486,6 +487,10 @@ class PlanFacts:
     capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
     # The strategy's audio strategy ("voiceover", "original_audio", ...); None = unknown.
     audio_strategy: str | None = None
+    # KRI-983: how a `user_song` strategy plays the creator's song ("lipsync" / "background"),
+    # and whether their song is attached to the draft's pinned media. None = unknown.
+    song_sync: str | None = None
+    user_song_attached: bool | None = None
     # The strategy's render program ("native", "guided"); None = unknown. KRI-889: a
     # guided story's voiceover is not cut around named lines.
     render_program: str | None = None
@@ -979,6 +984,7 @@ def plan_facts_from_strategy(
         speech_cleanup_offered=speech_cleanup_offered,
         caption_style=str(caption_style) if caption_style else None,
         audio_strategy=str(audio_strategy) if audio_strategy else None,
+        song_sync=str(strategy["song_sync"]) if strategy.get("song_sync") else None,
         speech_occurrence_answers=tuple(
             dict(a)
             for a in strategy.get("choice_answers") or []
@@ -4032,6 +4038,12 @@ _SPEED_NO_FOOTAGE = (
     "I can't speed these clips up: the video already shows each one whole, so there's no "
     "footage left to speed through"
 )
+# KRI-983: a lip-sync ask the draft does not carry out.
+_SONG_NOT_ATTACHED = "Add your song first and I'll use it."
+_SONG_NOT_USED = "This draft doesn't use your song."
+_SONG_IN_BACKGROUND = (
+    "This draft plays your song in the background; your clips aren't matched to its words."
+)
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
 _BED_STILL_PLAYS = "The footage sound still plays"
@@ -4274,6 +4286,11 @@ _REASON_TR: dict[str, str] = {
     _NO_CLIP_SPEED_SONG: (
         "Bu düzenlemede klip hızını değiştiremiyorum çünkü klipler şarkını takip ediyor, "
         "o yüzden normal hızda oynuyorlar"
+    ),
+    _SONG_NOT_ATTACHED: "Önce şarkını ekle, ben de onu kullanayım.",
+    _SONG_NOT_USED: "Bu taslak şarkını kullanmıyor.",
+    _SONG_IN_BACKGROUND: (
+        "Bu taslak şarkını arka planda çalıyor; klipler sözlerine göre yerleştirilmedi."
     ),
     _NO_SPEED_ON_FREEZE: (
         "Donmuş kare tutan bir klibin hızını değiştiremiyorum, o yüzden normal hızda oynuyor"
@@ -8956,6 +8973,42 @@ def _wants_source_sound_kept(req: BriefRequirement) -> bool:
     )
 
 
+def wants_lipsync(req: BriefRequirement) -> bool:
+    """KRI-983: "lipsync to the uploaded song", read by `song_captions.mentions_lipsync`.
+
+    Asks another audio reader already owns (a typed `audio_intent`, the footage's own sound, a
+    voice bed, beats, speech, captions) keep their checker."""
+    if (
+        req.kind not in _BEAT_KINDS
+        or "audio_intent" in req.facts
+        or _wants_captions(req)
+        or _wants_source_sound_kept(req)
+        or _wants_beats(req)
+        or _wants_closing(req)
+        or _wants_speech(req)
+        or _wants_bed_under_voice(req)
+        or _wants_bed_muted(req)
+        or _wants_cleanup(req)
+        or wants_engine_noise_reduction(req)
+        or requirement_clip_sound(req) is not None
+        or requirement_sound_toggle(req) is not None
+    ):
+        return False
+    return mentions_lipsync(" ".join(x for x in (req.description, req.literal) if x))
+
+
+def _check_lipsync(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if facts.user_song_attached is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if not facts.user_song_attached:
+        return _receipt(req, "not_possible", _loc(_SONG_NOT_ATTACHED))
+    if facts.audio_strategy != "user_song":
+        return _receipt(req, "not_possible", _loc(_SONG_NOT_USED))
+    if facts.song_sync != "lipsync":
+        return _receipt(req, "not_possible", _loc(_SONG_IN_BACKGROUND))
+    return _receipt(req, "met", None)
+
+
 # KRI-700: brightening or darkening the footage itself. No draft can carry it: a strategy has
 # no exposure field, and the phone plans only take the warm `golden_hour` look, which adds
 # contrast and so makes near-black night clips darker, not brighter. The model that read the
@@ -9127,6 +9180,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if _wants_source_sound_kept(req):
         return True
+    if wants_lipsync(req):
+        return True  # KRI-983
     if req.kind in _BEAT_KINDS:
         return (
             _wants_beats(req)
@@ -9607,6 +9662,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         and not (facts.rendered_variant and _wants_captions(req))
     ):
         return _check_style(req, facts)
+    elif wants_lipsync(req):
+        return _check_lipsync(req, facts)
     elif req.kind in _BEAT_KINDS and _wants_speech(req) and facts.speech_sections is not None:
         return _check_speech_excerpts(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _closing_photo_ask(req, facts)):
@@ -10314,4 +10371,5 @@ __all__ = [
     "render_block_recovery",
     "reply_from_receipts",
     "speech_cleanup_review_note",
+    "wants_lipsync",
 ]
