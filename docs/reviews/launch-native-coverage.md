@@ -41,6 +41,16 @@ still matches after rebasing onto the corrected Cunda parent. Nine result
 bundles remain under private `.dev/outcome-ios/`. Its owned simulator was deleted
 after the final drive.
 
+After merging the current main, all eight drives passed once more with 19 tests,
+zero failures and zero skips. The request-context and neighboring native suites
+passed 46 tests without failures or skips. This build's fingerprint is
+`ae0689332d739f73ba5dbfffeba28097a5d37867e0f8cd6d5394b39112ce12f4`.
+The nine result bundles remain under private `.dev/outcome-ios-main/`; the owned
+simulator was deleted. Registering the new retention test in the CI inventory
+preserves this native source fingerprint. All 121 CI policy checks pass with
+that inventory correction; before it, four selection assertions failed because
+unclassified UI tests conservatively select full coverage.
+
 - Real Google identity, session refresh and server erasure are separate from
   fixture consent and deletion controls.
 - The physical camera test remains opt-in. Camera/microphone capture,
