@@ -5391,16 +5391,20 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
 
 
 def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | None] | None:
-    """Pauses, filler sounds and retakes a variant's cut record removed, and the time saved.
+    """Pauses, filler sounds and retakes a variant's cut record removed, and their length.
 
     Read off ``silence_cut.removed`` (one ``reason`` per span). ``None`` when the variant
-    carries no cut record, so the note states no number it was not given.
+    carries no cut record, so the note states no number it was not given. The seconds are
+    summed over those cleanup rows only: the record also holds the quoted-line trim
+    (``opening_cut`` / ``end_cut``), which ``time_saved_s`` counts too (KRI-978: "1 filler
+    sound (41.4 s)" for a 0.32 s cut).
     """
     record = variant.get("silence_cut")
     rows = record.get("removed") if isinstance(record, Mapping) else None
     if not isinstance(rows, list) or not rows:
         return None
     pauses = fillers = retakes = 0
+    seconds = 0.0
     for row in rows:
         reason = row.get("reason") if isinstance(row, Mapping) else None
         if reason == "silence":
@@ -5409,15 +5413,18 @@ def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | 
             fillers += 1
         elif reason == "retake":
             retakes += 1
+        else:
+            continue
+        start, end = row.get("start_s"), row.get("end_s")
+        if seconds is not None and all(
+            isinstance(value, int | float) and not isinstance(value, bool) for value in (start, end)
+        ):
+            seconds += max(0.0, float(end) - float(start))
+        else:
+            seconds = None
     if not (pauses or fillers or retakes):
         return None
-    saved = record.get("time_saved_s")
-    seconds = (
-        float(saved)
-        if isinstance(saved, int | float) and not isinstance(saved, bool) and saved > 0
-        else None
-    )
-    return pauses, fillers, retakes, seconds
+    return pauses, fillers, retakes, seconds if seconds else None
 
 
 def speech_cleanup_review_note(
@@ -5464,12 +5471,12 @@ def speech_cleanup_review_note(
         sentences = [
             say(
                 en=(
-                    f"Speech cleanup cut {joined_en}"
+                    f"Speech cleanup cut what it heard as {joined_en}"
                     + (f" ({seconds:.1f} s)" if seconds is not None else "")
                     + "."
                 ),
                 tr=(
-                    f"Konuşma temizliği şunları kesti: {', '.join(parts_tr)}"
+                    f"Konuşma temizliği duyduğu şu sesleri kesti: {', '.join(parts_tr)}"
                     + (f" ({seconds:.1f} sn)".replace(".", ",") if seconds is not None else "")
                     + "."
                 ),
@@ -5478,9 +5485,12 @@ def speech_cleanup_review_note(
     if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_STAY) not in text:
         sentences.append(
             say(
-                en="It only cuts pauses and filler sounds, so a sentence you restarted stays in.",
+                # KRI-970: what it looks for, never a promise of what it cut. Its filler
+                # cuts trust the transcript's timing, which can sit over a real word.
+                en="It looks only for pauses and filler sounds, so a sentence you restarted "
+                "stays in.",
                 tr=(
-                    "Yalnızca duraklamaları ve dolgu seslerini keser; baştan başladığın bir "
+                    "Yalnızca duraklamaları ve dolgu seslerini arar; baştan başladığın bir "
                     "cümle videoda kalır."
                 ),
             )

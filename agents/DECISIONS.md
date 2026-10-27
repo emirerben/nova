@@ -2984,6 +2984,15 @@ token to `current_detector_policy` / bump `DETECTOR_VERSION` (retires `ready` an
 
 ---
 
+## [2026-10-27] The cleanup review counts only cleanup's own cuts and says what it heard (KRI-978)
+
+**Decision:** `speech_cleanup_review_note` (`_cleanup_counts` in `app/kria/brief_checks.py`) sums its seconds over the cleanup rows of `silence_cut.removed` only (`silence`, `filler_*`, `retake`), the same rows it counts, instead of reading `time_saved_s`. It now says "Speech cleanup cut what it heard as …" and "It looks only for pauses and filler sounds, so a sentence you restarted stays in." (TR: "duyduğu şu sesleri kesti" / "arar"). This amends the KRI-551 entry above.
+**Why:** Don Julio lunch T3 (job 0d8d644f) said "1 filler sound (41.4 s)" for a 0.32 s filler. `time_saved_s` has also counted the quoted-line trim (`opening_cut` / `end_cut`) since those cuts were folded into the same record. T1 (job 81ce940b, no trim) said 0.8 s and was right, which is why it went unseen. Counting and timing from the same rows means the two cannot disagree; `speech_cleanup_outcome.removed_ms` would also give 0.32 s, but it is a second source. The old wording promised what was cut, and on T1 and T3 cleanup had just cut part of "provolone" (KRI-970): its filler cuts trust the transcript's timing. A record with only trims already has `silence_cut_outcome = "no_change"` on the phone Talking path, so it never claims a cut.
+**Not done:** reporting the trim separately ("Kept 3.4–10.5 s of the take as you asked"), which the ticket listed as optional.
+**Guards:** `tests/tasks/test_kri978_cleanup_review_seconds.py` (real T3/T1 `silence_cut` records, English and Turkish).
+
+---
+
 ## [2026-10-20] Editor Save: one clip-window rule, readable refusals, and a code catalog (KRI-770)
 
 **Decision:** Every Save path compares a clip window against the minimum with `below_editor_minimum` / `snap_to_editor_minimum` (`app/schemas/editor_window.py`, 0.1 s with a 1e-6 tolerance), never a bare `< 0.1`. The phone's edge-trim drag goes through `KriaSourceWindowGeometry` like the Range sheet. Every non-2xx editor-commit logs (`editor_commit_422` / `editor_commit_refused`). The editor Save code catalog (`ios Tests/Fixtures/editor_save_codes.json`) lists each machine code the Save can raise as `mapped` (specific app copy) or `generic`; `tests/routes/test_editor_save_code_catalog.py` (AST scan) and `EditorSaveCodeCatalogTests` keep server and app in step. The app shows a readable server sentence instead of "This save was rejected".
