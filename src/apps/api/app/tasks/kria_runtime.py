@@ -125,6 +125,7 @@ from app.services.choice_questions import (
     CONFLICT_WHICH_VOICE,
     KEEP_OPEN_REASON,
     MAX_ASKS_PER_QUESTION,
+    SIMPLER_OMITTED_IDS_KEY,
     SIMPLER_VERSION_REASON,
     ChoiceCapability,
     answered_brief,
@@ -133,6 +134,7 @@ from app.services.choice_questions import (
     count_asks,
     match_open_choice,
     open_conflicts,
+    simpler_version_ask,
     simpler_version_question,
     tag_event,
 )
@@ -915,10 +917,6 @@ def _creative_copy_problem_sync(db, thread_id, media, *, strategy=None, resoluti
     )
 
 
-# KRI-968: the receipts path's "simpler version?" question records the requirements its
-# reply named as left out (and the brief revision it named them at). Clients ignore unknown
-# question keys; the KRI-759 policy-refusal question records `dropped_fields` instead.
-SIMPLER_OMITTED_IDS_KEY = "omitted_requirement_ids"
 SimplerConsent = Literal["named", "unnamed"]
 # `KriaTurnPlan.response` max_length: the held-draft reply must fit it whole.
 _MAX_TURN_RESPONSE_CHARS = 1200
@@ -949,6 +947,9 @@ def _simpler_version_offer(
     if len(sentence) > _MAX_LEAVES_OUT_CHARS:
         return "", question
     named_ids = [req.id for req in named]
+    for option in question["options"]:
+        if option["key"] == "simpler_version":
+            option["description"] = say(en=f"Leaves out: {listed}", tr=f"Çıkarılacak: {listed}")
     # An unmet id with no live row has nothing to drop; it is still part of the set the
     # creator answers, so a changed set is offered again.
     question[SIMPLER_OMITTED_IDS_KEY] = [
@@ -1109,12 +1110,14 @@ def _legacy_offer_matches(
 ) -> bool:
     """An offer stored before KRI-968 named nothing: it blocked these exact ids, at this
     brief revision, judging by its own receipts / readiness rows."""
+    from app.kria.approval_readiness import APPROVABLE  # noqa: PLC0415
+
     readiness = coverage.get("approval_readiness")
     blocked_ids = (
         {
             row.get("requirement_id")
             for row in readiness.get("requirements", [])
-            if row.get("disposition") not in {"executable", "delegated"}
+            if row.get("disposition") not in APPROVABLE
         }
         if isinstance(readiness, Mapping)
         else None
@@ -1706,6 +1709,31 @@ def _complete_draft_turn(
                     # KRI-776: a moment ask is judged against the windows the approved length
                     # plan will cut, so the card never promises moments the plan doesn't hold.
                     facts = with_planned_cuts(facts, planned.media_snapshot)
+                    from app.kria.approval_readiness import contract_drawn_texts  # noqa: PLC0415
+                    from app.services.creator_render_contract import (  # noqa: PLC0415
+                        build_render_contract,
+                    )
+
+                    contract_media = planned.media_snapshot or _draft_media(item)
+                    facts = replace(
+                        facts,
+                        contract_drawn_texts=contract_drawn_texts(
+                            (
+                                build_render_contract(
+                                    document.strategy,
+                                    generation_id="draft-receipt",
+                                    brief=brief,
+                                    media_snapshot=contract_media,
+                                )
+                                if settings.brief_binding_for(thread.creator_id)
+                                else None
+                            ),
+                            document.strategy,
+                            media=contract_media,
+                            manifest=planned.brief_manifest,
+                            creator_id=thread.creator_id,
+                        ),
+                    )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -1886,6 +1914,7 @@ def _complete_draft_turn(
             ]
         if readiness_required:
             from app.kria.approval_readiness import (  # noqa: PLC0415
+                APPROVABLE,
                 assess_readiness,
                 readiness_reply,
             )
@@ -1966,7 +1995,7 @@ def _complete_draft_turn(
             unmet_ids = [
                 row["requirement_id"]
                 for row in readiness_report["requirements"]
-                if row["disposition"] not in {"executable", "delegated"}
+                if row["disposition"] not in APPROVABLE
             ]
         automatic_omission_ids = _automatic_omission_ids(
             brief,
@@ -1993,6 +2022,14 @@ def _complete_draft_turn(
         automatic_omission_ids = tuple(
             req_id for req_id in automatic_omission_ids if req_id in unmet_ids
         )
+        # KRI-983: under approval readiness a version without the unmet asks must still make
+        # something they asked for. Elsewhere KRI-610 keeps "simpler version" able to drop a
+        # sole unmet ask the creator gave up on.
+        simpler_keeps_an_ask = (
+            not readiness_required
+            or brief is None
+            or any(req.id not in unmet_ids for req in brief.live())
+        )
         automatic_omission = (
             bool(automatic_omission_ids)
             and set(automatic_omission_ids) == set(unmet_ids)
@@ -2018,6 +2055,7 @@ def _complete_draft_turn(
             )
             if (
                 bool(unmet_ids)
+                and simpler_keeps_an_ask
                 and apply_intent.tool_name == "draft.apply_strategy"
                 and settings.brief_binding_for(thread.creator_id)
                 # A concurrent/new instruction needs its own offer, even if its stable
@@ -2233,10 +2271,9 @@ def _complete_draft_turn(
                     en="I held this first draft back.", tr="Bu ilk taslağı şimdilik beklettim."
                 )
             )
-            can_offer_simpler = (
-                not readiness_required
-                or bool(unmet_ids)
-                and not (readiness_report or {}).get("policy_problem")
+            policy_problem = (readiness_report or {}).get("policy_problem")
+            can_offer_simpler = simpler_keeps_an_ask and (
+                not readiness_required or bool(unmet_ids) and not policy_problem
             )
             # KRI-968: name what the simpler version leaves out before the creator picks it,
             # and record those ids on the question so a tap consents to exactly them.
@@ -2244,13 +2281,7 @@ def _complete_draft_turn(
                 _simpler_version_offer(brief, unmet_ids) if can_offer_simpler else ("", None)
             )
             ask = (
-                say(
-                    en="Should I try a different approach, or make this simpler version?",
-                    tr=(
-                        "Farklı bir yol mu deneyeyim, yoksa bunun daha basit bir "
-                        "sürümünü mü hazırlayayım?"
-                    ),
-                )
+                simpler_version_ask()
                 if can_offer_simpler
                 else say(
                     en="Please clarify the requested changes so I can prepare the edit again.",
@@ -2258,6 +2289,11 @@ def _complete_draft_turn(
                         "Düzenlemeyi yeniden hazırlayabilmem için "
                         "istediğin değişiklikleri netleştir."
                     ),
+                )
+                if policy_problem
+                else say(
+                    en="Tell me what to change and I'll prepare it again.",
+                    tr="Neyi değiştirmemi istediğini söyle, yeniden hazırlayayım.",
                 )
             )
             recovery = KriaTurnPlan(

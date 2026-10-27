@@ -214,6 +214,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItem
     func requestAccountDeletion() async throws -> AccountDeletionRequest
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
+    func submitTurn(threadID: UUID, request: SubmitTurnRequest) async throws -> TurnAccepted
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted
     /// `editorState` is the editor's unsaved state (server capability `editor_state_turns`); nil = omitted.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted
@@ -420,6 +421,9 @@ extension KriaAPIClient {
     func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func deleteProject(_ project: ProjectSummary) async throws { throw APIError.unsupported }
 
+    func submitTurn(threadID: UUID, request: SubmitTurnRequest) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: request.message, expectedRevision: request.expectedThreadRevision, clientEventID: request.clientEventID, editorState: request.editorState, clipSelection: request.clipSelection, songOrder: request.songOrder, choiceSelection: request.choiceSelection, songRange: request.songRange, suggestion: request.suggestion, protectedRegion: request.protectedRegion, momentOrder: request.momentOrder)
+    }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
         _ = clientEventID
         return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision)
@@ -1486,6 +1490,9 @@ struct KriaAPI: KriaAPIClient {
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?, momentOrder: MomentOrderAnswer?) async throws -> TurnAccepted {
         let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: momentOrder)
+        return try await submitTurn(threadID: threadID, request: body)
+    }
+    func submitTurn(threadID: UUID, request body: SubmitTurnRequest) async throws -> TurnAccepted {
         return try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(body), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
@@ -2198,9 +2205,10 @@ private enum ServerDateCoding {
         throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(), debugDescription: "Expected ISO-8601 date")
     }
 }
-struct SubmitTurnRequest: Encodable {
+struct SubmitTurnRequest: Encodable, Sendable {
     let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil; var protectedRegion: ProtectedRegionAnswer? = nil; var momentOrder: MomentOrderAnswer? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order" }
+    var outcomeContext: RequestOutcomeContext? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order"; case outcomeContext = "outcome_context" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
@@ -2213,6 +2221,7 @@ struct SubmitTurnRequest: Encodable {
         try c.encodeIfPresent(suggestion, forKey: .suggestion)
         try c.encodeIfPresent(protectedRegion, forKey: .protectedRegion)
         try c.encodeIfPresent(momentOrder, forKey: .momentOrder)
+        try c.encodeIfPresent(outcomeContext, forKey: .outcomeContext)
     }
 }
 

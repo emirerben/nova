@@ -650,7 +650,9 @@ async def test_no_institutional_source_is_a_precise_limit_before_approval(monkey
     content = str(reply.content)
     assert "Sources could not be confirmed before approval" in content
     assert "institutional" in content
-    assert content.endswith("Should I try a different approach, or make this simpler version?")
+    assert content.endswith(
+        "Should I make it without these, or do you want to change your request?"
+    )
     question = (reply.payload or {}).get("choice_question") or {}
     assert {option["key"] for option in question.get("options", [])} >= {"simpler_version"}
     assert (calls["copy"], calls["review"]) == (0, 0)

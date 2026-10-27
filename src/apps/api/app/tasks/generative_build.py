@@ -7196,7 +7196,17 @@ def _run_phone_unified_montage_job(
         )
 
         record["generation_id"] = generation
+        from app.pipeline.phone_plan_repair import contract_text_drawn  # noqa: PLC0415
+
         with _worker_reply_language(snapshot):
+            receipt_facts = replace(
+                plan_facts_from_unified_montage(record),
+                contract_drawn_texts=tuple(
+                    row.text
+                    for row in (contract.exact_texts if contract is not None else ())
+                    if contract_text_drawn(row, route="unified_montage")
+                ),
+            )
             record["requirement_receipts"] = [
                 {
                     **receipt.model_dump(mode="json"),
@@ -7205,7 +7215,7 @@ def _run_phone_unified_montage_job(
                 }
                 for receipt in build_receipts(
                     brief.live(),
-                    plan_facts_from_unified_montage(record),
+                    receipt_facts,
                     include_unchecked=bool(snapshot.get("creator_brief_binding")),
                 )
             ]
