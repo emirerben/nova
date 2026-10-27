@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.155.0] - 2026-10-27
+
+### Changed
+- fix(ios): SFX trim resizes the timeline block; first tap selects for trim (KRI-977) (#1867) <!-- release-pr: 1867 -->
+
 ## [0.81.154.0] - 2026-10-27
 
 ### Changed
