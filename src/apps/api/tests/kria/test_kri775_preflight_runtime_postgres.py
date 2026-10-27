@@ -205,7 +205,9 @@ async def test_the_m2_draft_is_held_back_with_the_reason_and_a_choice(monkeypatc
     assert "About 14 seconds" not in content
     assert "- Partly: Caro arriving with tray" in content
     assert "I held this first draft back." in content
-    assert content.endswith("Should I make it without these, or do you want to change your request?")
+    assert content.endswith(
+        "Should I make it without these, or do you want to change your request?"
+    )
     question = (reply.payload or {}).get("choice_question") or {}
     assert {option["key"] for option in question.get("options", [])} >= {"simpler_version"}
     receipts = {r["requirement_id"]: r for r in reply.payload["requirement_receipts"]}
