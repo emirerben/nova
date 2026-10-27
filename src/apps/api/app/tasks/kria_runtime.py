@@ -1709,6 +1709,31 @@ def _complete_draft_turn(
                     # KRI-776: a moment ask is judged against the windows the approved length
                     # plan will cut, so the card never promises moments the plan doesn't hold.
                     facts = with_planned_cuts(facts, planned.media_snapshot)
+                    from app.kria.approval_readiness import contract_drawn_texts  # noqa: PLC0415
+                    from app.services.creator_render_contract import (  # noqa: PLC0415
+                        build_render_contract,
+                    )
+
+                    contract_media = planned.media_snapshot or _draft_media(item)
+                    facts = replace(
+                        facts,
+                        contract_drawn_texts=contract_drawn_texts(
+                            (
+                                build_render_contract(
+                                    document.strategy,
+                                    generation_id="draft-receipt",
+                                    brief=brief,
+                                    media_snapshot=contract_media,
+                                )
+                                if settings.brief_binding_for(thread.creator_id)
+                                else None
+                            ),
+                            document.strategy,
+                            media=contract_media,
+                            manifest=planned.brief_manifest,
+                            creator_id=thread.creator_id,
+                        ),
+                    )
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging

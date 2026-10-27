@@ -2732,7 +2732,14 @@ async def decide_approval(
         expected_readiness = (
             (execution.result or {}).get("approval_readiness_digest") if execution else None
         )
-        if expected_readiness is not None or saved_readiness is not None:
+        from app.services.clip_order_sequence import unconfirmed_order_groups  # noqa: PLC0415
+
+        recheck_legacy_order = (
+            settings.approval_readiness_for(creator_id)
+            and copy_document is not None
+            and bool(unconfirmed_order_groups(copy_document.strategy.get("resolved_clip_intents")))
+        )
+        if expected_readiness is not None or saved_readiness is not None or recheck_legacy_order:
             from app.kria.approval_readiness import (  # noqa: PLC0415
                 NOT_READY,
                 assess_readiness,
@@ -3115,6 +3122,39 @@ async def read_creative_brief(
         str(session.target_generation_id) if session and session.target_generation_id else None
     )
     live = {req.id: req for req in brief.live()}
+    from app.services.clip_order_sequence import (  # noqa: PLC0415
+        unconfirmed_order_groups,
+        unconfirmed_order_reason,
+    )
+
+    draft_ids: set[uuid.UUID] = set()
+    for event in events:
+        try:
+            draft_ids.add(uuid.UUID(str((event.payload or {}).get("draft_id"))))
+        except ValueError:
+            continue
+    drafts = (
+        (
+            await db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.id.in_(draft_ids),
+                    CreatorEditDraft.thread_id == thread.id,
+                    CreatorEditDraft.creator_id == creator_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+        if draft_ids
+        else []
+    )
+    unconfirmed_drafts = {
+        str(row.id)
+        for row in drafts
+        if unconfirmed_order_groups(
+            ((row.snapshot_json or {}).get("strategy") or {}).get("resolved_clip_intents")
+        )
+    }
     newest: dict[str, RequirementReceipt] = {}
     for event in events:
         for raw in (event.payload or {}).get("requirement_receipts") or []:
@@ -3135,6 +3175,20 @@ async def read_creative_brief(
             # Older events can hold a "can't verify" receipt that judged nothing;
             # it is never a requirement's outcome, so the requirement stays open.
             rid = receipt.requirement_id
+            if (
+                receipt.status == "met"
+                and getattr(live.get(rid), "kind", None) == "order"
+                and str((event.payload or {}).get("draft_id")) in unconfirmed_drafts
+            ):
+                with reply_language_for(thread_reply_language(thread)):
+                    receipt = receipt.model_copy(
+                        update={
+                            "status": "partial",
+                            "verification": "checked",
+                            "stage": "applied",
+                            "reason": unconfirmed_order_reason(),
+                        }
+                    )
             if rid not in newest and (
                 is_judged(live.get(rid), receipt) or receipt.verification == "unchecked"
             ):

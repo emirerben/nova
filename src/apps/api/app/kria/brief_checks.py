@@ -79,7 +79,12 @@ from app.schemas.text_style_intent import (
     normalize_title_animation,
 )
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
-from app.services.clip_order_sequence import row_relations, sequence_rows
+from app.services.clip_order_sequence import (
+    row_relations,
+    sequence_rows,
+    unconfirmed_order_groups,
+    unconfirmed_order_reason,
+)
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import (
     creator_duration_satisfied,
@@ -342,6 +347,7 @@ class PlanFacts:
     # as the creator's own words and the spot ("the video that is blue (first)"). Read off
     # the finished order like `sequence_statuses`; empty = every stated group landed.
     sequence_unmet: tuple[str, ...] = ()
+    sequence_unconfirmed: tuple[str, ...] = ()
     # ... and the stated groups none of whose clips are in the edit (deselected, or no match):
     # absent, not misplaced. A group made only of clips an earlier group already seated, or of
     # Visuals-pool items, is neither (the planner outcome's ``code`` says which).
@@ -964,6 +970,14 @@ def plan_facts_from_strategy(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
         ),
         sequence_conflicts=_strategy_sequence_conflicts(strategy),
+        sequence_unconfirmed=tuple(
+            sorted(
+                name
+                for _position, name, _members in unconfirmed_order_groups(
+                    strategy.get("resolved_clip_intents")
+                )
+            )
+        ),
         texts=tuple(texts),
         edit_format=str(edit_format) if edit_format else None,
         speech_cleanup_enabled=speech_cleanup_enabled,
@@ -1141,6 +1155,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             if isinstance(row, Mapping) and row.get("op") == "order" and row.get("status") == "met"
         ),
         sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
+        sequence_unconfirmed=_sequence_problems(record, ("member_order_unknown",)),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         sequence_conflicts=_sequence_problems(record, ("conflict",)),
         sequence_unlocated=tuple(
@@ -2216,6 +2231,7 @@ _MONTAGE_ORDER_FIELDS = (
     "ordering_choice",
     "sequence_statuses",
     "sequence_unmet",
+    "sequence_unconfirmed",
     "sequence_absent",
     "sequence_conflicts",
     "sequence_unlocated",
@@ -2818,6 +2834,8 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     laid out yet (its order is judged when it renders)."""
     if facts.narrated_steps is not None:
         return _check_narrated_order(req, facts)
+    if facts.sequence_unconfirmed:
+        return _receipt(req, "partial", unconfirmed_order_reason())
     if facts.sequence_conflicts and not (facts.sequence_unmet or facts.sequence_absent):
         # KRI-764: one clip asked to be first AND last. The earlier ask stands and the edit
         # still renders, so say so (before approval too) instead of refusing the render.
@@ -10110,6 +10128,9 @@ _OUTCOME_REASON_TR = {
     "its clips are already in an earlier group": "klipleri zaten önceki bir grupta",
     "its clips are already placed at another spot": "klipleri zaten başka bir yerde",
     "the clips did not end up there": "klipler oraya gelmedi",
+    "the order inside this saved group wasn't recorded": (
+        "kaydedilmiş bu grubun iç sırası belirtilmemiş"
+    ),
     # KRI-723 (``unified_montage.MOMENT_*``).
     "I couldn't find this moment in your clip, so I can't confirm it's the one playing": (
         "Bu anı klipte bulamadım, o yüzden oynayanın o an olduğunu doğrulayamıyorum"
