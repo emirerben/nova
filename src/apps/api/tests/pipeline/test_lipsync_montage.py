@@ -744,3 +744,47 @@ def test_the_stack_retry_is_dropped_when_it_does_not_help():
     assert "S" not in result.song_receipt["broll_ids"]
     reasons = {row["media_id"]: row["reason"] for row in result.song_receipt["dropped"]}
     assert "stack_as_broll" not in reasons.values()
+
+
+# ── Sequential takes with sub-second filming breaks (job 3bf4116e, 2026-10-27) ──
+# The creator filmed the song in four back-to-back takes; the aligner placed every
+# one confidently, with 0.68 s / 0.15 s / 0.99 s of song nobody filmed between them.
+# Positions are the prod job's, shifted 40 s earlier to fit the test song.
+SEQUENTIAL = [("A", 22.6148, 22.645), ("B", 8.3113, 45.943), ("C", 20.7804, 54.399), ("D", 7.9862, 76.167)]
+
+
+def _sequential_plan():
+    clips = [take(media_id, duration) for media_id, duration, _ in SEQUENTIAL]
+    return plan(clips, [confident(media_id, delta) for media_id, _, delta in SEQUENTIAL])
+
+
+def test_back_to_back_takes_with_filming_breaks_all_play_in_song_order():
+    result = _sequential_plan()
+    assert [cut.media_id for cut in result.snapshot.fast_cuts] == ["A", "B", "C", "D"]
+    assert result.song_receipt["dropped"] == []
+    assert result.song_receipt["placed_outside_ids"] == []
+    assert result.user_song.window_start_s == pytest.approx(22.945)
+    assert result.user_song.window_end_s == pytest.approx(76.167 + 7.9862 - 0.3, abs=0.002)
+
+
+def test_a_filming_break_holds_the_last_frame_and_every_take_stays_in_sync():
+    result = _sequential_plan()
+    cuts = {cut.media_id: cut for cut in result.snapshot.fast_cuts}
+    # Each hold only covers song nobody filmed: the next take starts on its own position.
+    assert cuts["A"].freeze_hold_s and cuts["C"].freeze_hold_s
+    for cut in result.snapshot.fast_cuts:
+        assert cut.source_end_s <= dict((m, d) for m, d, _ in SEQUENTIAL)[cut.media_id] + 1e-6
+    assert_in_sync(result, compiled_plan(result))
+    footage, visuals = bindings_for(result)
+    recipe = compile_phone_guided_plan(compiled_plan(result), footage, visuals, song=song_bed())
+    assert recipe.duration == pytest.approx(result.snapshot.duration_s, abs=0.04)
+    held = [clip for track in recipe.tracks for clip in track.clips if clip.hold_duration]
+    assert len(held) == 2
+
+
+def test_a_filming_break_longer_than_a_held_frame_still_splits():
+    clips = [take("A", 12), take("B", 20)]
+    # A's footage ends at 22.0, B's begins at 24.0: two seconds nobody filmed.
+    result = plan(clips, [confident("A", 10), confident("B", 24)])
+    assert [cut.media_id for cut in result.snapshot.fast_cuts] == ["B"]
+    assert {"media_id": "A", "reason": "gap_unfillable"} in result.song_receipt["dropped"]
