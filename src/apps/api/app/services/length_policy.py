@@ -349,7 +349,7 @@ def creator_duration(
             requirement
             for requirement in brief.live()
             if requirement.kind == "timing"
-            and requirement.scope == "global"
+            and requirement.scope in {"global", "whole_video"}
             and requirement.facts.get("duration_s") is not None
             and not times_one_moment(requirement)
         ]
