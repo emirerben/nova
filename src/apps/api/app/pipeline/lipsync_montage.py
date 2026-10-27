@@ -1127,6 +1127,9 @@ def plan_lipsync_montage(
             opening_title=title,
             story_beats=_story_beats(cuts),
             fast_cuts=cuts,
+            # No per-clip text, but the labelled projection: it draws only the creator's own
+            # opening title, never the internal ``SNAPSHOT_FALLBACK_TITLE`` label.
+            clip_labels=[],
             **media_kwargs,
             video_reuse_policy="once",
             user_song=song_plan,
