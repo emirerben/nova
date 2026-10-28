@@ -302,6 +302,34 @@ Apply: fly secret + worker restart. Kill switch: `SPEECH_CLEANUP_MIXED_LANGUAGE_
 restores the EN/TR cross-check alone, byte for byte (only the preflight worker reads it).
 Already-settled analyses are not redone.
 
+#### Whole-take reference and re-listened stretches (KRI-1016)
+
+Plaza T2 (48 s, a guide's English with the creator translating into Turkish) showed two gaps in
+the merge above. whisper-1 auto-picked Turkish; the reference was the 30 s Gemini sample, so
+31.7-48 s stayed a Turkish translation of English speech (the end line and the photo cue were
+never heard). And whisper-1, decoding the whole take in Turkish, wrote NO words for the
+creator's real Turkish (6.4-13.4 s, 26.3-31.7 s; the recorded whisper-1 `language=tr` caption
+pass of the same clip is empty there too), so those stretches were wordless: the captions had
+nothing to show and the cleanup read them as pauses. With `SPEECH_CLEANUP_MIXED_RELISTEN_ENABLED` on (default), a mixed take also gets:
+
+1. a whole-take reference: when the 30 s sample already names two or more languages, the worker
+   asks Gemini for the rest of the window too and joins the two transcripts
+   (`reference_covers_s` is then None). A single-language take still makes one 30 s call;
+2. re-listened stretches: after the merge, every wordless stretch of 1 s or more where the
+   reference heard at least two words (fillers and numbers do not count) that no transcript word
+   matches is cut out and transcribed ALONE in each of the take's languages (at most 3 stretches,
+   6 calls). Heard alone, whisper writes a stretch in its own language. The words are clipped
+   inside the stretch and kept only where the reference confirms them, like any other pass.
+
+Evidence: `diagnostics.language_crosscheck` gains `reference_covers_s` and, when a stretch was
+found, `relistened` (`start_s`, `end_s`, `tried`, `heard`, `failed`); re-listened stretches
+appear in `segments`. Cost: one more Gemini call on mixed takes longer than 30 s, plus whisper-1
+on the re-listened stretches only (cents at most). Not covered: a take whose first 30 s are in
+one language and that switches later (the sample is not mixed, so the rest is never heard), and
+a stretch holding only numbers ("1810" is not a speech token). Kill switch:
+`SPEECH_CLEANUP_MIXED_RELISTEN_ENABLED=false` restores KRI-843 byte for byte. Apply: fly secret
++ worker restart.
+
 ## Local verification
 
 ```bash

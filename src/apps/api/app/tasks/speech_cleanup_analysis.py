@@ -46,6 +46,7 @@ from app.pipeline.speech_cleanup_analysis import (
 )
 from app.pipeline.transcribe import TranscribeError
 from app.services.clip_speech import audio_presence
+from app.services.mixed_language_transcript import reference_languages
 from app.services.speech_cleanup_preflight import (
     SPEECH_CLEANUP_ENGINE_VERSION,
     SPEECH_CLEANUP_MAX_DURATION_S,
@@ -86,8 +87,13 @@ SPEECH_CLEANUP_RECONCILE_SOFT_LIMIT_S = 20
 SPEECH_CLEANUP_RECONCILE_HARD_LIMIT_S = 25
 SPEECH_CLEANUP_PUBLISH_RETRY_S = 30
 # Gemini second opinion (`_gemini_reference_transcript`). whisper detects its
-# language from the opening 30 s window, so that is all Gemini needs to hear.
+# language from the opening 30 s window, so for the language check that is all
+# Gemini needs to hear. A MIXED take (the sample names two or more languages) is
+# different: the per-stretch merge only trusts a reference that covers the stretch
+# (KRI-843/KRI-1016), so Gemini also hears the rest of the take, up to the window's
+# end. A rest shorter than the margin is not worth a second call.
 SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S = 30.0
+SPEECH_CLEANUP_GEMINI_REFERENCE_REST_MARGIN_S = 1.0
 SPEECH_CLEANUP_GEMINI_ACTIVE_TIMEOUT_S = 20
 
 _STORAGE_PROVIDER_MODULES = frozenset({"google", "httpcore", "httpx", "requests", "urllib3"})
@@ -434,14 +440,25 @@ def _late_reference_transcript(work: _ClaimedWork) -> str | None:
     return reference
 
 
-def _write_reference_sample(local_audio_path: Path, sample_path: Path) -> bool:
-    """Copy the artifact's opening seconds; False when it holds no audio frames."""
+def _write_reference_sample(
+    local_audio_path: Path,
+    sample_path: Path,
+    *,
+    start_s: float = 0.0,
+    end_s: float | None = None,
+) -> bool:
+    """Copy a window of the artifact (its opening seconds by default).
 
+    False when the window holds no audio frames. `end_s` defaults to the sample
+    length at call time, not at import time, so the constant can be tuned.
+    """
+
+    window_end_s = SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S if end_s is None else end_s
     with wave.open(str(local_audio_path), "rb") as artifact:
         params = artifact.getparams()
-        frames = artifact.readframes(
-            int(SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S * artifact.getframerate())
-        )
+        rate = artifact.getframerate()
+        artifact.setpos(min(max(0, int(start_s * rate)), artifact.getnframes()))
+        frames = artifact.readframes(max(0, int((window_end_s - start_s) * rate)))
     if not frames:
         return False
     with wave.open(str(sample_path), "wb") as sample:
@@ -480,13 +497,29 @@ def _upload_reference_sample(sample_path: Path) -> Any:
         file_ref = client.files.get(name=file_ref.name)
 
 
-def _transcribe_reference_sample(work: _ClaimedWork, local_audio_path: Path) -> str | None:
+def _transcribe_reference_sample(
+    work: _ClaimedWork,
+    local_audio_path: Path,
+    *,
+    start_s: float = 0.0,
+    end_s: float | None = None,
+) -> str | None:
+    """Gemini's transcript of one window of the artifact (its opening by default)."""
+
     from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents._runtime import RunContext  # noqa: PLC0415
     from app.agents.transcript import TranscriptAgent, TranscriptInput  # noqa: PLC0415
 
-    sample_path = local_audio_path.with_name("reference-sample.wav")
-    if not _write_reference_sample(local_audio_path, sample_path):
+    # The opening keeps its own file and request id; any other window gets its own so
+    # the two uploads and the two billing rows never share a name.
+    is_opening = start_s <= 0.0
+    sample_name = (
+        "reference-sample.wav"
+        if is_opening
+        else f"reference-sample-{int(start_s * 1000)}-{int((end_s or 0.0) * 1000)}.wav"
+    )
+    sample_path = local_audio_path.with_name(sample_name)
+    if not _write_reference_sample(local_audio_path, sample_path, start_s=start_s, end_s=end_s):
         return None
     file_ref = _upload_reference_sample(sample_path)
     output = TranscriptAgent(default_client()).run(
@@ -494,24 +527,57 @@ def _transcribe_reference_sample(work: _ClaimedWork, local_audio_path: Path) -> 
         ctx=RunContext(
             plan_item_id=str(work.plan_item_id) if work.plan_item_id is not None else None,
             creator_id=work.creator_id,
-            request_id=f"speech-cleanup-reference:{work.claim.analysis_id}",
+            request_id=(
+                f"speech-cleanup-reference:{work.claim.analysis_id}"
+                if is_opening
+                else f"speech-cleanup-reference:{work.claim.analysis_id}:rest"
+            ),
             usage_purpose="optional_background",
         ),
     )
     return " ".join(output.full_text.split()) or None
 
 
-def _gemini_reference_transcript(work: _ClaimedWork, local_audio_path: Path) -> str | None:
-    """Gemini's own transcript of the narration's opening, for the language cross-check.
+def _wants_the_rest_of_the_take(work: _ClaimedWork, sample_reference: str) -> bool:
+    """A mixed-language take whose reference stopped at the sample but whose audio goes on.
+
+    A single-language take never needs it: whisper's language check only reads the
+    opening, so one 30 s call stays all it costs.
+    """
+
+    if not (
+        settings.speech_cleanup_mixed_language_enabled
+        and settings.speech_cleanup_mixed_relisten_enabled
+    ):
+        return False
+    if work.duration_s <= (
+        SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S + SPEECH_CLEANUP_GEMINI_REFERENCE_REST_MARGIN_S
+    ):
+        return False
+    return len(reference_languages(sample_reference)) >= 2
+
+
+def _gemini_reference_transcript(
+    work: _ClaimedWork, local_audio_path: Path
+) -> tuple[str | None, float | None]:
+    """Gemini's own transcript of the narration, and how far into it that transcript reaches.
 
     Kria v2 never saves Gemini's clip analysis on the plan item, so without this
     its preflights had no second opinion on whisper's detected language. A
     recorded voiceover never has an item transcript either. Best-effort: any
     failure keeps the single-listener analysis.
+
+    It listens to the opening 30 s, which is all the language check needs, and
+    covers exactly that (`covers_s` = 30). A MIXED take (the sample names two or
+    more languages) is also heard to the end of the window: the per-stretch merge
+    only trusts a reference over the stretches it covers, and whisper's one-language
+    decode is wrong exactly where the take switches language (KRI-1016). Then the
+    two texts are joined and `covers_s` is None (the whole take). If that second
+    call fails, the 30 s reference stands and so does its coverage.
     """
 
     if not settings.speech_cleanup_gemini_reference_enabled:
-        return None
+        return None, None
     started_at = time.monotonic()
     try:
         reference = _transcribe_reference_sample(work, local_audio_path)
@@ -524,27 +590,59 @@ def _gemini_reference_transcript(work: _ClaimedWork, local_audio_path: Path) -> 
             source_kind=work.source_kind,
             error_class=type(exc).__name__,
         )
-        return None
+        return None, None
+    covers_s: float | None = None
+    rest_found: bool | None = None
+    if reference is not None:
+        covers_s = SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S
+        if _wants_the_rest_of_the_take(work, reference):
+            try:
+                rest = _transcribe_reference_sample(
+                    work,
+                    local_audio_path,
+                    start_s=SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S,
+                    end_s=work.duration_s,
+                )
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception as exc:  # noqa: BLE001 - the 30 s reference still stands
+                log.warning(
+                    "speech_cleanup_analysis.gemini_reference_rest_unavailable",
+                    analysis_id=str(work.claim.analysis_id),
+                    source_kind=work.source_kind,
+                    error_class=type(exc).__name__,
+                )
+                rest = None
+            rest_found = rest is not None
+            if rest is not None:
+                reference = f"{reference} {rest}"
+                covers_s = None
     log.info(
         "speech_cleanup_analysis.gemini_reference",
         analysis_id=str(work.claim.analysis_id),
         source_kind=work.source_kind,
         found=reference is not None,
+        rest_found=rest_found,
         run_duration_ms=max(0, int(round((time.monotonic() - started_at) * 1000))),
     )
-    return reference
+    return reference, covers_s
 
 
 def _run_engine(work: _ClaimedWork, local_audio_path: Path) -> SpeechCleanupAnalysisResult:
-    reference, reference_source = work.reference_transcript, "clip_analysis"
+    reference, reference_source, reference_covers_s = (
+        work.reference_transcript,
+        "clip_analysis",
+        None,
+    )
     if reference is None:
-        reference = _gemini_reference_transcript(work, local_audio_path)
+        reference, reference_covers_s = _gemini_reference_transcript(work, local_audio_path)
         reference_source = "gemini_audio"
     result = _run_engine_once(
         work,
         local_audio_path,
         reference_transcript=reference,
         reference_source=reference_source if reference is not None else None,
+        reference_covers_s=reference_covers_s,
     )
     if reference is not None or work.source_kind != "embedded_spine":
         return result
@@ -556,6 +654,7 @@ def _run_engine(work: _ClaimedWork, local_audio_path: Path) -> SpeechCleanupAnal
         local_audio_path,
         reference_transcript=late_reference,
         reference_source="clip_analysis",
+        reference_covers_s=None,
     )
 
 
@@ -565,6 +664,7 @@ def _run_engine_once(
     *,
     reference_transcript: str | None,
     reference_source: str | None = None,
+    reference_covers_s: float | None,
 ) -> SpeechCleanupAnalysisResult:
     retake_detect_fn = None
     if settings.retake_cut_enabled and settings.speech_cleanup_retakes_enabled:
@@ -590,10 +690,9 @@ def _run_engine_once(
         filler_check=settings.speech_cleanup_filler_check_enabled,
         reference_transcript=reference_transcript,
         reference_source=reference_source,
-        # Gemini only listened to the narration's opening (`_transcribe_reference_sample`).
-        reference_covers_s=(
-            SPEECH_CLEANUP_GEMINI_REFERENCE_SAMPLE_S if reference_source == "gemini_audio" else None
-        ),
+        # How far Gemini's own listen reaches (`_gemini_reference_transcript`): the opening
+        # 30 s, or the whole take for a mixed one. A clip's own transcript covers it all.
+        reference_covers_s=reference_covers_s,
     )
     try:
         if retake_detect_fn is None:
