@@ -8,7 +8,8 @@ Per idea the checks read the viewer-facing copy (title, opening_text, closing_te
 and, for recap and place detection only, the angle as well.
 
   diary_recap   a first-person or diary-time marker AND no viewer-directed claim.
-  filler        stock travel-brochure or admiration words that name nothing in the footage.
+  filler        stock travel-brochure or admiration words, or a vague-invitation sentence
+                opener ('Experience ...'), that name nothing in the footage.
   names_place   whether the copy names the event's place; None when no place is in context.
 """
 
@@ -16,6 +17,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
+
+from app.agents.camera_roll_copy_edit import STOCK_OPENERS, STOCK_PHRASES
 
 COPY_FIELDS = ("opening_text", "closing_text", "caption")
 GENERIC_PLACE_WORDS = frozenset(
@@ -40,43 +43,19 @@ _VIEWER_DIRECTED = re.compile(
 _IMPERATIVE_OPENER = re.compile(
     r"^\s*(?:visit|go to|see|walk|watch|try|book|come|look|skip)\b", re.I
 )
-_FILLER = (
-    "stunning",
-    "breathtaking",
-    "hidden gem",
-    "history meets",
-    "unique blend",
-    "magical",
-    "magic of",
-    "charming",
-    "picturesque",
-    "tranquil",
-    "serene",
-    "peaceful",
-    "timeless",
-    "unforgettable",
-    "paradise",
-    "slice of",
-    "vibes",
-    "journey through",
-    "tapestry",
-    "experience the",
-    "discover the",
-    "immerse",
-    "beauty of",
-    "wonders of",
-    "soak up",
-    "every corner",
-    "something for everyone",
-    "memories",
-    "beautiful",
-    "amazing",
-    "incredible",
-    "wonderful",
-    "gorgeous",
-    "lovely",
-    "perfect",
+# The vocabulary is the app's (the copy edit pass shows it to its model as examples), so the
+# eval and the product mean the same thing by stock copy.
+_STOCK_OPENER = re.compile(
+    r"(?:^|[.!?:]\s+)(" + "|".join(re.escape(o) for o in STOCK_OPENERS) + r")\b",
+    re.IGNORECASE | re.MULTILINE,
 )
+
+
+def stock_copy(text: str) -> tuple[str, ...]:
+    """Stock phrases and vague-invitation sentence openers found in `text`, lowercased."""
+    lowered = text.lower()
+    phrases = tuple(p for p in STOCK_PHRASES if p in lowered)
+    return phrases + tuple(m.group(1).lower() for m in _STOCK_OPENER.finditer(text))
 
 
 @dataclass(frozen=True)
@@ -135,14 +114,13 @@ def check_idea(story: dict, *, place: str | None = None) -> IdeaVoice:
     viewer = bool(_VIEWER_DIRECTED.search(copy)) or any(
         _IMPERATIVE_OPENER.match(s) for s in surfaces
     )
-    lowered = copy.lower()
     terms = place_terms(place)
     return IdeaVoice(
         title=title,
         diary_recap=bool(markers) and not viewer,
         recap_markers=markers,
         viewer_directed=viewer,
-        filler=tuple(w for w in _FILLER if w in lowered),
+        filler=stock_copy(copy),
         names_place=(any(t in (recap_text).casefold() for t in terms) if terms else None),
     )
 
@@ -199,11 +177,22 @@ def _mean(values: list) -> float | None:
     return sum(values) / len(values) if values else None
 
 
+def _filler_rate(output: dict) -> float | None:
+    return analyze_stories(output.get("stories", [])).summary()["filler_rate"]
+
+
 def aggregate(runs: list[dict]) -> dict[str, float | None]:
-    """Mean of every structural rate and judge dimension across a variant's runs."""
+    """Mean of every structural rate and judge dimension across a variant's runs.
+
+    filler_rate is rescored from the saved output, so a file recorded under an older stock list
+    compares fairly. draft_filler_rate is the same check before the copy edit pass, when the run
+    recorded its draft.
+    """
     metrics: dict[str, float | None] = {}
-    for key in ("diary_recap_rate", "filler_rate", "missing_place_rate"):
+    for key in ("diary_recap_rate", "missing_place_rate"):
         metrics[key] = _mean([r["voice"]["summary"][key] for r in runs])
+    metrics["filler_rate"] = _mean([_filler_rate(r["output"]) for r in runs])
+    metrics["draft_filler_rate"] = _mean([_filler_rate(r["draft"]) for r in runs if "draft" in r])
     judged = [r["judge"] for r in runs if "judge" in r]
     for dim in JUDGE_DIMENSIONS:
         metrics[dim] = _mean([j["scores"].get(dim) for j in judged])

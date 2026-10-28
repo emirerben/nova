@@ -21,8 +21,12 @@ from app.agents.camera_roll_stories import CameraRollStoriesAgent
 
 from . import camera_roll_voice_samples as samples
 from .camera_roll_voice_fixture import PLACE, VARIANTS, build_input, candidates
-from .runners.camera_roll_voice import analyze_stories, composite, score_run
-from .runners.eval_runner import CassetteModelClient, build_eval_run_context
+from .runners.camera_roll_voice import analyze_stories, composite, score_run, stock_copy
+from .runners.eval_runner import (
+    CassetteModelClient,
+    RecordingModelClient,
+    build_eval_run_context,
+)
 
 AGENT = "nova.media.camera_roll_stories"
 BASELINE_DIR = Path(__file__).parent / "baselines" / "camera_roll_voice"
@@ -76,6 +80,44 @@ def test_a_recap_marker_with_a_viewer_claim_is_not_diary():
     assert idea.recap_markers and idea.viewer_directed and not idea.diary_recap
 
 
+# Lines the 2026-10-28.2 prompt actually returned (a2-social-voice-2026-10-28.json) that the
+# judge called brochure filler, and grounded lines of the same fixture that must stay clean.
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Experience Cunda's calm waters and sun-dappled olive groves.",
+        "Cobbled paths, old stone houses, and bougainvillea. Cunda Island is full of charm "
+        "around every corner.",
+        "From rocky shores to olive groves, Cunda offers serene landscapes. Perfect for a "
+        "peaceful getaway.",
+        "Explore Cunda's quiet stone streets",
+        "Cunda Island delivers on historic charm with its stone buildings. So much to explore!",
+        "A perfect blend of history and nature on Turkey's Aegean coast.",
+        "Find peace on Cunda Island: old windmills and sea views.",
+        "Wander Cunda's cobbled streets lined with historic stone houses.",
+        "The quiet beauty of olive groves meets the sea.",
+        "Discover Cunda Island's quiet natural landscapes.",
+    ],
+)
+def test_round_one_brochure_lines_are_flagged(line):
+    assert stock_copy(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Walk Cunda's stone alleys down to the harbour",
+        "A stone windmill with a wooden cap above the olive grove",
+        "Fishing boats tie up a few steps from the grilled-fish tables",
+        "Waves roll onto a rocky shore, then the sun sets over flat water",
+        "Pink bougainvillea over a doorway on a cobbled street. #CundaIsland",
+        "Why Cunda's old stone houses still have wooden shutters",
+    ],
+)
+def test_grounded_plain_lines_are_not_flagged(line):
+    assert stock_copy(line) == ()
+
+
 def test_judge_separates_the_two_samples(judge_for, with_judge):
     if not with_judge:
         pytest.skip("judge scoring needs --with-judge")
@@ -121,18 +163,22 @@ def test_live_baseline(eval_mode, live_model_client, with_judge, judge_for):
         if wanted and variant.name not in wanted:
             continue
         value = variant.build()
-        agent = CameraRollStoriesAgent(live_model_client)
         results = []
         for n in range(runs):
+            client = RecordingModelClient(live_model_client)
+            agent = CameraRollStoriesAgent(client)
             ctx = build_eval_run_context(f"camera-roll-voice/{variant.name}/{n}", is_live=True)
             try:
                 output = agent.run(value.model_dump(), ctx=ctx).model_dump()
             except Exception as exc:  # noqa: BLE001 - a failed run is data, not a crash
                 results.append({"error": f"{type(exc).__name__}: {exc}"[:300]})
                 continue
-            results.append(
-                score_run(output, place=variant.place, agent_input=value.model_dump(), judge=judge)
+            record = score_run(
+                output, place=variant.place, agent_input=value.model_dump(), judge=judge
             )
+            record["draft"] = agent.parse(client.invocations[0].raw_text, value).model_dump()
+            record["edit_calls"] = len(client.invocations) - 1
+            results.append(record)
         record["variants"][variant.name] = {
             "description": variant.description,
             "query": variant.query,

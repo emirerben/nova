@@ -376,7 +376,11 @@ Measures diary-style ideas/opening text from `nova.media.camera_roll_stories` on
 no-GPS "Cunda" fixture. Files: `camera_roll_voice_fixture.py` (data + builder; variants
 `bare`, `query`, and `event` with `event_title`/`event_about`),
 `runners/camera_roll_voice.py` (structural checks, free), `rubrics/camera_roll_stories.md`
-(judge: diary_voice lower-better, viewer_value, specificity, grounding).
+(judge: diary_voice lower-better, viewer_value, specificity, grounding). The `filler` check uses
+the stock vocabulary in `app/agents/camera_roll_copy_edit.py`, the list the copy edit pass shows
+its model, so `--compare` rescores `filler_rate` from saved outputs and live runs also record the
+pre-edit `draft` (`draft_filler_rate`). The judge, not `filler_rate`, is the independent measure
+of that pass.
 
 ```bash
 pytest tests/evals/test_camera_roll_voice_evals.py -v               # replay, free (CI)

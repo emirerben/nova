@@ -15,7 +15,8 @@ Examples (from src/apps/api):
   .venv/bin/python scripts/run_camera_roll_voice_eval.py --compare tests/evals/baselines/\
 camera_roll_voice/baseline.json tests/evals/baselines/camera_roll_voice/new-prompt.json
 
-Cost is shown for the agent (Gemini Flash, reservation-style upper bound) and the judge
+Cost is shown for the agent and its copy edit call (Gemini Flash, reservation-style upper
+bound) and the judge
 (Claude Sonnet, approximate list price). Judge prices are constants below; check them.
 """
 
@@ -48,6 +49,7 @@ AGENT_EXPECTED_OUT_TOKENS = 1500
 
 
 def plan(variant_names: list[str], runs: int, with_judge: bool) -> dict:
+    from app.agents.camera_roll_copy_edit import CameraRollCopyEditAgent
     from app.agents.camera_roll_stories import CameraRollStoriesAgent
     from app.services.ai_cost_control import estimate_call_cost_usd
     from tests.evals.camera_roll_voice_fixture import VARIANTS
@@ -63,8 +65,19 @@ def plan(variant_names: list[str], runs: int, with_judge: bool) -> dict:
         value = v.build()
         prompt = agent.render_prompt(value)
         kwargs = dict(model=spec.model, prompt=prompt, media_mime=None)
-        ceiling = estimate_call_cost_usd(max_output_tokens=agent.max_output_tokens, **kwargs)
-        typical = estimate_call_cost_usd(max_output_tokens=AGENT_EXPECTED_OUT_TOKENS, **kwargs)
+        # The copy edit call sends at most the ideas' copy and footage, a subset of this
+        # prompt, so the idea prompt bounds its input.
+        edit_ceiling = estimate_call_cost_usd(
+            max_output_tokens=CameraRollCopyEditAgent.max_output_tokens, **kwargs
+        )
+        ceiling = (
+            estimate_call_cost_usd(max_output_tokens=agent.max_output_tokens, **kwargs)
+            + edit_ceiling
+        )
+        typical = (
+            estimate_call_cost_usd(max_output_tokens=AGENT_EXPECTED_OUT_TOKENS, **kwargs)
+            + edit_ceiling
+        )
         judge_in = (rubric_chars + len(json.dumps(judge_view(value.model_dump())))) / 3
         judge_cost = (
             judge_in * JUDGE_USD_PER_MTOK_IN + JUDGE_OUT_TOKENS * JUDGE_USD_PER_MTOK_OUT
@@ -91,7 +104,7 @@ def plan(variant_names: list[str], runs: int, with_judge: bool) -> dict:
         "runs_per_variant": runs,
         "with_judge": with_judge,
         "variants": rows,
-        "total_calls": len(rows) * runs * (2 if with_judge else 1),
+        "total_calls": len(rows) * runs * (3 if with_judge else 2),
         "estimated_usd_typical": round(expected, 3),
         "estimated_usd_ceiling": round(upper, 3),
         "hard_cap_usd": HARD_CAP_USD,

@@ -1455,6 +1455,7 @@
       ],
       "paths": [
         "src/apps/api/app/agents/camera_roll_stories.py",
+        "src/apps/api/app/agents/camera_roll_copy_edit.py",
         "src/apps/api/app/agents/skills/grounded-hook/SKILL.md",
         "src/apps/api/app/agents/media_moment_relevance.py",
         "src/apps/api/app/cli/camera_roll_pilot.py",
