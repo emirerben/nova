@@ -1403,6 +1403,17 @@
         },
         "EditorCommitCaptionMeta": {
           "properties": {
+            "animation_phases": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAnimationPhases"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "appearance": {
               "anyOf": [
                 {
@@ -3401,6 +3412,55 @@
             "time_s"
           ],
           "title": "SyncAnchor",
+          "type": "object"
+        },
+        "TextAnimationPhases": {
+          "additionalProperties": false,
+          "properties": {
+            "entrance": {
+              "default": "none",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slide",
+                "typewriter"
+              ],
+              "title": "Entrance",
+              "type": "string"
+            },
+            "exit": {
+              "default": "none",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slide",
+                "typewriter"
+              ],
+              "title": "Exit",
+              "type": "string"
+            },
+            "loop": {
+              "default": "none",
+              "enum": [
+                "none",
+                "pulse",
+                "bounce",
+                "float"
+              ],
+              "title": "Loop",
+              "type": "string"
+            },
+            "speed": {
+              "default": 1,
+              "maximum": 3,
+              "minimum": 0.25,
+              "title": "Speed",
+              "type": "number"
+            }
+          },
+          "title": "TextAnimationPhases",
           "type": "object"
         },
         "TextCardBlock": {
