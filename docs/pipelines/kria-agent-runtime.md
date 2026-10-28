@@ -195,9 +195,13 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   isn't in this draft." `assess_readiness` takes `creator_id` to resolve the route; a caller
   without it gets no such evidence (fail closed). Pins: `tests/kria/test_kri945_*`.
 - **Automatic simpler drafts.** The runtime planner removes only typed, unavailable
-  optional text/SFX fields and recompiles the remaining strategy. At draft completion,
-  exact compiler-removed text, unavailable native/Talking clip labels and typed
-  brightness requests can be superseded automatically when they are the only blockers.
+  optional text/SFX fields and recompiles the remaining strategy. On a phone Talking edit
+  with its title lane open, one whole-video top-corner text is the opening title instead
+  of an omission (KRI-1009, `strategy_policy._talking_top_text_as_title`). At draft
+  completion, unquoted native/Talking clip labels and typed brightness requests can be
+  superseded automatically when they are the only blockers. Text the creator quoted (a
+  brief `literal`) never is: the draft is held back with the "simpler version?" question
+  naming it and the compiler's reason, and only the tap drops it (KRI-1009).
   Receipt/readiness failure alone is insufficient: a missing supported label or
   spoken trigger still needs repair/clarification. The same transaction
   appends an omission revision, rebuilds approval readiness, and pins the effective

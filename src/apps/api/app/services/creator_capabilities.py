@@ -1305,6 +1305,15 @@ def _phone_audio_mix_verified() -> bool:
     return "audioMix" in settings.phone_render_verified_features
 
 
+def phone_talking_title_lane_open(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-467: a phone Talking edit draws its opening title through its text lane
+    (`phone_subtitled_title`). A cloud Talking edit has no title lane, and
+    `PHONE_SUBTITLED_TITLE_ENABLED=false` closes it."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    return bool(phone is not None and phone.available and phone_subtitled_title_supported())
+
+
 def ending_clip_problem(
     manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
 ) -> str | None:
@@ -1593,15 +1602,12 @@ def compile_strategy_to_plan(
                 }
             )
     phone_capability = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
-    # KRI-467: a phone Talking edit draws the title through its text lane
-    # (`phone_subtitled_title`); `PHONE_SUBTITLED_TITLE_ENABLED=false` restores
-    # the refusal below.
+    # KRI-467: a phone Talking edit draws the title through its text lane;
+    # `PHONE_SUBTITLED_TITLE_ENABLED=false` restores the refusal below.
     phone_talking_title = bool(
         strategy.opening_title
         and strategy.edit_format == "subtitled"
-        and phone_capability is not None
-        and phone_capability.available
-        and phone_subtitled_title_supported()
+        and phone_talking_title_lane_open(manifest)
     )
     if strategy.opening_title and strategy.edit_format == "subtitled" and not phone_talking_title:
         # Caption-owned cloud subtitled edits still do not render a hero intro.
@@ -1927,6 +1933,7 @@ __all__ = [
     "ending_clip_candidates",
     "ending_clip_problem",
     "normalize_creator_strategy_media",
+    "phone_talking_title_lane_open",
     "repair_creator_ending_clip",
     "repair_creator_reaction_beats",
     "resolve_creator_image_media_ref",

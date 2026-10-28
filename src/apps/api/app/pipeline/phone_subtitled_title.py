@@ -88,7 +88,7 @@ _CLOSING_PILL_PAD_PX = 4
 _TITLE_MIN_S = 0.5
 _TITLE_MAX_S = 3.0
 _TITLE_AFTER_FIRST_WORD_S = 1.0
-_TITLE_MAX_CHARS = 80
+TALKING_TITLE_MAX_CHARS = 80
 
 # The title block's top never goes above the platform header chrome (same 6%
 # as `narrated_title`), and its bottom never reaches the caption band
@@ -165,7 +165,7 @@ def talking_title_element(
     """
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
-    text = " ".join((opening_title or "").split())[:_TITLE_MAX_CHARS]
+    text = " ".join((opening_title or "").split())[:TALKING_TITLE_MAX_CHARS]
     if not text:
         return None
     end_s = float(duration_s) if duration_s is not None else talking_title_end_s(first_word_end_s)
@@ -751,7 +751,7 @@ def talking_closing_element(
     there is one, else at the title's top spot."""
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
-    text = " ".join((closing_title or "").split())[:_TITLE_MAX_CHARS]
+    text = " ".join((closing_title or "").split())[:TALKING_TITLE_MAX_CHARS]
     if not text or end_s - start_s < _TITLE_MIN_S / 5:
         return None
     element = TextElement(
