@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.178.0] - 2026-10-28
+
+### Changed
+- fix(ios): save and simplify text preferences (#1895) <!-- release-pr: 1895 -->
+
 ## [0.81.177.0] - 2026-10-28
 
 ### Changed
