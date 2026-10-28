@@ -44,6 +44,10 @@ silently upgraded. Camera effects change the footage, not a floating visual.
   opacity, and explicit spoken-word highlighting. It persists as
   `caption_editor_style` on the variant and returns through the public editor
   snapshot. Sentence/word display and highlighting are independent once authored.
+- `caption_meta.animation_phases` (all captions) and a line's own `animation_phases`
+  (KRI-1007) sit beside `appearance`, never inside it (`EditorCaptionAppearance` forbids
+  extra keys). Shapes, precedence and the protocol 24 gate: phone-rendering.md
+  "Caption animation".
 - Media overlays and media blocks accept optional `editor_style` version 1:
   rotation, fit mode, zoom, and an animation object. The animation has version,
   entrance, exit, loop, and speed. Absent fields retain the legacy rendering path.
