@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.2.0] - 2026-10-28
+
+### Changed
+- feat(ios): refresh onboarding and edit previews (#1904) <!-- release-pr: 1904 -->
+
 ## [0.82.1.0] - 2026-10-28
 
 ### Changed
