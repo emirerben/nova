@@ -1,3 +1,4 @@
+import KriaMediaEngine
 import SwiftUI
 
 /// The Paper inspector shell keeps the preview visible while controls scroll.
@@ -456,6 +457,14 @@ struct NativeCaptionPanel: View {
     private var style: some View {
         VStack(spacing: 8) {
             displayPicker
+            NativeEditorMenuRow(title: "Text motion", value: TextAnimationPhases.Edge(rawValue: appearance["animation_phases"]?.objectValue?["entrance"]?.stringValue ?? "none")?.title ?? "None") {
+                ForEach([TextAnimationPhases.Edge.none] + TextAnimationPhases.Edge.designed, id: \.rawValue) { edge in
+                    Button(edge.title) { session.setCaptionTextAnimation(edge) }
+                }
+            }
+            .accessibilityIdentifier("native-editor-caption-text-motion")
+            Text("Text motion plays on each caption line.")
+                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             let layout = stacksControls ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))
             layout {
                 NativeFontPicker(

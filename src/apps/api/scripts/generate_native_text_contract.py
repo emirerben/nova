@@ -32,7 +32,7 @@ def generate() -> str:
 import Foundation
 
 public struct TextAnimationPhases: Codable, Equatable, Sendable {{
-    public enum Edge: String, Codable, Sendable {{ case {edge} }}
+    public enum Edge: String, Codable, CaseIterable, Sendable {{ case {edge} }}
     public enum Loop: String, Codable, Sendable {{ case {loop} }}
     public var entrance: Edge
     public var exit: Edge

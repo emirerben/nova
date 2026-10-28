@@ -841,3 +841,33 @@ def test_bars_drop_the_face_crop_and_crop_brings_it_back(monkeypatch):
     assert shifts and all(shift == (1, _FACE_SHIFT) for shift in shifts)
     framing = job.assembly_plan["variants"][0]["speaker_framing"]
     assert (framing["mode"], framing["reason"]) == ("face_fill", "face_in_window")
+
+
+@pytest.mark.parametrize(
+    "effect",
+    ["silkReveal", "elasticCondensed", "focusPull", "wordRelay", "ribbonWipe", "echoStack"],
+)
+def test_designed_caption_animation_survives_save_and_recipe_rebuild(monkeypatch, effect):
+    job = phone_job(monkeypatch)
+    monkeypatch.setattr(
+        gj.settings, "phone_render_verified_features", [*_VERIFIED_FEATURES, "authoredText"]
+    )
+    from app.agents._schemas.text_animation_phases import TextAnimationPhases
+
+    save(
+        job,
+        caption_meta=gj.EditorCommitCaptionMeta(
+            style="sentence",
+            appearance=gj.EditorCaptionAppearance(
+                animation_phases=TextAnimationPhases(entrance=effect),
+                highlight_spoken_word=False,
+            ),
+        ),
+    )
+    layers = device_status(job, "subtitled").request.recipe.text_layers
+    assert layers
+    assert all(layer.animation_phases.entrance == effect for layer in layers)
+    assert (
+        job.assembly_plan["variants"][0]["caption_editor_style"]["animation_phases"]["entrance"]
+        == effect
+    )
