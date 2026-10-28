@@ -4407,10 +4407,14 @@ struct NativeEditorTemporaryVideo {
     }
     func setTextPhase(id: String, phase: String, effect: String) {
         guard canEditSection(.text), ["entrance", "exit", "loop"].contains(phase),
-              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : ["none", "fade", "pop", "slide", "typewriter"]).contains(effect) else { return }
+              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : TextAnimationPhases.Edge.allCases.map(\.rawValue)).contains(effect) else { return }
         mutateText(id: id) {
             var phases = Self.textPhases(for: $0)
             phases[phase] = .string(effect)
+            if TextAnimationPhases.Edge(rawValue: effect)?.isDesigned == true {
+                $0.raw["theme_transition"] = nil
+                $0.raw["effect"] = .string("static")
+            }
             $0.raw["animation_phases"] = .object(phases)
         }
     }
@@ -5577,6 +5581,7 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             appearance[key] = value
+            if key == "highlight_spoken_word", value == .bool(true) { appearance["animation_phases"] = nil }
             if key == "alignment", appearance["position_x_frac"] != nil {
                 appearance["position_x_frac"] = .number(value.stringValue == "left" ? 0.06 : value.stringValue == "right" ? 0.82 : 0.5)
             }
@@ -5590,6 +5595,7 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             if appearance["highlight_spoken_word"] == nil { appearance["highlight_spoken_word"] = .bool(false) }
+            if style == "word" { appearance["animation_phases"] = nil }
             $0.captionMeta["appearance"] = .object(appearance)
             $0.captionMeta["style"] = .string(style)
         }
@@ -5634,7 +5640,10 @@ struct NativeEditorTemporaryVideo {
         let sweep = meta["style"] == .string("word") || meta["appearance"]?.objectValue?["highlight_spoken_word"] == .bool(true)
         let today: [String: JSONValue] = ["entrance": .string(document.isCueNative && !sweep ? "pop" : "none"),
                                           "exit": .string("none"), "loop": .string("none"), "speed": .number(1)]
-        let fallback = meta["animation_phases"]?.objectValue ?? today
+        // Style > Text motion (before KRI-1007) stored the all-captions entrance in `appearance`; it stays the
+        // effective default until All captions writes `caption_meta.animation_phases`.
+        let fallback = meta["animation_phases"]?.objectValue
+            ?? meta["appearance"]?.objectValue?["animation_phases"]?.objectValue ?? today
         guard case .line(let id) = scope else { return fallback }
         if document.isCueNative {
             return document.captionCues.first { $0.id == id }?.raw["animation_phases"]?.objectValue ?? fallback
@@ -5646,7 +5655,7 @@ struct NativeEditorTemporaryVideo {
 
     func setCaptionPhase(_ scope: CaptionAnimationScope, phase: String, effect: String) {
         guard ["entrance", "exit", "loop"].contains(phase),
-              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : ["none", "fade", "pop", "slide", "typewriter"]).contains(effect) else { return }
+              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : TextAnimationPhases.Edge.allCases.map(\.rawValue)).contains(effect) else { return }
         var phases = captionAnimationPhases(scope)
         phases[phase] = .string(effect)
         writeCaptionPhases(scope, phases)
@@ -5684,6 +5693,10 @@ struct NativeEditorTemporaryVideo {
             if !captionAnimationOverrideIDs.isEmpty { sections.insert(cueNative ? .captions : .text) }
             transactDocument(sections: sections) { doc in
                 doc.captionMeta["animation_phases"] = value
+                if var appearance = doc.captionMeta["appearance"]?.objectValue, appearance["animation_phases"] != nil {
+                    appearance["animation_phases"] = nil
+                    doc.captionMeta["appearance"] = .object(appearance)
+                }
                 if cueNative {
                     for index in doc.captionCues.indices { doc.captionCues[index].raw.removeValue(forKey: "animation_phases") }
                 } else {

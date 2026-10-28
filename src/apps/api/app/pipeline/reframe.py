@@ -47,8 +47,18 @@ log = structlog.get_logger()
 
 MAX_OUTPUT_BYTES = 500 * 1024 * 1024  # 500MB
 
-# Backward-compat alias — older code referenced the local constant.
-_SILENT_AUDIO_INPUT = SILENT_AUDIO_INPUT_ARGS
+
+def _silent_audio_input(duration_s: float) -> list[str]:
+    """`SILENT_AUDIO_INPUT_ARGS` that end on their own after ``duration_s``.
+
+    anullsrc never ends, and `-shortest` does not reliably stop it: FFmpeg
+    before 8.1 (CI 8.0.1, prod 7.1.5) lacks the scheduler choke fixes, so under
+    CPU load the silence runs ahead of a slow video and `-shortest`'s sync
+    queue overflows, releasing audio past the last frame (guided-story moments
+    probed 0.26–0.39 s long, KRI-997). The input `-t` caps the silence at the
+    output's planned length; keep `-shortest` so a shorter picture still wins.
+    """
+    return ["-t", f"{duration_s:.6f}", *SILENT_AUDIO_INPUT_ARGS]
 
 
 class ReframeError(Exception):
@@ -388,6 +398,7 @@ def reframe_and_export(
             output_path,
             has_audio=has_audio,
             canvas=canvas,
+            speed_factor=speed_factor,
         )
     elif keep_segments is not None:
         log.info(
@@ -428,9 +439,10 @@ def reframe_and_export(
         cmd = ["ffmpeg", "-ss", str(start_s), "-t", str(duration), "-i", input_path]
         if not has_audio:
             # Silent-audio input MUST come after -ss/-t so the source seek
-            # doesn't apply to the lavfi source. -shortest then truncates
-            # the silent track to the trimmed video duration.
-            cmd += _SILENT_AUDIO_INPUT
+            # doesn't apply to the lavfi source. It ends on its own at the
+            # retimed output length (-shortest alone lets it overrun on
+            # FFmpeg < 8.1); -shortest still truncates it to a shorter video.
+            cmd += _silent_audio_input(duration / speed_factor)
             cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
         cmd += [
             "-vf",
@@ -551,6 +563,7 @@ def _build_overlay_cmd(
     output_path: str,
     has_audio: bool = True,
     canvas: Canvas | None = None,
+    speed_factor: float = 1.0,
 ) -> list[str]:
     """Build FFmpeg command with -filter_complex for PNG + ASS overlay compositing.
 
@@ -579,7 +592,7 @@ def _build_overlay_cmd(
     silent_audio_idx = None
     if not has_audio:
         silent_audio_idx = 1 + len(overlay_pngs)
-        cmd.extend(_SILENT_AUDIO_INPUT)
+        cmd.extend(_silent_audio_input(duration / speed_factor))
 
     # Build filter_complex string
     # First apply the vf chain to the video input
@@ -747,8 +760,8 @@ def _build_keep_segments_cmd(
     permanent guard.
 
     Sources with no audio track mirror the uncut silent-audio contract:
-    lavfi anullsrc input after the main input, concat v=1:a=0, and
-    `-map 1:a:0 -shortest` truncating the silent track to the cut video.
+    lavfi anullsrc input after the main input, capped at the cut video's
+    length, concat v=1:a=0, and `-map 1:a:0 -shortest`.
 
     Raises ValueError when every segment snaps to no frame. Returns the
     command WITHOUT output encoding args — the caller appends
@@ -760,6 +773,7 @@ def _build_keep_segments_cmd(
     if not segments:
         raise ValueError("keep_segments hold no video frame: every segment snaps to no frame")
     n = len(segments)
+    kept_s = sum(end - first for first, end in segments) / fps
     # What actually renders on the frame grid, next to the plan logged by
     # reframe_and_export: boundaries move up to half a frame and segments
     # that snap to no frame drop out.
@@ -767,11 +781,12 @@ def _build_keep_segments_cmd(
         "reframe_keep_segments_grid",
         segments=n,
         dropped=len(keep_segments) - n,
-        kept_s=round(sum(end - first for first, end in segments) / fps, 3),
+        kept_s=round(kept_s, 3),
     )
     cmd = ["ffmpeg", "-ss", str(start_s), "-t", str(duration), "-i", input_path]
     if not has_audio:
-        cmd += _SILENT_AUDIO_INPUT
+        # Ends with the concatenated picture (see _silent_audio_input).
+        cmd += _silent_audio_input(kept_s)
 
     vf_chain = ",".join(vf_parts) if vf_parts else "null"
     fc_parts = [f"[0:v]{vf_chain}[base]"]

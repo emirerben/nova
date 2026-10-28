@@ -751,8 +751,12 @@ enum NativeEditorRenderError: Error, Equatable {
                     text.append(try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
                         start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: phases))
                 } else {
+                    let captionPhases = try appearance["animation_phases"].map {
+                        try JSONDecoder().decode(TextAnimationPhases.self, from: JSONEncoder().encode($0))
+                    }
                     let layout = try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
-                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas)
+                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: captionPhases)
+                    if captionPhases != nil { text.append(layout); continue }
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
                         effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none))
@@ -1054,14 +1058,28 @@ enum NativeEditorRenderError: Error, Equatable {
     /// phases governs the whole displayed line, else `caption_meta.animation_phases`. The line's first row
     /// enters, its last exits, every row loops. Phases that animate nothing, or that do not parse, leave the
     /// line as it is drawn today. `groups` index both arrays, which share their order.
+    /// Without either, the older `appearance.animation_phases` (Style > Text motion) draws the line as one
+    /// row, unless a word display or spoken-word highlight is on (`guided_caption_presentation`).
     private static func stampingCaptionLinePhases(_ rendered: [EditorTextElement], source: [EditorTextElement],
                                                   captionMeta: [String: JSONValue]) -> [EditorTextElement] {
         var stamped = rendered
         for index in stamped.indices where stamped[index].isCaption {
             stamped[index].raw.removeValue(forKey: "animation_phases")
         }
+        let appearance = captionMeta["appearance"]?.objectValue ?? [:]
+        let appearancePhases = captionMeta["style"] != .string("word") && appearance["highlight_spoken_word"] != .bool(true)
+            ? appearance["animation_phases"].flatMap { captionPhases($0) == nil ? nil : $0 } : nil
+        var hidden = Set<Int>()
         for group in captionLineGroups(source, captionMeta: captionMeta) {
-            guard let phases = captionLinePhases(group.map { source[$0] }, captionMeta: captionMeta) else { continue }
+            guard let phases = captionLinePhases(group.map { source[$0] }, captionMeta: captionMeta) else {
+                guard let appearancePhases, let first = group.first, let last = group.last else { continue }
+                stamped[first].text = group.map { source[$0].text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .joined(separator: " ")
+                stamped[first].endS = source[last].endS
+                stamped[first].raw["animation_phases"] = appearancePhases
+                hidden.formUnion(group.dropFirst())
+                continue
+            }
             for (position, index) in group.enumerated() {
                 var row = phases
                 if position > 0 { row.entrance = .none }
@@ -1073,7 +1091,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 ])
             }
         }
-        return stamped
+        return stamped.enumerated().filter { !hidden.contains($0.offset) }.map(\.element)
     }
 
     /// The phases one displayed text-lane caption line draws with, or nil for today's static line.

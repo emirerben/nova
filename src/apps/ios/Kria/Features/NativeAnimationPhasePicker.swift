@@ -1,3 +1,4 @@
+import KriaMediaEngine
 import SwiftUI
 
 /// The In / Out / Loop effect cards, preview toggle and speed slider. The Text panel and the
@@ -6,7 +7,12 @@ struct NativeAnimationPhasePicker<Session: NativeTransactionControlling>: View {
     enum Phase: String, CaseIterable {
         case entrance = "In", exit = "Out", loop = "Loop"
         var key: String { self == .entrance ? "entrance" : self == .exit ? "exit" : "loop" }
-        var effects: [String] { self == .loop ? ["None", "Pulse", "Bounce", "Float"] : ["None", "Fade", "Pop", "Slide", "Typewriter"] }
+        /// (stored value, card title): In and Out offer every edge, the six designed ones included.
+        var effects: [(value: String, title: String)] {
+            self == .loop
+                ? ["None", "Pulse", "Bounce", "Float"].map { ($0.lowercased(), $0) }
+                : TextAnimationPhases.Edge.allCases.map { ($0.rawValue, $0.title) }
+        }
     }
 
     @ObservedObject var session: Session
@@ -30,7 +36,7 @@ struct NativeAnimationPhasePicker<Session: NativeTransactionControlling>: View {
         VStack(spacing: 14) {
             NativeEditorPanelTabs(tabs: Phase.allCases, selection: $phase, accessibilityPrefix: identifierPrefix + "-phase")
             LazyVGrid(columns: [GridItem(.adaptive(minimum: usesAccessibilityLayout ? 118 : 92), spacing: 8)], spacing: 10) {
-                ForEach(phase.effects, id: \.self) { effect in card(effect) }
+                ForEach(phase.effects, id: \.value) { card(value: $0.value, title: $0.title) }
             }
             Button {
                 clock.toggleManually()
@@ -65,19 +71,18 @@ struct NativeAnimationPhasePicker<Session: NativeTransactionControlling>: View {
         }
     }
 
-    private func card(_ effect: String) -> some View {
-        let value = effect.lowercased()
+    private func card(value: String, title: String) -> some View {
         let selected = selectedEffect == value
         return Button { onEffect(phase.key, value) } label: {
             VStack(spacing: 6) {
                 NativeTextAnimationPreview(phase: phase.key, effect: value, speed: speed, clock: clock)
                     .frame(maxWidth: .infinity, minHeight: 52)
                     .background(selected ? KriaColor.selectionSoft : KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 9))
-                Text(effect).font(KriaFont.body(11).weight(selected ? .semibold : .regular))
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                Text(title).font(KriaFont.body(11).weight(selected ? .semibold : .regular))
+                    .lineLimit(2).multilineTextAlignment(.center)
             }
         }
-        .accessibilityLabel("\(phase.rawValue) animation \(effect)")
+        .accessibilityLabel("\(phase.rawValue) animation \(title)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 

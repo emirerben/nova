@@ -1168,11 +1168,12 @@ enum KriaClientProtocolContract {
     /// 22: renders and answers a camera-roll idea's `open_questions`. The server holds "Use this idea"
     /// behind them (409 `story_open_questions`) and sends the list only from this protocol; older builds
     /// see no questions and are not gated.
-    /// 23 (KRI-1007): round-trips caption `animation_phases` (a `caption_cues` row, a `caption_cue` text row and
+    /// 23: renders the six designed text animation edges.
+    /// 24 (KRI-1007): round-trips caption `animation_phases` (a `caption_cues` row, a `caption_cue` text row and
     /// `caption_meta`) and draws them in preview. The server advertises `editor_capabilities.caption_animation`
     /// only to this protocol and answers 426 `client_update_required` to an older build whose Save carries
     /// caption phases or replaces captions that hold them, since it would drop them.
-    static let version = 23
+    static let version = 24
     static let header = "X-Kria-Client-Protocol"
 }
 

@@ -42,6 +42,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents._schemas.text_animation_phases import TextAnimationPhases
 from app.kria.portable_text import PortableTextLayer
 from app.kria.render_assets import RenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -149,6 +150,7 @@ class PhoneCaptionLook:
     persisted variant fields field-for-field (see that function's docstring).
     """
 
+    animation_phases: TextAnimationPhases | None = None
     captions_enabled: bool = True
     font_family: str = CAPTION_FONT_FAMILY
     text_size_px: int = _CAPTION_TEXT_SIZE_PX
@@ -184,9 +186,28 @@ class PhoneCaptionLook:
     # `phone_rollout.single_word_captions_enabled` says the feature is verified AND the
     # app build is known to decode it.
     single_word: bool = False
+    # KRI-1007: the all-captions animation default (`TextAnimationPhases` dump) from
+    # ``caption_meta.animation_phases`` for cues without their own ``animation_phases``.
+    # It wins over ``animation_phases`` (the appearance default) and keeps the karaoke
+    # sweep. None keeps today's pop-in / karaoke timing.
+    default_animation_phases: dict | None = None
 
 
 _DEFAULT_CAPTION_LOOK = PhoneCaptionLook()
+
+
+def _phases_or_none(value: object) -> dict | None:
+    """A valid ``TextAnimationPhases`` dump, or None for anything else."""
+    from pydantic import ValidationError
+
+    from app.agents._schemas.text_animation_phases import TextAnimationPhases
+
+    if not isinstance(value, dict):
+        return None
+    try:
+        return TextAnimationPhases.model_validate(value).model_dump()
+    except ValidationError:
+        return None
 
 
 def _clamp_int(value: object, lo: int, hi: int, default: int) -> int:
@@ -351,6 +372,9 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         shadow_enabled = editor_shadow_enabled
 
     return PhoneCaptionLook(
+        animation_phases=TextAnimationPhases.model_validate(editor_style["animation_phases"])
+        if editor_style.get("animation_phases")
+        else None,
         captions_enabled=captions_enabled,
         font_family=font_family,
         text_size_px=_clamp_int(variant.get("caption_size_px"), 36, 160, _CAPTION_TEXT_SIZE_PX),
@@ -368,6 +392,7 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         shadow_opacity=_shadow_opacity_or_none(editor_style.get("shadow_opacity")),
         shadow_enabled=shadow_enabled,
         single_word=_single_word_enabled(variant),
+        default_animation_phases=_phases_or_none(variant.get("caption_animation_phases")),
     )
 
 
@@ -466,10 +491,20 @@ def compile_caption_layers(
         and style == "word"
         and resolved_look.highlight_spoken_word is not None
     )
+    from app.services.phone_rollout import caption_animation_renderable
+
+    animate = caption_animation_renderable()
     for index, cue in enumerate(prepared):
         overlay = _base_overlay(cue, resolved_look)
-        use_karaoke = "words" in cue and (
-            style == "word" or resolved_look.highlight_spoken_word is True
+        phases = cue.get("animation_phases") or resolved_look.default_animation_phases
+        phases = phases if animate else None
+        if phases is not None:
+            # A word-highlight line keeps its karaoke sweep: the phases move the whole line.
+            overlay["animation_phases"] = phases
+        use_karaoke = (
+            (phases is not None or resolved_look.animation_phases is None)
+            and "words" in cue
+            and (style == "word" or resolved_look.highlight_spoken_word is True)
         )
         word_timings = _relative_word_timings(cue, cue["words"]) if use_karaoke else []
         layer_id = f"{id_prefix}-{index}"
@@ -494,6 +529,12 @@ def compile_caption_layers(
                     overlays.extend(group.overlays)
                     continue
                 # A word that cannot stay on one line: this cue is today's full-line karaoke.
+        elif phases is not None:
+            # Same rule as authored text (`build_overlays_from_text_elements`): explicit
+            # phases replace the single-effect schedule.
+            overlay["effect"] = (
+                "typewriter" if "typewriter" in (phases["entrance"], phases["exit"]) else "none"
+            )
         else:
             overlay["effect"] = "pop-in"
         try:
@@ -636,6 +677,7 @@ def _merge_single_word_cues(
                     rotation_degrees=anchor.rotation_degrees,
                     runs=[layer.runs[0] for layer in words[lower:upper]],
                     effect="karaoke-line",
+                    animation_phases=anchor.animation_phases,
                     karaoke=KaraokeContent(
                         starts=[
                             round(value - absolute[lower], 3) for value in absolute[lower:upper]
@@ -1085,6 +1127,8 @@ def _base_overlay(cue: dict, look: PhoneCaptionLook) -> dict[str, Any]:
         "position_x_frac": look.position_x_frac,
         "position_y_frac": look.position_y_frac,
     }
+    if look.animation_phases is not None:
+        overlay["animation_phases"] = look.animation_phases.model_dump()
     if look.text_anchor is not None:
         # `_resolve_vertical_anchor` (text_overlay_skia.py) defaults a "left"
         # anchor to a TOP vertical anchor -- pin an explicit "center" so
@@ -1120,6 +1164,9 @@ def _prepare_cues(cues: list[dict], *, timeline_duration_s: float | None) -> lis
         if end - start < _MIN_CUE_DURATION_S:
             continue
         entry: dict[str, Any] = {"text": text, "start_s": start, "end_s": end}
+        phases = _phases_or_none(cue.get("animation_phases"))
+        if phases is not None:
+            entry["animation_phases"] = phases
         words = cue.get("words")
         if isinstance(words, list) and words:
             entry["words"] = _words_spelling(text, words, start_s=start, end_s=end)

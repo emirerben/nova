@@ -24,6 +24,7 @@
   "KriaUITests/CreationUITests/testGalleryPickIsReadFromPhotosAndReachesUpload": 53.6,
   "KriaUITests/CreationUITests/testIncomingResponseDoesNotPullReaderFromScrolledHistory": 25.0,
   "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace": 31.2,
+  "KriaUITests/CreationUITests/testDraggingASelectionHandleInTheComposerDoesNotOpenTheDrawer": 25.0,
   "KriaUITests/CreationUITests/testLibraryPickerReturnsToChatByDoneAndBySinglePick": 52.6,
   "KriaUITests/CreationUITests/testLivePlanFeedFullSequence": 57.6,
   "KriaUITests/CreationUITests/testLivePlanFeedRendersStructuredPayloadsAndOffersReview": 59.8,

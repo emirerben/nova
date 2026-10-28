@@ -103,6 +103,29 @@ final class NativeCaptionAnimationUITests: XCTestCase {
         exerciseScopes(app, row: "native-editor-caption-row-song-caption-1-1", line: "Line 5", prefix: "lyrics")
     }
 
+    /// Style > Text motion folded into Animation: its stored entrance shows as the All captions choice, and the
+    /// designed edges stay one tap away there.
+    func testTextMotionPresetShowsInAllCaptions() {
+        for (fixture, prefix) in [("-ui-testing-editor-talking-captions", "preset-cue"), ("-ui-testing-editor-song-captions", "preset-lyrics")] {
+            let app = launch([fixture, "-ui-testing-editor-caption-animation", "-ui-testing-editor-caption-text-motion",
+                              "-ui-testing-editor-live-preview"])
+            app.buttons["native-editor-captions-tab-Style"].tap()
+            XCTAssertFalse(app.descendants(matching: .any)["native-editor-caption-text-motion"].exists, "Text motion lives in Animation now")
+            app.buttons["native-editor-captions-tab-Animation"].tap()
+            XCTAssertTrue(selected(app.buttons["native-editor-caption-animation-scope-all"]))
+            let silk = app.buttons["In animation Silk Reveal"]
+            scrollTo(app, silk)
+            XCTAssertTrue(silk.isSelected, "the Text motion entrance is the all-captions default")
+            shot(app, "\(prefix)-all-silk-reveal")
+            let echo = app.buttons["In animation Echo Stack"]
+            scrollTo(app, echo)
+            echo.tap()
+            XCTAssertTrue(echo.isSelected)
+            XCTAssertFalse(silk.isSelected)
+            app.terminate()
+        }
+    }
+
     func testWithoutTheCapabilityThereIsNoAnimationTab() {
         let app = launch(["-ui-testing-editor-talking-captions"])
         XCTAssertTrue(app.buttons["native-editor-captions-tab-Style"].waitForExistence(timeout: 5))

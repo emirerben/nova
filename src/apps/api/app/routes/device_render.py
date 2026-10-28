@@ -464,6 +464,21 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     newer than the one that declined is not necessarily new enough for the recipe.
     """
     protocol = _caller_protocol()
+    recipe = status.request.recipe
+    from app.agents._schemas.text_animation_phases import DESIGNED_TEXT_EDGES
+
+    if protocol < 23 and any(
+        layer.animation_phases is not None
+        and DESIGNED_TEXT_EDGES.intersection(
+            (layer.animation_phases.entrance, layer.animation_phases.exit)
+        )
+        for layer in getattr(recipe, "text_layers", None) or []
+    ):
+        return {
+            "code": "client_update_required",
+            "feature": "designed_text_motion",
+            "minimum_client_protocol": 23,
+        }
     if "actual_export_policy" in record and protocol < 13:
         return {
             "code": "client_update_required",
@@ -483,7 +498,6 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
         if isinstance(exc.detail, dict):
             return dict(exc.detail)
         return {"code": "client_update_required", "feature": "text_preferences"}
-    recipe = status.request.recipe
     if getattr(recipe, "drawing_layers", None) and not freehand_drawing_client_supported():
         # KRI-589: an older build rejects `drawingLayers` as an unknown recipe key and would
         # FAIL the job instead of rendering. Tell it to update; the pinned recipe is untouched.

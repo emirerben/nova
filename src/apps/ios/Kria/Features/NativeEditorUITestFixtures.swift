@@ -70,10 +70,26 @@ enum NativeEditorUITestFixtures {
             value.serverSnapshot["editor_capabilities"] = .object(caps)
         }
         if arguments.contains("-ui-testing-editor-caption-animation") {
-            // KRI-1007: the server advertises `editor_capabilities.caption_animation` to a protocol-23 build.
+            // KRI-1007: the server advertises `editor_capabilities.caption_animation` to a protocol-24 build.
             var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
             caps["caption_animation"] = .bool(true)
             value.serverSnapshot["editor_capabilities"] = .object(caps)
+        }
+        if arguments.contains("-ui-testing-editor-caption-text-motion") {
+            // An all-captions entrance stored by Style > Text motion before it folded into Animation (KRI-1007).
+            var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            var meta = sections["caption_meta"]?.objectValue ?? [:]
+            var appearance = meta["appearance"]?.objectValue ?? [:]
+            appearance["animation_phases"] = .object([
+                "entrance": .string("silkReveal"), "exit": .string("none"), "loop": .string("none"), "speed": .number(1),
+            ])
+            appearance["highlight_spoken_word"] = .bool(false)
+            meta["appearance"] = .object(appearance)
+            meta["style"] = .string("sentence")
+            sections["caption_meta"] = .object(meta)
+            payload["sections"] = .object(sections)
+            value.serverSnapshot["editor_payload"] = .object(payload)
         }
         if arguments.contains("-ui-testing-editor-research-sources") {
             // Offline UI coverage only; live research is verified separately on device.

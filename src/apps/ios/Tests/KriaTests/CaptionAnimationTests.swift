@@ -13,7 +13,9 @@ import KriaMediaEngine
 ///      do not govern its displayed line, or "none" phases draw differently from unset;
 ///  (f) a build without `editor_capabilities.caption_animation` writes phases;
 ///  (g) an "All captions" change takes more than one Undo, or does not reach Save as the default plus override-free rows;
-///  (h) the stored default does not come back on reload (cue-native variants store it as `caption_animation_phases`).
+///  (h) the stored default does not come back on reload (cue-native variants store it as `caption_animation_phases`);
+///  (i) an entrance stored by the older Style > Text motion (`appearance.animation_phases`) stops drawing, is not the
+///      shown default, or survives an All captions change beside the new default.
 @MainActor final class CaptionAnimationTests: XCTestCase {
     private let fade: [String: JSONValue] = ["entrance": .string("fade"), "exit": .string("fade"), "loop": .string("pulse"), "speed": .number(1.5)]
     private let still: [String: JSONValue] = ["entrance": .string("none"), "exit": .string("none"), "loop": .string("none"), "speed": .number(1)]
@@ -123,10 +125,30 @@ import KriaMediaEngine
         XCTAssertTrue(unset.values.allSatisfy { $0.animationPhases == nil })
     }
 
+    private let silk: [String: JSONValue] = ["entrance": .string("silkReveal"), "exit": .string("none"), "loop": .string("none"), "speed": .number(1)]
+
+    func testATextMotionEntranceDrawsEachLineAsOneRowUntilTheAllCaptionsDefaultReplacesIt() throws {
+        let legacy: [String: JSONValue] = ["style": .string("sentence"), "appearance": .object(["animation_phases": .object(silk)])]
+        let layers = try laneLayers(sentenceRows, meta: legacy)
+        XCTAssertEqual(Set(layers.keys), ["a", "d"], "one row per sentence, as `guided_caption_presentation` draws it")
+        XCTAssertEqual(layers["a"]?.animationPhases, phases(silk))
+        XCTAssertEqual(layers["a"]?.runs.map(\.text).joined(separator: " "), "We went out.")
+
+        var both = legacy
+        both["animation_phases"] = .object(fade)
+        let replaced = try laneLayers(sentenceRows, meta: both)
+        XCTAssertEqual(replaced.count, 5, "the all-captions default wins and animates each line across its rows")
+        XCTAssertEqual(replaced["a"]?.animationPhases?.entrance, .fade)
+
+        let cue = try cueLayers(meta: legacy, cuePhases: [nil])
+        XCTAssertEqual(cue.first?.animationPhases, phases(silk))
+    }
+
     // MARK: Session: scope, capability, undo, Save, reload
 
     private func loaded(capability: Bool = true, storedDefault: [String: JSONValue]? = nil,
-                        storedOverride: [String: JSONValue]? = nil) async -> (NativeEditorSession, EditorCommitSpy) {
+                        storedOverride: [String: JSONValue]? = nil,
+                        storedTextMotion: [String: JSONValue]? = nil) async -> (NativeEditorSession, EditorCommitSpy) {
         var capabilities: [String: JSONValue] = [
             "caption_cues": .object(["editable": .bool(true)]),
             "caption_meta": .object(["editable": .bool(true)]),
@@ -143,6 +165,7 @@ import KriaMediaEngine
             "editor_capabilities": .object(capabilities),
         ]
         if let storedDefault { variant["caption_animation_phases"] = .object(storedDefault) }
+        if let storedTextMotion { variant["caption_editor_style"] = .object(["animation_phases": .object(storedTextMotion)]) }
         let threadID = UUID()
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h",
@@ -208,6 +231,27 @@ import KriaMediaEngine
         XCTAssertEqual(reloaded.captionAnimationPhases(.all), popBounce)
         XCTAssertEqual(reloaded.captionAnimationPhases(.line("cue-1")), popBounce)
         XCTAssertFalse(reloaded.hasUnsavedChanges)
+    }
+
+    func testAllCaptionsShowsATextMotionEntranceAndReplacesItInOneUndoStep() async throws {
+        let (session, fake) = await loaded(storedOverride: popBounce, storedTextMotion: silk)
+        XCTAssertEqual(session.captionAnimationPhases(.all), silk, "the Text motion entrance is the shown default")
+        XCTAssertEqual(session.captionAnimationPhases(.line("cue-1")), silk)
+        XCTAssertFalse(session.hasUnsavedChanges)
+        let undoBefore = session.undoHistoryCount
+        session.setCaptionPhase(.all, phase: "entrance", effect: "echoStack")
+        XCTAssertEqual(session.undoHistoryCount, undoBefore + 1)
+        XCTAssertNil(session.document.captionMeta["appearance"]?.objectValue?["animation_phases"])
+        XCTAssertEqual(session.document.captionMeta["animation_phases"]?.objectValue?["entrance"], .string("echoStack"))
+        XCTAssertTrue(session.document.captionCues.allSatisfy { $0.raw["animation_phases"] == nil })
+        session.undo()
+        XCTAssertEqual(session.captionAnimationPhases(.all), silk)
+        XCTAssertEqual(session.captionAnimationPhases(.line("cue-2")), popBounce)
+        session.redo()
+        await session.save()
+        let request = try XCTUnwrap(fake.lastRequest)
+        XCTAssertNil(request.captionMeta?["appearance"]?.objectValue?["animation_phases"])
+        XCTAssertEqual(request.captionMeta?["animation_phases"]?.objectValue?["entrance"], .string("echoStack"))
     }
 
     func testATextLaneLineChangeLeavesOnlyThatRowsPhasesOnItsLine() async throws {
