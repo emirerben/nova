@@ -152,7 +152,7 @@ def drop_color_emoji(text: str) -> str:
     return "".join(
         grapheme
         for grapheme in regex.findall(r"\X", text or "")
-        if not regex.search(r"\p{Emoji_Presentation}|\p{Emoji}️|⃣", grapheme)
+        if not regex.search(r"\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\u20E3", grapheme)
     )
 
 
