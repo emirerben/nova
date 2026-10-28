@@ -379,7 +379,7 @@
     {
       "id": "kri-547-speaker-framing",
       "needs_native": true,
-      "api_tests": "tests/pipeline/test_kri547_face_fill_device_fixture.py tests/pipeline/test_phone_speaker_framing.py tests/pipeline/test_phone_subtitled_plan.py tests/pipeline/test_phone_subtitled_title.py tests/pipeline/test_render_geometry.py tests/kria/test_speaker_framing_ask.py tests/kria/test_brief_speaker_framing.py tests/tasks/test_phone_subtitled_speaker_framing_worker.py",
+      "api_tests": "tests/pipeline/test_kri547_face_fill_device_fixture.py tests/pipeline/test_phone_speaker_framing.py tests/pipeline/test_phone_subtitled_plan.py tests/pipeline/test_phone_subtitled_title.py tests/pipeline/test_render_geometry.py tests/pipeline/test_narrated_title.py tests/kria/test_speaker_framing_ask.py tests/kria/test_brief_speaker_framing.py tests/tasks/test_phone_subtitled_speaker_framing_worker.py",
       "xctests": [
         "KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceInTheLeftThirdShowsTheServerWindowOnTheIPhone",
         "KriaTests/DeviceSpeakerFaceFillE2ETests/testFaceAtTheRightEdgeClampsWithNoBlackEdgeOnTheIPhone",
@@ -387,6 +387,7 @@
       ],
       "paths": [
         "src/apps/api/app/kria/speaker_framing_ask.py",
+        "src/apps/api/app/pipeline/narrated_title.py",
         "src/apps/api/app/pipeline/phone_recipe_shared.py",
         "src/apps/api/app/pipeline/phone_speaker_framing.py",
         "src/apps/api/app/pipeline/phone_subtitled_plan.py",
@@ -397,6 +398,7 @@
         "src/apps/api/tests/pipeline/test_phone_subtitled_plan.py",
         "src/apps/api/tests/pipeline/test_phone_subtitled_title.py",
         "src/apps/api/tests/pipeline/test_render_geometry.py",
+        "src/apps/api/tests/pipeline/test_narrated_title.py",
         "src/apps/api/tests/kria/test_speaker_framing_ask.py",
         "src/apps/api/tests/kria/test_brief_speaker_framing.py",
         "src/apps/api/tests/tasks/test_phone_subtitled_speaker_framing_worker.py",
