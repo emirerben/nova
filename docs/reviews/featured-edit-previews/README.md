@@ -20,6 +20,7 @@ need a replacement before the next Apple review submission.
 The report documents retain unedited `xcresulttool get test-results summary` JSON.
 `acceptance.md` records the independently supplied expectations.
 
+- `native-integrated.md` records four focused native checks after merging current main.
 - `native-debug-final.md` covers all ten focused Debug UI checks, including
   four-edit sequencing, centered playback, Slider timing/pause, sign-in and tile sizes.
 - `production-signin.md` verifies the normal Release app hides both development links.
