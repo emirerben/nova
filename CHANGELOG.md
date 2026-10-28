@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.190.0] - 2026-10-28
+
+### Changed
+- fix(captions): chat caption move reaches the phone render; plain-words reply (KRI-1008) (#1909) <!-- release-pr: 1909 -->
+
 ## [0.81.189.0] - 2026-10-28
 
 ### Changed
