@@ -112,11 +112,19 @@ The skipped tests were `AudioParityFixtureTests/testRendersEveryPreparedCase`,
 They require optional media references or an opt-in benchmark. None exercises the
 changed recovery path. CI group-selection checks also passed all 25 cases.
 
-`make verify-phone-render` is blocked. The downloaded TLC v1.8.0 JAR has SHA-256
+The initial formal check was blocked by a stale TLC v1.8.0 checksum pin.
+GitHub's official release metadata confirms the downloaded JAR's SHA-256,
 `fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e`.
-The repository requires
-`dae639a1f51a9e13ce60c369b15f32124cf1a78017aca366b6de0ae2b5169439`.
-The integrity check remains enforced. No passing formal-model claim is made.
+The pin now matches that official digest, and the integrity check remains enforced.
+
+With the verified runtime and JAR, all 20 existing lifecycle scenarios passed and
+all 33 mutation controls were caught. The completed run returned the verifier's
+explicit pass-with-drift result because it loaded the old coverage snapshot.
+The seven changed source mappings were reviewed against the unchanged abstraction,
+then refreshed. A separate source-hash comparison confirms no remaining mapping
+drift. See `formal/ios_edit_flow/findings.md` for that review and the abstraction's
+limits. The model does not prove relocated paths or upload-byte immutability;
+the concrete regressions above establish those narrower properties.
 
 ## Reproduce
 
