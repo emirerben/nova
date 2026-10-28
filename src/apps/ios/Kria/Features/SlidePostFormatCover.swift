@@ -3,7 +3,7 @@ import UIKit
 
 /// One picture size for every tile in the format picker, so the Slider tile cannot drift from the rest.
 enum FormatTileMetrics {
-    static let image = CGSize(width: 156, height: 164)
+    static let image = CGSize(width: 156, height: 228)
 }
 
 /// A compact, independently pausable preview for the final creation format.
@@ -14,12 +14,13 @@ struct SlidePostFormatCover: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var index = 0
+    @Binding var index: Int
     @Binding var paused: Bool
+    var active = true
     @State private var mostlyVisible = true
     private let size = FormatTileMetrics.image
     private var count: Int { Self.frames.count }
-    private var advances: Bool { !reduceMotion && !paused && mostlyVisible && scenePhase == .active }
+    private var advances: Bool { !reduceMotion && !paused && active && mostlyVisible && scenePhase == .active }
     private var displayedIndex: Int { index % count }
 
     var body: some View {
@@ -35,7 +36,7 @@ struct SlidePostFormatCover: View {
             }
             .frame(width: size.width * CGFloat(count + 1), height: size.height, alignment: .leading)
             .offset(x: -CGFloat(index) * size.width)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.6), value: index)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: index)
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
             .overlay(alignment: .bottomLeading) { counter }
             .clipped()
@@ -46,7 +47,7 @@ struct SlidePostFormatCover: View {
         .task(id: advances) {
             guard advances else { return }
             // An app/background pause can cancel the task during the repeated
-            // frame's 600ms travel. Resume from the real first frame, never an
+            // frame's travel. Resume from the real first frame, never an
             // out-of-range index.
             if index == count {
                 var transaction = Transaction()
@@ -54,14 +55,12 @@ struct SlidePostFormatCover: View {
                 withTransaction(transaction) { index = 0 }
             }
             while !Task.isCancelled {
-                // 2.7 seconds fully still, then a 0.6-second swipe. The
-                // transition wait makes the next hold start after the travel,
-                // so each logical frame occupies 3.3 seconds.
-                do { try await Task.sleep(for: .milliseconds(2700)) } catch { return }
+                // Keep the hold separate so every slide rests after its swipe.
+                do { try await Task.sleep(for: .milliseconds(1200)) } catch { return }
                 guard advances else { return }
                 let wraps = index == count - 1
-                withAnimation(.easeInOut(duration: 0.6)) { index += 1 }
-                do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
+                withAnimation(.easeInOut(duration: 0.35)) { index += 1 }
+                do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
                 if wraps {
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
