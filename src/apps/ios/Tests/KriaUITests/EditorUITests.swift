@@ -198,11 +198,16 @@ final class EditorUITests: XCTestCase {
         app.buttons["native-editor-redo"].tap()
 
         app.buttons["native-editor-tool-captions"].tap()
-        app.buttons["native-editor-captions-tab-Settings"].tap()
-        let captions = app.buttons["native-editor-caption-visible"]
+        XCTAssertFalse(app.buttons["native-editor-captions-tab-Settings"].exists, "caption switches live in Edit captions")
+        let captions = app.switches["native-editor-caption-visible"]
+        let highlight = app.switches["native-editor-caption-highlight"]
         XCTAssertTrue(captions.waitForExistence(timeout: 3))
+        XCTAssertEqual(captions.value as? String, "1")
         captions.tap()
-        app.buttons["Off"].tap()
+        XCTAssertEqual(captions.value as? String, "0", "Show captions turns off")
+        XCTAssertFalse(highlight.isEnabled, "a hidden caption has nothing to highlight")
+        captions.tap()
+        XCTAssertEqual(captions.value as? String, "1", "Show captions turns back on")
         app.buttons["native-editor-captions-done"].tap()
 
         app.buttons["native-editor-tool-visuals"].tap()
