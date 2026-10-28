@@ -10,11 +10,11 @@ import XCTest
         return app
     }
 
-    private func reveal(_ element: XCUIElement, app: XCUIApplication) {
+    private func reveal(_ element: XCUIElement, app: XCUIApplication, hasPreferencesFooter: Bool = true) {
         for _ in 0..<12 {
             let save = app.buttons["text-preferences-save"]
             let top = app.navigationBars.firstMatch.exists ? app.navigationBars.firstMatch.frame.maxY : app.frame.minY + 60
-            let bottom = save.exists ? save.frame.minY - 64 : app.frame.maxY - 50
+            let bottom = hasPreferencesFooter && save.exists ? save.frame.minY - 64 : app.frame.maxY - 50
             if element.exists {
                 let fixedAction = ["text-preferences-save", "text-preferences-reload"].contains(element.identifier)
                 if element.isHittable && (fixedAction || (element.frame.minY >= top && element.frame.maxY <= bottom)) { break }
@@ -34,7 +34,7 @@ import XCTest
         let excluded = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Excluded fonts")).firstMatch
         reveal(excluded, app: app); excluded.tap()
         let fontChoice = app.buttons["Fraunces"]
-        reveal(fontChoice, app: app); fontChoice.tap()
+        reveal(fontChoice, app: app, hasPreferencesFooter: false); fontChoice.tap()
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(excluded.label.contains("Fraunces"), "Returning from the picker must keep the excluded font")
         let selected = XCTAttachment(screenshot: app.screenshot())
@@ -46,10 +46,11 @@ import XCTest
         app.buttons["account-text-preferences"].tap()
         reveal(excluded, app: app); excluded.tap()
         let fraunces = app.buttons["Fraunces"]
-        reveal(fraunces, app: app)
+        reveal(fraunces, app: app, hasPreferencesFooter: false)
         XCTAssertTrue(fraunces.isSelected, "Saved exclusion must survive reopening settings")
         let persisted = XCTAttachment(screenshot: app.screenshot())
         persisted.name = "Persisted Fraunces exclusion"; persisted.lifetime = .keepAlways; add(persisted)
+        print("KRIA_NATIVE_TEST_PROOF font-picker-owned-bounds-v1")
     }
 
     func testTextPreferenceDraftSurvivesRoleSwitch() {
