@@ -7485,6 +7485,23 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
     )
 
 
+def _creator_pinned_media_keys(beats: list, closing: dict | None) -> frozenset[str]:
+    """Every Visuals-pool asset the creator pinned to a reaction beat, the closing photo or the
+    closing badge (KRI-1019), in both spellings (`_pool_media_keys`).
+
+    Read straight off the approved strategy, so it holds whatever became of the beat lane:
+    placed, unplaced for any reason, grounding raised, a lane request, or beats switched off.
+    Malformed entries (a non-object beat, a missing or non-string ``visual_id``) name nothing."""
+    named: list[object] = [beat.get("visual_id") for beat in beats if isinstance(beat, dict)]
+    if isinstance(closing, dict):
+        named += [closing.get("visual_id"), closing.get("badge_visual_id")]
+    keys: set[str] = set()
+    for visual_id in named:
+        if isinstance(visual_id, str) and visual_id.strip():
+            keys |= _pool_media_keys(visual_id)
+    return frozenset(keys)
+
+
 def _without_ending_media(
     beats: list, closing: dict | None, media_id: str
 ) -> tuple[list, dict | None, list[dict], bool]:
@@ -9116,6 +9133,12 @@ def _run_phone_subtitled_job(
                 beats: list = raw_beats if isinstance(raw_beats, list) else []
                 raw_closing = strategy.get("closing_media")
                 closing: dict | None = raw_closing if isinstance(raw_closing, dict) else None
+                # KRI-1019: a Visual the creator pinned to a beat (or the closing photo / badge)
+                # is the beat lane's to place as asked -- or to report and leave out. Read off
+                # the strategy, not off the PLACED cards: an unheard beat, a beat grounding that
+                # raised, a manual lane request or beats switched off place nothing and so
+                # reserved nothing, and the generic pass below put the same photo elsewhere.
+                creator_pinned_media_ids = _creator_pinned_media_keys(beats, closing)
 
                 if beats_enabled and (beats or closing):
                     if lane_request is not None:
@@ -9275,6 +9298,9 @@ def _run_phone_subtitled_job(
                                     for card in (lane_request.overlays if lane_request else [])
                                 )
                                 | beat_media_ids
+                                # KRI-1019: nor is a Visual pinned to a beat the beat lane
+                                # placed nowhere (or could not run for).
+                                | creator_pinned_media_ids
                                 # KRI-841: the Visual that ends the video is never also a card
                                 # or a full-screen insert mid-talk.
                                 | (
