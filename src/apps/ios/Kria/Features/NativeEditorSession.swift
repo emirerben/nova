@@ -5660,7 +5660,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     /// Lines with phases of their own. All captions removes them, so every line truly matches.
-    private var captionAnimationOverrideIDs: [String] {
+    var captionAnimationOverrideIDs: [String] {
         document.isCueNative
             ? document.captionCues.filter { $0.raw["animation_phases"] != nil }.map(\.id)
             : document.textElements.filter { $0.isCaption && $0.raw["animation_phases"] != nil }.map(\.id)

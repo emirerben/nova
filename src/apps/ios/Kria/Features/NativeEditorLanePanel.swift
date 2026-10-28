@@ -88,7 +88,7 @@ struct NativeCaptionPanel: View {
     private var stacksControls: Bool { dynamicTypeSize.isAccessibilitySize || contentWidth < 300 }
     @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
     @State private var lifecycleOwner = UUID()
-    enum Tab: String, CaseIterable { case edit = "Edit captions", style = "Style" }
+    enum Tab: String, CaseIterable { case edit = "Edit captions", style = "Style", animation = "Animation" }
     @ObservedObject var session: NativeEditorSession
     /// KRI-240 (plan 026 D27): the caption line open in the edit bar. Owned by
     /// `NativeEditorView`, which lays the editor out around it (Variant A). A row tap
@@ -112,6 +112,9 @@ struct NativeCaptionPanel: View {
     @State private var followSuspended = false
     @State private var followResumeTask: Task<Void, Never>?
     @State private var removal: CaptionRemovalNotice?
+    /// KRI-1007: the Animation tab edits one line (the one last tapped in Edit captions) instead of all captions.
+    @State private var animatesOneLine = false
+    @StateObject private var animationPreviewClock = NativeTextAnimationPreviewClock()
     /// The line under the playhead (plan 026 D15). Set from the playback clock, which
     /// the session keeps off its own publisher, so the panel re-renders when the
     /// playing line changes rather than on every clock tick.
@@ -121,6 +124,9 @@ struct NativeCaptionPanel: View {
     private var meta: [String: JSONValue] { session.document.captionMeta }
     private var appearance: [String: JSONValue] { meta["appearance"]?.objectValue ?? [:] }
     private var units: [EditorCaptionCue] { session.document.captionUnits }
+    /// Animation appears only where the server keeps caption phases (`editor_capabilities.caption_animation`),
+    /// like the Text panel's own Animation tab and Bend.
+    private var tabs: [Tab] { session.offersCaptionAnimation ? Tab.allCases : [.edit, .style] }
 
     var body: some View {
         // A container, not a Group: a Group copies onAppear/onDisappear onto each
@@ -129,7 +135,7 @@ struct NativeCaptionPanel: View {
             if let id = editingCueID, let index = units.firstIndex(where: { $0.id == id }) {
                 editBar(id: id, index: index)
             } else {
-                NativeEditorLanePanel(title: "Captions", tabs: Tab.allCases, tab: $tab, onDone: {
+                NativeEditorLanePanel(title: "Captions", tabs: tabs, tab: $tab, onDone: {
                     leaveLine(to: nil); onDone()
                 }, onScrollPhase: handleScrollPhase) {
                     VStack(spacing: 8) {
@@ -143,6 +149,7 @@ struct NativeCaptionPanel: View {
                         // caption lines still seek (plan 026 D16).
                         case .edit: transcript
                         case .style: style.disabled(!session.canEditCaptionMeta)
+                        case .animation: animation
                         }
                         if !session.canEditCaptions {
                             Text("Captions aren’t available for this edit.").foregroundStyle(KriaColor.mutedInk)
@@ -495,6 +502,57 @@ struct NativeCaptionPanel: View {
                 NativePaperSlider(session: session, value: number("size_px", fallback: 78), bounds: 36...160, step: 1, label: "Caption size")
                 Text(String(Int(meta["size_px"]?.numberValue ?? 78))).monospacedDigit().frame(width: 44)
             }.frame(minHeight: 44)
+        }
+    }
+
+    // MARK: Animation (KRI-1007)
+
+    private struct AnimationScope: Hashable, RawRepresentable { let rawValue: String }
+
+    /// The caption line last tapped in Edit captions, and its number in the list.
+    private var animationLine: (id: String, number: Int)? {
+        guard let selection = session.selection, selection.kind == .captionCue,
+              let index = units.firstIndex(where: { $0.id == selection.id }) else { return nil }
+        return (selection.id, index + 1)
+    }
+
+    private var animation: some View {
+        let line = animationLine
+        let all = AnimationScope(rawValue: "All captions")
+        let one = AnimationScope(rawValue: line.map { "Line \($0.number)" } ?? "Line")
+        let scope: NativeEditorSession.CaptionAnimationScope = animatesOneLine ? line.map { .line($0.id) } ?? .all : .all
+        let overrides = session.captionAnimationOverrideIDs.count
+        return VStack(spacing: 10) {
+            NativeEditorPanelTabs(
+                tabs: [all, one],
+                selection: Binding(get: { scope == .all ? all : one }, set: { animatesOneLine = $0 == one }),
+                accessibilityPrefix: "native-editor-caption-animation-scope",
+                identifier: { $0 == all ? "native-editor-caption-animation-scope-all" : "native-editor-caption-animation-scope-line" },
+                isEnabled: { $0 == all || line != nil }
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("native-editor-caption-animation-scope")
+            Group {
+                if line == nil {
+                    Text("To animate one line, tap it in Edit captions first.")
+                        .accessibilityIdentifier("native-editor-caption-animation-line-reason")
+                } else if scope == .all, overrides > 0 {
+                    Text(overrides == 1 ? "1 line has its own animation. Changing all captions replaces it."
+                                        : "\(overrides) lines have their own animation. Changing all captions replaces them.")
+                        .accessibilityIdentifier("native-editor-caption-animation-overrides")
+                }
+            }
+            .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            NativeAnimationPhasePicker(
+                session: session, clock: animationPreviewClock, phases: session.captionAnimationPhases(scope),
+                identifierPrefix: "native-editor-caption-animation",
+                speedNote: "Changes motion speed. Caption timing stays the same.",
+                usesAccessibilityLayout: stacksControls,
+                onEffect: { session.setCaptionPhase(scope, phase: $0, effect: $1) },
+                onSpeed: { session.setCaptionAnimationSpeed(scope, speed: $0) }
+            )
+            .disabled(!session.canEditCaptionAnimation(scope))
         }
     }
 

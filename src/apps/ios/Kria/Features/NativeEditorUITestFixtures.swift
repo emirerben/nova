@@ -21,6 +21,8 @@ enum NativeEditorUITestFixtures {
         case autoScrollExtend = "autoscroll-extend"
         case guidedText = "guided-text"
         case talkingCaptions = "talking-captions"
+        /// KRI-1007: lip-sync lyrics as caption_cue text rows (one per word, `line_end` closes a line).
+        case songCaptions = "song-captions"
         case retimedClips = "retimed-clips"
         /// Four 2.5 s cuts on four takes (KRI-561): a lip-sync song trim visibly drops cuts.
         case songTrim = "song-trim"
@@ -67,6 +69,12 @@ enum NativeEditorUITestFixtures {
             caps["text_bend"] = .bool(true)
             value.serverSnapshot["editor_capabilities"] = .object(caps)
         }
+        if arguments.contains("-ui-testing-editor-caption-animation") {
+            // KRI-1007: the server advertises `editor_capabilities.caption_animation` to a protocol-23 build.
+            var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+            caps["caption_animation"] = .bool(true)
+            value.serverSnapshot["editor_capabilities"] = .object(caps)
+        }
         if arguments.contains("-ui-testing-editor-research-sources") {
             // Offline UI coverage only; live research is verified separately on device.
             var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
@@ -110,6 +118,7 @@ enum NativeEditorUITestFixtures {
         case .autoScrollExtend: autoScrollExtend
         case .guidedText: guidedText
         case .talkingCaptions: talkingCaptions
+        case .songCaptions: songCaptions
         case .retimedClips: retimedClips
         case .songTrim: songTrim
         case .drawing: drawing
@@ -502,6 +511,37 @@ enum NativeEditorUITestFixtures {
                 "caption_cues": .object(["editable": .bool(true)]),
                 "caption_meta": .object(["editable": .bool(true)]),
                 "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+            ]),
+        ])
+    }()
+
+    static let songCaptions: EditorDraft = {
+        let clips = [clip(910, start: 0, duration: 6)]
+        let lines = [["Midnight", "drive", "again"], ["Hold", "on", "tight"]]
+        var rows: [JSONValue] = []
+        var start = 0.6
+        for (lineIndex, words) in lines.enumerated() {
+            for (wordIndex, word) in words.enumerated() {
+                var params: [String: JSONValue] = ["source": .string("caption_cue")]
+                if wordIndex == words.count - 1 { params["line_end"] = .bool(true) }
+                rows.append(.object([
+                    "id": .string("song-caption-\(lineIndex)-\(wordIndex)"), "text": .string(word),
+                    "start_s": .number(start), "end_s": .number(start + 0.8), "role": .string("generative_narration_caption"),
+                    "position": .string("bottom"), "alignment": .string("center"), "source_params": .object(params),
+                ]))
+                start += 0.8
+            }
+            start += 0.4
+        }
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array(rows),
+            "caption_meta": .object(["enabled": .bool(true), "style": .string("sentence")]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "editor_capabilities": .object([
+                "timeline": .bool(true), "text_elements": .bool(true),
+                "caption_meta": .object(["editable": .bool(true)]), "caption_editor_style": .bool(true),
             ]),
         ])
     }()

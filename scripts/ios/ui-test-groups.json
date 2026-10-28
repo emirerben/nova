@@ -278,7 +278,12 @@
       "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
       "KriaUITests/NativeEditorInspectorUITests/testQuickSwipeAcrossAClipSeeksInsteadOfReordering",
-      "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector"
+      "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector",
+      "KriaUITests/NativeCaptionAnimationUITests/testCueCaptionsAnimateAllThenOneLine",
+      "KriaUITests/NativeCaptionAnimationUITests/testLyricCaptionsAnimateAllThenOneLine",
+      "KriaUITests/NativeCaptionAnimationUITests/testWithoutTheCapabilityThereIsNoAnimationTab",
+      "KriaUITests/NativeCaptionAnimationUITests/testReduceMotionKeepsPreviewsStillUntilPlayed",
+      "KriaUITests/NativeCaptionVisualUITests/testCaptionSwitchesAndDisplayAtLargestTextSize"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -429,6 +434,7 @@
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollThumbnail.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollIdeaViews.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollTasteView.swift": "creation",
-    "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift": "creation"
+    "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift": "creation",
+    "src/apps/ios/Kria/Features/NativeAnimationPhasePicker.swift": "editor"
   }
 }

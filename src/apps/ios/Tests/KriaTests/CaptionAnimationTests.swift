@@ -106,6 +106,7 @@ import KriaMediaEngine
         XCTAssertEqual(edges("c"), ["none", "fade", "pulse"])
         XCTAssertEqual(edges("d"), ["fade", "none", "pulse"])
         XCTAssertEqual(edges("e"), ["none", "fade", "pulse"])
+        XCTAssertEqual(layers["b"]?.runs.map(\.text).joined(separator: " "), "We went out.", "each row still shows its whole sentence")
     }
 
     func testARowsOwnPhasesGovernItsWholeLineAndNoneMatchesUnset() throws {
