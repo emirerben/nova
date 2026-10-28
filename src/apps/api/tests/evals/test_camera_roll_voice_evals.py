@@ -173,12 +173,12 @@ def test_live_baseline(eval_mode, live_model_client, with_judge, judge_for):
             except Exception as exc:  # noqa: BLE001 - a failed run is data, not a crash
                 results.append({"error": f"{type(exc).__name__}: {exc}"[:300]})
                 continue
-            record = score_run(
+            scored = score_run(
                 output, place=variant.place, agent_input=value.model_dump(), judge=judge
             )
-            record["draft"] = agent.parse(client.invocations[0].raw_text, value).model_dump()
-            record["edit_calls"] = len(client.invocations) - 1
-            results.append(record)
+            scored["draft"] = agent.parse(client.invocations[0].raw_text, value).model_dump()
+            scored["edit_calls"] = len(client.invocations) - 1
+            results.append(scored)
         record["variants"][variant.name] = {
             "description": variant.description,
             "query": variant.query,
