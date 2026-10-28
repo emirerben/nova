@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.169.0] - 2026-10-28
+
+### Changed
+- fix(lipsync): back-to-back takes all play, held frame over filming breaks; no fallback title (KRI-996) (#1885) <!-- release-pr: 1885 -->
+
 ## [0.81.168.0] - 2026-10-28
 
 ### Changed
