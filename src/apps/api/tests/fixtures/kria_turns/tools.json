@@ -1414,6 +1414,17 @@
         },
         "EditorCommitCaptionMeta": {
           "properties": {
+            "animation_phases": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAnimationPhases"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "appearance": {
               "anyOf": [
                 {

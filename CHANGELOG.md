@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.186.0] - 2026-10-28
+
+### Changed
+- feat(ios): redesign caption panel rows and move switches into Edit captions (KRI-1007) (#1901) <!-- release-pr: 1901 -->
+
+## [0.81.185.0] - 2026-10-28
+
+### Changed
+- feat(captions): animation phases per caption line or for all captions (KRI-1007) (#1900) <!-- release-pr: 1900 -->
+
 ## [0.81.184.0] - 2026-10-28
 
 ### Changed
