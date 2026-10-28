@@ -531,9 +531,12 @@ class PlanFacts:
     # draft, or a render that does not record one): nothing about framing is claimed.
     speaker_framing: str | None = None
     speaker_framing_reason: str | None = None
-    # How many sampled frames held the speaker's face (`speaker_framing.faces.used`);
-    # None = the receipt did not say.
-    speaker_framing_faces_found: int | None = None
+    # The share (0..1) of the take the speaker's face was found in: `faces.presence` (receipt
+    # v2), else `faces.used / faces.decoded` (v1). None = the receipt did not say.
+    speaker_framing_face_share: float | None = None
+    # Seconds of the kept take with no speaker face in view, out of shot or turned away
+    # (`faces.absent_s`, receipt v2). None = not recorded.
+    speaker_framing_absent_s: float | None = None
     # KRI-628: whether a phone Talking render started at the line the creator quoted
     # (`variant["opening_cut"]`): "applied" or "not_applied", and why not. None = no
     # receipt (no such ask, a draft, or an older render): nothing is claimed.
@@ -6481,6 +6484,9 @@ def describe_text_look(req: BriefRequirement, facts: PlanFacts) -> str | None:
 # variant (`phone_speaker_framing`); these judge the ask from that receipt. The copy names
 # "the speaker", never "you", because the creator may be filming someone else (KRI-1008).
 _FRAMING_RECEIPT_MODES = frozenset({"face_fill", "letterbox", "centre_fill"})
+# Below this a face out of view is a blink, not footage without it; KRI-1020 face_fill keeps
+# the picture centred while the speaker is away or turned (`faces.absent_s` counts both).
+_FRAMING_ABSENT_NOTE_S = 1.0
 
 
 def _wants_speaker_framing(req: BriefRequirement) -> bool:
@@ -6494,24 +6500,53 @@ def _wants_speaker_framing(req: BriefRequirement) -> bool:
 
 
 def _speaker_framing_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
-    """``speaker_framing`` / ``_reason`` / ``_faces_found`` off a variant's framing receipt."""
+    """``speaker_framing`` / ``_reason`` / ``_face_share`` / ``_absent_s`` off a variant's
+    framing receipt, reading both the v1 (frame counts) and v2 (presence, absent seconds) forms."""
     receipt = variant.get("speaker_framing")
     if not isinstance(receipt, Mapping) or receipt.get("mode") not in _FRAMING_RECEIPT_MODES:
         return {}
     reason = receipt.get("reason")
     faces = receipt.get("faces")
-    used = faces.get("used") if isinstance(faces, Mapping) else None
+    faces = faces if isinstance(faces, Mapping) else {}
+    presence = faces.get("presence")
+    used = faces.get("used")
+    decoded = faces.get("decoded")
+    absent = faces.get("absent_s")
+    share: float | None = None
+    if (
+        isinstance(presence, (int, float))
+        and not isinstance(presence, bool)
+        and math.isfinite(presence)
+        and 0 <= presence <= 1
+    ):
+        share = float(presence)
+    elif (
+        isinstance(used, int)
+        and not isinstance(used, bool)
+        and isinstance(decoded, int)
+        and not isinstance(decoded, bool)
+        and decoded > 0
+        and 0 <= used <= decoded
+    ):
+        share = used / decoded
+    absent_s: float | None = None
+    if (
+        isinstance(absent, (int, float))
+        and not isinstance(absent, bool)
+        and math.isfinite(absent)
+        and absent >= 0
+    ):
+        absent_s = float(absent)
     return {
         "speaker_framing": str(receipt["mode"]),
         "speaker_framing_reason": str(reason) if isinstance(reason, str) and reason else None,
-        "speaker_framing_faces_found": (
-            used if isinstance(used, int) and not isinstance(used, bool) and used >= 0 else None
-        ),
+        "speaker_framing_face_share": share,
+        "speaker_framing_absent_s": absent_s,
     }
 
 
 def _framing_fallback_reason(
-    reason: str | None, *, cropped: bool, faces_found: int | None = None
+    reason: str | None, *, cropped: bool, face_share: float | None = None
 ) -> str:
     """Why the face crop was not used, and what the creator sees instead."""
     shown = (
@@ -6556,7 +6591,12 @@ def _framing_fallback_reason(
             en="I couldn't check where the speaker's face is in the clip",
             tr="Klipte konuşan kişinin yüzünün nerede olduğunu kontrol edemedim",
         )
-    elif reason == "no_face" and faces_found is not None and faces_found > 0:
+    elif reason == "faces_too_far_apart":
+        why = say(
+            en="Two people on camera are too far apart for one vertical crop to hold both",
+            tr="Kameradaki iki kişi tek bir dikey kadraja sığmayacak kadar birbirinden uzak",
+        )
+    elif reason == "no_face" and face_share is not None and face_share > 0:
         why = say(
             en=(
                 "I could only find the speaker's face in part of the clip, not enough "
@@ -6567,15 +6607,20 @@ def _framing_fallback_reason(
                 "dikey kadrajı ona göre ayarlamaya yetmedi"
             ),
         )
-    elif reason == "no_face" and faces_found == 0:
+    elif reason == "no_face" and face_share == 0:
         why = say(
             en="I couldn't find the speaker's face anywhere in the clip",
             tr="Klipte konuşan kişinin yüzünü hiç bulamadım",
         )
-    else:
+    elif reason == "no_face":
         why = say(
             en="I couldn't find the speaker's face reliably in the clip",
             tr="Klipte konuşan kişinin yüzünü güvenle bulamadım",
+        )
+    else:
+        why = say(
+            en="I couldn't keep the speaker's face in one vertical crop",
+            tr="Konuşan kişinin yüzünü tek bir dikey kadrajda tutamadım",
         )
     return f"{why}, {shown}"
 
@@ -6599,6 +6644,22 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
         )
         return _receipt(req, "partial", reason, verification="unchecked")
     if mode == "face_fill":
+        absent = facts.speaker_framing_absent_s
+        if absent is not None and absent >= _FRAMING_ABSENT_NOTE_S:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en=(
+                        "The video fills the vertical frame and follows the speaker's face, "
+                        f"but their face isn't in view for about {absent:.0f} s of the clip"
+                    ),
+                    tr=(
+                        "Video dikey ekranı dolduruyor ve konuşan kişinin yüzünü takip ediyor, "
+                        f"ama klibin yaklaşık {absent:.0f} sn'sinde konuşan kişinin yüzü görünmüyor"
+                    ),
+                ),
+            )
         return _receipt(
             req,
             "met",
@@ -6628,7 +6689,7 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
         _framing_fallback_reason(
             facts.speaker_framing_reason,
             cropped=mode == "centre_fill",
-            faces_found=facts.speaker_framing_faces_found,
+            face_share=facts.speaker_framing_face_share,
         ),
     )
 

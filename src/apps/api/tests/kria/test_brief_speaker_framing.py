@@ -91,6 +91,10 @@ _T1_R5 = _T1["requirement"]["description"]
         ("letterbox", "creator_chose_bars", "You chose black bars"),
         ("centre_fill", "no_face", "cropped to the middle"),
         ("centre_fill", "creator_chose_crop", "You chose crop"),
+        # KRI-1020's tracker: two people too far apart; a reason this copy doesn't know yet
+        # still gets a line that is true for every fallback.
+        ("letterbox", "faces_too_far_apart", "Two people on camera are too far apart"),
+        ("letterbox", "some_future_reason", "couldn't keep the speaker's face in one vertical"),
     ],
 )
 def test_a_fallback_is_an_honest_partly_with_the_reason(mode, reason, words):
@@ -122,6 +126,41 @@ def test_a_face_never_found_is_not_found_in_part_of_the_clip():
     assert "part of the clip" not in receipt.reason
 
 
+@pytest.mark.parametrize(("presence", "words"), [(0.22, "in part of the clip"), (0.0, "anywhere")])
+def test_a_tracker_receipt_reads_its_presence_share(presence, words):
+    """KRI-1020 receipt v2 records how much of the take shows the speaker (`faces.presence`)
+    instead of Haar frame counts."""
+    faces = {"detector": "yunet", "presence": presence, "absent_s": 27.0}
+    receipt = _receipt(_variant(_framing("letterbox", "no_face", version=2, faces=faces)))
+    assert words in receipt.reason
+
+
+def test_a_face_fill_with_the_speaker_out_of_shot_is_partly_and_says_how_long():
+    """T1 after KRI-1020: the crop follows Maximo, but the camera is on the Cabildo for the
+    first 17 s, so "his face in frame the whole time" is not true of the video."""
+    faces = {"detector": "yunet", "presence": 0.5, "absent_s": 17.2, "held_share": 0.97}
+    req = _req(_T1_R5)
+    variant = _variant(_framing("face_fill", "face_in_window", version=2, faces=faces))
+    receipt = _receipt(variant, req)
+    assert (receipt.status, receipt.verification) == ("partial", "checked")
+    assert receipt.reason == (
+        "The video fills the vertical frame and follows the speaker's face, but their face "
+        "isn't in view for about 17 s of the clip"
+    )
+    with reply_language_for("tr"):
+        tr = _receipt(variant, req)
+    assert tr.reason == (
+        "Video dikey ekranı dolduruyor ve konuşan kişinin yüzünü takip ediyor, ama klibin "
+        "yaklaşık 17 sn'sinde konuşan kişinin yüzü görünmüyor"
+    )
+    brief_gap = {**faces, "absent_s": 0.4}
+    short = _receipt(_variant(_framing("face_fill", "face_in_window", faces=brief_gap)), req)
+    assert (short.status, short.reason) == (
+        "met",
+        "The video fills the vertical frame and the speaker's face stays in it throughout",
+    )
+
+
 @pytest.mark.parametrize("language", ["en", "tr"])
 def test_no_framing_reason_calls_the_speaker_you(language):
     """Every speaker-framing line is right when the creator filmed someone else."""
@@ -137,9 +176,13 @@ def test_no_framing_reason_calls_the_speaker_you(language):
         ("centre_fill", "face_unconfirmed"),
         ("centre_fill", "creator_chose_crop"),
         ("centre_fill", "not_landscape"),
+        ("letterbox", "faces_too_far_apart"),
+        ("centre_fill", "some_future_reason"),
     ]:
         variants.append(_variant(_framing(mode, reason)))
         variants.append(_variant(_framing(mode, reason, faces=_T1_FACES)))
+        tracked = {"detector": "yunet", "presence": 0.5, "absent_s": 17.2}
+        variants.append(_variant(_framing(mode, reason, version=2, faces=tracked)))
     req = _req(_T1_R5)
     with reply_language_for(language):
         reasons = [_receipt(variant, req).reason or "" for variant in variants]
