@@ -13,6 +13,7 @@
       "KriaUITests/CreationUITests/testClipsOnlySubmissionUsesSuggestAnEdit",
       "KriaUITests/CreationUITests/testDictationShowsLiveWordsThenServerTextAndIsSendable",
       "KriaUITests/CreationUITests/testIncomingResponseDoesNotPullReaderFromScrolledHistory",
+      "KriaUITests/CreationUITests/testCleanUpSpeechApprovalShowsTheRenderStageAndKeepsTheConversationInView",
       "KriaUITests/CreationUITests/testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse",
       "KriaUITests/CreationUITests/testSlowDirectionAndPreJobFailureNeverReturnToUploading",
       "KriaUITests/CreationUITests/testStaleFootageConflictShowsServerReasonAndRefreshesTheDirection",
