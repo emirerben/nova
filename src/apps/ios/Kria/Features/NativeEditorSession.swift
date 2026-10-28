@@ -5581,7 +5581,7 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             appearance[key] = value
-            if key == "highlight_spoken_word", value == .bool(true) { appearance["animation_phases"] = nil }
+            if key == "highlight_spoken_word", value == .bool(true) { Self.keepTextMotion(&appearance, in: &$0.captionMeta, canKeep: offersCaptionAnimation) }
             if key == "alignment", appearance["position_x_frac"] != nil {
                 appearance["position_x_frac"] = .number(value.stringValue == "left" ? 0.06 : value.stringValue == "right" ? 0.82 : 0.5)
             }
@@ -5595,9 +5595,19 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             if appearance["highlight_spoken_word"] == nil { appearance["highlight_spoken_word"] = .bool(false) }
-            if style == "word" { appearance["animation_phases"] = nil }
+            if style == "word" { Self.keepTextMotion(&appearance, in: &$0.captionMeta, canKeep: offersCaptionAnimation) }
             $0.captionMeta["appearance"] = .object(appearance)
             $0.captionMeta["style"] = .string(style)
+        }
+    }
+
+    /// A Style > Text motion entrance draws lines whole, which word display and spoken-word highlighting cannot.
+    /// Where captions animate, it becomes the all-captions default (drawn per word), so the creator's choice
+    /// survives the switch; elsewhere it is dropped as before.
+    private static func keepTextMotion(_ appearance: inout [String: JSONValue], in meta: inout [String: JSONValue], canKeep: Bool) {
+        guard let phases = appearance.removeValue(forKey: "animation_phases") else { return }
+        if canKeep, meta["animation_phases"] == nil, NativeEditorRenderCompiler.captionPhases(phases) != nil {
+            meta["animation_phases"] = phases
         }
     }
 

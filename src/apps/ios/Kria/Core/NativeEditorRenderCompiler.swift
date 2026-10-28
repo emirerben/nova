@@ -1056,7 +1056,7 @@ enum NativeEditorRenderError: Error, Equatable {
 
     /// KRI-1007, the server's `_group_phases` + `_stamp_line_phases`: a line's first row with its own
     /// phases governs the whole displayed line, else `caption_meta.animation_phases`. The line's first row
-    /// enters, its last exits, every row loops. Phases that animate nothing, or that do not parse, leave the
+    /// enters, its last exits, every row loops; under Display Word every row is a word of its own and plays all three. Phases that animate nothing, or that do not parse, leave the
     /// line as it is drawn today. `groups` index both arrays, which share their order.
     /// Without either, the older `appearance.animation_phases` (Style > Text motion) draws the line as one
     /// row, unless a word display or spoken-word highlight is on (`guided_caption_presentation`).
@@ -1070,6 +1070,7 @@ enum NativeEditorRenderError: Error, Equatable {
         let appearancePhases = captionMeta["style"] != .string("word") && appearance["highlight_spoken_word"] != .bool(true)
             ? appearance["animation_phases"].flatMap { captionPhases($0) == nil ? nil : $0 } : nil
         var hidden = Set<Int>()
+        let wordDisplay = captionMeta["style"] == .string("word")
         for group in captionLineGroups(source, captionMeta: captionMeta) {
             guard let phases = captionLinePhases(group.map { source[$0] }, captionMeta: captionMeta) else {
                 guard let appearancePhases, let first = group.first, let last = group.last else { continue }
@@ -1082,8 +1083,8 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             for (position, index) in group.enumerated() {
                 var row = phases
-                if position > 0 { row.entrance = .none }
-                if position < group.count - 1 { row.exit = .none }
+                if position > 0 && !wordDisplay { row.entrance = .none }
+                if position < group.count - 1 && !wordDisplay { row.exit = .none }
                 if row.entrance == .none, row.exit == .none, row.loop == .none { continue }
                 stamped[index].raw["animation_phases"] = .object([
                     "entrance": .string(row.entrance.rawValue), "exit": .string(row.exit.rawValue),
