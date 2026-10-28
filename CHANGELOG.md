@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.174.0] - 2026-10-28
+
+### Fixed
+- fix(kria): "only about X" scopes a montage to the clips that show X (KRI-993) (#1880) <!-- release-pr: 1880 -->
+
 ## [0.81.173.0] - 2026-10-28
 
 ### Fixed
