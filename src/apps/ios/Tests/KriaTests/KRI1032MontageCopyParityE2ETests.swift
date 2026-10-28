@@ -117,6 +117,9 @@ import KriaMediaEngine
         session.trimSelected(edge: .trailing, to: first.end - 0.5)
         XCTAssertNil(try? session.videoDownloadRoute(deviceLocalFile: nil).isFinishedRender(finished),
                      "an unsaved edit never exports the old render")
+        // As the server answers after a Save: a new generation, its phone render not made yet.
+        fake.authoritativeVariant?["render_generation_id"] = .string("next")
+        fake.authoritativeVariant?["render_status"] = .string("awaiting_device")
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
         let rebuilt = await waitUntil { session.canDownloadCurrentVideo }
