@@ -6444,12 +6444,27 @@ def _plan_phone_user_song_montage(
         output_orientation=output_orientation,
         freeze_frames=freeze_frames,
     )
+    if not settings.song_captions_enabled:
+        return plan
     if plan_authority:
         pinned = strategy.get("song_captions")
-        if settings.song_captions_enabled and pinned in ("word", "sentence"):
+        asked = pinned in ("word", "sentence")
+        if asked:
             _attach_song_captions(plan, analysis, strategy, style=pinned)
-    elif settings.song_captions_enabled and _song_captions_wanted(creator_text, strategy):
-        _attach_song_captions(plan, analysis, strategy, creator_text)
+    else:
+        asked = _song_captions_wanted(creator_text, strategy)
+        if asked:
+            _attach_song_captions(plan, analysis, strategy, creator_text)
+    if not asked and settings.song_captions_available_by_default:
+        from app.pipeline.song_captions import caption_style_for  # noqa: PLC0415
+
+        _attach_song_captions(
+            plan,
+            analysis,
+            strategy,
+            style=caption_style_for(strategy.get("caption_style")),
+            hidden=True,
+        )
     return plan
 
 
@@ -6520,12 +6535,20 @@ def _song_captions_wanted(creator_text: str, strategy: dict) -> bool:
 
 
 def _attach_song_captions(
-    plan: Any, analysis: Any, strategy: dict, creator_text: str = "", *, style: str | None = None
+    plan: Any,
+    analysis: Any,
+    strategy: dict,
+    creator_text: str = "",
+    *,
+    style: str | None = None,
+    hidden: bool = False,
 ) -> None:
     """Pin the song's words on the plan's snapshot and note it in the plan record.
 
     ``style`` is the planner's pinned decision (KRI-578); without it (legacy jobs) the
-    style is read from ``creator_text``.
+    style is read from ``creator_text``. ``hidden`` pins lyrics nobody asked for, off
+    until the creator turns captions on: nothing to caption then pins nothing, and
+    never declines a montage that did not ask.
     """
     from app.kria.brief_checks import text_asks_for_word_captions  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UserSongPlanDeclined  # noqa: PLC0415
@@ -6538,7 +6561,12 @@ def _attach_song_captions(
         )
     track = track_from_analysis(analysis, caption_style=style)
     if track is None or plan.snapshot.user_song is None:
+        if hidden:
+            return
         raise UserSongPlanDeclined(_SONG_CAPTIONS_NO_WORDS_MESSAGE)
+    if hidden:
+        track = track.model_copy(update={"hidden": True})
+    unpinned = plan.snapshot
     # `model_copy` does not validate: re-validate so the song generation fence holds.
     plan.snapshot = EditProposalSnapshot.model_validate(
         {**plan.snapshot.model_dump(mode="json"), "song_captions": track.model_dump(mode="json")}
@@ -6551,11 +6579,15 @@ def _attach_song_captions(
     )
     inside = project_snapshot_words(plan.snapshot)
     if not inside:
+        if hidden:
+            plan.snapshot = unpinned
+            return
         # Words exist, but none are sung in the stretch this video uses (an instrumental
         # intro or tail): never report captions that nothing on screen will show.
         raise UserSongPlanDeclined(_SONG_CAPTIONS_NO_WORDS_IN_WINDOW_MESSAGE)
     plan.caption_receipt = {
-        "status": "placed",
+        # Never "placed" while hidden: the receipt check would claim captions were added.
+        "status": "available_hidden" if hidden else "placed",
         "style": style,
         "words": len(inside),
         "lines": sum(1 for word in inside if word.line_end),
