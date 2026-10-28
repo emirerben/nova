@@ -1619,7 +1619,9 @@ struct NativeEditorTemporaryVideo {
         selection = value
         selectionRequest &+= 1
         guard seekToStart, let value, let start = startTime(for: value) else { return }
-        seek(to: start)
+        let frameDuration = player?.currentItem?.videoComposition?.frameDuration.seconds ?? 1.0 / 30
+        // A sub-frame start otherwise decodes the preceding frame, before this item exists.
+        seek(to: (start / frameDuration).rounded(.up) * frameDuration)
     }
 
     func select(_ item: NativeEditorTimelineItem, seekToStart: Bool = true) {

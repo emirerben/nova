@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.181.0] - 2026-10-28
+
+### Changed
+- fix(ios): show selected timeline items on their first visible frame (KRI-999) (#1893) <!-- release-pr: 1893 -->
+
+## [0.81.180.0] - 2026-10-28
+
+### Changed
+- feat(song-captions): lip-sync lyrics pinned hidden so Show captions works (KRI-1000) (#1894) <!-- release-pr: 1894 -->
+
 ## [0.81.179.0] - 2026-10-28
 
 ### Changed
