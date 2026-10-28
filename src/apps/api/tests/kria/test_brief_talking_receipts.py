@@ -80,7 +80,8 @@ def test_karaoke_captions_are_done_on_a_karaoke_draft():
     receipt = check_requirement(req, _talking())
 
     assert receipt.status == "met"
-    assert receipt.reason == "words light up as you say them"
+    # The speaker may not be the creator (KRI-1008: the creator filmed a guide).
+    assert receipt.reason == "words light up as they're spoken"
     assert is_judged(req, receipt)
 
 
