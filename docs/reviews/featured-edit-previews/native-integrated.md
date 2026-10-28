@@ -1,9 +1,12 @@
-# Integrated native verification
+# Native integration verification
 
-Unedited JSON from `xcresulttool get test-results summary` after integrating
-main at `db42721ce34e38aea41303ec4775945305fa439a`. The feature source was
-unchanged by the integration. All four focused playback/build-condition checks
-passed on the integrated branch.
+After integrating main at 060922cae, all five focused native checks passed.
+They cover the drawer journey, centered playback, four-edit onboarding sequence,
+Slider timing and pause, and Debug sign-in visibility. The test-inventory conflict
+was resolved by retaining both branches’ entries. All 117 native tooling checks
+also passed and the discovered UI test inventory matches the manifest.
+
+Unedited JSON from `xcresulttool get test-results summary`.
 
 ```json
 {
@@ -20,7 +23,7 @@ passed on the integrated branch.
       },
       "expectedFailures" : 0,
       "failedTests" : 0,
-      "passedTests" : 4,
+      "passedTests" : 5,
       "skippedTests" : 0,
       "testPlanConfiguration" : {
         "configurationId" : "1",
@@ -31,11 +34,11 @@ passed on the integrated branch.
   "environmentDescription" : "Kria · Built with macOS 26.4.1",
   "expectedFailures" : 0,
   "failedTests" : 0,
-  "finishTime" : 1793199381.499,
-  "passedTests" : 4,
+  "finishTime" : 1793222145.404,
+  "passedTests" : 5,
   "result" : "Passed",
   "skippedTests" : 0,
-  "startTime" : 1793199298.459,
+  "startTime" : 1793221908.492,
   "statistics" : [
 
   ],
@@ -46,6 +49,7 @@ passed on the integrated branch.
   "topInsights" : [
 
   ],
-  "totalTestCount" : 4
+  "totalTestCount" : 5
 }
+
 ```

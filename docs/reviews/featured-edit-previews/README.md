@@ -18,14 +18,15 @@ The report documents retain unedited `xcresulttool get test-results summary` JSO
 `acceptance.md` records the independently supplied expectations.
 
 - `drawer-gesture.md` records the reproduced CI failure and three passing runs after correcting the swipe surface.
-- `native-integrated.md` records four focused native checks after merging current main.
+- `native-integrated.md` records five focused native checks after merging current main, plus the test-inventory validation.
 - `native-debug-final.md` covers all ten focused Debug UI checks, including
   four-edit sequencing, centered playback, Slider timing/pause, sign-in and tile sizes.
 - `production-signin.md` verifies the final Release app shows email sign-in and hides local-account access.
 - `native-unit.md` records 2,087 tests, including 26 explicit skips, with no failures.
 
-Earlier Debug and integration reports predate the final email-entry restoration.
-The Release report and screenshot verify the final sign-in state.
+The original Debug report predates the final email-entry restoration.
+The current integration report includes that restoration. The Release report and
+screenshot verify the final production sign-in state.
 
 The native evidence is from an iPhone 17 Pro simulator on iOS 26.5. It does not
 prove a physical-device build, an App Store review, or a production rollout.
