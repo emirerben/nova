@@ -19,12 +19,21 @@ import XCTest
             if element.exists {
                 let fixedAction = ["text-preferences-save", "text-preferences-reload"].contains(element.identifier)
                 if element.isHittable && (fixedAction || (element.frame.minY >= top && element.frame.maxY <= bottom)) { break }
-                if element.frame.minY < top { app.swipeDown(); continue }
+                if element.frame.minY < top { scrollForm(app, down: true); continue }
             }
-            app.swipeUp()
+            scrollForm(app, down: false)
         }
         XCTAssertTrue(element.waitForExistence(timeout: 3))
-        XCTAssertTrue(element.isHittable)
+        XCTAssertTrue(element.isHittable, "Control must be visible: \(element.identifier)\n\(app.debugDescription)")
+    }
+
+    private func scrollForm(_ app: XCUIApplication, down: Bool) {
+        // Whole-screen flings can jump a row from below the fixed Save bar to
+        // above the navigation bar, then back again. Move within the form in
+        // small steps so reveal converges instead of oscillating on CI devices.
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.4 : 0.65))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.65 : 0.4))
+        start.press(forDuration: 0.05, thenDragTo: end)
     }
 
     func testExcludedFontSurvivesPickerReturnSaveAndReopen() {
