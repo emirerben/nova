@@ -15,6 +15,7 @@ A passing settings journey selects Fraunces, returns from the picker with that n
 - A required font is also excluded, or a font is both favored and excluded.
 - A fixture invents an `id` response and masks the production contract error.
 - A failed save clears the draft or falsely reports success.
+- New UI tests are absent from the separate UI group inventory, forcing the selector into full fallback and failing its self-checks before a release build.
 
 ## Boundaries and design
 
@@ -72,3 +73,11 @@ The screenshot uses a synthetic account fixture and shows the actual native view
 ## Review process
 
 Work stayed in this agent under the user's no-delegation instruction. Fix Root Causes corrected the wire contract and page-loading behavior. Model the Domain selected a per-role draft dictionary. Prove It Works required native save/reopen and the mapped export checks. Attack the Premise led to recording tap geometry before changing the learning-control check. The cursor-team-kit deslop skill is not installed; the diff received a manual simplicity and comment review instead.
+
+## Release CI inventory correction
+
+After the authorized admin merge of #1895, main's iOS workflow stopped in its selector self-checks before compilation. The two new AccountPrivacy tests were in the journey manifest but absent from `scripts/ios/ui-test-groups.json`. The inventory comparison therefore forced full fallback, and four focused-selector assertions failed. This was reproduced locally before changing the inventory.
+
+Adding those two names to the existing creation group restored the exact CI gate: `python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v` passed all 121 tests. The native source fingerprint remains `e7f9580cc7d1e9c9f22bd7f5a6decc504f17e2550c56a86c96dcb607bc715543`, so the previously passing app and native UI evidence still covers the binary inputs. No assertion or selector fallback policy was relaxed.
+
+Failure-mode coverage: an unclassified UI test is caught by `inventory_matches` and the focused-selection self-checks; a missing workflow test selection is caught by the journey gate; response decoding and retained drafts remain covered by the eight native checks listed above. App Store upload, processing and tester availability still require direct release evidence.
