@@ -20,6 +20,7 @@ from app.pipeline.phone_speaker_framing import (
     face_core_box,
     face_core_mapper,
     face_fill_window,
+    landscape_canvas_framing,
     sample_anchors,
 )
 from app.pipeline.render_geometry import NormalizedBox, ProtectedRegion
@@ -365,3 +366,60 @@ def test_a_small_background_face_on_a_missed_frame_is_ignored():
     framing = _decide(_sampler(background))
     assert framing.mode == "face_fill"
     assert framing.receipt()["faces"]["ignored"] == 1
+
+
+# --- a landscape output canvas (the creator's pick) ---------------------------------------
+
+LANDSCAPE_CANVAS = Canvas(width=1920, height=1080)
+
+
+def test_a_landscape_canvas_records_its_own_reason_and_samples_no_face():
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no face is sampled on a wide canvas")
+
+    framing = decide_speaker_framing(
+        "/tmp/c.mp4",
+        keep_segments=[(0.0, 10.0)],
+        display_width=1920,
+        display_height=1080,
+        canvas=LANDSCAPE_CANVAS,
+        landscape_fit="fill",
+        asked_by=("r1",),
+        sample=forbidden,
+    )
+    assert (framing.mode, framing.reason) == ("centre_fill", "landscape_canvas")
+    assert framing.position_x is None
+    receipt = framing.receipt()
+    assert receipt["eligible"] is False and receipt["asked_by"] == ["r1"]
+
+
+def test_landscape_canvas_framing_keeps_the_window_for_the_way_back():
+    face = _receipt(mode="face_fill", reason="face_in_window", eligible=True)
+    wide = landscape_canvas_framing(face)
+    assert (wide["mode"], wide["reason"]) == ("centre_fill", "landscape_canvas")
+    assert wide["window"] == face["window"] and wide["eligible"] is True
+    assert wide["before_landscape"] == {"mode": "face_fill", "reason": "face_in_window"}
+    # Idempotent, and the prior verdict is never overwritten by a second landscape Save.
+    assert landscape_canvas_framing(wide) == wide
+    assert landscape_canvas_framing(None) is None
+    assert landscape_canvas_framing({"mode": "bogus"}) is None
+
+    # Portrait + crop again: the stored window gives the face crop back.
+    position, back = editor_speaker_framing(wide, landscape_fit="fill")
+    assert position == face["window"]["position_x"]
+    assert (back["mode"], back["reason"]) == ("face_fill", "face_in_window")
+    assert "before_landscape" not in back
+    # Portrait + bars: letterbox, as for any face receipt.
+    position, back = editor_speaker_framing(wide, landscape_fit="fit")
+    assert position is None
+    assert (back["mode"], back["reason"]) == ("letterbox", "creator_chose_bars")
+
+
+def test_a_receipt_born_on_a_landscape_canvas_has_nothing_to_restore():
+    born = {"version": 1, "mode": "centre_fill", "reason": "landscape_canvas", "eligible": False}
+    position, back = editor_speaker_framing(born, landscape_fit="fill")
+    assert position is None
+    assert (back["mode"], back["reason"]) == ("centre_fill", "face_unconfirmed")
+    position, back = editor_speaker_framing(born, landscape_fit="fit")
+    assert position is None
+    assert (back["mode"], back["reason"]) == ("letterbox", "face_unconfirmed")

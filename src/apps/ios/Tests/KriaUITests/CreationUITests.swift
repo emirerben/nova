@@ -60,6 +60,58 @@ final class CreationUITests: XCTestCase {
         app.terminate()
     }
 
+    /// KRI-986, real-device condition: the creator's chat composer is focused (keyboard up) inside the
+    /// editor's Kria sheet when they tap "Open editor". The tap must still close the sheet.
+    func testOpenEditorInsideTheEditorsKriaSheetWithKeyboardOpenReturnsToTheEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let chatOpenEditor = app.buttons["Open editor"]
+        XCTAssertTrue(chatOpenEditor.waitForExistence(timeout: 30))
+        chatOpenEditor.tap()
+
+        let kria = app.buttons["native-editor-conversation"]
+        XCTAssertTrue(kria.waitForExistence(timeout: 15), "the editor opened from the chat's ready card")
+        kria.tap()
+        let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        let sheetOpenEditor = sheet.buttons["Open editor"]
+        XCTAssertTrue(sheetOpenEditor.waitForExistence(timeout: 10), "the sheet's ready card offers Open editor")
+
+        // Focus the composer so the keyboard is up, as on a real device.
+        // The chat underneath the editor has its own (covered, unhittable) composer; take the live one.
+        let fields = app.textFields.matching(NSPredicate(format: "label == %@", "Message Kria"))
+        _ = fields.firstMatch.waitForExistence(timeout: 5)
+        let composer = fields.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? fields.firstMatch
+        XCTAssertTrue(composer.exists, "the sheet shows the chat composer")
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "tapping the composer opens the keyboard")
+
+        // The keyboard shrinks the visible conversation; bring the button above it if it slid underneath.
+        var swipes = 0
+        while !sheetOpenEditor.isHittable && swipes < 4 {
+            sheet.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(sheetOpenEditor.isHittable, "Open editor is reachable with the keyboard open")
+        let beforeTap = XCTAttachment(screenshot: app.screenshot())
+        beforeTap.name = "Kria sheet with keyboard open, before tapping Open editor (swipes: \(swipes))"
+        beforeTap.lifetime = .keepAlways
+        add(beforeTap)
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the keyboard is still open when Open editor is tapped")
+        sheetOpenEditor.tap()
+
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: sheet)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "Open editor closes the Kria sheet with the keyboard open")
+        XCTAssertTrue(kria.waitForExistence(timeout: 3))
+        XCTAssertTrue(kria.isHittable, "the creator is back in the editor")
+        app.terminate()
+    }
+
     func testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat-bubbles"]
@@ -1573,22 +1625,38 @@ final class CreationUITests: XCTestCase {
     /// label) and the row goes; the finished video offers the server's chips instead of the two fixed ones. The
     /// capability-OFF half is `testReadySuggestionChipsApplyFromTapsNearCapsuleEdges` above, which launches without
     /// `KRIA_SUGGESTION_CHIPS` and still pins the fixed chips.
+    func testPendingServerSuggestionChipsShowOnlyTheDefaultEdit() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v1", "KRIA_CHAT_FIXTURE_MEDIA": "1",
+                                 "KRIA_SUGGESTION_CHIPS": "1", "KRIA_SUGGESTION_CHIPS_PENDING": "hold"]
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        XCTAssertTrue(app.buttons["Let Kria cut the first version"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Add captions"].exists)
+        XCTAssertFalse(app.buttons["Add sound effects"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
+        app.terminate()
+    }
+
     func testServerSuggestionChipsSendOnTapAndReplaceFixedChips() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        // Pending: chip #1 alone, no generic fixed strings.
+        // Pending rendering is checked separately with a held server response. Polling may
+        // finish before XCUITest observes it; this journey starts with the delivered set.
         let defaultEdit = app.buttons["Let Kria cut the first version"]
         XCTAssertTrue(defaultEdit.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["Add captions"].exists, "Only chip #1 shows while the server is still working")
         XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
-        // The set lands: four chips in rank order, chip #1 first and unchanged; `why` rides in the accessibility label.
         let hook = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch
         XCTAssertTrue(hook.waitForExistence(timeout: 15))
         XCTAssertEqual(hook.label, "Add a hook to the opening, the first shot is a quiet one")

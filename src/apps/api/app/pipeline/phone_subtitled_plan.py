@@ -74,6 +74,7 @@ from app.kria.recipes import (
 )
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest
+from app.pipeline.canvas import LANDSCAPE
 from app.pipeline.phone_captions import (
     PhoneCaptionLook,
     caption_font_assets,
@@ -112,11 +113,20 @@ _display_dims = display_dims
 MAX_CLIP_DURATION_S = 300.0
 _MAX_CLIP_DURATION_S = MAX_CLIP_DURATION_S
 
-# The phone story canvas for every subtitled render -- subtitled has no
+# The phone story canvas for a portrait subtitled render -- subtitled has no
 # `decision.orientation`/`extras["canvas"]` to read (unlike the montage
-# compiler); a landscape source is letterboxed into it (KRI-283), never given
-# a landscape canvas.
+# compiler); the caller names the orientation with ``output_orientation``
+# and a landscape source on this canvas is letterboxed (KRI-283).
 _STORY_CANVAS = Canvas(width=1080, height=1920)
+# ``output_orientation="landscape"``: the same 16:9 canvas guided montage
+# renders on the phone (`guided_story._story_canvas`). It never has bars.
+_LANDSCAPE_STORY_CANVAS = Canvas(width=LANDSCAPE.width, height=LANDSCAPE.height)
+
+# A pip card's height follows its picture. A photo card carries no probed size
+# (`PhoneVisualBinding` only probes videos), so a landscape canvas contains it
+# assuming a 3:4 portrait phone photo (height 4/3 of its width) -- the common
+# case and the tallest one a 16:9 frame can host at the default card width.
+_UNKNOWN_CARD_ASPECT_H_OVER_W = 4.0 / 3.0
 
 # Below this, a clamped sound effect would be inaudible/pointless; skip it
 # rather than emit a near-zero-length audio clip.
@@ -198,6 +208,7 @@ def compile_phone_subtitled_plan(
     text_elements_user_edited: bool = False,
     speaker_position_x: float | None = None,
     additional_speakers: tuple[PhoneSourceBinding, ...] = (),
+    output_orientation: Literal["portrait", "landscape"] = "portrait",
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
 
@@ -321,6 +332,14 @@ def compile_phone_subtitled_plan(
     ``cutaways`` are then expressed on that combined timeline. Rejects a
     duplicate speaker, a non-video one, or one longer than 300 s.
 
+    ``output_orientation`` (``"portrait"`` default, byte-identical to before)
+    picks the recipe canvas: ``"landscape"`` is the 1920x1080 canvas guided
+    montage already renders on the phone. On it ``landscape_fit`` is forced to
+    ``"fill"`` and ``speaker_position_x`` is ignored (a wide canvas has no bars
+    and no sideways overflow to face-fill), and captions, the text lane and
+    pip cards all compile against it; a pip card is moved/shrunk only as far as
+    needed to stay inside the frame (`_contain_card_in_canvas`).
+
     ``speaker_position_x`` (KRI-547, optional) face-fills a LANDSCAPE speaker
     clip instead: identity scale (the engine's cover fill) shifted this many
     canvas pixels to the right on EVERY speaker `TimelineClip`, clamped so no
@@ -341,6 +360,16 @@ def compile_phone_subtitled_plan(
         can retry the compile with just that lane dropped
         (`app.pipeline.phone_subtitled_lanes.drop_lane`).
     """
+    if output_orientation not in ("portrait", "landscape"):
+        raise ValueError(f"unknown output_orientation {output_orientation!r}")
+    is_landscape = output_orientation == "landscape"
+    canvas = _LANDSCAPE_STORY_CANVAS if is_landscape else _STORY_CANVAS
+    if is_landscape:
+        # A wide canvas has no bars to letterbox into and no sideways overflow
+        # to face-fill a 16:9 take with (`phone_speaker_framing` is a no-op
+        # there too): the engine's native cover fill is the whole transform.
+        landscape_fit = "fill"
+        speaker_position_x = None
     if len(bindings) != 1:
         raise UnsupportedPhonePlan(
             f"phone subtitled plan requires exactly one clip, got {len(bindings)}"
@@ -356,12 +385,10 @@ def compile_phone_subtitled_plan(
     display_width, display_height = _display_dims(original)
     if speaker_position_x is not None and display_width > display_height:
         speaker_transform = face_fill_transform(
-            display_width, display_height, _STORY_CANVAS, speaker_position_x
+            display_width, display_height, canvas, speaker_position_x
         )
     else:
-        speaker_transform = fit_transform(
-            display_width, display_height, _STORY_CANVAS, landscape_fit
-        )
+        speaker_transform = fit_transform(display_width, display_height, canvas, landscape_fit)
 
     duration_s = float(original.duration_s)
     # An explicit `keep_segments` (editor Save reconstructing a previously
@@ -449,7 +476,7 @@ def compile_phone_subtitled_plan(
                 source_duration=extra_duration,
                 timeline_start=cursor,
                 rate=1.0,
-                transform=fit_transform(extra_width, extra_height, _STORY_CANVAS, landscape_fit),
+                transform=fit_transform(extra_width, extra_height, canvas, landscape_fit),
             )
         )
         cursor += extra_duration
@@ -461,8 +488,8 @@ def compile_phone_subtitled_plan(
     try:
         layers = compile_caption_layers(
             caption_cues,
-            canvas_width=_STORY_CANVAS.width,
-            canvas_height=_STORY_CANVAS.height,
+            canvas_width=canvas.width,
+            canvas_height=canvas.height,
             style=caption_style,
             timeline_duration_s=speaker_end,
             look=caption_look,
@@ -515,6 +542,8 @@ def compile_phone_subtitled_plan(
             text_elements,
             user_edited=text_elements_user_edited,
             timeline_duration_s=timeline_end,
+            canvas=canvas,
+            orientation=output_orientation,
         )
         if text_layers:
             for font_id, font_asset in caption_font_assets(text_layers).items():
@@ -595,6 +624,7 @@ def compile_phone_subtitled_plan(
                 speaker_end=speaker_end,
                 assets=assets,
                 manifest=manifest,
+                canvas=canvas,
             )
         except UnsupportedPhonePlan:
             raise
@@ -628,7 +658,7 @@ def compile_phone_subtitled_plan(
             required_capabilities |= {"soundEffects", "audioMix"}
 
     return EditRecipeV2(
-        canvas=_STORY_CANVAS,
+        canvas=canvas,
         assets=list(assets.values()),
         asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
         tracks=tracks,
@@ -643,25 +673,30 @@ def _compile_text_lane(
     *,
     user_edited: bool,
     timeline_duration_s: float,
+    canvas: Canvas = _STORY_CANVAS,
+    orientation: Literal["portrait", "landscape"] = "portrait",
 ) -> list[Any]:
     """The variant's text elements as positioned text layers (KRI-467)."""
     from app.pipeline.portable_text_layout import compile_text_overlay  # noqa: PLC0415
     from app.tasks.generative_build import _text_element_burn_dicts  # noqa: PLC0415
 
     try:
-        overlays = _text_element_burn_dicts(
-            {
-                "resolved_archetype": "subtitled",
-                "text_elements": [dict(row) for row in text_elements],
-                "duration_s": timeline_duration_s,
-                "text_elements_user_edited": user_edited,
-            }
-        )
+        variant: dict[str, Any] = {
+            "resolved_archetype": "subtitled",
+            "text_elements": [dict(row) for row in text_elements],
+            "duration_s": timeline_duration_s,
+            "text_elements_user_edited": user_edited,
+        }
+        if orientation == "landscape":
+            # `_text_element_burn_dicts` measures top-anchored legacy intros on
+            # the canvas the variant's orientation names; portrait is the default.
+            variant["orientation"] = "landscape"
+        overlays = _text_element_burn_dicts(variant)
         layers = [
             compile_text_overlay(
                 overlay,
                 layer_id=f"{TEXT_LAYER_PREFIX}{index}",
-                canvas=_STORY_CANVAS,
+                canvas=canvas,
                 dissolve_seed=101 + index * 37,
             )[0]
             for index, overlay in enumerate(overlays)
@@ -750,6 +785,67 @@ def _compile_ending_clip(
     return clip, source_duration
 
 
+def _card_aspect_h_over_w(visual: PhoneVisualBinding) -> float:
+    """A pip card's displayed height over width: probed (video, rotation applied)
+    when known, else the 3:4 assumption of `_UNKNOWN_CARD_ASPECT_H_OVER_W`."""
+    if visual.width is None or visual.height is None:
+        return _UNKNOWN_CARD_ASPECT_H_OVER_W
+    width, height = _display_dims(visual)
+    return height / width
+
+
+def _contain_card_in_canvas(
+    canvas: Canvas,
+    *,
+    width_fraction: float,
+    x_fraction: float,
+    y_fraction: float,
+    aspect_h_over_w: float,
+) -> tuple[float, float, float]:
+    """``(width_fraction, x_fraction, y_fraction)`` with the whole card inside
+    ``canvas``.
+
+    The engine draws a pip card ``canvas.width * width_fraction`` wide and
+    ``aspect_h_over_w`` times that tall, centred on ``(x, y)``. On the portrait
+    canvas the card's height can never exceed the frame, so those recipes are
+    left untouched (the caller does not call this). On a wide canvas a
+    portrait picture is taller than the frame, so the card is shrunk to the
+    frame height first, then its centre is moved only as far as keeps every
+    edge on screen.
+    """
+    width_px = canvas.width * width_fraction
+    height_px = width_px * aspect_h_over_w
+    if height_px > canvas.height:
+        width_px = canvas.height / aspect_h_over_w
+        height_px = float(canvas.height)
+    half_w, half_h = width_px / 2, height_px / 2
+    center_x = min(max(canvas.width * x_fraction, half_w), canvas.width - half_w)
+    center_y = min(max(canvas.height * y_fraction, half_h), canvas.height - half_h)
+    return (
+        min(max(width_px / canvas.width, 0.05), 1.0),
+        center_x / canvas.width,
+        center_y / canvas.height,
+    )
+
+
+def _card_placement(
+    card: SubtitledOverlayCard,
+    visual: PhoneVisualBinding,
+    canvas: Canvas,
+) -> tuple[float, float, float]:
+    """``(width_fraction, x_fraction, y_fraction)`` for a pip card."""
+    y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)
+    if canvas.width <= canvas.height:
+        return card.scale, card.x_frac, y_frac
+    return _contain_card_in_canvas(
+        canvas,
+        width_fraction=card.scale,
+        x_fraction=card.x_frac,
+        y_fraction=y_frac,
+        aspect_h_over_w=_card_aspect_h_over_w(visual),
+    )
+
+
 def _compile_overlay_track(
     cards: list[SubtitledOverlayCard],
     *,
@@ -758,6 +854,7 @@ def _compile_overlay_track(
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
     speech_windows: tuple[tuple[float, float], ...] = (),
+    canvas: Canvas = _STORY_CANVAS,
 ) -> tuple[TimelineTrack, bool]:
     """Compile ``cards`` onto the silent ``subtitled-overlays`` track.
 
@@ -799,6 +896,7 @@ def _compile_overlay_track(
                     order=order,
                     assets=assets,
                     manifest=manifest,
+                    canvas=canvas,
                 )
             )
             continue
@@ -813,7 +911,7 @@ def _compile_overlay_track(
             relative_path=asset.id,
             fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
         )
-        y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)
+        width_frac, x_frac, y_frac = _card_placement(card, visual, canvas)
         clips.append(
             TimelineClip(
                 id=f"subtitled-overlay-{card.id}",
@@ -825,8 +923,8 @@ def _compile_overlay_track(
                 volume=0,
                 visual_placement=VisualMediaPlacement(
                     order=order,
-                    width_fraction=card.scale,
-                    x_fraction=card.x_frac,
+                    width_fraction=width_frac,
+                    x_fraction=x_frac,
                     y_fraction=y_frac,
                     window_start=window_start,
                     window_end=window_end,
@@ -955,6 +1053,7 @@ def _compile_video_overlay_clip(
     order: int,
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
+    canvas: Canvas = _STORY_CANVAS,
 ) -> TimelineClip:
     """One video overlay card (KRI-183) -- muted, like `_compile_ending_clip`.
 
@@ -990,7 +1089,7 @@ def _compile_video_overlay_clip(
         natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
         orientation_degrees=visual.orientation_degrees,
     )
-    y_frac = min(card.y_frac, CAPTION_BAND_TOP_FRAC)
+    width_frac, x_frac, y_frac = _card_placement(card, visual, canvas)
     return TimelineClip(
         id=f"subtitled-overlay-{card.id}",
         source_asset_id=asset.id,
@@ -1001,8 +1100,8 @@ def _compile_video_overlay_clip(
         volume=0,
         visual_placement=VisualMediaPlacement(
             order=order,
-            width_fraction=card.scale,
-            x_fraction=card.x_frac,
+            width_fraction=width_frac,
+            x_fraction=x_frac,
             y_fraction=y_frac,
             window_start=window_start,
             window_end=window_end,
