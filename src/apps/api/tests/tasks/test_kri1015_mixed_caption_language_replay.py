@@ -298,8 +298,9 @@ def test_o_the_recorded_cuts_replay_exactly_through_the_real_cleanup_analysis():
     """The harness applies the 13 removals prod applied (8.765 s), nothing else."""
     snapshot = _preflight_snapshot(storage_path="phone-proxies/c0.mp4")
     plan = snapshot["analysis"]["cut_plan"]
-    assert [(r["start_s"], r["end_s"]) for r in plan["removed"]] == pytest.approx(
-        [(r["start_s"], r["end_s"]) for r in REMOVED]
+    # pytest 9.2 rejects approx() on nested pairs, so compare flattened bounds.
+    assert [b for r in plan["removed"] for b in (r["start_s"], r["end_s"])] == pytest.approx(
+        [b for r in REMOVED for b in (r["start_s"], r["end_s"])]
     )
     assert plan["time_saved_s"] == pytest.approx(8.765, abs=1e-3)
     assert snapshot["analysis"]["language"] == "en"
