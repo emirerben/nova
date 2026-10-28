@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.192.0] - 2026-10-28
+
+### Fixed
+- fix(kria): a photo pinned to a spoken beat is never re-placed as a corner card (KRI-1019) (#1910) <!-- release-pr: 1910 -->
+
 ## [0.81.191.0] - 2026-10-28
 
 ### Changed
