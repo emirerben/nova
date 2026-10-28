@@ -88,14 +88,18 @@ def _valid(topic):
     return topic if 4 <= len(topic) <= 200 else None
 
 
-def suggest_research_topic(query, clip_labels):
-    """Best place or landmark named by the creator's query, else by repeated clip labels."""
+def suggest_research_topic(query, clip_labels, event_title="", event_about=""):
+    """Best place or landmark named by the creator's words, else by repeated clip labels.
+
+    The query and the event's title and notes are all things the creator wrote.
+    """
     ranked = []
-    for run, introducer, initial in _runs(query):
-        if _has_landmark(run):
-            ranked.append((3, len(run), run))
-        elif not initial and introducer in _QUERY_PREPOSITIONS:
-            ranked.append((2, len(run), run))
+    for text in (query, event_title, event_about):
+        for run, introducer, initial in _runs(text):
+            if _has_landmark(run):
+                ranked.append((3, len(run), run))
+            elif not initial and introducer in _QUERY_PREPOSITIONS:
+                ranked.append((2, len(run), run))
     landmarks, introduced = Counter(), Counter()
     for label in clip_labels:
         seen = set()

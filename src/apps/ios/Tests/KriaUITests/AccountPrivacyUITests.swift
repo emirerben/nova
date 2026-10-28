@@ -33,6 +33,8 @@ import XCTest
         app.buttons["account-text-preferences"].tap()
         let excluded = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Excluded fonts")).firstMatch
         reveal(excluded, app: app); excluded.tap()
+        XCTAssertTrue(app.buttons["text-preferences-save"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Never use"].waitForExistence(timeout: 5))
         let fontChoice = app.buttons["Fraunces"]
         reveal(fontChoice, app: app); fontChoice.tap()
         app.navigationBars.buttons.firstMatch.tap()
@@ -45,6 +47,8 @@ import XCTest
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["account-text-preferences"].tap()
         reveal(excluded, app: app); excluded.tap()
+        XCTAssertTrue(app.buttons["text-preferences-save"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Never use"].waitForExistence(timeout: 5))
         let fraunces = app.buttons["Fraunces"]
         reveal(fraunces, app: app)
         XCTAssertTrue(fraunces.isSelected, "Saved exclusion must survive reopening settings")

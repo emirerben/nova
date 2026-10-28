@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.189.0] - 2026-10-28
+
+### Changed
+- fix(ios): preserve completed videos across app updates (#1907) <!-- release-pr: 1907 -->
+
+## [0.81.188.0] - 2026-10-28
+
+### Changed
+- feat(ios): Camera roll events list, event page, About, and usable idea cards (KRI-1005, KRI-1006) (#1908) <!-- release-pr: 1908 -->
+
+## [0.81.187.0] - 2026-10-28
+
+### Changed
+- feat(camera-roll): event title and notes plus a social-first idea prompt (KRI-1003, KRI-1004) (#1899) <!-- release-pr: 1899 -->
+
 ## [0.81.186.0] - 2026-10-28
 
 ### Changed
