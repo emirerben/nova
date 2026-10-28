@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.179.0] - 2026-10-28
+
+### Changed
+- fix(ci): register preferences tests for native releases (#1896) <!-- release-pr: 1896 -->
+
 ## [0.81.178.0] - 2026-10-28
 
 ### Changed
