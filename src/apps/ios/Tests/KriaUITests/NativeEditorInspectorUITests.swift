@@ -712,9 +712,24 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.launch()
         let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
         XCTAssertTrue(preview.waitForExistence(timeout: 8))
-        XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 12))
+        let video = app.descendants(matching: .any)["Video preview"].firstMatch
+        let textTool = app.buttons["native-editor-tool-text"]
+        var previousToolFrame: CGRect?
+        let editorReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard video.exists, textTool.exists, textTool.isEnabled else { previousToolFrame = nil; return false }
+            let frame = textTool.frame
+            guard frame.origin.x.isFinite, frame.origin.y.isFinite, frame.width.isFinite, frame.height.isFinite,
+                  frame.width > 0, frame.height > 0 else {
+                previousToolFrame = nil; return false
+            }
+            let stable = previousToolFrame == frame
+            previousToolFrame = frame
+            return stable && textTool.isHittable && !app.staticTexts["Preparing preview"].exists
+        }, object: textTool)
+        XCTAssertEqual(XCTWaiter.wait(for: [editorReady], timeout: 12), .completed,
+                       "The prepared editor tool must be enabled, hittable and settled")
         XCTAssertFalse(app.staticTexts["Preview unavailable"].exists)
-        app.buttons["native-editor-tool-text"].tap()
+        textTool.tap()
         let input = app.descendants(matching: .any)["native-editor-new-text-input"].firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 3))
         input.tap(); input.typeText("Live text")
@@ -779,9 +794,13 @@ final class NativeEditorInspectorUITests: XCTestCase {
         // the document. Preparation is asynchronous on hosted simulators.
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: textReady, object: preview)], timeout: 15), .completed)
         preview.pinch(withScale: 1.4, velocity: 0.4)
+        let enlargedSample = preview.value as? String ?? ""
+        XCTAssertTrue(enlargedSample.contains(";dangerGuideLast:"), "The live guide sample must be available")
+        XCTAssertFalse(enlargedSample.hasSuffix("dangerGuideLast:"),
+                       "The enlarged live footprint must record unsafe edges")
         preview.pinch(withScale: 0.75, velocity: -0.4)
-        XCTAssertFalse((preview.value as? String ?? "").hasSuffix("dangerGuideLast:"),
-                       "The oversized text footprint must warn after a live pinch")
+        XCTAssertTrue((preview.value as? String ?? "").hasSuffix("dangerGuideLast:"),
+                      "Shrinking the footprint inside the safe area must clear the last warning sample")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-danger-guide"].firstMatch.exists)
         let samples = (preview.value as? String)?.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
         XCTAssertGreaterThan(Int(samples) ?? 0, 4)

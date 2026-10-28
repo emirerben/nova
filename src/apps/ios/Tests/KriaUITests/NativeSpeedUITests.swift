@@ -29,10 +29,27 @@ final class NativeSpeedUITests: XCTestCase {
             let label = app.descendants(matching: .any)["native-editor-speed-duration"].firstMatch
             XCTAssertEqual(label.value as? String, duration)
         }
+        func dragToEndpoint(maximum: Bool) {
+            // XCTest documents normalized adjustment as approximate. Drive one
+            // actual thumb drag beyond the track, preserving exact endpoint checks.
+            let frame = slider.frame
+            let position = slider.normalizedSliderPosition
+            guard frame.width.isFinite, frame.height.isFinite, frame.height > 0, frame.width > frame.height,
+                  position.isFinite, (0...1).contains(position) else {
+                return XCTFail("The speed slider must have usable geometry")
+            }
+            let origin = slider.coordinate(withNormalizedOffset: .zero)
+            let inset = frame.height / 2
+            let thumbX = inset + (frame.width - 2 * inset) * position
+            let thumb = origin.withOffset(CGVector(dx: thumbX, dy: frame.height / 2))
+            let end = origin.withOffset(CGVector(dx: maximum ? frame.width + frame.height : -frame.height,
+                                                dy: frame.height / 2))
+            thumb.press(forDuration: 0.1, thenDragTo: end)
+        }
         verifyRate("1.00x", duration: "00:06.0")
-        slider.adjust(toNormalizedSliderPosition: 0)
+        dragToEndpoint(maximum: false)
         verifyRate("0.25x", duration: "00:24.0")
-        slider.adjust(toNormalizedSliderPosition: 1)
+        dragToEndpoint(maximum: true)
         verifyRate("4.00x", duration: "00:01.5")
         let reset = app.buttons["Reset speed"]
         if !reset.isHittable { app.collectionViews.firstMatch.swipeUp() }
