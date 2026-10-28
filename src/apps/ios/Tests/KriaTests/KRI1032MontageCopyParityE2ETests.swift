@@ -144,6 +144,9 @@ import KriaMediaEngine
         // As the server answers after a Save: a new generation, its phone render not made yet.
         fake.authoritativeVariant?["render_generation_id"] = .string("next")
         fake.authoritativeVariant?["render_status"] = .string("awaiting_device")
+        let priorAudioStatus = try XCTUnwrap(fake.deviceRenderResponse)
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "awaiting_device", request: priorAudioStatus.request,
+                                                               baseGeneration: "next")
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
         let rebuilt = await waitUntil { session.canDownloadCurrentVideo }
@@ -183,6 +186,17 @@ import KriaMediaEngine
             authoritativeVariant: variant
         )
         fake.sourcePoolResult = NativeEditorSourcePool(clips: pool, baseGeneration: Self.generation)
+        // A cold device preview reads the pinned recipe's audio contract even with no bed.
+        // Supply that transport response; a missing mock is an unsupported API, not an export failure.
+        let audioRequest = DeviceRenderRequest(
+            identity: DeviceRenderIdentity(jobID: jobID, variantID: "guided_story", recipeRevision: 1,
+                                           recipeDigest: String(repeating: "a", count: 64)),
+            recipe: KriaMediaEngine.EditRecipe(
+                assets: [MediaAsset(id: "source", relativePath: "source")],
+                tracks: [TimelineTrack(id: "video", kind: .video,
+                                       clips: [TimelineClip(id: "clip", sourceAssetID: "source", sourceDuration: 2)])]))
+        fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "published", request: audioRequest,
+                                                               publishedGeneration: Self.generation)
         let session = NativeEditorSession()
         await session.load(api: fake, threadID: threadID)
         XCTAssertEqual(session.timelineClips.count, fixture.slots.count)
