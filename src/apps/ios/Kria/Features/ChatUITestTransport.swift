@@ -395,8 +395,23 @@ final class CreationChatFixture: @unchecked Sendable {
                     "ai_timeline": ["slots": [["slot_id": "clip-0", "clip_index": 0, "in_s": 0, "duration_s": 1, "source_duration_s": 1]]]
                 ]]])
             }
-            if parts.last == "timeline" {
-                return response(["base_generation": "fixture-generation", "clips": [["clip_index": 0, "native_source": NSNull()]]])
+            if parts.last == "timeline", let projectID = UUID(uuidString: parts[1]),
+               let source = SongTimelineFixture.clipURL(mediaID: "fixture-clip", force: true) {
+                do {
+                    let project = BackgroundUploadCoordinator.projectDirectory(projectID)
+                    try project.createIfNeeded()
+                    let target = project.originals.appendingPathComponent("sync-recovery-fixture.mp4")
+                    if !FileManager.default.fileExists(atPath: target.path) { try FileManager.default.copyItem(at: source, to: target) }
+                    let fingerprint = try SHA256Fingerprinter().fingerprint(file: target)
+                    let asset = MediaAsset(id: "fixture-clip", relativePath: "originals/sync-recovery-fixture.mp4",
+                                           fingerprint: fingerprint, duration: 8, naturalSize: MediaSize(width: 180, height: 320), frameRate: 10)
+                    try SourceAssetStore(project: project).bind(mediaID: "fixture-clip", original: asset)
+                    return response(["base_generation": "fixture-generation", "clips": [["clip_index": 0, "native_source": [
+                        "media_id": "fixture-clip", "source_url": NSNull(), "local_required": true,
+                        "original": ["kind": "video", "sha256": fingerprint.hex, "byte_count": fingerprint.byteCount,
+                                     "duration_s": 8, "width": 180, "height": 320, "orientation_degrees": 0, "has_audio": false]
+                    ]]]])
+                } catch { return response(["detail": "Fixture original could not be prepared"], status: 500) }
             }
         }
         if parts.first == "plan-items", parts.count >= 2, ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_FIXTURE"] == "1" {
@@ -1312,6 +1327,9 @@ final class CreationChatFixture: @unchecked Sendable {
         case nil:
             let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])])
             var status: [String: Any] = ["phase": "awaiting_device", "request": encoded(DeviceRenderRequest(identity: identity(revision), recipe: recipe))]
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] == "1" {
+                status["base_generation"] = "fixture-generation"
+            }
             if scenario != "ready", revision == 1 {
                 status["phase"] = "needs_attention"
                 status["reason_code"] = scenario

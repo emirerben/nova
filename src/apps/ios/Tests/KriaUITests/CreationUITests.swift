@@ -1955,7 +1955,6 @@ final class CreationUITests: XCTestCase {
         let feed = app.otherElements["plan-feed"]
         XCTAssertTrue(feed.waitForExistence(timeout: 30))
         XCTAssertFalse(app.descendants(matching: .any)["device-render-status"].firstMatch.exists, "the feed hosts the device build")
-        let title = app.staticTexts["plan-feed.title"]
         attach(app, "plan-feed-device-start")
 
         // Work order the device follows. A section may only show decided once every earlier one has.
@@ -1975,7 +1974,7 @@ final class CreationUITests: XCTestCase {
                 XCTAssertFalse(decided[firstOpen...].contains(true), "sections advance in order: \(decided)")
                 if firstOpen > 0 { sawPartial = true }
             }
-            return title.label == "Plan ready · 7 of 7 decided"
+            return false
         }
         XCTAssertTrue(finished, "the completed build hands over to playback")
         XCTAssertTrue(sawPartial, "sections decided progressively, not all at once")
@@ -1999,6 +1998,12 @@ final class CreationUITests: XCTestCase {
         editor.tap()
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-load-failed"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.exists)
+        let playback = app.buttons["native-editor-play-pause"]
+        playback.tap()
+        XCTAssertTrue(eventually(timeout: 10) { playback.label == "Pause preview" }, app.debugDescription)
+        XCTAssertFalse(app.buttons["native-editor-retry-source-preview"].exists)
         attach(app, "local-video-editor-open")
     }
 

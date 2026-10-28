@@ -90,6 +90,9 @@ local-video regression, the initial device-build journey, and 39 existing transi
 recovery tests. The stronger fixture check also opened the editor preview through
 its normal loader while the video was awaiting publication. The first attempt at
 that stronger check exposed a missing fixture API response, which was added.
+Screenshot review then caught a preview fallback despite a passing screen-presence
+assertion. The fixture now supplies its device generation and a real local original.
+The regression also requires active preview playback and no fallback Retry button.
 The full media-engine suite ran 368 tests with no failures and seven skips.
 These are offline coordinator and simulator fixture checks. The
 fixture replaces encoding and network transport. They do not establish a TestFlight
