@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.1.0] - 2026-10-28
+
+### Changed
+- feat(ios): caption animation tab for one line or all captions (KRI-1007) (#1906) <!-- release-pr: 1906 -->
+
 ## [0.82.0.0] - 2026-10-28
 
 ### Added
