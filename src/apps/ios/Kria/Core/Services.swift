@@ -1168,7 +1168,11 @@ enum KriaClientProtocolContract {
     /// 22: renders and answers a camera-roll idea's `open_questions`. The server holds "Use this idea"
     /// behind them (409 `story_open_questions`) and sends the list only from this protocol; older builds
     /// see no questions and are not gated.
-    static let version = 22
+    /// 23 (KRI-1007): round-trips caption `animation_phases` (a `caption_cues` row, a `caption_cue` text row and
+    /// `caption_meta`) and draws them in preview. The server advertises `editor_capabilities.caption_animation`
+    /// only to this protocol and answers 426 `client_update_required` to an older build whose Save carries
+    /// caption phases or replaces captions that hold them, since it would drop them.
+    static let version = 23
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2635,7 +2639,7 @@ extension DraftSnapshot {
             let directKeys = [
                 "text_elements", "caption_cues", "caption_meta", "captions_enabled", "caption_size_px",
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled", "caption_editor_style",
-                "caption_margin_v", "caption_y_frac",
+                "caption_margin_v", "caption_y_frac", "caption_animation_phases",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment",
@@ -2650,6 +2654,11 @@ extension DraftSnapshot {
             }
             for key in directKeys where authoritativeVariant[key] != nil && !isIntentionalEmpty {
                 sections[key] = authoritativeVariant[key]
+            }
+            // A cleared all-captions animation leaves the key off the variant (KRI-1007), so an older draft copy
+            // must not bring it back.
+            if !isIntentionalEmpty, authoritativeVariant["caption_animation_phases"] == nil {
+                sections["caption_animation_phases"] = nil
             }
             if !isIntentionalEmpty, sections["music_window"] == nil, let start = authoritativeVariant["music_preview_start_s"] {
                 sections["music_window"] = .object(["start_s": start, "alignment": .string("preserve_cuts")])

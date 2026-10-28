@@ -5610,6 +5610,107 @@ struct NativeEditorTemporaryVideo {
     func setCaptionShadowEnabled(_ enabled: Bool) { setCaptionMeta(key: "shadow_enabled", value: .bool(enabled)) }
     func setCaptionPositionY(_ y: Double?) { setCaptionMeta(key: "y_frac", value: y.map { .number(min(max(0.30, $0), 0.90)) }) }
 
+    // MARK: - KRI-1007 caption animation
+
+    /// What an Animation-tab change applies to: every caption, or one line of Edit captions.
+    enum CaptionAnimationScope: Equatable { case all, line(String) }
+
+    /// `editor_capabilities.caption_animation`: absent where the server or this variant cannot keep caption phases.
+    var offersCaptionAnimation: Bool { canEdit("caption_animation") }
+
+    func canEditCaptionAnimation(_ scope: CaptionAnimationScope) -> Bool {
+        guard offersCaptionAnimation, canEditCaptions else { return false }
+        switch scope {
+        case .all: return canEditCaptionMeta && (captionAnimationOverrideIDs.isEmpty || canEditCaptionLines)
+        case .line(let id): return canEditCaptionLines && document.captionUnits.contains { $0.id == id }
+        }
+    }
+
+    /// The phases the picker shows as selected, in the renderer's order: the line's own, else the
+    /// all-captions default, else today's look (cue captions pop in; a word highlight and text-lane
+    /// captions hold still).
+    func captionAnimationPhases(_ scope: CaptionAnimationScope) -> [String: JSONValue] {
+        let meta = document.captionMeta
+        let sweep = meta["style"] == .string("word") || meta["appearance"]?.objectValue?["highlight_spoken_word"] == .bool(true)
+        let today: [String: JSONValue] = ["entrance": .string(document.isCueNative && !sweep ? "pop" : "none"),
+                                          "exit": .string("none"), "loop": .string("none"), "speed": .number(1)]
+        let fallback = meta["animation_phases"]?.objectValue ?? today
+        guard case .line(let id) = scope else { return fallback }
+        if document.isCueNative {
+            return document.captionCues.first { $0.id == id }?.raw["animation_phases"]?.objectValue ?? fallback
+        }
+        let line = captionLineRowIDs(containing: id)
+        return document.textElements.lazy.filter { line.contains($0.id) }
+            .compactMap { $0.raw["animation_phases"]?.objectValue }.first ?? fallback
+    }
+
+    func setCaptionPhase(_ scope: CaptionAnimationScope, phase: String, effect: String) {
+        guard ["entrance", "exit", "loop"].contains(phase),
+              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : ["none", "fade", "pop", "slide", "typewriter"]).contains(effect) else { return }
+        var phases = captionAnimationPhases(scope)
+        phases[phase] = .string(effect)
+        writeCaptionPhases(scope, phases)
+    }
+
+    func setCaptionAnimationSpeed(_ scope: CaptionAnimationScope, speed: Double) {
+        guard speed.isFinite else { return }
+        var phases = captionAnimationPhases(scope)
+        phases["speed"] = .number(min(3, max(0.25, speed)))
+        writeCaptionPhases(scope, phases)
+    }
+
+    /// Lines with phases of their own. All captions removes them, so every line truly matches.
+    private var captionAnimationOverrideIDs: [String] {
+        document.isCueNative
+            ? document.captionCues.filter { $0.raw["animation_phases"] != nil }.map(\.id)
+            : document.textElements.filter { $0.isCaption && $0.raw["animation_phases"] != nil }.map(\.id)
+    }
+
+    /// The rows drawn as one line with `id` (a text-lane line spans several word rows); the row alone otherwise.
+    private func captionLineRowIDs(containing id: String) -> Set<String> {
+        let rows = document.textElements
+        let line = NativeEditorRenderCompiler.captionLineGroups(rows, captionMeta: document.captionMeta)
+            .first { $0.contains { rows[$0].id == id } }
+        return Set(line?.map { rows[$0].id } ?? [id])
+    }
+
+    private func writeCaptionPhases(_ scope: CaptionAnimationScope, _ phases: [String: JSONValue]) {
+        guard canEditCaptionAnimation(scope) else { return }
+        let value = JSONValue.object(phases)
+        let cueNative = document.isCueNative
+        switch scope {
+        case .all:
+            var sections: Set<EditorSection> = [.captionMeta]
+            if !captionAnimationOverrideIDs.isEmpty { sections.insert(cueNative ? .captions : .text) }
+            transactDocument(sections: sections) { doc in
+                doc.captionMeta["animation_phases"] = value
+                if cueNative {
+                    for index in doc.captionCues.indices { doc.captionCues[index].raw.removeValue(forKey: "animation_phases") }
+                } else {
+                    for index in doc.textElements.indices where doc.textElements[index].isCaption {
+                        doc.textElements[index].raw.removeValue(forKey: "animation_phases")
+                    }
+                }
+            }
+        case .line(let id) where cueNative:
+            guard let index = document.captionCues.firstIndex(where: { $0.id == id }) else { return }
+            transactDocument(section: .captions) { $0.captionCues[index].raw["animation_phases"] = value }
+        case .line(let id):
+            // The line's first row with phases governs the line (`_group_phases`), so this row keeps the
+            // only phases on its line.
+            let line = captionLineRowIDs(containing: id)
+            transactDocument(section: .text) { doc in
+                for index in doc.textElements.indices where line.contains(doc.textElements[index].id) {
+                    if doc.textElements[index].id == id {
+                        doc.textElements[index].raw["animation_phases"] = value
+                    } else {
+                        doc.textElements[index].raw.removeValue(forKey: "animation_phases")
+                    }
+                }
+            }
+        }
+    }
+
     func updateCaptionCue(id: String, text: String? = nil, startS: Double? = nil, endS: Double? = nil) {
         guard canEditSection(.captions) else { return }
         if let index = document.textElements.firstIndex(where: { $0.id == id && $0.isCaption }) {
