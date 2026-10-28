@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "evidence_level": "native_output_simulator",
+  "platform": "iPhone 17 Simulator, iOS 26.5",
+  "native_source_base": "2f0b53d5e3d510c16c007fcf9064abee240e0b04",
+  "backend_integrated_base": "19aa3b3cf40af8285c9305cd4af30919134afc10",
+  "source_note": "The main integration changes no native source. Regenerated recipes differ only in required_capabilities array order, which decodes as a set. All other recipe fields match.",
+  "native_test": {
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "case_count": 4,
+    "phase_count": 8
+  },
+  "cases": [
+    {
+      "boxes": [
+        [
+          0.11033194758097337,
+          0.03356273961950218,
+          0.8897788635253907,
+          0.2858960729528356
+        ],
+        [
+          0.08241144841512044,
+          0.12356273961950232,
+          0.9197576786438624,
+          0.3758257025824652
+        ]
+      ],
+      "case": "landscape-en",
+      "layers": 2,
+      "overlap": true,
+      "phase": "before"
+    },
+    {
+      "boxes": [
+        [
+          0.11033194758097337,
+          0.03356273961950218,
+          0.8897788635253907,
+          0.2858960729528356
+        ],
+        [
+          0.08241144841512044,
+          0.4298217396195022,
+          0.9197576786438624,
+          0.6820847025824652
+        ]
+      ],
+      "case": "landscape-en",
+      "layers": 2,
+      "overlap": false,
+      "phase": "after"
+    },
+    {
+      "boxes": [
+        [
+          0.12530259857177728,
+          0.03356273961950218,
+          0.875869293808937,
+          0.3020812581380208
+        ],
+        [
+          0.10323420766194663,
+          0.12356273961950234,
+          0.8979271029233933,
+          0.3925034803602431
+        ]
+      ],
+      "case": "landscape-tr",
+      "layers": 2,
+      "overlap": true,
+      "phase": "before"
+    },
+    {
+      "boxes": [
+        [
+          0.12530259857177728,
+          0.03356273961950218,
+          0.875869293808937,
+          0.3020812581380208
+        ],
+        [
+          0.10323420766194663,
+          0.4298217396195023,
+          0.8979271029233933,
+          0.698762480360243
+        ]
+      ],
+      "case": "landscape-tr",
+      "layers": 2,
+      "overlap": false,
+      "phase": "after"
+    },
+    {
+      "boxes": [
+        [
+          0.08952723614728003,
+          0.061014457702636804,
+          0.9144695556358053,
+          0.25868112436930346
+        ],
+        [
+          0.08893932065610533,
+          0.12314987436930333,
+          0.9112918179547345,
+          0.3856498743693033
+        ]
+      ],
+      "case": "portrait-en",
+      "layers": 2,
+      "overlap": true,
+      "phase": "before"
+    },
+    {
+      "boxes": [
+        [
+          0.08952723614728003,
+          0.061014457702636804,
+          0.9144695556358053,
+          0.25868112436930346
+        ],
+        [
+          0.08893932065610533,
+          0.3448898743693033,
+          0.9112918179547345,
+          0.6073898743693034
+        ]
+      ],
+      "case": "portrait-en",
+      "layers": 2,
+      "overlap": false,
+      "phase": "after"
+    },
+    {
+      "boxes": [
+        [
+          0.1113520263671875,
+          0.03314987436930347,
+          0.8890206975159822,
+          0.29564987436930334
+        ],
+        [
+          0.10049050948531535,
+          0.12314987436930333,
+          0.8988194384398284,
+          0.3851946660359702
+        ]
+      ],
+      "case": "portrait-tr",
+      "layers": 2,
+      "overlap": true,
+      "phase": "before"
+    },
+    {
+      "boxes": [
+        [
+          0.1113520263671875,
+          0.03314987436930347,
+          0.8890206975159822,
+          0.29564987436930334
+        ],
+        [
+          0.10049050948531535,
+          0.37275387436930346,
+          0.8988194384398284,
+          0.6347986660359701
+        ]
+      ],
+      "case": "portrait-tr",
+      "layers": 2,
+      "overlap": false,
+      "phase": "after"
+    }
+  ],
+  "inputs": [
+    {
+      "case": "cases",
+      "consumed_sha256": "351c30d3e25abd8e3309d217cfc13ad1c102dae8075b6b7f78d807b2024a771e",
+      "regenerated_sha256": "351c30d3e25abd8e3309d217cfc13ad1c102dae8075b6b7f78d807b2024a771e",
+      "semantic_match": true
+    },
+    {
+      "case": "landscape-en",
+      "consumed_sha256": "57aa443dd79af4547affed126b6984f7e89bfd526234aa2dd6778b89a810fa5a",
+      "regenerated_sha256": "272ca8f005a2e6d9816757ab46b23a2b851c37a9ad8d1cadf9bc9e1dc14f878f",
+      "semantic_match": true
+    },
+    {
+      "case": "landscape-tr",
+      "consumed_sha256": "551f9f465174df76fc8c73f422d8edc8407ed3c1e96272eed0634e0c5015fa61",
+      "regenerated_sha256": "3b52277a6c56c20ef87848a4281ce37dc24a582f85e0290d2270c6a455b66ca7",
+      "semantic_match": true
+    },
+    {
+      "case": "portrait-en",
+      "consumed_sha256": "5f647e1b2bd6fc65715eae782ceb598e20cd69744d0d84d542a9bd1546392f54",
+      "regenerated_sha256": "cd867b6bf5f9db64579583e05ed8760cfacb4b0fb3baf5a1c8cf58908efcb280",
+      "semantic_match": true
+    },
+    {
+      "case": "portrait-tr",
+      "consumed_sha256": "af67ebb7cf939a46628dafd5bdaafa434ea88b72d79ff2399635dce16f42f22c",
+      "regenerated_sha256": "ee9edfdbec8d1714d89ba55272bd6980c5a88e51dcfd9450e1b89aa0374ac962",
+      "semantic_match": true
+    }
+  ],
+  "render_images": [
+    {
+      "file": "landscape-en-after.png",
+      "sha256": "3de88e9cc7ee63854a759f4365ee51c2922e50c03c98c406b1cf8e048f971984"
+    },
+    {
+      "file": "landscape-en-before.png",
+      "sha256": "0326b966afabcf88d354a9a04a27a675b277b5a930cbe5403b7154505378b4ea"
+    },
+    {
+      "file": "landscape-tr-after.png",
+      "sha256": "83c8ece406f4116b7d9e21614e0a060c5fc084ebe35f84f214eee716cf3f6d4f"
+    },
+    {
+      "file": "landscape-tr-before.png",
+      "sha256": "c7bc729dc25fbbda54a1a844e75475ea786c56ccfd483e15140c2f1f8a4fec45"
+    },
+    {
+      "file": "portrait-en-after.png",
+      "sha256": "7b10ca74e1cbe00df5184979b31471c99948069652464fdce6b1ca31b3e7a930"
+    },
+    {
+      "file": "portrait-en-before.png",
+      "sha256": "bba185ce6af0eb02c2cf151265b328a4c7ae9e760f6bd4b50efcf2575039fe1f"
+    },
+    {
+      "file": "portrait-tr-after.png",
+      "sha256": "4077fb3b1ff7589b3a13a04a0feb1d97e52c6e3fa84596bea3b6974b3526e943"
+    },
+    {
+      "file": "portrait-tr-before.png",
+      "sha256": "6a9f6c249483b864eddb3b9439da89821bb7754376ed00c5cf4955c619d2c4f2"
+    }
+  ],
+  "renderer_gate": {
+    "overall": "PASS",
+    "overlays": 138,
+    "warnings": 0,
+    "unexpected_failures": 0,
+    "skipped_overlays": 0,
+    "ocr_available": false,
+    "report_sha256": "c2de1ba10719443536a94ae2787425a0019d38d4493cb271c8868593910e5b76"
+  },
+  "controls": {
+    "wrong_literal": {
+      "rejected": true,
+      "reason": null
+    },
+    "no_room": {
+      "rejected": true,
+      "decline_reason": "needs_choice",
+      "field_path": "text_elements"
+    },
+    "input_unchanged": true
+  },
+  "limitations": [
+    "Synthetic text-only native compositor frames, not a new Cunda user render or Photos save.",
+    "Main installed app invalidTimeline preview error remains unresolved.",
+    "No original 28.804-second timing-preservation claim."
+  ],
+  "consumed_source_sha256": {
+    "src/apps/api/app/pipeline/phone_plan_repair.py": "1012ffc2632bba59d2fbefdb651520617b5f6819926fa5372383dfeebb1883ef",
+    "src/apps/api/app/routes/generative_jobs.py": "ada4d13f7794aff7e89a03f9c16430ed3437c89d59f76da1eeb41f01e62e4a5d",
+    "src/apps/api/tests/pipeline/test_contract_text_layout.py": "9feee8fc197314bf51805cb8c96925b487b462efbdcb14693340ca2ccb3f03e2",
+    "src/apps/api/tests/routes/test_contract_text_initial_projection.py": "9f9cb83b0eade77a05b8ad81078b1315b167b83854976c684bbc7d40018b010f",
+    "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/NativeTextLayerStore.swift": "85ae5681dea1e3ab2212f819842b5446a25256f9bb2d710e6bb83188d7e58529",
+    "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/RecipeVideoCompositor.swift": "efceb687bfab7bab86101dbd17a3a3d067b4cd44b3949b47c8e233342ec18511"
+  }
+}
