@@ -8882,6 +8882,7 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
     """Read the active revision or derive a non-persisted initial projection."""
 
     assembly = job.assembly_plan or {}
+    from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD
     from app.services.phone_editor_sources import merge_editor_sources
 
     def with_editor_sources(revision: dict) -> dict:
@@ -8891,7 +8892,10 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         return normalize_guided_editor_revision({**revision, "sources": sources, "state_hash": ""})
 
     guided_snapshot = assembly.get("guided_edit")
-    execution_plan = assembly.get("guided_story_execution_plan")
+    # Match the worker's repaired render while leaving the approval immutable.
+    execution_plan = variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly.get(
+        "guided_story_execution_plan"
+    )
     if not isinstance(guided_snapshot, dict) or not isinstance(execution_plan, dict):
         return None
     persisted = variant.get("guided_edit_revision")
