@@ -7,6 +7,8 @@ struct NativeEditorView: View {
     let onBack: () -> Void
     private let conversation: (() -> AnyView)?
     private let conversationAcceptedID: UUID?
+    /// Changes when the conversation asks to close its sheet (its "Open editor" while this editor is open).
+    private let conversationCloseID: UUID?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -77,6 +79,7 @@ struct NativeEditorView: View {
         libraryJobID: UUID? = nil,
         sharedSession: NativeEditorSession? = nil,
         conversationAcceptedID: UUID? = nil,
+        conversationCloseID: UUID? = nil,
         conversation: (() -> AnyView)? = nil,
         onBack: @escaping () -> Void
     ) {
@@ -85,6 +88,7 @@ struct NativeEditorView: View {
         self.onBack = onBack
         self.conversation = conversation
         self.conversationAcceptedID = conversationAcceptedID
+        self.conversationCloseID = conversationCloseID
         _session = StateObject(
             wrappedValue: sharedSession ?? initialDraft.map {
                 NativeEditorSession(
@@ -210,6 +214,8 @@ struct NativeEditorView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
+            // The sheet's "Open editor" lands back here.
+            .onChange(of: conversationCloseID) { _, _ in showsConversation = false }
             // Sending from the conversation sheet must not dismiss it (only the
             // creator closes it); `conversationAcceptedID` is intentionally unused here.
             // A re-plan can finish as a NEW job while this editor is open: show it.

@@ -14,6 +14,7 @@ struct SlidePostWorkspaceView: View {
     let capabilitiesLoaded: Bool
     private let conversation: (() -> AnyView)?
     private let conversationAcceptedID: UUID?
+    private let conversationCloseID: UUID?
     let onBack: (() -> Void)?
     let onAddMedia: (() -> Void)?
 
@@ -68,6 +69,7 @@ struct SlidePostWorkspaceView: View {
         capabilitiesLoaded: Bool = false,
         conversation: (() -> AnyView)? = nil,
         conversationAcceptedID: UUID? = nil,
+        conversationCloseID: UUID? = nil,
         onBack: (() -> Void)? = nil,
         onAddMedia: (() -> Void)? = nil,
         session: SlidePostSession? = nil
@@ -79,6 +81,7 @@ struct SlidePostWorkspaceView: View {
         self.capabilitiesLoaded = capabilitiesLoaded
         self.conversation = conversation
         self.conversationAcceptedID = conversationAcceptedID
+        self.conversationCloseID = conversationCloseID
         self.onBack = onBack
         self.onAddMedia = onAddMedia
     }
@@ -188,6 +191,7 @@ struct SlidePostWorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardUp = true }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardUp = false }
         .onChange(of: conversationAcceptedID) { _, _ in showsConversation = false }
+        .onChange(of: conversationCloseID) { _, _ in showsConversation = false }
         .onChange(of: videoPlaybackAllowed, initial: true) { _, allowed in videoPlayback.setAllowed(allowed) }
         .onChange(of: mode) { _, next in if next != .browse { session.selectedStickerID = nil } }
         // Media that finishes importing joins the post by itself; it waits out saves and AI edits.

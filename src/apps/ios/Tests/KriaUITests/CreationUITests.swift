@@ -27,6 +27,39 @@ final class CreationUITests: XCTestCase {
         }
     }
 
+    /// The editor's Kria sheet shows the same chat, so its ready card offers "Open editor" while the
+    /// editor is already open underneath. Tapping it must close the sheet and leave the creator in the
+    /// editor, not do nothing.
+    func testOpenEditorInsideTheEditorsKriaSheetReturnsToTheEditor() {
+        // The perf fixture's seeded chats end on a finished render the editor can really open.
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let chatOpenEditor = app.buttons["Open editor"]
+        XCTAssertTrue(chatOpenEditor.waitForExistence(timeout: 30))
+        chatOpenEditor.tap()
+
+        let kria = app.buttons["native-editor-conversation"]
+        XCTAssertTrue(kria.waitForExistence(timeout: 15), "the editor opened from the chat's ready card")
+        kria.tap()
+        let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        let sheetOpenEditor = sheet.buttons["Open editor"]
+        XCTAssertTrue(sheetOpenEditor.waitForExistence(timeout: 10), "the sheet's ready card offers Open editor")
+        XCTAssertTrue(sheetOpenEditor.isHittable)
+        sheetOpenEditor.tap()
+
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: sheet)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "Open editor closes the Kria sheet")
+        XCTAssertTrue(kria.waitForExistence(timeout: 3))
+        XCTAssertTrue(kria.isHittable, "the creator is back in the editor")
+        app.terminate()
+    }
+
     func testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat-bubbles"]
