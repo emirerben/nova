@@ -1259,6 +1259,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
+        if let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile) { return rendered }
         switch sourcePreviewState {
         case .ready:
             guard sourcePreviewSettled, let sourcePreview,
@@ -1280,6 +1281,26 @@ struct NativeEditorTemporaryVideo {
             return .server(target)
         }
         throw NativeEditorVideoDownloadError.unavailable
+    }
+
+    /// KRI-1032: with no edit on top of the finished render, the creator's saved or shared copy IS
+    /// that render: the file the phone made (or its upload), never a recompile of the editor
+    /// document. The recompile only approximates the render: it lost the clip-sound mutes, the
+    /// bars and the label placement the render had, and "Done: only the Recoleta clip keeps its
+    /// sound" described a video the creator never got. A saved edit makes the render stale
+    /// (`acknowledge`) until its re-render lands, and the editable preview is the copy then.
+    private func finishedRenderRoute(deviceLocalFile: URL?) -> NativeEditorVideoDownloadRoute? {
+        guard let finishedRenderURL, finishedRenderIsCurrent, !hasUnsavedChanges, chatStagedDocument == nil,
+              !isSaving, pendingPreviewGeneration == nil, let target = videoDownloadTarget else { return nil }
+        if let deviceLocalFile, let deviceOutputURL,
+           deviceLocalFile.standardizedFileURL == deviceOutputURL.standardizedFileURL {
+            return .localFile(deviceLocalFile)
+        }
+        // This phone's own render file stands in for the upload (`showDeviceOutput`).
+        if finishedRenderURL.isFileURL {
+            return FileManager.default.fileExists(atPath: finishedRenderURL.path) ? .localFile(finishedRenderURL) : nil
+        }
+        return .server(target)
     }
 
     /// Exports the exact composition on screen. On device this competes with
