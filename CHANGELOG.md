@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.189.0] - 2026-10-28
+
+### Changed
+- fix(ios): preserve completed videos across app updates (#1907) <!-- release-pr: 1907 -->
+
 ## [0.81.188.0] - 2026-10-28
 
 ### Changed
