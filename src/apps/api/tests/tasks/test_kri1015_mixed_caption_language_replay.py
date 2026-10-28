@@ -48,6 +48,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 
 import app.tasks.generative_build as gb
@@ -195,6 +196,12 @@ def _preflight_snapshot(*, storage_path: str) -> dict:
             words=SPOKEN_WORDS, language=SPOKEN.language, low_confidence=False
         ),
         silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=[], status="ok"),
+        # This replay owns approved removals, not the private waveform. Supply decoded
+        # audible PCM so the real guard runs; forced removals remain creator-exempt.
+        # A nonexistent preflight.wav must not silently turn this into a no-cut replay.
+        pcm_loader=lambda _path: (
+            0.2 * np.sin(2 * np.pi * 440 * np.arange(int(DURATION_S * 16_000)) / 16_000)
+        ).astype(np.float32),
     )
     return {
         "schema_version": 1,
