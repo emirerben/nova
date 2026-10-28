@@ -1111,6 +1111,105 @@ def test_turning_hidden_lyrics_on_draws_them_and_keeps_the_creators_edits_across
     assert _drawn_lyrics(job)
 
 
+# --- The editor READ the iPhone loads (status variant + timeline), hidden vs asked ---
+#
+# Failure modes written first:
+#   (f) the status variant drops the lyric rows or their caption_cue tag, so the phone's
+#       Edit captions list is empty and Show captions has nothing to reveal;
+#   (g) `caption_meta` loses `enabled: false` on read, so the phone draws lyrics unasked;
+#   (h) the device clamp closes caption_cues / caption_meta / caption_editor_style, so the
+#       Show captions toggle is disabled on a guided phone montage;
+#   (i) a row carries its own `enabled: false` / `removed`, so turning captions on in the
+#       panel still draws nothing (the phone compiler skips such rows per row);
+#   (j) a no-op re-read changes the revision hash or writes to the job (reads as an edit);
+#   (k) a ready render without the hidden rows' pixels fails the receipt check;
+#   (l) an asked-for track grows a `hidden` key (its approval hash would change).
+
+
+def _editor_read(job):
+    from app.routes import generative_jobs as gj
+
+    before = copy.deepcopy(job.assembly_plan)
+    (variant,) = gj._variants_for_response(job)
+    raw = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, raw)
+    timeline = gj.dispatch_get_timeline(
+        job, "guided_story", sign_url=lambda path, _ttl: f"https://signed.test/{path}"
+    )
+    assert job.assembly_plan == before, "reading the editor document wrote to the job"
+    return variant, revision, timeline
+
+
+def _receipt_without_hidden_pixels(plan):
+    from tests.pipeline.test_guided_story import _ready_result
+
+    result = _ready_result(plan)
+    drawn = [
+        row["id"]
+        for row in plan["text_elements"]
+        if row["source_params"].get("source") != "caption_cue"
+    ]
+    result["render_receipt"].update(
+        expected_text_ids=drawn,
+        actual_text_ids=drawn,
+        text_stages=[{"element_id": element_id, "visible": True} for element_id in drawn],
+    )
+    return result
+
+
+@pytest.mark.parametrize("asked", [False, True])
+def test_the_phone_editor_read_offers_hidden_lyrics_behind_the_captions_toggle(
+    harness, composer, monkeypatch, asked
+):
+    from app.pipeline.guided_story import GuidedStoryError, validate_ready_result
+    from app.routes import generative_jobs as gj
+
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: f"https://signed.test/{path}")
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=_lyrics_analysis(),
+        creator_request=CAPTION_REQUEST
+        if asked
+        else "Full creator request (chronological):\nMake a fast montage",
+    )
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    track = job.assembly_plan["guided_edit"]["approved_proposal"]["song_captions"]
+    assert ("hidden" in track) is (not asked)
+
+    variant, revision, timeline = _editor_read(job)
+
+    lyrics = [row for row in variant["text_elements"] if row["id"].startswith("song-caption-")]
+    assert lyrics
+    assert all(row["source_params"]["source"] == "caption_cue" for row in lyrics)
+    assert not any(row.get("enabled") is False or row.get("removed") for row in lyrics)
+    meta = variant["caption_meta"]
+    assert meta["style"] == "sentence"
+    assert meta.get("enabled") is (False if not asked else None)
+    assert revision["caption_meta"] == meta
+    capabilities = variant["editor_capabilities"]
+    assert capabilities["caption_cues"]["editable"] is True, capabilities["caption_cues"]
+    assert capabilities["caption_meta"]["editable"] is True, capabilities["caption_meta"]
+    assert capabilities["caption_editor_style"] is True
+    assert capabilities["text_elements"] is True
+
+    again, revision_again, timeline_again = _editor_read(job)
+    assert revision_again["state_hash"] == revision["state_hash"]
+    assert timeline_again["revision_hash"] == timeline["revision_hash"]
+    assert timeline["has_user_edits"] is False
+    assert again["render_status"] == variant["render_status"]
+    assert again["caption_meta"] == meta
+
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    result = _receipt_without_hidden_pixels(plan)
+    if asked:
+        with pytest.raises(GuidedStoryError):
+            validate_ready_result(plan, result, job_id="job-1", verify_storage=False)
+    else:
+        assert validate_ready_result(plan, result, job_id="job-1", verify_storage=False)
+
+
 @pytest.mark.parametrize("song_analysis", [analysis, lambda: _late_lyrics_analysis()])
 def test_a_song_without_words_to_caption_never_declines_a_montage_that_did_not_ask(
     harness, composer, song_analysis
