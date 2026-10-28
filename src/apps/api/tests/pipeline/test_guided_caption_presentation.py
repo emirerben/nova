@@ -153,14 +153,12 @@ def test_word_display_animates_every_word_and_sentence_display_animates_the_line
         ]
 
     for highlight in (False, True):
-        word = edges(
-            {"style": "word", "animation_phases": pop_fade,
-             "appearance": {"highlight_spoken_word": highlight}}
-        )
+        appearance = {"highlight_spoken_word": highlight}
+        word = edges({"style": "word", "animation_phases": pop_fade, "appearance": appearance})
         assert word == [("we", "pop", "fade"), ("go", "pop", "fade"), ("home.", "pop", "fade")]
     line = edges({"style": "sentence", "animation_phases": pop_fade})
     assert line == [("we go home.", "pop", "none"), ("we go home.", "none", "fade")]
     unset = {"style": "word", "appearance": {"highlight_spoken_word": False}}
-    assert project_guided_caption_overlays(deepcopy(rows), unset) == project_guided_caption_overlays(
-        deepcopy(rows), {**unset, "animation_phases": {"entrance": "none"}}
-    )
+    still = {**unset, "animation_phases": {"entrance": "none"}}
+    project = project_guided_caption_overlays
+    assert project(deepcopy(rows), unset) == project(deepcopy(rows), still)
