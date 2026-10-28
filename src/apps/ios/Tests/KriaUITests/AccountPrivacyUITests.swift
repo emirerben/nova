@@ -11,9 +11,60 @@ import XCTest
     }
 
     private func reveal(_ element: XCUIElement, app: XCUIApplication) {
-        for _ in 0..<12 where !element.isHittable { app.swipeUp() }
+        for _ in 0..<12 {
+            let save = app.buttons["text-preferences-save"]
+            let top = app.navigationBars.firstMatch.exists ? app.navigationBars.firstMatch.frame.maxY : app.frame.minY + 60
+            let bottom = save.exists ? save.frame.minY - 64 : app.frame.maxY - 50
+            if element.exists {
+                let fixedAction = ["text-preferences-save", "text-preferences-reload"].contains(element.identifier)
+                if element.isHittable && (fixedAction || (element.frame.minY >= top && element.frame.maxY <= bottom)) { break }
+                if element.frame.minY < top { app.swipeDown(); continue }
+            }
+            app.swipeUp()
+        }
         XCTAssertTrue(element.waitForExistence(timeout: 3))
         XCTAssertTrue(element.isHittable)
+    }
+
+    func testExcludedFontSurvivesPickerReturnSaveAndReopen() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let excluded = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Excluded fonts")).firstMatch
+        reveal(excluded, app: app); excluded.tap()
+        let fontChoice = app.buttons["Fraunces"]
+        reveal(fontChoice, app: app); fontChoice.tap()
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(excluded.label.contains("Fraunces"), "Returning from the picker must keep the excluded font")
+        let selected = XCTAttachment(screenshot: app.screenshot())
+        selected.name = "Excluded Fraunces before saving"; selected.lifetime = .keepAlways; add(selected)
+        let save = app.buttons["text-preferences-save"]
+        reveal(save, app: app); save.tap()
+        XCTAssertTrue(app.staticTexts["Saved for future videos."].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["account-text-preferences"].tap()
+        reveal(excluded, app: app); excluded.tap()
+        let fraunces = app.buttons["Fraunces"]
+        reveal(fraunces, app: app)
+        XCTAssertTrue(fraunces.isSelected, "Saved exclusion must survive reopening settings")
+        let persisted = XCTAttachment(screenshot: app.screenshot())
+        persisted.name = "Persisted Fraunces exclusion"; persisted.lifetime = .keepAlways; add(persisted)
+    }
+
+    func testTextPreferenceDraftSurvivesRoleSwitch() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let shadow = app.buttons["text-preference-shadow"]
+        reveal(shadow, app: app); shadow.tap(); app.buttons["Off"].tap()
+        let role = app.buttons["text-preference-role"]
+        for _ in 0..<5 where !role.isHittable { app.swipeDown() }
+        reveal(role, app: app); role.tap(); app.buttons["Title"].tap()
+        role.tap(); app.buttons["All Text"].tap()
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.label.contains("Off"), "Changing scope must retain the unsaved draft")
     }
 
     func testTextPreferencesSaveOffEffectsAndReopen() {
@@ -88,6 +139,7 @@ import XCTest
         XCTAssertEqual(learn.value as? String, "0")
         XCTAssertFalse(app.staticTexts["Based on 3 finished videos"].exists)
         let role = app.buttons["text-preference-role"]
+        for _ in 0..<6 where !role.isHittable { app.swipeDown() }
         reveal(role, app: app); role.tap(); app.buttons["Title"].tap()
         let placement = app.buttons["text-preference-placement"]
         reveal(placement, app: app)
