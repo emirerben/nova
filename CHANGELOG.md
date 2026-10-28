@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.172.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): the review counts only cleanup's own cuts and says what it heard (KRI-978) (#1872) <!-- release-pr: 1872 -->
+
 ## [0.81.171.0] - 2026-10-28
 
 ### Changed
