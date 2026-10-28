@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.182.0] - 2026-10-28
+
+### Fixed
+- fix(reframe): end the silent audio pad at the planned length (KRI-997) (#1887) <!-- release-pr: 1887 -->
+
 ## [0.81.181.0] - 2026-10-28
 
 ### Changed
