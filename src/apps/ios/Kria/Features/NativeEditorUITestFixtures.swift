@@ -11,6 +11,7 @@ enum NativeEditorUITestFixtures {
         case captionVisuals = "caption-visuals"
         case projectedCaptions = "projected-captions"
         case sourceText = "source-text"
+        case selectionBoundary = "selection-boundary"
         case gamedayAdd = "gameday-add"
         case twoText = "two-text"
         case boundary = "boundary"
@@ -99,6 +100,7 @@ enum NativeEditorUITestFixtures {
         case .captionVisuals: captionVisuals
         case .projectedCaptions: projectedCaptions
         case .sourceText: sourceText
+        case .selectionBoundary: selectionBoundary
         case .gamedayAdd: gamedayAdd
         case .twoText: twoText
         case .boundary: boundary
@@ -266,6 +268,16 @@ enum NativeEditorUITestFixtures {
         return draft(clips: clips, text: [layer], captions: false, music: false, sections: [
             "timeline_slots": slots(for: clips),
             "text_elements": .array([textRecord(layer, start: 0, end: 4, z: 1,
+                extra: ["font_family": .string("Inter"), "size_px": .number(72)])]),
+        ])
+    }()
+
+    static let selectionBoundary: EditorDraft = {
+        let clips = [clip(0, start: 0, duration: 2.001), clip(1, start: 2.001, duration: 2)]
+        let layer = text(100, content: "Selected text", x: 0.5, y: 0.4)
+        return draft(clips: clips, text: [layer], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array([textRecord(layer, start: 2.001, end: 4.001, z: 1,
                 extra: ["font_family": .string("Inter"), "size_px": .number(72)])]),
         ])
     }()
