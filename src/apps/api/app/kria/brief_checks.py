@@ -531,6 +531,9 @@ class PlanFacts:
     # draft, or a render that does not record one): nothing about framing is claimed.
     speaker_framing: str | None = None
     speaker_framing_reason: str | None = None
+    # How many sampled frames held the speaker's face (`speaker_framing.faces.used`);
+    # None = the receipt did not say.
+    speaker_framing_faces_found: int | None = None
     # KRI-628: whether a phone Talking render started at the line the creator quoted
     # (`variant["opening_cut"]`): "applied" or "not_applied", and why not. None = no
     # receipt (no such ask, a draft, or an older render): nothing is claimed.
@@ -4096,7 +4099,8 @@ _NAMED_CUT_STILL_IN = "Still in your video"
 _NAMED_CUT_AT_RENDER = (
     "I'll cut the line you named out of your take if I find it said once, and tell you after"
 )
-_CAPTIONS_WORD_BY_WORD = "words light up as you say them"
+# Neutral: the speaker may be someone the creator filmed (KRI-1008).
+_CAPTIONS_WORD_BY_WORD = "words light up as they're spoken"
 # KRI-541: what speech cleanup did on a finished render.
 _CLEANUP_DONE = "Speech cleanup cut the long pauses"
 _CLEANUP_NOTHING_TO_CUT = "Speech cleanup found no long pauses to cut"
@@ -4406,7 +4410,7 @@ _REASON_TR: dict[str, str] = {
         "belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, "
         "o yüzden videoda kalmış olabilir"
     ),
-    _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
+    _CAPTIONS_WORD_BY_WORD: "kelimeler söylendikçe yanıyor",
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
     _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
     _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
@@ -4724,10 +4728,11 @@ def _beat_room_problem(req: BriefRequirement, facts: PlanFacts, names: Sequence[
             say(
                 en=(
                     f"There was no room on screen for {_names(no_room)} without covering "
-                    "your face or the captions"
+                    "a face or the captions"
                 ),
                 tr=(
-                    f"{_names(no_room)} için yüzünü ya da altyazıları kapatmadan ekranda yer yoktu"
+                    f"{_names(no_room)} için bir yüzü ya da altyazıları kapatmadan "
+                    "ekranda yer yoktu"
                 ),
             )
         )
@@ -6473,7 +6478,8 @@ def describe_text_look(req: BriefRequirement, facts: PlanFacts) -> str | None:
 # KRI-547: "I filmed it sideways but want a vertical video, keep my face in frame".
 # The phone Talking worker reads the same words off the approved brief
 # (`app.kria.speaker_framing_ask`) and records how it framed the speaker on the
-# variant (`phone_speaker_framing`); these judge the ask from that receipt.
+# variant (`phone_speaker_framing`); these judge the ask from that receipt. The copy names
+# "the speaker", never "you", because the creator may be filming someone else (KRI-1008).
 _FRAMING_RECEIPT_MODES = frozenset({"face_fill", "letterbox", "centre_fill"})
 
 
@@ -6488,23 +6494,30 @@ def _wants_speaker_framing(req: BriefRequirement) -> bool:
 
 
 def _speaker_framing_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
-    """``speaker_framing`` / ``speaker_framing_reason`` off a variant's framing receipt."""
+    """``speaker_framing`` / ``_reason`` / ``_faces_found`` off a variant's framing receipt."""
     receipt = variant.get("speaker_framing")
     if not isinstance(receipt, Mapping) or receipt.get("mode") not in _FRAMING_RECEIPT_MODES:
         return {}
     reason = receipt.get("reason")
+    faces = receipt.get("faces")
+    used = faces.get("used") if isinstance(faces, Mapping) else None
     return {
         "speaker_framing": str(receipt["mode"]),
         "speaker_framing_reason": str(reason) if isinstance(reason, str) and reason else None,
+        "speaker_framing_faces_found": (
+            used if isinstance(used, int) and not isinstance(used, bool) and used >= 0 else None
+        ),
     }
 
 
-def _framing_fallback_reason(reason: str | None, *, cropped: bool) -> str:
+def _framing_fallback_reason(
+    reason: str | None, *, cropped: bool, faces_found: int | None = None
+) -> str:
     """Why the face crop was not used, and what the creator sees instead."""
     shown = (
         say(
-            en="so the video is cropped to the middle and your face can leave the frame",
-            tr="o yüzden video ortadan kırpıldı ve yüzün kadrajdan çıkabilir",
+            en="so the video is cropped to the middle and the speaker's face can leave the frame",
+            tr="o yüzden video ortadan kırpıldı ve konuşan kişinin yüzü kadrajdan çıkabilir",
         )
         if cropped
         else say(
@@ -6514,13 +6527,13 @@ def _framing_fallback_reason(reason: str | None, *, cropped: bool) -> str:
     )
     if reason == "face_moves_too_much":
         why = say(
-            en="Your face moves too far for one vertical crop to hold it",
-            tr="Yüzün tek bir dikey kadraja sığmayacak kadar hareket ediyor",
+            en="The speaker's face moves too far for one vertical crop to hold it",
+            tr="Konuşan kişinin yüzü tek bir dikey kadraja sığmayacak kadar hareket ediyor",
         )
     elif reason == "face_under_captions":
         why = say(
-            en="A vertical crop would put the captions over your face",
-            tr="Dikey kırpma altyazıları yüzünün üstüne getirirdi",
+            en="A vertical crop would put the captions over the speaker's face",
+            tr="Dikey kırpma altyazıları konuşan kişinin yüzünün üstüne getirirdi",
         )
     elif reason == "creator_chose_bars":
         return say(
@@ -6531,17 +6544,38 @@ def _framing_fallback_reason(reason: str | None, *, cropped: bool) -> str:
         return say(
             en=(
                 "You chose crop in the editor, so the video is cropped to the middle "
-                "and your face can leave the frame"
+                "and the speaker's face can leave the frame"
             ),
             tr=(
-                "Editörde kırpmayı seçtin, o yüzden video ortadan kırpıldı ve yüzün "
-                "kadrajdan çıkabilir"
+                "Editörde kırpmayı seçtin, o yüzden video ortadan kırpıldı ve konuşan "
+                "kişinin yüzü kadrajdan çıkabilir"
             ),
+        )
+    elif reason == "face_unconfirmed":
+        why = say(
+            en="I couldn't check where the speaker's face is in the clip",
+            tr="Klipte konuşan kişinin yüzünün nerede olduğunu kontrol edemedim",
+        )
+    elif reason == "no_face" and faces_found is not None and faces_found > 0:
+        why = say(
+            en=(
+                "I could only find the speaker's face in part of the clip, not enough "
+                "to fit one vertical crop around it"
+            ),
+            tr=(
+                "Konuşan kişinin yüzünü klibin yalnızca bir kısmında bulabildim, tek bir "
+                "dikey kadrajı ona göre ayarlamaya yetmedi"
+            ),
+        )
+    elif reason == "no_face" and faces_found == 0:
+        why = say(
+            en="I couldn't find the speaker's face anywhere in the clip",
+            tr="Klipte konuşan kişinin yüzünü hiç bulamadım",
         )
     else:
         why = say(
-            en="I couldn't find your face reliably in the clip",
-            tr="Klipte yüzünü güvenle bulamadım",
+            en="I couldn't find the speaker's face reliably in the clip",
+            tr="Klipte konuşan kişinin yüzünü güvenle bulamadım",
         )
     return f"{why}, {shown}"
 
@@ -6551,8 +6585,11 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     if mode is None:
         reason = (
             say(
-                en="This video didn't record how it framed you, so I can't check it.",
-                tr="Bu video seni nasıl kadrajladığını kaydetmedi, o yüzden kontrol edemiyorum.",
+                en="This video didn't record how it framed the speaker, so I can't check it.",
+                tr=(
+                    "Bu video konuşan kişiyi nasıl kadrajladığını kaydetmedi, "
+                    "o yüzden kontrol edemiyorum."
+                ),
             )
             if facts.rendered_variant
             else say(
@@ -6566,8 +6603,14 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
             req,
             "met",
             say(
-                en="The video fills the vertical frame and your face stays in it throughout",
-                tr="Video dikey ekranı dolduruyor ve yüzün baştan sona kadrajda kalıyor",
+                en=(
+                    "The video fills the vertical frame and the speaker's face stays in it "
+                    "throughout"
+                ),
+                tr=(
+                    "Video dikey ekranı dolduruyor ve konuşan kişinin yüzü baştan sona "
+                    "kadrajda kalıyor"
+                ),
             ),
         )
     if facts.speaker_framing_reason == "not_landscape":
@@ -6582,7 +6625,11 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     return _receipt(
         req,
         "partial",
-        _framing_fallback_reason(facts.speaker_framing_reason, cropped=mode == "centre_fill"),
+        _framing_fallback_reason(
+            facts.speaker_framing_reason,
+            cropped=mode == "centre_fill",
+            faces_found=facts.speaker_framing_faces_found,
+        ),
     )
 
 
@@ -6748,8 +6795,8 @@ def _with_spoken_text_face(
         req,
         "partial",
         say(
-            en=f"{text} lands on your face; I couldn't find a spot clear of it",
-            tr=f"{text} yüzünün üstüne denk geliyor; yüzünü açıkta bırakan bir yer bulamadım",
+            en=f"{text} lands on a face; I couldn't find a spot clear of it",
+            tr=f"{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
         ),
     )
 
@@ -6908,8 +6955,8 @@ def _with_title_face(
         req,
         "partial",
         say(
-            en="The title lands on your face; I couldn't find a spot clear of it",
-            tr="Başlık yüzünün üstüne denk geliyor; yüzünü açıkta bırakan bir yer bulamadım",
+            en="The title lands on a face; I couldn't find a spot clear of it",
+            tr="Başlık bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
         ),
     )
 

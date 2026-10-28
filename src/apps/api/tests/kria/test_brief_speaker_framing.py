@@ -8,6 +8,9 @@ back, and "can't check yet" on a draft.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.kria.brief import BriefRequirement, CreativeBrief
@@ -69,13 +72,22 @@ def test_a_face_filled_render_is_done():
     assert "face stays" in receipt.reason
 
 
+# Plaza T1 (job c7430eed): the creator filmed a guide, Maximo, who is off screen for the
+# first 16 s. The prod framing receipt, the brief's ask and the review line it should get.
+_T1 = json.loads(
+    (Path(__file__).parents[1] / "fixtures/kri1008_plaza_t1_framing_review.json").read_text()
+)
+_T1_FACES = _T1["speaker_framing"]["faces"]
+_T1_R5 = _T1["requirement"]["description"]
+
+
 @pytest.mark.parametrize(
     ("mode", "reason", "words"),
     [
-        ("letterbox", "face_moves_too_much", "moves too far"),
-        ("letterbox", "no_face", "couldn't find your face"),
-        ("letterbox", "face_unconfirmed", "couldn't find your face"),
-        ("letterbox", "face_under_captions", "captions over your face"),
+        ("letterbox", "face_moves_too_much", "speaker's face moves too far"),
+        ("letterbox", "no_face", "couldn't find the speaker's face reliably"),
+        ("letterbox", "face_unconfirmed", "couldn't check where the speaker's face is"),
+        ("letterbox", "face_under_captions", "captions over the speaker's face"),
         ("letterbox", "creator_chose_bars", "You chose black bars"),
         ("centre_fill", "no_face", "cropped to the middle"),
         ("centre_fill", "creator_chose_crop", "You chose crop"),
@@ -87,6 +99,63 @@ def test_a_fallback_is_an_honest_partly_with_the_reason(mode, reason, words):
     assert words in receipt.reason
     if mode == "letterbox" and not reason.startswith("creator"):
         assert "black bars" in receipt.reason
+
+
+def test_the_plaza_review_names_the_speaker_and_says_why():
+    """T1 replay: the creator filmed Maximo, so the review must not call him "you", and a
+    face found in 6 of 24 frames is not "couldn't find" (KRI-1008 finding 3)."""
+    req = BriefRequirement(**_T1["requirement"])
+    variant = _variant(_T1["speaker_framing"])
+    receipt = _receipt(variant, req)
+    reply = reply_from_receipts(CreativeBrief(version=3, requirements=[req]), [receipt])
+    assert receipt.reason != _T1["prod_reason"]
+    assert reply.splitlines()[-1] == _T1["expected_line"]
+    with reply_language_for("tr"):
+        tr = _receipt(variant, req)
+    assert tr.reason == _T1["expected_reason_tr"]
+
+
+def test_a_face_never_found_is_not_found_in_part_of_the_clip():
+    faces = {**_T1_FACES, "detected": 0, "used": 0, "ignored": 0}
+    receipt = _receipt(_variant(_framing("letterbox", "no_face", faces=faces)))
+    assert "couldn't find the speaker's face anywhere in the clip" in receipt.reason
+    assert "part of the clip" not in receipt.reason
+
+
+@pytest.mark.parametrize("language", ["en", "tr"])
+def test_no_framing_reason_calls_the_speaker_you(language):
+    """Every speaker-framing line is right when the creator filmed someone else."""
+    variants = [_variant()]
+    for mode, reason in [
+        ("face_fill", "face_in_window"),
+        ("letterbox", "face_moves_too_much"),
+        ("letterbox", "no_face"),
+        ("letterbox", "face_unconfirmed"),
+        ("letterbox", "face_under_captions"),
+        ("letterbox", "creator_chose_bars"),
+        ("centre_fill", "no_face"),
+        ("centre_fill", "face_unconfirmed"),
+        ("centre_fill", "creator_chose_crop"),
+        ("centre_fill", "not_landscape"),
+    ]:
+        variants.append(_variant(_framing(mode, reason)))
+        variants.append(_variant(_framing(mode, reason, faces=_T1_FACES)))
+    req = _req(_T1_R5)
+    with reply_language_for(language):
+        reasons = [_receipt(variant, req).reason or "" for variant in variants]
+        reasons.append(check_requirement(req, PlanFacts(edit_format="subtitled")).reason or "")
+    for text in reasons:
+        folded = text.casefold()
+        if language == "en":
+            assert "your face" not in folded and "framed you" not in folded, text
+            continue
+        words = folded.replace(",", " ").split()
+        assert "seni" not in words, text
+        # Turkish spells "your face" and "the speaker's face" alike (yüzünü); only the
+        # possessor in front of it tells them apart. "o yüzden" is "so".
+        for i, word in enumerate(words):
+            if word.startswith("yüz") and word != "yüzden":
+                assert i > 0 and words[i - 1] == "kişinin", text
 
 
 def test_an_already_vertical_clip_is_done():
@@ -172,9 +241,9 @@ def test_the_kadikoy_card_without_room_is_told_as_that(placed, status):
     with reply_language_for("en"):
         en = _receipt(variant, _req(R4))
     assert (tr.status, tr.verification) == (status, "checked")
-    assert tr.reason == "İlk durak için yüzünü ya da altyazıları kapatmadan ekranda yer yoktu."
+    assert tr.reason == "İlk durak için bir yüzü ya da altyazıları kapatmadan ekranda yer yoktu."
     assert en.reason == (
-        "There was no room on screen for İlk durak without covering your face or the captions."
+        "There was no room on screen for İlk durak without covering a face or the captions."
     )
     assert "sözlerine göre çıkan görsel yok" not in tr.reason
 
