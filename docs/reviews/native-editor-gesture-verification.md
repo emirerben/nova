@@ -117,7 +117,7 @@ or new inspector Undo regression. Broad native product changes intentionally
 fall back to smoke in the general UI step, and named native-unit replay filters
 UI classes out. Registration in the UI and journey manifests was insufficient.
 
-The workflow now has a separate native unit-leg replay under the existing
+The workflow now has a separate native creation-leg replay under the existing
 clip-speed journey condition. It executes the whole NativeSpeedUITests class
 and the live pinch journey, exports the result JSON, and requires all three
 named cases to pass. Existing smoke, API, native, and aggregate checks remain
@@ -142,3 +142,19 @@ The merged UI manifest passed its 25 selection checks. The preference-helper
 four-flow proof. Neither result replaces fresh exact-head original-runtime CI.
 The failed `77f2e7579` screens job remains preserved; its wrong-screen Save
 snapshot failure is not a production preferences-save failure.
+
+## Preserve explicit journey ownership
+
+The next head `92aed5468` stopped in CI's selection guard before native tests
+started. The new UI replay named a journey on the unit leg, but explicit journey
+steps belong to the creation/screens ownership map. The unchanged guard also
+failed locally. The correction assigns `kri-689-clip-speed` to creation and uses
+that same leg in the workflow. The unit-leg invariant and existing guard tests
+remain unchanged. This failure does not invalidate the retained local native
+result, and it is not passing remote proof. A normal corrective push must pass
+fresh routing and full required CI before merge.
+
+The corrected mapping passed all 121 CI policy tests and 12 iOS workflow-policy
+checks locally. Existing guard assertions are unchanged. Native source hashes
+still match the 248-check combined-build result; no native test rerun is claimed
+for this CI-only correction.

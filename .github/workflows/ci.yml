@@ -1190,7 +1190,7 @@ jobs:
           KRIA_IOS_UI_GROUPS: ${{ needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups }}
         run: bash scripts/ios/verify.sh
       - name: Verify native speed reset, inspector Undo and pinch warning
-        if: matrix.leg == 'unit' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-689-clip-speed')
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-689-clip-speed')
         working-directory: src/apps/ios
         run: |
           xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
