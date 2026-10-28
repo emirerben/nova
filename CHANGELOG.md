@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.176.0] - 2026-10-28
+
+### Changed
+- fix(ios): keep confirmed intro facts readable and editable (KRI-984) (#1889) <!-- release-pr: 1889 -->
+
 ## [0.81.175.0] - 2026-10-28
 
 ### Changed
