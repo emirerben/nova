@@ -60,6 +60,58 @@ final class CreationUITests: XCTestCase {
         app.terminate()
     }
 
+    /// KRI-986, real-device condition: the creator's chat composer is focused (keyboard up) inside the
+    /// editor's Kria sheet when they tap "Open editor". The tap must still close the sheet.
+    func testOpenEditorInsideTheEditorsKriaSheetWithKeyboardOpenReturnsToTheEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let chatOpenEditor = app.buttons["Open editor"]
+        XCTAssertTrue(chatOpenEditor.waitForExistence(timeout: 30))
+        chatOpenEditor.tap()
+
+        let kria = app.buttons["native-editor-conversation"]
+        XCTAssertTrue(kria.waitForExistence(timeout: 15), "the editor opened from the chat's ready card")
+        kria.tap()
+        let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        let sheetOpenEditor = sheet.buttons["Open editor"]
+        XCTAssertTrue(sheetOpenEditor.waitForExistence(timeout: 10), "the sheet's ready card offers Open editor")
+
+        // Focus the composer so the keyboard is up, as on a real device.
+        // The chat underneath the editor has its own (covered, unhittable) composer; take the live one.
+        let fields = app.textFields.matching(NSPredicate(format: "label == %@", "Message Kria"))
+        _ = fields.firstMatch.waitForExistence(timeout: 5)
+        let composer = fields.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? fields.firstMatch
+        XCTAssertTrue(composer.exists, "the sheet shows the chat composer")
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "tapping the composer opens the keyboard")
+
+        // The keyboard shrinks the visible conversation; bring the button above it if it slid underneath.
+        var swipes = 0
+        while !sheetOpenEditor.isHittable && swipes < 4 {
+            sheet.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(sheetOpenEditor.isHittable, "Open editor is reachable with the keyboard open")
+        let beforeTap = XCTAttachment(screenshot: app.screenshot())
+        beforeTap.name = "Kria sheet with keyboard open, before tapping Open editor (swipes: \(swipes))"
+        beforeTap.lifetime = .keepAlways
+        add(beforeTap)
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the keyboard is still open when Open editor is tapped")
+        sheetOpenEditor.tap()
+
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: sheet)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "Open editor closes the Kria sheet with the keyboard open")
+        XCTAssertTrue(kria.waitForExistence(timeout: 3))
+        XCTAssertTrue(kria.isHittable, "the creator is back in the editor")
+        app.terminate()
+    }
+
     func testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat-bubbles"]

@@ -1341,6 +1341,13 @@ private struct CreationWorkspaceView: View {
         // the editor is already open underneath: close the sheet to land back in it.
         if showsResult || workspaceScreen == .slideWorkspace {
             editorConversationCloseID = UUID()
+            // The card names the thread's newest version. An editor still on an older job (the
+            // creator tapped "Keep editing" earlier, or the adopt never ran) is asked again; own
+            // unsaved edits raise the Switch / Keep editing prompt, never a silent switch.
+            if showsResult, currentProject.runtimeVersion == 2, editorSession.isBehindActiveJob(currentProject) {
+                let target = currentProject
+                Task { await editorSession.adoptLatestJob(target, api: model.api) }
+            }
             return
         }
         // A slide post has no video timeline: every "open editor" entry lands in the slide workspace.
