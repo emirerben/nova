@@ -726,6 +726,7 @@ def compose_creation_text(
     _check_copy(texts, constraints)
     if text_requirements is not None and constraints and pinned_research is None:
         from app.kria.brief_checks import check_requirement, plan_facts_from_editor_payload
+        from app.kria.text_shape_ask import words_only
 
         # A bound brief owns the current request, not the historical conversation.
         # Skip only when every requested text/style behavior is already proven.
@@ -751,7 +752,8 @@ def compose_creation_text(
             and snapshot.title_animation is None
             and relevant
             and relationships_verified
-            and all(check_requirement(req, facts).status == "met" for req in relevant)
+            # KRI-1029: the composer can't curve text; only the words decide.
+            and all(check_requirement(words_only(req), facts).status == "met" for req in relevant)
         ):
             return snapshot.model_copy(
                 update={

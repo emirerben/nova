@@ -242,6 +242,25 @@ def test_the_title_is_drawn_once_on_the_palms() -> None:
     assert [row["text"] for row in record["labels"]] == [TITLE, "Casa Rosada", "Catedral"]
 
 
+def test_a_title_ask_reads_the_label_as_the_title() -> None:
+    """A brief that also says "add a title" (no words) is still a "Done": the opening text is
+    the creator's own label, drawn once from 0 s."""
+    brief = apply_updates(
+        prod_brief("v3"),
+        [BriefUpdate(kind="text", scope="title", description="add a title")],
+        source_turn_id=None,
+    )
+    asked = brief.live()[-1]
+    unified = plan(brief)
+    assert unified.record()["title_shown_as_label"] == PALMS
+    with reply_language_for("en"):
+        receipts = build_receipts(
+            brief.live(), plan_facts_from_unified_montage(unified.record()), include_unchecked=True
+        )
+    receipt = next(r for r in receipts if r.requirement_id == asked.id)
+    assert (receipt.status, receipt.reason) == ("met", None)
+
+
 def test_the_phone_recipe_draws_one_curved_title_and_the_contract_accepts_it() -> None:
     brief = replayed_brief()
     unified = plan(brief)
@@ -315,6 +334,48 @@ def test_a_phone_that_cant_bend_gets_a_straight_title_and_an_honest_draft(
     assert r5.reason == "I can't curve text in this edit on your iPhone yet, so it stays straight"
     # A limit of the edit, said before approval: never a "simpler version?" question.
     assert is_format_limit(r5.reason)
+
+
+@pytest.mark.parametrize("client_protocol", [23, None], ids=["bends", "stays-straight"])
+def test_the_text_composer_is_not_called_for_the_curve(
+    monkeypatch: pytest.MonkeyPatch, client_protocol: int | None
+) -> None:
+    """The worker's creation-text step skips its model when the plan already shows every
+    asked text. A curve the phone can't draw is no reason to call it (no new model cost, no
+    rewritten copy); the receipt says the text stays straight instead.
+
+    The M1 brief itself always reaches the model (its "make it all vertical" and the palms
+    label are not provable on the text lane, before and after this change), so this keeps
+    only the asks the lane can prove, with the curved title as a title-scope ask.
+    """
+    import app.services.creation_text_composition as composition  # noqa: PLC0415
+    from app.services.creation_text_composition import (  # noqa: PLC0415
+        compose_creation_text,
+        snapshot_copy_constraints,
+    )
+
+    def no_model(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("the text composer model must not run")
+
+    monkeypatch.setattr(composition.CreationTextComposer, "run", no_model)
+    monkeypatch.setattr(composition.CreationTextComposerFast, "run", no_model)
+    kept = [req for req in prod_brief("v3").requirements if req.id not in {"r2", "r3", "r5"}]
+    brief = apply_updates(
+        CreativeBrief(version=3, requirements=kept),
+        [BriefUpdate(kind="text", scope="title", literal=TITLE, description="Curved title")],
+        source_turn_id=None,
+    )
+    unified = plan(brief, client_protocol=client_protocol)
+    bends = [row.get("bend") for row in titles(text_elements(unified))]
+    assert bends == ([CURVED_TEXT_BEND] if client_protocol else [None])
+    composed = compose_creation_text(
+        unified.snapshot,
+        creator_request="\n".join(FIXTURE["creator_messages"]),
+        copy_constraints=snapshot_copy_constraints(unified.snapshot),
+        text_requirements=brief.live(),
+    )
+    assert composed.text_composition is not None
+    assert composed.text_composition.operations == []
 
 
 def worker_r5(brief: CreativeBrief, record: dict) -> dict:

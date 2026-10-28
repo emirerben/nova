@@ -1128,6 +1128,12 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         if row.get("inferred") and row.get("text")
     }
     title = record.get("title")
+    title_source = record.get("title_source")
+    shown = record.get("title_shown_as_label")
+    if not title and isinstance(shown, str) and per_clip.get(shown):
+        # KRI-1030: the opening title is the first clip's own label (same creator words,
+        # drawn once from 0 s), so a title ask reads that label as the title.
+        title, title_source = per_clip[shown], "creator"
     duration = record.get("duration_s")
     basis = record.get("ordering_basis")
     route = record.get("route") if isinstance(record.get("route"), Mapping) else {}
@@ -1143,7 +1149,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
     return PlanFacts(
         clip_ids=tuple(str(c) for c in record.get("clip_ids") or []),
         title=str(title) if title else None,
-        title_source=str(record["title_source"]) if record.get("title_source") else None,
+        title_source=str(title_source) if title_source else None,
         repeat_label_clip_ids=repeats,
         route_start=str(route["start"]) if route.get("start") else None,
         route_end=str(route["end"]) if route.get("end") else None,

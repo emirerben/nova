@@ -217,3 +217,15 @@ def text_shape(req: BriefRequirement) -> str | None:
     if req.kind != "text":
         return None
     return recorded_shape(req.facts) or shape_in_words(req.description)
+
+
+def words_only(req: BriefRequirement) -> BriefRequirement:
+    """``req`` with its shape set aside, for a check of the words alone.
+
+    The text composer's "nothing to compose" gate (`creation_text_composition`) asks whether
+    the plan already shows the creator's words. The composer can't curve text, so a curve the
+    phone can't draw is no reason to call it; the receipt still says the text stays straight.
+    """
+    if text_shape(req) != CURVED:
+        return req
+    return req.model_copy(update={"facts": {**req.facts, TEXT_SHAPE_FACT: STRAIGHT}})
