@@ -126,6 +126,28 @@ drift. See `formal/ios_edit_flow/findings.md` for that review and the abstractio
 limits. The model does not prove relocated paths or upload-byte immutability;
 the concrete regressions above establish those narrower properties.
 
+## Hosted validation follow-up
+
+CI run `40718658393`, attempt 2, passed the iPhone unit and creation jobs.
+The screens job `122982606493` failed in the inherited KRI-648 font-preferences
+test. Its scroll helper observed the outgoing Save button, then queried its
+frame after the font picker replaced that screen. The failure snapshot already
+contained the font list and its back button. This test code is identical on main.
+
+The test now waits for Save to disappear and the `Never use` navigation title
+to appear on both picker entries before calling the scroll helper. All existing
+font-selection, save, and persisted-selection assertions remain enforced.
+There is no product-code change in this follow-up.
+
+The unchanged test passed once locally, so the hosted timing failure was not
+reproduced locally. With the navigation waits, the complete journey passed three
+consecutive executions on an isolated iPhone 17 Pro simulator, iOS 26.5, with
+zero failures or skips. The third persisted-selection screenshot was inspected
+and shows Fraunces checked after reopening. Local evidence is retained in
+`.dev/lipsync-font-after.xcresult` and `.dev/lipsync-font-after-summary.json`.
+This verifies the new synchronization and existing journey assertions; fresh
+hosted validation of the final head is still required before merge.
+
 ## Reproduce
 
 ```bash
