@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 import uuid
 from contextlib import contextmanager
@@ -25,6 +26,7 @@ from app.pipeline.lipsync_montage import lipsync_sync_error_s
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, UserSongPlanDeclined
 from app.schemas.user_song import SongAlignment, SongWord
 from app.services.device_render import device_status
+from app.services.phone_editor import PHONE_EDITOR_SAVED_PLAN_FIELD
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.tasks import generative_build as gb
 from tests._prod_profile import PROD_VERIFIED_FEATURES
@@ -975,9 +977,33 @@ def test_a_met_captions_ask_is_judged_from_the_real_plan_record(harness, compose
     assert receipt.status == "met"
 
 
-def test_no_captions_ask_means_no_lyric_captions_even_with_a_caption_style(harness, composer):
+# --- Lyrics ride along hidden when nobody asked (the Captions toggle reveals them) ---
+#
+# Failure modes written first:
+#   (a) a song with no words (or none in the window) declines a montage that never asked;
+#   (b) the plan record says captions were "placed" while nothing is on screen;
+#   (c) the editor document carries lyric rows without `enabled: false`, so they draw unasked;
+#   (d) turning captions on in the editor leaves `editor_caption_meta` stale (still hidden);
+#   (e) the text composer is told lyrics are on screen when they are off.
+
+_LYRIC_RE = re.compile(r"\bla\d+\b")
+
+
+def _drawn_lyrics(job):
+    recipe = device_status(job, "guided_story").request.recipe
+    return [
+        run.text for layer in recipe.text_layers for run in layer.runs if _LYRIC_RE.search(run.text)
+    ]
+
+
+@pytest.mark.parametrize("sync", ["lipsync", "background"])
+def test_without_a_captions_ask_the_lyrics_ride_along_hidden(harness, composer, sync):
+    from app.kria.brief_checks import plan_facts_from_unified_montage
+    from app.services.creation_text_composition import CreationTextComposer
+
     job, _snapshot, _bindings = harness(
-        sync="background",
+        sync=sync,
+        rows=[confident("clip-a", 10), confident("clip-b", 28), confident("clip-c", 46)],
         song_analysis=_lyrics_analysis(),
         creator_request="Full creator request (chronological):\nMake a fast montage",
         strategy_extra=KARAOKE,  # the model's own default is never a request
@@ -986,9 +1012,131 @@ def test_no_captions_ask_means_no_lyric_captions_even_with_a_caption_style(harne
     gb._run_generative_job(str(job.id))
 
     assert job.status == "awaiting_device"
+    track = job.assembly_plan["guided_edit"]["approved_proposal"]["song_captions"]
+    assert track["hidden"] is True
+    assert track["caption_style"] == "word"  # the toggle reveals them in the planned style
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    assert _caption_rows(plan)
+    assert plan["editor_caption_meta"] == {"style": "word", "y_frac": 0.7, "enabled": False}
+    assert _drawn_lyrics(job) == []
+    record = job.assembly_plan["unified_montage"]
+    assert record["captions"]["status"] == "available_hidden"
+    assert plan_facts_from_unified_montage(record).montage_captions != "placed"
+    (seen,) = composer
+    assert seen.variant_snapshot["caption_lane"]["shown"] is False
+    prompt = CreationTextComposer.__new__(CreationTextComposer).render_prompt(seen)
+    assert "already on screen" not in prompt
+
+
+def _editor_save(job, **sections):
+    from app.routes import generative_jobs as gj
+
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        **sections,
+    )
+    gj.require_guided_story_editor_commit(job, "guided_story", payload)
+    gj.prepare_editor_commit(job, "guided_story", payload)
+
+
+def test_turning_hidden_lyrics_on_draws_them_and_keeps_the_creators_edits_across_a_song_move(
+    harness, composer, monkeypatch
+):
+    from app.routes import generative_jobs as gj
+
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=_lyrics_analysis(),
+        creator_request="Full creator request (chronological):\nMake a fast montage",
+    )
+    gb._run_generative_job(str(job.id))
+    assert _drawn_lyrics(job) == []
+    variant = job.assembly_plan["variants"][0]
+    assert gj._guided_v2_revision(job, variant)["caption_meta"]["enabled"] is False
+
+    # Show captions: a Save that touches only the caption settings.
+    _editor_save(
+        job,
+        caption_meta=gj.EditorCommitCaptionMeta(enabled=True, style="sentence", color="#FFD400"),
+    )
+    saved = job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]
+    assert saved["editor_caption_meta"]["enabled"] is True
+    recipe = device_status(job, "guided_story").request.recipe
+    lyric_runs = [
+        run for layer in recipe.text_layers for run in layer.runs if _LYRIC_RE.search(run.text)
+    ]
+    assert lyric_runs
+    assert all(
+        (run.fill.red, round(run.fill.green, 2), run.fill.blue) == (1.0, 0.83, 0.0)
+        for run in lyric_runs
+    )
+    assert any(run.text.count("la") > 1 for run in lyric_runs)  # whole lyric lines
+
+    # Rewrite one lyric word and delete another (omitted from the Save).
+    variant = job.assembly_plan["variants"][0]
+    rows = copy.deepcopy(gj._guided_v2_revision(job, variant)["text_elements"])
+    lyrics = [
+        row for row in rows if row["id"].startswith("song-caption-") and not row.get("removed")
+    ]
+    edited, deleted = lyrics[3], lyrics[5]
+    edited["text"] = "my own words"
+    edited["word_timings"][0]["text"] = "my own words"
+    _editor_save(
+        job,
+        text_elements=[row for row in rows if row is not deleted],
+    )
+
+    # Move the song a second later: timing follows the song, the creator's edits hold.
+    start = job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]["user_song"][
+        "window_start_s"
+    ]
+    _editor_save(job, user_song=gj.EditorCommitUserSong(window_start_s=start + 1.0))
+    saved = job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]
+    assert saved["user_song"]["window_start_s"] == pytest.approx(start + 1.0)
+    assert saved["editor_caption_meta"]["enabled"] is True
+    drawn = " ".join(_drawn_lyrics(job))
+    assert "my own words" in drawn
+    assert not re.search(rf"\b{deleted['text']}\b", drawn)
+    assert _drawn_lyrics(job)
+
+
+@pytest.mark.parametrize("song_analysis", [analysis, lambda: _late_lyrics_analysis()])
+def test_a_song_without_words_to_caption_never_declines_a_montage_that_did_not_ask(
+    harness, composer, song_analysis
+):
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=song_analysis(),
+        creator_request="Full creator request (chronological):\nMake a fast montage",
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
+    assert "song_captions" not in job.assembly_plan["guided_edit"]["approved_proposal"]
+    assert "captions" not in job.assembly_plan["unified_montage"]
+
+
+def test_available_by_default_off_is_byte_identical_to_before(harness, composer, monkeypatch):
+    monkeypatch.setattr(gb.settings, "song_captions_available_by_default", False)
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=_lyrics_analysis(),
+        creator_request="Full creator request (chronological):\nMake a fast montage",
+        strategy_extra=KARAOKE,
+    )
+
+    gb._run_generative_job(str(job.id))
+
+    assert job.status == "awaiting_device"
     assert "song_captions" not in job.assembly_plan["guided_edit"]["approved_proposal"]
     assert not _caption_rows(job.assembly_plan["guided_story_execution_plan"])
     assert "captions" not in job.assembly_plan["unified_montage"]
+    assert "caption_lane" not in composer[0].variant_snapshot
 
 
 def test_kill_switch_off_is_byte_identical_to_before(harness, composer, monkeypatch):
@@ -1190,9 +1338,11 @@ def test_a_stamped_montage_ignores_a_captions_ask_in_the_request_text(harness, c
     gb._run_generative_job(str(job.id))
 
     assert job.status == "awaiting_device"
-    assert "song_captions" not in job.assembly_plan["guided_edit"]["approved_proposal"]
-    assert not _caption_rows(job.assembly_plan["guided_story_execution_plan"])
-    assert "captions" not in job.assembly_plan["unified_montage"]
+    assert job.assembly_plan["guided_edit"]["approved_proposal"]["song_captions"]["hidden"]
+    plan = job.assembly_plan["guided_story_execution_plan"]
+    assert plan["editor_caption_meta"]["enabled"] is False
+    assert _drawn_lyrics(job) == []
+    assert job.assembly_plan["unified_montage"]["captions"]["status"] == "available_hidden"
 
 
 def test_a_stamped_pin_with_the_song_gone_asks_for_the_song(harness):
