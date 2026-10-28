@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.3.0] - 2026-10-28
+
+### Changed
+- fix(ios): the Kria sheet's "Open editor" adopts the newer job; keyboard-open UI guard (KRI-986) (#1902) <!-- release-pr: 1902 -->
+
 ## [0.82.2.0] - 2026-10-28
 
 ### Changed
