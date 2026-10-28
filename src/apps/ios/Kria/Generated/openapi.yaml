@@ -3427,6 +3427,11 @@
       },
       "EditorCommitCaptionMeta": {
         "properties": {
+          "animation_phases": {
+            "$ref": "#/components/schemas/TextAnimationPhases",
+            "default": null,
+            "nullable": true
+          },
           "appearance": {
             "$ref": "#/components/schemas/EditorCaptionAppearance",
             "default": null,

@@ -76,22 +76,27 @@ def project_guided_caption_overlays(
     word_style = meta.get("style") == "word"
     appearance = meta.get("appearance") or {}
     highlight = appearance.get("highlight_spoken_word") is True
+    from app.services.phone_rollout import caption_animation_renderable
+
+    animate = caption_animation_renderable()
     for group in groups:
         group_words = [word for row in group for word in str(row["text"]).split()]
         display_text = " ".join(group_words)
-        phases = appearance.get("animation_phases")
-        if phases is not None and not word_style and not highlight:
+        phases = _group_phases(group, meta) if animate else None
+        appearance_phases = appearance.get("animation_phases")
+        if phases is None and appearance_phases is not None and not word_style and not highlight:
             row = deepcopy(group[0])
             row.update(
                 text=display_text,
                 end_s=group[-1]["end_s"],
                 effect="static",
-                animation_phases=phases,
+                animation_phases=appearance_phases,
             )
             row.pop("word_timings", None)
             output.append(row)
             continue
         offset = 0
+        first_output = len(output)
         for index, original in enumerate(group):
             words = str(original["text"]).split()
             start = float(original["start_s"])
@@ -139,6 +144,51 @@ def project_guided_caption_overlays(
                         ]
                     output.append(row)
             offset += len(words)
+        if phases is not None:
+            _stamp_line_phases(output[first_output:], phases)
     for row in output:
         row.pop("caption_line_end", None)
     return output
+
+
+def _group_phases(group: list[dict[str, Any]], meta: dict[str, Any]) -> dict[str, Any] | None:
+    """The displayed line's animation (KRI-1007): a row's own phases, else the meta default.
+
+    Phases that animate nothing are today's static line, so they yield None.
+    """
+    from pydantic import ValidationError
+
+    from app.agents._schemas.text_animation_phases import TextAnimationPhases
+
+    raw = next(
+        (row["animation_phases"] for row in group if row.get("animation_phases") is not None),
+        meta.get("animation_phases"),
+    )
+    if raw is None:
+        return None
+    try:
+        phases = TextAnimationPhases.model_validate(raw)
+    except ValidationError:
+        return None
+    if phases.entrance == phases.exit == phases.loop == "none":
+        return None
+    return phases.model_dump()
+
+
+def _stamp_line_phases(rows: list[dict[str, Any]], phases: dict[str, Any]) -> None:
+    """Animate the line, not each interval: the first row enters, the last exits, all loop."""
+    for index, row in enumerate(rows):
+        row_phases = {
+            **phases,
+            "entrance": phases["entrance"] if index == 0 else "none",
+            "exit": phases["exit"] if index == len(rows) - 1 else "none",
+        }
+        if row_phases["entrance"] == row_phases["exit"] == row_phases["loop"] == "none":
+            continue
+        row["animation_phases"] = row_phases
+        if row.get("effect") != "karaoke-line":
+            row["effect"] = (
+                "typewriter"
+                if "typewriter" in (row_phases["entrance"], row_phases["exit"])
+                else "none"
+            )

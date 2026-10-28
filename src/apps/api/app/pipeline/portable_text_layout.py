@@ -867,6 +867,7 @@ def _compile_karaoke_overlay(overlay: dict, *, layer_id: str, canvas):
         rotation_degrees=cloud._finite_float(overlay.get("rotation_deg"), 0),
         runs=runs,
         effect="karaoke-line",
+        animation_phases=overlay.get("animation_phases"),
         karaoke=KaraokeContent(starts=ordered_starts, highlight=highlight),
     ), asset
 

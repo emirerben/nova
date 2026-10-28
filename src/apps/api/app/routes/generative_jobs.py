@@ -1249,6 +1249,9 @@ class EditorCommitCaptionMeta(BaseModel):
     highlight_color: str | None = None
     stroke_width: int | None = Field(None, ge=0, le=12)
     shadow_enabled: bool | None = None
+    # KRI-1007: the all-captions animation default. Rows with their own `animation_phases`
+    # win. An explicit null clears the default; omitted keeps the stored one.
+    animation_phases: TextAnimationPhases | None = None
 
     @field_validator("color", "highlight_color")
     @classmethod
@@ -3371,6 +3374,8 @@ class CaptionCue(BaseModel):
     size_px: int | None = Field(None, ge=36, le=160)
     stroke_width: int | None = Field(None, ge=0, le=12)
     shadow_enabled: bool | None = Field(None, strict=True)
+    # KRI-1007: this line's own animation; absent inherits `caption_animation_phases`.
+    animation_phases: TextAnimationPhases | None = None
 
     @field_validator("font_family")
     @classmethod
@@ -7420,7 +7425,28 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # Bend (recorded editor snapshots and replays), and the app reads a missing key as off.
     if _text_bend_capability(variant):
         capabilities["text_bend"] = True
+    if _caption_animation_capability(variant, capabilities):
+        capabilities["caption_animation"] = True
     return capabilities
+
+
+def _caption_animation_capability(variant: dict, capabilities: dict) -> bool:
+    """KRI-1007: may the app set caption phases (``editor_capabilities.caption_animation``)?
+
+    Device variants only (cloud caption burns do not draw phases), only where captions are
+    editable at all, and only for a build that keeps the phases on Save.
+    """
+    from app.services.phone_rollout import caption_animation_supported  # noqa: PLC0415
+
+    def editable(key: str) -> bool:
+        value = capabilities.get(key)
+        return isinstance(value, dict) and value.get("editable") is True
+
+    return bool(
+        variant.get("render_destination") in {"device", "phone"}
+        and (editable("caption_meta") or editable("caption_cues"))
+        and caption_animation_supported(require_client=True)
+    )
 
 
 _VOICEOVER_ORIGINAL_AUDIO_ARCHETYPES = frozenset({"narrated", "voiceover"})
@@ -10605,6 +10631,7 @@ def prepare_editor_commit(
         _require_render_affecting_mutation_allowed(
             job, variant, allow_authored=payload.editor_state_version in (1, 2)
         )
+        _require_caption_animation_client(job, variant, payload)
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
         from app.services.phone_editor_sources import editor_sources_for_variant
@@ -10650,6 +10677,43 @@ def prepare_editor_commit(
             learning_sections=payload.model_fields_set,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
+
+
+def _require_caption_animation_client(
+    job: Job, variant: dict, payload: EditorCommitRequest
+) -> None:
+    """426 for an app build that cannot keep caption ``animation_phases`` (KRI-1007).
+
+    Refused when the Save carries phases, or replaces caption state that holds them: an
+    older build re-sends cues and the guided caption meta without the key, which would
+    silently wipe the creator's animation.
+    """
+    from app.services.phone_rollout import caption_animation_client_supported  # noqa: PLC0415
+
+    if caption_animation_client_supported():
+        return
+
+    def has_phases(rows: object) -> bool:
+        return isinstance(rows, list) and any(
+            isinstance(row, dict) and row.get("animation_phases") is not None for row in rows
+        )
+
+    carries = has_phases(payload.caption_cues) or (
+        payload.caption_meta is not None and payload.caption_meta.animation_phases is not None
+    )
+    drops = payload.caption_cues is not None and has_phases(variant.get("caption_cues"))
+    if payload.caption_meta is not None and not drops:
+        stored_meta = (_guided_v2_revision(job, variant) or {}).get("caption_meta")
+        drops = isinstance(stored_meta, dict) and stored_meta.get("animation_phases") is not None
+    if carries or drops:
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "caption_animation",
+                "minimum_client_protocol": settings.caption_animation_min_client_protocol,
+            },
+        )
 
 
 def _validate_drawings_section(
@@ -11108,6 +11172,10 @@ def _prepare_editor_commit(
             caption_meta_patch["caption_stroke_width"] = int(meta.stroke_width)
         if meta.shadow_enabled is not None:
             caption_meta_patch["caption_shadow_enabled"] = bool(meta.shadow_enabled)
+        if "animation_phases" in meta.model_fields_set:
+            caption_meta_patch["caption_animation_phases"] = (
+                meta.animation_phases.model_dump() if meta.animation_phases is not None else None
+            )
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None and not guided_v2:
@@ -11890,6 +11958,8 @@ def _prepare_editor_commit(
             updated["caption_cues"] = validated_caption_cues
         if caption_meta_patch is not None:
             updated.update(caption_meta_patch)
+            if updated.get("caption_animation_phases", False) is None:
+                del updated["caption_animation_phases"]
         if resolved_slots is not None:
             updated["user_timeline"] = {"slots": resolved_slots}
         if payload.mix is not None:
