@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.4.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): re-listen wordless stretches and hear the whole mixed take (KRI-1016) (#1913) <!-- release-pr: 1913 -->
+
 ## [0.82.3.0] - 2026-10-28
 
 ### Changed
