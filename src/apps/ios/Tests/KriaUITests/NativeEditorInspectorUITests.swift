@@ -192,6 +192,16 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["Bold"].tap()
         app.buttons["Animation"].tap()
         let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
+        for name in ["Silk Reveal", "Elastic Condensed", "Focus Pull", "Word Relay", "Ribbon Wipe", "Echo Stack"] {
+            let effect = app.buttons["In animation " + name]
+            for _ in 0..<4 {
+                if effect.isHittable { break }
+                scroll.swipeUp()
+            }
+            XCTAssertTrue(effect.isHittable, name)
+            effect.tap()
+            XCTAssertTrue(effect.isSelected, name)
+        }
         let toggle = app.buttons["native-editor-text-animation-preview-toggle"]
         for _ in 0..<3 {
             if toggle.isHittable { break }

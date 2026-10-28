@@ -2005,6 +2005,25 @@
         "src/apps/api/tests/integration/test_request_following_queue.py",
         "src/apps/api/tests/routes/test_actual_export_publication.py"
       ]
+    },
+    {
+      "id": "six-designed-text-animations",
+      "needs_native": true,
+      "api_tests": "tests/pipeline/test_text_overlay_skia.py tests/pipeline/test_text_animation_phases.py tests/routes/test_phone_editor_commit.py tests/routes/test_phone_subtitled_editor_commit.py tests/pipeline/test_phone_captions.py tests/pipeline/test_guided_caption_presentation.py tests/services/test_render_library.py",
+      "xctests": [
+        "KriaUITests/NativeEditorInspectorUITests/testConnectedTextPresetAndAnimationPreviewControls"
+      ],
+      "paths": [
+        "src/apps/api/app/pipeline/designed_text_motion.py",
+        "src/apps/api/app/pipeline/text_animation_phases.py",
+        "src/apps/api/app/agents/_schemas/text_animation_phases.py",
+        "src/apps/ios/Kria/Features/NativeTextAnimationPreview.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/NativeDesignedTextPainter.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DesignedTextAnimationPreview.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DesignedTextAnimationTests.swift",
+        "src/apps/api/app/services/render_library.py",
+        "src/apps/api/tests/services/test_render_library.py"
+      ]
     }
   ]
 }

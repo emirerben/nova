@@ -23,6 +23,9 @@ extension RecipeTextLayer {
     /// Baselines and tracking are authored in output pixels. No device-specific
     /// wrap, auto-shrink, font lookup, or substitution occurs here.
     static func make(_ layer: PortableTextLayer, assetURLs: [String: URL], canvas: CGSize, maxBitmapBytes: Int = 64 * 1024 * 1024, fixedBounds: CGRect? = nil) throws -> Self {
+        if layer.animationPhases.map({ $0.entrance.isDesigned || $0.exit.isDesigned }) == true {
+            return try makeDesigned(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes)
+        }
         if layer.giantTitle != nil { return try makeGiantTitle(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes) }
         if layer.karaoke != nil { return try makeKaraoke(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes) }
         if layer.effect == .dissolveOut { return try makeDissolve(layer, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes) }

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.184.0] - 2026-10-28
+
+### Changed
+- feat(ios): add six reusable text animations (#1898) <!-- release-pr: 1898 -->
+
 ## [0.81.183.0] - 2026-10-28
 
 ### Changed

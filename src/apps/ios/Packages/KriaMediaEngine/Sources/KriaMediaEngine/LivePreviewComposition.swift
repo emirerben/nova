@@ -294,6 +294,7 @@ public struct LivePreviewExportSnapshot: Sendable {
 extension RecipeTextLayer {
     var bitmapBytes: Int {
         let pixelCount = image.extent.width * image.extent.height
+        if let designed { return designed.bitmapBytes }
         if let dissolve { return dissolve.bitmapBytes + Int(pixelCount * 12) }
         if let giantTitle { return giantTitle.bitmapBytes }
         if let handwriting { return handwriting.bitmapBytes }
