@@ -117,6 +117,31 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 3), .completed)
     }
 
+    /// Dragging a text-selection handle sideways moves the handle. The projects drawer's own drag used to claim it.
+    func testDraggingASelectionHandleInTheComposerDoesNotOpenTheDrawer() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let composer = app.textFields["Message Kria"].exists ? app.textFields["Message Kria"] : app.textViews["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("alpha beta gamma delta epsilon zeta")
+        composer.press(forDuration: 1.2)
+        let selectAll = app.menuItems["Select All"]
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5), "Long press offers Select All")
+        selectAll.tap()
+        let before = XCTAttachment(screenshot: app.screenshot()); before.name = "Selected all"; before.lifetime = .keepAlways; add(before)
+        let box = composer.frame
+        // The start handle's knob sits above the first character of the selection.
+        let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.minX + 2, dy: box.minY - 6))
+        let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.minX + 150, dy: box.minY - 6))
+        start.press(forDuration: 0.3, thenDragTo: end)
+        let after = XCTAttachment(screenshot: app.screenshot()); after.name = "After handle drag"; after.lifetime = .keepAlways; add(after)
+        XCTAssertFalse(app.buttons["drawer-new-chat"].waitForExistence(timeout: 1.5), "Dragging a selection handle must not open the drawer")
+    }
+
     func testLaunchEntersChatFirstWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
