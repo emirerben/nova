@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.167.0] - 2026-10-28
+
+### Changed
+- fix(ios): recover TestFlight history cancelled before job creation (#1883) <!-- release-pr: 1883 -->
+
 ## [0.81.166.0] - 2026-10-27
 
 ### Fixed
