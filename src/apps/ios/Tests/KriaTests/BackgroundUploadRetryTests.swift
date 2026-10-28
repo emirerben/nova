@@ -1117,9 +1117,14 @@ extension BackgroundUploadRetryTests {
         let h = harness(answerImmediately: false)   // hold the reservation: the clip never gets an upload record
         let file = try h.select("asset-1", contents: video)
 
-        let appeared = await waitUntil { h.coordinator.previewVersion > 0 }
+        let staged = await waitUntil { !h.coordinator.inFlight.isEmpty }
+        XCTAssertTrue(staged)
+        let previewID = try XCTUnwrap(h.coordinator.inFlight.first?.key)
+        // Await the real decode rather than racing a five-second timer on a loaded simulator.
+        // The reservation remains held, so this still proves visibility before upload.
+        await h.coordinator.finishEarlyPreviewForTesting(recordID: previewID)
 
-        XCTAssertTrue(appeared, "a thumbnail is written as soon as the clip is chosen")
+        XCTAssertGreaterThan(h.coordinator.previewVersion, 0, "a thumbnail is written as soon as the clip is chosen")
         XCTAssertTrue(h.coordinator.records.isEmpty, "…while it is still being prepared, not yet an upload")
         let inFlight = try XCTUnwrap(h.coordinator.inFlight.first)
         XCTAssertEqual(inFlight.value.filename, file.lastPathComponent, "and it can be listed by name")

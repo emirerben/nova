@@ -220,7 +220,8 @@ final class CreationChatFixture: @unchecked Sendable {
         if events.contains(where: { $0["event_type"] as? String == "user_message" }) || media.isEmpty { return set("none", []) }
         let lead = chip(1, "default_edit", "Let Kria cut the first version", ChatSubmission.mediaOnlyMessage)
         suggestionAsks[id, default: 0] += 1
-        if suggestionAsks[id] == 1, ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_PENDING"] != "0" {
+        let pendingMode = ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_PENDING"]
+        if pendingMode == "hold" || (suggestionAsks[id] == 1 && pendingMode != "0") {
             return set("first_prompt", status: "pending", wording: "pending", understanding: "pending", retry: 2, [lead])
         }
         return set("first_prompt", [lead,

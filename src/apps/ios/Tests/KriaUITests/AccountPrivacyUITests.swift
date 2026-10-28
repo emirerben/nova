@@ -12,9 +12,10 @@ import XCTest
 
     private func reveal(_ element: XCUIElement, app: XCUIApplication) {
         for _ in 0..<12 {
-            let save = app.buttons["text-preferences-save"]
             let top = app.navigationBars.firstMatch.exists ? app.navigationBars.firstMatch.frame.maxY : app.frame.minY + 60
-            let bottom = save.exists ? save.frame.minY - 64 : app.frame.maxY - 50
+            // A child picker has no Save button. Do not query the disappearing parent's
+            // frame during navigation; the target's own hit-testing handles fixed actions.
+            let bottom = app.frame.maxY - 50
             if element.exists {
                 let fixedAction = ["text-preferences-save", "text-preferences-reload"].contains(element.identifier)
                 if element.isHittable && (fixedAction || (element.frame.minY >= top && element.frame.maxY <= bottom)) { break }
@@ -35,10 +36,20 @@ import XCTest
         reveal(excluded, app: app); excluded.tap()
         XCTAssertTrue(app.buttons["text-preferences-save"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["Never use"].waitForExistence(timeout: 5))
-        let fontChoice = app.buttons["Fraunces"]
-        reveal(fontChoice, app: app); fontChoice.tap()
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap(); search.typeText("Fraunces")
+        let fontChoice = app.buttons["text-preference-font-Fraunces"]
+        XCTAssertTrue(fontChoice.waitForExistence(timeout: 5))
+        fontChoice.tap()
+        let chosen = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: fontChoice)
+        XCTAssertEqual(XCTWaiter.wait(for: [chosen], timeout: 5), .completed)
+        let cancelSearch = app.buttons.matching(NSPredicate(format: "label IN %@", ["Cancel", "close"])).firstMatch
+        XCTAssertTrue(cancelSearch.waitForExistence(timeout: 5))
+        cancelSearch.tap()
         app.navigationBars.buttons.firstMatch.tap()
-        XCTAssertTrue(excluded.label.contains("Fraunces"), "Returning from the picker must keep the excluded font")
+        let retained = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Fraunces"), object: excluded)
+        XCTAssertEqual(XCTWaiter.wait(for: [retained], timeout: 5), .completed, "Returning from the picker must keep the excluded font")
         let selected = XCTAttachment(screenshot: app.screenshot())
         selected.name = "Excluded Fraunces before saving"; selected.lifetime = .keepAlways; add(selected)
         let save = app.buttons["text-preferences-save"]
@@ -49,8 +60,11 @@ import XCTest
         reveal(excluded, app: app); excluded.tap()
         XCTAssertTrue(app.buttons["text-preferences-save"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["Never use"].waitForExistence(timeout: 5))
-        let fraunces = app.buttons["Fraunces"]
-        reveal(fraunces, app: app)
+        let reopenedSearch = app.searchFields.firstMatch
+        XCTAssertTrue(reopenedSearch.waitForExistence(timeout: 5))
+        reopenedSearch.tap(); reopenedSearch.typeText("Fraunces")
+        let fraunces = app.buttons["text-preference-font-Fraunces"]
+        XCTAssertTrue(fraunces.waitForExistence(timeout: 5))
         XCTAssertTrue(fraunces.isSelected, "Saved exclusion must survive reopening settings")
         let persisted = XCTAttachment(screenshot: app.screenshot())
         persisted.name = "Persisted Fraunces exclusion"; persisted.lifetime = .keepAlways; add(persisted)
