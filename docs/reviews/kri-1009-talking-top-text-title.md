@@ -104,10 +104,9 @@ Question instead of silent drop:
 - Native output (macOS host build of KriaMediaEngine `AVFoundationLocalExporter`, the
   engine the iPhone runs; synthetic 1080x1920 clip): "The Cabildo" and an Argentina flag
   drawn in the top band (y_frac 0.15) from 0 to ~2.5 s, gone at 2.6 s; the pre-fix twin
-  draws only captions. Repeatable with `scripts/ios/kri-1009-talking-title.py`; its own
-  full prepare→export→compare run is pending free disk (the data volume fell to ~150 MB
-  during this work). Its `prepare` ran for real; `compare` passed on the earlier export
-  and failed, as it must, with the twin's movie swapped in.
+  draws only captions. `scripts/ios/kri-1009-talking-title.py` prepare → export →
+  compare passed (macOS 26.6.2, Swift 6.3.3); `compare` fails, as it must, when the
+  twin's movie stands in for the title movie. Results: `kri-1009-native-title.json`.
 - Related suites: `tests/kria` + title worker/editor/pipeline tests: 6618 passed.
 
 ## Gaps and owners
