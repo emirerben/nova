@@ -163,14 +163,11 @@ struct SignInView: View {
             .accessibilityLabel("Continue with Google")
             .accessibilityIdentifier("signin.google")
 
-            #if DEV_AUTH
             Button("Sign in with email") { showsReviewerSignIn = true }
                 .font(KriaFont.body(13).weight(.medium))
                 .foregroundStyle(KriaColor.zinc)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .accessibilityIdentifier("signin.email")
-
-            #endif
 
             if AppConfiguration.current.allowsDevelopmentAuth {
                 Button {

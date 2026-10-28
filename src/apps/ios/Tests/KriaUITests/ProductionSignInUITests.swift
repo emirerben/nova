@@ -9,11 +9,10 @@ import XCTest
         #endif
         app.launch()
         XCTAssertTrue(app.buttons["signin.google"].waitForExistence(timeout: 10))
-        #if DEV_AUTH
         XCTAssertTrue(app.buttons["signin.email"].exists)
+        #if DEV_AUTH
         XCTAssertTrue(app.buttons["signin.local"].exists)
         #else
-        XCTAssertFalse(app.buttons["signin.email"].exists)
         XCTAssertFalse(app.buttons["signin.local"].exists)
         #endif
         let screenshot = XCTAttachment(screenshot: app.screenshot())

@@ -1,4 +1,7 @@
-# Production signin
+# Production sign-in
+
+Final Release check after the user retained email sign-in for Apple reviewer access.
+Email is present. Local-account access is absent. No DEV_AUTH or DEBUG condition was added.
 
 Unedited JSON from `xcresulttool get test-results summary`.
 
@@ -28,11 +31,11 @@ Unedited JSON from `xcresulttool get test-results summary`.
   "environmentDescription" : "Kria Production SignIn Check · Built with macOS 26.4.1",
   "expectedFailures" : 0,
   "failedTests" : 0,
-  "finishTime" : 1793198758.191,
+  "finishTime" : 1793202096.415,
   "passedTests" : 1,
   "result" : "Passed",
   "skippedTests" : 0,
-  "startTime" : 1793198703.158,
+  "startTime" : 1793201412.215,
   "statistics" : [
 
   ],
@@ -45,4 +48,5 @@ Unedited JSON from `xcresulttool get test-results summary`.
   ],
   "totalTestCount" : 1
 }
+
 ```

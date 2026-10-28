@@ -4,7 +4,7 @@ Expectations supplied by the creator before implementation.
 
 ```json
 {
-  "request_provenance": "User instructions in this Codex chat, 2026-10-25 through 2026-10-28; KRI-638 and KRI-643. Production email-link removal explicitly requested on 2026-10-28.",
+  "request_provenance": "User instructions in this Codex chat, 2026-10-25 through 2026-10-28; KRI-638 and KRI-643. The final instruction on 2026-10-28 retains production email sign-in for Apple reviewer access.",
   "onboarding_order": [
     "bosphorus",
     "lisbon",
@@ -17,7 +17,8 @@ Expectations supplied by the creator before implementation.
   "slider_transition_seconds": 0.35,
   "production_signin": [
     "Apple",
-    "Google"
+    "Google",
+    "email reviewer form"
   ],
   "development_signin": [
     "Apple",

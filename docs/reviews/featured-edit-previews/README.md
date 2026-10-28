@@ -9,11 +9,8 @@ aspect ratio without black bars. New Chat plays only the centered video card.
 Slider holds for 1.2 seconds and swipes for 0.35 seconds. Narrated keeps its
 existing image because the user deferred a replacement.
 
-The user also requested removal of production email sign-in. `DEV_AUTH` now gates
-the email link. The existing local-account guard remains unchanged. Production
-Release has neither development entry point. This removes the entry used by
-KRI-111 for Apple review, so review access and App Store Connect review notes
-need a replacement before the next Apple review submission.
+The final user instruction retains production email sign-in so the KRI-111 Apple
+reviewer demo form stays reachable. Local-account access remains development-only.
 
 ## Evidence
 
@@ -23,8 +20,11 @@ The report documents retain unedited `xcresulttool get test-results summary` JSO
 - `native-integrated.md` records four focused native checks after merging current main.
 - `native-debug-final.md` covers all ten focused Debug UI checks, including
   four-edit sequencing, centered playback, Slider timing/pause, sign-in and tile sizes.
-- `production-signin.md` verifies the normal Release app hides both development links.
+- `production-signin.md` verifies the final Release app shows email sign-in and hides local-account access.
 - `native-unit.md` records 2,087 tests, including 26 explicit skips, with no failures.
+
+Earlier Debug and integration reports predate the final email-entry restoration.
+The Release report and screenshot verify the final sign-in state.
 
 The native evidence is from an iPhone 17 Pro simulator on iOS 26.5. It does not
 prove a physical-device build, an App Store review, or a production rollout.
@@ -49,7 +49,7 @@ shared preview dimensions.
 For the production sign-in check, use the `Kria Production SignIn Check` scheme.
 It uses Release and includes only the production sign-in UI check, so Debug-only
 unit-test helpers are excluded. Neither `DEBUG` nor `DEV_AUTH` is added. The check
-launches the normal Release app and asserts that both development links are absent.
+launches the normal Release app and asserts that email sign-in is present and local-account access is absent.
 
 The Release UI verification used code-coverage instrumentation and testable module
 exports to reuse the simulator build. These settings do not define `DEBUG` or
