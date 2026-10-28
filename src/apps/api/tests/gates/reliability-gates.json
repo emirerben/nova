@@ -3588,6 +3588,7 @@
         "src/apps/api/app/kria/strategy_policy.py",
         "src/apps/api/app/services/creator_capabilities.py",
         "src/apps/api/app/pipeline/phone_subtitled_title.py",
+        "src/apps/api/app/pipeline/narrated_title.py",
         "src/apps/api/app/tasks/kria_runtime.py"
       ],
       "regression_tests": [
