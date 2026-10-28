@@ -168,6 +168,29 @@ def never_executed(job):
     )
 
 
+def unstarted_attempt(run_id, attempt_number, repo):
+    """Prove an exact cancelled attempt never created any Actions job."""
+    path = f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt_number}"
+    attempt = json.loads(command("gh", "api", path))
+    jobs = json.loads(command("gh", "api", f"{path}/jobs?per_page=100"))
+    return (
+        isinstance(attempt, dict)
+        and attempt.get("id") == run_id
+        and type(attempt.get("run_attempt")) is int
+        and attempt["run_attempt"] == attempt_number
+        and attempt.get("status") == "completed"
+        and attempt.get("conclusion") == "cancelled"
+        and attempt.get("path") == ".github/workflows/testflight.yml"
+        and attempt.get("head_branch") == "main"
+        and isinstance(attempt.get("repository"), dict)
+        and attempt["repository"].get("full_name") == repo
+        and isinstance(jobs, dict)
+        and type(jobs.get("total_count")) is int
+        and jobs["total_count"] == 0
+        and jobs.get("jobs") == []
+    )
+
+
 def main():
     # Include failed/cancelled workflows: transfer may have succeeded before a
     # distribution failure. Never infer an upload from workflow/step success.
@@ -200,6 +223,10 @@ def main():
                 "jobs",
             )
         )["jobs"]
+        if jobs == [] and unstarted_attempt(
+            run_id, attempt_number, os.environ["GITHUB_REPOSITORY"]
+        ):
+            continue
         releases = [job for job in jobs if job["name"] == "release"]
         if len(releases) != 1:
             raise ProvenanceError(
