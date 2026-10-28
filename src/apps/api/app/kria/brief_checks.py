@@ -51,7 +51,7 @@ from app.kria.reply_language import current_reply_language, say
 from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
 from app.kria.speed_ask import asks_clip_speed
-from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
+from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS, _fact_speaker
 from app.kria.style_asks import (
     MOMENT_SHORT_MAX_S,
     MomentAsk,
@@ -4659,8 +4659,21 @@ def _unheard_for(facts: PlanFacts, names: Sequence[str]) -> list[str]:
     return [t for t in facts.unheard_beat_triggers if any(_trigger_heard(n, t) for n in names)]
 
 
-def _never_heard_problem(triggers: Iterable[str]) -> str:
+def _asks_about_other_speaker(req: BriefRequirement) -> bool:
+    """True when the ask names someone other than the creator as the one who says the words:
+    a ``speaker`` fact that is not the creator or anyone ("Maximo"), or a cue worded "when he
+    mentions ..." (KRI-1019)."""
+    return _fact_speaker(req) is not None or _cue_trigger_match(req)[1] is not None
+
+
+def _never_heard_problem(triggers: Iterable[str], *, other_speaker: bool = False) -> str:
     names = _names(triggers)
+    if other_speaker:
+        # The words were meant for someone else's mouth: "your voice" would blame the creator.
+        return say(
+            en=f"I never heard {names} in the take",
+            tr=f"Videoda {names} sözünü duymadım",
+        )
     return say(
         en=f"I never heard {names} in your voice",
         tr=f"Sesinde {names} sözünü duymadım",
@@ -5019,7 +5032,9 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             unheard = list(facts.unheard_beat_triggers) if not names else _unheard_for(facts, names)
             room = _beat_room_problem(req, facts, names)
             if unheard:
-                problems.append(_never_heard_problem(unheard))
+                problems.append(
+                    _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
+                )
             elif room:
                 problems.append(room)
             else:
@@ -5071,7 +5086,9 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 and not any(_trigger_heard(n, u) for u in unheard)
             ]
             if unheard:
-                problems.append(_never_heard_problem(unheard))
+                problems.append(
+                    _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
+                )
             # Named words: only the ones that didn't land; unnamed: the ask's own words.
             room = None if named and not missing else _beat_room_problem(req, facts, missing)
             if room:
