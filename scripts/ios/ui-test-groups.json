@@ -24,6 +24,7 @@
       "KriaUITests/CreationUITests/testNewChatShowsUsableFormatsWithoutWaitingForMoreReads",
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap",
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
+      "KriaUITests/CreationUITests/testPendingServerSuggestionChipsShowOnlyTheDefaultEdit",
       "KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips",
       "KriaUITests/CreationUITests/testServerSuggestionChipTapNamesTheOfferedChipOnTheTurn",
       "KriaUITests/SlidePostUITests/testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose",

@@ -1625,22 +1625,38 @@ final class CreationUITests: XCTestCase {
     /// label) and the row goes; the finished video offers the server's chips instead of the two fixed ones. The
     /// capability-OFF half is `testReadySuggestionChipsApplyFromTapsNearCapsuleEdges` above, which launches without
     /// `KRIA_SUGGESTION_CHIPS` and still pins the fixed chips.
+    func testPendingServerSuggestionChipsShowOnlyTheDefaultEdit() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v1", "KRIA_CHAT_FIXTURE_MEDIA": "1",
+                                 "KRIA_SUGGESTION_CHIPS": "1", "KRIA_SUGGESTION_CHIPS_PENDING": "hold"]
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        XCTAssertTrue(app.buttons["Let Kria cut the first version"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Add captions"].exists)
+        XCTAssertFalse(app.buttons["Add sound effects"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
+        app.terminate()
+    }
+
     func testServerSuggestionChipsSendOnTapAndReplaceFixedChips() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        // Pending: chip #1 alone, no generic fixed strings.
+        // Pending rendering is checked separately with a held server response. Polling may
+        // finish before XCUITest observes it; this journey starts with the delivered set.
         let defaultEdit = app.buttons["Let Kria cut the first version"]
         XCTAssertTrue(defaultEdit.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["Add captions"].exists, "Only chip #1 shows while the server is still working")
         XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
-        // The set lands: four chips in rank order, chip #1 first and unchanged; `why` rides in the accessibility label.
         let hook = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch
         XCTAssertTrue(hook.waitForExistence(timeout: 15))
         XCTAssertEqual(hook.label, "Add a hook to the opening, the first shot is a quiet one")
