@@ -1939,6 +1939,7 @@ struct NativeEditorTemporaryVideo {
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
+            if sameTarget { refreshEditingPermissions(from: variant, document: nextDocument) }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
             // Only the previous chat draft is unsaved: the newer cumulative
             // head replaces it wholesale instead of conflicting with it.
@@ -7762,6 +7763,36 @@ struct NativeEditorTemporaryVideo {
         songCaptionLipsyncCarryS = 0
         rendersOnDevice = variant?["render_destination"]?.stringValue == "device"
         guidedRevisionNumber = Self.number(variant?["editor_revision_number"]).flatMap { $0 >= 1 && $0 <= Double(Int32.max) ? Int($0) : nil }
+        configureEditingPermissions(from: variant)
+    }
+
+    private func refreshEditingPermissions(from variant: [String: JSONValue]?, document latest: EditorDocument) {
+        guard cloudEditorUnavailableMessage == nil, document.capabilities != latest.capabilities else { return }
+        func refreshed(_ value: EditorDocument) -> EditorDocument {
+            var value = value
+            value.capabilities = latest.capabilities
+            return value
+        }
+        document = refreshed(document)
+        cleanDocument = refreshed(cleanDocument)
+        undoStack = undoStack.map(refreshed)
+        redoStack = redoStack.map(refreshed)
+        if let transactionBaseline { self.transactionBaseline = refreshed(transactionBaseline) }
+        if var activeTrim {
+            activeTrim.baseline = refreshed(activeTrim.baseline)
+            activeTrim.redoBaseline = activeTrim.redoBaseline.map(refreshed)
+            self.activeTrim = activeTrim
+        }
+        if var activeTimedEdit {
+            activeTimedEdit.baseline = refreshed(activeTimedEdit.baseline)
+            activeTimedEdit.redoBaseline = activeTimedEdit.redoBaseline.map(refreshed)
+            self.activeTimedEdit = activeTimedEdit
+        }
+        previewVariant["editor_capabilities"] = variant?["editor_capabilities"]
+        configureEditingPermissions(from: variant)
+    }
+
+    private func configureEditingPermissions(from variant: [String: JSONValue]?) {
         guard let variant else {
             // Preview fixtures remain interactive, but production never claims
             // renderer support without an authoritative status response.

@@ -84,6 +84,33 @@ final class ChatDraftStagingTests: XCTestCase {
             canUndo: false, createdAt: .now)
     }
 
+    func testRecoveredPermissionsUnlockRangeWithoutSavingLocalText() async throws {
+        var locked = Self.variant()
+        locked["editor_capabilities"] = .object(["timeline": .bool(false), "text_elements": .bool(true)])
+        let fake = EditorCommitSpy(draftSnapshot: Self.bootstrapSnapshot(), authoritativeVariant: locked)
+        let session = NativeEditorSession()
+        await session.load(api: fake, threadID: UUID())
+        session.setTextStyle(id: "t1", style: "Inter")
+        let editedText = session.document.textElements
+        let clip = try XCTUnwrap(session.timelineClips.first)
+        let selection = EditorSelection(kind: .clip, id: clip.id.uuidString)
+        XCTAssertNotNil(session.sourceWindowBlockedReason(for: selection))
+
+        fake.editorVariantError = .offline
+        await session.synchronizePromptRevision()
+        fake.editorVariantError = nil
+        fake.authoritativeVariant = Self.variant()
+        await session.synchronizePromptRevision()
+
+        XCTAssertNil(session.sourceWindowBlockedReason(for: selection))
+        XCTAssertTrue(session.canEditTimeline)
+        XCTAssertEqual(session.document.textElements, editedText)
+        XCTAssertTrue(session.hasUnsavedChanges)
+        XCTAssertEqual(fake.commitCount, 0)
+        session.undo()
+        XCTAssertNil(session.sourceWindowBlockedReason(for: selection), "Undo must not restore stale permissions")
+    }
+
     private func loaded(_ snapshot: DraftSnapshot) async -> (NativeEditorSession, EditorCommitSpy) {
         let fake = EditorCommitSpy(draftSnapshot: snapshot, authoritativeVariant: Self.variant(),
             commitResponse: EditorCommitResponse(ok: true, generation: "g2",
