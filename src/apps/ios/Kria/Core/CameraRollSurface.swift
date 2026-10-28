@@ -84,6 +84,12 @@ struct CameraRollEvent: Identifiable {
     private(set) var latestCollection: SavedCameraRollCollection?
     var showsLatestReview = false
     private(set) var started = false
+    /// "Use this idea" work by idea. It outlives its progress sheet: closing the sheet never cancels it.
+    private(set) var uses: [UUID: CameraRollIdeaUse] = [:]
+    /// The idea whose progress sheet is open.
+    var shownUse: CameraRollIdeaUse?
+    /// Opens a chat in the workspace; false when the workspace will not open it.
+    @ObservationIgnored var openChat: @MainActor (CreationThread) async -> Bool = { _ in false }
 
     @ObservationIgnored private var providers: [String: PhotosPickerItem] = [:]
     @ObservationIgnored private var removedEntries: [String: [CameraRollCollection.Entry]] = [:]
@@ -485,6 +491,28 @@ struct CameraRollEvent: Identifiable {
     }
 
     func anotherIdea(in group: String) { apply(.anotherIdea(group: group)) }
+
+    /// Opens the idea's progress sheet: the work already under way, or new work for this idea.
+    func use(_ story: CameraRollStory) {
+        if let existing = uses[story.id] { shownUse = existing; return }
+        let snapshot = collection
+        let job = CameraRollIdeaUse(story: story, api: api, collection: { [weak self] in self?.collection ?? snapshot }) { [weak self] thread in
+            guard let self else { return false }
+            let opened = await openChat(thread)
+            if opened { uses[story.id] = nil; if shownUse?.id == story.id { shownUse = nil } }
+            return opened
+        }
+        uses[story.id] = job
+        shownUse = job
+        job.start()
+    }
+
+    /// Saves an answer to (or a skip of) one of an idea's open questions from its card.
+    func answerQuestions(_ story: CameraRollStory, plan: CameraRollContentPlan) async {
+        do {
+            replaceStory(try await api.updateCameraRollContentPlan(collectionID: collection.id, story: story, collectionRevision: revision, plan: plan))
+        } catch { showError(error, summary: "Couldn't save that answer.") }
+    }
 
     func deleteIdea(_ story: CameraRollStory, in group: String) { apply(.deleteIdea(storyID: story.id, group: group)) }
 

@@ -35,8 +35,14 @@ final class CameraRollCollectionUITests: XCTestCase {
         return XCTWaiter.wait(for: [met], timeout: timeout) == .completed
     }
 
+    /// Swipes until the element is on screen, then lets the scroll coast to a stop: a tap during the coast only
+    /// stops the scroll and never reaches the button.
     private func scrollTo(_ element: XCUIElement, in app: XCUIApplication, limit: Int = 10) {
-        for _ in 0..<limit where !element.exists || !element.isHittable { app.swipeUp() }
+        var swiped = false
+        for _ in 0..<limit where !element.exists || !element.isHittable { app.swipeUp(); swiped = true }
+        guard swiped else { return }
+        let coast = XCTestExpectation(description: "scroll settles"); coast.isInverted = true
+        _ = XCTWaiter.wait(for: [coast], timeout: 1)
     }
 
     private func attach(_ name: String, _ screenshot: XCUIScreenshot) {
@@ -330,6 +336,95 @@ final class CameraRollCollectionUITests: XCTestCase {
         attach("Your taste", app.screenshot())
         app.buttons["camera-roll-back"].tap()
         XCTAssertTrue(app.staticTexts["camera-roll-title"].waitForExistence(timeout: 5))
+    }
+
+    // MARK: Using an idea
+
+    private let ferryIdea = "11111111-1111-4111-8111-000000000002"
+    private let simitIdea = "11111111-1111-4111-8111-000000000003"
+
+    func testEveryIdeaCardShowsItsClipsAndUse() {
+        let app = launch(["-collection-mixed-states"])
+        openEvent(app, sunday)
+        for idea in [guideIdea, ferryIdea, simitIdea] {
+            let use = element(app, "camera-roll-idea-use-\(idea)")
+            scrollTo(use, in: app)
+            XCTAssertTrue(use.waitForExistence(timeout: 5), "Every idea offers Use this idea")
+            XCTAssertTrue(element(app, "camera-roll-idea-clips-\(idea)").exists, "Every idea shows its clips")
+        }
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "camera-roll-idea-best-fit").count, 1, "Only the first idea is the best fit")
+        attach("Every idea card", app.screenshot())
+    }
+
+    func testOpenQuestionsSayWhyUseWaitsAndAnsweringEnablesIt() {
+        let app = launch(["-collection-mixed-states"])
+        openEvent(app, sunday)
+        let use = element(app, "camera-roll-idea-use-\(guideIdea)")
+        scrollTo(use, in: app)
+        XCTAssertTrue(use.waitForExistence(timeout: 5))
+        XCTAssertFalse(use.isEnabled, "An idea with an open question can't be used yet")
+        XCTAssertEqual(element(app, "camera-roll-idea-use-reason-\(guideIdea)").label, "Answer or skip the question above to use this idea.")
+        XCTAssertTrue(app.staticTexts["What was the name of the ferry café?"].exists, "The question is on the card")
+        attach("Idea waiting on a question", app.screenshot())
+        let skip = element(app, "story-question-skip-q1")
+        scrollTo(skip, in: app)
+        skip.tap()
+        XCTAssertTrue(wait(use, "enabled == true"), "Skipping the question enables Use")
+        XCTAssertFalse(element(app, "camera-roll-idea-use-reason-\(guideIdea)").exists)
+    }
+
+    func testUseShowsEachStepThenOpensTheChat() {
+        let app = launch(["-collection-mixed-states", "-collection-slow-use"])
+        openEvent(app, sunday)
+        let use = element(app, "camera-roll-idea-use-\(ferryIdea)")
+        scrollTo(use, in: app)
+        use.tap()
+        XCTAssertTrue(element(app, "camera-roll-use-sheet").waitForExistence(timeout: 5), "Use opens the progress sheet at once")
+        let clips = element(app, "camera-roll-use-step-clips")
+        XCTAssertTrue(wait(clips, "label CONTAINS %@", "Uploading clips 1/2", timeout: 10), "Clip uploads count up")
+        attach("Use progress", app.screenshot())
+        XCTAssertTrue(wait(element(app, "camera-roll-use-step-chat"), "value == %@", "In progress", timeout: 15))
+        XCTAssertTrue(element(app, "camera-roll-opened-chat").waitForExistence(timeout: 15), "Success goes straight to the chat")
+    }
+
+    func testUseKeepsGoingAfterTheSheetCloses() {
+        let app = launch(["-collection-mixed-states", "-collection-slow-use"])
+        openEvent(app, sunday)
+        let use = element(app, "camera-roll-idea-use-\(ferryIdea)")
+        scrollTo(use, in: app)
+        use.tap()
+        XCTAssertTrue(element(app, "camera-roll-use-sheet").waitForExistence(timeout: 5))
+        element(app, "camera-roll-use-close").tap()
+        XCTAssertTrue(wait(use, "label CONTAINS %@", "Show progress"), "The card says the idea is still being built")
+        use.tap()
+        XCTAssertTrue(element(app, "camera-roll-use-sheet").waitForExistence(timeout: 5), "The sheet reopens on the same work")
+        element(app, "camera-roll-use-close").tap()
+        XCTAssertTrue(element(app, "camera-roll-opened-chat").waitForExistence(timeout: 20), "Closing the sheet never cancels the work")
+    }
+
+    func testAFailedStepOffersRetry() {
+        let app = launch(["-collection-mixed-states", "-collection-use-fails-once"])
+        openEvent(app, sunday)
+        let use = element(app, "camera-roll-idea-use-\(ferryIdea)")
+        scrollTo(use, in: app)
+        use.tap()
+        let error = element(app, "camera-roll-use-error")
+        XCTAssertTrue(error.waitForExistence(timeout: 10), "A failure shows on the sheet")
+        XCTAssertEqual(element(app, "camera-roll-use-step-chat").value as? String, "Failed")
+        attach("Use failed with Retry", app.screenshot())
+        element(app, "camera-roll-use-retry").tap()
+        XCTAssertTrue(element(app, "camera-roll-opened-chat").waitForExistence(timeout: 15))
+    }
+
+    func testUseSaysWhenTheChatCannotOpen() {
+        let app = launch(["-collection-mixed-states", "-collection-chat-deleted"])
+        openEvent(app, sunday)
+        let use = element(app, "camera-roll-idea-use-\(ferryIdea)")
+        scrollTo(use, in: app)
+        use.tap()
+        let error = element(app, "camera-roll-use-error")
+        XCTAssertTrue(wait(error, "label CONTAINS %@", "was deleted", timeout: 10), "A chat the phone won't open says why instead of doing nothing")
+        XCTAssertFalse(element(app, "camera-roll-opened-chat").exists)
     }
 
     // MARK: First run and access

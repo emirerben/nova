@@ -96,7 +96,7 @@ struct ChatWorkspaceView: View {
                     WorkspaceCrossfade(dismiss: {}) { _ in
                         CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
                             await model.loadProjects()
-                            model.selectProject(thread.summary)
+                            return model.selectProject(thread.summary)
                         })
                     }
                 } else if let project = model.selectedProject {

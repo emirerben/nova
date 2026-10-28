@@ -208,8 +208,8 @@ struct CameraRollEventPage: View {
             }
             if generating { CameraRollWorkingCard(ready: ready, identifier: "camera-roll-working-\(event.id)") }
             ForEach(Array(ideas.enumerated()), id: \.element.id) { index, story in
-                CameraRollIdeaCard(model: model, story: story, event: event, isFirst: index == 0) { autoSelect in
-                    openIdea(CameraRollIdeaRoute(group: event.id, storyID: story.id, autoSelect: autoSelect))
+                CameraRollIdeaCard(model: model, story: story, event: event, isBestFit: index == 0) {
+                    openIdea(CameraRollIdeaRoute(group: event.id, storyID: story.id))
                 }
             }
             if !ideas.isEmpty {

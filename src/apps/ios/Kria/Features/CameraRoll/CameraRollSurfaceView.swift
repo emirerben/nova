@@ -2,12 +2,10 @@ import SwiftUI
 import Photos
 import PhotosUI
 
-/// Which idea the detail page shows, and whether it should start building it on arrival ("Use this idea").
-struct CameraRollIdeaRoute: Hashable, Identifiable {
+/// Which idea the detail page shows.
+struct CameraRollIdeaRoute: Hashable {
     let group: String
     let storyID: UUID
-    let autoSelect: Bool
-    var id: String { "\(group)/\(storyID)/\(autoSelect)" }
 }
 
 /// The full-screen Camera roll (Paper boards A to A8). It is workspace content beside the projects drawer, not a
@@ -16,7 +14,8 @@ struct CameraRollIdeaRoute: Hashable, Identifiable {
 struct CameraRollSurfaceView: View {
     @Bindable var model: CameraRollSurfaceModel
     let openProjects: () -> Void
-    let onSelected: @MainActor (CreationThread) async -> Void
+    /// Opens a chat in the workspace; false when the workspace will not open it.
+    let onSelected: @MainActor (CreationThread) async -> Bool
 
     @Environment(\.projectsDrawerOpen) private var drawerOpen
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -67,7 +66,8 @@ struct CameraRollSurfaceView: View {
         } message: {
             Text("\(model.latestCollection?.name ?? model.collection.name) · \(model.latestCollection?.members?.count ?? 0) items. Your local changes will remain available as a separate collection.")
         }
-        .task { await model.start() }
+        .sheet(item: $model.shownUse) { use in CameraRollUseSheet(use: use) }
+        .task { model.openChat = onSelected; await model.start() }
         .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(active: phase == .active) }
         .onChange(of: model.events.map(\.id)) { _, ids in
             // A deleted or replaced event takes its pages with it.
@@ -263,7 +263,7 @@ struct CameraRollSurfaceView: View {
 
     @ViewBuilder private func detail(_ route: CameraRollIdeaRoute) -> some View {
         if let story = model.board.storiesByGroup[route.group]?.first(where: { $0.id == route.storyID }) {
-            CameraRollIdeaDetailScreen(model: model, group: route.group, story: story, autoSelect: route.autoSelect, onSelected: onSelected)
+            CameraRollIdeaDetailScreen(model: model, group: route.group, story: story)
         } else {
             VStack(spacing: 0) {
                 CameraRollPageHeader(title: model.title(for: route.group))
@@ -281,13 +281,12 @@ struct CameraRollSurfaceView: View {
 // MARK: - Idea detail (Paper A4)
 
 /// One idea on its own page. The review itself (clips, opening text, open questions, research, "Use this idea")
-/// is `CameraRollStoriesView` in its embedded form; this adds the page chrome and wires its changes back.
+/// is `CameraRollStoriesView` in its embedded form; this adds the page chrome and wires its changes back. Use
+/// runs on the model, like Use on the idea's card.
 struct CameraRollIdeaDetailScreen: View {
     let model: CameraRollSurfaceModel
     let group: String
     let story: CameraRollStory
-    let autoSelect: Bool
-    let onSelected: @MainActor (CreationThread) async -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -296,8 +295,8 @@ struct CameraRollIdeaDetailScreen: View {
             CameraRollStoriesView(
                 api: model.api, collection: model.collection,
                 result: CameraRollStories(stories: [story], coverage: model.coverage[group]),
-                cacheOnly: model.cacheOnlyRequired, embedded: true, thumbnailsDisabled: model.thumbnailsDisabled, autoSelect: autoSelect,
-                onSelected: onSelected,
+                cacheOnly: model.cacheOnlyRequired, embedded: true, thumbnailsDisabled: model.thumbnailsDisabled,
+                onUse: { model.use($0) }, onSelected: model.openChat,
                 onReviewed: { reviewed in for changed in reviewed.stories { model.replaceStory(changed) } },
                 onDelete: { model.deleteIdea(story, in: group); dismiss() })
         }
