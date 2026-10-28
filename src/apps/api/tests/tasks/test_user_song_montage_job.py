@@ -1057,6 +1057,13 @@ def test_turning_hidden_lyrics_on_draws_them_and_keeps_the_creators_edits_across
     assert _drawn_lyrics(job) == []
     variant = job.assembly_plan["variants"][0]
     assert gj._guided_v2_revision(job, variant)["caption_meta"]["enabled"] is False
+    # A song move while hidden re-times the lyric rows but keeps them off.
+    start = job.assembly_plan["guided_story_execution_plan"]["user_song"]["window_start_s"]
+    _editor_save(job, user_song=gj.EditorCommitUserSong(window_start_s=start + 0.5))
+    assert _drawn_lyrics(job) == []
+    saved = job.assembly_plan["variants"][0][PHONE_EDITOR_SAVED_PLAN_FIELD]
+    assert saved["editor_caption_meta"]["enabled"] is False
+    assert _caption_rows(saved)
 
     # Show captions: a Save that touches only the caption settings.
     _editor_save(
