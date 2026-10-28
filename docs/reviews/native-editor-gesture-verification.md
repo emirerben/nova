@@ -62,7 +62,8 @@ All failed results and recordings remain in the task artifacts.
 
 The red regression is `inspector-reset-undo-red.xcresult`: one test failed
 after all setup and Reset checks passed. The identical regression passed after
-the one-line close hook. Final `inspector-close-green.xcresult` passed 248 tests:
+the one-line close hook. Before the later animation integration, `inspector-close-green.xcresult` passed
+248 tests:
 244 existing editor-session checks and four unique UI journeys, zero failures
 and zero skips. Its summary SHA-256 is
 `5c73fe02ba3fe6a92e13c24ea42423b849e16217e527218c5c2281b17365716c`.
@@ -91,3 +92,18 @@ The native verification used main `69c3b701d` plus this working patch.
 `e8003529fe8b182405791f96806fb0d45076ff6b514bf78bd5351b3656583612`.
 The safe report records a local fix. No physical-device or installed TestFlight
 verification of this new inspector hook is claimed.
+
+## Latest-main integration
+
+Merged main `06863782d`, including the six new native text animations, into
+this task branch at `66b3188b08c094e49c3854673f23c6dc145deef4`. The regenerated app then passed
+the same 244 session checks and four UI journeys again: 248 passed, zero failed,
+zero skipped. Exact selected UI coverage was verified with the repository's
+`ui_tests.verify_results` function. The summary SHA-256 is
+`7f5d70f6baffd7f3e4a02c346d5fde9af3a49a5f613feb2f4fd9bca1a7ecda57`.
+
+The latest native result is `latest-main-inspector-close.xcresult`. The original
+endpoint method and new Undo regression are unchanged from the red/green proof.
+The latest Gameday export's inspected title and fifth-source frames are byte
+identical to the earlier inspected frames. This still requires fresh exact-head
+CI and actual candidate publication.

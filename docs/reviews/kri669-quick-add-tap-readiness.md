@@ -28,15 +28,15 @@ retains its result bundle and screenshots showing the fifth Istanbul source and
 Saved to Photos acknowledgement. That workflow still failed its separate pinch
 UI check; no failed or pending gate was overridden.
 
-After integrating main `69c3b701d` and the inspector-close fix, the full Gameday
-journey passed again as part of `inspector-close-green.xcresult`: four unique UI
+After integrating main `06863782d` and the inspector-close fix, the full Gameday
+journey passed again as part of `latest-main-inspector-close.xcresult`: four unique UI
 journeys and 244 editor-session tests passed, zero failures and zero skips.
 This local simulator is iPhone 17/iOS 26.5. Fresh exact-head CI on the original
 runtime is still required.
 
-The actual latest simulator export was written at 13:53:17 UTC. It is H.264/AAC,
+The actual latest simulator export was written at 14:02:59 UTC. It is H.264/AAC,
 1080×1920, 8.6 seconds, 7,457,976 bytes. SHA-256:
-`93cc4c3bd32f0d0a3105a6657d08aa51ef253af14f28224ce3726547bc302354`.
+`b1baaf6bdbbc089d0273d5431f1862063a8c6a2ae4f94bcfbe1e79b9d77c5dca`.
 The inspected 0.8-second frame retains "Gameday edited title"; 5.6 seconds shows
 the distinct fifth Istanbul source. The 1.6-second branded outro follows the
 seven-second content timeline. Media remain outside git. The simulator's Photos
@@ -51,3 +51,7 @@ This is a local test correction with an inspected fixture export, not a proved
 production import fix. The Cunda native fix needs its own current-main CI and
 candidate delivery. Original timing, quiet audio, and remaining original-media
 replays stay open under KRI-984. Launch is not cleared.
+
+After the native animation integration, both current export frames remained
+byte-identical to the inspected title and fifth-source frames. This establishes
+those visual checkpoints only.
