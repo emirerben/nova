@@ -11146,8 +11146,21 @@ def _prepare_editor_commit(
             caption_meta_patch["caption_font_user_edited"] = True
         if meta.y_frac is not None:
             from app.pipeline.captions import y_frac_to_margin_v  # noqa: PLC0415
+            from app.pipeline.phone_captions import caption_y_fields  # noqa: PLC0415
 
             caption_meta_patch["caption_margin_v"] = y_frac_to_margin_v(meta.y_frac)
+            # KRI-1008: the phone compiler and the iOS editor read the style's y before the
+            # margin, so a y_frac move (a chat op sends no appearance, or the client echoes
+            # the stale one) moves both. An appearance that moved its own y in this Save is
+            # the newer placement and stays.
+            sent_y = meta.appearance.position_y_frac if meta.appearance is not None else None
+            stored_style = variant.get("caption_editor_style")
+            if sent_y is None or sent_y == (
+                stored_style.get("position_y_frac") if isinstance(stored_style, dict) else None
+            ):
+                caption_meta_patch.update(
+                    caption_y_fields({**variant, **caption_meta_patch}, meta.y_frac)
+                )
             caption_meta_patch["caption_position_user_edited"] = True
         if meta.size_px is not None:
             caption_meta_patch["caption_size_px"] = int(meta.size_px)

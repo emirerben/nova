@@ -191,6 +191,16 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   `low_alignment_score`, `filler_without_room`) and which cuts the re-listen dropped. Kill
   switch: `fly secrets set SPEECH_CLEANUP_FILLER_CHECK_ENABLED=false --app nova-video` +
   api and worker restart (it is part of the source policy fingerprint, so analyses redo).
+- "cleanup cut whole words / a quiet second speaker" on a take with no real pause (two
+  people talking, one far from the mic; a wrong-language or partial transcript) → the
+  ambient silence floor sat above the quiet voice and the transcript had no token there.
+  `mixed-gap-v8-voice-guard` (KRI-1017, `app/pipeline/speech_voice_guard.py`) gives back any
+  silence or filler cut that holds a sustained voiced run, whatever the transcript says: a
+  pause keeps its longer voice-free edge, a filler cut is dropped whole. Transcribed fillers,
+  retakes and creator-chosen spans are exempt. `diagnostics.voice_guard` lists what it
+  `dropped` and `trimmed` (`start_s`, `end_s`, `reason`, `voiced_s`, `kept_cut_*`). It has no
+  flag: it can only keep audio. If it keeps pauses on noisy takes, check for periodic background (music,
+  crowd talk) before touching `MIN_PERIODICITY`; never tune it on loudness alone.
 - "the cuts sound jumpy / the background drops out at every cut" on noisy footage →
   the render, not the detector. Cloud cuts crossfade up to 25 ms of removed audio
   from each side and cut audio on the video frame grid (`_CUT_CROSSFADE_HANDLE_S`,

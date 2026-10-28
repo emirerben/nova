@@ -537,11 +537,13 @@ enum WorkspaceDestination: Equatable, Sendable {
     /// the older video's card would only repeat what it asked for.
     func clearChatDeviceRenderFocus() { chatDeviceRenderFocus = nil }
 
-    func selectProject(_ project: ProjectSummary) {
-        guard !deletedProjectIDs.contains(project.id) else { return }
+    /// False when the chat was deleted on this phone, which never reopens it.
+    @discardableResult func selectProject(_ project: ProjectSummary) -> Bool {
+        guard !deletedProjectIDs.contains(project.id) else { return false }
         selectedProject = projects.first(where: { $0.id == project.id }) ?? project
         destination = .chat(project.id)
         errorMessage = nil
+        return true
     }
 
     /// Shows the camera roll in the workspace. The selected project stays selected underneath, so closing the

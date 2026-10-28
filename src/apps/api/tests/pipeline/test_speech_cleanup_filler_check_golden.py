@@ -52,6 +52,7 @@ from app.pipeline.speech_cleanup_analysis import (
     analyze_speech_cleanup,
 )
 from app.pipeline.transcribe import TranscribeError
+from tests._silent_pcm import silent_pcm
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 _CAFE = json.loads((_FIXTURES / "kri970_cafe_late_stamps.json").read_text())
@@ -93,6 +94,7 @@ def _run(
         silence_detect_fn=lambda *_a, **_k: SimpleNamespace(
             spans=tuple(map(tuple, silences)), status="ok"
         ),
+        pcm_loader=silent_pcm,
     )
 
 

@@ -587,7 +587,7 @@
     {
       "id": "kri-653-silent-take",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_silence_cut_no_speech.py tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/services/test_audio_presence.py tests/services/test_transcript_quality.py tests/tasks/test_silent_audio_gate.py",
+      "api_tests": "tests/pipeline/test_silence_cut_no_speech.py tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py tests/services/test_audio_presence.py tests/services/test_transcript_quality.py tests/tasks/test_silent_audio_gate.py",
       "paths": [
         "src/apps/api/app/pipeline/silence_cut.py",
         "src/apps/api/app/services/clip_speech.py",
@@ -596,7 +596,11 @@
         "src/apps/api/tests/fixtures/kri970_provolone_takes.json",
         "src/apps/api/app/pipeline/speech_cleanup_alignment.py",
         "src/apps/api/tests/pipeline/test_speech_cleanup_filler_check_golden.py",
-        "src/apps/api/tests/fixtures/kri970_cafe_late_stamps.json"
+        "src/apps/api/tests/fixtures/kri970_cafe_late_stamps.json",
+        "src/apps/api/app/pipeline/speech_voice_guard.py",
+        "src/apps/api/tests/pipeline/test_voice_guard_cleanup_e2e.py",
+        "src/apps/api/tests/pipeline/test_kri1017_maximo2_replay.py",
+        "src/apps/api/tests/fixtures/kri1017_maximo2_cleanup.json"
       ]
     },
     {
@@ -1455,6 +1459,7 @@
       ],
       "paths": [
         "src/apps/api/app/agents/camera_roll_stories.py",
+        "src/apps/api/app/agents/skills/grounded-hook/SKILL.md",
         "src/apps/api/app/agents/media_moment_relevance.py",
         "src/apps/api/app/cli/camera_roll_pilot.py",
         "src/apps/api/app/cli/camera_roll_retrieval_eval.py",

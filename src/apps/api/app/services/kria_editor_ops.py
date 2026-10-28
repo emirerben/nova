@@ -1418,6 +1418,12 @@ def project_editor_draft(
     for key, value in (payload.get("caption_meta") or {}).items():
         if key != "font_set":
             projected["captions_enabled" if key == "enabled" else f"caption_{key}"] = value
+        if key == "y_frac" and isinstance(value, (int, float)) and not isinstance(value, bool):
+            from app.pipeline.phone_captions import caption_y_fields  # noqa: PLC0415
+
+            # KRI-1008: the next turn's snapshot reads caption_margin_v (the phone compiler,
+            # the style y) before caption_y_frac, so the staged spot must reach both.
+            projected.update(caption_y_fields(projected, float(value)))
     return projected
 
 

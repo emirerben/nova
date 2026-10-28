@@ -7485,6 +7485,23 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
     )
 
 
+def _creator_pinned_media_keys(beats: list, closing: dict | None) -> frozenset[str]:
+    """Every Visuals-pool asset the creator pinned to a reaction beat, the closing photo or the
+    closing badge (KRI-1019), in both spellings (`_pool_media_keys`).
+
+    Read straight off the approved strategy, so it holds whatever became of the beat lane:
+    placed, unplaced for any reason, grounding raised, a lane request, or beats switched off.
+    Malformed entries (a non-object beat, a missing or non-string ``visual_id``) name nothing."""
+    named: list[object] = [beat.get("visual_id") for beat in beats if isinstance(beat, dict)]
+    if isinstance(closing, dict):
+        named += [closing.get("visual_id"), closing.get("badge_visual_id")]
+    keys: set[str] = set()
+    for visual_id in named:
+        if isinstance(visual_id, str) and visual_id.strip():
+            keys |= _pool_media_keys(visual_id)
+    return frozenset(keys)
+
+
 def _without_ending_media(
     beats: list, closing: dict | None, media_id: str
 ) -> tuple[list, dict | None, list[dict], bool]:
@@ -9116,6 +9133,12 @@ def _run_phone_subtitled_job(
                 beats: list = raw_beats if isinstance(raw_beats, list) else []
                 raw_closing = strategy.get("closing_media")
                 closing: dict | None = raw_closing if isinstance(raw_closing, dict) else None
+                # KRI-1019: a Visual the creator pinned to a beat (or the closing photo / badge)
+                # is the beat lane's to place as asked -- or to report and leave out. Read off
+                # the strategy, not off the PLACED cards: an unheard beat, a beat grounding that
+                # raised, a manual lane request or beats switched off place nothing and so
+                # reserved nothing, and the generic pass below put the same photo elsewhere.
+                creator_pinned_media_ids = _creator_pinned_media_keys(beats, closing)
 
                 if beats_enabled and (beats or closing):
                     if lane_request is not None:
@@ -9275,6 +9298,9 @@ def _run_phone_subtitled_job(
                                     for card in (lane_request.overlays if lane_request else [])
                                 )
                                 | beat_media_ids
+                                # KRI-1019: nor is a Visual pinned to a beat the beat lane
+                                # placed nowhere (or could not run for).
+                                | creator_pinned_media_ids
                                 # KRI-841: the Visual that ends the video is never also a card
                                 # or a full-screen insert mid-talk.
                                 | (
@@ -29464,6 +29490,28 @@ def _silence_cut_analysis(
                 if analysis_policy == "required_v1" and settings.speech_cleanup_budget_clamp_enabled
                 else "bailout"
             )
+
+            def _voice_guarded(unguarded):  # noqa: ANN001, ANN202
+                # KRI-1017: a silence/filler cut that holds sustained voicing is not dead
+                # air, whatever the transcript and the silence spans agreed on. Judged on the
+                # same media the plan was built from; a decode fault drops the judged cuts.
+                from app.pipeline.speech_voice_guard import apply_voice_guard  # noqa: PLC0415
+
+                guarded, guard_report = apply_voice_guard(
+                    unguarded,
+                    clip_path,
+                    words=transcript.words,
+                    retake_spans=retake_spans,
+                    forced=forced_removals,
+                )
+                if (
+                    guard_report["status"] != "ok"
+                    or guard_report["dropped"]
+                    or guard_report["trimmed"]
+                ):
+                    record_pipeline_event("silence_cut", "silence_cut_voice_guard", guard_report)
+                return guarded
+
             if mixed_gap_selection.effective_mode == "off":
                 plan = build_cut_plan(
                     transcript.words,
@@ -29475,6 +29523,7 @@ def _silence_cut_analysis(
                     over_budget_policy=over_budget_policy,
                     max_removal_frac_required=(settings.speech_cleanup_max_removal_frac_required),
                 )
+                plan = _voice_guarded(plan)
             else:
                 comparison = build_cut_plan_comparison(
                     transcript.words,
@@ -29568,6 +29617,9 @@ def _silence_cut_analysis(
                         "speech_cleanup_receipt_failed",
                         error_class=type(exc).__name__,
                     )
+                # After the receipt blocks above: they can swap the candidate back for the
+                # baseline, and the guard must judge the plan that actually ships.
+                plan = _voice_guarded(plan)
                 entry["speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
                     analysis_policy=analysis_policy,
                     assignment=assignment,
