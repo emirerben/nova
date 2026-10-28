@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.177.0] - 2026-10-28
+
+### Changed
+- fix(ios): refresh editor permissions after connection recovery (#1891) <!-- release-pr: 1891 -->
+
 ## [0.81.176.0] - 2026-10-28
 
 ### Changed
