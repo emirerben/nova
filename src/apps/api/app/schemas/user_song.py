@@ -101,6 +101,9 @@ class SongCaptionTrack(BaseModel):
     song_generation: int
     caption_style: Literal["sentence", "word"] = "sentence"
     words: list[SongCaptionWord] = Field(min_length=1, max_length=MAX_SONG_CAPTION_WORDS)
+    # Pinned without a captions ask: the lane starts off until the creator turns it on.
+    # Omitted when False so a track the creator asked for keeps its approval hash.
+    hidden: bool = Field(default=False, exclude_if=lambda value: value is False)
 
     @model_validator(mode="after")
     def _ordered_words(self) -> SongCaptionTrack:
