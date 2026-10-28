@@ -3980,7 +3980,7 @@ def test_both_renderers_compose_designed_holds_with_typewriter(entrance, exit, t
     "effect", ["silkReveal", "elasticCondensed", "focusPull", "ribbonWipe", "echoStack"]
 )
 def test_designed_text_animations_settle_as_fast_as_pop(phase, effect, tmp_path):
-    """A designed edge is done when the legacy 0.4 s pop is: no slower than the edges it sits beside."""
+    """A designed edge is done when the legacy 0.4 s pop is, no slower than its neighbours."""
     from app.pipeline.text_overlay import _render_authored_phase_frame
 
     overlay = {
