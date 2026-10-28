@@ -1168,7 +1168,8 @@ enum KriaClientProtocolContract {
     /// 22: renders and answers a camera-roll idea's `open_questions`. The server holds "Use this idea"
     /// behind them (409 `story_open_questions`) and sends the list only from this protocol; older builds
     /// see no questions and are not gated.
-    static let version = 22
+    /// 23: renders the six designed text animation edges.
+    static let version = 23
     static let header = "X-Kria-Client-Protocol"
 }
 
