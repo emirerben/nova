@@ -88,7 +88,7 @@ struct NativeCaptionPanel: View {
     private var stacksControls: Bool { dynamicTypeSize.isAccessibilitySize || contentWidth < 300 }
     @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
     @State private var lifecycleOwner = UUID()
-    enum Tab: String, CaseIterable { case edit = "Edit captions", style = "Style", settings = "Settings" }
+    enum Tab: String, CaseIterable { case edit = "Edit captions", style = "Style" }
     @ObservedObject var session: NativeEditorSession
     /// KRI-240 (plan 026 D27): the caption line open in the edit bar. Owned by
     /// `NativeEditorView`, which lays the editor out around it (Variant A). A row tap
@@ -136,14 +136,13 @@ struct NativeCaptionPanel: View {
                         switch tab {
                         // KRI-216: each tab is gated by its own server capability
                         // (caption_cues for line edits, caption_meta for style and
-                        // settings) rather than the coarse canEditCaptions, so a
+                        // the caption switches) rather than the coarse canEditCaptions, so a
                         // phone variant with only one lane editable doesn't show
                         // Save-refusing controls as enabled — or block a lane that
                         // IS editable just because the other one isn't. Read-only
                         // caption lines still seek (plan 026 D16).
                         case .edit: transcript
                         case .style: style.disabled(!session.canEditCaptionMeta)
-                        case .settings: settings.disabled(!session.canEditCaptionMeta)
                         }
                         if !session.canEditCaptions {
                             Text("Captions aren’t available for this edit.").foregroundStyle(KriaColor.mutedInk)
@@ -218,6 +217,7 @@ struct NativeCaptionPanel: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             VStack(spacing: 8) {
+                captionSwitches
                 if let removal { removalNotice(removal) }
                 if !session.canEditCaptionLines, session.canEditCaptions {
                     Text(session.capability(for: .captions)?.reason ?? "Caption lines can’t be edited for this video.")
@@ -455,11 +455,7 @@ struct NativeCaptionPanel: View {
 
     private var style: some View {
         VStack(spacing: 8) {
-            NativeEditorMenuRow(title: "Display", value: meta["style"] == .string("word") ? "Word" : "Sentence") {
-                Button("Sentence") { session.setCaptionDisplay("sentence") }
-                Button("Word") { session.setCaptionDisplay("word") }
-            }.disabled(!session.canEditCaptionAppearance)
-                .accessibilityIdentifier("native-editor-caption-display")
+            displayPicker
             let layout = stacksControls ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))
             layout {
                 NativeFontPicker(
@@ -504,26 +500,58 @@ struct NativeCaptionPanel: View {
 
     private var highlightsWords: Bool { appearance["highlight_spoken_word"]?.boolValue ?? (meta["style"] == .string("word")) }
 
-    private var settings: some View {
-        VStack(spacing: 8) {
-            NativeEditorMenuRow(title: "Show captions", value: meta["enabled"] != .bool(false) ? "On" : "Off") {
-                Button("On") { session.setCaptionEnabled(true) }
-                Button("Off") { session.setCaptionEnabled(false) }
-            }.accessibilityIdentifier("native-editor-caption-visible")
-            NativeEditorMenuRow(title: "Highlight spoken word", value: highlightsWords ? "On" : "Off") {
-                Button("On") { session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool(true)) }
-                Button("Off") { session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool(false)) }
-            }.disabled(!session.canEditCaptionAppearance)
-                .accessibilityIdentifier("native-editor-caption-highlight")
-            if highlightsWords {
-                ColorPicker("Highlight color", selection: color("highlight_color", fallback: "#C5F82A"), supportsOpacity: false)
-                    .disabled(!session.canEditCaptionAppearance)
-                    .frame(minHeight: 44)
+    private var showsCaptions: Bool { meta["enabled"] != .bool(false) }
+
+    /// Whole-video switches above the line list, so they are found where captions are edited.
+    private var captionSwitches: some View {
+        VStack(spacing: 0) {
+            NativeEditorSwitchRow(
+                title: "Show captions", id: "native-editor-caption-visible",
+                isOn: Binding(get: { showsCaptions }, set: { session.setCaptionEnabled($0) })
+            )
+            NativeEditorSwitchRow(
+                title: "Highlight spoken word", id: "native-editor-caption-highlight",
+                isOn: Binding(get: { highlightsWords }, set: {
+                    session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool($0))
+                })
+            ) {
+                if highlightsWords {
+                    ColorPicker("Highlight color", selection: color("highlight_color", fallback: "#C5F82A"), supportsOpacity: false)
+                        .labelsHidden()
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("native-editor-caption-highlight-color")
+                }
             }
-            Text("Applies to all captions in this edit.\nEdit individual lines in Edit captions.")
-                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // A hidden caption has nothing to highlight.
+            .disabled(!session.canEditCaptionAppearance || !showsCaptions)
         }
+        .padding(.horizontal, 12)
+        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 12))
+        .disabled(!session.canEditCaptionMeta)
+    }
+
+    private enum CaptionDisplay: String, CaseIterable { case sentence = "Sentence", word = "Word" }
+
+    private var displayPicker: some View {
+        let selection = Binding<CaptionDisplay>(
+            get: { meta["style"] == .string("word") ? .word : .sentence },
+            set: { value in
+                guard (meta["style"] == .string("word")) != (value == .word) else { return }
+                session.setCaptionDisplay(value == .word ? "word" : "sentence")
+            }
+        )
+        let layout = stacksControls ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            Text("Display").frame(width: stacksControls ? nil : 66, alignment: .leading)
+            NativeEditorPanelTabs(
+                tabs: CaptionDisplay.allCases, selection: selection, accessibilityPrefix: "native-editor-caption-display",
+                identifier: { "native-editor-caption-display-" + $0.rawValue.lowercased() }
+            )
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .disabled(!session.canEditCaptionAppearance)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("native-editor-caption-display")
     }
 
     private func effectRow(_ title: String, key: String, colorKey: String, fallback: Double, range: ClosedRange<Double>) -> some View {
@@ -721,6 +749,40 @@ struct CaptionEditBar: View {
         .disabled(!enabled)
         .accessibilityLabel(label)
         .accessibilityIdentifier(id)
+    }
+}
+
+/// A binary setting: title on the left, a Sky switch on the right, an optional accessory between.
+struct NativeEditorSwitchRow<Accessory: View>: View {
+    @Environment(\.isEnabled) private var isEnabled
+    let title: String
+    let id: String
+    @Binding var isOn: Bool
+    @ViewBuilder var accessory: () -> Accessory
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(KriaFont.body(15).weight(.semibold))
+                .foregroundStyle(isEnabled ? KriaColor.ink : KriaColor.zinc)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { if isEnabled { isOn.toggle() } }
+                .accessibilityHidden(true)
+            accessory()
+            Toggle(title, isOn: $isOn)
+                .labelsHidden()
+                .tint(KriaColor.sky)
+                .accessibilityIdentifier(id)
+        }
+        .padding(.vertical, 4)
+        .frame(minHeight: 52)
+    }
+}
+
+extension NativeEditorSwitchRow where Accessory == EmptyView {
+    init(title: String, id: String, isOn: Binding<Bool>) {
+        self.init(title: title, id: id, isOn: isOn, accessory: { EmptyView() })
     }
 }
 
