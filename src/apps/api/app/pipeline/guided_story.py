@@ -61,6 +61,7 @@ from app.schemas.edit_proposal import (
     FAST_MONTAGE_TITLE_HOLD_S,
     GUIDED_STORY_MIN_MOMENT_S,
     GUIDED_TITLE_HOLD_S,
+    SNAPSHOT_FALLBACK_TITLE,
     EditProposalSnapshot,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
@@ -1633,7 +1634,15 @@ def _base_text_elements(
     )
     # A labeled edit shows only confirmed creator copy: no generated title
     # unless the creator supplied one.
-    show_title = bool(snapshot.opening_title) or not (snapshot.shot_labels or snapshot.pinned_texts)
+    # The schema's placeholder title is never on-screen text, whatever the edit's shape.
+    drawn_title = (
+        None
+        if not snapshot.opening_title and snapshot.title == SNAPSHOT_FALLBACK_TITLE
+        else snapshot.title
+    )
+    show_title = drawn_title is not None and (
+        bool(snapshot.opening_title) or not (snapshot.shot_labels or snapshot.pinned_texts)
+    )
 
     def title_y(default_y: float, text: str, size_px: int, max_width_frac: float) -> float:
         """The opening title steps down while a top pin shares its window (KRI-526)."""
@@ -1917,13 +1926,7 @@ def _base_text_elements(
         return [
             *(
                 []
-                if not snapshot.opening_title
-                and (
-                    snapshot.pinned_texts
-                    # A lip-sync's title is the creator's own or none: its ``title`` without
-                    # one is the internal ``SNAPSHOT_FALLBACK_TITLE`` label (KRI-996).
-                    or (snapshot.user_song is not None and snapshot.user_song.mode == "lipsync")
-                )
+                if drawn_title is None or (not snapshot.opening_title and snapshot.pinned_texts)
                 else [
                     TextElement(
                         id="guided-title",
@@ -1955,25 +1958,29 @@ def _base_text_elements(
             *_caption_lane_elements(snapshot, pin_windows),
         ]
     if compiler_version < 3:
-        elements = [
-            TextElement(
-                id="guided-title",
-                text=snapshot.title,
-                start_s=0.0,
-                end_s=title_end,
-                role="generative_intro",
-                position="top",
-                font_family=snapshot.font_family or "Inter-Bold",
-                size_px=78 if snapshot.direction == "fast_montage" else 84,
-                color=snapshot.text_color or "#FFFFFF",
-                highlight_color="#6FE7F7",
-                stroke_width=5,
-                shadow_enabled=True,
-                effect=policy["text_effect"],
-                alignment="center",
-                max_width_frac=0.86,
-            ).model_dump(mode="json", exclude_none=True)
-        ]
+        elements = (
+            [
+                TextElement(
+                    id="guided-title",
+                    text=snapshot.title,
+                    start_s=0.0,
+                    end_s=title_end,
+                    role="generative_intro",
+                    position="top",
+                    font_family=snapshot.font_family or "Inter-Bold",
+                    size_px=78 if snapshot.direction == "fast_montage" else 84,
+                    color=snapshot.text_color or "#FFFFFF",
+                    highlight_color="#6FE7F7",
+                    stroke_width=5,
+                    shadow_enabled=True,
+                    effect=policy["text_effect"],
+                    alignment="center",
+                    max_width_frac=0.86,
+                ).model_dump(mode="json", exclude_none=True)
+            ]
+            if drawn_title is not None
+            else []
+        )
         for beat, window in zip(snapshot.story_beats, beat_windows, strict=True):
             thought = beat.thought.strip()
             if not thought:

@@ -3554,14 +3554,15 @@ def test_resolve_default_title_fill_uses_approved_proposal_title() -> None:
     )
 
 
-def test_resolve_default_title_fill_never_uses_placeholder_proposal_title() -> None:
+@pytest.mark.parametrize("placeholder", [_PLACEHOLDER_PROPOSAL_TITLE, "Montage"])
+def test_resolve_default_title_fill_never_uses_placeholder_proposal_title(placeholder) -> None:
 
     approved = EditProposal.model_construct(
         schema_version=1,
         proposal_version=1,
         generation_attempt_id="attempt-1",
         status="approved",
-        draft=EditProposalSnapshot.model_construct(title=_PLACEHOLDER_PROPOSAL_TITLE),
+        draft=EditProposalSnapshot.model_construct(title=placeholder),
         last_approved=None,
     )
     assert _resolve_default_title_fill(active_plan=None, proposal=approved) is None
