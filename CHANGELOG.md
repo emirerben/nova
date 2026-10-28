@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.0.0] - 2026-10-28
+
+### Added
+- feat(kria): landscape 16:9 output for phone-rendered Talking edits (KRI-306 follow-up, KRI-1008) (#1905) <!-- release-pr: 1905 -->
+
+## [0.81.192.0] - 2026-10-28
+
+### Fixed
+- fix(kria): a photo pinned to a spoken beat is never re-placed as a corner card (KRI-1019) (#1910) <!-- release-pr: 1910 -->
+
+## [0.81.191.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): never cut a span that holds a voice, whatever the transcript says (KRI-1017) (#1915) <!-- release-pr: 1915 -->
+
+## [0.81.190.0] - 2026-10-28
+
+### Changed
+- fix(captions): chat caption move reaches the phone render; plain-words reply (KRI-1008) (#1909) <!-- release-pr: 1909 -->
+
+## [0.81.189.0] - 2026-10-28
+
+### Changed
+- fix(ios): preserve completed videos across app updates (#1907) <!-- release-pr: 1907 -->
+
+## [0.81.188.0] - 2026-10-28
+
+### Changed
+- feat(ios): Camera roll events list, event page, About, and usable idea cards (KRI-1005, KRI-1006) (#1908) <!-- release-pr: 1908 -->
+
+## [0.81.187.0] - 2026-10-28
+
+### Changed
+- feat(camera-roll): event title and notes plus a social-first idea prompt (KRI-1003, KRI-1004) (#1899) <!-- release-pr: 1899 -->
+
 ## [0.81.186.0] - 2026-10-28
 
 ### Changed

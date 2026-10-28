@@ -18,7 +18,7 @@ struct CameraRollStoriesUITestHost: View {
         value.bind(try! JSONDecoder().decode(SavedMediaAsset.self, from: JSONSerialization.data(withJSONObject: asset)), to: "fixture-source")
         collection = value
     }
-    var body: some View { CameraRollStoriesView(api: api, collection: collection, result: result, onSelected: { _ in }) }
+    var body: some View { CameraRollStoriesView(api: api, collection: collection, result: result, onSelected: { _ in true }) }
 }
 private enum CameraRollStoryFixture {
     static var reviewStories: [[String: Any]] {

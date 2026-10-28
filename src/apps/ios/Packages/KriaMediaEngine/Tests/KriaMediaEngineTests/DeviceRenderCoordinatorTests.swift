@@ -58,6 +58,75 @@ final class DeviceRenderCoordinatorTests: XCTestCase {
         XCTAssertEqual(unchanged?.attemptID, first?.attemptID)
     }
 
+    func testAppUpdateRelocatesFinishedExportWithoutEncodingAgain() async throws {
+        for synced in [false, true] {
+            let oldDirectory = scratch(), newDirectory = scratch()
+            defer { try? FileManager.default.removeItem(at: oldDirectory); try? FileManager.default.removeItem(at: newDirectory) }
+            let exporter = RecordingExporter(), publisher = RecordingPublisher()
+            await publisher.setFailure(!synced)
+            let first = try DeviceRenderCoordinator(directory: oldDirectory, exporter: exporter, sources: FixtureSources(), publisher: publisher, retryPolicy: .immediate)
+            try await first.start(request(), decision: CapabilityDecision(route: .local))
+            await first.waitUntilIdle()
+            let snapshot = await first.snapshot()
+            let saved = try XCTUnwrap(snapshot)
+            try FileManager.default.moveItem(at: oldDirectory, to: newDirectory)
+            let restored = try DeviceRenderCoordinator(directory: newDirectory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+            let reopened = await restored.snapshot()
+            XCTAssertEqual(reopened?.outputURL, newDirectory.appendingPathComponent(saved.attemptID.uuidString + ".mp4"))
+            await publisher.setFailure(false)
+            try await restored.recover()
+            await restored.waitUntilIdle()
+            let final = await restored.snapshot()
+            let count = await exporter.count
+            XCTAssertEqual(final?.phase, .synced)
+            XCTAssertEqual(final?.attemptID, saved.attemptID)
+            XCTAssertEqual(count, 1, "An app update must reuse the checksum-verified export")
+        }
+    }
+
+    func testExistingReservationConflictPublishesTheSameExportWithANewAttempt() async throws {
+        let directory = scratch()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), publisher = ReusedAttemptPublisher()
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local))
+        for _ in 0..<100 {
+            if await coordinator.snapshot()?.phase == .synced { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let saved = await coordinator.snapshot()
+        let attempts = await publisher.attempts
+        let count = await exporter.count
+        XCTAssertEqual(saved?.phase, .synced)
+        XCTAssertEqual(attempts.count, 2)
+        XCTAssertEqual(Set(attempts).count, 2)
+        XCTAssertEqual(count, 1, "Repair the upload identity without rebuilding the creator's video")
+    }
+
+    func testLostOrChangedExportGetsANewUploadAttemptBeforeEncoding() async throws {
+        for corrupt in [false, true] {
+            let directory = scratch()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let exporter = RecordingExporter(), publisher = RecordingPublisher()
+            await publisher.setFailure(true)
+            let first = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher, retryPolicy: .immediate)
+            try await first.start(request(), decision: CapabilityDecision(route: .local))
+            await first.waitUntilIdle()
+            let snapshot = await first.snapshot()
+            let saved = try XCTUnwrap(snapshot)
+            let file = try XCTUnwrap(saved.outputURL)
+            if corrupt { try Data("different bytes".utf8).write(to: file) }
+            else { try FileManager.default.removeItem(at: file) }
+            await publisher.setFailure(false)
+            let restored = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher)
+            try await restored.recover()
+            await restored.waitUntilIdle()
+            let final = await restored.snapshot()
+            XCTAssertEqual(final?.phase, .synced)
+            XCTAssertNotEqual(final?.attemptID, saved.attemptID, "Different bytes cannot reuse a server upload reservation")
+        }
+    }
+
     /// The server adds seconds to its expected duration based on the tail the
     /// phone declares, so the coordinator must forward what the exporter
     /// actually appended. Declaring "none" while shipping the outro is a 422 on
@@ -730,5 +799,15 @@ private struct ThrowingExporter: LocalExporting {
     let brandTail = "none"
     func export(recipe: EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
         throw error
+    }
+}
+
+private actor ReusedAttemptPublisher: DeviceRenderPublishing {
+    private(set) var attempts: [UUID] = []
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        attempts.append(attemptID)
+        if attempts.count == 1 { throw DeviceExportAttemptReused() }
+        return .published
     }
 }

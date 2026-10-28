@@ -7,6 +7,8 @@ struct SavedCameraRollCollection: Codable, Sendable, Identifiable {
     let revision: Int
     var name: String? = nil
     var members: [CameraRollCollectionMember]? = nil
+    /// Absent from a server that predates event titles and about; present (even empty) once it stores them.
+    var events: [CameraRollEventInfo]? = nil
 }
 
 struct CameraRollCollectionMember: Codable, Sendable, Equatable {
@@ -31,6 +33,8 @@ struct CameraRollCollectionMember: Codable, Sendable, Equatable {
 struct CameraRollCollectionSelection: Codable, Sendable, Equatable {
     let name: String
     let members: [CameraRollCollectionMember]
+    /// Nil until the server has shown it stores events, so an older server is never sent a field it refuses.
+    var events: [CameraRollEventInfo]? = nil
 }
 
 /// One event's ideas as last read from the server.
@@ -52,7 +56,8 @@ extension CameraRollCollection {
                   let source = asset.kind == "video" ? asset.bindableSource(for: .clip, destination: .phone) : asset.source else { continue }
             members.append(CameraRollCollectionMember(asset_id: asset.id, source_id: source.id, group: map[entry.id] ?? name))
         }
-        return CameraRollCollectionSelection(name: name.trimmingCharacters(in: .whitespacesAndNewlines), members: members)
+        return CameraRollCollectionSelection(name: name.trimmingCharacters(in: .whitespacesAndNewlines), members: members,
+                                             events: serverStoresEvents ? Array(events.prefix(CameraRollEventInfo.maximumCount)) : nil)
     }
     func members(inGroup group: String) -> [CameraRollCollectionMember] {
         uploadedSelection.members.filter { $0.group == group }
@@ -188,8 +193,13 @@ private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @u
 
 extension KriaAPI {
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection {
+        struct Body: Encodable {
+            let name: String; let expected_revision: Int; let members: [CameraRollCollectionMember]; let events: [CameraRollEventInfo]?
+        }
         let selection = collection.uploadedSelection
-        return try await replaceCameraRollMembers(collectionID: collection.id, name: selection.name, members: selection.members, expectedRevision: revision)
+        return try await request(path: "me/media-collections/\(collection.id)", method: "PUT",
+                                 bodyData: JSONEncoder().encode(Body(name: selection.name, expected_revision: revision, members: selection.members, events: selection.events)),
+                                 decode: SavedCameraRollCollection.self)
     }
     func replaceCameraRollMembers(collectionID: UUID, name: String, members: [CameraRollCollectionMember], expectedRevision: Int) async throws -> SavedCameraRollCollection {
         struct Body: Encodable { let name: String; let expected_revision: Int; let members: [CameraRollCollectionMember] }
