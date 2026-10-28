@@ -767,6 +767,16 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
+    # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
+    # recipe's existing `animationPhases`. Default TRUE; the editor capability
+    # `caption_animation` needs `authoredText` in PHONE_RENDER_VERIFIED_FEATURES and an app
+    # build declaring `X-Kria-Client-Protocol` >= `caption_animation_min_client_protocol`;
+    # an older build's Save that carries (or would drop) caption phases gets 426. False:
+    # the capability is hidden and captions compile as before (stored phases are kept).
+    # Apply: `fly secrets set CAPTION_ANIMATION_ENABLED=false` (api + worker) + restart.
+    caption_animation_enabled: bool = True
+    caption_animation_min_client_protocol: int = 23
     # Text behind people ON THE PHONE (the device twin of `text_behind_subject_enabled`
     # below, which is the cloud Skia lane). When True, `compile_text_overlay` stamps
     # `behind_subject` on a phone recipe text layer whose text element asks for it, and
