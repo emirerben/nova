@@ -1734,6 +1734,7 @@ final class CreationUITests: XCTestCase {
     private func launchLivePlanFeed(
         reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true,
         device: Bool = false, followup: Bool = false, contractV2: Bool = false, review: Bool = false,
+        syncFailure: Bool = false,
         thoughts: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
@@ -1751,6 +1752,7 @@ final class CreationUITests: XCTestCase {
             app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = "ready"
             app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] = "1"
         }
+        if syncFailure { app.launchEnvironment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] = "1" }
         if reduceMotion { app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1" }
         if reduceTransparency { app.launchEnvironment["UI_TEST_REDUCE_TRANSPARENCY"] = "1" }
         if let cancel { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] = cancel }
@@ -1960,7 +1962,8 @@ final class CreationUITests: XCTestCase {
         let order = ["clips", "music", "title", "captions", "look", "sfx"]
         var sawPartial = false
         let finished = eventually(timeout: 90) {
-            XCTAssertTrue(feed.exists, "the feed never leaves during the device build")
+            if app.buttons["device-render-play"].exists { return true }
+            XCTAssertTrue(feed.exists, "the feed stays visible until an export exists")
             // One query = one consistent snapshot; per-row reads race the advancing build.
             let snapshot = (feed.value as? String ?? "").split(separator: ",").reduce(into: [String: String]()) { result, pair in
                 let parts = pair.split(separator: "=")
@@ -1974,10 +1977,29 @@ final class CreationUITests: XCTestCase {
             }
             return title.label == "Plan ready · 7 of 7 decided"
         }
-        XCTAssertTrue(finished, "all sections are decided once the device build completes")
+        XCTAssertTrue(finished, "the completed build hands over to playback")
         XCTAssertTrue(sawPartial, "sections decided progressively, not all at once")
-        XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"))
+        XCTAssertTrue(app.buttons["device-render-play"].waitForExistence(timeout: 10))
+        XCTAssertFalse(feed.exists)
         attach(app, "plan-feed-device-done")
+    }
+
+    func testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries() {
+        let app = launchLivePlanFeed(reduceMotion: true, device: true, syncFailure: true)
+        let play = app.buttons["device-render-play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 60), app.debugDescription)
+        for _ in 0..<4 {
+            XCTAssertTrue(play.exists, "A sync retry must not replace a finished video with the plan feed")
+            XCTAssertFalse(app.staticTexts["Your plan is ready"].exists)
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        let editor = app.buttons["workspace-mode-editor"]
+        XCTAssertTrue(editor.exists, "The finished local edit stays accessible")
+        attach(app, "local-video-sync-retry")
+        editor.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-load-failed"].firstMatch.exists)
+        attach(app, "local-video-editor-open")
     }
 
     func testLivePlanFeedStopCancelsTheDeviceRender() {

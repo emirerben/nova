@@ -80,6 +80,8 @@ public enum DeviceRenderPhase: String, Codable, Sendable {
     case preparing, rendering, localReady, syncing, synced, cancelled, needsAttention, superseded
 }
 
+public struct DeviceExportAttemptReused: Error, Sendable { public init() {} }
+
 public struct DeviceRenderReceipt: Codable, Equatable, Sendable {
     public let request: DeviceRenderRequest
     public let attemptID: UUID

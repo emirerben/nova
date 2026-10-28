@@ -386,6 +386,19 @@ final class CreationChatFixture: @unchecked Sendable {
            let scenario = DeviceRenderUITestFixture.scenario, let jobID = UUID(uuidString: parts[2]) {
             return deviceRenderResponse(scenario: scenario, jobID: jobID, route: parts.count > 4 ? parts[4] : nil, body: body)
         }
+        if ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] == "1",
+           parts.first == "generative-jobs" {
+            if parts.last == "status" {
+                return response(["variants": [[
+                    "variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device",
+                    "render_destination": "device", "duration_s": 1, "render_generation_id": "fixture-generation",
+                    "ai_timeline": ["slots": [["slot_id": "clip-0", "clip_index": 0, "in_s": 0, "duration_s": 1, "source_duration_s": 1]]]
+                ]]])
+            }
+            if parts.last == "timeline" {
+                return response(["base_generation": "fixture-generation", "clips": [["clip_index": 0, "native_source": NSNull()]]])
+            }
+        }
         if parts.first == "plan-items", parts.count >= 2, ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_FIXTURE"] == "1" {
             return slideResponse(request, itemID: parts[1], parts: parts, body: body)
         }
@@ -1476,6 +1489,9 @@ enum DeviceRenderUITestFixture {
     private struct Publisher: DeviceRenderPublishing {
         func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
         func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] == "1" {
+                throw APIError.conflict
+            }
             DeviceRenderUITestFixture.published.insert(identity.jobID.uuidString)
             return .published
         }
