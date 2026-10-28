@@ -107,3 +107,19 @@ endpoint method and new Undo regression are unchanged from the red/green proof.
 The latest Gameday export's inspected title and fifth-source frames are byte
 identical to the earlier inspected frames. This still requires fresh exact-head
 CI and actual candidate publication.
+
+## Require the critical UI cases in CI
+
+The first published head `77f2e7579` exposed a coverage gap before merge. Its
+unit job 122875269386 passed 2087 unit executions with 26 skips and four smoke
+UI cases. It did not execute the changed pinch case, original endpoint case,
+or new inspector Undo regression. Broad native product changes intentionally
+fall back to smoke in the general UI step, and named native-unit replay filters
+UI classes out. Registration in the UI and journey manifests was insufficient.
+
+The workflow now has a separate native unit-leg replay under the existing
+clip-speed journey condition. It executes the whole NativeSpeedUITests class
+and the live pinch journey, exports the result JSON, and requires all three
+named cases to pass. Existing smoke, API, native, and aggregate checks remain
+unchanged. The earlier green unit job is not critical-case proof. The next
+exact-head CI must actually execute and pass this replay before merging.
