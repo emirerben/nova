@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.191.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): never cut a span that holds a voice, whatever the transcript says (KRI-1017) (#1915) <!-- release-pr: 1915 -->
+
 ## [0.81.190.0] - 2026-10-28
 
 ### Changed
