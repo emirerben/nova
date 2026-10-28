@@ -486,6 +486,29 @@ final class ChatWorkspaceTests: XCTestCase {
         )
     }
 
+    /// The approval decision only writes `approval_approved`; the job and `render_queued` land from the
+    /// agent-control task a moment later. Until then the projection is a plain draft (or the previous cut),
+    /// and the workspace must already show the render stage, never the footage or ready stage again.
+    func testApprovedRenderAwaitingDispatchShowsRenderingNotFootageOrReady() {
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, renderDispatchPending: true),
+            .rendering
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .ready, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, renderDispatchPending: true),
+            .rendering
+        )
+        // A newer proposal still outranks it: the creator has something to answer.
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: true, isChoosingFormat: false, hasFormat: true, renderDispatchPending: true),
+            .direction
+        )
+        XCTAssertEqual(
+            WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true),
+            .footage
+        )
+    }
+
     func testPreparationWinsOverDraftAndReadyStatuses() {
         XCTAssertEqual(
             WorkspaceStage.resolve(status: .draft, awaitsNewPlanConfirmation: false, isChoosingFormat: false, hasFormat: true, preparationIsActive: true),
