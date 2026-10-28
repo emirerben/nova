@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.0.0] - 2026-10-28
+
+### Added
+- feat(kria): landscape 16:9 output for phone-rendered Talking edits (KRI-306 follow-up, KRI-1008) (#1905) <!-- release-pr: 1905 -->
+
+## [0.81.192.0] - 2026-10-28
+
+### Fixed
+- fix(kria): a photo pinned to a spoken beat is never re-placed as a corner card (KRI-1019) (#1910) <!-- release-pr: 1910 -->
+
+## [0.81.191.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): never cut a span that holds a voice, whatever the transcript says (KRI-1017) (#1915) <!-- release-pr: 1915 -->
+
 ## [0.81.190.0] - 2026-10-28
 
 ### Changed

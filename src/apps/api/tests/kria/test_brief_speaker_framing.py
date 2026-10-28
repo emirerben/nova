@@ -95,6 +95,15 @@ def test_an_already_vertical_clip_is_done():
     assert "already vertical" in receipt.reason
 
 
+def test_a_landscape_pick_is_a_checked_partly_that_says_there_was_no_vertical_to_do():
+    receipt = _receipt(_variant(_framing("centre_fill", "landscape_canvas")))
+    assert (receipt.status, receipt.verification) == ("partial", "checked")
+    assert "landscape video" in receipt.reason
+    assert "no vertical framing to do" in receipt.reason
+    # Never the face-search wording a fallback gets.
+    assert "find your face" not in receipt.reason
+
+
 def test_a_render_without_a_framing_receipt_stays_unchecked():
     receipt = _receipt(_variant())
     assert receipt.verification == "unchecked"
