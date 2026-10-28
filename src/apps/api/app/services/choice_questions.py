@@ -5248,6 +5248,10 @@ def answered_brief(brief: Any, strategy: Any) -> Any:
             base = changed.get(req.id, req)
             changed[req.id] = base.model_copy(update={"facts": {**base.facts, **spoken[req.id]}})
     _apply_unclear_answers(brief, answers, changed)
+    # KRI-1025: a pin or text whose clip the creator answered None to on the picker.
+    from app.services.clip_none_answers import apply_none_answers  # noqa: PLC0415
+
+    apply_none_answers(brief, answers, changed)
     if not changed:
         return brief
     return brief.model_copy(
