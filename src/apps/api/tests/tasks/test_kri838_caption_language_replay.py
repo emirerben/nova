@@ -221,7 +221,8 @@ def test_a_cafe_t2_turkish_ask_on_english_speech_is_translated_and_met(
     # and the review of the creator's ask reads the cues and says so
     receipt = _review(variant, "altyazılar Türkçe olsun")
     assert (receipt.status, receipt.verification) == ("met", "checked")
-    assert receipt.reason == "The captions are in Turkish."
+    # KRI-1015: the review says the captions were translated
+    assert receipt.reason == "The captions are in Turkish, translated from the English speech."
 
 
 def test_a2_the_cleanup_branch_translates_only_the_kept_words(monkeypatch, translator, events):

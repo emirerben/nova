@@ -60,6 +60,7 @@ from app.services.clip_speech import SilenceDetectionResult
 from app.services.device_render import device_status
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from app.tasks import generative_build as gb
+from tests._silent_pcm import silent_pcm
 from tests.tasks.test_generative_build_silence_cut import DURATION as CLEANUP_S
 from tests.tasks.test_phone_subtitled_narrated_dispatch import (
     _raw_preflight_snapshot,
@@ -138,6 +139,7 @@ def _checked_words_snapshot(storage_path: str) -> dict:
             words=WORDS, language="en", low_confidence=False
         ),
         silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=[], status="ok"),
+        pcm_loader=silent_pcm,
     )
     return {
         "schema_version": 1,

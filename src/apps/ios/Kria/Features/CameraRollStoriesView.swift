@@ -12,11 +12,12 @@ struct CameraRollStoriesView: View {
     var embedded = false
     /// Offline fixtures have no pictures to fetch; tiles show their colour instead.
     var thumbnailsDisabled = false
-    /// Start building the idea as soon as the page opens ("Use this idea" on an idea card). Waits when the idea
-    /// still has open questions.
-    var autoSelect = false
+    /// "Use this idea" handed to an owner that outlives this view (the Camera roll's model). Without one, the
+    /// view runs the work itself.
+    var onUse: (@MainActor (CameraRollStory) -> Void)? = nil
     var onAddBackground: @MainActor (String) -> Void = { _ in }
-    let onSelected: @MainActor (CreationThread) async -> Void
+    /// Opens the chat; false when the workspace will not open it.
+    let onSelected: @MainActor (CreationThread) async -> Bool
     var onReviewed: @MainActor (CameraRollStories) -> Void = { _ in }
     /// "Not this one" in the embedded form: the idea is deleted (and not offered again) rather than just hidden.
     var onDelete: @MainActor () -> Void = {}
@@ -24,20 +25,17 @@ struct CameraRollStoriesView: View {
     @State private var stories: [CameraRollStory] = []
     @State private var busy = false
     @State private var error: String?
-    @State private var heldRecovery: HeldStoryRecovery?
     @State private var inspection: String?
     @State private var question = "What is clearly visible in this interval?"
     @State private var player: AVPlayer?
     @State private var showsPreview = false
-    @State private var selectionTask: Task<Void, Never>?
     @State private var editingWording: CameraRollStory?
-    @State private var missingOriginals: [SavedMediaAsset] = []
-    @State private var relinkingStory: CameraRollStory?
+    @State private var use: CameraRollIdeaUse?
+    @State private var showsUse = false
     @State private var taste: EditorialTasteProfile?
     @State private var showsTaste = false
     @State private var ratingStory: CameraRollStory?
     @State private var feedbackSaved = Set<String>()
-    @State private var didAutoSelect = false
 
     var body: some View {
         Group {
@@ -51,14 +49,10 @@ struct CameraRollStoriesView: View {
                     try? await api.recordCameraRollStoryExposure(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0)
                 }
             }
-            if embedded, autoSelect, !didAutoSelect, let story = result.stories.first, story.contentPlan?.unresolvedQuestions.isEmpty ?? true {
-                didAutoSelect = true
-                selectionTask = Task { await select(story) }
-            }
         }
         .onDisappear {
             onReviewed(CameraRollStories(stories: stories, coverage: result.coverage, suggestedResearchTopic: result.suggestedResearchTopic))
-            selectionTask?.cancel(); player?.pause()
+            player?.pause()
         }
         .interactiveDismissDisabled(busy)
         .sheet(item: $ratingStory) { story in
@@ -78,14 +72,7 @@ struct CameraRollStoriesView: View {
                 }
             }
         }
-        .sheet(item: $relinkingStory) { story in
-            if let owner = api.mediaLibraryOwner {
-                CollectionOriginalsReview(assets: missingOriginals, owner: owner) {
-                    relinkingStory = nil
-                    selectionTask = Task { await select(story) }
-                }
-            }
-        }
+        .sheet(isPresented: $showsUse) { if let use { CameraRollUseSheet(use: use) } }
     }
 
     private var standaloneContent: some View {
@@ -158,7 +145,7 @@ struct CameraRollStoriesView: View {
                                 .accessibilityIdentifier("idea-feedback")
                         }
                         if let research = story.research { CameraRollIdeaResearchView(research: research) }
-                        Button { selectionTask = Task { await select(story) } } label: {
+                        Button { select(story) } label: {
                             Text("Use this idea").frame(maxWidth: .infinity)
                         }.buttonStyle(KriaPrimaryButtonStyle()).disabled(!(story.contentPlan?.unresolvedQuestions.isEmpty ?? true))
                             .accessibilityIdentifier("story-choose-\(story.id)")
@@ -175,12 +162,6 @@ struct CameraRollStoriesView: View {
                 }
                 if busy { ProgressView("Preparing…") }
                 if let error { Text(error).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("story-error") }
-                if let heldRecovery {
-                    Button("Try this idea again") {
-                        selectionTask = Task { await recover(heldRecovery) }
-                    }.buttonStyle(KriaPrimaryButtonStyle()).disabled(busy)
-                        .accessibilityIdentifier("story-recover-held-selection")
-                }
                 }.padding(24)
             }
             .background(KriaColor.paper).kriaPage()
@@ -231,10 +212,6 @@ struct CameraRollStoriesView: View {
                         DisclosureGroup("See clips and details") { storyDetails(story) }.font(KriaFont.body(14))
                         if busy { ProgressView("Preparing…").accessibilityIdentifier("story-busy") }
                         if let error { Text(error).font(KriaFont.body(13)).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("story-error") }
-                        if let heldRecovery {
-                            Button("Try this idea again") { selectionTask = Task { await recover(heldRecovery) } }
-                                .buttonStyle(KriaPrimaryButtonStyle()).disabled(busy).accessibilityIdentifier("story-recover-held-selection")
-                        }
                     }.padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 190)
                 }.kriaScrollEdgeFade()
                 actionBar(story)
@@ -274,7 +251,7 @@ struct CameraRollStoriesView: View {
 
     private func actionBar(_ story: CameraRollStory) -> some View {
         VStack(spacing: 8) {
-            Button { selectionTask = Task { await select(story) } } label: {
+            Button { select(story) } label: {
                 Text("Use this idea").font(KriaFont.body(16).weight(.bold)).foregroundStyle(KriaColor.ink)
                     .frame(maxWidth: .infinity, minHeight: 52).background(KriaColor.butter, in: Capsule()).contentShape(Capsule())
             }
@@ -432,57 +409,15 @@ struct CameraRollStoriesView: View {
             player = created; showsPreview = true
         } catch { self.error = CameraRollCollectionFailure.message(error) }
     }
-    @MainActor private func select(_ story: CameraRollStory) async {
-        guard story.contentPlan?.unresolvedQuestions.isEmpty ?? true else {
-            error = CameraRollCollectionFailure.openQuestions
-            return
-        }
-        busy = true; error = nil; heldRecovery = nil; defer { busy = false }
-        do {
-            guard let owner = api.mediaLibraryOwner else { throw APIError.unsupported }
-            let assets = collection.entries.compactMap(\.savedAsset).filter { asset in story.moments.contains { $0.assetID == asset.id } }
-            var missing: [SavedMediaAsset] = []
-            for asset in assets where asset.kind == "video" {
-                if try await SavedMediaReuse.adoptOriginal(asset: asset, owner: owner, api: api) == nil { missing.append(asset) }
-            }
-            if !missing.isEmpty { missingOriginals = missing; relinkingStory = story; return }
-            var thread = try await api.createCameraRollStoryThread(id: story.id, revision: story.revision)
-            guard let threadID = UUID(uuidString: thread.id), thread.runtimeVersion == 2 else { throw APIError.invalidResponse }
-            var used = Set<UUID>()
-            for moment in story.moments where used.insert(moment.assetID).inserted {
-                try Task.checkCancellation()
-                guard let asset = collection.entries.compactMap(\.savedAsset).first(where: { $0.id == moment.assetID }), let source = asset.sources.first(where: { $0.id == moment.sourceID && $0.generation == moment.generation }) else { throw APIError.invalidResponse }
-                let mediaID = (source.role == "analysis_proxy" ? "analysis-proxy-" : "") + asset.id.uuidString
-                thread = try await SavedMediaReuse.attach(asset: asset, source: source, threadID: threadID, itemID: thread.activePlanItemID, role: .clip, mediaID: mediaID, owner: owner, api: api)
-            }
-            let accepted = try await api.selectCameraRollStory(collectionID: collection.id, story: story, collectionRevision: collection.serverRevision ?? 0, threadID: threadID, threadRevision: thread.revision, eventID: "choose-\(story.id)-\(story.revision)")
-            if let heldTurnID = accepted.recoverableHeldTurnID {
-                heldRecovery = HeldStoryRecovery(story: story, threadID: threadID, heldTurnID: heldTurnID, revision: accepted.threadRevision)
-                error = "This idea stopped before a draft was prepared. Try it again to review a new draft."
-                return
-            }
-            let current = try await api.project(threadID: threadID)
-            await onSelected(current)
-        } catch is CancellationError { self.error = "Paused. The draft chat is saved; choose this story again to continue." }
-        catch { self.error = CameraRollCollectionFailure.message(error) }
-    }
-
-    private struct HeldStoryRecovery {
-        let story: CameraRollStory
-        let threadID: UUID
-        let heldTurnID: UUID
-        let revision: Int
-    }
-
-    @MainActor private func recover(_ held: HeldStoryRecovery) async {
-        busy = true; error = nil; defer { busy = false }
-        do {
-            let accepted = try await api.recoverCameraRollStory(collectionID: collection.id, story: held.story, collectionRevision: collection.serverRevision ?? 0, threadID: held.threadID, threadRevision: held.revision, eventID: "choose-\(held.story.id)-\(held.story.revision)", heldTurnID: held.heldTurnID)
-            guard let successorID = UUID(uuidString: accepted.turnID), successorID != held.heldTurnID else { throw APIError.invalidResponse }
-            let current = try await api.project(threadID: held.threadID)
-            heldRecovery = nil
-            await onSelected(current)
-        } catch { self.error = CameraRollCollectionFailure.message(error) }
+    /// Opens the idea's progress: on the owner that keeps it running, or here for the standalone review.
+    @MainActor private func select(_ story: CameraRollStory) {
+        if let onUse { onUse(story); return }
+        showsUse = true
+        if let use, use.story.id == story.id { return }
+        let collection = collection
+        let started = CameraRollIdeaUse(story: story, api: api, collection: { collection }, open: onSelected)
+        use = started
+        started.start()
     }
 }
 
@@ -582,7 +517,7 @@ private struct CameraRollWordingEditor: View {
     }
 }
 
-private struct CollectionOriginalsReview: View {
+struct CollectionOriginalsReview: View {
     let assets: [SavedMediaAsset]
     let owner: String
     let onReady: @MainActor () -> Void

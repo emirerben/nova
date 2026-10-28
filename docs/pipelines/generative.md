@@ -171,6 +171,22 @@ correction model. Known gaps: the editor D5 re-transcribe route/task and the web
 speaker's language; the compile-time Voiceover receipt has no cue text (the render-ready
 review reads it).
 
+**Mixed asks keep the take as spoken (KRI-1015):** `caption_language_decision` reads the
+dispatched request one line (one creator message) at a time, and the last message that
+decides wins. A message that captions two languages each as itself ("English captions for
+the English, Turkish captions for my Turkish"), joins two languages after one direction word
+("subtitles in English and Turkish"), or captions a language where it is spoken ("captions
+in English where he speaks English") is `keep_spoken`: no `caption_language_request` is
+stamped, so captions follow the spoken words (on a mixed take, the preflight transcript's
+per-stretch languages: KRI-1016 owns their accuracy). The dispatcher never reads the binding's
+"Superseded requirements" block, and the brief side treats a `keep_spoken` requirement as no
+language ask (it stays "Have a look"). When phone Talking does end with captions in another
+language than the one spoken, the variant carries `caption_translated_from` and the review
+says so: a captions ask with no language (and no other live requirement asking for that
+language) is "Partly: I translated the English speech into Turkish captions"; a language ask
+met by translation reads "The captions are in Turkish, translated from the English speech."
+Known gap: a single message typed over several lines is read as several messages.
+
 **Smart Captions (server-only flag):** set `SMART_CAPTIONS_ENABLED=true` on Fly
 and restart the API/workers. There is deliberately no `NEXT_PUBLIC` twin. A
 creator is eligible only when `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item

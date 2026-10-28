@@ -1405,6 +1405,23 @@ CASES: tuple[Case, ...] = (
             "tr_mixed": "İspanyolca captions olsun",
         },
     ),
+    # D37c (KRI-1015): a mixed ask keeps each language as spoken, so no language is requested
+    # (the last clause used to win and translated every English line into Turkish).
+    Case(
+        "D37c",
+        "captions_transcript",
+        "pipeline.caption_language.parse_caption_language_request",
+        "mixed ask keeps each language as spoken",
+        _caption_language,
+        "English captions for the English, Turkish captions for my Turkish",
+        None,
+        {
+            "tr": "İngilizce kısımlara İngilizce altyazı, Türkçe kısımlara Türkçe altyazı",
+            "tr_ascii": "ingilizce kisimlara ingilizce altyazi, turkce kisimlara turkce altyazi",
+            "tr_upper": "İNGİLİZCE KISIMLARA İNGİLİZCE ALTYAZI, TÜRKÇE KISIMLARA TÜRKÇE ALTYAZI",
+            "tr_mixed": "English captions for the English, Türkçe kısımlara Türkçe altyazı",
+        },
+    ),
     # O18 (KRI-780): a chat-driven plan item's hook is written in the chat's language.
     Case(
         "O18",
