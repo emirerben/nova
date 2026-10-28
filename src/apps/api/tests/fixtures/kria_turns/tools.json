@@ -1236,6 +1236,17 @@
               "default": null,
               "title": "Alignment"
             },
+            "animation_phases": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAnimationPhases"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "highlight_spoken_word": {
               "anyOf": [
                 {
@@ -3424,7 +3435,13 @@
                 "fade",
                 "pop",
                 "slide",
-                "typewriter"
+                "typewriter",
+                "silkReveal",
+                "elasticCondensed",
+                "focusPull",
+                "wordRelay",
+                "ribbonWipe",
+                "echoStack"
               ],
               "title": "Entrance",
               "type": "string"
@@ -3436,7 +3453,13 @@
                 "fade",
                 "pop",
                 "slide",
-                "typewriter"
+                "typewriter",
+                "silkReveal",
+                "elasticCondensed",
+                "focusPull",
+                "wordRelay",
+                "ribbonWipe",
+                "echoStack"
               ],
               "title": "Exit",
               "type": "string"

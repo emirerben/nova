@@ -8,7 +8,6 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import storage
 from app.kria.render_assets import LibraryRenderAsset, RenderFingerprint
 from app.models import MusicTrack, SoundEffect
 
@@ -66,6 +65,8 @@ def inspect_library_asset(
     path: str, *, asset_id: str, catalog: str, catalog_id: str
 ) -> LibraryRenderAsset:
     """Pin the generation before hashing; replacement bytes cannot enter the receipt."""
+    from app import storage
+
     metadata = storage.object_metadata(path)
     if not metadata.generation or not 0 < metadata.size <= 256 * 1024**2:
         raise ValueError("invalid library asset size or generation")

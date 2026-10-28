@@ -56,7 +56,7 @@ def _request_context():
     clear_request_context()
 
 
-def _from_app(protocol: int | None = 23) -> None:
+def _from_app(protocol: int | None = 24) -> None:
     set_client_protocol(protocol)
 
 
@@ -157,6 +157,25 @@ def test_the_default_animates_lines_without_their_own_and_a_line_override_wins(m
     ] * 2
 
 
+def test_designed_edges_reach_caption_layers_over_the_appearance_default(monkeypatch):
+    from tests.routes.test_phone_narrated_editor_commit import _CUES
+
+    silk = {"entrance": "silkReveal", "exit": "none", "loop": "none", "speed": 1.0}
+    echo = {"entrance": "echoStack", "exit": "ribbonWipe", "loop": "none", "speed": 1.0}
+    job = _narrated(monkeypatch)
+    _from_app()
+    save(
+        job,
+        caption_cues=[{**_CUES[0], "animation_phases": silk}, _CUES[1]],
+        caption_meta=gj.EditorCommitCaptionMeta(
+            animation_phases=echo,
+            appearance=gj.EditorCaptionAppearance(animation_phases=FADE),
+        ),
+    )
+    layers = _captions(job)
+    assert [_phases(layers[key]) for key in ("caption-0", "caption-1")] == [silk, echo]
+
+
 def test_word_highlight_lines_keep_their_karaoke_sweep_under_the_phases(monkeypatch):
     from tests.routes.test_phone_narrated_editor_commit import _WORD_CUES
 
@@ -206,7 +225,7 @@ def test_the_kill_switch_compiles_stored_phases_as_before(monkeypatch):
     assert "caption_animation" not in variant["editor_capabilities"]
 
 
-@pytest.mark.parametrize("protocol", [22, None])
+@pytest.mark.parametrize("protocol", [22, 23, None])
 def test_an_older_build_cannot_save_or_wipe_caption_phases(monkeypatch, protocol):
     from tests.routes.test_phone_narrated_editor_commit import _CUES
 
@@ -223,7 +242,7 @@ def test_an_older_build_cannot_save_or_wipe_caption_phases(monkeypatch, protocol
         assert refused.value.status_code == 426
         assert refused.value.detail["feature"] == "caption_animation"
 
-    _from_app(23)
+    _from_app(24)
     save(job, caption_cues=[_CUES[0], {**_CUES[1], "animation_phases": FADE}])
     before = copy.deepcopy(job.assembly_plan)
     _from_app(protocol)

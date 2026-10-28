@@ -82,9 +82,21 @@ def project_guided_caption_overlays(
     for group in groups:
         group_words = [word for row in group for word in str(row["text"]).split()]
         display_text = " ".join(group_words)
+        phases = _group_phases(group, meta) if animate else None
+        appearance_phases = appearance.get("animation_phases")
+        if phases is None and appearance_phases is not None and not word_style and not highlight:
+            row = deepcopy(group[0])
+            row.update(
+                text=display_text,
+                end_s=group[-1]["end_s"],
+                effect="static",
+                animation_phases=appearance_phases,
+            )
+            row.pop("word_timings", None)
+            output.append(row)
+            continue
         offset = 0
         first_output = len(output)
-        phases = _group_phases(group, meta) if animate else None
         for index, original in enumerate(group):
             words = str(original["text"]).split()
             start = float(original["start_s"])

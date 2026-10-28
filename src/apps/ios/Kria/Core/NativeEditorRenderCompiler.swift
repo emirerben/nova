@@ -743,8 +743,12 @@ enum NativeEditorRenderError: Error, Equatable {
                         highlight: explicitHighlight == false ? captionStyle.color : try ink(meta["highlight_color"], fallback: "#C5F82A"),
                         style: captionStyle, fontURL: font, canvas: canvas))
                 } else {
+                    let captionPhases = try appearance["animation_phases"].map {
+                        try JSONDecoder().decode(TextAnimationPhases.self, from: JSONEncoder().encode($0))
+                    }
                     let layout = try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
-                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas)
+                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: captionPhases)
+                    if captionPhases != nil { text.append(layout); continue }
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
                         effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none))
@@ -964,10 +968,19 @@ enum NativeEditorRenderError: Error, Equatable {
             return projected[$0].id < projected[$1].id
         }
         var sentence: [Int] = []
+        var hidden = Set<Int>()
+        let animated = captionMeta["appearance"]?.objectValue?["animation_phases"]?.objectValue != nil
         func emitSentence() {
             guard !sentence.isEmpty else { return }
             let display = sentence.map { projected[$0].text.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .joined(separator: " ")
+            if animated, let first = sentence.first, let last = sentence.last {
+                projected[first].text = display
+                projected[first].endS = projected[last].endS
+                hidden.formUnion(sentence.dropFirst())
+                sentence.removeAll()
+                return
+            }
             for (position, index) in sentence.enumerated() {
                 projected[index].text = display
                 // Python's render-only projection holds each sentence display
@@ -1002,7 +1015,7 @@ enum NativeEditorRenderError: Error, Equatable {
             }
         }
         emitSentence()
-        return projected
+        return projected.enumerated().filter { !hidden.contains($0.offset) }.map(\.element)
     }
 
     /// KRI-110: overlay caption_meta styling onto a caption_cue-tagged text
@@ -1018,6 +1031,7 @@ enum NativeEditorRenderError: Error, Equatable {
         if case .string(let alignment)? = appearance["alignment"], ["left", "center", "right"].contains(alignment) {
             patched.raw["alignment"] = .string(alignment)
         }
+        if let value = appearance["animation_phases"] { patched.raw["animation_phases"] = value }
         if let value = appearance["stroke_color"] { patched.raw["stroke_color"] = value }
         if let value = appearance["shadow_color"] { patched.raw["shadow_color"] = value }
         if let value = appearance["shadow_opacity"] { patched.raw["shadow_opacity"] = value }

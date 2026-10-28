@@ -776,7 +776,7 @@ class Settings(BaseSettings):
     # the capability is hidden and captions compile as before (stored phases are kept).
     # Apply: `fly secrets set CAPTION_ANIMATION_ENABLED=false` (api + worker) + restart.
     caption_animation_enabled: bool = True
-    caption_animation_min_client_protocol: int = 23
+    caption_animation_min_client_protocol: int = 24
     # Text behind people ON THE PHONE (the device twin of `text_behind_subject_enabled`
     # below, which is the cloud Skia lane). When True, `compile_text_overlay` stamps
     # `behind_subject` on a phone recipe text layer whose text element asks for it, and

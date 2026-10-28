@@ -1223,6 +1223,7 @@ class EditorCaptionAppearance(BaseModel):
     stroke_color: str | None = None
     shadow_color: str | None = None
     shadow_opacity: float | None = Field(None, ge=0, le=1, allow_inf_nan=False)
+    animation_phases: TextAnimationPhases | None = None
     highlight_spoken_word: bool | None = None
     position_x_frac: float | None = Field(None, ge=0.05, le=0.95, allow_inf_nan=False)
     position_y_frac: float | None = Field(None, ge=0.10, le=0.90, allow_inf_nan=False)

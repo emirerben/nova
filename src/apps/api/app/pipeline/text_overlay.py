@@ -991,10 +991,21 @@ def _render_authored_phase_frame(
     phases = TextAnimationPhases.model_validate(overlay["animation_phases"])
     state = sample_text_phases(phases, local_time, duration)
     _render_static_overlay_layer(
-        {**overlay, "_reveal_progress": state.reveal, "rotation_deg": 0}, text, position, png_path
+        {
+            **overlay,
+            "_reveal_progress": 1 if phases.entrance == "wordRelay" else state.reveal,
+            "rotation_deg": 0,
+        },
+        text,
+        position,
+        png_path,
     )
     with Image.open(png_path) as original:
         frame = original.convert("RGBA")
+    from app.pipeline.designed_text_motion import has_designed_motion, paint_designed_motion
+
+    if has_designed_motion(phases):
+        frame = paint_designed_motion(frame, overlay, phases, local_time, duration)
     anchor_x = float(overlay.get("position_x_frac", 0.5)) * CANVAS_W
     anchor_y = float(overlay.get("position_y_frac", _POSITION_Y.get(position, 0.5))) * CANVAS_H
     angle = radians(float(overlay.get("rotation_deg") or 0))

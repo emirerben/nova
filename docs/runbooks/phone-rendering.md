@@ -3532,8 +3532,10 @@ The app reads `capabilities.text_bend` (creation) and `editor_capabilities.text_
 
 ## Caption animation (KRI-1007)
 
-Captions take the same `animation_phases` as text (`entrance`/`exit` in
-`none|fade|pop|slide|typewriter`, `loop` in `none|pulse|bounce|float`, `speed` 0.25..3).
+Captions take the same `animation_phases` as text, validated by the one
+`TextAnimationPhases` model (`app/agents/_schemas/text_animation_phases.py`): `entrance`/`exit`
+include the designed edges (`docs/pipelines/designed-text-animations.md`), `loop` in
+`none|pulse|bounce|float`, `speed` 0.25..3.
 
 | Where | Wire field | Stored as |
 |---|---|---|
@@ -3541,7 +3543,9 @@ Captions take the same `animation_phases` as text (`entrance`/`exit` in
 | One line, guided / song / montage | `animation_phases` on the `caption_cue`-source text row | the revision text row |
 | All captions | `caption_meta.animation_phases` (explicit `null` clears) | `caption_animation_phases` on a cue-native variant; `caption_meta.animation_phases` in a guided revision |
 
-Precedence: line > all-captions default > today's look (pop-in, or the karaoke sweep). Unset
+Precedence: line > all-captions default > `caption_meta.appearance.animation_phases` (#1898,
+stored in `caption_editor_style`; it turns the karaoke sweep off and collapses a guided line)
+> today's look (pop-in, or the karaoke sweep). Unset
 compiles byte-identical recipes (`tests/routes/test_caption_animation.py` golden). The phone
 draws the recipe's existing `animationPhases`, so the layer needs `authoredText`. A word
 highlight line keeps its karaoke sweep and the phases move the whole line (typewriter shows the
@@ -3550,7 +3554,8 @@ its last exits, every interval loops. Cloud caption burns do not draw phases.
 
 Gate: `CAPTION_ANIMATION_ENABLED` (default on; off compiles stored phases away and hides the
 capability) + `authoredText` verified + client protocol >= `CAPTION_ANIMATION_MIN_CLIENT_PROTOCOL`
-(23) for `editor_capabilities.caption_animation`. A Save from an older build that carries caption
+(24; protocol 23 is the designed-edge build, which does not keep line phases) for
+`editor_capabilities.caption_animation`. A Save from an older build that carries caption
 phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_update_required`
 (`feature: "caption_animation"`).
 
