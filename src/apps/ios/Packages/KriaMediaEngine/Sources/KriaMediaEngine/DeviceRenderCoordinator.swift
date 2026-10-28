@@ -332,6 +332,17 @@ public actor DeviceRenderCoordinator {
         let url = directory.appendingPathComponent("device-render.json")
         if FileManager.default.fileExists(atPath: url.path) {
             receipt = try JSONDecoder().decode(DeviceRenderReceipt.self, from: Data(contentsOf: url))
+            if var saved = receipt, let oldURL = saved.outputURL, oldURL.isFileURL {
+                let relocated = directory.appendingPathComponent(saved.attemptID.uuidString + ".mp4")
+                if oldURL != relocated,
+                   relocated.resolvingSymlinksInPath().deletingLastPathComponent() == directory.resolvingSymlinksInPath(),
+                   FileManager.default.fileExists(atPath: relocated.path),
+                   try SHA256Fingerprinter().fingerprint(file: relocated) == saved.outputFingerprint {
+                    saved.outputURL = relocated
+                    receipt = saved
+                    try JSONEncoder().encode(saved).write(to: url, options: .atomic)
+                }
+            }
         }
     }
     /// Never awaited by `start()`/`cancel()`: the report is persisted on the receipt
@@ -420,11 +431,33 @@ public actor DeviceRenderCoordinator {
         deliverPendingReport()
         guard let saved = receipt, running == nil,
               ![.cancelled, .superseded, .synced, .needsAttention].contains(saved.phase) else { return }
+        if saved.outputURL != nil, try intactOutput(saved) == nil {
+            try replaceAttempt(output: nil)
+            return
+        }
         running = Task { await self.perform(attempt: saved.attemptID) }
+    }
+
+    private func replaceAttempt(output: URL?) throws {
+        guard let saved = receipt else { return }
+        let attempt = UUID()
+        var replacement: URL?
+        if let output {
+            let target = directory.appendingPathComponent(attempt.uuidString + ".mp4")
+            try FileManager.default.copyItem(at: output, to: target)
+            replacement = target
+        }
+        let next = DeviceRenderReceipt(request: saved.request, attemptID: attempt,
+                                       phase: replacement == nil ? .preparing : .localReady,
+                                       outputURL: replacement, outputFingerprint: replacement == nil ? nil : saved.outputFingerprint)
+        try JSONEncoder().encode(next).write(to: receiptURL, options: .atomic)
+        receipt = next
+        running = Task { await self.perform(attempt: attempt) }
     }
 
     public func retrySync() throws {
         guard let saved = receipt, saved.outputURL != nil, saved.phase == .localReady, running == nil else { return }
+        if try intactOutput(saved) == nil { try replaceAttempt(output: nil); return }
         running = Task { await self.perform(attempt: saved.attemptID) }
     }
 
@@ -565,6 +598,11 @@ public actor DeviceRenderCoordinator {
                     try? update(attempt, phase: .cancelled)
                 }
                 return
+            } catch is DeviceExportAttemptReused {
+                guard current(attempt), let saved = receipt, let output = try? intactOutput(saved) else { return }
+                do { try replaceAttempt(output: output) }
+                catch { try? update(attempt, phase: .localReady, error: error.localizedDescription) }
+                return
             } catch {
                 guard current(attempt) else { return }
                 if suspendedAttempt == attempt || Self.isInterruption(error) {
@@ -630,6 +668,10 @@ public actor DeviceRenderCoordinator {
             try await validateOutputDuration(output, for: saved.request)
             guard current(attempt) else { return }
         } else {
+            if saved.outputURL != nil {
+                try replaceAttempt(output: nil)
+                return
+            }
             try update(attempt, phase: .preparing)
             let assets = try await sources.resolve(for: saved.request.recipe)
             guard current(attempt) else { return }
