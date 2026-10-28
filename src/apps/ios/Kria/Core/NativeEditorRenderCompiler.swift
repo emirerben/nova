@@ -217,12 +217,17 @@ enum NativeEditorRenderError: Error, Equatable {
                 let requestedSpan = authoredMovingDuration * authoredRate
                 guard available.isFinite, authoredSlot.inS.isFinite, authoredRate.isFinite,
                       available > 0, authoredSlot.inS >= 0 else { throw RecipeError.invalidTimeline }
-                if authoredSlot.inS + requestedSpan > available {
-                    guard requestedSpan <= available,
+                // Saved-draft end-minus-start arithmetic can exceed the exact
+                // source endpoint by a few floating-point ULPs. Match the
+                // surrounding microsecond geometry checks without admitting a
+                // genuinely longer source window.
+                let sourceWindowToleranceS = 0.000_001
+                if authoredSlot.inS + requestedSpan > available + sourceWindowToleranceS {
+                    guard requestedSpan <= available + sourceWindowToleranceS,
                           authoredSlot.raw["source_start_locked"] != .bool(true) else { throw RecipeError.invalidTimeline }
                     requestedRate = authoredRate
                     sourceSpan = requestedSpan
-                    sourceStart = available - requestedSpan
+                    sourceStart = max(0, available - requestedSpan)
                 }
             }
             guard NarratedRateGate.acceptsDerived(requestedRate, sourceSpan: sourceSpan, slot: authoredSlot),
