@@ -42,7 +42,7 @@ final class DesignedTextAnimationTests: XCTestCase {
                 if let output = ProcessInfo.processInfo.environment["KRIA_TEXT_MOTION_EVIDENCE"], content.contains("Somewhere") {
                     let directory = URL(fileURLWithPath: output)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    for time in [0.12, 0.4, 0.8, 2.0] {
+                    for time in [0.05, 0.12, 0.25, 2.0] {
                         let image = try RecipeVideoCompositor.paintText([text], over: background, canvas: background.extent, time: time)
                         try CIContext().writePNGRepresentation(of: image, to: directory.appendingPathComponent("\(name)-\(time).png"),
                             format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
@@ -58,8 +58,8 @@ final class DesignedTextAnimationTests: XCTestCase {
             fontURL: font, canvas: canvas, phases: phases)
         let made = try RecipeTextLayer.make(layer, assetURLs: ["font": font], canvas: CGSize(width: 360, height: 640))
         let background = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 360, height: 640))
-        let a = pixels(try RecipeVideoCompositor.paintText([made], over: background, canvas: background.extent, time: 1.1999))
-        let b = pixels(try RecipeVideoCompositor.paintText([made], over: background, canvas: background.extent, time: 1.2001))
+        let a = pixels(try RecipeVideoCompositor.paintText([made], over: background, canvas: background.extent, time: TextAnimationPhases.edgeSeconds - 0.0001))
+        let b = pixels(try RecipeVideoCompositor.paintText([made], over: background, canvas: background.extent, time: TextAnimationPhases.edgeSeconds + 0.0001))
         let difference = zip(a, b).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
         XCTAssertLessThan(Double(difference) / Double(a.count), 0.01, "A line must not change its curve when the entrance ends")
     }
