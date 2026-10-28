@@ -260,7 +260,8 @@ import KriaMediaEngine
     /// RMS of the file's mixed-down audio inside each window (0.1 s trimmed off both ends, past the cut).
     private static func rmsLevels(of url: URL, windows: [(id: String, start: Double, end: Double)]) async throws -> [String: Double] {
         let asset = AVURLAsset(url: url)
-        let track = try XCTUnwrap(try await asset.loadTracks(withMediaType: .audio).first, "the export has an audio track")
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        let track = try XCTUnwrap(tracks.first, "the export has an audio track")
         let reader = try AVAssetReader(asset: asset)
         let rate = 44_100.0
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: rate,
