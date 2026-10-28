@@ -4646,6 +4646,59 @@ def _run_generative_job_impl(
     )
 
 
+def _phone_montage_landscape_framing(
+    job_id: str,
+    snapshot: dict,
+    plan: Any,
+    bindings: tuple,
+    *,
+    landscape_fit: str,
+) -> Any:
+    """KRI-1027: how the phone montage frames its sideways clips for a creator who said
+    how they should sit ("make it all vertical" / "keep the black bars").
+
+    The ask is read deterministically off the approved brief pinned on the job
+    (``creator_brief_binding``), never a prompt field. ``None`` without such an ask
+    (or a readable binding, or any footage): the plan compiles exactly as before and
+    nothing is sampled. Otherwise a `phone_montage_framing.MontageFraming` that never
+    raises: a failure frames nothing more than today's crop."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+    from app.kria.landscape_fit_ask import brief_landscape_fit_ask  # noqa: PLC0415
+    from app.pipeline.phone_montage_framing import frame_montage  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+    from app.storage import download_to_file  # noqa: PLC0415
+
+    raw_binding = snapshot.get("creator_brief_binding")
+    if not raw_binding or not bindings:
+        return None
+    try:
+        ask = brief_landscape_fit_ask(BriefBinding.model_validate(raw_binding).resolve())
+    except Exception as exc:  # noqa: BLE001 - an unreadable binding is "no ask"
+        log.warning("phone_montage_framing.binding_unreadable", job_id=job_id, error=str(exc)[:200])
+        return None
+    if ask is None:
+        return None
+    try:
+        with tempfile.TemporaryDirectory(prefix="phone-montage-framing-") as workdir:
+            framing = frame_montage(
+                plan,
+                bindings,
+                ask=ask.fit,
+                asked_by=ask.requirement_ids,
+                landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                workdir=workdir,
+                download=download_to_file,
+            )
+    except Exception as exc:  # noqa: BLE001 - framing is a nicety; the render goes on
+        log.warning("phone_montage_framing.failed", job_id=job_id, error=str(exc)[:200])
+        return None
+    try:
+        record_pipeline_event("phone", "landscape_framing", framing.receipt())
+    except Exception:  # noqa: BLE001 - observability only
+        pass
+    return framing
+
+
 def _creator_landscape_fit(all_candidates: dict | None) -> str:
     """The creator's EXPLICIT bars/crop choice (``creator_render_shape``), else
     ``"fill"`` -- guided/unified phone output only letterboxes on request (KRI-285)."""
@@ -4917,6 +4970,19 @@ def _run_phone_guided_job(
         )
     raw_plan, _track = _guided_execution_plan(job_id, guided)
     plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
+    # KRI-1027: frame sideways clips for the creator's bars/crop ask BEFORE any text is
+    # placed, so titles and labels are kept off faces where the crop really shows them.
+    landscape_framing = _phone_montage_landscape_framing(
+        job_id, snapshot, plan, bindings, landscape_fit=landscape_fit
+    )
+    framing_changed = False
+    if landscape_framing is not None:
+        from app.pipeline.phone_montage_framing import apply_montage_framing  # noqa: PLC0415
+
+        framed = apply_montage_framing(raw_plan, landscape_framing)
+        if framed is not raw_plan:
+            raw_plan, framing_changed = framed, True
+            plan = GuidedStoryExecutionPlan.model_validate(raw_plan)
     if current_phone_text_policy():
         from app.services.phone_text_styling import style_guided_generation  # noqa: PLC0415
 
@@ -5133,9 +5199,12 @@ def _run_phone_guided_job(
             break
     validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
-    # The editor's Save recompiles from this private plan, so it must hold the moments' sound.
+    # The editor's Save recompiles from this private plan, so it must hold the moments' sound
+    # and (KRI-1027) their vertical framing.
     repaired_plan_payload = (
-        copy.deepcopy(raw_plan) if current_phone_text_policy() or toggle_changed else None
+        copy.deepcopy(raw_plan)
+        if current_phone_text_policy() or toggle_changed or framing_changed
+        else None
     )
     if compiled.plan is not plan:
         repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
@@ -5230,6 +5299,13 @@ def _run_phone_guided_job(
 
             # KRI-942: what the pinned recipe plays for each on/off ask, and why not.
             current["variants"][0][TOGGLE_RECEIPT_FIELD] = toggle_receipt
+        if landscape_framing is not None:
+            from app.pipeline.phone_montage_framing import (  # noqa: PLC0415
+                LANDSCAPE_FRAMING_FIELD,
+            )
+
+            # KRI-1027: how each sideways clip was framed for the creator's ask, and why.
+            current["variants"][0][LANDSCAPE_FRAMING_FIELD] = landscape_framing.receipt()
         if repaired_plan_payload is not None:
             # The editor's first Save recompiles from this private per-variant plan, not
             # the approved canonical plan (whose text lane is re-validated against the

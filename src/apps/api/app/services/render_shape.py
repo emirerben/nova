@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 OutputOrientationChoice = Literal["portrait", "landscape"]
@@ -472,11 +472,54 @@ def cloud_fit_axis(variant: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def readable_brief(binding: object | None) -> Any:
+    """The ``CreativeBrief`` a draft's ``brief_binding`` (model or stored dict) pins,
+    or None. Never raises: an unreadable binding just preselects nothing extra."""
+    from app.kria.brief_binding import BriefBinding  # noqa: PLC0415
+
+    if binding is None:
+        return None
+    try:
+        if not isinstance(binding, BriefBinding):
+            binding = BriefBinding.model_validate(binding)
+        return binding.resolve()
+    except Exception:  # noqa: BLE001 - a preselection nicety never fails a read/approve
+        return None
+
+
+def apply_creator_ask(offer: RenderShapeOffer, brief: object | None) -> RenderShapeOffer:
+    """``offer`` preselecting what the creator asked for in chat (KRI-1027).
+
+    "Make it all vertical" / "no black bars" preselects crop, "keep the black bars"
+    preselects bars (`app.kria.landscape_fit_ask`), each on a vertical canvas: bars
+    only exist there, and both asks are about a vertical video. The app sends the
+    preselected shape back with the approval, so without this the item's remembered
+    "fit" letterboxed a montage whose creator asked for the opposite. Only the
+    default moves: what is on offer, and a choice the creator then makes on the
+    confirm screen, are untouched. No ask (or no bars/crop on offer) = ``offer``.
+    """
+    from app.kria.landscape_fit_ask import brief_landscape_fit_ask  # noqa: PLC0415
+
+    ask = brief_landscape_fit_ask(brief)  # type: ignore[arg-type]
+    if ask is None or ask.fit not in offer.fit_choices:
+        return offer
+    orientation = "portrait" if "portrait" in offer.orientations else offer.default_orientation
+    return replace(offer, default_fit=ask.fit, default_orientation=orientation)
+
+
 async def offer_for_item(
-    db: Any, item: object, strategy: object, creator_id: object, *, creator_request: str = ""
+    db: Any,
+    item: object,
+    strategy: object,
+    creator_id: object,
+    *,
+    creator_request: str = "",
+    brief: object | None = None,
 ) -> RenderShapeOffer:
     """``creation_offer`` with the item's previous ready variant and the account's
-    render destination resolved (one unlocked Job read)."""
+    render destination resolved (one unlocked Job read), then -- on a montage --
+    the creator's own bars/crop ask in ``brief`` (the pending draft's pinned brief)
+    preselected (`apply_creator_ask`)."""
     from app.config import settings  # noqa: PLC0415
     from app.models import Job  # noqa: PLC0415
     from app.services.phone_destination import item_requires_native_device_only  # noqa: PLC0415
@@ -486,10 +529,15 @@ async def offer_for_item(
     native_device_only = False
     if settings.ios_native_device_only_enabled:
         native_device_only = await item_requires_native_device_only(db, item, creator_id)
-    return creation_offer(
+    offer = creation_offer(
         item,
         strategy,
         previous_orientation=previous_ready_orientation(job),
         device_render=bool(settings.phone_rendering_for(creator_id) or native_device_only),
         creator_request=creator_request,
     )
+    if str(_get(strategy, "edit_format") or "montage") not in _LANDSCAPE_AND_FIT_FORMATS:
+        # A Talking edit frames its speaker from the same words (KRI-547) and falls back
+        # to the item's bars when no crop holds the face: its preselection stays as is.
+        return offer
+    return apply_creator_ask(offer, brief)
