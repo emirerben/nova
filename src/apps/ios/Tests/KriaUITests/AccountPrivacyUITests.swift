@@ -11,9 +11,16 @@ import XCTest
     }
 
     private func reveal(_ element: XCUIElement, app: XCUIApplication) {
-        for _ in 0..<12 where !element.isHittable {
-            if element.exists && element.frame.minY < app.frame.minY + 100 { app.swipeDown() }
-            else { app.swipeUp() }
+        for _ in 0..<12 {
+            let save = app.buttons["text-preferences-save"]
+            let top = app.navigationBars.firstMatch.exists ? app.navigationBars.firstMatch.frame.maxY : app.frame.minY + 60
+            let bottom = save.exists ? save.frame.minY - 64 : app.frame.maxY - 50
+            if element.exists {
+                let fixedAction = ["text-preferences-save", "text-preferences-reload"].contains(element.identifier)
+                if element.isHittable && (fixedAction || (element.frame.minY >= top && element.frame.maxY <= bottom)) { break }
+                if element.frame.minY < top { app.swipeDown(); continue }
+            }
+            app.swipeUp()
         }
         XCTAssertTrue(element.waitForExistence(timeout: 3))
         XCTAssertTrue(element.isHittable)
