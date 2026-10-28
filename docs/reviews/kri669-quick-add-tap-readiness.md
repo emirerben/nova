@@ -34,7 +34,7 @@ journeys and 244 editor-session tests passed, zero failures and zero skips.
 This local simulator is iPhone 17/iOS 26.5. Fresh exact-head CI on the original
 runtime is still required.
 
-The actual latest simulator export was written at 14:02:59 UTC. It is H.264/AAC,
+The earlier simulator export was written at 14:02:59 UTC. It is H.264/AAC,
 1080×1920, 8.6 seconds, 7,457,976 bytes. SHA-256:
 `b1baaf6bdbbc089d0273d5431f1862063a8c6a2ae4f94bcfbe1e79b9d77c5dca`.
 The inspected 0.8-second frame retains "Gameday edited title"; 5.6 seconds shows
@@ -55,3 +55,11 @@ replays stay open under KRI-984. Launch is not cleared.
 After the native animation integration, both current export frames remained
 byte-identical to the inspected title and fifth-source frames. This establishes
 those visual checkpoints only.
+
+After the caption-panel and preference-helper integration at `431ea3312`, the
+same complete journey passed again in `integrated-picker-inspector.xcresult`.
+The new export was written at 15:49:06 UTC, retains the same format, duration and
+byte count, and has SHA-256
+`78d6818f88d0b043899e8a1d60d1622784d92284472f6ca62f744e68c96fdd77`.
+Both inspected title and fifth-source frames remain byte-identical. The combined
+result has 248 passed checks, zero failures or skips; final CI is still required.

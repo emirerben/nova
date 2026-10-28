@@ -102,7 +102,7 @@ zero skipped. Exact selected UI coverage was verified with the repository's
 `ui_tests.verify_results` function. The summary SHA-256 is
 `7f5d70f6baffd7f3e4a02c346d5fde9af3a49a5f613feb2f4fd9bca1a7ecda57`.
 
-The latest native result is `latest-main-inspector-close.xcresult`. The original
+That integration result is `latest-main-inspector-close.xcresult`. The original
 endpoint method and new Undo regression are unchanged from the red/green proof.
 The latest Gameday export's inspected title and fifth-source frames are byte
 identical to the earlier inspected frames. This still requires fresh exact-head
@@ -123,3 +123,22 @@ and the live pinch journey, exports the result JSON, and requires all three
 named cases to pass. Existing smoke, API, native, and aggregate checks remain
 unchanged. The earlier green unit job is not critical-case proof. The next
 exact-head CI must actually execute and pass this replay before merging.
+
+## Combined caption and preference-helper integration
+
+After merging actual main `db42721ce` and the independently proved font-picker
+helper correction, native revision `431ea3312a1d247286ceb82e5dd6344cb0194efa` passed
+all 244 session checks and four unique UI journeys again. The result is
+`integrated-picker-inspector.xcresult`: 248 passed, zero failures, skips or retries.
+Its summary SHA-256 is
+`e74b8f8e88893b29f854baa076a6d05ea6ab0ed57b93518dc42ecf26dbca24c7`.
+The repository UI verifier required all four named UI cases, and the CI journey
+verifier independently required both speed cases and pinch. All three runtime
+markers appeared. The proof records nine native source hashes, including the
+current caption panel, generated contract and preference test.
+
+The merged UI manifest passed its 25 selection checks. The preference-helper
+[red/green report](kri648-font-picker-test-ownership.md) retains its separate
+four-flow proof. Neither result replaces fresh exact-head original-runtime CI.
+The failed `77f2e7579` screens job remains preserved; its wrong-screen Save
+snapshot failure is not a production preferences-save failure.
