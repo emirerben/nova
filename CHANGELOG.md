@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.175.0] - 2026-10-28
+
+### Changed
+- fix(montage): never print the internal Montage title on an untitled edit (KRI-998) (#1888) <!-- release-pr: 1888 -->
+
 ## [0.81.174.0] - 2026-10-28
 
 ### Fixed
