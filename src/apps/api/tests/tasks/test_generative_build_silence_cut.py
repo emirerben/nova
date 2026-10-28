@@ -70,6 +70,7 @@ from app.pipeline.speech_cleanup_analysis import (
 )
 from app.pipeline.speech_cleanup_apply import hydrate_speech_cleanup_snapshot
 from app.pipeline.transcribe import Word
+from tests._silent_pcm import silent_pcm
 
 JOB_ID = "00000000-0000-0000-0000-000000000042"
 
@@ -189,6 +190,7 @@ def _snapshot(
             spans=snapshot_silences,
             status=silence_status,
         ),
+        pcm_loader=silent_pcm,
     )
     return hydrate_speech_cleanup_snapshot(
         {
@@ -229,6 +231,13 @@ def _snapshot_from_patched_pipeline(*, duration=None):
 # ── Harness ──────────────────────────────────────────────────────────────────────
 
 
+def _stand_down_voice_guard(monkeypatch):
+    """The voice guard (KRI-1017) decodes the clip with ffmpeg; these tests have no clip."""
+    import app.pipeline.speech_voice_guard as voice_guard_mod
+
+    monkeypatch.setattr(voice_guard_mod, "decode_pcm_f32", silent_pcm)
+
+
 def _patch_pipeline(
     monkeypatch,
     *,
@@ -258,6 +267,7 @@ def _patch_pipeline(
         "events": [],
         "receipts": [],
     }
+    _stand_down_voice_guard(monkeypatch)
     monkeypatch.setattr(
         gb,
         "_T6_TEST_SNAPSHOT_INPUT",
@@ -2025,6 +2035,7 @@ def _patch_th_full(monkeypatch, *, words=None, silences=None, cut_dur=4.06):
     import app.storage as storage
 
     calls: dict = {"transcribe": [], "detect": [], "reframe": [], "cmds": [], "events": []}
+    _stand_down_voice_guard(monkeypatch)
     monkeypatch.setattr(
         gb,
         "_T6_TEST_SNAPSHOT_INPUT",

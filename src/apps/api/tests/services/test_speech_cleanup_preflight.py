@@ -27,6 +27,7 @@ from app.services.speech_cleanup_preflight import (
     preflight_enabled_for_source,
     refresh_policy_stale_analysis_async,
 )
+from tests._silent_pcm import silent_pcm
 
 DURATION_S = 10.0
 MIXED_GAP_ISLANDS = ((5.778866, 6.209660), (7.406100, 7.977846))
@@ -85,6 +86,7 @@ def run_analysis(
             status=silence_status,
         ),
         retake_detect_fn=retake_detect_fn,
+        pcm_loader=silent_pcm,
     )
 
 

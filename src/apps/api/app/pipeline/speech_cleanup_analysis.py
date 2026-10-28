@@ -19,12 +19,13 @@ import os
 import re
 import subprocess
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from difflib import SequenceMatcher
 from typing import Any, Literal, Protocol
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.config import settings
@@ -39,6 +40,7 @@ from app.pipeline.silence_cut import (
     squeezed_filler_indices,
 )
 from app.pipeline.speech_cleanup_alignment import AlignerUnavailable, align_words
+from app.pipeline.speech_voice_guard import apply_voice_guard
 from app.pipeline.transcribe import TranscribeError, Transcript, Word
 from app.services.mixed_language_transcript import (
     MAX_EXTRA_PASSES,
@@ -487,6 +489,21 @@ def _findings(plan: CutPlan) -> tuple[SpeechCleanupFinding, ...]:
     if diagnostics is None:
         return tuple(_finding(removal) for removal in plan.removed)
 
+    # ``plan.diagnostics`` describes the detector's output, not what survived after it: a
+    # later stage (the filler re-listen, the voice guard) can drop or trim a removal and keep
+    # the old diagnostics. An atom is evidence of a cut only while the cut is still in the
+    # plan, so it must sit inside the merged surviving removals; the planner guarantees that
+    # for a plan nothing has changed.
+    surviving: list[list[float]] = []
+    for removal in sorted(plan.removed, key=lambda item: (item.start_s, item.end_s)):
+        if surviving and removal.start_s <= surviving[-1][1] + 1e-6:
+            surviving[-1][1] = max(surviving[-1][1], removal.end_s)
+        else:
+            surviving.append([removal.start_s, removal.end_s])
+
+    def survives(start: float, end: float) -> bool:
+        return any(lo <= start + 1e-6 and end - 1e-6 <= hi for lo, hi in surviving)
+
     selected_dispositions = {"selected_full", "promoted_protected"}
     findings = [
         SpeechCleanupFinding(
@@ -497,6 +514,7 @@ def _findings(plan: CutPlan) -> tuple[SpeechCleanupFinding, ...]:
         )
         for item in diagnostics.atomic_dispositions
         if item.disposition in selected_dispositions
+        and survives(item.atom_start_s, item.atom_end_s)
     ]
     # Pause components do not have atomic-disposition records. Keep them as
     # separate evidence even when they geometrically contain a filler atom.
@@ -1064,12 +1082,16 @@ def analyze_speech_cleanup(
     transcribe_fn: _TranscriptFn | None = None,
     silence_detect_fn: _SilenceFn | None = None,
     retake_detect_fn: _RetakeDetectFn | None = None,
+    pcm_loader: Callable[[str], np.ndarray] | None = None,
 ) -> SpeechCleanupAnalysisResult:
     """Analyze one exact, already-bounded local narration artifact.
 
     Known media/provider failures deliberately remain visible to the task
     adapter; this function does not broadly catch exceptions.  In particular,
     programming errors escape unchanged instead of becoming ``no_findings``.
+
+    ``pcm_loader`` decodes the artifact for the audible-speech guard (default
+    ``audio_pcm.decode_pcm_f32``); tests inject it so a placeholder path need not be media.
     """
 
     transcribe = transcribe_fn or _default_transcribe
@@ -1170,6 +1192,18 @@ def analyze_speech_cleanup(
         else:
             plan = comparison.baseline
 
+    # KRI-1017: a silence/filler cut that holds sustained voicing is not dead air, whatever the
+    # transcript and the silence spans agreed on. Runs before the re-listen so it never spends
+    # a paid transcription on a cut it is about to drop anyway.
+    plan, voice_guard_report = apply_voice_guard(
+        plan,
+        analysis_input.local_media_path,
+        words=words,
+        retake_spans=(*analysis_input.retake_spans, *detected_retakes),
+        forced=forced,
+        pcm_loader=pcm_loader,
+    )
+
     if filler_report is not None:
         plan, filler_report["relisten"] = _relistened_plan(
             plan,
@@ -1189,6 +1223,14 @@ def analyze_speech_cleanup(
     diagnostics = _diagnostics(diagnostic_plan, candidate_error_class=candidate_error_class)
     if language_crosscheck is not None:
         diagnostics["language_crosscheck"] = language_crosscheck
+    if (
+        voice_guard_report["status"] != "ok"
+        or voice_guard_report["dropped"]
+        or voice_guard_report["trimmed"]
+    ):
+        # Only when it acted: a clean pass leaves the diagnostics as they were (the off-mode
+        # contract is an empty payload).
+        diagnostics["voice_guard"] = voice_guard_report
     if filler_report is not None:
         diagnostics["filler_check"] = filler_report
     return SpeechCleanupAnalysisResult(
