@@ -1759,6 +1759,21 @@
       ]
     },
     {
+      "id": "kri-1015-mixed-caption-language",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri1015_mixed_caption_language_replay.py tests/kria/test_kri1015_caption_language_receipts.py tests/services/test_kri1015_dispatch_caption_language.py tests/pipeline/test_caption_language.py tests/tasks/test_subtitled_caption_language.py",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_language.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/README.md",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/incident.json",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/spoken_words.json",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/truth_words_en.json",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/truth_words_tr.json"
+      ]
+    },
+    {
       "id": "kri-798-render-worker-restart",
       "needs_native": false,
       "api_tests": "tests/services/test_fly_machines.py tests/tasks/test_render_worker_lifecycle.py tests/tasks/test_render_worker_activity_sql.py tests/test_render_worker_wake.py",
