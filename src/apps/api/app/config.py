@@ -834,6 +834,11 @@ class Settings(BaseSettings):
     # captions are planned and no ask is made, byte-identical to before. Recompiles of
     # already-approved plans do not read it. Only effective while USER_SONG_MONTAGE_ENABLED holds.
     song_captions_enabled: bool = True
+    # A creator-song montage nobody asked captions for still pins its lyrics, hidden, so
+    # the editor's Show captions toggle can reveal them. Kill switch:
+    # `fly secrets set SONG_CAPTIONS_AVAILABLE_BY_DEFAULT=false` + restart (api + worker):
+    # new montages without a captions ask carry no lyric track, as before.
+    song_captions_available_by_default: bool = True
     # KRI-443: live plan block feed. After Create on a v2 thread, the render emits
     # `plan_block` events into CreationThreadEvent (read via GET /delta), and
     # POST /creation-threads/{id}/turns/{turn}/cancel-render is enabled. Default

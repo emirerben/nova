@@ -3422,6 +3422,15 @@ caption lane, reported the ask as unmet and the job died as `phone_plan_unsuppor
   restart): no lyric track is planned and no ask is made, so output is byte-identical
   to before (and a lip-sync + captions ask fails as it did). Already-approved plans
   keep their captions; the compiler never reads the flag.
+- **Available but hidden.** With no captions ask (legacy: no ask in the request;
+  plan authority: no `song_captions` pin), the worker still pins the track with
+  `hidden: true` in the planned style. `editor_caption_meta` (and the revision's
+  `caption_meta`) then carry `enabled: false`, so the phone recipe draws no lyric layers
+  and the receipt is `available_hidden`, never `placed`. Show captions in the editor
+  commits `caption_meta.enabled: true`, which recompiles through
+  `compile_guided_runtime_plan` and draws them. A song with no words in the window pins
+  nothing and never declines. Kill switch `SONG_CAPTIONS_AVAILABLE_BY_DEFAULT=false`
+  (same apply): unasked montages carry no track, as before. New videos only.
 - **Limits.** Whisper timing on singing is "close", not frame-exact; lyrics follow
   whatever language whisper returned. Lip-sync trim does not re-time other text.
 
