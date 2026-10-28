@@ -1772,9 +1772,14 @@ def _base_text_elements(
                     effect="static",
                     alignment="center",
                     max_width_frac=0.84,
+                    # KRI-1029: the creator's curved title (None = straight, no key).
+                    bend=snapshot.title_bend,
                     **({"animation_phases": title_phases} if title_phases is not None else {}),
                 ).model_dump(mode="json", exclude_none=True)
             )
+        bend_by_source = {
+            label.media_id: label.bend for label in snapshot.clip_labels or [] if label.text
+        }
         label_group = {
             label.media_id: label.group_id
             for label in snapshot.clip_labels or []
@@ -1800,7 +1805,9 @@ def _base_text_elements(
             if last > first:
                 in_stretch.update(range(first + 1, last + 1))
 
-        def label_element(element_id: str, text: str, start_s: float, end_s: float) -> dict:
+        def label_element(
+            element_id: str, text: str, start_s: float, end_s: float, bend: float | None = None
+        ) -> dict:
             return TextElement(
                 id=element_id,
                 text=text,
@@ -1822,6 +1829,7 @@ def _base_text_elements(
                 effect="static",
                 alignment=label_alignment,
                 max_width_frac=0.82,
+                bend=bend,
             ).model_dump(mode="json", exclude_none=True)
 
         for index, (cut, window) in enumerate(cuts_and_windows):
@@ -1836,6 +1844,7 @@ def _base_text_elements(
                         label,
                         float(window["start_s"]),
                         float(cuts_and_windows[stretch[2]][1]["end_s"]),
+                        bend_by_source.get(cut.media_id),
                     )
                 )
                 continue
@@ -1845,6 +1854,7 @@ def _base_text_elements(
                     label,
                     float(window["start_s"]),
                     float(window["end_s"]),
+                    bend_by_source.get(cut.media_id),
                 )
             )
         return [

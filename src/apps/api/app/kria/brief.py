@@ -46,6 +46,7 @@ from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
+from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
@@ -534,6 +535,8 @@ def merge_requirements(
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
 # KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
 # KRI-945: and the server's mark on a title literal it copied from an approved wording.
+# KRI-1029: and the text's shape ("curved title"), which "make the title just X" restates
+# without.
 STICKY_FACTS = frozenset(
     {
         "first_clip",
@@ -544,6 +547,7 @@ STICKY_FACTS = frozenset(
         "ending_clip",
         "keep_audio",
         APPROVED_COPY_FACT,
+        TEXT_SHAPE_FACT,
     }
 )
 
@@ -608,7 +612,10 @@ def apply_updates(
                     "scope": update.scope,
                     "literal": update.literal,
                     "description": update.description,
-                    "facts": _carry_sticky_facts(target, update),
+                    # KRI-1029: this turn's own shape words win over a carried shape.
+                    "facts": with_text_shape(
+                        update.kind, update.description, _carry_sticky_facts(target, update)
+                    ),
                     "source_turn_id": source_turn_id,
                     "status": "open",
                 }
@@ -623,7 +630,7 @@ def apply_updates(
             scope=update.scope,
             literal=update.literal,
             description=update.description,
-            facts=update.facts,
+            facts=with_text_shape(update.kind, update.description, update.facts),
             source_turn_id=source_turn_id,
         )
         incoming.append(

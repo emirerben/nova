@@ -61,6 +61,7 @@ from app.kria.style_asks import (
     text_look_facts,
     value_matches,
 )
+from app.kria.text_shape_ask import CURVED, text_shape
 from app.kria.unclear_word_ask import asks_if_unclear
 from app.pipeline.caption_language import (
     ASK_END,
@@ -272,6 +273,8 @@ class TextStyleRow:
     layout_row: dict | None = None
     canvas_width: int = 1080
     canvas_height: int = 1920
+    # KRI-1029: the row's saved ``bend`` (KRI-646); None = drawn straight.
+    bend: float | None = None
 
 
 @dataclass(frozen=True)
@@ -618,6 +621,11 @@ class PlanFacts:
     # a clip (a record written before speed asks were planned: no ``clip_speeds`` key). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
     speed_unsupported: bool = False
+    # KRI-1029: the phone montage plan's curved-text outcomes (record ``text_shapes``), as
+    # (folded text, role, reason): reason None = drawn curved, "phone" = this build / server
+    # can't bend text, "animation" = the title's entrance can't bend. None = no record row
+    # to read (nothing is claimed).
+    text_shapes: tuple[tuple[str, str, str | None], ...] | None = None
     # KRI-689: the plan record's clip-speed rows (``clip_speeds``), keyed by requirement id:
     # {status ("applied" / "locked" / "not_grounded" / "photo" / "ramp" / "replaced" /
     # "dropped"), rate, rate_requested, rate_stated, cut_ids, cut_positions, media_ids,
@@ -1205,8 +1213,30 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         asset_holds=tuple(
             row for row in record.get("asset_holds") or [] if isinstance(row, Mapping)
         ),
+        text_shapes=_text_shape_facts(record.get("text_shapes")),
         **_montage_caption_facts(record.get("captions")),
     )
+
+
+def _text_shape_facts(rows: object) -> tuple[tuple[str, str, str | None], ...] | None:
+    """The plan record's ``text_shapes`` rows (KRI-1029) as PlanFacts.text_shapes."""
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for row in rows:
+        if not isinstance(row, Mapping) or not isinstance(row.get("text"), str):
+            continue
+        reason = row.get("reason")
+        if row.get("bend") is None and reason is None:
+            reason = "phone"  # straight with no recorded why: never claim it curved
+        out.append(
+            (
+                _fold(row["text"]),
+                str(row.get("role") or ""),
+                None if row.get("bend") is not None else str(reason),
+            )
+        )
+    return tuple(out)
 
 
 def _freeze_facts(rows: object, legacy: object = None) -> dict[str, Mapping[str, Any]]:
@@ -1654,6 +1684,7 @@ def _text_style_rows(
                 layout_row=row,
                 canvas_width=canvas.width,
                 canvas_height=canvas.height,
+                bend=_finite_number(row.get("bend")) or None,
             )
         )
     return tuple(out)
@@ -2411,6 +2442,7 @@ def plan_facts_from_rendered_montage(
         song_bed=plan.song_bed,
         speed_unsupported=plan.speed_unsupported,
         clip_speeds=_rendered_speeds(plan.clip_speeds, variant),
+        text_shapes=plan.text_shapes,
         timeline_non_video_ids=_rendered_non_video_ids(variant),
         freeze_frames=_rendered_freezes(plan.freeze_frames, variant),
         source_audio_kept=kept if isinstance(kept, bool) else None,
@@ -4108,6 +4140,15 @@ _LIGHT_UNAVAILABLE = (
 # KRI-777: no edit can hold a frame (see `kria.freeze_ask`). Said on the draft, before the
 # approval card, and again on the finished video's receipt.
 _NO_FREEZE_FRAME = "I can't freeze a frame in this edit yet, so that moment plays normally"
+# KRI-1029: the creator asked a text curved and this edit draws it straight: the app build
+# that approved (or the server) can't bend text, or the title's typewriter entrance can't
+# curve. Said on the draft and on the finished video. ``_TEXT_CAME_OUT_STRAIGHT`` is a
+# finished video whose saved text has no bend although the plan bent it.
+_TEXT_STAYS_STRAIGHT = "I can't curve text in this edit on your iPhone yet, so it stays straight"
+_TYPEWRITER_STAYS_STRAIGHT = "A typewriter title can't curve, so it stays straight"
+_TEXT_CAME_OUT_STRAIGHT = "The text is straight in the finished video, not curved"
+# KRI-1029: said beside "Done", since a rewritten ask may no longer say "curved" itself.
+_TEXT_CURVED = "curved"
 # KRI-994: the clip the creator asked to skip, or a photo in a "video clips only" edit, is
 # in the finished video after all (a pin or the plan's own placement kept it).
 _SKIPPED_CLIP_PLAYS = "The clip you asked to skip is still in the video"
@@ -4338,6 +4379,12 @@ _REASON_TR: dict[str, str] = {
         "Bu klipleri hızlandıramıyorum: video her birini zaten baştan sona gösteriyor, "
         "hızlanacak görüntü kalmadı"
     ),
+    _TEXT_STAYS_STRAIGHT: (
+        "Bu düzenlemede iPhone'unda yazıyı henüz kavisli yapamıyorum, o yüzden düz kalıyor"
+    ),
+    _TYPEWRITER_STAYS_STRAIGHT: "Daktilo efektli başlık kavisli olamıyor, o yüzden düz kalıyor",
+    _TEXT_CAME_OUT_STRAIGHT: "Bitmiş videoda yazı kavisli değil, düz",
+    _TEXT_CURVED: "kavisli",
     _SKIPPED_CLIP_PLAYS: "Çıkarmanı istediğin klip hâlâ videoda",
     _PHOTO_IN_CLIPS_ONLY: "Videoda hâlâ bir fotoğraf var",
     _NO_FREEZE_FRAME: (
@@ -4537,6 +4584,8 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _SPEED_NO_FOOTAGE,
     _NO_FREEZE_FRAME,
     _FREEZE_NOT_GROUNDED,
+    _TEXT_STAYS_STRAIGHT,
+    _TYPEWRITER_STAYS_STRAIGHT,
     _MOMENTS_NOT_LOCATED,
     _MOMENTS_CREATOR_CALL,
     _FREEZE_NEEDS_FRAME,
@@ -6401,6 +6450,42 @@ def combine_receipts(first: RequirementReceipt, second: RequirementReceipt) -> R
     return worst.model_copy(update={"reason": "; ".join(dict.fromkeys(reasons))[:300] or None})
 
 
+def check_text_shape(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """Judge a curved-text ask (KRI-1029, ``text_shape_ask``); None when nothing says.
+
+    The phone montage plan records why a curved text stays straight (``facts.text_shapes``):
+    that reason wins, on the draft and on the finished video. Otherwise the saved rows decide
+    (a finished video or an editor turn: every row with the words must carry a ``bend``),
+    and a plan that bent the text is a "Done" on the draft. Matched by the requirement's
+    words; without a literal, a title-scope ask reads the title and a per-clip ask the labels.
+    """
+    if text_shape(req) != CURVED:
+        return None
+    wanted = _fold(req.literal) if req.literal else None
+    role = {"title": "title", "per_clip": "label"}.get(req.scope)
+    planned = [
+        reason
+        for text, row_role, reason in facts.text_shapes or ()
+        if (text == wanted if wanted is not None else row_role == role)
+    ]
+    if "animation" in planned:
+        return _receipt(req, "not_possible", _TYPEWRITER_STAYS_STRAIGHT)
+    if any(reason is not None for reason in planned):
+        return _receipt(req, "not_possible", _TEXT_STAYS_STRAIGHT)
+    rows = [
+        row
+        for row in facts.text_styles or ()
+        if (_fold(row.text) == wanted if wanted is not None else row in _look_rows(req, facts))
+    ]
+    if rows:
+        if all(row.bend for row in rows):
+            return _receipt(req, "met", _TEXT_CURVED)
+        return _receipt(req, "not_possible", _TEXT_CAME_OUT_STRAIGHT)
+    if planned:
+        return _receipt(req, "met", _TEXT_CURVED)
+    return None
+
+
 def _with_text_look(
     req: BriefRequirement, facts: PlanFacts, base: RequirementReceipt
 ) -> RequirementReceipt:
@@ -6414,6 +6499,15 @@ def _with_text_look(
         base = (
             _receipt(req, "partial", _NO_CHECKER) if look is None else combine_receipts(base, look)
         )
+    if text_shape(req) == CURVED and base.status == "met":
+        # KRI-1029: "curved title": the same rule, the words alone never certify the curve.
+        shape = check_text_shape(req, facts)
+        if shape is None:
+            base = _receipt(req, "partial", _NO_CHECKER)
+        elif shape.status == "met" and not base.reason:
+            base = base.model_copy(update={"reason": shape.reason})  # "Done: … (curved)"
+        else:
+            base = combine_receipts(base, shape)
     return _with_spoken_text_speaker(req, facts, base)
 
 

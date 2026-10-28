@@ -131,6 +131,7 @@ def montage_blockers(
     if brief is None or not settings.brief_binding_for(creator_id):
         return None
     from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
+    from app.kria.text_shape_ask import CURVED, text_shape  # noqa: PLC0415
 
     judged: dict[str, BriefRequirement] = {
         req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS
@@ -138,7 +139,11 @@ def montage_blockers(
     # KRI-689: a clip-speed ask is settled by the same plan (which cuts, which rate, or why
     # not). Its receipt is returned whatever its status, so the draft says "Done: ... (clips 1
     # and 3 play at 2x)" or the honest "Couldn't" before the approval card.
-    speed_asks = {req.id for req in brief.live() if asks_clip_speed(req)}
+    # KRI-1029: so is a curved-text ask ("Done", or "it stays straight" for a build or a
+    # title entrance that can't bend), never the model's "your curved title".
+    speed_asks = {
+        req.id for req in brief.live() if asks_clip_speed(req) or text_shape(req) == CURVED
+    }
     if not judged and not speed_asks:
         return None
     planned = preflight_montage_plan(

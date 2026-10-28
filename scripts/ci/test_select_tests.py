@@ -675,6 +675,10 @@ class GitDiffTests(unittest.TestCase):
                 (True, "covered", "kri-547-speaker-framing"),
             ),
             (
+                "src/apps/api/app/kria/text_shape_ask.py",
+                (True, "covered", "kri-1029-1030-plaza-title"),
+            ),
+            (
                 "src/apps/api/app/pipeline/phone_recipe_shared.py",
                 (True, "covered", "kri-547-speaker-framing"),
             ),
