@@ -77,7 +77,19 @@ class OfferedIdea(BaseModel):
     moment_ids: list[str] = Field(default_factory=list, max_length=8)
 
 
+class CaptureSpan(BaseModel):
+    """First and last capture date (ISO YYYY-MM-DD) among an event's footage."""
+
+    first: str = Field(max_length=10)
+    last: str = Field(max_length=10)
+
+
 class CameraRollStoriesInput(MomentRelevanceInput):
+    # An event request may rely on the event's own title and notes instead of a typed query.
+    query: str = Field(default="", max_length=500, exclude_if=lambda v: not v)
+    event_title: str = Field(default="", max_length=80, exclude_if=lambda v: not v)
+    event_about: str = Field(default="", max_length=600, exclude_if=lambda v: not v)
+    capture_span: CaptureSpan | None = Field(default=None, exclude_if=lambda v: v is None)
     already_offered: list[OfferedIdea] = Field(
         default_factory=list, max_length=20, exclude_if=lambda v: not v
     )
@@ -96,7 +108,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-26.2",
+        prompt_version="2026-10-28.1",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=20,
@@ -115,6 +127,17 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
         data = input.model_dump()
         if input.public_research:
             data["public_research"].pop("search_entry_html", None)
+        context = {
+            key: data.pop(field)
+            for key, field in (
+                ("title", "event_title"),
+                ("about", "event_about"),
+                ("capture_span", "capture_span"),
+            )
+            if field in data
+        }
+        if context:
+            data["creator_provided_event_context"] = context
         sources = {candidate.source: f"s{i + 1}" for i, candidate in enumerate(input.candidates)}
         data["candidates"] = [
             {**candidate.model_dump(), "id": f"m{i + 1}", "source": sources[candidate.source]}
