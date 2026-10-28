@@ -79,6 +79,7 @@ from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
     MAX_PROPOSAL_DURATION_S,
     MIN_PROPOSAL_DURATION_S,
+    SNAPSHOT_FALLBACK_TITLE,
     ClipLabel,
     CreatorStillHold,
     EditProposalSnapshot,
@@ -143,10 +144,6 @@ MIN_TOTAL_S = float(MIN_PROPOSAL_DURATION_S)
 # (``ClipLabel`` allows 120).
 MAX_LABEL_CHARS = 60
 MAX_CREATOR_LABEL_CHARS = 120
-# ``EditProposalSnapshot.title`` is required even when no creator-visible title
-# exists. Keep its schema placeholder separate from ``opening_title`` so this
-# internal label never becomes an on-screen text layer (KRI-255).
-SNAPSHOT_FALLBACK_TITLE = "Montage"
 _CAPTURE_ORDER_KEYS = CAPTURE_ORDER_KEYS  # shared with the render contract and receipts
 _START_KEYS = START_KEYS
 _END_KEYS = END_KEYS

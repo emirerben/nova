@@ -108,7 +108,7 @@ from app.routes.plan_items import (
     _OVERLAY_ALLOWED_CONTENT_TYPES,
     _pool_asset_counts_toward_capacity,
 )
-from app.schemas.edit_proposal import EditProposal, parse_edit_proposal
+from app.schemas.edit_proposal import SNAPSHOT_FALLBACK_TITLE, EditProposal, parse_edit_proposal
 from app.schemas.slide_post import parse_slide_post, sticker_asset_ids
 from app.services.creation_thread_titles import (
     matches_conversation_revision,
@@ -3219,7 +3219,8 @@ def _resolve_default_title_fill(
         )
         if snapshot is not None:
             candidate = (snapshot.title or "").strip()
-            if candidate and candidate != _PLACEHOLDER_PROPOSAL_TITLE:
+            placeholders = (_PLACEHOLDER_PROPOSAL_TITLE, SNAPSHOT_FALLBACK_TITLE)
+            if candidate and candidate not in placeholders:
                 return candidate[:_MAX_TITLE_LENGTH]
     return None
 

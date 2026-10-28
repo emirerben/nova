@@ -1887,6 +1887,11 @@ class CreatorStillHold(BaseModel):
 CREATOR_STILL_HOLD_TOLERANCE_S = 1 / 30 + 0.001
 
 
+# ``EditProposalSnapshot.title`` is required even when the creator gave no title. Planners
+# fill it with this internal label, and the text compiler never draws it (KRI-255, KRI-996).
+SNAPSHOT_FALLBACK_TITLE = "Montage"
+
+
 class EditProposalSnapshot(BaseModel):
     # Explicit no-copy policy for footage recommendations. Missing preserves every
     # legacy snapshot/hash. A review summary must never become on-screen text.

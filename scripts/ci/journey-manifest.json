@@ -354,7 +354,8 @@
         "src/apps/api/tests/pipeline/test_song_captions.py",
         "src/apps/api/tests/kria/test_song_captions_policy.py",
         "src/apps/api/tests/pipeline/test_lipsync_montage.py",
-        "src/apps/api/tests/fixtures/kri996_lipsync_back_to_back_takes.json"
+        "src/apps/api/tests/fixtures/kri996_lipsync_back_to_back_takes.json",
+        "src/apps/api/tests/fixtures/kri998_untitled_montage_title.json"
       ]
     },
     {
