@@ -184,7 +184,8 @@
       "KriaUITests/CameraRollCollectionUITests/testTastePanelOpensFromTheHeaderAndReturns",
       "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
       "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection",
-      "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas"
+      "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas",
+      "KriaUITests/CreationUITests/testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

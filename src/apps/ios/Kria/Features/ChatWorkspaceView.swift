@@ -749,14 +749,11 @@ private struct CreationWorkspaceView: View {
         return DeviceBuildStage(phase: presentation.phase, exportProgress: presentation.exportProgress)
     }
 
-    /// The feed hosts the device build (instead of the status card) while the phone is preparing, rendering
-    /// or finished cleanly. Anything that needs the creator (stopped, needs attention, a failed sync with a
-    /// message, superseded), output checking, or automatic repair hands over to
-    /// `DeviceRenderPanel`, which owns verification and recovery progress.
+    /// Finished exports use the status card so sync retries keep playback available.
     private var feedHostsDeviceBuild: Bool {
         guard let key = deviceRenderKey, showsPlanFeed else { return false }
         guard let presentation = model.deviceRenders.presentations[key] else { return true }
-        guard deviceBuildStage != nil else { return false }
+        guard let stage = deviceBuildStage, stage != .finished else { return false }
         guard !presentation.outputVerificationPending, presentation.repairAttempt == nil else { return false }
         // A quiet network wait stays in the feed; heat, storage and unknown states need the card.
         return presentation.message == nil && !presentation.requiresServerRetry && presentation.waiting?.isQuiet != false
@@ -1443,8 +1440,13 @@ private struct CreationWorkspaceView: View {
         SlidePostRouting.isFormatKnown(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
-    /// Editor entries (header switch, Open editor, Open current cut) exist only when this is
-    /// definitely not a slide post. A ready project of unknown format shows a loading state.
+    private var hasAccessibleVideo: Bool {
+        if currentProject.status == .ready { return true }
+        guard let key = deviceRenderKey, let presentation = model.deviceRenders.presentations[key] else { return false }
+        return presentation.localFile != nil && !presentation.outputVerificationPending
+            && [.localReady, .syncing, .synced].contains(presentation.phase)
+    }
+
     private var canOpenVideoEditor: Bool {
         SlidePostRouting.canOpenVideoEditor(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
@@ -1695,10 +1697,8 @@ private struct CreationWorkspaceView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             WorkspaceHeader(
                 project: currentProject,
-                // `currentProject.status` (not `workspaceStage`) so the switch
-                // to the existing cut stays available even while a new plan's
-                // confirmation card is showing on top of it.
-                showsEditorSwitch: currentProject.status == .ready && canOpenVideoEditor,
+                // Local playback remains usable while cloud publication is pending.
+                showsEditorSwitch: hasAccessibleVideo && canOpenVideoEditor,
                 openProjects: openProjects,
                 openEditor: openEditor,
                 openAccount: openAccount
@@ -1828,7 +1828,7 @@ private struct CreationWorkspaceView: View {
             // A new plan's confirmation card can appear over an already-ready
             // cut (see `WorkspaceStage.resolve`); confirming it is a choice,
             // not something the old cut's reachability should be sacrificed for.
-            if currentProject.status == .ready && canOpenVideoEditor {
+            if hasAccessibleVideo && canOpenVideoEditor {
                 Button("Open current cut", action: openEditor)
                     .buttonStyle(CanonicalSecondaryButtonStyle())
                     .disabled(isActing)

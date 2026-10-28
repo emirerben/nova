@@ -285,3 +285,26 @@ Items 2 to 6 are on this branch (see "Fixed on this branch"). Item 1, the planne
    - Retry the report until the server accepts it.
    - Re-delivering an already-approved recipe needs no new approval.
 6. **The refresh-sync banner gets its own quiet channel,** separate from `saveState`.
+
+## App-update recovery review, 28 October 2026
+
+PR #1907 restores a moved completed MP4 after a checksum match. Lost or changed
+bytes and pre-existing reservation collisions use a fresh upload attempt. These
+operations retain the same edit request. In the lifecycle model, `coord.file`
+means an intact usable export, and request identity abstracts upload attempts.
+The new file-path and byte-identity rules are covered by concrete coordinator
+regressions, not by additional claims about this model.
+
+The reviewed drift in `recover`, `retrySync`, `perform`, `performOnce`, and the
+publisher preserves the existing prepare, local-ready, sync, and publish phases.
+Two inherited changes were reviewed too. `runPromptRevisionSync` follows selected
+mutation authority for legacy threads while preserving the model's quiet refresh
+failure behavior. `_client_update_detail` adds another protocol-floor case, which
+has the same `Floors` and update-required behavior already represented here.
+No invariant or transition was weakened. The source hashes were refreshed after
+that review. This records the existing abstraction's limits rather than asserting
+that it proves relocated file paths or immutable exported bytes.
+
+The TLC checksum pin now matches GitHub's official v1.8.0 release-asset digest,
+`fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e`.
+The archive integrity check remains mandatory.
