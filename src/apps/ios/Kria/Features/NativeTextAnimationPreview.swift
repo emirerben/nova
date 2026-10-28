@@ -87,6 +87,9 @@ struct NativeTextAnimationPreview: View {
     @ObservedObject var clock: NativeTextAnimationPreviewClock
 
     var body: some View {
+        if let edge = TextAnimationPhases.Edge(rawValue: effect), edge.isDesigned {
+            NativeDesignedAnimationTile(edge: edge, phase: phase, speed: speed, clock: clock)
+        } else {
         GeometryReader { proxy in
             let sample = NativeTextAnimationPreviewMath.displaySample(
                 phase: phase, effect: effect, speed: speed, clockTime: clock.elapsed,
@@ -105,6 +108,35 @@ struct NativeTextAnimationPreview: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .accessibilityHidden(true)
         }
+        }
+    }
+}
+
+private struct NativeDesignedAnimationTile: View {
+    let edge: TextAnimationPhases.Edge
+    let phase: String
+    let speed: Double
+    @ObservedObject var clock: NativeTextAnimationPreviewClock
+    @State private var renderer: DesignedTextAnimationPreview?
+    @State private var image: CGImage?
+
+    var body: some View {
+        Group {
+            if let image { Image(decorative: image, scale: 1).resizable().scaledToFit() }
+            else { Text("Text").font(KriaFont.body(18).weight(.semibold)) }
+        }
+        .accessibilityHidden(true)
+        .task(id: "\(edge.rawValue)-\(phase)-\(speed)") {
+            guard let font = NativeFontCatalog.shared.fontURL(for: "Inter") else { return }
+            renderer = try? DesignedTextAnimationPreview(fontURL: font, effect: edge, exit: phase == "exit", speed: speed)
+            refresh()
+        }
+        .onChange(of: clock.elapsed) { _, _ in refresh() }
+    }
+    private func refresh() {
+        let cycle = 3.4
+        let t = clock.hasEverPlayed ? clock.elapsed.truncatingRemainder(dividingBy: cycle) : 1.8
+        image = try? renderer?.image(time: min(2.99, t))
     }
 }
 

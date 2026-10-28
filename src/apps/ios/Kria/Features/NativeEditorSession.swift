@@ -1619,7 +1619,9 @@ struct NativeEditorTemporaryVideo {
         selection = value
         selectionRequest &+= 1
         guard seekToStart, let value, let start = startTime(for: value) else { return }
-        seek(to: start)
+        let frameDuration = player?.currentItem?.videoComposition?.frameDuration.seconds ?? 1.0 / 30
+        // A sub-frame start otherwise decodes the preceding frame, before this item exists.
+        seek(to: (start / frameDuration).rounded(.up) * frameDuration)
     }
 
     func select(_ item: NativeEditorTimelineItem, seekToStart: Bool = true) {
@@ -4405,13 +4407,32 @@ struct NativeEditorTemporaryVideo {
     }
     func setTextPhase(id: String, phase: String, effect: String) {
         guard canEditSection(.text), ["entrance", "exit", "loop"].contains(phase),
-              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : ["none", "fade", "pop", "slide", "typewriter"]).contains(effect) else { return }
+              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : TextAnimationPhases.Edge.allCases.map(\.rawValue)).contains(effect) else { return }
         mutateText(id: id) {
             var phases = Self.textPhases(for: $0)
             phases[phase] = .string(effect)
+            if TextAnimationPhases.Edge(rawValue: effect)?.isDesigned == true {
+                $0.raw["theme_transition"] = nil
+                $0.raw["effect"] = .string("static")
+            }
             $0.raw["animation_phases"] = .object(phases)
         }
     }
+    func setCaptionTextAnimation(_ edge: TextAnimationPhases.Edge) {
+        guard canEditCaptionMeta else { return }
+        transactDocument(section: .captionMeta) { doc in
+            var appearance = doc.captionMeta["appearance"]?.objectValue ?? [:]
+            appearance["animation_phases"] = edge == .none ? nil : .object([
+                "entrance": .string(edge.rawValue), "exit": .string("none"), "loop": .string("none"), "speed": .number(1)
+            ])
+            if edge != .none {
+                appearance["highlight_spoken_word"] = .bool(false)
+                doc.captionMeta["style"] = .string("sentence")
+            }
+            doc.captionMeta["appearance"] = .object(appearance)
+        }
+    }
+
     func setTextAnimationSpeed(id: String, speed: Double) {
         guard canEditSection(.text), speed.isFinite else { return }
         mutateText(id: id) {
@@ -5575,6 +5596,7 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             appearance[key] = value
+            if key == "highlight_spoken_word", value == .bool(true) { appearance["animation_phases"] = nil }
             if key == "alignment", appearance["position_x_frac"] != nil {
                 appearance["position_x_frac"] = .number(value.stringValue == "left" ? 0.06 : value.stringValue == "right" ? 0.82 : 0.5)
             }
@@ -5588,6 +5610,7 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             if appearance["highlight_spoken_word"] == nil { appearance["highlight_spoken_word"] = .bool(false) }
+            if style == "word" { appearance["animation_phases"] = nil }
             $0.captionMeta["appearance"] = .object(appearance)
             $0.captionMeta["style"] = .string(style)
         }

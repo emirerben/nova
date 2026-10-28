@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.186.0] - 2026-10-28
+
+### Changed
+- feat(ios): redesign caption panel rows and move switches into Edit captions (KRI-1007) (#1901) <!-- release-pr: 1901 -->
+
+## [0.81.185.0] - 2026-10-28
+
+### Changed
+- feat(captions): animation phases per caption line or for all captions (KRI-1007) (#1900) <!-- release-pr: 1900 -->
+
+## [0.81.184.0] - 2026-10-28
+
+### Changed
+- feat(ios): add six reusable text animations (#1898) <!-- release-pr: 1898 -->
+
+## [0.81.183.0] - 2026-10-28
+
+### Changed
+- fix(ios): text-selection handle drags extend the selection instead of opening the projects drawer (KRI-1002) (#1897) <!-- release-pr: 1897 -->
+
+## [0.81.182.0] - 2026-10-28
+
+### Fixed
+- fix(reframe): end the silent audio pad at the planned length (KRI-997) (#1887) <!-- release-pr: 1887 -->
+
+## [0.81.181.0] - 2026-10-28
+
+### Changed
+- fix(ios): show selected timeline items on their first visible frame (KRI-999) (#1893) <!-- release-pr: 1893 -->
+
 ## [0.81.180.0] - 2026-10-28
 
 ### Changed

@@ -384,8 +384,8 @@ private struct AssistantHeading: View {
     }
 }
 
-/// Custom drag surfaces (not scroll views) that keep their own drags while the drawer is closed. Sideways scroll views
-/// are found by `DrawerGestureTracking.startsInSidewaysScroller`.
+/// Custom drag surfaces (not scroll views) that keep their own drags while the drawer is closed. Sideways scroll views and
+/// text-selection handles are found by `DrawerGestureTracking.startsOnOwnDrag`.
 struct DrawerGestureExclusionPreference: PreferenceKey {
     static var defaultValue: [CGRect] { [] }
     static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) { value += nextValue() }

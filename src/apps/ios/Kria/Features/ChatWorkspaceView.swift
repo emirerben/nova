@@ -204,11 +204,14 @@ private final class DrawerGestureTracking {
 
     func reset() { previous = nil; latest = nil }
 
-    /// Whether a touch began on a sideways scroller (a horizontal `ScrollView` or a paging `TabView`), which keeps
-    /// its own drag. Asking UIKit means a new row works without remembering to opt out.
-    @MainActor static func startsInSidewaysScroller(at point: CGPoint) -> Bool {
+    /// Whether a touch began on something that keeps its own sideways drag: a horizontal scroller (a `ScrollView` or
+    /// a paging `TabView`) or the handles of an active text selection. Asking UIKit means a new row or field works
+    /// without remembering to opt out.
+    @MainActor static func startsOnOwnDrag(at point: CGPoint) -> Bool {
         let windows = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows }.flatMap { $0 }
-        guard let window = windows.first(where: { $0.isKeyWindow }), var view = window.hitTest(point, with: nil) else { return false }
+        guard let window = windows.first(where: { $0.isKeyWindow }) else { return false }
+        if selectionHandlesContain(point, in: window) { return true }
+        guard var view = window.hitTest(point, with: nil) else { return false }
         while true {
             if let scroll = view as? UIScrollView, scroll.isScrollEnabled,
                scroll.contentSize.width + scroll.adjustedContentInset.left + scroll.adjustedContentInset.right > scroll.bounds.width + 0.5 {
@@ -217,6 +220,23 @@ private final class DrawerGestureTracking {
             guard let parent = view.superview else { return false }
             view = parent
         }
+    }
+
+    /// A selection's handles hang outside the text view, so a touch within a handle's reach of the field counts.
+    @MainActor private static func selectionHandlesContain(_ point: CGPoint, in window: UIWindow) -> Bool {
+        guard let input = selectingTextInput(in: window) else { return false }
+        return input.convert(input.bounds, to: window).insetBy(dx: -44, dy: -44).contains(point)
+    }
+
+    @MainActor private static func selectingTextInput(in view: UIView) -> (UIView & UITextInput)? {
+        if view.isFirstResponder, let input = view as? (UIView & UITextInput),
+           let range = input.selectedTextRange, !range.isEmpty {
+            return input
+        }
+        for subview in view.subviews {
+            if let found = selectingTextInput(in: subview) { return found }
+        }
+        return nil
     }
 }
 
@@ -306,7 +326,7 @@ private struct ProjectsDrawerContainer<Drawer: View, Content: View>: View {
                 // Choose an axis once, without a 20-point dead zone at touch-down.
                 if horizontalDrawerDrag == nil {
                     let startsInScroller = !isOpen && (tracking.exclusions.contains { $0.contains(value.startLocation) }
-                        || DrawerGestureTracking.startsInSidewaysScroller(at: value.startLocation))
+                        || DrawerGestureTracking.startsOnOwnDrag(at: value.startLocation))
                     horizontalDrawerDrag = !startsInScroller && abs(value.translation.width) > abs(value.translation.height)
                     drawerDragStartTime = value.time
                     tracking.reset()
