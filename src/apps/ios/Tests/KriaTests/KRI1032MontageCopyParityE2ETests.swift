@@ -144,15 +144,19 @@ import KriaMediaEngine
         // As the server answers after a Save: a new generation, its phone render not made yet.
         fake.authoritativeVariant?["render_generation_id"] = .string("next")
         fake.authoritativeVariant?["render_status"] = .string("awaiting_device")
+        // Trimming ripples text too: acknowledge both submitted lanes, as the server does.
+        fake.commitResponse = EditorCommitResponse(ok: true, generation: "next",
+            sections: EditorCommitSections(textElements: true, captionMeta: false, timeline: true, mix: false),
+            revisionNumber: nil, revisionHash: nil, expectedDuration: nil)
         let priorAudioStatus = try XCTUnwrap(fake.deviceRenderResponse)
         fake.deviceRenderResponse = DeviceRenderStatusResponse(phase: "awaiting_device", request: priorAudioStatus.request,
                                                                baseGeneration: "next")
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
-        let rebuilt = await waitUntil { session.displayedSourcePreviewRecipe != nil && session.sourcePreviewState == .ready }
+        let rebuilt = await waitUntil { (try? session.videoDownloadRoute(deviceLocalFile: nil)) == .sourcePreview }
         XCTAssertTrue(rebuilt, "the saved document's preview must settle; state \(session.sourcePreviewState)")
         XCTAssertFalse(session.canDownloadCurrentVideo, "export stays gated while the saved generation is rendering")
-        XCTAssertFalse(session.hasUnsavedChanges, "the edit was durably saved")
+        XCTAssertFalse(session.hasUnsavedChanges, "the edit was durably saved; dirty lanes \(session.dirtySections)")
         XCTAssertEqual(try session.videoDownloadRoute(deviceLocalFile: nil), .sourcePreview)
     }
 
