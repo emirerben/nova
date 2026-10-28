@@ -110,6 +110,9 @@ CREATOR_EVIDENCE = frozenset({CREATOR_SELECTED_EVIDENCE, FILE_NAME_EVIDENCE})
 # only place the described moment can be. Nobody located the moment INSIDE that take, so
 # this is not the creator's word (never in CREATOR_EVIDENCE).
 ONLY_VIDEO_EVIDENCE = "the only video"
+# KRI-1031: the evidence on an `exclude` assignment the server settled from the clip's
+# measured length ("too short to use"). Not the creator's tap, and not a resolver guess.
+LENGTH_EVIDENCE = "clip length"
 
 # A caption is a phrase, not a tag: longer than a label, but still short
 # on-screen text for one chapter (never a full sentence). These shape bounds
@@ -284,6 +287,10 @@ class ClipIntent(BaseModel):
         ):
             # Nothing is printed or placed for a clip that is left out.
             raise ValueError("exclude carries no creator_text, caption_attribute or position")
+        if self.by_length is not None and self.op != "exclude":
+            raise ValueError("by_length requires op=exclude")
+        if self.under_s is not None and self.by_length is None:
+            raise ValueError("under_s requires by_length")
         return self
 
     # Exact creator-written copy for this intent ("post match pub"), if any. A
@@ -317,6 +324,17 @@ class ClipIntent(BaseModel):
     # this field loads and re-dumps byte-identically.
     requirement_id: str | None = Field(
         default=None, max_length=24, exclude_if=lambda value: value is None
+    )
+    # KRI-1031: for op="exclude" only. "Skip anything too short to use", "drop the mis-taps",
+    # "nothing under a second": clips told apart by their LENGTH, which the server measures
+    # (`app.services.too_short_clips`), never by what they show. Omitted from dumps when
+    # unset, so every intent persisted before these fields re-dumps byte-identically.
+    by_length: Literal["too_short"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    # Only with `by_length`: the creator's own number of seconds ("under a second" -> 1).
+    under_s: float | None = Field(
+        default=None, gt=0, le=600, exclude_if=lambda value: value is None
     )
 
     @field_validator("intent_id", mode="before")

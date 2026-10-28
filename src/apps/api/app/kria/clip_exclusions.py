@@ -149,6 +149,9 @@ def exclusions_to_ask(
             and intent.status == "resolved"
             and not intent.assignments
             and clip_count >= 2
+            # KRI-1031: a measured length ask that matched nothing means no clip is too
+            # short; the draft says so instead of asking.
+            and intent.by_length is None
         ):
             suspected = tuple(dict.fromkeys(suspects.get(intent.intent_id, ())))
             asked.append(ContestedExclusion(intent, (), protected, suspected))
@@ -295,6 +298,90 @@ def carry_forward_exclusions(
     return out, carried
 
 
+def still_played_exclusions(
+    intents: Iterable[ResolvedClipIntent], strategy: CreativeStrategy, media_ids: Sequence[str]
+) -> list[str]:
+    """The clips resolved excludes left out that the drafted pick still plays (KRI-1026).
+
+    ``media_ids`` is every attached item in clip order (an "all" scope or an empty pick plays
+    them all). An exclusion can stay unapplied for a good reason (another ask the creator
+    settled names the clip, the strategy plays it, it would leave no footage), but never
+    without a word: Plaza de Mayo M1 played both clips the creator had tapped out.
+    """
+    excluded = {
+        a.media_id
+        for intent in intents
+        if intent.op == "exclude" and intent.status == "resolved"
+        for a in intent.assignments
+    }
+    if not excluded:
+        return []
+    takes_everything = strategy.media_scope == "all" or not strategy.selected_media_ids
+    played = set(media_ids) if takes_everything else set(strategy.selected_media_ids)
+    return [media_id for media_id in media_ids if media_id in excluded and media_id in played]
+
+
+def _clip_numbers(positions: Sequence[int]) -> tuple[str, str]:
+    """(en, tr) for 1-based clip numbers: "clip 2" / "clips 2 and 4", "2. klibi" / ..."""
+    shown = [str(p) for p in positions]
+    if len(shown) == 1:
+        return f"clip {shown[0]}", f"{shown[0]}. klibi"
+    return (
+        f"clips {', '.join(shown[:-1])} and {shown[-1]}",
+        f"{', '.join(f'{p}.' for p in shown[:-1])} ve {shown[-1]}. klipleri",
+    )
+
+
+def still_played_notice(positions: Sequence[int]) -> str:
+    """The draft's line for ``still_played_exclusions``, by 1-based clip number."""
+    en, tr = _clip_numbers(positions)
+    one = len(positions) == 1
+    return say(
+        en=f"I couldn't leave out {en}, so {'it is' if one else 'they are'} still in the video.",
+        tr=f"{tr} çıkaramadım, o yüzden videoda {'duruyor' if one else 'duruyorlar'}.",
+    )
+
+
+def length_exclusion_notice(
+    intents: Iterable[ResolvedClipIntent], still_played: Sequence[str], media_ids: Sequence[str]
+) -> str | None:
+    """What the draft says about a "too short to use" ask the server measured (KRI-1031).
+
+    The clips it left out, by number; or, when no clip is too short, that every clip stays.
+    None when there is no such ask, or when every clip it matched still plays (the
+    ``still_played_notice`` already says so).
+    """
+    measured = [
+        intent
+        for intent in intents
+        if intent.op == "exclude" and intent.status == "resolved" and intent.by_length
+    ]
+    if not measured:
+        return None
+    matched = {a.media_id for intent in measured for a in intent.assignments}
+    left_out = [
+        index + 1
+        for index, media_id in enumerate(media_ids)
+        if media_id in matched and media_id not in still_played
+    ]
+    if left_out:
+        en, tr = _clip_numbers(left_out)
+        one = len(left_out) == 1
+        return say(
+            en=f"I left out {en} because {'it is' if one else 'they are'} too short to use.",
+            tr=(
+                f"{tr} kullanılamayacak kadar kısa {'olduğu' if one else 'oldukları'} için"
+                " çıkardım."
+            ),
+        )
+    if not matched:
+        return say(
+            en="None of your clips is too short to use, so I kept them all.",
+            tr="Kliplerinden hiçbiri kullanılamayacak kadar kısa değil, hepsini tuttum.",
+        )
+    return None
+
+
 def earlier_exclusions(snapshot: object) -> list[ResolvedClipIntent]:
     """The ``exclude`` intents a draft snapshot carries; anything malformed reads as none."""
     strategy = snapshot.get("strategy") if isinstance(snapshot, dict) else None
@@ -321,6 +408,9 @@ __all__ = [
     "earlier_exclusions",
     "exclusion_question",
     "exclusions_to_ask",
+    "length_exclusion_notice",
     "pinned_clips",
+    "still_played_exclusions",
+    "still_played_notice",
     "with_exclusion_categories",
 ]

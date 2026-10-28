@@ -186,6 +186,9 @@ class IntentClip:
     # The name the app shows for the upload ("IMG_7382"). Only the deterministic file-name
     # match reads it (KRI-614, `apply_file_name_references`): never sent to the resolver.
     file_name: str | None = None
+    # The clip's length in seconds. Only the "too short to use" rule reads it (KRI-1031,
+    # `app.services.too_short_clips`): never sent to a model.
+    duration_s: float | None = None
 
 
 @dataclass(frozen=True)

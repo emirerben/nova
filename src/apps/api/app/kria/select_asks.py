@@ -36,13 +36,16 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from app.schemas.clip_intents import CREATOR_EVIDENCE
+from app.schemas.clip_intents import CREATOR_EVIDENCE, LENGTH_EVIDENCE
 
 if TYPE_CHECKING:
     from app.kria.brief import BriefRequirement, CreativeBrief
 
 ONLY_KIND_FACT = "only_media_kind"
 INCLUDE_KIND_FACT = "include_media_kind"
+# The clips the creator tapped or named, and the ones the server measured as too short to use
+# (KRI-1031): an exclusion settled this way can be judged against the finished timeline.
+_SETTLED_EVIDENCE = CREATOR_EVIDENCE | {LENGTH_EVIDENCE}
 
 
 def only_video_ask(req: Any) -> bool:
@@ -93,7 +96,8 @@ class ExclusionFact:
     """The clips the creator's exclusions for one live ``select`` ask left out.
 
     ``complete`` is False when a linked exclusion is not proven to name the creator's own
-    clips (a resolver guess, or it matched nothing): the receipt then claims nothing.
+    clips (a resolver guess, or it matched nothing): the receipt then claims nothing. A clip
+    the server measured as too short to use (KRI-1031) counts as proven.
     """
 
     requirement_id: str
@@ -138,8 +142,8 @@ def exclusion_facts(
         if linked is None:
             continue
         assigned = _assigned(row)
-        by_creator = bool(assigned) and all(a.get("evidence") in CREATOR_EVIDENCE for a in assigned)
-        complete[linked] = complete.get(linked, True) and by_creator
+        settled = bool(assigned) and all(a.get("evidence") in _SETTLED_EVIDENCE for a in assigned)
+        complete[linked] = complete.get(linked, True) and settled
         media.setdefault(linked, []).extend(
             str(a["media_id"]) for a in assigned if a.get("media_id")
         )

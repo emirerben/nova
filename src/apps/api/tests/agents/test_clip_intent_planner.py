@@ -1914,9 +1914,12 @@ def test_kri667_prompt_teaches_exclude_only_with_the_flag() -> None:
         .replace("caption|exclude", "caption")
         .replace(',"exclusive":false', "")
         .replace(',"requirement_id":"r1|null"', "")
+        .replace(',"by_length":"too_short|null","under_s":null', "")
     )
     # KRI-994: the requirement link is taught only with exclusions on.
     assert '"requirement_id":"r1|null"' in on and "requirement_id" not in off
+    # KRI-1031: so is the length mark ("too short to use").
+    assert '"by_length":"too_short|null"' in on and "by_length" not in off
     assert "clip_exclusions" not in _cappadocia_input().model_dump()
 
 
