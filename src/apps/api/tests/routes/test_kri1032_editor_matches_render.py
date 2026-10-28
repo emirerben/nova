@@ -109,6 +109,18 @@ def test_editor_slots_keep_the_rendered_clip_sound(plaza_job):
     assert slots[_AUDIBLE_MOMENT].get("muted") is None
 
 
+def test_wrong_audible_clip_is_caught(plaza_job):
+    """Negative control: the same count of muted slots with the wrong clip audible (the bus
+    instead of Recoleta) must not pass the sound check above."""
+    served = {slot["slot_id"]: bool(slot.get("muted")) for slot in _timeline(plaza_job)["slots"]}
+    swapped = {**served, _AUDIBLE_MOMENT: True, "unified-cut-4": False}
+    assert sum(swapped.values()) == sum(served.values())
+    moments = _pinned(plaza_job)["story_timeline"]
+    expected = {m["moment_id"]: bool(m.get("source_audio_muted")) for m in moments}
+    assert served == expected
+    assert swapped != expected
+
+
 def test_editor_letterboxes_like_the_render(plaza_job):
     fit = _status(plaza_job)["editor_capabilities"]["landscape_fit"]
     assert fit["value"] == _pinned(plaza_job)["landscape_fit"] == "fit"

@@ -100,15 +100,39 @@ import KriaMediaEngine
         // The creator's copy of an unedited video is the render file itself.
         XCTAssertEqual(try session.videoDownloadRoute(deviceLocalFile: nil), .localFile(finished))
 
-        // The composition the editor would export (used once the creator edits): measured on the host.
+        // The composition the editor exports once the creator edits, measured as a file: silence on
+        // every muted clip, the tone on Recoleta, black bars around a landscape clip, none on a portrait one.
         let exported = try await session.exportDisplayedSourcePreview()
         defer { try? FileManager.default.removeItem(at: exported.cleanupURL) }
+        let windows: [(id: String, start: Double, end: Double)] = try fixture.slots.map { value in
+            let slot = try XCTUnwrap(value.objectValue)
+            return (try XCTUnwrap(slot["slot_id"]?.stringValue), try XCTUnwrap(slot["output_start_s"]?.numberValue),
+                    try XCTUnwrap(slot["output_end_s"]?.numberValue))
+        }
+        let levels = try await Self.rmsLevels(of: exported.fileURL, windows: windows.filter { $0.end - $0.start > 0.4 })
+        for (id, rms) in levels {
+            if muted.contains(id) { XCTAssertLessThan(rms, 0.002, "\(id) must be silent in the exported file") }
+            else { XCTAssertGreaterThan(rms, 0.05, "\(id) keeps its sound in the exported file") }
+        }
+        var bars: [[String: Any]] = []
+        for (value, window) in zip(fixture.slots, windows) where window.end - window.start > 0.4 {
+            let index = Int(try XCTUnwrap(value.objectValue?["clip_index"]?.numberValue))
+            let (edge, centre) = try await Self.lumaEdgeAndCentre(of: exported.fileURL, at: (window.start + window.end) / 2)
+            if try XCTUnwrap(aspects[index]) > 1 {
+                XCTAssertLessThan(edge, 24, "\(window.id): black bar above the landscape picture")
+            } else {
+                XCTAssertGreaterThan(edge, 100, "\(window.id): a portrait clip fills the frame")
+            }
+            XCTAssertGreaterThan(centre, 100, "\(window.id): picture in the middle")
+            bars.append(["slot": window.id, "top_band_luma": edge, "centre_luma": centre])
+        }
         let evidence = Self.repoRoot.appendingPathComponent(".dev/kri-1032", isDirectory: true)
         try? FileManager.default.createDirectory(at: evidence, withIntermediateDirectories: true)
         let copy = evidence.appendingPathComponent("editor-copy.mp4")
         try? FileManager.default.removeItem(at: copy)
-        try FileManager.default.copyItem(at: exported.fileURL, to: copy)
-        writeReport(["clips": rows, "muted_slots": fixture.render.mutedSlots, "export": copy.path,
+        try? FileManager.default.copyItem(at: exported.fileURL, to: copy)
+        writeReport(["clips": rows, "muted_slots": fixture.render.mutedSlots, "export": copy.path, "export_rms": levels,
+                     "export_bars": bars,
                      "text": recipe.textLayers.map { ["id": $0.id, "y_frac": $0.anchorY / Double(recipe.canvas.height)] }])
 
         // A saved edit makes the render stale: the copy is the editor's composition until it re-renders.
@@ -231,6 +255,60 @@ import KriaMediaEngine
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         return url
+    }
+
+    /// RMS of the file's mixed-down audio inside each window (0.1 s trimmed off both ends, past the cut).
+    private static func rmsLevels(of url: URL, windows: [(id: String, start: Double, end: Double)]) async throws -> [String: Double] {
+        let asset = AVURLAsset(url: url)
+        let track = try XCTUnwrap(try await asset.loadTracks(withMediaType: .audio).first, "the export has an audio track")
+        let reader = try AVAssetReader(asset: asset)
+        let rate = 44_100.0
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: rate,
+            AVNumberOfChannelsKey: 1, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false])
+        reader.add(output)
+        guard reader.startReading() else { throw reader.error ?? CocoaError(.fileReadUnknown) }
+        var sums = [String: (Double, Int)]()
+        while let buffer = output.copyNextSampleBuffer() {
+            let first = CMSampleBufferGetPresentationTimeStamp(buffer).seconds
+            guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
+            var length = 0
+            var pointer: UnsafeMutablePointer<CChar>?
+            CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &pointer)
+            guard let pointer else { continue }
+            let count = length / MemoryLayout<Float>.size
+            pointer.withMemoryRebound(to: Float.self, capacity: count) { samples in
+                for index in 0..<count {
+                    let time = first + Double(index) / rate
+                    guard let window = windows.first(where: { time >= $0.start + 0.1 && time <= $0.end - 0.1 }) else { continue }
+                    let value = Double(samples[index])
+                    let (sum, n) = sums[window.id] ?? (0, 0)
+                    sums[window.id] = (sum + value * value, n + 1)
+                }
+            }
+        }
+        return sums.mapValues { $0.1 > 0 ? ($0.0 / Double($0.1)).squareRoot() : 0 }
+    }
+
+    /// Mean luma (0-255) of the top 15 % of the frame and of its middle band at `seconds`.
+    private static func lumaEdgeAndCentre(of url: URL, at seconds: Double) async throws -> (Double, Double) {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+        let (image, _) = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600))
+        let width = 90, height = 160
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try XCTUnwrap(CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        func luma(rows: Range<Int>) -> Double {
+            var total = 0.0
+            for row in rows { for column in 0..<width {
+                let offset = (row * width + column) * 4
+                total += 0.299 * Double(pixels[offset]) + 0.587 * Double(pixels[offset + 1]) + 0.114 * Double(pixels[offset + 2])
+            } }
+            return total / Double(rows.count * width)
+        }
+        // Row 0 of the bitmap is the top of the frame.
+        return (luma(rows: 0..<height * 15 / 100), luma(rows: height * 45 / 100..<height * 55 / 100))
     }
 
     private func waitUntil(timeout: Duration = .seconds(60), _ condition: () -> Bool) async -> Bool {
