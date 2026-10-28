@@ -369,3 +369,24 @@ flag-on cohort, not a tap rate.
 - `app/agents/{template_recipe,clip_metadata,creative_direction,transcript,platform_copy,audio_template,song_classifier,music_matcher}.py` — the eight agents under test.
 - `scripts/export_eval_fixtures.py` — DB → fixture exporter.
 - `scripts/reanalyze_underbaked_templates.py` — one-off to re-run two-pass analysis on templates with under-baked `creative_direction`.
+
+## Camera-roll idea voice eval
+
+Measures diary-style ideas/opening text from `nova.media.camera_roll_stories` on a 12-candidate
+no-GPS "Cunda" fixture. Files: `camera_roll_voice_fixture.py` (data + builder; variants
+`bare`, `query`, and `event` with `event_title`/`event_about`),
+`runners/camera_roll_voice.py` (structural checks, free), `rubrics/camera_roll_stories.md`
+(judge: diary_voice lower-better, viewer_value, specificity, grounding). The `filler` check uses
+the stock vocabulary in the runner, and `--compare` rescores `filler_rate` from saved outputs so
+files recorded under an older list compare fairly.
+
+```bash
+pytest tests/evals/test_camera_roll_voice_evals.py -v               # replay, free (CI)
+pytest tests/evals/test_camera_roll_voice_evals.py --with-judge     # judge separates 2 samples (paid)
+python scripts/run_camera_roll_voice_eval.py --dry-run --runs 3 --with-judge   # plan + cost
+python scripts/run_camera_roll_voice_eval.py --live --label <name> --runs 3 --with-judge \
+  --max-cost-usd 1 --approve-reservation       # PAID baseline -> baselines/camera_roll_voice/<name>.json
+python scripts/run_camera_roll_voice_eval.py --compare <before.json> <after.json>
+```
+
+Replay uses two hand-written responses to prove the checks separate; it does not measure the agent.
