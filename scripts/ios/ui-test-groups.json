@@ -226,6 +226,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testTextReturnAndDeleteKeepCanvasLinesAligned",
       "KriaUITests/NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations",
       "KriaUITests/NativeEditorInspectorUITests/testSlowTimelineScrubPausesPlaybackAndDisplaysMatchingClip",
+      "KriaUITests/NativeEditorInspectorUITests/testTimelineSelectionShowsIncomingClipAndTextAtSubframeStart",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressMovesTextTimingWithoutOpeningInspector",
       "KriaUITests/NativeEditorInspectorUITests/testPreviewPreparationSurvivesLoadedViewTransition",
       "KriaUITests/NativeEditorInspectorUITests/testProjectedCaptionsAppearInCaptionLaneOnly",
