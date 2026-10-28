@@ -6419,6 +6419,7 @@ def _plan_phone_user_song_montage(
     output_orientation: str | None = None,
     creator_text: str = "",
     plan_authority: bool = False,
+    freeze_frames: bool = False,
 ) -> Any:
     """Plan the creator-song montage, with the song's lyrics as captions when asked (KRI-569).
 
@@ -6441,6 +6442,7 @@ def _plan_phone_user_song_montage(
         font_covers=font_covers,
         creator_order=creator_order,
         output_orientation=output_orientation,
+        freeze_frames=freeze_frames,
     )
     if plan_authority:
         pinned = strategy.get("song_captions")
@@ -6575,6 +6577,7 @@ def _plan_phone_user_song_core(
     font_covers: Any,
     creator_order: list[int],
     output_orientation: str | None = None,
+    freeze_frames: bool = False,
 ) -> tuple[Any, Any]:
     """Plan a phone montage around the creator's own song (KRI-374).
 
@@ -6674,6 +6677,7 @@ def _plan_phone_user_song_core(
                 font_covers=font_covers,
                 output_orientation=output_orientation,
                 creator_choices=creator_choices,
+                freeze_frames=freeze_frames,
             ),
             analysis,
         )
@@ -7129,6 +7133,8 @@ def _run_phone_unified_montage_job(
         clips = _unified_montage_clips(clip_paths, entries, binding_by_path, facts_on=facts_on)
         user_song = all_candidates.get("user_song")
         if isinstance(user_song, dict) and user_song.get("gcs_path"):
+            from app.services import phone_rollout  # noqa: PLC0415
+
             plan = _plan_phone_user_song_montage(
                 job_id,
                 user_song,
@@ -7146,6 +7152,13 @@ def _run_phone_unified_montage_job(
                 output_orientation=_creator_shape_orientation(all_candidates),
                 creator_text="" if plan_authority else _creator_request_text(all_candidates),
                 plan_authority=plan_authority,
+                # KRI-996: a held frame over song nobody filmed, only where the approving phone
+                # can hold one (the KRI-828 / KRI-898 gate).
+                freeze_frames=phone_rollout.freeze_frame_planned_for(
+                    phone_rollout.stamped_client_protocol(
+                        all_candidates.get("creator_client_protocol")
+                    )
+                ),
             )
         else:
             if plan_authority:

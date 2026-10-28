@@ -336,7 +336,7 @@
     {
       "id": "kri-561-song-order",
       "needs_native": true,
-      "api_tests": "tests/pipeline/test_song_order_placements.py tests/routes/test_phone_song_editor_commit.py tests/pipeline/test_song_captions.py tests/kria/test_song_captions_policy.py",
+      "api_tests": "tests/pipeline/test_song_order_placements.py tests/routes/test_phone_song_editor_commit.py tests/pipeline/test_song_captions.py tests/kria/test_song_captions_policy.py tests/pipeline/test_lipsync_montage.py",
       "xctests": [
         "KriaTests/SongOrderTests/testSubmissionListsPlacedTakesByTimeThenTheTrayInCaptureOrderAndEveryTakeOnce",
         "KriaTests/SongOrderTests/testOldServerPayloadWithNoNewFieldsStillParsesAndGivesATimelineWithDefaults",
@@ -352,7 +352,9 @@
         "src/apps/api/tests/routes/test_phone_song_editor_commit.py",
         "src/apps/api/app/pipeline/song_captions.py",
         "src/apps/api/tests/pipeline/test_song_captions.py",
-        "src/apps/api/tests/kria/test_song_captions_policy.py"
+        "src/apps/api/tests/kria/test_song_captions_policy.py",
+        "src/apps/api/tests/pipeline/test_lipsync_montage.py",
+        "src/apps/api/tests/fixtures/kri996_lipsync_back_to_back_takes.json"
       ]
     },
     {

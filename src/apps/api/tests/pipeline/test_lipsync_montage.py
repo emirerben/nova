@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
-from app.pipeline.guided_story import GuidedStoryError, GuidedStoryExecutionPlan
+from app.pipeline.guided_story import (
+    GuidedStoryError,
+    GuidedStoryExecutionPlan,
+    compile_execution_plan,
+)
 from app.pipeline.lipsync_montage import (
     MAX_WINDOW_MS,
     LipsyncPlanError,
@@ -32,13 +39,14 @@ from tests.pipeline.user_song_helpers import (
 )
 
 
-def plan(clips, rows, *, order=None, song=None):
+def plan(clips, rows, *, order=None, song=None, freeze_frames=True):
     return plan_lipsync_montage(
         clips,
         alignment(*rows),
         song or analysis(),
         confirmed_order=order,
         plan_item_id=SONG_ITEM_ID,
+        freeze_frames=freeze_frames,
     )
 
 
@@ -744,3 +752,88 @@ def test_the_stack_retry_is_dropped_when_it_does_not_help():
     assert "S" not in result.song_receipt["broll_ids"]
     reasons = {row["media_id"]: row["reason"] for row in result.song_receipt["dropped"]}
     assert "stack_as_broll" not in reasons.values()
+
+
+# ── Sequential takes with sub-second filming breaks (job 3bf4116e, 2026-10-27) ──
+# The creator filmed the song in four back-to-back takes; the aligner placed every
+# one confidently, with 0.68 s / 0.15 s / 0.99 s of song nobody filmed between them.
+# Positions are the prod job's, shifted 40 s earlier to fit the test song.
+_FIXTURE = json.loads(
+    (Path(__file__).parents[1] / "fixtures" / "kri996_lipsync_back_to_back_takes.json").read_text()
+)
+SEQUENTIAL = [(t["media_id"], t["duration_s"], t["delta_s"]) for t in _FIXTURE["takes"]]
+
+
+def _sequential_plan():
+    clips = [take(media_id, duration) for media_id, duration, _ in SEQUENTIAL]
+    return plan(clips, [confident(media_id, delta) for media_id, _, delta in SEQUENTIAL])
+
+
+def test_back_to_back_takes_with_filming_breaks_all_play_in_song_order():
+    result = _sequential_plan()
+    played = [cut.media_id for cut in result.snapshot.fast_cuts]
+    assert played == _FIXTURE["expected"]["takes_played"]
+    assert result.song_receipt["dropped"] == []
+    assert result.song_receipt["placed_outside_ids"] == []
+    assert result.user_song.window_start_s == pytest.approx(22.945)
+    assert result.user_song.window_end_s == pytest.approx(76.167 + 7.9862 - 0.3, abs=0.002)
+
+
+def test_a_filming_break_holds_the_last_frame_and_every_take_stays_in_sync():
+    result = _sequential_plan()
+    cuts = {cut.media_id: cut for cut in result.snapshot.fast_cuts}
+    # Each hold only covers song nobody filmed: the next take starts on its own position.
+    assert [cuts[m].freeze_hold_s for m in "ABCD"] == [0.884, 0.345, 1.188, None]
+    for cut in result.snapshot.fast_cuts:
+        assert cut.source_end_s <= dict((m, d) for m, d, _ in SEQUENTIAL)[cut.media_id] + 1e-6
+    assert_in_sync(result, compiled_plan(result))
+    footage, visuals = bindings_for(result)
+    recipe = compile_phone_guided_plan(compiled_plan(result), footage, visuals, song=song_bed())
+    assert recipe.duration == pytest.approx(result.snapshot.duration_s, abs=0.04)
+    held = [clip for track in recipe.tracks for clip in track.clips if clip.hold_duration]
+    assert [clip.source_asset_id for clip in held] == _FIXTURE["expected"]["held_takes"]
+
+
+def test_a_phone_that_cannot_hold_a_frame_gets_the_split_montage():
+    clips = [take(media_id, duration) for media_id, duration, _ in SEQUENTIAL]
+    rows = [confident(media_id, delta) for media_id, _, delta in SEQUENTIAL]
+    result = plan(clips, rows, freeze_frames=False)
+    assert all(cut.freeze_hold_s is None for cut in result.snapshot.fast_cuts)
+    assert [cut.media_id for cut in result.snapshot.fast_cuts] == ["A"]
+
+
+def test_a_filming_break_longer_than_a_held_frame_still_splits():
+    clips = [take("A", 12), take("B", 20)]
+    # A's footage ends at 22.0, B's begins at 24.0: two seconds nobody filmed.
+    result = plan(clips, [confident("A", 10), confident("B", 24)])
+    assert [cut.media_id for cut in result.snapshot.fast_cuts] == ["B"]
+    assert {"media_id": "A", "reason": "gap_unfillable"} in result.song_receipt["dropped"]
+
+
+def _title_texts(result):
+    compiled = compile_execution_plan(result.guided_edit(), track=None)
+    return [t["text"] for t in compiled["text_elements"] if t["id"] == "guided-title"]
+
+
+def test_a_lipsync_without_a_title_ask_draws_no_title():
+    # Job 3bf4116e: "Create a lipsync" burned the internal "Montage" label over the first 2 s.
+    assert _title_texts(_sequential_plan()) == []
+
+
+def test_a_lipsync_with_the_creators_title_draws_it():
+    clips = [take(media_id, duration) for media_id, duration, _ in SEQUENTIAL]
+    result = plan_lipsync_montage(
+        clips,
+        alignment(*[confident(media_id, delta) for media_id, _, delta in SEQUENTIAL]),
+        analysis(),
+        strategy={"opening_title": "Saygı"},
+        plan_item_id=SONG_ITEM_ID,
+        freeze_frames=True,
+    )
+    (title,) = [
+        t
+        for t in compile_execution_plan(result.guided_edit(), track=None)["text_elements"]
+        if t["id"] == "guided-title"
+    ]
+    # The creator's title keeps the fast-montage title look.
+    assert (title["text"], title["size_px"]) == ("Saygı", 92.0)

@@ -1,0 +1,13 @@
+{
+  "source": "prod job 3bf4116e-141e-49c9-a555-5edc69c7d7bc, 2026-10-27, assembly_plan song_alignment",
+  "note": "Song positions shifted 40 s earlier to fit the 120 s test song; durations are the analysis proxies'.",
+  "song_shift_s": -40.0,
+  "takes": [
+    {"media_id": "A", "prod_media_id": "analysis-proxy-ios-8FCFFA8B-77FB-480D-B08B-7048FB1134DA.mp4", "duration_s": 22.6148, "delta_s": 22.645},
+    {"media_id": "B", "prod_media_id": "analysis-proxy-ios-39C7BCA8-14A4-4449-9606-107EF811F817.mp4", "duration_s": 8.3113, "delta_s": 45.943},
+    {"media_id": "C", "prod_media_id": "analysis-proxy-ios-EA107B82-9947-47A2-B459-03324BA2CA0E.mp4", "duration_s": 20.7804, "delta_s": 54.399},
+    {"media_id": "D", "prod_media_id": "analysis-proxy-ios-FF9ADFF5-59F6-4795-A469-A52C9B1D88B4.mp4", "duration_s": 7.9862, "delta_s": 76.167}
+  ],
+  "prod_output": {"takes_played": ["A"], "dropped_gap_unfillable": ["B", "C", "D"], "duration_s": 22.0, "title": "Montage"},
+  "expected": {"takes_played": ["A", "B", "C", "D"], "held_takes": ["A", "B", "C"], "title": null}
+}

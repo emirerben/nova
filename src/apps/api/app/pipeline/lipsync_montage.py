@@ -105,8 +105,14 @@ DIP_MARGIN_MS = 100
 HOLE_CLOSE_MAX_MS = 600
 # No take is slid further than this to close holes: lips drift off the song by the slide.
 HOLE_CLOSE_SLIP_CAP_MS = 800
+# A stretch of song nobody filmed between two placed takes (the creator stopped and restarted
+# recording) is covered by holding the earlier take's last frame, up to this long. Both takes
+# keep their own song position; a longer stretch still splits the montage.
+FREEZE_BRIDGE_MAX_MS = 1500
 MAX_WINDOW_MS = 120 * 1000  # song-owned: not part of the 240 s spoken-edit cap
 MIN_TOTAL_MS = int(MIN_TOTAL_S * 1000)
+# One output frame at 30 fps, rounded up: a hold this short or shorter is not a freeze.
+_FRAME_MS = 34
 # Two candidate positions closer than this are the same position.
 _SAME_POSITION_MS = 50
 # Sync tolerance of the invariant source_start - output_start == window - delta.
@@ -168,7 +174,7 @@ def resync_moment_rows(
                 "A lip-sync clip was moved to a place in the song that starts before it was filmed."
             )
         start = max(0.0, start)
-        end = round(start + float(row["duration_s"]), 3)
+        end = round(start + float(row["duration_s"]) - float(row.get("freeze_hold_s") or 0.0), 3)
         limit = (source_durations or {}).get(str(row.get("media_id")))
         if limit is not None and end > limit + 0.05:
             raise LipsyncSyncError(
@@ -363,6 +369,7 @@ class _Block:
     start: int
     end: int
     placed: _Placed | None = None  # None -> B-roll
+    hold: int = 0  # the last ``hold`` ms of the block freeze the take's final frame
 
 
 def _ms(seconds: float) -> int:
@@ -822,9 +829,15 @@ def _window_blocks(blocks: list[_Block]) -> tuple[list[_Block], bool]:
     kept: list[_Block] = []
     for block in blocks:
         start, end = max(block.start, best), min(block.end, window_end)
+        footage_end = min(end, block.end - block.hold)
         floor = MIN_SEGMENT_MS if block.placed is not None else MIN_BROLL_PIECE_MS
-        if end - start >= floor:
-            kept.append(_Block(block.clip, start, end, block.placed))
+        if footage_end - start >= floor:
+            hold = end - footage_end
+            if hold <= _FRAME_MS:
+                # The window ends inside a hold: a sliver of held frame is not a freeze the phone
+                # plays, so the window ends with the footage instead.
+                end, hold = footage_end, 0
+            kept.append(_Block(block.clip, start, end, block.placed, hold))
     return kept, True
 
 
@@ -840,6 +853,7 @@ def plan_lipsync_montage(
     font_covers: Callable[[str, str], bool] | None = None,
     output_orientation: str | None = None,
     creator_choices: Mapping[str, Mapping[str, Any]] | None = None,
+    freeze_frames: bool = False,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan that lays ``clips`` on the song's clock.
 
@@ -853,7 +867,9 @@ def plan_lipsync_montage(
     ``position_basis="creator_stack"``) and B-roll. ``strategy``/``view`` supply only the
     creator's title, closing title and typography. ``output_orientation`` is the
     creator's explicit finished-video shape (KRI-306); without it the snapshot
-    infers one from the footage.
+    infers one from the footage. ``freeze_frames`` (``freeze_frame_planned_for``: the phone
+    that approved can hold a frame) lets a short stretch of song nobody filmed be covered by
+    holding the earlier take's last frame; without it that stretch splits the montage.
 
     Raises ``LipsyncPlanError`` (``stale_alignment``, ``song_not_analyzed``,
     ``no_synced_takes``, ``span_too_short``) when no montage can be made.
@@ -939,7 +955,18 @@ def plan_lipsync_montage(
                 continue
             pieces = pool.fill(gap)
             if pieces is None:
-                spans.append(list(island))
+                # Song nobody filmed: run both takes to the edge of their footage and hold
+                # the earlier one's last frame over what is left.
+                avail_prev, avail_next = own_footage(previous, island[0], DIP_MARGIN_MS)
+                hold = gap - avail_prev - avail_next
+                if not freeze_frames or hold > FREEZE_BRIDGE_MAX_MS:
+                    spans.append(list(island))
+                    continue
+                island[0].start -= avail_next
+                previous.end = island[0].start
+                previous.hold = hold
+                bridged += 1
+                spans[-1].extend(island)
                 continue
             pool.take(pieces)
             offset = previous.end
@@ -1014,7 +1041,7 @@ def plan_lipsync_montage(
         clip, length = block.clip, block.end - block.start
         if block.placed is not None:
             start = (block.start - block.placed.delta_ms) / 1000
-            end = (block.end - block.placed.delta_ms) / 1000
+            end = (block.end - block.hold - block.placed.delta_ms) / 1000
             pinned[clip.media_id] = UserSongTake(
                 delta_s=block.placed.delta_ms / 1000,
                 status=block.placed.status,  # type: ignore[arg-type]
@@ -1036,10 +1063,11 @@ def plan_lipsync_montage(
                 media_id=clip.media_id,
                 source_start_s=round(start, 3),
                 source_end_s=round(end, 3),
-                output_duration_s=round(end - start, 3),
+                output_duration_s=round(length / 1000, 3),
                 role="hook" if index == 0 else "payoff" if index == len(blocks) - 1 else "build",
                 transition="none",
                 beat_align=False,
+                **({"freeze_hold_s": block.hold / 1000} if block.hold else {}),
             )
         )
         refs.append(_media_ref(clip))
