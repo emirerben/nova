@@ -216,7 +216,13 @@ import KriaMediaEngine
                                        magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
         let audioFormat = try XCTUnwrap(format)
         var frame = 0, sample = 0
+        var lastProgress = ContinuousClock.now
         while frame < frames || sample < samples {
+            if ContinuousClock.now - lastProgress > .seconds(20) {
+                writer.cancelWriting()
+                throw NSError(domain: "KRI1032Fixture", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                    "Writer stalled: video \(frame)/\(frames), audio \(sample)/\(samples)"])
+            }
             let videoTime = Double(frame) / Double(fps), audioTime = Double(sample) / Double(rate)
             if frame < frames, video.isReadyForMoreMediaData, sample >= samples || videoTime <= audioTime {
                 var buffer: CVPixelBuffer?
@@ -232,6 +238,8 @@ import KriaMediaEngine
                     throw writer.error ?? CocoaError(.fileWriteUnknown)
                 }
                 frame += 1
+                lastProgress = .now
+                if frame == frames { video.markAsFinished() }
             } else if sample < samples, audio.isReadyForMoreMediaData {
                 let count = min(4_410, samples - sample)
                 var pcm = [Int16](repeating: 0, count: count)
@@ -247,11 +255,12 @@ import KriaMediaEngine
                     packetDescriptions: nil, sampleBufferOut: &buffer)
                 guard audio.append(try XCTUnwrap(buffer)) else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
                 sample += count
+                lastProgress = .now
+                if sample == samples { audio.markAsFinished() }
             } else {
                 try await Task.sleep(for: .milliseconds(2))
             }
         }
-        video.markAsFinished(); audio.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         return url
