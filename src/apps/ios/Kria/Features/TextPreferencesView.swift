@@ -69,6 +69,7 @@ struct TextPreferenceMemory: Decodable, Sendable {
 
 struct TextPreferenceOperation: Decodable, Sendable {
     let id: String
+    enum CodingKeys: String, CodingKey { case id = "operation_id" }
 }
 
 @MainActor final class TextPreferencesModel: ObservableObject {
@@ -149,86 +150,44 @@ struct TextPreferencesView: View {
     @StateObject private var model: TextPreferencesModel
     @State private var role = "all_text"
     @State private var rule = TextPreferenceRule()
-    @State private var color = ""
+    @State private var drafts: [String: TextPreferenceRule] = [:]
     private let roles = ["all_text", "title", "label", "pinned", "caption", "lyric"]
     init(api: any KriaAPIClient) { _model = StateObject(wrappedValue: TextPreferencesModel(api: api)) }
+
     var body: some View {
         Form {
-            Section {
-                Text("These choices apply to future videos. Instructions for a particular video take priority.")
-                Text("Outlines and shadows are off by default.").foregroundStyle(KriaColor.mutedInk)
-            }
-            if let learning = model.memory?.editLearning, learning.available || learning.enabled {
-                Section("Learn from finished edits") {
-                    Toggle("Learn from finished edits", isOn: Binding(get: { learning.enabled }, set: { enabled in Task { await model.setLearningEnabled(enabled) } }))
-                        .accessibilityIdentifier("text-learning-enabled")
-                        .disabled(model.isWorking)
-                    Text("Off by default. After the same change appears in three finished videos, Kria can suggest a preference. Nothing changes until you accept.")
-                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                    Text("Turning this off clears learning history and pending suggestions. Approved preferences stay saved.")
-                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                    if learning.enabled {
-                        Button("Reset learning history") { Task { await model.resetLearningHistory() } }
-                            .accessibilityIdentifier("text-learning-reset")
-                    }
-                    if model.learningHistoryReset { Text("Learning history reset.") }
-                }
-            }
             if let memory = model.memory, memory.textStylingAvailable {
-                Toggle("Use saved preferences", isOn: Binding(get: { memory.enabled }, set: { enabled in Task { await model.setEnabled(enabled) } }))
-                    .disabled(model.isWorking)
-                if !memory.enabled { Text("Personalization is paused. Enable it to apply saved choices.") }
-                Section("Apply to") {
-                    Picker("Text role", selection: $role) {
+                Section {
+                    Toggle("Use saved preferences", isOn: Binding(get: { memory.enabled }, set: { enabled in Task { await model.setEnabled(enabled) } }))
+                        .accessibilityIdentifier("text-preferences-enabled")
+                    if !memory.enabled { Text("Paused. Turn this on to use your choices in new videos.").foregroundStyle(KriaColor.mutedInk) }
+                    Picker("Apply to", selection: $role) {
                         ForEach(roles, id: \.self) { Text(label($0)).tag($0) }
                     }.accessibilityIdentifier("text-preference-role")
+                } footer: {
+                    Text("For future videos. Instructions for one video take priority.")
                 }
-                Section("Fonts") {
-                    Picker("Required font", selection: Binding(get: { rule.fontFamily ?? (rule.automaticFont == true ? "automatic" : "defaults") }, set: {
-                        rule.fontFamily = ["automatic", "defaults"].contains($0) ? nil : $0
-                        rule.automaticFont = $0 == "defaults" ? nil : $0 == "automatic"
-                    })) {
-                        Text("Use defaults").tag("defaults")
-                        Text("Automatic").tag("automatic")
-                        ForEach(NativeFontCatalog.shared.pickerFonts, id: \.self) { Text($0).tag($0) }
-                    }.accessibilityIdentifier("text-preference-font")
-                    NavigationLink("Favorite fonts (\(rule.favoriteFonts.count))") {
-                        fontChoices(title: "Favorite fonts", selected: $rule.favoriteFonts, other: $rule.excludedFonts)
-                    }
-                    NavigationLink("Excluded fonts (\(rule.excludedFonts.count))") {
-                        fontChoices(title: "Excluded fonts", selected: $rule.excludedFonts, other: $rule.favoriteFonts)
-                    }
-                }
-                Section("Placement and color") {
-                    Picker("Placement", selection: Binding(get: { rule.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
-                        Text("Use defaults").tag("")
-                        ForEach(["top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right"], id: \.self) { Text(label($0)).tag($0) }
-                    }.accessibilityIdentifier("text-preference-placement")
-                    TextField("Color hex, or blank to use defaults", text: $color)
-                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                        .accessibilityLabel("Text color hex")
-                }
-                Section("Effects") {
-                    Picker("Outline", selection: Binding(get: { rule.strokeWidth.map { $0 == 0 ? "off" : "on" } ?? "default" }, set: { rule.strokeWidth = $0 == "default" ? nil : ($0 == "off" ? 0 : 2) })) {
-                        Text("Use defaults").tag("default"); Text("Off").tag("off"); Text("On").tag("on")
-                    }.accessibilityIdentifier("text-preference-outline")
-                    Picker("Shadow", selection: Binding(get: { rule.shadowEnabled.map { $0 ? "on" : "off" } ?? "default" }, set: { rule.shadowEnabled = $0 == "default" ? nil : $0 == "on" })) {
-                        Text("Use defaults").tag("default"); Text("Off").tag("off"); Text("On").tag("on")
-                    }.accessibilityIdentifier("text-preference-shadow")
-                }
+                fontSection
                 Section {
-                    status
-                    Button("Save preferences") {
-                        rule.color = color.isEmpty ? nil : color
-                        let savedRole = role, savedRule = rule
-                        Task { await model.save(role: savedRole, rule: savedRule) }
-                    }.accessibilityIdentifier("text-preferences-save")
+                    TextPreferencePreview(rule: rule)
+                        .listRowBackground(KriaColor.softZinc)
+                }
+                placementSection
+                effectsSection
+                Section {
                     Button("Reset \(label(role).lowercased()) preferences") {
                         let resetRole = role
-                        Task { await model.reset(role: resetRole); reloadRule() }
+                        Task {
+                            await model.reset(role: resetRole)
+                            if model.error == nil { drafts.removeValue(forKey: resetRole); reloadRule() }
+                        }
                     }
-                    if let undo = memory.recentUndo { Button("Undo last preference change") { Task { await model.undo(undo.id); reloadRule() } } }
-                }.disabled(model.isWorking)
+                    if let undo = memory.recentUndo {
+                        Button("Undo last preference change") {
+                            Task { await model.undo(undo.id); if model.error == nil { drafts.removeValue(forKey: role); reloadRule() } }
+                        }.accessibilityIdentifier("text-preferences-undo")
+                    }
+                }
                 let other = memory.active.filter { $0.categoryIsText && !($0.normalizedKey ?? "").hasPrefix("text_style_") }
                 if !other.isEmpty {
                     Section("Other saved text instructions") {
@@ -242,44 +201,255 @@ struct TextPreferencesView: View {
                     Section("Suggestions") {
                         ForEach(memory.suggestions.filter(\.categoryIsText)) { item in
                             TextPreferenceSuggestionRow(item: item) { accept in
-                                await model.decide(item, accept: accept); reloadRule()
+                                await model.decide(item, accept: accept)
+                                if model.error == nil { drafts.removeValue(forKey: role); reloadRule() }
                             }
                         }
                     }
                 }
             } else if model.memory != nil { Text("Text preferences are not available yet.") }
-            if model.memory?.textStylingAvailable != true { status }
-            if model.isWorking { ProgressView("Loading preferences") }
+            if let learning = model.memory?.editLearning, learning.available || learning.enabled {
+                Section("Learn from finished edits") {
+                    Toggle("Learn from finished edits", isOn: Binding(get: { learning.enabled }, set: { enabled in Task { await model.setLearningEnabled(enabled) } }))
+                        .accessibilityIdentifier("text-learning-enabled")
+                    Text("After the same change in three finished videos, Kria can suggest a preference. You choose whether to save it.")
+                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    Text("Turning this off clears learning history and pending suggestions. Approved preferences stay saved.")
+                        .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    if learning.enabled {
+                        Button("Reset learning history") { Task { await model.resetLearningHistory() } }
+                            .accessibilityIdentifier("text-learning-reset")
+                    }
+                    if model.learningHistoryReset { Text("Learning history reset.") }
+                }
+            }
+            if model.isWorking && model.memory == nil { ProgressView("Loading preferences") }
         }
         .disabled(model.isWorking)
+        .tint(KriaColor.ink)
         .scrollContentBackground(.hidden).background(KriaColor.paper)
         .navigationTitle("Text preferences").navigationBarTitleDisplayMode(.inline)
-        .task { await model.load(); reloadRule() }
-        .onChange(of: role) { _, _ in reloadRule() }
+        .safeAreaInset(edge: .bottom) { saveBar }
+        .task {
+            guard model.memory == nil else { return }
+            await model.load(); reloadRule()
+        }
+        .onChange(of: role) { oldRole, _ in
+            drafts[oldRole] = rule
+            reloadRule()
+            model.saved = false
+        }
+        .onChange(of: rule) { _, _ in model.saved = false }
     }
-    @ViewBuilder private var status: some View {
-        if model.saved { Text("Saved for future videos.").accessibilityIdentifier("text-preferences-saved") }
-        if let error = model.error {
-            Text(error).foregroundStyle(KriaColor.failureText)
-            Button(model.needsReload ? "Reload preferences" : "Retry") { Task { await model.load(); reloadRule() } }
-                .accessibilityIdentifier("text-preferences-reload")
+
+    private var fontSection: some View {
+        Section("Fonts") {
+            NavigationLink {
+                TextPreferenceFontPicker(rule: $rule, selection: .favorite)
+            } label: {
+                fontRow("Favorite fonts", symbol: "heart", fonts: rule.favoriteFonts)
+            }.accessibilityIdentifier("text-preference-favorite-fonts")
+            NavigationLink {
+                TextPreferenceFontPicker(rule: $rule, selection: .excluded)
+            } label: {
+                fontRow("Never use", symbol: "nosign", fonts: rule.excludedFonts)
+            }
+            .accessibilityLabel("Excluded fonts, " + fontSummary(rule.excludedFonts))
+            .accessibilityIdentifier("text-preference-excluded-fonts")
+            Picker("Font", selection: Binding(get: { rule.fontFamily ?? (rule.automaticFont == true ? "automatic" : "defaults") }, set: {
+                rule.fontFamily = ["automatic", "defaults"].contains($0) ? nil : $0
+                rule.automaticFont = $0 == "defaults" ? nil : $0 == "automatic"
+                if let font = rule.fontFamily { rule.excludedFonts.removeAll { $0 == font } }
+            })) {
+                Text("Use defaults").tag("defaults")
+                Text("Automatic").tag("automatic")
+                ForEach(NativeFontCatalog.shared.pickerFonts, id: \.self) { Text($0).tag($0) }
+            }.accessibilityIdentifier("text-preference-font")
         }
     }
-    private func reloadRule() { rule = model.memory?.rule(role: role) ?? TextPreferenceRule(); color = rule.color ?? "" }
-    private func label(_ value: String) -> String { value.replacingOccurrences(of: "_", with: " ").capitalized }
-    private func fontChoices(title: String, selected: Binding<[String]>, other: Binding<[String]>) -> some View {
-        List(NativeFontCatalog.shared.pickerFonts, id: \.self) { font in
-            Button {
-                if selected.wrappedValue.contains(font) { selected.wrappedValue.removeAll { $0 == font } }
-                else { selected.wrappedValue.append(font); other.wrappedValue.removeAll { $0 == font } }
-            } label: {
-                HStack {
-                    Text(font).font(NativeFontCatalog.shared.previewFont(font, size: 16))
-                    Spacer()
-                    if selected.wrappedValue.contains(font) { Image(systemName: "checkmark") }
-                }.frame(minHeight: 44).contentShape(Rectangle())
-            }.accessibilityAddTraits(selected.wrappedValue.contains(font) ? .isSelected : [])
-        }.navigationTitle(title)
+
+    private var placementSection: some View {
+        Section("Placement and color") {
+            Picker("Placement", selection: Binding(get: { rule.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
+                Text("Use defaults").tag("")
+                ForEach(["top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right"], id: \.self) { Text(label($0)).tag($0) }
+            }.accessibilityIdentifier("text-preference-placement")
+            HStack {
+                Text("Color")
+                Spacer()
+                ForEach(["#FFFFFF", "#000000", "#FFFF00", "#FF0000", "#0000FF"], id: \.self) { hex in
+                    Button { rule.color = rule.color == hex ? nil : hex } label: {
+                        Circle().fill(nativeEditorColor(hex))
+                            .overlay(Circle().strokeBorder(KriaColor.line, lineWidth: 1))
+                            .overlay { if rule.color == hex { Image(systemName: "checkmark").font(.caption.bold()).foregroundStyle(hex == "#000000" || hex == "#0000FF" ? Color.white : Color.black) } }
+                            .frame(width: 28, height: 28).frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(colorName(hex))
+                    .accessibilityAddTraits(rule.color == hex ? .isSelected : [])
+                }
+            }
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 8))
+            TextField("Custom color, e.g. #FFFFFF", text: Binding(get: { rule.color ?? "" }, set: { rule.color = $0.isEmpty ? nil : $0 }))
+                .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                .accessibilityLabel("Text color hex")
+        }
+    }
+
+    private var effectsSection: some View {
+        Section {
+            Picker("Outline", selection: Binding(get: { rule.strokeWidth.map { $0 == 0 ? "off" : "on" } ?? "default" }, set: { rule.strokeWidth = $0 == "default" ? nil : ($0 == "off" ? 0 : 2) })) {
+                Text("Use defaults").tag("default"); Text("Off").tag("off"); Text("On").tag("on")
+            }.accessibilityIdentifier("text-preference-outline")
+            Picker("Shadow", selection: Binding(get: { rule.shadowEnabled.map { $0 ? "on" : "off" } ?? "default" }, set: { rule.shadowEnabled = $0 == "default" ? nil : $0 == "on" })) {
+                Text("Use defaults").tag("default"); Text("Off").tag("off"); Text("On").tag("on")
+            }.accessibilityIdentifier("text-preference-shadow")
+        } header: { Text("Effects") } footer: { Text("Outlines and shadows are off by default.") }
+    }
+
+    private var saveBar: some View {
+        VStack(spacing: 8) {
+            if model.saved { Label("Saved for future videos.", systemImage: "checkmark.circle.fill").foregroundStyle(KriaColor.success).accessibilityIdentifier("text-preferences-saved") }
+            if let memory = model.memory, !model.saved, model.error == nil, rule != memory.rule(role: role) {
+                Text("Unsaved changes").foregroundStyle(KriaColor.mutedInk)
+            }
+            if let error = model.error {
+                Text(error).foregroundStyle(KriaColor.failureText)
+                Button(model.needsReload ? "Reload preferences" : "Retry") {
+                    let discardDraft = model.needsReload
+                    Task {
+                        await model.load()
+                        if discardDraft && model.error == nil { drafts.removeValue(forKey: role); reloadRule() }
+                    }
+                }.accessibilityIdentifier("text-preferences-reload")
+            }
+            if model.memory?.textStylingAvailable == true {
+                Button {
+                    let savedRole = role, savedRule = rule
+                    Task { await model.save(role: savedRole, rule: savedRule) }
+                } label: {
+                    HStack {
+                        if model.isWorking { ProgressView() }
+                        Text(model.isWorking ? "Saving…" : "Save preferences").frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(KriaPrimaryButtonStyle())
+                .accessibilityIdentifier("text-preferences-save")
+                .disabled(model.isWorking || model.needsReload)
+            }
+        }
+        .font(KriaFont.body(14))
+        .padding(.horizontal, 20).padding(.vertical, 12)
+        .frame(maxWidth: .infinity).background(KriaColor.paper)
+    }
+
+    private func reloadRule() { rule = drafts[role] ?? model.memory?.rule(role: role) ?? TextPreferenceRule() }
+    private func label(_ value: String) -> String { value == "pinned" ? "Corner text" : value.replacingOccurrences(of: "_", with: " ").capitalized }
+    private func fontSummary(_ fonts: [String]) -> String {
+        if fonts.isEmpty { return "Choose fonts" }
+        let names = fonts.prefix(2).joined(separator: ", ")
+        return fonts.count > 2 ? names + " and \(fonts.count - 2) more" : names
+    }
+    private func fontRow(_ title: String, symbol: String, fonts: [String]) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).frame(width: 24).foregroundStyle(KriaColor.mutedInk)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                Text(fontSummary(fonts)).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            }
+        }.padding(.vertical, 4)
+    }
+    private func colorName(_ hex: String) -> String {
+        ["#FFFFFF": "White", "#000000": "Black", "#FFFF00": "Yellow", "#FF0000": "Red", "#0000FF": "Blue"][hex] ?? hex
+    }
+}
+
+private struct TextPreferencePreview: View {
+    let rule: TextPreferenceRule
+    private var font: String? {
+        rule.fontFamily ?? rule.favoriteFonts.first ?? ["Inter", "Hanken Grotesk", "Poppins Bold"].first { !rule.excludedFonts.contains($0) }
+    }
+    private var backgroundColor: Color {
+        let rgb = UInt32((rule.color ?? "#30352C").replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0x30352C
+        let brightness = Double((rgb >> 16) & 255) * 0.299 + Double((rgb >> 8) & 255) * 0.587 + Double(rgb & 255) * 0.114
+        return brightness > 128 ? KriaColor.ink : KriaColor.sage
+    }
+    private var alignment: Alignment {
+        switch rule.position {
+        case "top_left": .topLeading
+        case "top": .top
+        case "top_right": .topTrailing
+        case "bottom_left": .bottomLeading
+        case "bottom": .bottom
+        case "bottom_right": .bottomTrailing
+        default: .center
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Font preview").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+            Text("A little moment.")
+                .font(NativeFontCatalog.shared.previewFont(font, size: 27))
+                .foregroundStyle(rule.color.map { nativeEditorColor($0) } ?? KriaColor.ink)
+                .shadow(color: rule.shadowEnabled == true ? .black.opacity(0.4) : .clear, radius: 2, y: 2)
+                .padding(18).frame(maxWidth: .infinity, minHeight: 100, alignment: alignment)
+                .background(backgroundColor).clipShape(RoundedRectangle(cornerRadius: 16))
+                .accessibilityIdentifier("text-preferences-preview")
+        }.padding(.vertical, 6)
+    }
+}
+
+private struct TextPreferenceFontPicker: View {
+    enum Selection { case favorite, excluded }
+    @Binding var rule: TextPreferenceRule
+    let selection: Selection
+    @State private var search = ""
+    private var fonts: [String] {
+        NativeFontCatalog.shared.pickerFonts.filter { search.isEmpty || $0.localizedCaseInsensitiveContains(search) }
+    }
+    private func isSelected(_ font: String) -> Bool {
+        (selection == .favorite ? rule.favoriteFonts : rule.excludedFonts).contains(font)
+    }
+    var body: some View {
+        List {
+            Section {
+                ForEach(fonts, id: \.self) { font in
+                    Button { toggle(font) } label: {
+                        HStack(spacing: 14) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(font).font(NativeFontCatalog.shared.previewFont(font, size: 20))
+                                Text("A little moment.").font(NativeFontCatalog.shared.previewFont(font, size: 14)).foregroundStyle(KriaColor.mutedInk)
+                            }
+                            Spacer()
+                            Image(systemName: isSelected(font) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(isSelected(font) ? KriaColor.ink : KriaColor.line)
+                        }.padding(.vertical, 6).frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(font)
+                    .accessibilityIdentifier("text-preference-font-" + font)
+                    .accessibilityAddTraits(isSelected(font) ? .isSelected : [])
+                }
+            } footer: {
+                Text(selection == .favorite ? "Kria will favor these fonts when choosing a style." : "Kria will avoid these fonts in future videos. Return to save your choices.")
+            }
+        }
+        .searchable(text: $search, prompt: "Find a font")
+        .tint(KriaColor.ink)
+        .navigationTitle(selection == .favorite ? "Favorite fonts" : "Never use")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    private func toggle(_ font: String) {
+        if selection == .favorite {
+            if isSelected(font) { rule.favoriteFonts.removeAll { $0 == font } }
+            else { rule.favoriteFonts.append(font); rule.excludedFonts.removeAll { $0 == font } }
+        } else {
+            if isSelected(font) { rule.excludedFonts.removeAll { $0 == font } }
+            else {
+                rule.excludedFonts.append(font); rule.favoriteFonts.removeAll { $0 == font }
+                if rule.fontFamily == font { rule.fontFamily = nil; rule.automaticFont = true }
+            }
+        }
     }
 }
 

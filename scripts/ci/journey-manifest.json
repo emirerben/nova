@@ -1011,6 +1011,8 @@
       "fixture_generator": "scripts/ios/phone-text-style-e2e.py",
       "xctests": [
         "KriaTests/DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport",
+        "KriaUITests/AccountPrivacyUITests/testExcludedFontSurvivesPickerReturnSaveAndReopen",
+        "KriaUITests/AccountPrivacyUITests/testTextPreferenceDraftSurvivesRoleSwitch",
         "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
         "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
         "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
