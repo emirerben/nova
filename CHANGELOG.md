@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.188.0] - 2026-10-28
+
+### Changed
+- feat(ios): Camera roll events list, event page, About, and usable idea cards (KRI-1005, KRI-1006) (#1908) <!-- release-pr: 1908 -->
+
 ## [0.81.187.0] - 2026-10-28
 
 ### Changed
