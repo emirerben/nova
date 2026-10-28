@@ -217,6 +217,8 @@ _CLIP_INTENT_LEAVES = (
     "position",
     "order_by",
     "ordered_members",
+    # KRI-994: the brief `select` ask an exclusion carries out; read only by receipts.
+    "requirement_id",
 )
 
 FIELD_MATRIX: dict[str, FieldRule] = {

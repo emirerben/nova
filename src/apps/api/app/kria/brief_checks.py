@@ -48,6 +48,7 @@ from app.kria.freeze_ask import (
 from app.kria.narrated_clip_sound_ask import AFTER_VOICE, ClipSoundAsk, requirement_clip_sound
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.reply_language import current_reply_language, say
+from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
 from app.kria.speed_ask import asks_clip_speed
 from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
@@ -503,6 +504,12 @@ class PlanFacts:
     # recompiles (`set_mix original_level`), app build unknown; None = no control (cloud
     # render, unknown). Never guessed: a receipt names only the control recorded here.
     original_audio_control: str | None = None
+    # KRI-994: the clips each live `select` ask's creator-settled exclusions left out
+    # (`select_asks.exclusion_facts`). Empty = none linked, so no exclusion is judged.
+    exclusions: tuple[ExclusionFact, ...] = ()
+    # KRI-994: the media ids of every non-video cut in the finished timeline; () = none (all
+    # cuts are videos). None = no finished timeline here, so "clips only" is not judged.
+    timeline_non_video_ids: tuple[str, ...] | None = None
     closing_requested: bool = False
     closing_visual_id: str | None = None
     closing_badge_requested: bool = False
@@ -2272,6 +2279,24 @@ def _rendered_clip_cuts(
     return [(media_id, start, end) for _at, _index, media_id, start, end in cuts]
 
 
+def _rendered_non_video_ids(variant: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """The media ids of the finished timeline's non-video cuts (KRI-994); None = unknown.
+
+    Every lane counts: a photo shown as a card is still a photo in the video. A timeline
+    with no rows, or a row that does not say what it is, says nothing.
+    """
+    rows = variant.get("story_timeline")
+    if not isinstance(rows, list) or not rows:
+        return None
+    photos: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or not isinstance(row.get("kind"), str):
+            return None
+        if row["kind"] != "video":
+            photos.append(str(row.get("media_id") or row["kind"]))
+    return tuple(dict.fromkeys(photos))
+
+
 def _rendered_holds(
     holds: tuple[Mapping[str, Any], ...] | None, variant: Mapping[str, Any]
 ) -> tuple[Mapping[str, Any], ...] | None:
@@ -2386,6 +2411,7 @@ def plan_facts_from_rendered_montage(
         song_bed=plan.song_bed,
         speed_unsupported=plan.speed_unsupported,
         clip_speeds=_rendered_speeds(plan.clip_speeds, variant),
+        timeline_non_video_ids=_rendered_non_video_ids(variant),
         freeze_frames=_rendered_freezes(plan.freeze_frames, variant),
         source_audio_kept=kept if isinstance(kept, bool) else None,
         source_clip_ids=tuple(prints),
@@ -4082,6 +4108,10 @@ _LIGHT_UNAVAILABLE = (
 # KRI-777: no edit can hold a frame (see `kria.freeze_ask`). Said on the draft, before the
 # approval card, and again on the finished video's receipt.
 _NO_FREEZE_FRAME = "I can't freeze a frame in this edit yet, so that moment plays normally"
+# KRI-994: the clip the creator asked to skip, or a photo in a "video clips only" edit, is
+# in the finished video after all (a pin or the plan's own placement kept it).
+_SKIPPED_CLIP_PLAYS = "The clip you asked to skip is still in the video"
+_PHOTO_IN_CLIPS_ONLY = "The video still has a photo in it"
 # KRI-828: the freeze is planned, but no analysed moment of the clips matches the creator's
 # words for it (or two do), so no frame is guessed.
 _FREEZE_NOT_GROUNDED = (
@@ -4308,6 +4338,8 @@ _REASON_TR: dict[str, str] = {
         "Bu klipleri hızlandıramıyorum: video her birini zaten baştan sona gösteriyor, "
         "hızlanacak görüntü kalmadı"
     ),
+    _SKIPPED_CLIP_PLAYS: "Çıkarmanı istediğin klip hâlâ videoda",
+    _PHOTO_IN_CLIPS_ONLY: "Videoda hâlâ bir fotoğraf var",
     _NO_FREEZE_FRAME: (
         "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
     ),
@@ -9423,6 +9455,38 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
     return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
 
 
+def _check_select_typed(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """A `select` ask the finished timeline proves or disproves (KRI-994); None = not judged.
+
+    ``stage="checked"`` marks the receipt as judged (see ``is_judged``): there is no
+    word-based checker behind a plain `select`, only the typed link and the timeline.
+    """
+    if only_video_ask(req):
+        if facts.timeline_non_video_ids is None:
+            return None
+        if facts.timeline_non_video_ids:
+            return _receipt(
+                req,
+                "partial",
+                say(en=_PHOTO_IN_CLIPS_ONLY, tr=_REASON_TR[_PHOTO_IN_CLIPS_ONLY]),
+                verification="checked",
+                stage="checked",
+            )
+        return _receipt(req, "met", None, verification="checked", stage="checked")
+    fact = next((f for f in facts.exclusions if f.requirement_id == req.id), None)
+    if fact is None or not fact.complete or not fact.media_ids or not facts.clip_ids:
+        return None
+    if any(media_id in facts.clip_ids for media_id in fact.media_ids):
+        return _receipt(
+            req,
+            "partial",
+            say(en=_SKIPPED_CLIP_PLAYS, tr=_REASON_TR[_SKIPPED_CLIP_PLAYS]),
+            verification="checked",
+            stage="checked",
+        )
+    return _receipt(req, "met", None, verification="checked", stage="checked")
+
+
 def _check_requirement_with_protection(
     req: BriefRequirement, facts: PlanFacts
 ) -> RequirementReceipt:
@@ -9624,6 +9688,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                 if seated.status != "met":
                     return seated
             return _check_closing_speech(req, facts)
+    if req.kind == "select":
+        typed = _check_select_typed(req, facts)
+        if typed is not None:
+            return typed
     if _timed_card_ask(req) is not None and (facts.timed_cards is not None or not facts.editor):
         # An exact-timed small card: the recorded fact owns the ask (a draft read against its
         # manifest, or a finished phone render's own `phone_timed_card_receipt`); an editor
@@ -9963,6 +10031,14 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     ):
         # KRI-705: a phone Talking edit's plain "can't" is an answer, though no checker owns it.
         return True
+    if (
+        req is not None
+        and req.kind == "select"
+        and receipt.verification == "checked"
+        and receipt.stage == "checked"
+    ):
+        # KRI-994: a `select` ask the typed link / finished timeline settled.
+        return receipt.reason not in _NEUTRAL_REASONS
     if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
         # KRI-558: a change proven by the before/after edit diff, not by a value check.
         return receipt.reason not in _NEUTRAL_REASONS

@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.167.0] - 2026-10-28
+
+### Changed
+- fix(ios): recover TestFlight history cancelled before job creation (#1883) <!-- release-pr: 1883 -->
+
+## [0.81.166.0] - 2026-10-27
+
+### Fixed
+- fix(kria): review receipts honour tapped skips and withdrawn photo asks (KRI-994) (#1882) <!-- release-pr: 1882 -->
+
+## [0.81.165.0] - 2026-10-27
+
+### Fixed
+- fix(kria): lift planner flags written inside the action instead of retrying (KRI-992) (#1881) <!-- release-pr: 1881 -->
+
+## [0.81.164.0] - 2026-10-27
+
+### Changed
+- feat(kria): ask which clip when two clips tie for one Voiceover shot (KRI-962) (#1871) <!-- release-pr: 1871 -->
+
 ## [0.81.163.0] - 2026-10-27
 
 ### Changed

@@ -105,6 +105,15 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "receipt wording for the approved brief requirements",
         None,
     ),
+    "kria/select_asks.py": (
+        "plan_time",
+        "KRI-994 exclusion_facts links a resolved exclude to the brief `select` ask it carries "
+        "out, by the planner's typed requirement_id or by verbatim string identity of the "
+        "intent's attribute inside exactly one ask's text. It feeds receipt wording only; it "
+        "never decides route, duration, voice, order or required text, and an unlinked or "
+        "ambiguous exclusion claims nothing.",
+        None,
+    ),
     "kria/approval_readiness.py": (
         "plan_time",
         "readiness_reply quotes already-identified blocked requirements for the creator; "

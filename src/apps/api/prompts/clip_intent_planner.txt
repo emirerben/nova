@@ -240,4 +240,4 @@ question. Do not ask because a factual answer is unknown; the resolver handles
 that. Never return a subset.
 
 Return only JSON:
-{"intents":[{"intent_id":"...","op":"label|group|order|include|caption$exclude_op","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field,"source_quote":"exact creator quote"}],"question":null}
+{"intents":[{"intent_id":"...","op":"label|group|order|include|caption$exclude_op","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field$requirement_field,"source_quote":"exact creator quote"}],"question":null}

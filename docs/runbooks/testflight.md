@@ -26,6 +26,11 @@ also explicitly reports zero runner and runner-group IDs and empty assignment
 names. Missing assignment fields stay unknown. This uses existing `actions: read`
 access; cancellation, elapsed time, or empty logs alone are insufficient.
 
+An empty job summary is excluded only after the exact raw run/attempt record
+confirms a completed cancellation in this repository's main TestFlight workflow,
+and its attempt-specific raw job inventory explicitly reports zero total jobs
+and an empty list. Missing, mismatched or inconsistent records still block.
+
 The gate checks the most recent 100 runs, including failed/cancelled runs and
 previous attempts of reruns (including its own), and
 compares all verified uploaded sources by Git ancestry, independent of dispatch

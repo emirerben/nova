@@ -1910,7 +1910,9 @@ def test_kri667_prompt_teaches_exclude_only_with_the_flag() -> None:
     assert off.split("No other op exists.")[0] == on.split("- exclude:")[0]
     assert off.split("Showing a clip when")[1] == on.split("Showing a clip when")[1].replace(
         "caption|exclude", "caption"
-    )
+    ).replace(',"requirement_id":"r1|null"', "")
+    # KRI-994: the requirement link is taught only with exclusions on.
+    assert '"requirement_id":"r1|null"' in on and "requirement_id" not in off
     assert "clip_exclusions" not in _cappadocia_input().model_dump()
 
 

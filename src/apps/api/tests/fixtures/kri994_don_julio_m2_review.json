@@ -1,0 +1,532 @@
+{
+ "_source": "KRI-994: Don Julio lunch M2 run 2026-10-27, thread 4C536AFE, job 26556f5a. Trimmed from job_debug.json / events (ids and the recorded review only).",
+ "brief": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 10
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "10-second montage",
+    "source_turn_id": "07f721a0-a091-4ce9-9679-31d334855adc"
+   },
+   {
+    "id": "r2",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "only about the steak",
+    "source_turn_id": "07f721a0-a091-4ce9-9679-31d334855adc"
+   },
+   {
+    "id": "r3",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip the clip where he cuts the cheese, I only want the steak being cut",
+    "source_turn_id": "07f721a0-a091-4ce9-9679-31d334855adc"
+   },
+   {
+    "id": "r4",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Use my steak photo too",
+    "source_turn_id": "07f721a0-a091-4ce9-9679-31d334855adc"
+   },
+   {
+    "id": "r5",
+    "kind": "order",
+    "facts": {
+     "last_clip": "the dessert"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "End on the dessert",
+    "source_turn_id": "07f721a0-a091-4ce9-9679-31d334855adc"
+   },
+   {
+    "id": "r6",
+    "kind": "style",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Quick cuts",
+    "source_turn_id": "07f721a0-a091-4ce9-9679-31d334855adc"
+   },
+   {
+    "id": "r7",
+    "kind": "order",
+    "facts": {
+     "last_clip": "my friend smiling"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "end on my friend smiling",
+    "source_turn_id": "444b9d0f-087c-42bf-b3d0-79a9e7312086"
+   },
+   {
+    "id": "r8",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make the montage from the video clips only (no photos)",
+    "source_turn_id": "f5c77a83-ef50-4494-941d-f8a46f4f8d87"
+   }
+  ]
+ },
+ "unified_montage": {
+  "route": {},
+  "title": null,
+  "labels": [],
+  "version": 1,
+  "clip_ids": [
+   "analysis-proxy-ios-1F22B95A-845E-46C2-A48A-FD19B5F7D570.mp4",
+   "analysis-proxy-ios-56C108AD-2C8E-4446-9DA2-4DB9E86BB1C1.mp4",
+   "analysis-proxy-ios-2D17ECD4-3882-42FA-9E3B-2C806B773C27.mp4"
+  ],
+  "best_parts": [
+   {
+    "score": 4.0,
+    "reason": "best_moment_extended_for_target",
+    "media_id": "analysis-proxy-ios-2D17ECD4-3882-42FA-9E3B-2C806B773C27.mp4",
+    "source_end_s": 4.667,
+    "source_start_s": 1.724
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment_extended_for_target",
+    "media_id": "analysis-proxy-ios-1F22B95A-845E-46C2-A48A-FD19B5F7D570.mp4",
+    "source_end_s": 6.072,
+    "source_start_s": 2.228
+   },
+   {
+    "score": 7.0,
+    "reason": "best_moment_extended_for_target",
+    "media_id": "analysis-proxy-ios-56C108AD-2C8E-4446-9DA2-4DB9E86BB1C1.mp4",
+    "source_end_s": 6.332,
+    "source_start_s": 3.119
+   }
+  ],
+  "duration_s": 10.0,
+  "title_source": "none",
+  "brief_version": 3,
+  "generation_id": "babfa847d0d8433f82112793d4b74877",
+  "ordering_basis": "attachment",
+  "endpoint_places": {},
+  "intent_outcomes": [
+   {
+    "op": "order",
+    "code": "landed",
+    "name": "last: my friend smiling",
+    "reason": null,
+    "status": "met",
+    "position": "last"
+   }
+  ],
+  "clip_durations_s": {
+   "analysis-proxy-ios-1F22B95A-845E-46C2-A48A-FD19B5F7D570.mp4": 9.0,
+   "analysis-proxy-ios-2D17ECD4-3882-42FA-9E3B-2C806B773C27.mp4": 4.667,
+   "analysis-proxy-ios-56C108AD-2C8E-4446-9DA2-4DB9E86BB1C1.mp4": 11.0
+  },
+  "wants_per_clip_text": false,
+  "requirement_receipts": [
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "babfa847d0d8433f82112793d4b74877",
+    "requirement_id": "r1",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": "I can't verify this one automatically yet.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "babfa847d0d8433f82112793d4b74877",
+    "requirement_id": "r2",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": "I can't verify this one automatically yet.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "babfa847d0d8433f82112793d4b74877",
+    "requirement_id": "r3",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": "I can't verify this one automatically yet.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "babfa847d0d8433f82112793d4b74877",
+    "requirement_id": "r4",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": "I can't verify this one automatically yet.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "babfa847d0d8433f82112793d4b74877",
+    "requirement_id": "r6",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "babfa847d0d8433f82112793d4b74877",
+    "requirement_id": "r7",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": "I can't verify this one automatically yet.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "babfa847d0d8433f82112793d4b74877",
+    "requirement_id": "r8",
+    "inferred_labels": [],
+    "target_media_ids": []
+   }
+  ],
+  "short_label_clip_ids": [],
+  "dropped_label_reasons": {},
+  "dropped_label_clip_ids": [],
+  "ordering_fallback_clip_ids": []
+ },
+ "variant": {
+  "ok": true,
+  "rank": 1,
+  "text_mode": "agent_text",
+  "duration_s": 11.6,
+  "intro_mode": "linear",
+  "variant_id": "guided_story",
+  "orientation": "portrait",
+  "brand_tail_s": 1.6,
+  "intro_layout": "linear",
+  "media_digest": "3bfa4614e023a40c74091fef3579a696487ad3d8c159fa9fc80c1a99c26134d3",
+  "style_set_id": "guided_story_v2",
+  "landscape_fit": "fit",
+  "render_status": "ready",
+  "text_elements": [],
+  "music_track_id": null,
+  "song_reference": {
+   "end_s": 63.75,
+   "title": "Brazilian Soul (Live on KEXP)",
+   "artist": "SOFI TUKKER",
+   "start_s": 53.75,
+   "delivery": "external_platform",
+   "track_id": "b8e5463c-9616-4f65-99e8-4e5d1c6fee52",
+   "schema_version": 1
+  },
+  "story_timeline": [
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "hook",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-1",
+    "gcs_path": "users/u/creation-threads/t/analysis-proxy-ios-1F22B95A-845E-46C2-A48A-FD19B5F7D570.mp4",
+    "media_id": "analysis-proxy-ios-1F22B95A-845E-46C2-A48A-FD19B5F7D570.mp4",
+    "required": true,
+    "moment_id": "unified-cut-1",
+    "beat_align": false,
+    "duration_s": 3.844,
+    "generation": "1793117551722280",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 3.844,
+    "source_end_s": 6.072,
+    "playback_rate": null,
+    "output_start_s": 0.0,
+    "source_start_s": 2.228,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "build",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-2",
+    "gcs_path": "users/u/creation-threads/t/analysis-proxy-ios-56C108AD-2C8E-4446-9DA2-4DB9E86BB1C1.mp4",
+    "media_id": "analysis-proxy-ios-56C108AD-2C8E-4446-9DA2-4DB9E86BB1C1.mp4",
+    "required": true,
+    "moment_id": "unified-cut-2",
+    "beat_align": false,
+    "duration_s": 3.213,
+    "generation": "1793117553036194",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 7.057,
+    "source_end_s": 6.332,
+    "playback_rate": null,
+    "output_start_s": 3.844,
+    "source_start_s": 3.119,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "payoff",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-3",
+    "gcs_path": "users/u/creation-threads/t/analysis-proxy-ios-2D17ECD4-3882-42FA-9E3B-2C806B773C27.mp4",
+    "media_id": "analysis-proxy-ios-2D17ECD4-3882-42FA-9E3B-2C806B773C27.mp4",
+    "required": true,
+    "moment_id": "unified-cut-3",
+    "beat_align": false,
+    "duration_s": 2.943,
+    "generation": "1793117546275438",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 10.0,
+    "source_end_s": 4.667,
+    "playback_rate": null,
+    "output_start_s": 7.057,
+    "source_start_s": 1.724,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   }
+  ],
+  "edit_duration_s": 10.0,
+  "proposal_version": 1,
+  "render_destination": "device",
+  "render_finished_at": "2026-10-27T16:49:46.520820+00:00",
+  "resolved_archetype": "guided_story",
+  "music_playback_mode": "reference_only",
+  "render_generation_id": "29d59ee4-271a-4571-8167-00414f7b385b",
+  "source_audio_preserved": true,
+  "context_label_text_elements": []
+ },
+ "creator_strategy": {
+  "media_scope": "selected",
+  "selected_media_ids": [
+   "analysis-proxy-ios-1F22B95A-845E-46C2-A48A-FD19B5F7D570.mp4",
+   "analysis-proxy-ios-56C108AD-2C8E-4446-9DA2-4DB9E86BB1C1.mp4",
+   "analysis-proxy-ios-2D17ECD4-3882-42FA-9E3B-2C806B773C27.mp4"
+  ],
+  "clip_intents": [
+   {
+    "op": "include",
+    "attribute": "the steak being cut",
+    "intent_id": "include_steak_cut"
+   },
+   {
+    "op": "exclude",
+    "attribute": "the clip where he cuts the cheese",
+    "intent_id": "exclude_cheese_cut"
+   },
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "my friend smiling",
+    "intent_id": "order_friend_last"
+   }
+  ],
+  "resolved_clip_intents": [
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "the steak being cut",
+    "intent_id": "include_steak_cut",
+    "assignments": [
+     {
+      "evidence": "waiter slices steak on the left tray",
+      "media_id": "analysis-proxy-ios-56C108AD-2C8E-4446-9DA2-4DB9E86BB1C1.mp4",
+      "confidence": 0.9
+     },
+     {
+      "evidence": "A person's hands are shown using a knife and fork to slice a grilled steak",
+      "media_id": "asset-cfb745e0-513a-4ade-b2c0-8b1b34e54585",
+      "confidence": 0.9
+     }
+    ]
+   },
+   {
+    "op": "exclude",
+    "status": "resolved",
+    "attribute": "the clip where he cuts the cheese",
+    "intent_id": "exclude_cheese_cut",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-98E88D32-BFD6-45DD-8FB4-99389BB0CEB0.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "last",
+    "attribute": "my friend smiling",
+    "intent_id": "order_friend_last",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-2D17ECD4-3882-42FA-9E3B-2C806B773C27.mp4",
+      "confidence": 1.0
+     }
+    ]
+   }
+  ],
+  "target_duration_s": 10,
+  "edit_format": "montage"
+ },
+ "picker_answer": {
+  "answers": [
+   {
+    "key": "exclude:the-clip-where-he-cuts-the-cheese",
+    "media_ids": [
+     "analysis-proxy-ios-98E88D32-BFD6-45DD-8FB4-99389BB0CEB0.mp4"
+    ]
+   }
+  ],
+  "skipped": false,
+  "none_keys": [],
+  "question_id": "e1d7bccf-5070-4b0a-a962-f21f34ebf206"
+ },
+ "recorded_review": {
+  "content": "- Done: 10-second montage\n- Done: end on my friend smiling\nHave a look at these in the video:\n- only about the steak\n- Skip the clip where he cuts the cheese, I only want the steak being cut\n- Use my steak photo too\n- Quick cuts\n- Make the montage from the video clips only (no photos)",
+  "requirement_receipts": [
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "29d59ee4-271a-4571-8167-00414f7b385b",
+    "requirement_id": "r1",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": null,
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "29d59ee4-271a-4571-8167-00414f7b385b",
+    "requirement_id": "r2",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": null,
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "29d59ee4-271a-4571-8167-00414f7b385b",
+    "requirement_id": "r3",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": null,
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "29d59ee4-271a-4571-8167-00414f7b385b",
+    "requirement_id": "r4",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": null,
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "29d59ee4-271a-4571-8167-00414f7b385b",
+    "requirement_id": "r6",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "29d59ee4-271a-4571-8167-00414f7b385b",
+    "requirement_id": "r7",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": null,
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "29d59ee4-271a-4571-8167-00414f7b385b",
+    "requirement_id": "r8",
+    "inferred_labels": [],
+    "target_media_ids": []
+   }
+  ]
+ }
+}
