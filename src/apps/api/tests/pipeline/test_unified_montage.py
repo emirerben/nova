@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import unicodedata
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -33,6 +35,7 @@ from app.pipeline.unified_montage import (
 from app.schemas.edit_proposal import EditProposalSnapshot
 
 T0 = datetime(2026, 9, 20, 7, 0, tzinfo=UTC)
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 
 def clip(
@@ -891,9 +894,10 @@ def _untitled_snapshots():
 
 
 def test_an_untitled_montage_never_prints_the_internal_montage_label():
+    expected = json.loads((FIXTURES / "kri998_untitled_montage_title.json").read_text())
     leaks, compiled_lanes = [], set()
     for lane, snapshot in _untitled_snapshots():
-        for compiler_version in range(1, 9):
+        for compiler_version in expected["compiler_versions"]:
             try:
                 compiled = _compile_execution_plan_version(
                     snapshot, track=None, compiler_version=compiler_version
@@ -901,7 +905,8 @@ def test_an_untitled_montage_never_prints_the_internal_montage_label():
             except GuidedStoryError:
                 continue
             compiled_lanes.add(lane)
-            if "Montage" in [element["text"] for element in compiled["text_elements"]]:
+            printed = [element["text"] for element in compiled["text_elements"]]
+            if expected["placeholder"] in printed:
                 leaks.append((lane, compiler_version))
-    assert compiled_lanes == {"clip labels", "fast cuts", "story beats"}
+    assert compiled_lanes == set(expected["title_lanes"])
     assert leaks == []
