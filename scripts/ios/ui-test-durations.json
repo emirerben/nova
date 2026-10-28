@@ -131,6 +131,7 @@
   "KriaUITests/NativeQuickAddMenuUITests/testTappingPlusAgainClosesTheMenu": 11.1,
   "KriaUITests/NativeQuickAddMenuUITests/testTextOptionStartsTextCreation": 10.3,
   "KriaUITests/NativeQuickAddMenuUITests/testVideoAndVisualOptionsRouteToTheirSurfaces": 20.2,
+  "KriaUITests/NativeSpeedUITests/testClosingSpeedInspectorCommitsResetForSingleUndo": 30.0,
   "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam": 12.7,
   "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute": 15.5,
   "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos": 7.3,

@@ -868,6 +868,7 @@ final class NativeEditorInspectorUITests: XCTestCase {
         input.tap(); input.typeText("Cancel this")
         app.buttons["native-editor-text-cancel"].tap()
         XCTAssertFalse(input.exists)
+        print("KRIA_NATIVE_TEST_PROOF pinch-warning-phases-v1")
     }
 
     func testEditorChromeFitsViewportAndCurrentToolsRemainReachable() {

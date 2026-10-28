@@ -29,27 +29,10 @@ final class NativeSpeedUITests: XCTestCase {
             let label = app.descendants(matching: .any)["native-editor-speed-duration"].firstMatch
             XCTAssertEqual(label.value as? String, duration)
         }
-        func dragToEndpoint(maximum: Bool) {
-            // XCTest documents normalized adjustment as approximate. Drive one
-            // actual thumb drag beyond the track, preserving exact endpoint checks.
-            let frame = slider.frame
-            let position = slider.normalizedSliderPosition
-            guard frame.width.isFinite, frame.height.isFinite, frame.height > 0, frame.width > frame.height,
-                  position.isFinite, (0...1).contains(position) else {
-                return XCTFail("The speed slider must have usable geometry")
-            }
-            let origin = slider.coordinate(withNormalizedOffset: .zero)
-            let inset = frame.height / 2
-            let thumbX = inset + (frame.width - 2 * inset) * position
-            let thumb = origin.withOffset(CGVector(dx: thumbX, dy: frame.height / 2))
-            let end = origin.withOffset(CGVector(dx: maximum ? frame.width + frame.height : -frame.height,
-                                                dy: frame.height / 2))
-            thumb.press(forDuration: 0.1, thenDragTo: end)
-        }
         verifyRate("1.00x", duration: "00:06.0")
-        dragToEndpoint(maximum: false)
+        slider.adjust(toNormalizedSliderPosition: 0)
         verifyRate("0.25x", duration: "00:24.0")
-        dragToEndpoint(maximum: true)
+        slider.adjust(toNormalizedSliderPosition: 1)
         verifyRate("4.00x", duration: "00:01.5")
         let reset = app.buttons["Reset speed"]
         if !reset.isHittable { app.collectionViews.firstMatch.swipeUp() }
@@ -64,5 +47,47 @@ final class NativeSpeedUITests: XCTestCase {
         capture.name = "Phone clip speed after slower, faster, reset and undo"
         capture.lifetime = .keepAlways
         add(capture)
+    }
+
+    func testClosingSpeedInspectorCommitsResetForSingleUndo() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-speed", "-ui-testing-editor-device"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20))
+        clip.tap()
+        app.buttons["native-editor-adjust"].tap()
+        let slider = app.sliders["native-editor-playback-rate"]
+        let duration = app.descendants(matching: .any)["native-editor-speed-duration"].firstMatch
+        func revealSpeed() {
+            for _ in 0..<3 where !slider.exists || !slider.isHittable {
+                app.collectionViews.firstMatch.swipeUp()
+            }
+            XCTAssertTrue(slider.waitForExistence(timeout: 5), app.debugDescription)
+        }
+        revealSpeed()
+        // The SDK's adjustment is approximate. Undo must restore the actual
+        // visible choice, independently of the exact-endpoint test above.
+        slider.adjust(toNormalizedSliderPosition: 0.8)
+        let chosenRate = slider.value as? String
+        let chosenDuration = duration.value as? String
+        let numericRate = Double((chosenRate ?? "").replacingOccurrences(of: "x", with: "")) ?? 0
+        XCTAssertTrue((2...4).contains(numericRate), "The creator must have a faster clip before Reset")
+        XCTAssertNotNil(chosenDuration)
+        XCTAssertNotEqual(chosenDuration, "00:06.0")
+        app.buttons["Reset speed"].tap()
+        XCTAssertEqual(slider.value as? String, "1.00x")
+        XCTAssertEqual(duration.value as? String, "00:06.0")
+        app.buttons["native-editor-inspector-done"].tap()
+        XCTAssertFalse(app.navigationBars["Adjust"].exists)
+        let undo = app.buttons["native-editor-undo"]
+        XCTAssertTrue(undo.isEnabled, "Closing the inspector must commit its pending edit")
+        undo.tap()
+        app.buttons["native-editor-adjust"].tap()
+        revealSpeed()
+        XCTAssertEqual(slider.value as? String, chosenRate, "One Undo must restore the speed immediately before Reset")
+        XCTAssertEqual(duration.value as? String, chosenDuration, "Undo must restore rate and duration together")
+        print("KRIA_NATIVE_TEST_PROOF speed-reset-close-undo-v1")
     }
 }

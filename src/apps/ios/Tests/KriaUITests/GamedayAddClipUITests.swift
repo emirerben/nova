@@ -59,6 +59,7 @@ final class GamedayAddClipUITests: XCTestCase {
         }
         XCTAssertTrue(exported.label.contains("Saved to Photos"), "Export must complete from the current composed preview")
         capture(app, "Exported current five-clip edit")
+        print("KRIA_NATIVE_TEST_PROOF gameday-stable-taps-v1")
     }
 
     private func openQuickAdd(_ app: XCUIApplication, option identifier: String) {

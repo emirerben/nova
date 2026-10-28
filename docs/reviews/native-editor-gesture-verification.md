@@ -1,85 +1,93 @@
-# Native editor gesture verification
+# Native inspector undo and UI verification
 
-This corrects two UI checks found while delivering KRI-984 through PR1892.
-It changes test driving and the warning oracle. App, renderer, fixture transport,
-capability policy, and accepted speed values are unchanged.
+Closing the native inspector must finish its pending edit before the creator
+uses Undo. The new regression reproduces a real failure on unchanged app code:
+a chosen 3.30x speed and 1.8-second duration become 1x and 6 seconds after Reset;
+Done and one Undo leave them at 1x and 6 seconds instead of restoring the choice.
+All setup, changed-speed, Reset, dismissal, and enabled-Undo assertions pass.
 
-## Pinch warning: check the phase that can be unsafe
+## Finish the transaction when its inspector leaves
 
-CI 40668700336 on `cd0ed23e544ab5ba4693aba4682a44ceb6535501` failed
-`testSourcePreviewTextCreationAndAnimations` in three automatic attempts. The
-retained screen recording shows the orange warning during enlargement at 55.5s,
-then a cleared guide after shrinking at 74s. The test checked only that final
-safe sample and therefore rejected working behavior.
+The retained in-memory trace shows Undo running with an active transaction.
+Call stacks identify `NativeEditorSlider.editingChanged` and
+`UISliderAccessibility`; the last edit callback opens a transaction that stays
+open through Reset and dismissal. The exact platform callback cause is not
+claimed. The recording confirms Reset changed the visible control.
 
-The same assertion failed on unchanged main
-`53dc75b3b78decc7f292af647c136295bece7c78`. A temporary diagnostic retained
-the actual values after each gesture: enlargement reported
-`bottom,left,right,top`; shrinking reported no unsafe edges. The corrected
-check requires an available, unsafe sample after enlargement and an empty
-sample after shrinking. It still checks that the live guide disappears after
-the gesture, that text samples were produced, that the preview stays available,
-and that the animation controls and cancel flow work.
+`NativeEditorView.finishPanelEditing` already finishes transactions for the
+editor's other panels. `NativeEditorInspectorView` only dismissed its sheet.
+It now calls `session.endTransaction()` when it disappears. An already-closed
+transaction remains a no-op. No slider value, duration, renderer, capability,
+or persistence policy changes.
 
-A separate local run missed the initial Text tap before the new-text input
-appeared. The recording preserves that startup state. The test now waits for
-the prepared video and an enabled, hittable Text control with finite, stable
-bounds, using the existing 12-second readiness budget. It taps once; the
-new-text input still has the original 3-second outcome deadline. The exact
-cause of that occasional early miss remains unconfirmed.
+The new real-control UI regression chooses a faster speed with the SDK slider
+API and records the actual visible rate and duration. After Reset, Done, and
+one Undo, both must equal that previous choice. Capturing the prior state is
+the Undo oracle; it does not replace exact endpoint coverage. The original
+0.25x/4.00x, 24s/1.5s, Reset, and Undo test remains unchanged.
 
-## Speed: drive the endpoint while keeping exact assertions
+## Check the pinch warning during the unsafe phase
 
-The same CI run saw 3.95x instead of 4.00x and 0.40x after undo in an earlier
-attempt; that test recovered on retry. Unchanged main passed it locally.
-Xcode's public `XCUIAutomation/XCUIElement.h` slider API describes normalized
-adjustment as best effort and does not guarantee an exact position.
+CI 40668700336 failed the old pinch assertion in three automatic attempts.
+The recording shows the orange warning during enlargement at 55.5 seconds,
+then a cleared guide after shrinking at 74 seconds. A diagnostic on unchanged
+main `53dc75b3b` reports unsafe edges after enlargement and none after shrinking.
+The test previously rejected that final safe sample.
 
-The test now uses one physical thumb drag to each end, starting between the
-inset thumb centres and ending beyond the track. It retains exact 0.25x/4.00x
-and 24.0s/1.5s checks for the six-second fixture, then exact reset and undo
-checks. It adds no action retry or numerical tolerance. The precise cause of
-the recovered CI undo difference is not independently established; this is a
-verified test-driving correction, not a claimed production speed fix.
+The corrected test requires an available, unsafe sample after enlargement
+and an empty sample after shrinking. It retains live sample counts, preview,
+animations, and cancel checks. Initial Text readiness now requires the prepared
+video and an enabled, hittable tool with stable finite bounds within the same
+12-second budget. The exact cause of the occasional early Text miss is unknown.
 
-## Evidence and failed iterations
+## Preserve failed experiments
 
-The final two complete UI journeys passed on iPhone 17 / iOS 26.5 with zero failures
-and zero skips. This is two unique tests. No unsupported-speed UI case was added.
-Original CI used iPhone 17 Pro / iOS 26.2 and remains a mandatory fresh gate.
+Physical slider-driver replacements did not qualify. Some reached the endpoints;
+others stopped short or left Undo at an older rate. They were removed. The
+original endpoint test and SDK driver remain intact. No tolerance, action retry,
+or timeout increase was added. These experiments do not establish a production
+endpoint defect or fix.
 
-Retained CI artifact: [12811698140](https://github.com/emirerben/nova/actions/runs/40668700336/artifacts/12811698140).
-Its underlying unit suite had 2086 executions, 26 skips and zero failures. The
-selected UI suite had 88 unique tests: 87 passed, one failed after retries. The
-successful Gameday creation replay is retained separately in artifact 12807399359.
+A local integration run printed an old assertion absent from its source despite
+matching built and installed binaries. That result is unqualified and retained.
+A fresh build directory and simulator then confirmed the changed test bodies
+with runtime markers. Gameday and pinch passed, but speed failed after Undo.
+Markers establish execution only; result status must establish success.
 
-Failed local iterations remain available: the original pinch assertion; the
-first endpoint driver missing the minimum; its measured touch geometry; a
-later early Text tap; and an introduced XCTest expectation-registration error.
-That helper now uses an unregistered `XCTNSPredicateExpectation`, so the later
-text-entry wait cannot wait on it twice. None of these failures was counted
-as a successful replay or erased by a workflow rerun.
+The first temporary NSLog diagnostic passed but did not recover transaction
+logs. The later memory-only trace reproduced the open transaction, and a
+call-site trace identified its owner. Diagnostic app fields, logging, and
+environment flags were removed before the regression and final verification.
+All failed results and recordings remain in the task artifacts.
 
-Final result: `gesture-replays-final.xcresult` and its summary/proof in the task
-artifacts. Summary SHA-256:
-`314b7b727e754982efb5973ee4c79bd30fb297a1f39e25e44d3e3f8aaf584bbd`.
-Bundled font-set SHA-256:
-`0ca78ba68bffb6ee34feba289241c42eb9eeecad219e6a2617409f2352e1df6d`.
+The red regression is `inspector-reset-undo-red.xcresult`: one test failed
+after all setup and Reset checks passed. The identical regression passed after
+the one-line close hook. Final `inspector-close-green.xcresult` passed 248 tests:
+244 existing editor-session checks and four unique UI journeys, zero failures
+and zero skips. Its summary SHA-256 is
+`5c73fe02ba3fe6a92e13c24ea42423b849e16217e527218c5c2281b17365716c`.
+The red and green test-source hashes match. Fresh original-runtime CI remains
+mandatory.
+Local iPhone 17 uses iOS 26.5; CI uses iPhone 17 Pro/iOS 26.2.
 
-The two exact test-source SHA-256 values are:
+The earlier CI artifact is
+[12811698140](https://github.com/emirerben/nova/actions/runs/40668700336/artifacts/12811698140).
+Its unit suite had 2086 executions, 26 skips, and zero failures. Its selected UI
+suite had 88 unique tests: 87 passed, and one pinch test failed after retries.
+The earlier speed test recovered on retry. Successful Gameday creation evidence
+is retained separately in artifact 12807399359. Two UIKit hierarchy warnings
+remain recorded; this change does not claim to fix them.
 
-- `NativeEditorInspectorUITests.swift`: `9606a9f5d33b736f59626d7f08d1f5c11fe4874f820dc03cbad5f6d61bdabd35`
-- `NativeSpeedUITests.swift`: `8f7102726f19ba52417c34d89dfd5f0f9bea33587a1717355283f1b9eba9039b`
+The one added UI case is registered in the editor group with a 30-second estimate.
+The iOS script checks passed 117 tests. Full required CI, current-base review,
+and automatic client publication still gate delivery. This does not clear the
+Cunda candidate, its corrected published text, the original 28.804-second timing
+request, quiet-audio fidelity, or remaining original-media replays.
 
-```bash
-make ios-generate
-xcodebuild -project src/apps/ios/Kria.xcodeproj -scheme Kria -configuration Debug -destination 'platform=iOS Simulator,id=0C93EF74-5406-4416-9CD5-E692F0BA7495' -derivedDataPath .dev/native-gesture/ios-build -skipPackagePluginValidation -parallel-testing-enabled NO -only-testing:KriaUITests/NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations -only-testing:KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector CODE_SIGNING_ALLOWED=NO test
-```
-
-Use an available local simulator identifier if the retained device is removed.
-The scope guard acquired for these UI test files was released with its retained
-owner token. No previous boundary or mutation lock was removed.
-
-Fresh CI, current-main integration, and review checks still gate merging. This
-report does not clear the Cunda TestFlight candidate, its corrected published
-text, original 28.804-second timing request, or remaining original-media replays.
+The native verification used main `69c3b701d` plus this working patch.
+`NativeEditorView.swift` SHA-256:
+`771890ed1719e54323dc78051ea1da21a9c4593e98828c8ab564c56c0c577b97`.
+`NativeSpeedUITests.swift` SHA-256:
+`e8003529fe8b182405791f96806fb0d45076ff6b514bf78bd5351b3656583612`.
+The safe report records a local fix. No physical-device or installed TestFlight
+verification of this new inspector hook is claimed.
