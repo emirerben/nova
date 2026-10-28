@@ -7178,11 +7178,39 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
     return capabilities
 
 
+def _caption_rows_lock_speed(states: tuple[dict, ...]) -> bool:
+    """Caption rows lock clip speed unless all are song lyrics with the lane turned off.
+
+    Lyrics are timed on the song clock, so a speed change cannot desync them; speech
+    captions are timed to source audio. A Save replaces ``caption_meta`` wholesale, so
+    the last state carrying one decides whether the lane is off.
+    """
+    from app.pipeline.song_captions import SONG_CAPTION_ORIGIN  # noqa: PLC0415
+
+    if any(state.get("caption_cues") for state in states):
+        return True
+    rows = [
+        row
+        for state in states
+        for row in state.get("text_elements") or []
+        if _is_caption_cue_row(row)
+    ]
+    if any(row["source_params"].get("origin") != SONG_CAPTION_ORIGIN for row in rows):
+        return True
+    metas = [
+        state["caption_meta"] for state in states if isinstance(state.get("caption_meta"), dict)
+    ]
+    return bool(rows) and (not metas or metas[-1].get("enabled") is not False)
+
+
 def _phone_speed_lane_reason(*states: dict) -> str | None:
     """Keep clocks without native source-time projection closed on both surfaces."""
+    captions_locked = _caption_rows_lock_speed(states)
     for state in states:
         texts = state.get("text_elements") or []
-        if state.get("caption_cues") or any(_is_caption_cue_row(row) for row in texts):
+        if captions_locked and (
+            state.get("caption_cues") or any(_is_caption_cue_row(row) for row in texts)
+        ):
             return "caption_timing_locked"
         for lane in (
             "media_overlays",
@@ -10376,8 +10404,13 @@ def require_guided_story_editor_commit(
     if isinstance(variant, dict) and variant.get("render_destination") == "device":
         # A stale client must not bypass the capability, including a reset to
         # 1x or adding a locked lane in the same transaction as a speed change.
+        # The saved states come first so a Save that only turns hidden lyrics on is judged
+        # against the stored rows. A revision without caption_meta drops it, which shows them.
         speed_reason = _phone_clip_speed_reason(job, variant) or _phone_speed_lane_reason(
-            payload.model_dump(exclude_unset=True), payload.guided_revision or {}
+            variant,
+            _guided_v2_revision(job, variant) or {},
+            {"caption_meta": {}, **payload.guided_revision} if payload.guided_revision else {},
+            payload.model_dump(exclude_unset=True),
         )
         if speed_reason and payload.timeline_slots is not None:
             old_by_id = {row.get("slot_id"): row for row in editor_deletion_timeline(job, variant)}

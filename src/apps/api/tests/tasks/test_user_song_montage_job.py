@@ -1210,6 +1210,122 @@ def test_the_phone_editor_read_offers_hidden_lyrics_behind_the_captions_toggle(
         assert validate_ready_result(plan, result, job_id="job-1", verify_storage=False)
 
 
+# --- Clip speed on a song montage whose lyrics are pinned hidden ---
+#
+# Failure modes written first:
+#   (m) hidden lyric rows lock clip speed, so every background-song montage loses the
+#       speed control it had before lyrics were pinned by default;
+#   (n) captions turned on (stored, or in the same Save as a speed change) leave speed
+#       open, so a speed change could desync drawn lyrics from the edit;
+#   (o) the lip-sync lock (song-clock clips) opens because its lyrics are hidden;
+#   (p) a narration/subtitled caption row (timed to source speech) opens with
+#       `enabled: false`, because the exemption keys on the flag instead of the origin.
+
+
+def _speed_save(job, rate):
+    from app.routes import generative_jobs as gj
+
+    variant = job.assembly_plan["variants"][0]
+    first = gj.editor_deletion_timeline(job, variant)[0]
+    return gj.TimelineSlotEdit(
+        slot_id=first["slot_id"],
+        clip_index=first["clip_index"],
+        in_s=first["in_s"],
+        duration_s=first["duration_s"],
+        playback_rate=rate,
+    )
+
+
+def _speed(job):
+    """The phone's speed control and the reason a Save would be refused with."""
+    from app.routes import generative_jobs as gj
+
+    (variant,) = gj._variants_for_response(job)
+    editable = variant["editor_capabilities"]["clips"]["playback_rate"]["editable"]
+    return editable, gj._phone_clip_speed_reason(job, job.assembly_plan["variants"][0])
+
+
+def _refused(job, **sections):
+    from fastapi import HTTPException
+
+    from app.routes import generative_jobs as gj
+
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    payload = gj.EditorCommitRequest(
+        base_generation=gj.variant_render_baseline(variant),
+        guided_revision_number=revision["revision_number"],
+        **sections,
+    )
+    with pytest.raises(HTTPException) as caught:
+        gj.require_guided_story_editor_commit(job, "guided_story", payload)
+    return caught.value.status_code, caught.value.detail
+
+
+def test_hidden_song_lyrics_leave_clip_speed_editable_until_captions_are_shown(
+    harness, composer, monkeypatch
+):
+    from app.routes import generative_jobs as gj
+
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj.settings, "phone_render_verified_features", PROD_VERIFIED_FEATURES)
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: f"https://signed.test/{path}")
+    job, _snapshot, _bindings = harness(
+        sync="background",
+        song_analysis=_lyrics_analysis(),
+        creator_request="Full creator request (chronological):\nMake a fast montage",
+    )
+    gb._run_generative_job(str(job.id))
+    assert job.assembly_plan["guided_edit"]["approved_proposal"]["song_captions"]["hidden"]
+
+    assert _speed(job) == (True, None)
+    on = gj.EditorCommitCaptionMeta(enabled=True, style="sentence")
+    assert _refused(job, caption_meta=on, timeline_slots=[_speed_save(job, 2.0)]) == (
+        422,
+        {"code": "caption_timing_locked"},
+    )
+    _editor_save(job, timeline_slots=[_speed_save(job, 2.0)])
+    assert (
+        gj.editor_deletion_timeline(job, job.assembly_plan["variants"][0])[0]["playback_rate"]
+        == 2.0
+    )
+
+    _editor_save(job, caption_meta=on)
+    assert _speed(job) == (False, "caption_timing_locked")
+    assert _refused(job, timeline_slots=[_speed_save(job, 1.0)]) == (
+        422,
+        {"code": "caption_timing_locked"},
+    )
+
+    speech_row = {
+        "id": "caption-0",
+        "source_params": {"source": "caption_cue", "key": "0", "origin": "narration"},
+    }
+    hidden = {"enabled": False, "style": "sentence"}
+    assert (
+        gj._phone_speed_lane_reason({"text_elements": [speech_row], "caption_meta": hidden})
+        == "caption_timing_locked"
+    )
+
+
+def test_hidden_song_lyrics_keep_a_lipsync_montage_speed_locked(harness, composer, monkeypatch):
+    from app.routes import generative_jobs as gj
+
+    monkeypatch.setattr(gj.settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(gj.settings, "phone_render_verified_features", PROD_VERIFIED_FEATURES)
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: f"https://signed.test/{path}")
+    job, _snapshot, _bindings = harness(
+        sync="lipsync",
+        rows=[confident("clip-a", 10), confident("clip-b", 28), confident("clip-c", 46)],
+        song_analysis=_lyrics_analysis(),
+        creator_request="Full creator request (chronological):\nLipsync",
+    )
+    gb._run_generative_job(str(job.id))
+    assert job.assembly_plan["guided_edit"]["approved_proposal"]["song_captions"]["hidden"]
+
+    assert _speed(job) == (False, "user_song_lipsync_locked")
+
+
 @pytest.mark.parametrize("song_analysis", [analysis, lambda: _late_lyrics_analysis()])
 def test_a_song_without_words_to_caption_never_declines_a_montage_that_did_not_ask(
     harness, composer, song_analysis
