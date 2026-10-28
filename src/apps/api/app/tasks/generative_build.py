@@ -29464,6 +29464,28 @@ def _silence_cut_analysis(
                 if analysis_policy == "required_v1" and settings.speech_cleanup_budget_clamp_enabled
                 else "bailout"
             )
+
+            def _voice_guarded(unguarded):  # noqa: ANN001, ANN202
+                # KRI-1017: a silence/filler cut that holds sustained voicing is not dead
+                # air, whatever the transcript and the silence spans agreed on. Judged on the
+                # same media the plan was built from; a decode fault drops the judged cuts.
+                from app.pipeline.speech_voice_guard import apply_voice_guard  # noqa: PLC0415
+
+                guarded, guard_report = apply_voice_guard(
+                    unguarded,
+                    clip_path,
+                    words=transcript.words,
+                    retake_spans=retake_spans,
+                    forced=forced_removals,
+                )
+                if (
+                    guard_report["status"] != "ok"
+                    or guard_report["dropped"]
+                    or guard_report["trimmed"]
+                ):
+                    record_pipeline_event("silence_cut", "silence_cut_voice_guard", guard_report)
+                return guarded
+
             if mixed_gap_selection.effective_mode == "off":
                 plan = build_cut_plan(
                     transcript.words,
@@ -29475,6 +29497,7 @@ def _silence_cut_analysis(
                     over_budget_policy=over_budget_policy,
                     max_removal_frac_required=(settings.speech_cleanup_max_removal_frac_required),
                 )
+                plan = _voice_guarded(plan)
             else:
                 comparison = build_cut_plan_comparison(
                     transcript.words,
@@ -29568,6 +29591,9 @@ def _silence_cut_analysis(
                         "speech_cleanup_receipt_failed",
                         error_class=type(exc).__name__,
                     )
+                # After the receipt blocks above: they can swap the candidate back for the
+                # baseline, and the guard must judge the plan that actually ships.
+                plan = _voice_guarded(plan)
                 entry["speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
                     analysis_policy=analysis_policy,
                     assignment=assignment,

@@ -46,6 +46,7 @@ from app.services.phone_overlay_grounding import GroundedOverlayCards
 from app.services.phone_reaction_grounding import GroundedReactionBeats
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, PhoneVisualBinding
 from app.tasks import generative_build as gb
+from tests._silent_pcm import silent_pcm
 from tests.pipeline.test_phone_subtitled_plan import _binding as _wide_binding
 from tests.pipeline.test_phone_voiceover_montage_plan import _binding
 from tests.tasks.test_generative_build import _Meta
@@ -317,6 +318,7 @@ def _raw_preflight_snapshot(
             words=_cut_words(), language="en", low_confidence=False
         ),
         silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=SILENCES, status="ok"),
+        pcm_loader=silent_pcm,
     )
     return {
         "schema_version": 1,
