@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.168.0] - 2026-10-28
+
+### Changed
+- fix(ios): allow verified library originals in device source grants (KRI-835) (#1884) <!-- release-pr: 1884 -->
+
 ## [0.81.167.0] - 2026-10-28
 
 ### Changed
