@@ -185,6 +185,10 @@
       "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
       "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection",
       "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas",
+      "KriaUITests/FeaturedEditPreviewUITests/testCenteredFormatOwnsPlayback",
+      "KriaUITests/FeaturedEditPreviewUITests/testOnboardingPlaysFourEditsInOrder",
+      "KriaUITests/FeaturedEditPreviewUITests/testSliderAdvancesWhenCenteredAndPauses",
+      "KriaUITests/ProductionSignInUITests/testBuildControlsDevelopmentSignIn",
       "KriaUITests/CreationUITests/testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries"
     ],
     "projects": [

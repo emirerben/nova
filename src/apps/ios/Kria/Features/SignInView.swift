@@ -12,11 +12,6 @@ struct SignInView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var message: String?
     @State private var appleNonce = UUID().uuidString
-    // Visible in every build configuration, Release included — the server,
-    // not the client, decides whether `auth/mobile/reviewer-login` is
-    // available (404 when the feature is disabled). Exists so Apple's Beta
-    // App Review team can sign in with a demo username/password instead of
-    // Sign in with Apple/Google. See KRI-111.
     @State private var showsReviewerSignIn = false
     @State private var appeared = false
     @State private var heroReady = false
@@ -35,7 +30,7 @@ struct SignInView: View {
     }
 
     private var heroAnimating: Bool {
-        heroReady && !effectiveReduceMotion && scenePhase == .active && !showsReviewerSignIn
+        heroReady && UIAccessibility.isVideoAutoplayEnabled && !effectiveReduceMotion && scenePhase == .active && !showsReviewerSignIn
     }
 
     var body: some View {
@@ -274,57 +269,38 @@ enum SignInFailureCopy {
     }
 }
 
-/// Three overlapping portrait frames, not interactive and hidden from
-/// accessibility — purely decorative. Drifts gently forever once its own
-/// entrance has settled; sits at rest under Reduce Motion, background, or
-/// while the reviewer sign-in sheet is up.
 private struct SignInHero: View {
     let isAnimating: Bool
-
-    private enum Phase: CaseIterable { case rest, drift }
+    @State private var activeIndex = 0
+    @State private var playing = false
 
     var body: some View {
-        Group {
-            if isAnimating {
-                PhaseAnimator(Phase.allCases) { phase in
-                    frames(drift: phase == .drift)
-                } animation: { _ in
-                    .easeInOut(duration: SignInMotion.ambientPeriod / 2)
+        HStack(spacing: 28) {
+            preview(.bosphorus)
+                .frame(width: 151, height: 151 / FeaturedEdit.bosphorus.aspectRatio)
+            VStack(spacing: 8) {
+                ForEach(Array(FeaturedEdit.onboarding.dropFirst())) { edit in
+                    preview(edit).frame(width: 146, height: 146 / edit.aspectRatio)
                 }
-            } else {
-                frames(drift: false)
             }
         }
-        .frame(width: 342, height: 244)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+        .frame(width: 342, height: 270)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Example edits")
+        .accessibilityValue("\(playing ? "Playing" : "Paused") edit \(activeIndex + 1) of 4")
+        .accessibilityIdentifier("signin.featured-edits")
     }
 
-    @ViewBuilder
-    private func frames(drift: Bool) -> some View {
-        let dy: CGFloat = drift ? SignInMotion.ambientDrift : -SignInMotion.ambientDrift
-        let tilt: Double = drift ? SignInMotion.ambientTilt : -SignInMotion.ambientTilt
-        ZStack {
-            heroFrame("voiceover")
-                .shadow(color: .black.opacity(0.14), radius: 22, x: 0, y: 10)
-                .rotationEffect(.degrees(-11 + tilt), anchor: .bottom)
-                .position(x: 58 + 59, y: 44 + 79 + dy)
-            heroFrame("broll")
-                .shadow(color: .black.opacity(0.14), radius: 22, x: 0, y: 10)
-                .rotationEffect(.degrees(11 + tilt), anchor: .bottom)
-                .position(x: 166 + 59, y: 44 + 79 - dy)
-            heroFrame("montage")
-                .shadow(color: .black.opacity(0.18), radius: 30, x: 0, y: 14)
-                .position(x: 112 + 59, y: 24 + 79 - dy)
-        }
-    }
-
-    private func heroFrame(_ name: String) -> some View {
-        BundledPosterImage(name: name)
-            .scaledToFill()
-            .frame(width: 118, height: 158)
-            .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private func preview(_ edit: FeaturedEdit) -> some View {
+        FeaturedEditPreview(edit: edit, active: FeaturedEdit.onboarding[activeIndex] == edit,
+                            allowed: isAnimating, completed: {
+            guard FeaturedEdit.onboarding[activeIndex] == edit else { return }
+            activeIndex = (activeIndex + 1) % FeaturedEdit.onboarding.count
+        }, playingChanged: { value in
+            if FeaturedEdit.onboarding[activeIndex] == edit { playing = value }
+        })
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 14, x: 0, y: 6)
     }
 }
 
