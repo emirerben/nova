@@ -5385,7 +5385,15 @@ def _variant_orientation(variant: dict) -> str:
 
 def _orientation_unsupported_reason(variant: dict) -> str | None:
     archetype = variant.get("resolved_archetype")
-    if archetype in {"subtitled", "narrated", "talking_head"}:
+    if archetype == "subtitled" and is_phone_subtitled_editor_variant(variant):
+        # A phone-rendered Talking edit (incl. the multi-clip Talking head, which stays
+        # `subtitled`) re-canvases on Save: `_compile_subtitled_editor_commit` recompiles onto
+        # 1920x1080. It is open exactly while that Save lane is -- the same predicate
+        # `device_editor_offer(subtitled_lanes=...)` is given. The CLOUD subtitled renderer
+        # has no landscape canvas, so a cloud variant falls to the closed branch below.
+        if not phone_subtitled_editor_lanes_supported():
+            return "phone_edit_unsupported"
+    elif archetype in {"subtitled", "narrated", "talking_head"}:
         return "orientation_unsupported"
     if is_collage_montage_preset(
         variant.get("montage_preset_rendered") or variant.get("montage_preset")
@@ -6983,8 +6991,12 @@ def _clamp_phone_editor_capabilities(
 
     ``shape`` (KRI-306, `render_shape.device_editor_offer`): what Save accepts for
     orientation and bars/crop on this variant. Orientation is only ever CLOSED
-    here (never opened beyond the base map); `landscape_fit` is replaced by the
-    device truth (the cloud map always advertises it closed).
+    here (never opened beyond the base map): a phone Talking variant is opened by
+    the base map itself (`_orientation_unsupported_reason` knows a device-rendered
+    `subtitled` variant), and `device_editor_offer` agrees on the same predicates,
+    so "device offer wins" only ever matters when they would disagree.
+    `landscape_fit` is replaced by the device truth (the cloud map always
+    advertises it closed).
 
     ``source_crop`` (KRI-140): a guided-story device variant keeps the footage
     crop control once the device has verified ``sourceCrop`` -- the phone
@@ -7484,6 +7496,7 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             job.assembly_plan or {},
             subtitled_lanes=subtitled_lanes,
             voiceover_lanes=voiceover_lanes,
+            landscape_enabled=_LANDSCAPE_OUTPUT_ENABLED,
             guided_revision=(
                 variant.get("resolved_archetype") == "guided_story"
                 and bool(getattr(settings, "guided_story_editor_v2_enabled", False))
