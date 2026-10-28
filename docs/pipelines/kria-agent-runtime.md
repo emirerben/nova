@@ -316,9 +316,11 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   trees") is not drawn again: `plan_unified_montage` keeps the label, at the creator's spot, and
   records `title_shown_as_label` (receipts read that label as the title). The label covers
   the opening from 0 s, so the contract's `opening` role and `phone_plan_repair._shows` accept
-  it. Not folded when the title has a typed
-  hold or an entrance animation. Done where the snapshot is built: `guided_story` recompiles
-  stored plans for equality (`validate_execution_plan`), so old approvals stay byte-identical.
+  it. Not folded when the title has a typed hold or an entrance animation. Done where the
+  snapshot is built: `guided_story` recompiles stored plans for equality
+  (`validate_execution_plan`), so old approvals stay byte-identical. Likewise a global brief
+  literal that is one of the creator's own labels ('label "Casa Rosada" on the pink building')
+  is never also the opening title (`_title`'s `creator_label_texts`).
 - **Freeze frame (KRI-777).** No edit can hold a frame (no strategy field; neither the
   phone recipe nor the cloud renderer freezes a creator-chosen frame). Café M2 filed
   "freeze the frame for one second on Atakan's bite" as `timing/global {"duration_s": 1,

@@ -1914,7 +1914,12 @@ def plan_unified_montage(
         )
 
     # ── title and typography ─────────────────────────────────────────────────
-    title, title_source = _title(strategy, view, [label.text for label in labels.values()])
+    title, title_source = _title(
+        strategy,
+        view,
+        [label.text for label in labels.values()],
+        [label.text for label in labels.values() if label.provenance == "creator"],
+    )
     closing = _nfc(strategy.get("closing_title")) or None
     pins = _pinned_texts(strategy)
     requested_font = strategy.get("font_family")
@@ -3778,13 +3783,21 @@ def _intent_outcomes(
 
 
 def _title(
-    strategy: Mapping[str, Any], view: BriefView, label_texts: Sequence[str] = ()
+    strategy: Mapping[str, Any],
+    view: BriefView,
+    label_texts: Sequence[str] = (),
+    creator_label_texts: Sequence[str] = (),
 ) -> tuple[str | None, str]:
     """The opening title and where it came from.
 
     ``label_texts`` are the per-clip labels the montage prints. A brief literal that only
     lists them ("Bölüm başlıkları: Sabah, Üniversite, Öğle arası, Spor, Akşam") asked for
     chapter titles, which the labels already are: it is never also an opening title (KRI-545).
+
+    ``creator_label_texts`` are the labels written in the creator's own words. A global
+    literal that IS one of them ('label "Casa Rosada" on the pink building', filed as global
+    text and placed by its clip intent) is that label, never also the opening title (KRI-1030,
+    Plaza de Mayo M1 first draft: "Casa Rosada" over the palm trees, then on its own clip).
     """
     if "opening_title" in (strategy.get("omitted_copy_targets") or []):
         return None, "none"
@@ -3810,7 +3823,8 @@ def _title(
         return _nfc(view.title_literal), "creator"
     start = _first(view.facts, _START_KEYS)
     end = _first(view.facts, _END_KEYS)
-    if titles(view.global_literal):
+    labelled = {fold_text(text) for text in creator_label_texts}
+    if titles(view.global_literal) and fold_text(_nfc(view.global_literal)) not in labelled:
         route = f"{start} → {end}" if start and end else ""
         headline = _nfc(view.global_literal)
         if route and route.casefold() not in headline.casefold():
@@ -3835,13 +3849,15 @@ def title_source_exists(strategy: Mapping[str, Any], brief: Any) -> bool:
     phone path's production setting).
     """
     view = brief_view(brief)
-    labels = [
+    intents = _intent_labels(strategy, True).values()
+    creator_labels = [
         *view.clip_literals.values(),
         *(_nfc(text) for text in strategy.get("shot_labels") or []),
-        *(text for text, _creator in _intent_labels(strategy, True).values()),
+        *(text for text, creator in intents if creator),
         *_described_shot_labels(strategy, True).values(),
     ]
-    return _title(strategy, view, labels)[0] is not None
+    labels = [*creator_labels, *(text for text, creator in intents if not creator)]
+    return _title(strategy, view, labels, creator_labels)[0] is not None
 
 
 __all__ = [

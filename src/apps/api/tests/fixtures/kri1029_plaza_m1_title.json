@@ -4055,5 +4055,1288 @@
   "dropped_label_reasons": {},
   "dropped_label_clip_ids": [],
   "ordering_fallback_clip_ids": []
+ },
+ "first_job_strategy": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "rationale": "Ending on the Cathedral updates the sequence to match your available footage. The very short clips are skipped to keep the pacing solid. Audio will only play on the Recoleta clip, and the labels will be placed on the specific locations you described.",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed"
+   },
+   {
+    "op": "exclude",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_too_short",
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "attribute": "the palm trees",
+    "intent_id": "title_plaza_de_mayo",
+    "creator_text": "Plaza de Mayo 🇦🇷"
+   },
+   {
+    "op": "label",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Open with the palm trees and Plaza de Mayo title",
+   "Show the Casa Rosada",
+   "Walk to the bus",
+   "Mention going to Recoleta with audio on",
+   "End at the Cathedral"
+  ],
+  "target_duration_s": 20,
+  "selected_media_ids": [
+   "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+   "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+   "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+   "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+   "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed",
+    "assignments": [
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "exclude",
+    "status": "resolved",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_too_short",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the palm trees",
+    "intent_id": "title_plaza_de_mayo",
+    "assignments": [
+     {
+      "value": "Plaza de Mayo 🇦🇷",
+      "evidence": "tall palm trees and building view",
+      "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Plaza de Mayo 🇦🇷"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "assignments": [
+     {
+      "value": "Casa Rosada",
+      "evidence": "pink government building",
+      "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "assignments": [
+     {
+      "value": "Catedral",
+      "evidence": "large, columned building, which one person identifies as a cathedral",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral",
+    "assignments": [
+     {
+      "evidence": "the cathedral",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "confidence": 0.95
+     }
+    ]
+   }
+  ],
+  "selected_music_section": null
+ },
+ "first_job_media_snapshot": {
+  "song_path": null,
+  "voiceover": null,
+  "best_parts": [
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+    "source_end_s": 8.0,
+    "source_start_s": 5.3
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+    "source_end_s": 5.57,
+    "source_start_s": 1.0
+   },
+   {
+    "score": 3.5,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+    "source_end_s": 10.9,
+    "source_start_s": 8.1
+   },
+   {
+    "score": 100.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+    "source_end_s": 9.18,
+    "source_start_s": 3.82
+   },
+   {
+    "score": 0.0,
+    "reason": "analysis_fallback",
+    "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+    "source_end_s": 4.57,
+    "source_start_s": 0.0
+   }
+  ],
+  "clip_paths": [
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4"
+  ],
+  "length_plan": {
+   "owner": "creator",
+   "sources": [
+    {
+     "kind": "video",
+     "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+     "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+     "duration_s": 14.334,
+     "generation": null,
+     "storage_generation": "1793203988824280"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+     "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+     "duration_s": 14.0,
+     "generation": null,
+     "storage_generation": "1793203987865473"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+     "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+     "duration_s": 11.634,
+     "generation": null,
+     "storage_generation": "1793203979784508"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+     "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+     "duration_s": 14.5,
+     "generation": null,
+     "storage_generation": "1793203989777291"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+     "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+     "duration_s": 23.4,
+     "generation": null,
+     "storage_generation": "1793203987419847"
+    }
+   ],
+   "version": 1,
+   "windows": [
+    {
+     "score": 6.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+     "source_end_s": 8.0,
+     "source_start_s": 5.3
+    },
+    {
+     "score": 6.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+     "source_end_s": 5.57,
+     "source_start_s": 1.0
+    },
+    {
+     "score": 3.5,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+     "source_end_s": 10.9,
+     "source_start_s": 8.1
+    },
+    {
+     "score": 100.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+     "source_end_s": 9.18,
+     "source_start_s": 3.82
+    },
+    {
+     "score": 0.0,
+     "reason": "analysis_fallback",
+     "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+     "source_end_s": 4.57,
+     "source_start_s": 0.0
+    }
+   ],
+   "conflicts": [],
+   "capacity_s": 40.26,
+   "natural_owner": "footage",
+   "capacity_raw_s": 77.868,
+   "window_eligible": true,
+   "max_source_count": 80,
+   "target_duration_s": 20.0,
+   "natural_duration_s": null
+  },
+  "song_analysis": null,
+  "song_alignment": null,
+  "voiceover_path": null,
+  "song_duration_s": null,
+  "song_generation": null,
+  "clip_assignments": [
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2025-12-12T22:00:16Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 568,
+     "aspect": 1.775,
+     "brands": [],
+     "height": 320,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "man in Argentina jersey",
+     "exposure": {
+      "frames": 13,
+      "version": 1,
+      "mean_luma": 120.2,
+      "near_black_share": 0.0
+     },
+     "duration_s": 11.633333,
+     "transcript": "Now we'll we'll take the bus, right? Yes.",
+     "description": "man speaks about taking bus man adjusts his hair while talking",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 2.5,
+       "energy": 3.0,
+       "start_s": 0.0,
+       "description": "man speaks about taking bus"
+      },
+      {
+       "end_s": 10.9,
+       "energy": 3.5,
+       "start_s": 8.1,
+       "description": "man adjusts his hair while talking"
+      }
+     ],
+     "display_width": 568,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "Argentina soccer jersey"
+      ],
+      "brands": [
+       "FIFA"
+      ],
+      "people": {
+       "note": "two men, one with a beard and sunglasses, wearing an Argentina soccer jersey",
+       "count": 2,
+       "speaks_to_camera": true
+      },
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "Now we'll take the bus, right?",
+         "end_s": 2.46,
+         "start_s": 0.0
+        },
+        {
+         "text": "Yes.",
+         "end_s": 2.94,
+         "start_s": 2.5
+        }
+       ],
+       "to_camera": true,
+       "has_speech": true,
+       "transcript": "Now we'll we'll take the bus, right? Yes."
+      },
+      "actions": [
+       "man walks forward",
+       "man speaks to camera",
+       "man adjusts his hair"
+      ],
+      "setting": "city square or park outdoors during daytime",
+      "subject": "man in Argentina jersey",
+      "summary": "Two men are walking outdoors, one of whom is speaking to the camera about taking a bus. They are in a city square or park setting.",
+      "activity": "walking and talking to camera",
+      "audio_type": "dialogue",
+      "content_type": "talking_head",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady, handheld selfie view",
+      "notable_moments": [
+       {
+        "end_s": 2.5,
+        "start_s": 0.0,
+        "description": "man speaks about taking bus"
+       },
+       {
+        "end_s": 10.9,
+        "start_s": 8.1,
+        "description": "man adjusts his hair while talking"
+       }
+      ]
+     },
+     "display_height": 320,
+     "on_screen_text": "Now we'll we'll take the bus, right? Yes.",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+    "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+    "has_audio": true,
+    "duration_s": 11.633333,
+    "source_filename": "6D8666F9-1AA4-466E-947C-9BCD5EAD8B48-M1_07_footage.mp4",
+    "upload_contract": {
+     "proxy": {
+      "width": 568,
+      "height": 320,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "2be23d35b065423b69f6a002c859e339f2ca9bbda2753a4e68438176a6aa77bd",
+       "has_audio": true,
+       "byte_count": 20260929,
+       "duration_s": 11.634,
+       "orientation_degrees": 0
+      },
+      "duration_s": 11.633333333333333,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "c0ad2a29-1143-4d4d-9ae7-b891a0df1930",
+    "library_source_id": "a5c1f3ce-dd99-4b18-9ad1-ad51255ac9e4",
+    "manifest_identity": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+    "storage_generation": "1793203979784508"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2025-12-12T22:00:08Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 568,
+     "aspect": 1.775,
+     "brands": [],
+     "height": 320,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "tiled ground",
+     "exposure": {
+      "frames": 2,
+      "version": 1,
+      "mean_luma": 118.5,
+      "near_black_share": 0.0
+     },
+     "duration_s": 0.966667,
+     "transcript": "",
+     "description": "",
+     "video_codec": "h264",
+     "best_moments": [],
+     "display_width": 568,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "grey square tiles",
+       "curved grey boundary tiles"
+      ],
+      "brands": [],
+      "people": {
+       "note": "",
+       "count": null,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "setting": "outdoor tiled area",
+      "subject": "tiled ground",
+      "summary": "The clip features a static shot of a tiled ground with a distinct curved pattern made of larger, darker tiles.",
+      "activity": "static view of pavement",
+      "audio_type": "ambient",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": []
+     },
+     "display_height": 320,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+    "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+    "has_audio": true,
+    "duration_s": 0.966667,
+    "source_filename": "06B7F4C3-1322-45D2-ADC2-C3096416B049-M1_06_footage.mp4",
+    "upload_contract": {
+     "proxy": {
+      "width": 568,
+      "height": 320,
+      "original": {
+       "kind": "video",
+       "width": 3840,
+       "height": 2160,
+       "sha256": "a94e952df9041a9b5cb16fd75847c85117d0c8d6059a5f8703e8a5206b7f71fd",
+       "has_audio": true,
+       "byte_count": 16339268,
+       "duration_s": 0.96,
+       "orientation_degrees": 0
+      },
+      "duration_s": 0.9666666666666667,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "c6b0a9eb-77eb-4955-a568-e339ddea3a12",
+    "library_source_id": "12e519fc-1a5d-489d-a46d-21b4fb9a3c84",
+    "manifest_identity": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+    "storage_generation": "1793203980557251"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2025-12-12T22:01:47Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "people walking past a large building",
+     "exposure": {
+      "frames": 24,
+      "version": 1,
+      "mean_luma": 103.9,
+      "near_black_share": 0.0
+     },
+     "duration_s": 23.4,
+     "transcript": "Yeah. Yes. Well, and this is the cathedral, by the way. You might have. What is this? It's not the Pantheon, this is the cathedral. Okay. It looks like Pantheon. I know, they try to imitate it, but it's not. Yeah. It was opened just a while ago. You could have seen, have you, if you entered here? No.",
+     "description": "It's not the Pantheon, this is the cathedral.",
+     "video_codec": "h264",
+     "best_moments": [],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "brands": [],
+      "people": {
+       "note": "two men and a woman walking, two men sitting",
+       "count": 5,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "Yes.",
+         "end_s": 1.42,
+         "start_s": 0.96
+        },
+        {
+         "text": "This is the cathedral.",
+         "end_s": 5.32,
+         "start_s": 4.2
+        },
+        {
+         "text": "You might have...",
+         "end_s": 6.8,
+         "start_s": 5.96
+        },
+        {
+         "text": "What is this?",
+         "end_s": 7.4,
+         "start_s": 6.8
+        },
+        {
+         "text": "This is not the pantheon, this is the cathedral.",
+         "end_s": 9.38,
+         "start_s": 7.44
+        },
+        {
+         "text": "Okay.",
+         "end_s": 9.8,
+         "start_s": 9.46
+        },
+        {
+         "text": "It looks like pantheon.",
+         "end_s": 11.1,
+         "start_s": 9.88
+        },
+        {
+         "text": "I know.",
+         "end_s": 11.66,
+         "start_s": 11.3
+        },
+        {
+         "text": "They tried to imitate it.",
+         "end_s": 13.04,
+         "start_s": 11.88
+        },
+        {
+         "text": "It was open just a while ago.",
+         "end_s": 19.88,
+         "start_s": 17.68
+        },
+        {
+         "text": "You could have seen...",
+         "end_s": 21.74,
+         "start_s": 20.72
+        },
+        {
+         "text": "Have you...",
+         "end_s": 22.06,
+         "start_s": 21.74
+        },
+        {
+         "text": "Did you enter here?",
+         "end_s": 22.78,
+         "start_s": 22.06
+        },
+        {
+         "text": "No.",
+         "end_s": 23.02,
+         "start_s": 22.78
+        },
+        {
+         "text": "Ah, okay.",
+         "end_s": 23.38,
+         "start_s": 23.16
+        }
+       ],
+       "to_camera": false,
+       "has_speech": true,
+       "transcript": "Yeah. Yes. Well, and this is the cathedral, by the way. You might have. What is this? It's not the Pantheon, this is the cathedral. Okay. It looks like Pantheon. I know, they try to imitate it, but it's not. Yeah. It was opened just a while ago. You could have seen, have you, if you entered here? No."
+      },
+      "actions": [
+       "man walks past columns",
+       "woman walks on sidewalk",
+       "man walks next to woman",
+       "two men conversing"
+      ],
+      "setting": "city street in front of a classical-style building",
+      "subject": "people walking past a large building",
+      "summary": "The video shows two people walking past a large, columned building, which one person identifies as a cathedral. They discuss its resemblance to the Pantheon.",
+      "activity": "walking on a sidewalk and discussing architecture",
+      "audio_type": "dialogue",
+      "content_type": "broll",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": []
+     },
+     "display_height": 568,
+     "on_screen_text": "Yeah. Yes. Well, and this is the cathedral, by the way. You might have. What is this? It's not the Pantheon, this is the cathedral. Okay. It looks like Pantheon. I know, they try to imitate it, but it's not. Yeah. It was opened just a while ago. You could have seen, have you, if you entered here? No.",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+    "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+    "has_audio": true,
+    "duration_s": 23.4,
+    "source_filename": "473A38AF-090A-4768-A3F8-83697A04A8A8-M1_05_footage.mp4",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1080,
+       "height": 1920,
+       "sha256": "3a8c20af9681b8489b0432f1c161aa7a90c8ed9805ddc09558550fbc4e441467",
+       "has_audio": true,
+       "byte_count": 44492024,
+       "duration_s": 23.4,
+       "orientation_degrees": 0
+      },
+      "duration_s": 23.4,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "10777f7d-af44-4daf-bcc8-9e399f6652c3",
+    "library_source_id": "360878f0-5f59-43a2-a03c-89045178c1e6",
+    "manifest_identity": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+    "storage_generation": "1793203987419847"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2025-12-12T22:10:13Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "man on a bus",
+     "duration_s": 0.2,
+     "transcript": "",
+     "description": "man standing on bus holding bar man slightly swaying with bus motion man looking around on bus",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 3.0,
+       "energy": 5.0,
+       "start_s": 0.0,
+       "description": "man standing on bus holding bar"
+      },
+      {
+       "end_s": 6.0,
+       "energy": 4.0,
+       "start_s": 3.0,
+       "description": "man slightly swaying with bus motion"
+      },
+      {
+       "end_s": 10.0,
+       "energy": 3.0,
+       "start_s": 6.0,
+       "description": "man looking around on bus"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "yellow overhead bus bar"
+      ],
+      "brands": [],
+      "people": {
+       "note": "a man with a beard wearing a black patterned shirt",
+       "count": 1,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "man stands holding bus bar"
+      ],
+      "setting": "public bus interior during the day",
+      "subject": "man on a bus",
+      "summary": "A man with a beard stands on a bus, holding onto a yellow overhead bar as the bus moves.",
+      "activity": "riding a bus",
+      "audio_type": "ambient",
+      "content_type": "broll",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": [
+       {
+        "end_s": 3.0,
+        "start_s": 0.0,
+        "description": "man standing on bus holding bar"
+       },
+       {
+        "end_s": 6.0,
+        "start_s": 3.0,
+        "description": "man slightly swaying with bus motion"
+       },
+       {
+        "end_s": 10.0,
+        "start_s": 6.0,
+        "description": "man looking around on bus"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+    "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+    "has_audio": false,
+    "duration_s": 0.2,
+    "source_filename": "FBDFB411-CF4B-4A4D-8A33-BA1CDB64B58E-M1_03_footage.mp4",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1080,
+       "height": 1920,
+       "sha256": "b60315f2205fc0f36e471243eba37006be9db12c3f2bec0c607b9bcea0294ec2",
+       "has_audio": false,
+       "byte_count": 1411502,
+       "duration_s": 0.16683333333333333,
+       "orientation_degrees": 0
+      },
+      "duration_s": 0.2,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "df2a0d04-934e-4c38-a197-a8b01a171fe1",
+    "library_source_id": "21f95e45-d57c-40bd-b640-e46f8138537a",
+    "manifest_identity": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+    "storage_generation": "1793203987701461"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2025-12-12T21:49:02Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 568,
+     "aspect": 1.775,
+     "brands": [],
+     "height": 320,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "man speaking in public square",
+     "exposure": {
+      "frames": 15,
+      "version": 1,
+      "mean_luma": 113.1,
+      "near_black_share": 0.0
+     },
+     "duration_s": 14.0,
+     "transcript": "of the square, you had the the real government, the government of the whole, the whole country. And it was in the hands of Spain, right? And when the when the viceroy, you know, viceroy,",
+     "description": "camera pans to wide view of square man speaks to camera",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 7.0,
+       "energy": 6.0,
+       "start_s": 1.0,
+       "description": "camera pans to wide view of square"
+      },
+      {
+       "end_s": 12.0,
+       "energy": 4.0,
+       "start_s": 9.0,
+       "description": "man speaks to camera"
+      }
+     ],
+     "display_width": 568,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "pink government building",
+       "white monument with a statue",
+       "Argentine flag on flagpole"
+      ],
+      "brands": [],
+      "people": {
+       "note": "a man with a beard and dark shirt",
+       "count": null,
+       "speaks_to_camera": true
+      },
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "a square you have the the real government the government of the whole the whole country and it was in the hands of spain right and when the when the viceroy you know viceroy",
+         "end_s": 13.98,
+         "start_s": 0.0
+        }
+       ],
+       "to_camera": true,
+       "has_speech": true,
+       "transcript": "of the square, you had the the real government, the government of the whole, the whole country. And it was in the hands of Spain, right? And when the when the viceroy, you know, viceroy,"
+      },
+      "actions": [
+       "man speaks to camera",
+       "camera pans across large square"
+      ],
+      "setting": "public square in Buenos Aires, daytime",
+      "subject": "man speaking in public square",
+      "summary": "A man speaks to the camera in a public square, explaining the history of the square and the government building. The camera pans from the man to a wide shot of the square with a pink building in the background, then back to the man.",
+      "activity": "giving a historical explanation while standing in a square",
+      "audio_type": "dialogue",
+      "content_type": "talking_head",
+      "on_screen_text": "",
+      "visual_quality": "smooth pan, stays sharp",
+      "notable_moments": [
+       {
+        "end_s": 7.0,
+        "start_s": 1.0,
+        "description": "camera pans to wide view of square"
+       },
+       {
+        "end_s": 12.0,
+        "start_s": 9.0,
+        "description": "man speaks to camera"
+       }
+      ]
+     },
+     "display_height": 320,
+     "on_screen_text": "of the square, you had the the real government, the government of the whole, the whole country. And it was in the hands of Spain, right? And when the when the viceroy, you know, viceroy,",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+    "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+    "has_audio": true,
+    "duration_s": 14.0,
+    "source_filename": "88EDBCD7-D000-446E-BEE0-F23E7855C2FB-M1_04_footage.mp4",
+    "upload_contract": {
+     "proxy": {
+      "width": 568,
+      "height": 320,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "d9bc4bcee1fdc56fa87fce8d67e8bbf75b8f6d902b12f1aa3f4bd69a0960665f",
+       "has_audio": true,
+       "byte_count": 24353195,
+       "duration_s": 14.0,
+       "orientation_degrees": 0
+      },
+      "duration_s": 14.0,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "9c8710f9-49e2-4827-9640-8bce331cff5a",
+    "library_source_id": "05d3efad-0153-4624-af32-e2f3487395ba",
+    "manifest_identity": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+    "storage_generation": "1793203987865473"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2025-12-12T21:41:10Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "palm trees and building",
+     "exposure": {
+      "frames": 15,
+      "version": 1,
+      "mean_luma": 102.5,
+      "near_black_share": 0.0
+     },
+     "duration_s": 14.333333,
+     "transcript": "Yeah, we started. Uh, hello everyone. I think, should I do in English or Turkish? Turkish? Would you mind? Turkish? Okay, you'll tell and I'll just translate into Turkish. Okay. Okay.",
+     "description": "tall palm trees and building view speaker begins addressing audience asking about language preference agreeing on translation plan",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 1.9,
+       "energy": 3.0,
+       "start_s": 0.0,
+       "description": "tall palm trees and building view"
+      },
+      {
+       "end_s": 3.8,
+       "energy": 5.0,
+       "start_s": 2.2,
+       "description": "speaker begins addressing audience"
+      },
+      {
+       "end_s": 8.0,
+       "energy": 6.0,
+       "start_s": 5.3,
+       "description": "asking about language preference"
+      },
+      {
+       "end_s": 13.9,
+       "energy": 4.0,
+       "start_s": 9.9,
+       "description": "agreeing on translation plan"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "brands": [],
+      "people": {
+       "note": "two people sitting on grass in background",
+       "count": 2,
+       "speaks_to_camera": true
+      },
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "Yeah, we started.",
+         "end_s": 2.36,
+         "start_s": 1.24
+        },
+        {
+         "text": "Hello everyone.",
+         "end_s": 4.7,
+         "start_s": 3.88
+        },
+        {
+         "text": "Should I do it in English or Turkish?",
+         "end_s": 7.06,
+         "start_s": 5.02
+        },
+        {
+         "text": "Turkish.",
+         "end_s": 7.52,
+         "start_s": 7.22
+        },
+        {
+         "text": "Would you mind?",
+         "end_s": 8.04,
+         "start_s": 7.58
+        },
+        {
+         "text": "Turkish.",
+         "end_s": 8.94,
+         "start_s": 8.54
+        },
+        {
+         "text": "Yeah.",
+         "end_s": 9.7,
+         "start_s": 9.36
+        },
+        {
+         "text": "Okay, you'll tell and I'll just translate into Turkish.",
+         "end_s": 11.48,
+         "start_s": 9.7
+        },
+        {
+         "text": "Okay.",
+         "end_s": 12.14,
+         "start_s": 11.74
+        },
+        {
+         "text": "Okay.",
+         "end_s": 12.76,
+         "start_s": 12.38
+        }
+       ],
+       "to_camera": true,
+       "has_speech": true,
+       "transcript": "Yeah, we started. Uh, hello everyone. I think, should I do in English or Turkish? Turkish? Would you mind? Turkish? Okay, you'll tell and I'll just translate into Turkish. Okay. Okay."
+      },
+      "setting": "outdoor park with historical building",
+      "subject": "palm trees and building",
+      "summary": "The video shows a sunny park setting with tall palm trees and a historic building in the background. Two people are visible sitting on the grass. The speaker asks whether to speak in English or Turkish.",
+      "activity": "walking and speaking to camera",
+      "audio_type": "dialogue",
+      "content_type": "talking_head",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": [
+       {
+        "end_s": 1.9,
+        "start_s": 0.0,
+        "description": "tall palm trees and building view"
+       },
+       {
+        "end_s": 3.8,
+        "start_s": 2.2,
+        "description": "speaker begins addressing audience"
+       },
+       {
+        "end_s": 8.0,
+        "start_s": 5.3,
+        "description": "asking about language preference"
+       },
+       {
+        "end_s": 13.9,
+        "start_s": 9.9,
+        "description": "agreeing on translation plan"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "Yeah, we started. Uh, hello everyone. I think, should I do in English or Turkish? Turkish? Would you mind? Turkish? Okay, you'll tell and I'll just translate into Turkish. Okay. Okay.",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+    "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+    "has_audio": true,
+    "duration_s": 14.333333,
+    "source_filename": "662AF7CB-8F95-4C21-9F78-0539F2A1DFFA-M1_02_footage.mp4",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1080,
+       "height": 1920,
+       "sha256": "7e3d0de3d40c7fe27df27d9bb51d280084d939f8a436e128cfd016e4d710d9e5",
+       "has_audio": true,
+       "byte_count": 28629783,
+       "duration_s": 14.334,
+       "orientation_degrees": 0
+      },
+      "duration_s": 14.333333333333334,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "20195c47-8d9b-4413-9260-d8b16d2b8722",
+    "library_source_id": "287b339d-1852-4272-b6d7-a17ddf862a85",
+    "manifest_identity": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+    "storage_generation": "1793203988824280"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2025-12-12T22:00:46Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "man in soccer jersey",
+     "exposure": {
+      "frames": 16,
+      "version": 1,
+      "mean_luma": 131.2,
+      "near_black_share": 0.0
+     },
+     "duration_s": 14.5,
+     "transcript": "Yeah, we started great. Now we are going to Recoleta. Recoleta. Yeah. Everyone less that",
+     "description": "Now we are going to Recoleta.",
+     "video_codec": "h264",
+     "best_moments": [],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "white and blue Argentina soccer jersey",
+       "orange-tinted sunglasses",
+       "black sling bag"
+      ],
+      "brands": [
+       "Adidas",
+       "FIFA 2022",
+       "AFA"
+      ],
+      "people": {
+       "note": "two men, one in an Argentina soccer jersey and sunglasses, the other in a black palm tree shirt",
+       "count": 2,
+       "speaks_to_camera": true
+      },
+      "speech": {
+       "language": "en",
+       "segments": [
+        {
+         "text": "We started great, now we are going to Recoleta,",
+         "end_s": 8.88,
+         "start_s": 4.62
+        },
+        {
+         "text": "Recoleta everyone lays down",
+         "end_s": 14.48,
+         "start_s": 10.14
+        }
+       ],
+       "to_camera": true,
+       "has_speech": true,
+       "transcript": "Yeah, we started great. Now we are going to Recoleta. Recoleta. Yeah. Everyone less that"
+      },
+      "actions": [
+       "man talks to camera",
+       "man gives a thumbs up",
+       "second man walks into frame"
+      ],
+      "setting": "outdoor public space with trees",
+      "subject": "man in soccer jersey",
+      "summary": "A man wearing an Argentina soccer jersey and sunglasses talks to the camera, giving a thumbs up. Another man appears briefly beside him as he mentions going to Recoleta.",
+      "activity": "talking to camera and giving a thumbs up",
+      "audio_type": "dialogue",
+      "content_type": "talking_head",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": []
+     },
+     "display_height": 568,
+     "on_screen_text": "Yeah, we started great. Now we are going to Recoleta. Recoleta. Yeah. Everyone less that",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/a228e85b-c293-44ec-9adf-1228ae19b4bf/analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+    "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+    "has_audio": true,
+    "duration_s": 14.5,
+    "source_filename": "09268518-CB02-4810-939B-C6647DC82331-M1_01_footage.mp4",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1080,
+       "height": 1920,
+       "sha256": "c5086d24fb993e5ce1a7be73ca54effe65ba980e85961fc3e53703dd940e08e5",
+       "has_audio": true,
+       "byte_count": 17939210,
+       "duration_s": 14.5,
+       "orientation_degrees": 0
+      },
+      "duration_s": 14.5,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "da255538-28c0-4475-8133-534c49dcc820",
+    "library_source_id": "38017458-f4c4-4803-a0ae-00574a8bf14e",
+    "manifest_identity": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+    "storage_generation": "1793203989777291"
+   }
+  ],
+  "best_parts_conflicts": [],
+  "voiceover_duration_s": null,
+  "voiceover_generation": null,
+  "best_parts_capacity_s": 40.26
  }
 }

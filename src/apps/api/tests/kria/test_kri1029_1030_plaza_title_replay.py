@@ -242,6 +242,41 @@ def test_the_title_is_drawn_once_on_the_palms() -> None:
     assert [row["text"] for row in record["labels"]] == [TITLE, "Casa Rosada", "Catedral"]
 
 
+def test_the_first_draft_never_makes_a_label_the_opening_title() -> None:
+    """The failed first job 40684a25 (strategy t3: the title as a label intent on the palms,
+    no ``opening_title``), replayed with its own strategy, media snapshot and length plan.
+
+    Its brief files 'label "Casa Rosada" on the pink building' as global text, and ``_title``
+    took that first global literal as the opening title: "Casa Rosada" at the top over the
+    palm trees, then again on the pink building (found by the KRI-1024 session once the flag
+    stopped refusing the render). The flag is written as the creator wrote it the next turn,
+    so this checks the title alone (KRI-1024 owns the flag).
+    """
+
+    def unflagged(value):  # noqa: ANN001, ANN202
+        return json.loads(json.dumps(value).replace(" \\ud83c\\udde6\\ud83c\\uddf7", ""))
+
+    from app.services.phone_montage_preflight import preflight_montage_plan  # noqa: PLC0415
+
+    brief = CreativeBrief.model_validate(unflagged(FIXTURE["brief_v2"]))
+    planned = preflight_montage_plan(
+        creator_id=CREATOR_ID,
+        edit_format="montage",
+        brief=brief,
+        strategy=unflagged(FIXTURE["first_job_strategy"]),
+        media_snapshot=copy.deepcopy(FIXTURE["first_job_media_snapshot"]),
+        visuals=[],
+        client_protocol=23,
+    )
+    assert isinstance(planned, tuple), planned
+    rows = text_elements(planned[0])
+    assert [row["text"] for row in rows if row["start_s"] == 0.0] == [TITLE]
+    for words in (TITLE, "Casa Rosada", "Catedral"):
+        assert [row["text"] for row in rows].count(words) == 1, words
+    record = planned[0].record()
+    assert (record["title"], record["title_source"]) == (None, "none")
+
+
 def test_a_title_ask_reads_the_label_as_the_title() -> None:
     """A brief that also says "add a title" (no words) is still a "Done": the opening text is
     the creator's own label, drawn once from 0 s."""
