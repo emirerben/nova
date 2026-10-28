@@ -5,6 +5,32 @@ import KriaMediaEngine
 @testable import Kria
 
 @MainActor final class NativeEditorRenderCompilerTests: XCTestCase {
+    func testSelectingSubframeStartDisplaysTheSelectedItemsFrame() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.selectionBoundary)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: url)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let items = session.timelineItems.filter { $0.start == 2.001 }
+        XCTAssertTrue(items.contains { $0.kind == .clip })
+        XCTAssertTrue(items.contains { $0.kind == .text })
+        for item in items {
+            session.seek(to: 0)
+            for _ in 0..<200 {
+                if session.scrubPreviewTime == 0 { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            session.select(item)
+            for _ in 0..<400 {
+                if (session.scrubPreviewTime ?? 0) >= 2 { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            let displayed = try XCTUnwrap(session.scrubPreviewTime)
+            XCTAssertGreaterThanOrEqual(displayed, item.start, "Selected \(item.kind) shows the preceding frame")
+            XCTAssertLessThan(displayed, item.end)
+            XCTAssertFalse(session.isPlaying)
+        }
+    }
+
     func testFootageRateAndCropCompileAsAdditiveRecipeFields() throws {
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
