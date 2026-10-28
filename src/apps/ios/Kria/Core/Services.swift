@@ -1928,7 +1928,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .unsupportedPhoneEdit:
-            "This text style or layout can’t be saved on this iPhone yet. Your edits are still here; adjust the style or size and try again."
+            "This edit couldn’t be prepared for this iPhone. Your edits are still here. Undo the last change and try saving again."
         case .phoneRenderingUnavailable:
             "Rendering is temporarily unavailable. Your edits are still here."
         case .guidedStorySourceStale:
