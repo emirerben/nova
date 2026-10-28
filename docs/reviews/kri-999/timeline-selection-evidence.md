@@ -70,3 +70,12 @@ No provider calls, paid evaluations, backend changes or web-editor work occurred
 The cursor-team-kit `deslop` skill was unavailable. The diff and added comment
 were reviewed directly in the current agent, as required by the user's ban on
 delegation.
+
+## Pre-merge check
+
+CI found that the new UI test was absent from `scripts/ios/ui-test-groups.json`.
+The four selector failures reproduced locally. Registering the test in the
+editor group restored inventory matching, and all 121 tests from
+`python3 -m unittest discover -s scripts/ci` passed. The same 40 native checks
+were rerun and passed, with results in `/private/tmp/pr1893-final-native.xcresult`.
+The selection implementation and fixtures did not change in this correction.
