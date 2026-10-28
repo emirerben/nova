@@ -7775,6 +7775,7 @@ def _run_phone_subtitled_job(
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
         SOURCE_FALLBACK,
+        SUPPORTED_CAPTION_LANGUAGES,
         coerce_caption_language_request,
         crosscheck_detected_language,
         resolve_spoken_caption_language,
@@ -8485,6 +8486,10 @@ def _run_phone_subtitled_job(
                     _closing if isinstance(_closing, dict) else None,
                 )
 
+            # KRI-1015: the INDEPENDENT read of the spoken language ("" = unknown) the
+            # caption-language ensure step ran with; set by whichever branch ran below.
+            caption_spoken_lang = ""
+
             def _requested_language_caption_words(
                 spoken_words: list[Any], spoken_lang: str
             ) -> tuple[list[Any], str]:
@@ -8605,6 +8610,7 @@ def _run_phone_subtitled_job(
                 # KRI-838: the spoken language, only when something detected it (never the
                 # job language the fallback chain ends on): what an unmet ask is stamped.
                 spoken_caption_lang = detected_lang if _lang_source != SOURCE_FALLBACK else ""
+                caption_spoken_lang = spoken_caption_lang
                 caption_words, detected_lang = _requested_language_caption_words(
                     words, detected_lang
                 )
@@ -8735,16 +8741,17 @@ def _run_phone_subtitled_job(
                     # not reliably translate). Only the CAPTIONS take the verified or
                     # translated words; `raw_words` and `timeline_words` stay on the spoken
                     # pass (KRI-839).
+                    # The spoken pass's language when whisper or its text said it,
+                    # else Gemini's independent read of the clip, else "".
+                    caption_spoken_lang = (
+                        _spoken_lang
+                        if _lang_source != SOURCE_FALLBACK
+                        else _clip_spoken_language(clip_metas, clip_id)
+                    )
                     ensured = _ensure_requested_caption_language(
                         caption_words,
                         requested=caption_language_req,
-                        # The spoken pass's language when whisper or its text said it,
-                        # else Gemini's independent read of the clip, else "".
-                        fallback_language=(
-                            _spoken_lang
-                            if _lang_source != SOURCE_FALLBACK
-                            else _clip_spoken_language(clip_metas, clip_id)
-                        ),
+                        fallback_language=caption_spoken_lang,
                         job_id=job_id,
                         variant_id="subtitled",
                         glossary=_caption_glossary(snapshot, all_candidates),
@@ -8792,6 +8799,18 @@ def _run_phone_subtitled_job(
                         if spoken_text_asks:
                             timeline_words.extend(extra_words)
                     extra_offset_s += float(extra_binding.original.duration_s)
+            # KRI-1015: the review says when the captions were translated -- the spoken language
+            # (a language Nova names, never a whisper guess) when the final one differs from it.
+            caption_translated_from = ""
+            if caption_language_req is not None:
+                _translated_source = caption_spoken_lang.casefold().split("-")[0]
+                _caption_final = str(detected_lang or "").casefold().split("-")[0]
+                if (
+                    _translated_source in SUPPORTED_CAPTION_LANGUAGES
+                    and _caption_final
+                    and _caption_final != _translated_source
+                ):
+                    caption_translated_from = _translated_source
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
@@ -9831,6 +9850,8 @@ def _run_phone_subtitled_job(
             "caption_language": detected_lang,
             "ok": False,
         }
+        if caption_translated_from:
+            new_entry["caption_translated_from"] = caption_translated_from  # KRI-1015
         if media_lanes_enabled:
             if not ending_lane_only:
                 new_entry["overlay_transcript"] = raw_words
