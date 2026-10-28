@@ -2,7 +2,7 @@
 import Foundation
 
 public struct TextAnimationPhases: Codable, Equatable, Sendable {
-    public enum Edge: String, Codable, Sendable { case none, fade, pop, slide, typewriter }
+    public enum Edge: String, Codable, CaseIterable, Sendable { case none, fade, pop, slide, typewriter, silkReveal, elasticCondensed, focusPull, wordRelay, ribbonWipe, echoStack }
     public enum Loop: String, Codable, Sendable { case none, pulse, bounce, float }
     public var entrance: Edge
     public var exit: Edge

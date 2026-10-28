@@ -42,6 +42,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents._schemas.text_animation_phases import TextAnimationPhases
 from app.kria.portable_text import PortableTextLayer
 from app.kria.render_assets import RenderAsset
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
@@ -149,6 +150,7 @@ class PhoneCaptionLook:
     persisted variant fields field-for-field (see that function's docstring).
     """
 
+    animation_phases: TextAnimationPhases | None = None
     captions_enabled: bool = True
     font_family: str = CAPTION_FONT_FAMILY
     text_size_px: int = _CAPTION_TEXT_SIZE_PX
@@ -351,6 +353,9 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         shadow_enabled = editor_shadow_enabled
 
     return PhoneCaptionLook(
+        animation_phases=TextAnimationPhases.model_validate(editor_style["animation_phases"])
+        if editor_style.get("animation_phases")
+        else None,
         captions_enabled=captions_enabled,
         font_family=font_family,
         text_size_px=_clamp_int(variant.get("caption_size_px"), 36, 160, _CAPTION_TEXT_SIZE_PX),
@@ -468,8 +473,10 @@ def compile_caption_layers(
     )
     for index, cue in enumerate(prepared):
         overlay = _base_overlay(cue, resolved_look)
-        use_karaoke = "words" in cue and (
-            style == "word" or resolved_look.highlight_spoken_word is True
+        use_karaoke = (
+            resolved_look.animation_phases is None
+            and "words" in cue
+            and (style == "word" or resolved_look.highlight_spoken_word is True)
         )
         word_timings = _relative_word_timings(cue, cue["words"]) if use_karaoke else []
         layer_id = f"{id_prefix}-{index}"
@@ -1085,6 +1092,8 @@ def _base_overlay(cue: dict, look: PhoneCaptionLook) -> dict[str, Any]:
         "position_x_frac": look.position_x_frac,
         "position_y_frac": look.position_y_frac,
     }
+    if look.animation_phases is not None:
+        overlay["animation_phases"] = look.animation_phases.model_dump()
     if look.text_anchor is not None:
         # `_resolve_vertical_anchor` (text_overlay_skia.py) defaults a "left"
         # anchor to a TOP vertical anchor -- pin an explicit "center" so

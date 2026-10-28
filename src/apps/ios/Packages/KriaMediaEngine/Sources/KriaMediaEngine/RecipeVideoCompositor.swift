@@ -62,6 +62,7 @@ struct RecipeTextLayer: @unchecked Sendable {
     var selectionBounds: ResolvedTextSelectionBounds? = nil
     var portable: PortableTextLayer? = nil
     var portableAnchor: CGPoint = .zero
+    var designed: NativeDesignedTextPainter? = nil
     var handwriting: NativeHandwritingPainter? = nil
     var discreteReveal: NativeDiscreteRevealPainter? = nil
     var smoothReveal: NativeSmoothRevealPainter? = nil
@@ -314,6 +315,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     if let painter = text.dissolve { image = try painter.image(source: text.image, localTime: time - text.start, duration: text.end - text.start) }
                     if let painter = text.staggered { image = try painter.image(localTime: time - text.start, settled: text.image) }
                     if let painter = text.smoothReveal { image = try painter.image(localTime: time - text.start, settled: text.image) }
+                    if let painter = text.designed { image = try painter.image(localTime: time - text.start, settled: image) }
                     if state.blurPx > 0.01 { image = image.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: state.blurPx]) }
                     if let bounds = layer.revealBounds, state.revealProgress < 1 {
                         guard state.revealProgress > 0 else { continue }

@@ -604,18 +604,21 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     }
 
     private var animationEffects: some View {
-        ForEach(phase == .loop ? ["None", "Pulse", "Bounce", "Float"] : ["None", "Fade", "Pop", "Slide", "Typewriter"], id: \.self) { effect in
-            Button { session.setTextPhase(id: id, phase: phaseKey, effect: effect.lowercased()) } label: {
+        let effects: [(String, String)] = phase == .loop
+            ? ["None", "Pulse", "Bounce", "Float"].map { ($0.lowercased(), $0) }
+            : TextAnimationPhases.Edge.allCases.map { ($0.rawValue, $0.title) }
+        return ForEach(effects, id: \.0) { value, title in
+            Button { session.setTextPhase(id: id, phase: phaseKey, effect: value) } label: {
                 VStack(spacing: 6) {
-                    NativeTextAnimationPreview(phase: phaseKey, effect: effect.lowercased(), speed: phases["speed"]?.numberValue ?? 1, clock: previewClock)
+                    NativeTextAnimationPreview(phase: phaseKey, effect: value, speed: phases["speed"]?.numberValue ?? 1, clock: previewClock)
                         .frame(maxWidth: .infinity, minHeight: 52)
                         .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 9))
-                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(selectedPhase == effect.lowercased() ? KriaColor.sky : .clear, lineWidth: 2))
-                    Text(effect).font(KriaFont.body(11)).lineLimit(1).minimumScaleFactor(0.8)
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(selectedPhase == value ? KriaColor.sky : .clear, lineWidth: 2))
+                    Text(title).font(KriaFont.body(11)).lineLimit(2).multilineTextAlignment(.center)
                 }
             }
-            .accessibilityLabel("\(phase.rawValue) animation \(effect)")
-            .accessibilityAddTraits(selectedPhase == effect.lowercased() ? .isSelected : [])
+            .accessibilityLabel("\(phase.rawValue) animation \(title)")
+            .accessibilityAddTraits(selectedPhase == value ? .isSelected : [])
         }
     }
 

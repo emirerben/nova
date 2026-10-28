@@ -3903,3 +3903,73 @@ def test_authored_safe_width_matches_ios():
     ]
     for x, anchor, expected in cases:
         assert authored_safe_width(1080, x, anchor) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "effect",
+    ["silkReveal", "elasticCondensed", "focusPull", "wordRelay", "ribbonWipe", "echoStack"],
+)
+@pytest.mark.parametrize("content", ["Creator text\nİstanbul güzel", "A 👨‍👩‍👧‍👦 B"])
+def test_both_renderers_honor_designed_text_animations(effect, content, tmp_path):
+    from app.pipeline.text_overlay import _render_authored_phase_frame
+
+    overlay = {
+        "text": content,
+        "font_family": "Inter",
+        "text_size_px": 80,
+        "text_color": "#FFFFFF",
+        "position": "center",
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "effect": "static",
+        "start_s": 0,
+        "end_s": 3,
+        "animation_phases": {"entrance": effect},
+    }
+    outputs = []
+    for time in [0.12, 2.1, 0.12]:
+        skia_image = tos._draw_frame(overlay, time, 3).toarray(
+            colorType=skia.ColorType.kRGBA_8888_ColorType,
+            alphaType=skia.AlphaType.kUnpremul_AlphaType,
+        )
+        path = tmp_path / f"{effect}-{time}.png"
+        _render_authored_phase_frame(overlay, overlay["text"], "center", str(path), time, 3)
+        outputs.append((skia_image, np.array(Image.open(path))))
+    for renderer in [0, 1]:
+        assert not np.array_equal(outputs[0][renderer], outputs[1][renderer]), effect
+        assert np.array_equal(outputs[0][renderer], outputs[2][renderer]), effect
+        assert outputs[1][renderer][:, :, 3].max() > 200, effect
+
+
+@pytest.mark.parametrize(
+    ("entrance", "exit"),
+    [("wordRelay", "typewriter"), ("ribbonWipe", "typewriter"), ("typewriter", "ribbonWipe")],
+)
+def test_both_renderers_compose_designed_holds_with_typewriter(entrance, exit, tmp_path):
+    from app.pipeline.text_overlay import _render_authored_phase_frame
+
+    overlay = {
+        "text": "HELLO",
+        "font_family": "Inter",
+        "text_size_px": 80,
+        "text_color": "#FFFFFF",
+        "position": "center",
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "effect": "none",
+        "start_s": 0,
+        "end_s": 3,
+        "animation_phases": {"entrance": entrance, "exit": exit},
+    }
+    samples = []
+    times = [0.2, 1.4] if entrance == "typewriter" else [2.8, 2.2]
+    for time in times:
+        image = tos._draw_frame(overlay, time, 3).toarray(
+            colorType=skia.ColorType.kRGBA_8888_ColorType,
+            alphaType=skia.AlphaType.kUnpremul_AlphaType,
+        )
+        path = tmp_path / f"{time}.png"
+        _render_authored_phase_frame(overlay, "HELLO", "center", str(path), time, 3)
+        samples.append((image[:, :, :3].sum(), np.array(Image.open(path))[:, :, :3].sum()))
+    assert samples[0][0] < samples[1][0]
+    assert samples[0][1] < samples[1][1]

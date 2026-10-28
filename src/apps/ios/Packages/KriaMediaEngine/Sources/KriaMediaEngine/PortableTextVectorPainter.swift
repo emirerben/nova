@@ -32,7 +32,59 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         let outline: CGPath?
         /// Non-nil when the layer is bent: every glyph is drawn on its own with its arc transform.
         var bent: [BentGlyph]? = nil
-        func draw(_ context: CGContext, mode: CGTextDrawingMode = .fill, isMask: Bool = false, opacity: Double = 1) {
+        func selectedGlyphs(in range: NSRange) -> [BentGlyph] {
+            var result: [BentGlyph] = []
+            var ordinal = 0
+            for item in CTLineGetGlyphRuns(line) as! [CTRun] {
+                let count = CTRunGetGlyphCount(item)
+                let itemFont = (CTRunGetAttributes(item) as NSDictionary)[kCTFontAttributeName] as! CTFont
+                var ids = [CGGlyph](repeating: 0, count: count)
+                var points = [CGPoint](repeating: .zero, count: count)
+                var indices = [CFIndex](repeating: 0, count: count)
+                CTRunGetGlyphs(item, CFRange(location: 0, length: 0), &ids)
+                CTRunGetPositions(item, CFRange(location: 0, length: 0), &points)
+                CTRunGetStringIndices(item, CFRange(location: 0, length: 0), &indices)
+                for i in 0..<count {
+                    defer { ordinal += 1 }
+                    guard NSLocationInRange(indices[i], range) else { continue }
+                    if let bent, bent.indices.contains(ordinal) { result.append(bent[ordinal]) }
+                    else if let glyphs, glyphs.indices.contains(ordinal) {
+                        result.append(BentGlyph(font: font, id: glyphs[ordinal], position: positions[ordinal], transform: .identity))
+                    } else {
+                        result.append(BentGlyph(font: itemFont, id: ids[i],
+                            position: CGPoint(x: points[i].x + origin.x, y: points[i].y + origin.y), transform: .identity))
+                    }
+                }
+            }
+            return result
+        }
+        func draw(_ context: CGContext, mode: CGTextDrawingMode = .fill, isMask: Bool = false, opacity: Double = 1, range: NSRange? = nil) {
+            if let range {
+                let glyphs = selectedGlyphs(in: range)
+                if mode == .clip {
+                    let path = CGMutablePath()
+                    for glyph in glyphs {
+                        if let outline = CTFontCreatePathForGlyph(glyph.font, glyph.id, nil) {
+                            path.addPath(outline, transform: CGAffineTransform(translationX: glyph.position.x, y: glyph.position.y).concatenating(glyph.transform))
+                        }
+                    }
+                    context.addPath(path); context.clip()
+                } else {
+                    context.saveGState(); defer { context.restoreGState() }
+                    context.setTextDrawingMode(mode)
+                    context.textPosition = .zero
+                    context.setFillColor(isMask ? CGColor(gray: 1, alpha: 1) : fill)
+                    context.setStrokeColor(strokeColor)
+                    context.setLineWidth(strokeWidth); context.setLineJoin(.round)
+                    context.setAlpha(opacity)
+                    for glyph in glyphs {
+                        context.saveGState(); context.concatenate(glyph.transform)
+                        CTFontDrawGlyphs(glyph.font, [glyph.id], [glyph.position], 1, context)
+                        context.restoreGState()
+                    }
+                }
+                return
+            }
             // Hint ordinary-size glyphs at fractional positions. Above 256px,
             // use outlines to bound the platform glyph cache during a 60× zoom.
             let deviceFontSize = CTFontGetSize(font) * hypot(context.ctm.a, context.ctm.b)
@@ -306,7 +358,21 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         }
     }
 
-    func image(bounds requestedBounds: CGRect? = nil, maxBitmapBytes: Int, transform: CGAffineTransform = .identity, clip: CGPath? = nil, runClips: [CGPath?]? = nil, runTransforms: [CGAffineTransform]? = nil, runGroupAlphas: [Double]? = nil, opacity: Double = 1) throws -> CIImage {
+    func segmentBounds(runIndex: Int, ranges: [NSRange]) -> [CGRect] {
+        let run = runs[runIndex]
+        let bleed = max(run.strokeWidth + 2, run.blurs.map { ceil(3 * $0.sigma) + max(abs($0.dx), abs($0.dy)) + 2 }.max() ?? 0)
+        return ranges.map { range in
+            let box = run.selectedGlyphs(in: range).reduce(CGRect.null) { result, glyph in
+                var id = glyph.id
+                var bounds = CGRect.zero
+                CTFontGetBoundingRectsForGlyphs(glyph.font, .default, &id, &bounds, 1)
+                return result.union(bounds.offsetBy(dx: glyph.position.x, dy: glyph.position.y).applying(glyph.transform))
+            }
+            return box.isNull ? .null : box.insetBy(dx: -bleed, dy: -bleed).integral
+        }
+    }
+
+    func image(bounds requestedBounds: CGRect? = nil, maxBitmapBytes: Int, transform: CGAffineTransform = .identity, clip: CGPath? = nil, runClips: [CGPath?]? = nil, runTransforms: [CGAffineTransform]? = nil, runGroupAlphas: [Double]? = nil, opacity: Double = 1, runIndices: Set<Int>? = nil, includeBackground: Bool = true, runRanges: [Int: NSRange] = [:]) throws -> CIImage {
         let bounds = requestedBounds ?? self.bounds
         guard !bounds.isNull, bounds.width > 0, bounds.height > 0,
               bounds.width * bounds.height * 4 <= Double(maxBitmapBytes),
@@ -321,7 +387,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
         guard runClips == nil || runClips?.count == runs.count else { throw RecipeError.invalidTimeline }
         guard runTransforms == nil || runTransforms?.count == runs.count,
               runGroupAlphas == nil || (runGroupAlphas?.count == runs.count && runGroupAlphas!.allSatisfy { $0.isFinite && (0...1).contains($0) }) else { throw RecipeError.invalidTimeline }
-        if let background = layer.background {
+        if includeBackground, let background = layer.background {
             context.saveGState()
             context.concatenate(transform)
             context.concatenate(rotation)
@@ -334,7 +400,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
             context.fillPath()
             context.restoreGState()
         }
-        for (index, run) in runs.enumerated() {
+        for (index, run) in runs.enumerated() where runIndices?.contains(index) ?? true {
             let groupAlpha = runGroupAlphas?[index] ?? 1
             if groupAlpha <= 0.001 { continue }
             let drawingTransform = runTransforms?[index].concatenating(transform) ?? transform
@@ -357,7 +423,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                 }
                 maskContext.translateBy(x: -maskBounds.minX, y: -maskBounds.minY)
                 maskContext.concatenate(rotation)
-                run.draw(maskContext, isMask: true)
+                run.draw(maskContext, isMask: true, range: runRanges[index])
                 guard let maskImage = maskContext.makeImage() else { throw MediaEngineError.exportFailed }
                 for blur in run.blurs {
                     let angle = -layer.rotationDegrees * .pi / 180
@@ -382,9 +448,9 @@ struct PortableTextVectorPainter: @unchecked Sendable {
             context.saveGState()
             context.concatenate(drawingTransform)
             context.concatenate(rotation)
-            if run.strokeWidth > 0 { run.draw(context, mode: .stroke, opacity: opacity) }
+            if run.strokeWidth > 0 { run.draw(context, mode: .stroke, opacity: opacity, range: runRanges[index]) }
             if let gradient = run.gradient {
-                run.draw(context, mode: .clip, isMask: true)
+                run.draw(context, mode: .clip, isMask: true, range: runRanges[index])
                 guard let cgGradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
                     colors: gradient.stops.map { $0.color.cgColor } as CFArray, locations: gradient.stops.map { CGFloat($0.position) }) else {
                     throw NativePreviewFeatureError("PortableTextVectorPainter-282")
@@ -394,7 +460,7 @@ struct PortableTextVectorPainter: @unchecked Sendable {
                     start: CGPoint(x: gradient.startX, y: canvas.height - gradient.startY),
                     end: CGPoint(x: gradient.endX, y: canvas.height - gradient.endY),
                     options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-            } else { run.draw(context, opacity: opacity) }
+            } else { run.draw(context, opacity: opacity, range: runRanges[index]) }
             context.restoreGState()
         }
         guard let image = context.makeImage() else { throw MediaEngineError.exportFailed }
