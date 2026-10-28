@@ -117,6 +117,12 @@ satisfied by that lane: never add text bars that duplicate them and never report
 unmet. Their wording, look and timing are edited in the caption panel, not in this pass.
 """
 
+_HIDDEN_CAPTION_LANE_INSTRUCTIONS = """CAPTION LANE
+The creator's song lyrics are kept in the caption lane (see Caption lane below) but are
+turned off: they are NOT on screen. The creator did not ask for captions; they can turn
+them on later in the caption panel. Never add text bars that copy the lyrics.
+"""
+
 
 class CreationTextComposer(EditCopilotAgent):
     # This is background creation, not the latency-limited interactive route.
@@ -125,7 +131,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v13-word-sequence-operation-order",
+        prompt_version="v14-hidden-song-caption-lane",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -149,7 +155,15 @@ class CreationTextComposer(EditCopilotAgent):
         return "\n\n".join(
             [
                 _INSTRUCTIONS,
-                *([_CAPTION_LANE_INSTRUCTIONS] if caption_lane else []),
+                *(
+                    [
+                        _HIDDEN_CAPTION_LANE_INSTRUCTIONS
+                        if caption_lane.get("shown") is False
+                        else _CAPTION_LANE_INSTRUCTIONS
+                    ]
+                    if caption_lane
+                    else []
+                ),
                 response_contract,
                 text_tools,
                 "Fonts: " + _font_catalog(),
@@ -539,6 +553,7 @@ def _song_caption_lane(snapshot: EditProposalSnapshot) -> dict[str, Any] | None:
             _clean_prompt_data(line, max_chars=_CAPTION_LANE_LINE_CHARS)
             for line in lines[:_CAPTION_LANE_SAMPLE_LINES]
         ],
+        **({"shown": False} if track.hidden else {}),
     }
 
 
