@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.5.0] - 2026-10-28
+
+### Fixed
+- fix(captions): mixed-language asks keep each language as spoken (KRI-1015) (#1914) <!-- release-pr: 1914 -->
+
 ## [0.82.4.0] - 2026-10-28
 
 ### Changed
