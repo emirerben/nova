@@ -142,6 +142,7 @@
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
       "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss",
       "KriaUITests/CreationUITests/testOpenEditorInsideTheEditorsKriaSheetReturnsToTheEditor",
+      "KriaUITests/CreationUITests/testOpenEditorInsideTheEditorsKriaSheetWithKeyboardOpenReturnsToTheEditor",
       "KriaUITests/SavedUploadsUITests/testReuseAcrossTwoPostsWithoutAnotherUpload",
       "KriaUITests/SavedUploadsUITests/testExpiringCloudCopyWarnsAndRemainsReusableAcrossPosts",
       "KriaUITests/SavedUploadsUITests/testSearchPaginationAndRetry",
