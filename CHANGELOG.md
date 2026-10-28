@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.170.0] - 2026-10-28
+
+### Changed
+- fix(ios): "Open editor" in the editor's Kria sheet returns to the editor (KRI-986) (#1875) <!-- release-pr: 1875 -->
+
 ## [0.81.169.0] - 2026-10-28
 
 ### Changed
