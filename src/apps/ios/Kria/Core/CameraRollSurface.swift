@@ -72,6 +72,7 @@ struct CameraRollEvent: Identifiable {
     /// The event whose inline "Find ideas" panel is open.
     var finderGroup: String?
     var drafts: [String: FinderDraft] = [:]
+    /// Events whose page shows all of its footage rather than the first row.
     var expanded: Set<String> = []
     private(set) var taste: EditorialTasteProfile?
     private(set) var permission = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -83,9 +84,16 @@ struct CameraRollEvent: Identifiable {
     private(set) var latestCollection: SavedCameraRollCollection?
     var showsLatestReview = false
     private(set) var started = false
+    /// "Use this idea" work by idea. It outlives its progress sheet: closing the sheet never cancels it.
+    private(set) var uses: [UUID: CameraRollIdeaUse] = [:]
+    /// The idea whose progress sheet is open.
+    var shownUse: CameraRollIdeaUse?
+    /// Opens a chat in the workspace; false when the workspace will not open it.
+    @ObservationIgnored var openChat: @MainActor (CreationThread) async -> Bool = { _ in false }
 
     @ObservationIgnored private var providers: [String: PhotosPickerItem] = [:]
     @ObservationIgnored private var removedEntries: [String: [CameraRollCollection.Entry]] = [:]
+    @ObservationIgnored private var removedInfo: [String: CameraRollEventInfo] = [:]
     @ObservationIgnored private var syncedSelection: CameraRollCollectionSelection?
     @ObservationIgnored private var previousPermission: PHAuthorizationStatus?
     @ObservationIgnored private var mutationChain: Task<Void, Never>?
@@ -118,6 +126,7 @@ struct CameraRollEvent: Identifiable {
             if buckets[key] == nil { order.append(key) }
             buckets[key, default: []].append(entry)
         }
+        for info in collection.events where buckets[info.group] == nil { order.append(info.group); buckets[info.group] = [] }
         return order.map { CameraRollEvent(id: $0, entries: buckets[$0] ?? []) }
     }
 
@@ -140,10 +149,22 @@ struct CameraRollEvent: Identifiable {
     var remainingCapacity: Int { CameraRollCollection.maximumCount - collection.entries.count }
     var isEmpty: Bool { collection.entries.isEmpty }
     func title(for group: String) -> String { collection.title(forGroup: group) }
+    func about(for group: String) -> String { collection.about(forGroup: group) }
+    /// About is only offered once the server has shown it stores it; titles work either way, on the phone at least.
+    var aboutAvailable: Bool { collection.serverStoresEvents }
 
     func state(of entry: CameraRollCollection.Entry) -> CameraRollItemState { store.tile(entry.id).state }
     func readyCount(in event: CameraRollEvent) -> Int { event.entries.filter { state(of: $0) == .ready }.count }
     func waitingCount(in event: CameraRollEvent) -> Int { event.entries.filter { !state(of: $0).isSettled }.count }
+    func retryCount(in event: CameraRollEvent) -> Int { event.entries.filter { if case .needsRetry = state(of: $0) { true } else { false } }.count }
+
+    /// Said only while something in the event is unfinished; a settled event needs no readiness line.
+    func readinessNote(_ event: CameraRollEvent) -> String? {
+        let waiting = waitingCount(in: event), retry = retryCount(in: event)
+        let parts = [waiting > 0 ? "\(waiting) still looking" : nil, retry > 0 ? "\(retry) \(retry == 1 ? "needs" : "need") a retry" : nil]
+        let note = parts.compactMap { $0 }.joined(separator: " · ")
+        return note.isEmpty ? nil : note
+    }
 
     /// The header summary: settled items over all items, and how many wait on the creator.
     struct Progress: Equatable {
@@ -410,6 +431,14 @@ struct CameraRollEvent: Identifiable {
         do {
             let saved = try await api.saveCameraRollCollection(collection, revision: revision)
             revision = saved.revision; collection.serverRevision = saved.revision; syncedSelection = selection
+            if let stored = saved.events, !collection.serverStoresEvents {
+                // First answer from a server that stores events: what the phone kept on its own goes up now.
+                collection.serverStoresEvents = true
+                collection.adoptServerEvents(stored)
+                if collection.events == stored { syncedSelection = collection.uploadedSelection }
+                persist()
+                return await saveCollection(reportingFailureAs: summary)
+            }
             persist()
             return true
         } catch {
@@ -447,7 +476,7 @@ struct CameraRollEvent: Identifiable {
     /// applied. A mutation's own failure path passes false: it runs inside that queue and would wait on itself.
     private func refreshIdeas(afterPendingMutations: Bool) async {
         guard revision > 0 || mode == .fixture else { return }
-        if mode != .fixture, !(await saveCollection(reportingFailureAs: nil)) { return }
+        guard await saveCollection(reportingFailureAs: nil) else { return }
         if afterPendingMutations { await mutationChain?.value }
         func ideaIDs(_ group: String) -> [UUID] { (board.storiesByGroup[group] ?? []).map(\.id) }
         let asked = Dictionary(uniqueKeysWithValues: events.map { ($0.id, ideaIDs($0.id)) })
@@ -462,6 +491,28 @@ struct CameraRollEvent: Identifiable {
     }
 
     func anotherIdea(in group: String) { apply(.anotherIdea(group: group)) }
+
+    /// Opens the idea's progress sheet: the work already under way, or new work for this idea.
+    func use(_ story: CameraRollStory) {
+        if let existing = uses[story.id] { shownUse = existing; return }
+        let snapshot = collection
+        let job = CameraRollIdeaUse(story: story, api: api, collection: { [weak self] in self?.collection ?? snapshot }) { [weak self] thread in
+            guard let self else { return false }
+            let opened = await openChat(thread)
+            if opened { uses[story.id] = nil; if shownUse?.id == story.id { shownUse = nil } }
+            return opened
+        }
+        uses[story.id] = job
+        shownUse = job
+        job.start()
+    }
+
+    /// Saves an answer to (or a skip of) one of an idea's open questions from its card.
+    func answerQuestions(_ story: CameraRollStory, plan: CameraRollContentPlan) async {
+        do {
+            replaceStory(try await api.updateCameraRollContentPlan(collectionID: collection.id, story: story, collectionRevision: revision, plan: plan))
+        } catch { showError(error, summary: "Couldn't save that answer.") }
+    }
 
     func deleteIdea(_ story: CameraRollStory, in group: String) { apply(.deleteIdea(storyID: story.id, group: group)) }
 
@@ -563,6 +614,7 @@ struct CameraRollEvent: Identifiable {
     func deleteEvent(_ group: String) {
         let members = collection.members(inGroup: group)
         removedEntries[group] = collection.remove(inGroup: group)
+        removedInfo[group] = collection.removeEvent(group)
         if selecting?.group == group { selecting = nil }
         if finderGroup == group { finderGroup = nil }
         expanded.remove(group)
@@ -573,16 +625,21 @@ struct CameraRollEvent: Identifiable {
     private func undoDeleteEvent(_ group: String) {
         collection.restore(removedEntries[group] ?? [])
         removedEntries[group] = nil
+        if let info = removedInfo.removeValue(forKey: group) { collection.restoreEvent(info) }
         syncEngine()
         apply(.undoDeleteEvent(group: group))
     }
 
     private func deleteGroupOnServer(_ group: String) async {
         let stillMembers = !(removedEntries[group] ?? []).compactMap(\.savedAsset).isEmpty
-        guard revision > 0, stillMembers else { persist(); return }
+        guard revision > 0, stillMembers else { await saveCollection(reportingFailureAs: nil); persist(); return }
         do {
             let result = try await api.deleteCameraRollGroup(collectionID: collection.id, group: group, expectedRevision: revision)
-            revision = result.revision; collection.serverRevision = result.revision; syncedSelection = collection.uploadedSelection
+            revision = result.revision; collection.serverRevision = result.revision
+            // The group delete dropped the members on the server; the event's title and about leave with a save.
+            let current = collection.uploadedSelection
+            syncedSelection = CameraRollCollectionSelection(name: current.name, members: current.members, events: syncedSelection?.events)
+            await saveCollection(reportingFailureAs: nil)
             persist()
         } catch let error as APIError where error == .requestFailed(status: 404) {
             // The server never held this event (nothing in it had uploaded), so there is nothing to delete there.
@@ -591,6 +648,7 @@ struct CameraRollEvent: Identifiable {
             // The event stays on the server, so it comes back here as well.
             collection.restore(removedEntries[group] ?? [])
             removedEntries[group] = nil
+            if let info = removedInfo.removeValue(forKey: group) { collection.restoreEvent(info) }
             syncEngine()
             board.reduce(.undoDeleteEvent(group: group))
             showError(error, summary: "Couldn't delete that event.")
@@ -598,7 +656,7 @@ struct CameraRollEvent: Identifiable {
     }
 
     private func restoreGroupOnServer(_ group: String, members: [CameraRollCollectionMember], storyIDs: [UUID]) async {
-        guard revision > 0, !members.isEmpty else { persist(); return }
+        guard revision > 0, !members.isEmpty else { await saveCollection(reportingFailureAs: nil); persist(); return }
         do {
             let saved = try await api.saveCameraRollCollection(collection, revision: revision)
             revision = saved.revision; collection.serverRevision = saved.revision; syncedSelection = collection.uploadedSelection
@@ -627,7 +685,27 @@ struct CameraRollEvent: Identifiable {
 
     func rename(group: String, to title: String) {
         collection.rename(group: group, to: title)
-        persist()
+        persist(); syncEvents()
+    }
+
+    func setAbout(group: String, to about: String) {
+        collection.setAbout(group: group, to: about)
+        persist(); syncEvents()
+    }
+
+    /// A new event with a title and about and nothing in it yet; the creator adds footage from its page or the
+    /// picker that follows. Returns its group key.
+    @discardableResult func createEvent(title: String, about: String) -> String {
+        let group = newEventKey()
+        collection.addEvent(group: group, title: title, about: about)
+        persist(); syncEvents()
+        return group
+    }
+
+    /// Titles and about reach the server on their own save; a failure says so and keeps them on the phone.
+    private func syncEvents() {
+        guard mode != .metadataOnly, revision > 0, collection.serverStoresEvents else { return }
+        enqueue { [self] in await saveCollection(reportingFailureAs: "Event details are saved on this iPhone.") }
     }
 
     /// Where selected items can go: the other events, then a new one.
@@ -684,6 +762,7 @@ struct CameraRollEvent: Identifiable {
                 if !member.group.isEmpty { rebuilt.setGroup(member.group, for: id) }
             }
             rebuilt.serverRevision = latest.revision
+            if let events = latest.events { rebuilt.serverStoresEvents = true; rebuilt.adoptServerEvents(events) }
             try collection.localCopy().save(in: originals)
             try rebuilt.save(in: originals)
             collection = rebuilt; revision = latest.revision; syncedSelection = rebuilt.uploadedSelection

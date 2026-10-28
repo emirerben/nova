@@ -74,6 +74,9 @@ REASON_NO_FACE = "no_face"
 REASON_FACE_UNCONFIRMED = "face_unconfirmed"
 REASON_FACE_UNDER_CAPTIONS = "face_under_captions"
 REASON_NOT_LANDSCAPE = "not_landscape"
+# The creator picked a landscape output: a wide canvas has no sideways overflow to
+# slide a face crop over, so there was no vertical framing to do.
+REASON_LANDSCAPE_CANVAS = "landscape_canvas"
 REASON_CREATOR_CHOSE_BARS = "creator_chose_bars"
 REASON_CREATOR_CHOSE_CROP = "creator_chose_crop"
 
@@ -295,6 +298,9 @@ def decide_speaker_framing(
     ``sample`` defaults to `render_geometry.sample_face_regions`."""
     asked = tuple(asked_by)
     fallback = today_mode(landscape_fit)
+    if canvas.width > canvas.height:
+        # A landscape output (creator's pick): nothing to face-fill, nothing sampled.
+        return SpeakerFraming("centre_fill", REASON_LANDSCAPE_CANVAS, asked_by=asked)
     if canvas.height <= canvas.width or display_width <= display_height:
         # Portrait or square footage on the story canvas: nothing to letterbox
         # and nothing a sideways shift could improve; the engine's cover fill.
@@ -429,6 +435,21 @@ def editor_speaker_framing(
     A portrait/square speaker (``not_landscape``) is never touched."""
     if not isinstance(receipt, Mapping) or receipt.get("mode") not in FRAMING_MODES:
         return None, None
+    if receipt.get("reason") == REASON_LANDSCAPE_CANVAS:
+        # Back on a portrait canvas after a landscape one: re-derive from what the receipt
+        # held before (its face window and checks survive the round trip), else from nothing
+        # measured at all (a landscape render never sampled a face).
+        prior = receipt.get("before_landscape")
+        restored = {k: v for k, v in receipt.items() if k != "before_landscape"}
+        if (
+            isinstance(prior, Mapping)
+            and prior.get("mode") in FRAMING_MODES
+            and isinstance(prior.get("reason"), str)
+        ):
+            restored.update(mode=prior["mode"], reason=prior["reason"])
+        else:
+            restored.update(mode=today_mode(landscape_fit), reason=REASON_FACE_UNCONFIRMED)
+        receipt = restored
     updated = dict(receipt)
     if receipt.get("reason") == REASON_NOT_LANDSCAPE:
         return None, updated
@@ -451,6 +472,22 @@ def editor_speaker_framing(
     return None, updated
 
 
+def landscape_canvas_framing(receipt: object) -> dict[str, Any] | None:
+    """The framing receipt after an editor Save moved the edit onto a landscape canvas.
+
+    ``None`` without a receipt (no framing ask). Otherwise the receipt says
+    ``centre_fill`` / ``landscape_canvas`` (the brief check then reads the truth), keeping
+    its window and checks plus the mode and reason it had in ``before_landscape`` so a
+    later portrait Save re-derives the face crop (`editor_speaker_framing`)."""
+    if not isinstance(receipt, Mapping) or receipt.get("mode") not in FRAMING_MODES:
+        return None
+    updated = dict(receipt)
+    if receipt.get("reason") != REASON_LANDSCAPE_CANVAS:
+        updated["before_landscape"] = {"mode": receipt.get("mode"), "reason": receipt.get("reason")}
+    updated.update(mode="centre_fill", reason=REASON_LANDSCAPE_CANVAS)
+    return updated
+
+
 __all__ = [
     "FACE_BOTTOM_LIMIT_FRAC",
     "FRAMING_MODES",
@@ -461,6 +498,7 @@ __all__ = [
     "REASON_FACE_MOVES",
     "REASON_FACE_UNCONFIRMED",
     "REASON_FACE_UNDER_CAPTIONS",
+    "REASON_LANDSCAPE_CANVAS",
     "REASON_NOT_LANDSCAPE",
     "REASON_NO_FACE",
     "SPEAKER_FRAMING_FIELD",
@@ -468,6 +506,7 @@ __all__ = [
     "SpeakerFraming",
     "decide_speaker_framing",
     "editor_speaker_framing",
+    "landscape_canvas_framing",
     "FACE_CORE_MARGIN_FRAC",
     "FACE_CORE_X",
     "FACE_CORE_Y",

@@ -46,6 +46,7 @@ from app.services.speech_cleanup_preflight import (
 )
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.tasks import autoplace
+from tests._silent_pcm import silent_pcm
 from tests.services.test_speech_cleanup_analysis_lifecycle import (
     _analysis,
     _AsyncDB,
@@ -104,6 +105,7 @@ def _engine(transcribe: Mock):
         analysis_input,
         transcribe_fn=transcribe,
         silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=SILENCES, status="ok"),
+        pcm_loader=silent_pcm,
     )
 
 

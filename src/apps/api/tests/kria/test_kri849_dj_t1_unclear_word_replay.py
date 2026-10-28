@@ -93,6 +93,7 @@ from app.services.choice_questions import answered_brief, tag_event
 from app.services.clip_speech import SilenceDetectionResult
 from app.tasks import generative_build as gb
 from app.tasks.content_plan_build import _dispatch_item_render
+from tests._silent_pcm import silent_pcm
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled
 
 FIXTURE = json.loads(
@@ -496,6 +497,7 @@ def checked_snapshot(storage_path: str, words: list[Word]) -> dict:
         ),
         transcribe_fn=lambda *_a, **_k: NS(words=words, language="en", low_confidence=False),
         silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=[], status="ok"),
+        pcm_loader=silent_pcm,
     )
     return {
         "schema_version": 1,

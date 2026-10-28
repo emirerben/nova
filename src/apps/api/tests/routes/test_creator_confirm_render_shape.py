@@ -53,7 +53,23 @@ async def test_a_valid_choice_resolves():
 
 
 @pytest.mark.asyncio
-async def test_an_unavailable_choice_422s_a_fresh_confirm_but_not_a_resume():
+async def test_a_talking_edit_can_pick_landscape_on_the_device():
+    db, item, plan, user = _args("subtitled")
+    shape = await _confirm_render_shape(
+        db,
+        item,
+        plan,
+        _body(output_orientation="landscape", landscape_fit="fit"),
+        user,
+        strict=True,
+    )
+    assert shape == {"output_orientation": "landscape", "landscape_fit": "fill"}
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_choice_422s_a_fresh_confirm_but_not_a_resume(monkeypatch):
+    # Landscape output switched off: a Talking edit is back to bars/crop only.
+    monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "false")
     db, item, plan, user = _args("subtitled")
     body = _body(output_orientation="landscape")
     with pytest.raises(HTTPException) as error:

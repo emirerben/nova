@@ -142,6 +142,106 @@ def test_parse_caption_language_request(text: str | None, expected: str | None) 
     assert parse_caption_language_request(text) == expected
 
 
+# KRI-1015 (Plaza T2, "maximo 2"): a mixed English/Turkish take whose creator asked to keep
+# every language as spoken came out with every English line translated into Turkish. The
+# parser read "English captions for the English, Turkish captions for my Turkish" clause by
+# clause and kept the LAST language it saw.
+#
+# Failure modes, written before the fix:
+#  1. One message binds two different languages in two clauses -> the last clause wins
+#     (either order), so one of the two spoken languages is translated.
+#  2. Two languages joined after one direction word ("subtitles in English and Turkish")
+#     -> only the first takes the direction, so it wins.
+#  3. A clause captions a language "where he speaks" that same language -> read as a
+#     target, so the other language is translated.
+#  4. The Turkish wordings of 1-3 fail the same way.
+#  5. Over-correction: a real one-language ask that also names the other language outside
+#     the ask ("Captions in English, not Turkish", "Turkish captions, even for the English
+#     parts", "altyazılar Türkçe olsun, İngilizce konuşmayı da çevir") stops being heard.
+#  6. Over-correction across messages: a later message that changes the language
+#     ("Turkish captions" then "English captions please") stops winning, or a later
+#     keep-both message loses to an earlier one-language message.
+_T2_PROMPT = (
+    "Talking video, filmed horizontally: make it vertical and keep his face in frame. Maximo "
+    'explains in English and I translate to Turkish in the middle, then we both say "1810". '
+    "Keep every language as it was spoken: English captions for the English, Turkish captions "
+    'for my Turkish, nothing translated. When he first says "1810", put a big "1810" on '
+    'screen for a moment. When he says "on the other side of the square", show my Casa Rosada '
+    "photo full screen for about two seconds with his voice still playing, then come back to "
+    'him. Start at "Okay, I\'ll translate it to Turkish" and end after "the government of the '
+    'whole country".'
+)
+# The request the T2 job was dispatched with (job e46baf42): chronological messages, then
+# the pinned brief, then the latest message again.
+_T2_DISPATCHED_REQUEST = (
+    f"Full creator request (chronological):\n{_T2_PROMPT}\n\n"
+    "Creative brief v1 (everything the creator has asked for, still in force):\n"
+    "- [r1] [timing/global] Start and end at specific spoken lines facts={end_line: the "
+    "government of the whole country; start_line: Okay, I'll translate it to Turkish}\n"
+    "- [r2] [style/global] Keep every language as it was spoken with no translation "
+    "facts={captions: on}\n"
+    '- [r3] [text/global] Big text on screen for a moment when he first says 1810 ("1810") '
+    'facts={triggers: ["1810"]}\n'
+    f"Latest message: {_T2_PROMPT}"
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 1. Two languages bound in two clauses of one message: each stays as spoken.
+        (_T2_PROMPT, None),
+        (_T2_DISPATCHED_REQUEST, None),
+        ("English captions for the English, Turkish captions for my Turkish", None),
+        ("Turkish captions for my Turkish, English captions for the English", None),
+        ("English captions. Turkish captions for the Turkish bits.", None),
+        ("English captions for the English and Turkish captions for the Turkish", None),
+        # 2. Joined after one direction word.
+        ("Subtitles in English and Turkish", None),
+        ("captions in English or Turkish", None),
+        # 3. Captioned in the language spoken there.
+        ("Captions in English where he speaks English, Turkish where I speak Turkish", None),
+        # 4. Turkish wordings.
+        (
+            "Her dil konuşulduğu gibi kalsın: İngilizce kısımlara İngilizce altyazı, Türkçe "
+            "kısımlara Türkçe altyazı, hiçbir şey çevrilmesin.",
+            None,
+        ),
+        ("İngilizce kısımlar İngilizce altyazı, Türkçe kısımlar Türkçe altyazı olsun", None),
+        ("İngilizceye İngilizce altyazı, Türkçeye Türkçe altyazı", None),
+        ("Altyazı İngilizce ve Türkçe olsun, çeviri yapma", None),
+        # 5. One-language asks that also name the other language stay heard.
+        ("Captions in English, not Turkish", "en"),
+        ("Turkish captions, even for the English parts", "tr"),
+        ("Turkish captions for the English parts", "tr"),
+        ("Turkish captions for my Turkish followers", "tr"),
+        ("He speaks English, put Turkish subtitles", "tr"),
+        ("Altyazılar Türkçe olsun, İngilizce konuşmayı da çevir", "tr"),
+        ("İngilizce kısımları da Türkçe altyazıyla ver", "tr"),
+        ("Translate everything into Turkish captions", "tr"),
+        # 6. Across messages (one per line), the later message decides.
+        ("Turkish captions\nEnglish captions please", "en"),
+        (
+            "Turkish captions\nEnglish captions for the English, Turkish captions for my Turkish",
+            None,
+        ),
+        (
+            "English captions for the English, Turkish captions for my Turkish\n"
+            "All captions Turkish",
+            "tr",
+        ),
+        (
+            "Türkçe altyazı\nİngilizce kısımlar İngilizce altyazı, Türkçe kısımlar Türkçe altyazı",
+            None,
+        ),
+    ],
+)
+def test_kri1015_mixed_language_asks_keep_each_language_as_spoken(
+    text: str, expected: str | None
+) -> None:
+    assert parse_caption_language_request(text) == expected
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     # KRI-838: "fr" used to be None (the table was en/tr only). The table now carries every
