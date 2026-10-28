@@ -216,7 +216,8 @@ final class CreationChatFixture: @unchecked Sendable {
         if events.contains(where: { $0["event_type"] as? String == "user_message" }) || media.isEmpty { return set("none", []) }
         let lead = chip(1, "default_edit", "Let Kria cut the first version", ChatSubmission.mediaOnlyMessage)
         suggestionAsks[id, default: 0] += 1
-        if suggestionAsks[id] == 1, ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_PENDING"] != "0" {
+        let pendingMode = ProcessInfo.processInfo.environment["KRIA_SUGGESTION_CHIPS_PENDING"]
+        if pendingMode == "hold" || (suggestionAsks[id] == 1 && pendingMode != "0") {
             return set("first_prompt", status: "pending", wording: "pending", understanding: "pending", retry: 2, [lead])
         }
         return set("first_prompt", [lead,
@@ -385,6 +386,34 @@ final class CreationChatFixture: @unchecked Sendable {
         if parts.count >= 4, parts[0] == "me", parts[1] == "jobs", parts[3] == "device-render",
            let scenario = DeviceRenderUITestFixture.scenario, let jobID = UUID(uuidString: parts[2]) {
             return deviceRenderResponse(scenario: scenario, jobID: jobID, route: parts.count > 4 ? parts[4] : nil, body: body)
+        }
+        if ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] == "1",
+           parts.first == "generative-jobs" {
+            if parts.last == "status" {
+                return response(["variants": [[
+                    "variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device",
+                    "render_destination": "device", "duration_s": 1, "render_generation_id": "fixture-generation",
+                    "ai_timeline": ["slots": [["slot_id": "clip-0", "clip_index": 0, "in_s": 0, "duration_s": 1, "source_duration_s": 1]]]
+                ]]])
+            }
+            if parts.last == "timeline", let projectID = UUID(uuidString: parts[1]),
+               let source = SongTimelineFixture.clipURL(mediaID: "fixture-clip", force: true) {
+                do {
+                    let project = BackgroundUploadCoordinator.projectDirectory(projectID)
+                    try project.createIfNeeded()
+                    let target = project.originals.appendingPathComponent("sync-recovery-fixture.mp4")
+                    if !FileManager.default.fileExists(atPath: target.path) { try FileManager.default.copyItem(at: source, to: target) }
+                    let fingerprint = try SHA256Fingerprinter().fingerprint(file: target)
+                    let asset = MediaAsset(id: "fixture-clip", relativePath: "originals/sync-recovery-fixture.mp4",
+                                           fingerprint: fingerprint, duration: 8, naturalSize: MediaSize(width: 180, height: 320), frameRate: 10)
+                    try SourceAssetStore(project: project).bind(mediaID: "fixture-clip", original: asset)
+                    return response(["base_generation": "fixture-generation", "clips": [["clip_index": 0, "native_source": [
+                        "media_id": "fixture-clip", "source_url": NSNull(), "local_required": true,
+                        "original": ["kind": "video", "sha256": fingerprint.hex, "byte_count": fingerprint.byteCount,
+                                     "duration_s": 8, "width": 180, "height": 320, "orientation_degrees": 0, "has_audio": false]
+                    ]]]])
+                } catch { return response(["detail": "Fixture original could not be prepared"], status: 500) }
+            }
         }
         if parts.first == "plan-items", parts.count >= 2, ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_FIXTURE"] == "1" {
             return slideResponse(request, itemID: parts[1], parts: parts, body: body)
@@ -1299,6 +1328,9 @@ final class CreationChatFixture: @unchecked Sendable {
         case nil:
             let recipe = KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")], tracks: [TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "c", sourceAssetID: "source", sourceDuration: 1)])])
             var status: [String: Any] = ["phase": "awaiting_device", "request": encoded(DeviceRenderRequest(identity: identity(revision), recipe: recipe))]
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] == "1" {
+                status["base_generation"] = "fixture-generation"
+            }
             if scenario != "ready", revision == 1 {
                 status["phase"] = "needs_attention"
                 status["reason_code"] = scenario
@@ -1476,6 +1508,9 @@ enum DeviceRenderUITestFixture {
     private struct Publisher: DeviceRenderPublishing {
         func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
         func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+            if ProcessInfo.processInfo.environment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] == "1" {
+                throw APIError.conflict
+            }
             DeviceRenderUITestFixture.published.insert(identity.jobID.uuidString)
             return .published
         }

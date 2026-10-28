@@ -220,3 +220,18 @@ schemes:
       config: Live Development
     analyze:
       config: Live Development
+
+  Kria Production SignIn Check:
+    build:
+      targets:
+        Kria: all
+        KriaUITests: [test]
+    run:
+      config: Release
+    test:
+      config: Release
+      gatherCoverageData: false
+      targets:
+        - name: KriaUITests
+          selectedTests:
+            - ProductionSignInUITests/testBuildControlsDevelopmentSignIn

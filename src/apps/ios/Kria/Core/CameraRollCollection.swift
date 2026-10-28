@@ -13,6 +13,17 @@ struct CameraRollMetadata: Codable, Sendable, Equatable, Identifiable {
     var capture: ClipCaptureRaw?
 }
 
+/// What the creator says about one event: its title and an "About this event" note for the idea AI. `group` is the
+/// server's key and never changes; a rename only changes `title`. Mirrors the server's `CollectionEvent`.
+struct CameraRollEventInfo: Codable, Sendable, Equatable {
+    static let maximumTitle = 80
+    static let maximumAbout = 600
+    static let maximumCount = 50
+    let group: String
+    var title: String
+    var about: String
+}
+
 struct CameraRollCollection: Codable, Sendable {
     // Measured on iPhone 13 Pro: 53 mixed assets, 33.72 ms, 72.1 MiB process peak.
     // Catalogue capacity is independent of the smaller selected-story render bound.
@@ -24,13 +35,18 @@ struct CameraRollCollection: Codable, Sendable {
     /// A file written before ideas were per event stored one `savedIdeas` object; that key is no longer read, so
     /// such a file still loads and its ideas come back from the server.
     var ideasByGroup: [String: SavedCameraRollGroupIdeas] = [:]
-    /// What the creator calls an event. The server's group key never changes when they rename, so ideas stay put.
-    var eventTitles: [String: String] = [:]
+    /// Every event the creator titled, described or created, in creation order. An event listed here with no
+    /// entries is a new event waiting for footage.
+    private(set) var events: [CameraRollEventInfo] = []
+    /// The server answered with `events`, so it stores them. Until then they stay on the phone: an older server
+    /// refuses a body that carries them.
+    var serverStoresEvents = false
     var serverRevision: Int?
     var name: String
     private(set) var entries: [Entry]
 
-    enum CodingKeys: String, CodingKey { case id, ideasByGroup, eventTitles, serverRevision, name, entries }
+    /// `eventTitles` is the phone-only title map from before events; it is read once and written as `events`.
+    enum CodingKeys: String, CodingKey { case id, ideasByGroup, events, eventTitles, serverStoresEvents, serverRevision, name, entries }
 
     struct Entry: Codable, Sendable, Identifiable {
         let id: String
@@ -49,7 +65,24 @@ struct CameraRollCollection: Codable, Sendable {
         entries = try c.decode([Entry].self, forKey: .entries)
         serverRevision = try c.decodeIfPresent(Int.self, forKey: .serverRevision)
         ideasByGroup = try c.decodeIfPresent([String: SavedCameraRollGroupIdeas].self, forKey: .ideasByGroup) ?? [:]
-        eventTitles = try c.decodeIfPresent([String: String].self, forKey: .eventTitles) ?? [:]
+        serverStoresEvents = try c.decodeIfPresent(Bool.self, forKey: .serverStoresEvents) ?? false
+        if let saved = try c.decodeIfPresent([CameraRollEventInfo].self, forKey: .events) {
+            events = saved
+        } else {
+            let titles = try c.decodeIfPresent([String: String].self, forKey: .eventTitles) ?? [:]
+            events = titles.sorted { $0.key < $1.key }.map { CameraRollEventInfo(group: $0.key, title: $0.value, about: "") }
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(ideasByGroup, forKey: .ideasByGroup)
+        try c.encode(events, forKey: .events)
+        try c.encode(serverStoresEvents, forKey: .serverStoresEvents)
+        try c.encodeIfPresent(serverRevision, forKey: .serverRevision)
+        try c.encode(name, forKey: .name)
+        try c.encode(entries, forKey: .entries)
     }
 
     init(id: UUID = UUID(), name: String, identifiers: [String]) throws {
@@ -177,14 +210,49 @@ struct CameraRollCollection: Codable, Sendable {
         return number
     }
 
-    /// Entries are taken out of the collection whole so Undo can put the very same bindings back.
-    func title(forGroup group: String) -> String { eventTitles[group] ?? group }
+    func title(forGroup group: String) -> String { events.first { $0.group == group }?.title ?? group }
+    func about(forGroup group: String) -> String { events.first { $0.group == group }?.about ?? "" }
 
     mutating func rename(group: String, to title: String) {
-        let cleaned = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
-        eventTitles[group] = cleaned.isEmpty || cleaned == group ? nil : cleaned
+        let cleaned = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(CameraRollEventInfo.maximumTitle))
+        update(group) { $0.title = cleaned.isEmpty ? group : cleaned }
     }
 
+    mutating func setAbout(group: String, to about: String) {
+        let cleaned = String(about.trimmingCharacters(in: .whitespacesAndNewlines).prefix(CameraRollEventInfo.maximumAbout))
+        update(group) { $0.about = cleaned }
+    }
+
+    mutating func addEvent(group: String, title: String, about: String) {
+        removeEvent(group)
+        events.append(CameraRollEventInfo(group: group, title: group, about: ""))
+        rename(group: group, to: title)
+        setAbout(group: group, to: about)
+    }
+
+    /// Takes the event's title and about out, for Undo to put back with `restoreEvent`.
+    @discardableResult mutating func removeEvent(_ group: String) -> CameraRollEventInfo? {
+        guard let index = events.firstIndex(where: { $0.group == group }) else { return nil }
+        return events.remove(at: index)
+    }
+
+    mutating func restoreEvent(_ info: CameraRollEventInfo) {
+        if !events.contains(where: { $0.group == info.group }) { events.append(info) }
+    }
+
+    /// Takes in what the server holds for events the phone has never described; the phone's own wording wins.
+    mutating func adoptServerEvents(_ incoming: [CameraRollEventInfo]) {
+        for info in incoming { restoreEvent(info) }
+    }
+
+    private mutating func update(_ group: String, _ change: (inout CameraRollEventInfo) -> Void) {
+        if let index = events.firstIndex(where: { $0.group == group }) { change(&events[index]); return }
+        var info = CameraRollEventInfo(group: group, title: group, about: "")
+        change(&info)
+        events.append(info)
+    }
+
+    /// Entries are taken out of the collection whole so Undo can put the very same bindings back.
     mutating func remove(inGroup group: String) -> [Entry] {
         let map = groupMap()
         let leaving = entries.filter { map[$0.id] == group }
@@ -201,6 +269,7 @@ struct CameraRollCollection: Codable, Sendable {
     func localCopy() throws -> Self {
         var copy = try Self(name: String(name.prefix(140)) + " (local changes)", identifiers: entries.map(\.id))
         copy.entries = entries
+        copy.events = events
         return copy
     }
 

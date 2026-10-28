@@ -64,6 +64,7 @@ from app.pipeline.speech_cleanup_apply import hydrate_speech_cleanup_snapshot
 from app.pipeline.transcribe import TranscribeError, Transcript, Word
 from app.services.clip_speech import SilenceDetectionResult
 from app.tasks import generative_build as gb
+from tests._silent_pcm import silent_pcm
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 T1 = json.loads((FIXTURES / "kri843_don_julio_t1_passes.json").read_text())
@@ -145,6 +146,7 @@ def _analyze(
         transcribe_fn=replay,
         silence_detect_fn=_silences(T1["silence_spans"] if silences is None else silences),
         retake_detect_fn=retake_detect_fn,
+        pcm_loader=silent_pcm,
     )
     return result, replay
 

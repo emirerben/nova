@@ -10,6 +10,11 @@ import Foundation
 ///   `-collection-conflict`      saving the collection answers "this collection changed" until the creator opens the latest
 ///   `-collection-cache-miss`    finding ideas answers "new analysis is unavailable", which is not an edit conflict
 ///   `-collection-slow-group-delete` deleting an event takes the server 1.5 s, so Undo can be tapped while it is in flight
+///   `-collection-legacy-server` a server from before event titles and about: its collection has no `events`, and
+///                               a body that sends them is refused, as `extra="forbid"` refuses it
+///   `-collection-slow-use`      every step of "Use this idea" takes the server 0.8 s, so its progress can be watched
+///   `-collection-use-fails-once` handing the chat to the idea fails the first time, so Retry can be tapped
+///   `-collection-chat-deleted`  the workspace refuses to open the idea's chat, as it does for a chat the creator deleted
 /// `-camera-roll-collection` hosts the surface on its own; `-camera-roll-surface-fixture` swaps the fixture in under
 /// the real drawer (`-ui-testing-chat`).
 enum CameraRollSurfaceFixture {
@@ -19,6 +24,8 @@ enum CameraRollSurfaceFixture {
     static let collectionID = UUID(uuidString: "DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD")!
     static let saturday = "Saturday · Bodrum"
     static let sunday = "Sunday · Istanbul"
+    /// An event the creator made before choosing anything for it.
+    static let cunda = "Cunda Island"
 
     /// A fixed asset id per fixture item, so the server fixture and the seeded collection agree.
     static func assetID(_ number: Int) -> String { String(format: "00000000-0000-4000-8000-%012d", number) }
@@ -53,7 +60,10 @@ enum CameraRollSurfaceFixture {
         Item(key: "sunday-4", number: 14, kind: "video", duration: 8, group: sunday, state: "ready"),
         Item(key: "sunday-5", number: 15, kind: "image", duration: 0, group: sunday, state: "ready"),
         Item(key: "sunday-6", number: 16, kind: "video", duration: 11, group: sunday, state: "ready")
-    ]
+    ] + (21...52).map { number in
+        Item(key: "saturday-\(number)", number: number, kind: number.isMultiple(of: 2) ? "image" : "video",
+             duration: number.isMultiple(of: 2) ? 0 : 6, group: saturday, state: "ready")
+    }
 
     static func assetJSON(_ item: Item) -> [String: Any] {
         let role = item.kind == "video" ? "analysis_proxy" : "original"
@@ -67,7 +77,7 @@ enum CameraRollSurfaceFixture {
     static func api() -> KriaAPI {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [CameraRollSurfaceURLProtocol.self]
-        return KriaAPI(baseURL: URL(string: "https://camera-roll-surface.invalid")!, tokenStore: ChatUITestTokenStore(), session: URLSession(configuration: config))
+        return KriaAPI(baseURL: URL(string: "https://camera-roll-surface.invalid")!, tokenStore: CameraRollSurfaceTokenStore(), session: URLSession(configuration: config))
     }
 
     @MainActor static func model() -> CameraRollSurfaceModel {
@@ -82,6 +92,7 @@ enum CameraRollSurfaceFixture {
                     collection.bind(asset, to: item.entryID)
                 }
             }
+            collection.addEvent(group: cunda, title: cunda, about: "")
             collection.serverRevision = 1
             events["fixture-uploading"] = [.exportStarted, .uploadProgress(0.38)]
         }
@@ -96,8 +107,16 @@ struct CameraRollSurfaceUITestHost: View {
     @State private var model = CameraRollSurfaceFixture.model()
     @State private var opened = false
     var body: some View {
-        ZStack {
-            CameraRollSurfaceView(model: model, openProjects: {}, onSelected: { _ in opened = true })
+        ZStack(alignment: .topLeading) {
+            SwiftUI.TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                Text(CameraRollSurfaceFixtureServer.shared.storedEventsSummary).font(.system(size: 1)).foregroundStyle(.clear)
+                    .frame(width: 1, height: 1).accessibilityIdentifier("camera-roll-fixture-server-events")
+            }
+            CameraRollSurfaceView(model: model, openProjects: {}, onSelected: { _ in
+                guard !ProcessInfo.processInfo.arguments.contains("-collection-chat-deleted") else { return false }
+                opened = true
+                return true
+            })
             if opened { Text("Opened a chat").accessibilityIdentifier("camera-roll-opened-chat") }
         }
     }
@@ -108,13 +127,23 @@ struct CameraRollSurfaceUITestHost: View {
 struct CameraRollDeviceDiagnosticHost: View {
     @State private var model: CameraRollSurfaceModel
     init(api: any KriaAPIClient) { _model = State(initialValue: CameraRollSurfaceModel(api: api, mode: .metadataOnly)) }
-    var body: some View { CameraRollSurfaceView(model: model, openProjects: {}, onSelected: { _ in }) }
+    var body: some View { CameraRollSurfaceView(model: model, openProjects: {}, onSelected: { _ in false }) }
+}
+
+/// A signed-in creator, so "Use this idea" has an account whose originals it can look for.
+private struct CameraRollSurfaceTokenStore: TokenStore {
+    func read() throws -> MobileSession? {
+        let payload = Data("{\"sub\":\"camera-roll-surface-fixture\"}".utf8).base64EncodedString()
+        return MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture", expiresIn: 3600)
+    }
+    func write(_ session: MobileSession) throws {}
+    func delete() throws {}
 }
 
 private final class CameraRollSurfaceURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-    private static let server = CameraRollSurfaceFixtureServer()
+    private static var server: CameraRollSurfaceFixtureServer { .shared }
     override func startLoading() {
         // A slow route applies its change when it answers, as a real server's would, so a request that overtook it
         // would show up as a wrong final state.
@@ -139,11 +168,26 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
     private var revision = 1
     private var generated = 0
     private var taste: [String: Any] = ["revision": 0, "enabled": true, "memory_paused": false, "rules": [], "examples": []]
+    private var threadRevision = 1
+    private var selectFailed = false
+    /// What the server stores for each event. A legacy server has no such field.
+    private var events: [[String: Any]] = []
+
+    static let shared = CameraRollSurfaceFixtureServer()
+    /// "group|title|about" per stored event, for the test host to show what actually reached the server.
+    var storedEventsSummary: String {
+        lock.lock(); defer { lock.unlock() }
+        return events.map { "\($0["group"] ?? "")|\($0["title"] ?? "")|\($0["about"] ?? "")" }.joined(separator: "\n")
+    }
 
     private static func has(_ flag: String) -> Bool { ProcessInfo.processInfo.arguments.contains(flag) }
 
     func delay(for request: URLRequest) -> TimeInterval {
-        Self.has("-collection-slow-group-delete") && request.httpMethod == "DELETE" && request.url?.path.hasSuffix("/groups") == true ? 1.5 : 0
+        let path = request.url?.path ?? ""
+        if Self.has("-collection-slow-use"), path.contains("/creation-threads/") || path.hasSuffix("/select") || (request.httpMethod == "POST" && path.hasSuffix("/creation-threads")) {
+            return 0.8
+        }
+        return Self.has("-collection-slow-group-delete") && request.httpMethod == "DELETE" && path.hasSuffix("/groups") ? 1.5 : 0
     }
 
     /// What another phone saved first: a renamed collection holding two of Sunday's items.
@@ -168,6 +212,13 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
             taste = ["revision": (taste["revision"] as? Int ?? 0) + 1, "enabled": false, "memory_paused": false, "rules": [], "examples": []]
             return (200, taste)
         }
+        if method == "GET", path.hasSuffix("/creation-threads/capabilities") {
+            return (200, ["formats": [["id": "montage", "edit_format": "montage", "max_clips": 10]], "runtime_versions": [1, 2], "media_collections": true])
+        }
+        if path.contains("/creation-threads/") || (method == "POST" && path.hasSuffix("/creation-threads")) {
+            if method == "POST", path.hasSuffix("/media") { threadRevision += 1 }
+            return (200, Self.thread(revision: threadRevision))
+        }
         if method == "GET", path.hasSuffix("/creation-threads") {
             return (200, [["id": CameraRollSurfaceFixture.assetID(90), "title": "Ferry day", "status": "active", "revision": 1, "runtime_version": 2,
                            "active_plan_item_id": CameraRollSurfaceFixture.assetID(90), "updated_at": "2026-10-19T10:00:00Z"]])
@@ -180,7 +231,9 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
             let members = CameraRollSurfaceFixture.items.filter { $0.group == CameraRollSurfaceFixture.sunday }.prefix(2).map {
                 ["asset_id": CameraRollSurfaceFixture.assetID($0.number), "source_id": CameraRollSurfaceFixture.sourceID($0.number), "group": $0.group]
             }
-            return (200, ["id": CameraRollSurfaceFixture.collectionID.uuidString, "revision": 2, "name": Self.latestName, "members": members])
+            var latest: [String: Any] = ["id": CameraRollSurfaceFixture.collectionID.uuidString, "revision": 2, "name": Self.latestName, "members": members]
+            if !Self.has("-collection-legacy-server") { latest["events"] = [] }
+            return (200, latest)
         }
         if method == "GET", path.contains("/media-assets/"),
            let item = CameraRollSurfaceFixture.items.first(where: { path.lowercased().hasSuffix($0.assetIDString.lowercased()) }) {
@@ -194,7 +247,15 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
             if Self.has("-collection-conflict"), body["name"] as? String != Self.latestName {
                 return (409, ["detail": ["code": "collection_changed", "message": "This collection changed. Refresh before continuing."]])
             }
-            return (200, ["id": CameraRollSurfaceFixture.collectionID.uuidString, "revision": revision, "name": body["name"] ?? "My outing", "members": body["members"] ?? []])
+            if Self.has("-collection-legacy-server") {
+                if body["events"] != nil {
+                    return (422, ["detail": [["type": "extra_forbidden", "loc": ["body", "events"], "msg": "Extra inputs are not permitted"]]])
+                }
+                return (200, ["id": CameraRollSurfaceFixture.collectionID.uuidString, "revision": revision, "name": body["name"] ?? "My outing", "members": body["members"] ?? []])
+            }
+            if let sent = body["events"] as? [[String: Any]] { events = sent }
+            return (200, ["id": CameraRollSurfaceFixture.collectionID.uuidString, "revision": revision, "name": body["name"] ?? "My outing",
+                          "members": body["members"] ?? [], "events": events])
         }
         if method == "DELETE", path.hasSuffix("/groups") {
             let group = body["group"] as? String ?? ""
@@ -214,6 +275,19 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
             if method == "POST", path.hasSuffix("/restore") {
                 deleted.remove(id)
                 return (200, stories.first { ($0["id"] as? String)?.lowercased() == id } ?? [:])
+            }
+            if method == "POST", path.hasSuffix("/select") {
+                if Self.has("-collection-use-fails-once"), !selectFailed {
+                    selectFailed = true
+                    return (500, ["detail": "The server stumbled"])
+                }
+                threadRevision += 1
+                return (200, ["turn_id": UUID().uuidString, "thread_revision": threadRevision, "status": "accepted"])
+            }
+            if method == "PATCH", let plan = body["content_plan"], let index = stories.firstIndex(where: { ($0["id"] as? String)?.lowercased() == id }) {
+                stories[index]["content_plan"] = plan
+                stories[index]["revision"] = (stories[index]["revision"] as? Int ?? 1) + 1
+                return (200, stories[index])
             }
             if method == "POST", path.hasSuffix("/expose") { return (200, stories.first { ($0["id"] as? String)?.lowercased() == id } ?? [:]) }
             return (200, stories.first { ($0["id"] as? String)?.lowercased() == id } ?? [:])
@@ -252,6 +326,12 @@ private final class CameraRollSurfaceFixtureServer: @unchecked Sendable {
         [story(index: 1, group: CameraRollSurfaceFixture.sunday, title: "Three stops for a perfect day in Istanbul", form: "guide", assets: [11, 13, 14, 16], question: true),
          story(index: 2, group: CameraRollSurfaceFixture.sunday, title: "Ferry light, Sunday morning", form: "atmosphere", assets: [12, 15]),
          story(index: 3, group: CameraRollSurfaceFixture.sunday, title: "The simit I'd cross the city for", form: "review", assets: [13, 16])]
+    }
+
+    static let threadID = "33333333-3333-4333-8333-333333333333"
+    static func thread(revision: Int) -> [String: Any] {
+        ["id": threadID, "title": "Ferry light, Sunday morning", "status": "active", "revision": revision, "runtime_version": 2,
+         "active_plan_item_id": threadID, "updated_at": "2026-10-28T10:00:00Z"]
     }
 
     static func storyID(_ index: Int) -> String { String(format: "11111111-1111-4111-8111-%012d", index) }

@@ -45,6 +45,7 @@ from app.pipeline.speech_cleanup_analysis import (
     analyze_speech_cleanup,
 )
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
+from tests._silent_pcm import silent_pcm
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 _TAKES = json.loads((_FIXTURES / "kri970_provolone_takes.json").read_text())["takes"]
@@ -117,6 +118,7 @@ def test_the_cleanup_analysis_end_to_end_keeps_provolone(name):
         silence_detect_fn=lambda *_args, **_kwargs: SimpleNamespace(
             spans=tuple(silences), status="ok"
         ),
+        pcm_loader=silent_pcm,
     )
     assert _cut_over(result.cut_plan.to_cut_plan(), lo, hi) == []
     assert not [f for f in result.findings if f.start_s < hi and f.end_s > lo]

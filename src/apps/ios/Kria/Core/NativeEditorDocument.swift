@@ -486,7 +486,7 @@ struct EditorDocument: Equatable, Sendable {
     /// with them. The editor can delete cues (KRI-240), and deleting the last one
     /// must not turn the API's mirror text elements into captions of their own,
     /// which would list and burn every pre-edit caption again.
-    private var isCueNative: Bool {
+    var isCueNative: Bool {
         !captionCues.isEmpty || !(loadedState?.captionCues.isEmpty ?? true)
     }
 
@@ -827,6 +827,8 @@ private extension EditorDocument {
             ("stroke_width", ["caption_stroke_width"]),
             ("shadow_enabled", ["caption_shadow_enabled"]),
             ("appearance", ["caption_editor_style"]),
+            // KRI-1007: a cue-native variant stores the all-captions animation beside its caption fields.
+            ("animation_phases", ["caption_animation_phases"]),
         ]
         for (canonicalKey, keys) in aliases {
             if let value = value(for: canonicalKey, aliases: keys) { result[canonicalKey] = value }
