@@ -74,7 +74,7 @@ Question instead of silent drop:
 
 - `strategy_policy._talking_top_text_as_title`: on a Talking edit whose phone title lane
   is open (`creator_capabilities.phone_talking_title_lane_open`), one whole-video
-  top-corner line of at most 80 characters (`TALKING_TITLE_MAX_CHARS`, what the lane
+  top-corner line of at most 80 characters (`narrated_title.TITLE_MAX_CHARS`, what the lane
   draws) with no title beside it becomes `opening_title`, before the baseline is taken,
   with a notice that it shows for the first few seconds. Kill switch:
   `PHONE_SUBTITLED_TITLE_ENABLED=false` closes the lane and restores the omission.

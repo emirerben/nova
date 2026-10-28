@@ -41,6 +41,8 @@ from typing import Any, Protocol
 TITLE_Y_FRAC = 0.15
 TITLE_SIZE_PX = 120
 TITLE_FONT_FAMILY = "Playfair Display"
+# The longest title the top band is fitted for; the phone Talking title lane cuts there.
+TITLE_MAX_CHARS = 80
 
 _TITLE_SAFE_MARGIN_FRAC = 0.06
 _TITLE_BAND_BOTTOM_FRAC = 0.30

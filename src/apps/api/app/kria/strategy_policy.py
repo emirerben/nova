@@ -52,7 +52,7 @@ from app.agents._schemas.creator_policy import (
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
 from app.kria.voiceover_scope import lost_visual_asks, resolve_native_all_scope
-from app.pipeline.phone_subtitled_title import TALKING_TITLE_MAX_CHARS
+from app.pipeline.narrated_title import TITLE_MAX_CHARS
 from app.schemas.clip_intents import ClipIntent
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
@@ -985,7 +985,7 @@ def _talking_top_text_as_title(
         or len(pins) != 1
         or not pins[0].corner.startswith("top_")
         or not pins[0].is_whole_video
-        or len(" ".join(pins[0].text.split())) > TALKING_TITLE_MAX_CHARS
+        or len(" ".join(pins[0].text.split())) > TITLE_MAX_CHARS
         or not phone_talking_title_lane_open(manifest)
     ):
         return strategy, None

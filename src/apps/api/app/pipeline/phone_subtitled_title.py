@@ -48,7 +48,7 @@ from typing import Any, Protocol
 
 import structlog
 
-from app.pipeline.narrated_title import TITLE_Y_FRAC, narrated_title_placement
+from app.pipeline.narrated_title import TITLE_MAX_CHARS, TITLE_Y_FRAC, narrated_title_placement
 from app.pipeline.object_track import ObjectTrack, object_canvas_boxes, object_collision
 from app.pipeline.phone_subtitled_lanes import CAPTION_BAND_TOP_FRAC
 from app.pipeline.render_geometry import (
@@ -83,12 +83,10 @@ _CLOSING_PHOTO_INSET_FRAC = 0.015
 # (`portable_text_layout`'s `TextBackground`).
 _CLOSING_PILL_PAD_PX = 4
 
-# Mirrors the narrated title (`phone_narrated_plan`): the cloud intro window
-# and the longest title the top band is fitted for.
+# Mirrors the narrated title (`phone_narrated_plan`): the cloud intro window.
 _TITLE_MIN_S = 0.5
 _TITLE_MAX_S = 3.0
 _TITLE_AFTER_FIRST_WORD_S = 1.0
-TALKING_TITLE_MAX_CHARS = 80
 
 # The title block's top never goes above the platform header chrome (same 6%
 # as `narrated_title`), and its bottom never reaches the caption band
@@ -165,7 +163,7 @@ def talking_title_element(
     """
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
-    text = " ".join((opening_title or "").split())[:TALKING_TITLE_MAX_CHARS]
+    text = " ".join((opening_title or "").split())[:TITLE_MAX_CHARS]
     if not text:
         return None
     end_s = float(duration_s) if duration_s is not None else talking_title_end_s(first_word_end_s)
@@ -751,7 +749,7 @@ def talking_closing_element(
     there is one, else at the title's top spot."""
     from app.agents._schemas.text_element import TextElement  # noqa: PLC0415
 
-    text = " ".join((closing_title or "").split())[:TALKING_TITLE_MAX_CHARS]
+    text = " ".join((closing_title or "").split())[:TITLE_MAX_CHARS]
     if not text or end_s - start_s < _TITLE_MIN_S / 5:
         return None
     element = TextElement(
