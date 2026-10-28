@@ -396,6 +396,24 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
     )
 
 
+def caption_y_fields(variant: dict, y_frac: float) -> dict:
+    """The variant fields holding the caption block's vertical spot, all moved to ``y_frac``.
+
+    A phone variant keeps that spot twice: ``caption_margin_v`` and, once a generation
+    resolved its geometry, ``caption_editor_style.position_y_frac`` -- which
+    `caption_look_from_variant` and the iOS editor read first. Moving only the margin
+    leaves the drawn captions where they were (KRI-1008). A variant without a style y
+    keeps the margin-only shape.
+    """
+    from app.pipeline.captions import y_frac_to_margin_v
+
+    fields: dict = {"caption_margin_v": y_frac_to_margin_v(y_frac)}
+    style = variant.get("caption_editor_style")
+    if isinstance(style, dict) and style.get("position_y_frac") is not None:
+        fields["caption_editor_style"] = {**style, "position_y_frac": y_frac}
+    return fields
+
+
 def _single_word_enabled(variant: dict) -> bool:
     # Imported here: `phone_rollout` imports the recipe models this module's importers load.
     from app.services.phone_rollout import single_word_captions_enabled
