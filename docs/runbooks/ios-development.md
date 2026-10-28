@@ -546,6 +546,20 @@ well as revisions because reconciliation can change a projection without
 appending an event. `testSlowDirectionAndPreJobFailureNeverReturnToUploading`
 exercises the delayed response, pre-job failure, retry and ready transition.
 
+### Caption animation (KRI-1007)
+
+Captions → Animation shows the Text panel's In / Out / Loop cards and speed slider
+(`NativeAnimationPhasePicker`, shared with Text) under an `All captions | Line N` switch.
+All captions is the default and writes `caption_meta.animation_phases` while removing every
+line's own phases in one undo step. Line N is the line last tapped in Edit captions; with
+none picked it is disabled and a visible line says why. The tab appears only with
+`editor_capabilities.caption_animation` (client protocol 23). The preview compiler follows the
+server: line > all-captions default > today's look, a word-highlight line keeps its sweep,
+and a text-lane (guided, song) line animates as one line. Wire shape: phone-rendering.md
+"Caption animation". Proof: `CaptionAnimationTests` and `NativeCaptionAnimationUITests`
+(`-ui-testing-editor-caption-animation`, `-ui-testing-editor-song-captions`,
+`-ui-testing-editor-live-preview` for the compiled preview on any fixture).
+
 ### Caption line editing (KRI-240)
 
 Captions → Edit captions lists lines with their start time; there is no chevron,

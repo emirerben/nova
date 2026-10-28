@@ -1,7 +1,9 @@
 # Native captions and visuals (KRI-43)
 
 The native editor uses Paper screens 11–19 for caption and visual inspectors.
-Captions have Edit captions, Style, and Settings tabs. Language, regeneration,
+Captions have Edit captions, Style, and (where the server sends
+`editor_capabilities.caption_animation`) Animation tabs; Show captions and Highlight
+spoken word sit at the top of Edit captions. Language, regeneration,
 Sounds, and the separate Overlays/Styles tools are outside this change. AI actions
 are tracked separately in PR #1019. Since KRI-240, tapping a line in Edit captions
 opens it in an edit bar with the keyboard up; see "Caption line editing (KRI-240)"
