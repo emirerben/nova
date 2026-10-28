@@ -16,6 +16,7 @@ from app.agents.camera_roll_stories import (
     CameraRollStoriesAgent,
     CameraRollStoriesInput,
     CameraRollStoriesOutput,
+    CaptureSpan,
     OfferedIdea,
 )
 from app.agents.media_moment_relevance import MomentCandidate
@@ -259,14 +260,37 @@ async def _event_history(db, owner, identifier, group, exclude_story_ids):
     return offered, [row for row in rows if deleted_as_idea(row)]
 
 
+async def _capture_span(db, owner, selected):
+    """First and last capture date of an event's footage; None when no asset carries one."""
+    eligible = await media_collections.eligible_sources(db, owner, selected)
+    times = [
+        stamp
+        for asset, _ in eligible.values()
+        if (stamp := media_collections.capture_time(asset)) is not None
+    ]
+    if not times:
+        return None
+    return CaptureSpan(first=min(times).date().isoformat(), last=max(times).date().isoformat())
+
+
 async def generate_stories(db, owner, identifier, body):
     group = body.group
+    event_title = event_about = ""
+    capture_span = None
     if group is not None:
         collection = await media_collections.owned_collection(
             db, owner, identifier, revision=body.expected_revision
         )
-        if not any(member.group == group for member in media_collections.members(collection)):
+        in_group = [
+            member for member in media_collections.members(collection) if member.group == group
+        ]
+        if not in_group:
             raise HTTPException(404, "Event not found in this collection")
+        if described := next(
+            (value for value in media_collections.events(collection) if value.group == group), None
+        ):
+            event_title, event_about = described.title, described.about
+        capture_span = await _capture_span(db, owner, in_group)
     offered_rows, deleted_rows = await _event_history(
         db, owner, identifier, group, body.exclude_story_ids
     )
@@ -279,7 +303,9 @@ async def generate_stories(db, owner, identifier, body):
     suggested_topic = (
         None
         if getattr(body, "research_topic", None)
-        else suggest_research_topic(body.query, [value.text for value in candidates])
+        else suggest_research_topic(
+            body.query, [value.text for value in candidates], event_title, event_about
+        )
     )
     if not candidates:
         return CollectionStoriesOut(
@@ -290,10 +316,18 @@ async def generate_stories(db, owner, identifier, body):
         )
     # Retrieve editorial examples against the actual outing, even when the
     # creator leaves the broad default query unchanged.
-    taste_query = (body.query + " " + " ".join(value.text[:160] for value in candidates))[:2000]
+    taste_query = " ".join(
+        [
+            *(text for text in (body.query, event_title, event_about) if text),
+            *(value.text[:160] for value in candidates),
+        ]
+    )[:2000]
     taste = await creator_editorial_taste.generation_context(db, owner, taste_query)
     input = CameraRollStoriesInput(
         query=body.query,
+        event_title=event_title,
+        event_about=event_about,
+        capture_span=capture_span,
         editorial_taste_context=taste,
         already_offered=[
             OfferedIdea(

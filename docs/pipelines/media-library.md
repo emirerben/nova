@@ -219,6 +219,19 @@ stays version 1 and omits a null form when serializing, so stored JSON, digests 
 bindings of those rows are byte-identical. A wording edit keeps the stored form (builds that
 predate the field send none back).
 
+Idea copy is written for a stranger scrolling a feed (KRI-1004). The prompt prefers guide,
+review, factual and performance ideas over `atmosphere`, makes the opening a concrete hook and
+keeps first-person day recaps out of captions. It honours the event's title and notes
+(`creator_provided_event_context`): a named place goes into each idea, and a stated aim such as
+"why people should visit" allows why-visit ideas built on features the footage shows. The
+prompt starts with the `grounded-hook` runtime skill; an edit to that skill needs a
+`camera_roll_stories` `prompt_version` bump, because the idea cache is keyed on the version.
+A model copy-edit pass that stripped stock travel wording was tried and removed: the words went
+but the judge's viewer_value and specificity did not move. Copy is only as specific as the
+footage descriptions and the creator's event title and notes, so those inputs carry the quality.
+Measure voice changes with `tests/evals/test_camera_roll_voice_evals.py` (DECISIONS.md
+"Camera-roll ideas are written for a stranger").
+
 An idea may carry up to three `content_plan.open_questions` (`id`, `question`, `answer`,
 `dismissed`): facts only the creator knows. The question text is server-owned. The creator
 answers or skips through the existing `PATCH .../stories/{id}` wording edit (a new story

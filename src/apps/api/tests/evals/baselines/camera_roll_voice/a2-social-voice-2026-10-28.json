@@ -1,0 +1,1348 @@
+{
+  "label": "a2-social-voice-2026-10-28",
+  "created_at": "2026-10-28T12:17:25+00:00",
+  "git_sha": "9c6cea6d2",
+  "agent": "nova.media.camera_roll_stories",
+  "prompt_version": "2026-10-28.2",
+  "model": "gemini-2.5-flash",
+  "judged": true,
+  "variants": {
+    "bare": {
+      "description": "No place anywhere: the default query only. What a fresh no-GPS event sends today.",
+      "query": "Suggest different content ideas from this outing",
+      "runs": [
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "A Walk Through Stone Village Streets",
+                "hook": "Wander through quiet streets and discover old stone architecture.",
+                "payoff": "Showcase the tranquil beauty and characteristic details of old stone village streets.",
+                "rationale": "The opening visual immediately sets a peaceful, inviting scene. The walking footage and still photos highlight traditional buildings and charming details, offering a glimpse into a serene village experience.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "People who enjoy exploring quiet, picturesque villages and old architecture.",
+                  "angle": "Showcase the tranquil beauty and characteristic details of old stone village streets.",
+                  "why_it_works": "The opening visual immediately sets a peaceful, inviting scene. The walking footage and still photos highlight traditional buildings and charming details, offering a glimpse into a serene village experience.",
+                  "opening_text": "Wander through quiet streets and discover old stone architecture.",
+                  "closing_text": null,
+                  "caption": "Take a moment to enjoy the timeless beauty of these quiet village streets. The stone houses, wooden shutters, and bougainvillea create a unique charm.",
+                  "beat_reasons": [
+                    "Establishes a narrow cobbled street scene.",
+                    "Shows a walk down a stone alley with old houses.",
+                    "Highlights a small square with traditional stone houses."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Morning at the Fishing Harbour",
+                "hook": "The quiet hum of morning at the fishing harbour.",
+                "payoff": "Capture the calm start to a day at a small, traditional fishing harbour.",
+                "rationale": "The opening shows a picturesque harbour. The following clip with boats and a man coiling rope, alongside the sound of gulls and voices, immerses the viewer in the authentic, working atmosphere of a fishing village.",
+                "moment_ids": [
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "Viewers interested in coastal life, fishing villages, and peaceful waterside scenes.",
+                  "angle": "Capture the calm start to a day at a small, traditional fishing harbour.",
+                  "why_it_works": "The opening shows a picturesque harbour. The following clip with boats and a man coiling rope, alongside the sound of gulls and voices, immerses the viewer in the authentic, working atmosphere of a fishing village.",
+                  "opening_text": "The quiet hum of morning at the fishing harbour.",
+                  "closing_text": null,
+                  "caption": "Experience the calm mornings at a small harbour where fishing boats bob gently and the day begins with familiar routines. Listen for the gulls overhead.",
+                  "beat_reasons": [
+                    "Sets the scene with fishing boats in a calm harbour.",
+                    "Shows daily activity with boats and a man coiling rope.",
+                    "Expands to show the sea nearby with small boats."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Coastal Views: From Windmills to Sunset",
+                "hook": "From old windmills to clear waters and evening skies.",
+                "payoff": "Showcase diverse coastal elements, from historic structures to the open sea and sunset.",
+                "rationale": "This idea contrasts different aspects of a coastal environment, starting with a unique landmark and transitioning to the vastness of the sea and a beautiful sunset. It offers a visual journey of natural and historic coastal elements.",
+                "moment_ids": [
+                  "00000003-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000006-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "Anyone who appreciates scenic coastal landscapes and natural beauty.",
+                  "angle": "Showcase diverse coastal elements, from historic structures to the open sea and sunset.",
+                  "why_it_works": "This idea contrasts different aspects of a coastal environment, starting with a unique landmark and transitioning to the vastness of the sea and a beautiful sunset. It offers a visual journey of natural and historic coastal elements.",
+                  "opening_text": "From old windmills to clear waters and evening skies.",
+                  "closing_text": null,
+                  "caption": "Explore diverse coastal scenes, from a stone windmill on a hilltop to the endless blue sea and a calm sunset over the water.",
+                  "beat_reasons": [
+                    "Introduces a stone windmill on a low hill.",
+                    "Pans across clear green water and small boats.",
+                    "Shows orange light on flat water at sunset."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 0.6666666666666666,
+              "missing_place_rate": null
+            },
+            "ideas": [
+              {
+                "title": "A Walk Through Stone Village Streets",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "timeless",
+                  "beauty of"
+                ],
+                "names_place": null
+              },
+              {
+                "title": "Morning at the Fishing Harbour",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "experience the"
+                ],
+                "names_place": null
+              },
+              {
+                "title": "Coastal Views: From Windmills to Sunset",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [],
+                "names_place": null
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 3.0,
+              "viewer_value": 2.0,
+              "specificity": 2.0,
+              "grounding": 4.0
+            },
+            "composite": 2.75,
+            "reasoning": "The ideas avoid overt diary voice but rely on vague atmospheric hooks ('quiet hum', 'tranquil beauty', 'explore diverse coastal scenes') with no concrete payoff for a stranger, no place name is ever given despite the footage containing identifiable features like a stone windmill, bougainvillea, and faded-hull boats, and while nothing is invented the copy leans on generic brochure language rather than the specific footage details provided."
+          }
+        },
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "A Walk Through Stone Village Streets",
+                "hook": "Step into the quiet charm of stone streets and bougainvillea.",
+                "payoff": "A serene visual journey through narrow cobbled streets, highlighting the calm beauty and characteristic elements of a traditional stone village.",
+                "rationale": "The opening photo sets a peaceful scene, and the video walk immerses viewers. Specific details like bougainvillea, balconies, and a cat create a sense of discovery.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000",
+                  "00000011-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "People who enjoy exploring quiet, picturesque old villages and finding charming details.",
+                  "angle": "A serene visual journey through narrow cobbled streets, highlighting the calm beauty and characteristic elements of a traditional stone village.",
+                  "why_it_works": "The opening photo sets a peaceful scene, and the video walk immerses viewers. Specific details like bougainvillea, balconies, and a cat create a sense of discovery.",
+                  "opening_text": "Step into the quiet charm of stone streets and bougainvillea.",
+                  "closing_text": null,
+                  "caption": "Wander through the peaceful lanes. Every corner has its own character, from sun-drenched walls to welcoming doorways. A perfect escape.",
+                  "beat_reasons": [
+                    "Establishes the inviting atmosphere of a narrow village street with old stone houses.",
+                    "Shows a walk through a cobbled alley, giving a sense of movement and immersion.",
+                    "Highlights architectural details with old stone houses and wooden balconies.",
+                    "Adds a charming, unexpected detail of a cat on a doorstep, enhancing the village feel."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Morning at the Harbour: Fishing Boats and Daily Life",
+                "hook": "Morning calm in the harbour with fishing boats and daily work.",
+                "payoff": "Capturing the serene and active moments of a small fishing harbour in the morning, focusing on boats and a man at work.",
+                "rationale": "The opening shows a classic harbour view, followed by a dynamic scene with a man coiling rope and sounds, providing an immersive glimpse into a calm morning.",
+                "moment_ids": [
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "People who appreciate the authentic, unhurried pace of a working harbour and coastal life.",
+                  "angle": "Capturing the serene and active moments of a small fishing harbour in the morning, focusing on boats and a man at work.",
+                  "why_it_works": "The opening shows a classic harbour view, followed by a dynamic scene with a man coiling rope and sounds, providing an immersive glimpse into a calm morning.",
+                  "opening_text": "Morning calm in the harbour with fishing boats and daily work.",
+                  "closing_text": null,
+                  "caption": "The quiet start to the day at the harbour. Watch fishing boats bob and a local go about their morning tasks. Simple beauty.",
+                  "beat_reasons": [
+                    "Establishes a small, traditional harbour scene with fishing boats on calm water.",
+                    "Shows boats bobbing and a man coiling rope, conveying the working rhythm of the harbour."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Coastal Views & Olive Groves",
+                "hook": "From rocky shores to sun-dappled olive trees.",
+                "payoff": "Evening light over the water.",
+                "rationale": "This idea offers a visual escape, moving from the calming waves of the sea to the gentle rustling of olive leaves, culminating in a beautiful sunset. It creates a tranquil experience.",
+                "moment_ids": [
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000007-0001-4000-8000-000000000000",
+                  "00000008-0001-4000-8000-000000000000",
+                  "00000006-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "Viewers seeking peaceful natural landscapes, coastal beauty, and the tranquility of an olive grove.",
+                  "angle": "A peaceful journey from the tranquil sea to sun-dappled olive groves, ending with a serene sunset view over the water.",
+                  "why_it_works": "This idea offers a visual escape, moving from the calming waves of the sea to the gentle rustling of olive leaves, culminating in a beautiful sunset. It creates a tranquil experience.",
+                  "opening_text": "From rocky shores to sun-dappled olive trees.",
+                  "closing_text": "Evening light over the water.",
+                  "caption": "Experience the quiet beauty of this coastal landscape. Waves, ancient olive trees, and the peaceful end to a day by the sea.",
+                  "beat_reasons": [
+                    "Presents the clear green water and rocky shore, establishing a coastal scene.",
+                    "Shows gnarled olive trees on a hillside, transitioning to an inland natural setting.",
+                    "Captures olive branches moving in the breeze, emphasizing the natural serenity.",
+                    "Concludes with a serene sunset over the flat water, offering a peaceful closing view."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 0.6666666666666666,
+              "missing_place_rate": null
+            },
+            "ideas": [
+              {
+                "title": "A Walk Through Stone Village Streets",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "peaceful",
+                  "every corner",
+                  "perfect"
+                ],
+                "names_place": null
+              },
+              {
+                "title": "Morning at the Harbour: Fishing Boats and Daily Life",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [],
+                "names_place": null
+              },
+              {
+                "title": "Coastal Views & Olive Groves",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "peaceful",
+                  "experience the",
+                  "beauty of"
+                ],
+                "names_place": null
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 3.0,
+              "viewer_value": 2.0,
+              "specificity": 2.0,
+              "grounding": 4.0
+            },
+            "composite": 2.75,
+            "reasoning": "The ideas avoid outright diary voice but rely on vague mood language ('serene visual journey', 'quiet charm', 'simple beauty') that gives a stranger no concrete reason to watch; no place is named despite footage featuring a windmill, stone houses, harbour, olive grove and a cat that could anchor specifics, and the hooks describe atmosphere rather than delivering a payoff, verdict or curiosity gap."
+          }
+        },
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "A Walk Through Cobbled Alleys",
+                "hook": "Wander through stone alleys and see the details.",
+                "payoff": "Explore the quiet beauty and hidden details of an old village's stone streets and traditional architecture.",
+                "rationale": "It transports viewers to a peaceful, historic setting, highlighting specific architectural details and the feeling of discovery. The visual journey creates a sense of charm and calm.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "guide",
+                  "audience": "Travelers looking for charming old towns, or people who enjoy slow walks through historic streets.",
+                  "angle": "Explore the quiet beauty and hidden details of an old village's stone streets and traditional architecture.",
+                  "why_it_works": "It transports viewers to a peaceful, historic setting, highlighting specific architectural details and the feeling of discovery. The visual journey creates a sense of charm and calm.",
+                  "opening_text": "Wander through stone alleys and see the details.",
+                  "closing_text": null,
+                  "caption": "Discover the quiet charm of old stone villages. Every corner reveals something new, from vibrant bougainvillea to weathered balconies. #OldTownCharm #VillageLife",
+                  "beat_reasons": [
+                    "Establishes a narrow, picturesque cobbled street with bougainvillea.",
+                    "Shows the immersive experience of walking through the stone alley.",
+                    "Highlights more traditional stone houses with wooden balconies."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Life by the Water's Edge",
+                "hook": "Start your day where fishing boats dock.",
+                "payoff": "Show the simple, authentic experience of a small coastal harbor, from fishing boats to fresh meals.",
+                "rationale": "It captures the relaxed pace and visual appeal of a seaside village, from working boats to a fresh meal. Viewers get a sense of local life by the water.",
+                "moment_ids": [
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000012-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "review",
+                  "audience": "Viewers dreaming of coastal getaways, or those curious about quiet seaside towns and local life.",
+                  "angle": "Show the simple, authentic experience of a small coastal harbor, from fishing boats to fresh meals.",
+                  "why_it_works": "It captures the relaxed pace and visual appeal of a seaside village, from working boats to a fresh meal. Viewers get a sense of local life by the water.",
+                  "opening_text": "Start your day where fishing boats dock.",
+                  "closing_text": null,
+                  "caption": "From calm harbors to fresh catches by the sea. There's a special kind of peace in these waterside moments. #CoastalLife #HarborViews",
+                  "beat_reasons": [
+                    "Sets the scene with a small, tranquil harbor and fishing boats.",
+                    "Adds dynamic action of boats bobbing and a person working.",
+                    "Transitions to the wider view of the sea and rocky shore.",
+                    "Shows a fresh, prepared meal by the water."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Countryside Views: Olives and Windmills",
+                "hook": "Experience the quiet calm of the countryside.",
+                "payoff": "Present the serene atmosphere of a countryside featuring ancient olive groves and a historic windmill.",
+                "rationale": "It provides a moment of calm and visual escape, highlighting the natural beauty and timeless feel of the rural landscape.",
+                "moment_ids": [
+                  "00000007-0001-4000-8000-000000000000",
+                  "00000008-0001-4000-8000-000000000000",
+                  "00000003-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "People who appreciate natural landscapes and peaceful rural scenes.",
+                  "angle": "Present the serene atmosphere of a countryside featuring ancient olive groves and a historic windmill.",
+                  "why_it_works": "It provides a moment of calm and visual escape, highlighting the natural beauty and timeless feel of the rural landscape.",
+                  "opening_text": "Experience the quiet calm of the countryside.",
+                  "closing_text": null,
+                  "caption": "The gentle breeze through olive groves and windmills on the hill. Simple moments, profound calm. #Countryside #OliveGroves",
+                  "beat_reasons": [
+                    "Establishes the ancient, gnarled olive trees of the grove.",
+                    "Shows the movement of leaves in the breeze, enhancing atmosphere.",
+                    "Presents a classic stone windmill on a hill, completing the rural scene."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 0.6666666666666666,
+              "missing_place_rate": null
+            },
+            "ideas": [
+              {
+                "title": "A Walk Through Cobbled Alleys",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "discover the",
+                  "every corner"
+                ],
+                "names_place": null
+              },
+              {
+                "title": "Life by the Water's Edge",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": true,
+                "filler": [],
+                "names_place": null
+              },
+              {
+                "title": "Countryside Views: Olives and Windmills",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "experience the"
+                ],
+                "names_place": null
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 3.0,
+              "viewer_value": 2.0,
+              "specificity": 2.0,
+              "grounding": 4.0
+            },
+            "composite": 2.75,
+            "reasoning": "The ideas avoid pure diary voice but hooks like 'Experience the quiet calm' and 'Wander through stone alleys and see the details' are vague mood invitations rather than concrete viewer payoffs, no place is named despite being nameable from footage features, and while specific elements (windmill, bougainvillea, fishing boats) appear in captions they rarely anchor the opening hooks where they matter most."
+          }
+        }
+      ],
+      "errors": []
+    },
+    "query": {
+      "description": "Place and intent typed into the one-shot query: today's best workaround.",
+      "query": "Cunda Island: show why people should visit, stone architecture, nature, sea",
+      "runs": [
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "Stone Streets & Sea Views: Cunda Island Charm",
+                "hook": "Wander Cunda's cobbled streets lined with historic stone houses.",
+                "payoff": "Explore the unique stone architecture and traditional village life of Cunda Island, from its charming streets to its working harbor.",
+                "rationale": "Viewers see the charming, authentic streets and coastal life of Cunda, giving them a glimpse of what to expect and why it's a worthwhile visit for its atmosphere.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000",
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "guide",
+                  "audience": "Travelers looking for picturesque European island towns with unique architecture and a relaxing pace.",
+                  "angle": "Explore the unique stone architecture and traditional village life of Cunda Island, from its charming streets to its working harbor.",
+                  "why_it_works": "Viewers see the charming, authentic streets and coastal life of Cunda, giving them a glimpse of what to expect and why it's a worthwhile visit for its atmosphere.",
+                  "opening_text": "Wander Cunda's cobbled streets lined with historic stone houses.",
+                  "closing_text": null,
+                  "caption": "Cunda Island delivers on historic charm with its beautiful stone buildings, bougainvillea-covered doorways, and lively harbor scenes. So much to explore!",
+                  "beat_reasons": [
+                    "Shows a narrow cobbled street and stone houses.",
+                    "Moves through a stone alley, emphasizing pedestrian charm.",
+                    "Highlights traditional stone houses with wooden balconies.",
+                    "Frames a peaceful harbor with fishing boats tied.",
+                    "Captures daily life at the harbor with boats and a man working."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Cunda Island's Coastal Beauty: Sea & Olive Groves",
+                "hook": "Experience Cunda's calm waters and sun-dappled olive groves.",
+                "payoff": "Showcase the natural beauty of Cunda Island, focusing on its tranquil sea views and sun-drenched olive groves.",
+                "rationale": "Viewers get a sense of the island's serene natural landscapes and coastal charm, appealing to those looking for a relaxing escape.",
+                "moment_ids": [
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000007-0001-4000-8000-000000000000",
+                  "00000008-0001-4000-8000-000000000000",
+                  "00000003-0001-4000-8000-000000000000",
+                  "00000006-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "Nature lovers and those seeking peaceful, scenic destinations by the sea.",
+                  "angle": "Showcase the natural beauty of Cunda Island, focusing on its tranquil sea views and sun-drenched olive groves.",
+                  "why_it_works": "Viewers get a sense of the island's serene natural landscapes and coastal charm, appealing to those looking for a relaxing escape.",
+                  "opening_text": "Experience Cunda's calm waters and sun-dappled olive groves.",
+                  "closing_text": null,
+                  "caption": "From the gentle waves to the ancient olive trees, Cunda Island offers serene landscapes and beautiful coastal vistas. Perfect for a peaceful getaway.",
+                  "beat_reasons": [
+                    "Shows waves on a rocky shore and boats on the horizon.",
+                    "Establishes an olive grove with gnarled trunks.",
+                    "Features olive branches moving in a light breeze.",
+                    "Presents a stone windmill on a scenic hilltop.",
+                    "Concludes with an atmospheric sunset over the sea."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Island Flavors & Local Life: A Taste of Cunda",
+                "hook": "Cunda Island: Where charm meets fresh seafood.",
+                "payoff": "Highlight the everyday charm and culinary delights of Cunda Island, from its friendly street cats to fresh seafood.",
+                "rationale": "Viewers see a slice of Cunda's local character and appealing fresh food, making them feel like they're getting an authentic recommendation.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000011-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000",
+                  "00000012-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "review",
+                  "audience": "Foodies and travelers interested in local culture and culinary experiences in charming island settings.",
+                  "angle": "Highlight the everyday charm and culinary delights of Cunda Island, from its friendly street cats to fresh seafood.",
+                  "why_it_works": "Viewers see a slice of Cunda's local character and appealing fresh food, making them feel like they're getting an authentic recommendation.",
+                  "opening_text": "Cunda Island: Where charm meets fresh seafood.",
+                  "closing_text": null,
+                  "caption": "Beyond the scenic views, Cunda Island offers glimpses into daily life, from its welcoming cats to delicious fresh-grilled fish by the water. A truly local experience!",
+                  "beat_reasons": [
+                    "Establishes a charming street setting.",
+                    "Shows a friendly cat on an old stone step.",
+                    "Captures a man coiling rope by fishing boats at the quay.",
+                    "Displays grilled fish and meze on a waterside table.",
+                    "Ends with clear green water and boats, hinting at the source of fresh food."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 0.6666666666666666,
+              "missing_place_rate": 0.0
+            },
+            "ideas": [
+              {
+                "title": "Stone Streets & Sea Views: Cunda Island Charm",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "beautiful"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Cunda Island's Coastal Beauty: Sea & Olive Groves",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "serene",
+                  "peaceful",
+                  "beautiful",
+                  "perfect"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Island Flavors & Local Life: A Taste of Cunda",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [],
+                "names_place": true
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 2.0,
+              "viewer_value": 3.0,
+              "specificity": 3.0,
+              "grounding": 4.0
+            },
+            "composite": 3.5,
+            "reasoning": "The ideas avoid diary voice and correctly name Cunda Island with footage-grounded details (cobbled streets, bougainvillea, windmill, olive groves, fishing harbour), but openings lean on generic invitations ('Experience', 'Wander', 'Where charm meets') rather than concrete payoffs or curiosity gaps, and several captions fall back on brochure language ('perfect for a peaceful getaway', 'serene landscapes') that could fit any island trip."
+          }
+        },
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "Cunda Island: Stone Architecture & Cobbled Streets",
+                "hook": "Wander Cunda's cobbled alleys and admire stone houses.",
+                "payoff": "Explore the distinct stone architecture and picturesque narrow streets that define Cunda Island.",
+                "rationale": "Shows the characteristic stone houses, cobbled alleys, and historical feel of Cunda, giving viewers a clear visual of its unique charm.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000",
+                  "00000011-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "guide",
+                  "audience": "Travelers looking for charming old towns and unique architecture.",
+                  "angle": "Explore the distinct stone architecture and picturesque narrow streets that define Cunda Island.",
+                  "why_it_works": "Shows the characteristic stone houses, cobbled alleys, and historical feel of Cunda, giving viewers a clear visual of its unique charm.",
+                  "opening_text": "Wander Cunda's cobbled alleys and admire stone houses.",
+                  "closing_text": null,
+                  "caption": "Cunda Island is known for its beautiful stone architecture and charming streets. Every corner has character!",
+                  "beat_reasons": [
+                    "Show a narrow cobbled street and stone houses with bougainvillea.",
+                    "Walk through a stone alley with old houses and potted plants.",
+                    "Feature a row of old stone houses with wooden balconies and ivy.",
+                    "Highlight a detail like a cat on a worn stone step of an old house."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Cunda Island: Serene Sea Views & Coastal Life",
+                "hook": "Experience the calm beauty of Cunda Island's coast.",
+                "payoff": "Capture the peaceful maritime atmosphere and beautiful sea landscapes of Cunda Island, from harbors to sunsets.",
+                "rationale": "Presents a calming visual journey of Cunda's coast, showing the harbor, boats, and serene sea, evoking a sense of tranquility.",
+                "moment_ids": [
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000006-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "Anyone seeking relaxing coastal vibes and scenic ocean views.",
+                  "angle": "Capture the peaceful maritime atmosphere and beautiful sea landscapes of Cunda Island, from harbors to sunsets.",
+                  "why_it_works": "Presents a calming visual journey of Cunda's coast, showing the harbor, boats, and serene sea, evoking a sense of tranquility.",
+                  "opening_text": "Experience the calm beauty of Cunda Island's coast.",
+                  "closing_text": null,
+                  "caption": "From quiet harbors to stunning sunsets, Cunda Island offers endless moments of coastal peace. What's your favorite view?",
+                  "beat_reasons": [
+                    "Show a small harbor with fishing boats tied at the quay.",
+                    "Capture fishing boats bobbing at the quay and a man coiling rope.",
+                    "Display waves rolling onto a rocky shore and clear green water.",
+                    "End with the sea at sunset, showing orange light on flat water."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Cunda Island: Nature's Quiet Beauty – Olives and Windmills",
+                "hook": "Discover Cunda Island's quiet natural landscapes.",
+                "payoff": "Highlight the natural elements of Cunda Island, focusing on its olive groves and historic windmill.",
+                "rationale": "Showcases the island's natural landscape, including its iconic olive trees and a historic windmill, offering a different aspect of its charm.",
+                "moment_ids": [
+                  "00000007-0001-4000-8000-000000000000",
+                  "00000008-0001-4000-8000-000000000000",
+                  "00000003-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "review",
+                  "audience": "Nature lovers and those interested in the natural landscape of Mediterranean islands.",
+                  "angle": "Highlight the natural elements of Cunda Island, focusing on its olive groves and historic windmill.",
+                  "why_it_works": "Showcases the island's natural landscape, including its iconic olive trees and a historic windmill, offering a different aspect of its charm.",
+                  "opening_text": "Discover Cunda Island's quiet natural landscapes.",
+                  "closing_text": null,
+                  "caption": "Beyond the streets, Cunda Island has serene olive groves and historic landmarks like its windmill. A different kind of beauty!",
+                  "beat_reasons": [
+                    "Show gnarled old olive trunks and silver-green leaves on a hillside.",
+                    "Capture olive branches moving gently in a light breeze.",
+                    "Feature a stone windmill on a low hill under a clear blue sky."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 1.0,
+              "missing_place_rate": 0.0
+            },
+            "ideas": [
+              {
+                "title": "Cunda Island: Stone Architecture & Cobbled Streets",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "charming",
+                  "every corner",
+                  "beautiful"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Cunda Island: Serene Sea Views & Coastal Life",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": true,
+                "filler": [
+                  "stunning",
+                  "serene",
+                  "experience the",
+                  "beauty of"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Cunda Island: Nature's Quiet Beauty – Olives and Windmills",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "serene"
+                ],
+                "names_place": true
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 2.0,
+              "viewer_value": 3.0,
+              "specificity": 4.0,
+              "grounding": 5.0
+            },
+            "composite": 4.0,
+            "reasoning": "The ideas are visitor-oriented rather than diary-style and correctly name Cunda's specific features (cobbled alleys, stone windmill, olive groves, harbour), but the opening hooks are vague imperatives ('Experience the calm beauty', 'Discover Cunda Island's quiet natural landscapes') that don't give a stranger a concrete payoff within two seconds, leaving viewer_value only middling."
+          }
+        },
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "Cunda Island's Stone Alleys",
+                "hook": "Walk Cunda's quiet stone streets",
+                "payoff": "Explore the characteristic stone houses and cobbled streets of Cunda Island.",
+                "rationale": "Shows the specific aesthetic of Cunda's old town: narrow stone streets, bougainvillea, and traditional houses, giving viewers a sense of place.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000",
+                  "00000011-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "guide",
+                  "audience": "Travelers looking for charming European island towns with unique architecture.",
+                  "angle": "Explore the characteristic stone houses and cobbled streets of Cunda Island.",
+                  "why_it_works": "Shows the specific aesthetic of Cunda's old town: narrow stone streets, bougainvillea, and traditional houses, giving viewers a sense of place.",
+                  "opening_text": "Walk Cunda's quiet stone streets",
+                  "closing_text": null,
+                  "caption": "Wander through the narrow, cobbled alleys of Cunda Island. Every turn reveals another charming stone house, vibrant bougainvillea, or a sleepy cat on a doorstep.",
+                  "beat_reasons": [
+                    "Establishes a narrow cobbled street between old stone houses.",
+                    "Moves through a stone alley, showing typical architecture and plants.",
+                    "Highlights traditional stone houses with wooden balconies.",
+                    "Shows a detail of local life, a cat on a stone step."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Island Coastline & Olive Groves",
+                "hook": "Find peace where the sea meets the groves",
+                "payoff": "Showcase the peaceful natural beauty of Cunda Island's coastline and olive groves.",
+                "rationale": "Presents a calm escape, contrasting the dynamic sea with serene olive trees, offering a sense of peace and natural beauty.",
+                "moment_ids": [
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000007-0001-4000-8000-000000000000",
+                  "00000008-0001-4000-8000-000000000000",
+                  "00000006-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "Anyone seeking relaxing natural landscapes, from calm seas to tranquil groves.",
+                  "angle": "Showcase the peaceful natural beauty of Cunda Island's coastline and olive groves.",
+                  "why_it_works": "Presents a calm escape, contrasting the dynamic sea with serene olive trees, offering a sense of peace and natural beauty.",
+                  "opening_text": "Find peace where the sea meets the groves",
+                  "closing_text": null,
+                  "caption": "The natural beauty of Cunda Island extends from its clear waters to its ancient olive groves. A perfect blend of coastal tranquility and rustic charm.",
+                  "beat_reasons": [
+                    "Shows clear green water and the rocky shore.",
+                    "Establishes an olive grove with gnarled trunks.",
+                    "Illustrates light moving through olive branches.",
+                    "Ends with the calm sea at sunset, emphasizing natural beauty."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Cunda's Harbour Life",
+                "hook": "Fresh fish by the harbour on Cunda Island",
+                "payoff": "Experience the daily rhythm of Cunda Island's fishing harbor and local cuisine.",
+                "rationale": "Highlights local life around the harbor, showing fishing boats and fresh seafood, giving a concrete reason to visit for food and atmosphere.",
+                "moment_ids": [
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000",
+                  "00000012-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "review",
+                  "audience": "People interested in authentic local experiences and fresh seafood.",
+                  "angle": "Experience the daily rhythm of Cunda Island's fishing harbor and local cuisine.",
+                  "why_it_works": "Highlights local life around the harbor, showing fishing boats and fresh seafood, giving a concrete reason to visit for food and atmosphere.",
+                  "opening_text": "Fresh fish by the harbour on Cunda Island",
+                  "closing_text": null,
+                  "caption": "The small harbor on Cunda Island is where you'll find daily life unfolding, with fishing boats bringing in fresh catches. Don't miss the local grilled fish!",
+                  "beat_reasons": [
+                    "Shows fishing boats tied along a stone quay in the harbour.",
+                    "Illustrates active harbor life with a man coiling a rope.",
+                    "Showcases fresh grilled fish and meze by the water."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 0.6666666666666666,
+              "missing_place_rate": 0.0
+            },
+            "ideas": [
+              {
+                "title": "Cunda Island's Stone Alleys",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": true,
+                "filler": [
+                  "charming"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Island Coastline & Olive Groves",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "tranquil",
+                  "beauty of",
+                  "perfect"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Cunda's Harbour Life",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": true,
+                "filler": [],
+                "names_place": true
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 2.0,
+              "viewer_value": 4.0,
+              "specificity": 4.0,
+              "grounding": 4.0
+            },
+            "composite": 4.0,
+            "reasoning": "Ideas speak to prospective visitors rather than recapping the creator's day, with concrete Cunda-specific features (cobblestones, bougainvillea, stone windmill absent from ideas but olive groves, harbour, cat named), though the harbour caption's 'Don't miss the local grilled fish!' edges toward a claim slightly beyond what the footage strictly confirms, and idea 2's opening ('Find peace where the sea meets the groves') is a soft brochure phrase."
+          }
+        }
+      ],
+      "errors": []
+    },
+    "event": {
+      "description": "event_title and event_about set, default query.",
+      "query": "Suggest different content ideas from this outing",
+      "runs": [
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "Wander Cunda Island's Stone Alleys",
+                "hook": "Explore Cunda's quiet stone streets",
+                "payoff": "Explore the unique stone architecture and quiet streets of Cunda Island.",
+                "rationale": "The opening shows inviting, sunlit cobbled streets and distinctive stone houses, immediately setting a mood for exploration and highlighting the island's architectural beauty.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000",
+                  "00000011-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "guide",
+                  "audience": "Travelers looking for charming old towns and unique architecture.",
+                  "angle": "Explore the unique stone architecture and quiet streets of Cunda Island.",
+                  "why_it_works": "The opening shows inviting, sunlit cobbled streets and distinctive stone houses, immediately setting a mood for exploration and highlighting the island's architectural beauty.",
+                  "opening_text": "Explore Cunda's quiet stone streets",
+                  "closing_text": null,
+                  "caption": "Cobbled paths, old stone houses, and bougainvillea. Cunda Island is full of charm around every corner. #CundaIsland #StoneArchitecture",
+                  "beat_reasons": [
+                    "Establishes a narrow, inviting cobbled street with stone houses and flowers.",
+                    "Shows a walk through a sun-dappled stone alley, emphasizing the atmosphere.",
+                    "Highlights more stone houses with traditional wooden balconies.",
+                    "Adds a touch of local life with a cat on a stone step."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Cunda Island: Sea, Shore & Olives",
+                "hook": "Experience Cunda Island's natural calm",
+                "payoff": "Showcase the serene natural beauty of Cunda Island, from its coast to olive groves.",
+                "rationale": "The opening shot of waves and clear water immediately transports the viewer to a calm, scenic seaside setting, fulfilling the 'nature and sea' promise.",
+                "moment_ids": [
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000008-0001-4000-8000-000000000000",
+                  "00000003-0001-4000-8000-000000000000",
+                  "00000006-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "Viewers seeking peaceful natural landscapes and scenic beauty by the sea.",
+                  "angle": "Showcase the serene natural beauty of Cunda Island, from its coast to olive groves.",
+                  "why_it_works": "The opening shot of waves and clear water immediately transports the viewer to a calm, scenic seaside setting, fulfilling the 'nature and sea' promise.",
+                  "opening_text": "Experience Cunda Island's natural calm",
+                  "closing_text": null,
+                  "caption": "From rocky shores to breezy olive groves and historic windmills, Cunda offers peaceful moments in nature. #CundaNature #IslandLife",
+                  "beat_reasons": [
+                    "Sets a serene scene with waves and clear green water.",
+                    "Shows olive tree branches moving in the breeze, representing the island's nature.",
+                    "Presents a stone windmill as an iconic landscape feature.",
+                    "Ends with a tranquil sea sunset view, emphasizing calm."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Harbor Life on Cunda Island",
+                "hook": "Fresh fish and harbor views on Cunda",
+                "payoff": "Highlight the authentic harbor experience and fresh seafood on Cunda Island.",
+                "rationale": "The opening immediately shows charming fishing boats in a harbor, hinting at local life and fresh catches, which is then paid off with the food shot.",
+                "moment_ids": [
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000",
+                  "00000012-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "review",
+                  "audience": "Foodies and travelers interested in local culture and seaside dining.",
+                  "angle": "Highlight the authentic harbor experience and fresh seafood on Cunda Island.",
+                  "why_it_works": "The opening immediately shows charming fishing boats in a harbor, hinting at local life and fresh catches, which is then paid off with the food shot.",
+                  "opening_text": "Fresh fish and harbor views on Cunda",
+                  "closing_text": null,
+                  "caption": "Morning catches and traditional meze by the water. Cunda Island's harbor is the perfect spot for fresh seafood and local charm. #CundaFood #HarborVibes",
+                  "beat_reasons": [
+                    "Establishes a quiet harbour with colourful fishing boats.",
+                    "Shows daily harbor activity with boats and a man coiling rope.",
+                    "Presents grilled fish and meze with a view of the water, linking to the harbor."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 1.0,
+              "missing_place_rate": 0.0
+            },
+            "ideas": [
+              {
+                "title": "Wander Cunda Island's Stone Alleys",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "every corner"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Cunda Island: Sea, Shore & Olives",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "peaceful"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Harbor Life on Cunda Island",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "vibes",
+                  "perfect"
+                ],
+                "names_place": true
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 2.0,
+              "viewer_value": 3.0,
+              "specificity": 3.0,
+              "grounding": 4.0
+            },
+            "composite": 3.5,
+            "reasoning": "The ideas avoid diary voice and name Cunda Island with some concrete footage elements (cobbled streets, windmill, fishing boats, meze), but opening hooks are vague commands ('Explore', 'Experience', 'Fresh fish') rather than concrete payoffs, and phrases like 'full of charm around every corner' and 'peaceful moments in nature' are generic brochure filler that could caption any Aegean island visit."
+          }
+        },
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "Cunda Island: Stone streets and sea views",
+                "hook": "Walk through Cunda Island's stone streets to the sea.",
+                "payoff": "Explore the characteristic stone architecture and beautiful seaside of Cunda Island, highlighting its unique atmosphere.",
+                "rationale": "Viewers see the blend of traditional island life with scenic ocean vistas, showing concrete reasons why Cunda is worth visiting for its visual appeal.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000",
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "guide",
+                  "audience": "Travelers looking for charming old towns and coastal scenery.",
+                  "angle": "Explore the characteristic stone architecture and beautiful seaside of Cunda Island, highlighting its unique atmosphere.",
+                  "why_it_works": "Viewers see the blend of traditional island life with scenic ocean vistas, showing concrete reasons why Cunda is worth visiting for its visual appeal.",
+                  "opening_text": "Walk through Cunda Island's stone streets to the sea.",
+                  "closing_text": null,
+                  "caption": "Cunda Island offers charming stone houses, quiet alleys, and beautiful sea views. A perfect blend of history and nature on Turkey's Aegean coast.",
+                  "beat_reasons": [
+                    "Shows a narrow cobbled street and stone houses.",
+                    "Walks down a narrow stone alley, highlighting architecture.",
+                    "Features a row of old stone houses with wooden balconies.",
+                    "Establishes a small harbour with fishing boats.",
+                    "Pans across clear green water and small boats."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Life on Cunda Island: Cats, olives, and fresh catch",
+                "hook": "Small moments on Cunda: curious cats and fresh food.",
+                "payoff": "Grilled fish by the water.",
+                "rationale": "Viewers experience the quiet charm of the island through visible elements like friendly cats, olive groves, and a meal of grilled fish.",
+                "moment_ids": [
+                  "00000011-0001-4000-8000-000000000000",
+                  "00000007-0001-4000-8000-000000000000",
+                  "00000008-0001-4000-8000-000000000000",
+                  "00000010-0001-4000-8000-000000000000",
+                  "00000012-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "review",
+                  "audience": "People interested in the small details of island life and local experiences.",
+                  "angle": "A glimpse into the daily life and simple pleasures on Cunda Island, from local cats to fresh food.",
+                  "why_it_works": "Viewers experience the quiet charm of the island through visible elements like friendly cats, olive groves, and a meal of grilled fish.",
+                  "opening_text": "Small moments on Cunda: curious cats and fresh food.",
+                  "closing_text": "Grilled fish by the water.",
+                  "caption": "From ancient olive groves to the day's fresh catch, Cunda Island offers a relaxed pace and simple, authentic pleasures. Even the local cats are friendly!",
+                  "beat_reasons": [
+                    "Shows an orange tabby cat on a stone step.",
+                    "Features an olive grove with gnarled trunks.",
+                    "Shows olive branches moving in a light breeze.",
+                    "Features fishing boats and a man coiling rope.",
+                    "Highlights grilled fish and meze by a window overlooking water."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Cunda Island: Aegean views and windmills",
+                "hook": "Find peace on Cunda Island: old windmills and sea views.",
+                "payoff": "Showcasing the natural beauty and picturesque sights of Cunda Island, focusing on its iconic windmill and sea views.",
+                "rationale": "Viewers get a quick visual escape to Cunda's serene landscapes, from a historic windmill to the tranquil Aegean Sea at sunset.",
+                "moment_ids": [
+                  "00000003-0001-4000-8000-000000000000",
+                  "00000006-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "Anyone looking for scenic views and relaxing coastal landscapes.",
+                  "angle": "Showcasing the natural beauty and picturesque sights of Cunda Island, focusing on its iconic windmill and sea views.",
+                  "why_it_works": "Viewers get a quick visual escape to Cunda's serene landscapes, from a historic windmill to the tranquil Aegean Sea at sunset.",
+                  "opening_text": "Find peace on Cunda Island: old windmills and sea views.",
+                  "closing_text": null,
+                  "caption": "Cunda Island's natural beauty shines, from hilltop windmills to stunning sunsets over the Aegean. A serene escape on Turkey's coast.",
+                  "beat_reasons": [
+                    "Establishes a stone windmill on a low hill.",
+                    "Shows orange light on flat water at sunset.",
+                    "Pans across clear green water to small boats."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 0.6666666666666666,
+              "missing_place_rate": 0.0
+            },
+            "ideas": [
+              {
+                "title": "Cunda Island: Stone streets and sea views",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": true,
+                "filler": [
+                  "charming",
+                  "beautiful",
+                  "perfect"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Life on Cunda Island: Cats, olives, and fresh catch",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [],
+                "names_place": true
+              },
+              {
+                "title": "Cunda Island: Aegean views and windmills",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "stunning",
+                  "serene"
+                ],
+                "names_place": true
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 2.0,
+              "viewer_value": 3.0,
+              "specificity": 4.0,
+              "grounding": 4.0
+            },
+            "composite": 3.75,
+            "reasoning": "The ideas address strangers rather than recapping a personal day, name concrete footage elements (windmill, cobbled alleys, olive groves, tabby cat, grilled fish) and the place consistently, but openings lean on vague lures like 'find peace' and 'small moments' rather than delivering a sharp, concrete payoff a stranger would stop for, and phrases like 'iconic windmill' and 'history and nature' edge toward brochure filler without inventing facts."
+          }
+        },
+        {
+          "output": {
+            "stories": [
+              {
+                "title": "Cunda Island: Stone Alleys & Coastal Views",
+                "hook": "Wander quiet stone alleys and find views of the Aegean Sea.",
+                "payoff": "Explore the diverse beauty of Cunda Island, from its quaint stone architecture to its serene coastal landscapes.",
+                "rationale": "It shows the key features of Cunda Island, offering a quick visual tour of its charming streets and sea views, perfect for travel inspiration.",
+                "moment_ids": [
+                  "00000001-0001-4000-8000-000000000000",
+                  "00000002-0001-4000-8000-000000000000",
+                  "00000004-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000009-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "guide",
+                  "audience": "Travelers looking for scenic island destinations with charm and history.",
+                  "angle": "Explore the diverse beauty of Cunda Island, from its quaint stone architecture to its serene coastal landscapes.",
+                  "why_it_works": "It shows the key features of Cunda Island, offering a quick visual tour of its charming streets and sea views, perfect for travel inspiration.",
+                  "opening_text": "Wander quiet stone alleys and find views of the Aegean Sea.",
+                  "closing_text": null,
+                  "caption": "Cunda Island offers charming streets, old houses, and beautiful sea vistas. Perfect for a relaxing stroll.",
+                  "beat_reasons": [
+                    "Establishes a narrow cobbled street between old stone houses.",
+                    "Continues the walk down a narrow stone alley, showing architectural details.",
+                    "Shows a small square with old stone houses and wooden balconies.",
+                    "Reveals the clear green water and small boats on the horizon.",
+                    "Ends with a peaceful small harbour with fishing boats on calm water."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Island Life: Olive Groves, Windmills, and Sea",
+                "hook": "The quiet beauty of olive groves meets the sea.",
+                "payoff": "Experience the calm and natural beauty of Cunda Island, from olive groves to the sea.",
+                "rationale": "It transports viewers to the tranquil natural settings of the island, highlighting the serene landscapes and the quiet pace of life.",
+                "moment_ids": [
+                  "00000007-0001-4000-8000-000000000000",
+                  "00000008-0001-4000-8000-000000000000",
+                  "00000003-0001-4000-8000-000000000000",
+                  "00000005-0001-4000-8000-000000000000",
+                  "00000006-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "atmosphere",
+                  "audience": "People looking for peaceful, nature-focused island escapes and scenic beauty.",
+                  "angle": "Experience the calm and natural beauty of Cunda Island, from olive groves to the sea.",
+                  "why_it_works": "It transports viewers to the tranquil natural settings of the island, highlighting the serene landscapes and the quiet pace of life.",
+                  "opening_text": "The quiet beauty of olive groves meets the sea.",
+                  "closing_text": null,
+                  "caption": "From gnarled olive trees swaying in the breeze to windmills on a hill and tranquil shorelines, Cunda Island offers serene natural views.",
+                  "beat_reasons": [
+                    "Shows an olive grove with old trunks and silver-green leaves.",
+                    "Captures olive branches moving gently in a light breeze.",
+                    "Presents a stone windmill on a low hill against a blue sky.",
+                    "Features waves rolling onto a rocky shore with clear green water.",
+                    "Ends with orange light on flat water at sunset by the shoreline."
+                  ]
+                },
+                "research": null
+              },
+              {
+                "title": "Cunda's Daily Rhythm: Boats, Cats, & Local Food",
+                "hook": "See local boats, a friendly cat, and fresh grilled fish.",
+                "payoff": "A glimpse into the everyday charm of Cunda Island, from its fishing traditions to its local culinary delights.",
+                "rationale": "It shows the vibrant local character of the island through its harbor activity, a friendly cat, and inviting food, hinting at a pleasant experience.",
+                "moment_ids": [
+                  "00000010-0001-4000-8000-000000000000",
+                  "00000009-0001-4000-8000-000000000000",
+                  "00000011-0001-4000-8000-000000000000",
+                  "00000012-0001-4000-8000-000000000000"
+                ],
+                "content_plan": {
+                  "version": 1,
+                  "format": "text_story",
+                  "form": "review",
+                  "audience": "Foodies and those interested in local culture and the small details of island life.",
+                  "angle": "A glimpse into the everyday charm of Cunda Island, from its fishing traditions to its local culinary delights.",
+                  "why_it_works": "It shows the vibrant local character of the island through its harbor activity, a friendly cat, and inviting food, hinting at a pleasant experience.",
+                  "opening_text": "See local boats, a friendly cat, and fresh grilled fish.",
+                  "closing_text": null,
+                  "caption": "Experience Cunda Island beyond the scenery: watch fishing boats, spot a local cat, and enjoy fresh grilled fish by the water.",
+                  "beat_reasons": [
+                    "Shows fishing boats bobbing at the quay with a man coiling rope.",
+                    "Features a small harbour with wooden fishing boats along a stone quay.",
+                    "Highlights an orange tabby cat sitting on a worn stone step.",
+                    "Presents grilled fish and meze on a table at a waterside restaurant."
+                  ]
+                },
+                "research": null
+              }
+            ]
+          },
+          "voice": {
+            "summary": {
+              "ideas": 3,
+              "diary_recap_rate": 0.0,
+              "filler_rate": 0.6666666666666666,
+              "missing_place_rate": 0.0
+            },
+            "ideas": [
+              {
+                "title": "Cunda Island: Stone Alleys & Coastal Views",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "charming",
+                  "beautiful",
+                  "perfect"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Island Life: Olive Groves, Windmills, and Sea",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": false,
+                "filler": [
+                  "tranquil",
+                  "serene",
+                  "beauty of"
+                ],
+                "names_place": true
+              },
+              {
+                "title": "Cunda's Daily Rhythm: Boats, Cats, & Local Food",
+                "diary_recap": false,
+                "recap_markers": [],
+                "viewer_directed": true,
+                "filler": [],
+                "names_place": true
+              }
+            ]
+          },
+          "judge": {
+            "scores": {
+              "diary_voice": 2.0,
+              "viewer_value": 3.0,
+              "specificity": 4.0,
+              "grounding": 4.0
+            },
+            "composite": 3.75,
+            "reasoning": "The ideas address viewers rather than recapping the creator's day, but openings are vague mood-setters ('quiet beauty meets the sea') with only partial concrete payoffs, and while Cunda-specific features like windmills, olive groves, cats, and harbour boats are named, captions drift into brochure language ('charming streets', 'relaxing stroll', 'serene natural views') that could fit any Mediterranean island."
+          }
+        }
+      ],
+      "errors": []
+    }
+  }
+}

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.187.0] - 2026-10-28
+
+### Changed
+- feat(camera-roll): event title and notes plus a social-first idea prompt (KRI-1003, KRI-1004) (#1899) <!-- release-pr: 1899 -->
+
 ## [0.81.186.0] - 2026-10-28
 
 ### Changed

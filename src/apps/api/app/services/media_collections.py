@@ -18,7 +18,12 @@ from app.models import (
     MediaCollectionMember,
     MediaCollectionStory,
 )
-from app.schemas.media_collections import CollectionMember, CollectionOut, CollectionWrite
+from app.schemas.media_collections import (
+    CollectionEvent,
+    CollectionMember,
+    CollectionOut,
+    CollectionWrite,
+)
 from app.services.media_library_ingest import lock_library_owner
 
 
@@ -105,6 +110,13 @@ def members(row: MediaCollection) -> list[CollectionMember]:
     ]
 
 
+def events(row: MediaCollection) -> list[CollectionEvent]:
+    return [
+        CollectionEvent.model_validate(value)
+        for value in (row.selection_json or {}).get("events", [])
+    ]
+
+
 async def eligible_sources(
     db: AsyncSession, owner: uuid.UUID, selected: list[CollectionMember]
 ) -> dict[uuid.UUID, tuple[MediaAsset, MediaAssetSource]]:
@@ -185,10 +197,11 @@ def collection_out(row: MediaCollection, eligible: dict) -> CollectionOut:
         unavailable_asset_ids=[
             member.asset_id for member in selected if member.asset_id not in eligible
         ],
+        events=events(row),
     )
 
 
-def _capture_time(asset: MediaAsset) -> datetime | None:
+def capture_time(asset: MediaAsset) -> datetime | None:
     # These are existing, creator-authorized capture facts, never AI guesses.
     context = asset.creator_context or {}
     value = context.get("capture_time")
@@ -213,7 +226,7 @@ def _group(
     dated = sorted(
         (timestamp, str(member.asset_id), member.asset_id)
         for member in selected
-        if (timestamp := _capture_time(sources[member.asset_id][0])) is not None
+        if (timestamp := capture_time(sources[member.asset_id][0])) is not None
     )
     groups = {}
     last = None
@@ -272,6 +285,8 @@ async def write_collection(
             },
         )
     grouped = _group(requested, sources, members(row) if row else [])
+    stored_events = events(row) if row else []
+    new_events = stored_events if body.events is None else body.events
     # Opening the native collection saves its current selection again. Compare the
     # effective content, not the request digest (which contains expected_revision).
     # A stale identical snapshot is safe to acknowledge; it cannot overwrite data.
@@ -280,6 +295,7 @@ async def write_collection(
         and body.expected_revision <= row.revision
         and row.name == body.name.strip()
         and members(row) == grouped
+        and stored_events == new_events
     ):
         return collection_out(row, sources)
     if (row.revision if row is not None else 0) != body.expected_revision:
@@ -299,6 +315,7 @@ async def write_collection(
     row.selection_json = {
         "request_digest": digest,
         "members": [member.model_dump(mode="json") for member in grouped],
+        "events": [value.model_dump(mode="json") for value in new_events],
     }
     await db.flush()
     await carry_forward_stories(
