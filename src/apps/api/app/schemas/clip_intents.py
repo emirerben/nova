@@ -273,6 +273,10 @@ class ClipIntent(BaseModel):
             or self.caption_attribute is not None
         ):
             raise ValueError("placeholder requires a clip label with no creator_text")
+        if self.exclusive and (
+            self.op != "include" or self.creator_text is not None or self.placeholder
+        ):
+            raise ValueError("exclusive requires op=include with no creator_text")
         if self.op == "exclude" and (
             self.creator_text is not None
             or self.caption_attribute is not None
@@ -300,6 +304,12 @@ class ClipIntent(BaseModel):
     # Only for op="order", and never together with `position`.
     order_by: ClipOrderBy | None = Field(default=None, exclude_if=lambda value: value is None)
     ordered_members: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-993: only for op="include". "Only about the steak": the edit is limited to the
+    # clips this intent resolves to (plus what the creator pinned or the strategy places),
+    # not just guaranteed to contain them. Omitted from dumps when false, so every intent
+    # persisted before this field loads and re-dumps byte-identically.
+    exclusive: bool = Field(default=False, exclude_if=lambda value: not value)
+
     # KRI-994: for op="exclude" only, the Creative Brief `select` requirement ("r3") this
     # exclusion carries out, as the planner model declared it. Unverified here: the receipt
     # reader (`app.kria.select_asks.exclusion_facts`) keeps it only when it names a live

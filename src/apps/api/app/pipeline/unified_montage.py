@@ -3593,6 +3593,33 @@ def _intent_outcomes(
                         "reason": "I found no clips of it",
                     }
                 )
+        elif op == "include" and intent.get("exclusive") and _is_resolved(intent, "include"):
+            # KRI-993: "only about X". Met when every played clip shows X or is one the
+            # creator placed by another ask (a pinned closing clip).
+            row = {"op": "include", "name": f"only about {name}"}
+            named = {
+                m
+                for other in strategy.get("resolved_clip_intents") or []
+                if isinstance(other, Mapping)
+                and other.get("op") != "exclude"
+                and not other.get("exclusive")
+                for m in _members(other)
+            }
+            off = [
+                clip.ref_id
+                for clip in ordered
+                if clip.lane == "clip"
+                and clip.kind == "video"
+                and clip.ref_id not in _members(intent)
+                and clip.ref_id not in named
+            ]
+            if not members:
+                out.append({**row, "status": "not_possible", "reason": "I found no clips of it"})
+            elif off:
+                reason = "I couldn't confirm every clip in it shows this"
+                out.append({**row, "status": "partial", "reason": reason})
+            else:
+                out.append({**row, "status": "met", "reason": None})
         elif _is_resolved(intent, "caption") and not intent.get("creator_text"):
             text = _nfc(intent.get("caption_text"))
             row = {"op": "caption", "name": f"text for {name}"}

@@ -88,7 +88,7 @@ from app.kria.clip_exclusions import (
     exclusions_to_ask,
     with_exclusion_categories,
 )
-from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope
+from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope, apply_subject_scope
 from app.kria.clip_ties import left_out, tie_question, voiceover_ties, with_tie_categories
 from app.kria.contracts import KriaTurnPlan
 from app.kria.draft_sound_carry import sound_asks_unchanged
@@ -3843,6 +3843,18 @@ async def _plan_creator_action(
                     }
                 )
                 policy_notices = (*policy_notices, *extra)
+            # KRI-993: "only about the steak" limits the pick to the clips it matched
+            # (after the skips, so a skipped clip is never added back).
+            scoped_pick = _with_subject_scope(manifest, action.strategy, planned.resolution.intents)
+            if scoped_pick is not None:
+                extra = [n for n in scoped_pick[1] if n not in policy_notices]
+                action = action.model_copy(
+                    update={
+                        "strategy": scoped_pick[0],
+                        "summary": " ".join([action.summary.strip(), *extra]).strip(),
+                    }
+                )
+                policy_notices = (*policy_notices, *extra)
             if _unapplied_exclusions(planned):
                 # KRI-680: "don't use the two very dark clips" that no clip matched was
                 # dropped without a word, and both clips rendered. Say so before the render.
@@ -4065,6 +4077,32 @@ def _without_excluded_clips(
     if isinstance(checked, RefusedStrategy):
         log.info("kria_clip_exclusions_refused", code=checked.code)
         return None
+    return checked.strategy, tuple(checked.notices)
+
+
+def _with_subject_scope(
+    manifest: ResolvedCreatorManifest,
+    strategy: Any,
+    resolved: list[ResolvedClipIntent],
+) -> tuple[Any, tuple[str, ...]] | None:
+    """(checked strategy limited to the "only about X" clips, its notices), or None to keep.
+
+    KRI-993: `apply_subject_scope` narrows the pick; the narrowed strategy runs the same
+    runtime-v2 check, and a refusal keeps the checked pick (the footage stays).
+    """
+    scope = apply_subject_scope(manifest, strategy, resolved_intents=resolved)
+    if scope.strategy is strategy:
+        return None
+    checked = check_strategy_for_runtime_v2(manifest, scope.strategy)
+    if isinstance(checked, RefusedStrategy):
+        log.info("kria_clip_subject_scope_refused", code=checked.code)
+        return None
+    log.info(
+        "kria_clip_subject_scope_applied",
+        kept=list(scope.kept),
+        dropped=list(scope.dropped),
+        added=list(scope.added),
+    )
     return checked.strategy, tuple(checked.notices)
 
 

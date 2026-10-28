@@ -68,7 +68,7 @@ Return every distinct requested operation as one of:
   later resolver may author from footage -- never for the target chapter.$exclude_bullet
 No other op exists.
 
-$exclusion_rules
+$exclusion_rules$exclusive_rules
 
 Showing a clip when the creator's voiceover gets to it ("show the balloons
 while I talk about the balloons", "when I say Deniz, show Deniz at the laptop",
@@ -240,4 +240,4 @@ question. Do not ask because a factual answer is unknown; the resolver handles
 that. Never return a subset.
 
 Return only JSON:
-{"intents":[{"intent_id":"...","op":"label|group|order|include|caption$exclude_op","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field$requirement_field,"source_quote":"exact creator quote"}],"question":null}
+{"intents":[{"intent_id":"...","op":"label|group|order|include|caption$exclude_op","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field$exclusive_field$requirement_field,"source_quote":"exact creator quote"}],"question":null}

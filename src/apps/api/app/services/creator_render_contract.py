@@ -217,6 +217,7 @@ _CLIP_INTENT_LEAVES = (
     "position",
     "order_by",
     "ordered_members",
+    "exclusive",
     # KRI-994: the brief `select` ask an exclusion carries out; read only by receipts.
     "requirement_id",
 )

@@ -75,6 +75,17 @@ _EXCLUSION_RULES_ON = (
     'Using a clip\'s sound ("the voice from the talk to camera video") is an audio\n'
     "choice, never `include` or `exclude`."
 )
+# KRI-993: the `exclusive` marker on an `include`. Rides the KRI-667 kill switch: with
+# CLIP_INTENT_EXCLUDE_ENABLED off the prompt never teaches it and the parser drops it.
+_EXCLUSIVE_RULES = (
+    'An edit limited to a subject ("only about the steak", "just the sunset shots",\n'
+    '"nothing but the dog", "sadece biftek") is ONE `include` intent for that subject with\n'
+    "`exclusive` true: the edit is limited to the clips it matches. Use it only when the\n"
+    'creator limits the WHOLE edit to a subject, never for "make sure the gym is in", a\n'
+    'style or mood ("only fast cuts"), or a plain description of what was filmed.\n'
+    "`exclusive` is false on every other intent."
+)
+_EXCLUSIVE_FIELD = ',"exclusive":false'
 _EXCLUSION_RULES_OFF = (
     'Leaving clips OUT is not one of these operations. "Skip the quad bike clip",\n'
     '"leave out the laundry", "don\'t use the blurry ones" and "without the drone\n'
@@ -1051,8 +1062,10 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # KRI-945: an intro, explanation or facts for the whole video is never a caption.
         # KRI-941: "in this order: A, B, C" is one `order` intent per named subject, position
         # null, in the stated order (the prompt said that and, further down, the opposite).
+        #
+        # KRI-993: "only about X" is one `include` with `exclusive` true (same kill switch).
         # KRI-994: an `exclude` names the brief `select` requirement it carries out.
-        prompt_version="2026-10-27-exclude-requirement-id",
+        prompt_version="2026-10-27-subject-scope-exclude-requirement-id",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -1128,6 +1141,8 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 _EXCLUSION_RULES_ON if input.clip_exclusions else _EXCLUSION_RULES_OFF
             ),
             exclude_op=_EXCLUDE_OP if input.clip_exclusions else "",
+            exclusive_rules=f"\n\n{_EXCLUSIVE_RULES}" if input.clip_exclusions else "",
+            exclusive_field=_EXCLUSIVE_FIELD if input.clip_exclusions else "",
             requirement_field=_REQUIREMENT_FIELD if input.clip_exclusions else "",
         )
         # KRI-520: the reply-language instruction goes last. "" for English/unknown:
@@ -1264,7 +1279,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         data = {
             k: v
             for k, v in raw_intent.items()
-            if not (k in {"label_source", "placeholder"} and v is None)
+            if not (k in {"label_source", "placeholder", "exclusive"} and v is None)
         }
         # The id is a handle the model invents; a missing one is minted here and an
         # over-long one is shortened by ClipIntent (KRI-422), never a rejection.
@@ -1320,6 +1335,8 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             data["caption_attribute"] = None  # exact copy wins over an authored topic
         if data.get("op") != "order":
             data["position"] = None
+        if data.get("op") != "include" or not input.clip_exclusions:
+            data.pop("exclusive", None)  # KRI-993: a scope means nothing on any other op
         if data.get("op") != "label":
             # Narration-label fields mean nothing on any other op: "Elif's sentence
             # with her own voice, at the end" came back as a transcript order (KRI-531).
