@@ -11,8 +11,8 @@ struct CameraRollIdeaRoute: Hashable, Identifiable {
 }
 
 /// The full-screen Camera roll (Paper boards A to A8). It is workspace content beside the projects drawer, not a
-/// sheet: the menu circle and the edge swipe still open the drawer. Footage is a contact sheet grouped by event;
-/// each event has its own "Find ideas" and its own ideas. Every tile reads its state from `CameraRollItemState`.
+/// sheet: the menu circle and the edge swipe still open the drawer. Home lists the events; each event opens its own
+/// page with its footage and ideas. Every tile reads its state from `CameraRollItemState`.
 struct CameraRollSurfaceView: View {
     @Bindable var model: CameraRollSurfaceModel
     let openProjects: () -> Void
@@ -25,31 +25,25 @@ struct CameraRollSurfaceView: View {
     @State private var showsPicker = false
     @State private var showsSaved = false
     @State private var pickerSelection: [PhotosPickerItem] = []
-    @State private var route: CameraRollIdeaRoute?
-    @State private var showsTaste = false
+    @State private var path: [CameraRollPage] = []
+    @State private var showsNewEvent = false
+    /// Photos opens for this event once the New event sheet has gone.
+    @State private var chooseAfterNewEvent: String?
     @State private var confirmingDelete: String?
     private var reduceMotion: Bool { KriaMotion.isReduced(systemReduceMotion) }
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .bottom) {
+        ZStack(alignment: .bottom) {
+            NavigationStack(path: $path) {
                 VStack(spacing: 0) {
-                    if let selecting = model.selecting, let event = model.events.first(where: { $0.id == selecting.group }) {
-                        CameraRollEventEditor(model: model, event: event)
-                    } else {
-                        header
-                        content
-                    }
+                    header
+                    content
                 }
-                overlays
+                .background(KriaColor.paper)
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: CameraRollPage.self) { page in destination(page) }
             }
-            .background(KriaColor.paper)
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(item: $route) { route in detail(route) }
-            .navigationDestination(isPresented: $showsTaste) {
-                CameraRollTasteView(api: model.api) { model.tasteChanged($0) }
-            }
+            overlays
         }
         .kriaPage()
         .photosPicker(isPresented: $showsPicker, selection: $pickerSelection, maxSelectionCount: max(1, model.remainingCapacity),
@@ -57,6 +51,15 @@ struct CameraRollSurfaceView: View {
         .onChange(of: pickerSelection) { _, picked in model.add(picked); pickerSelection = [] }
         .sheet(isPresented: $showsSaved) {
             CameraRollSavedPicker(api: model.api, capacity: model.remainingCapacity) { model.addSaved($0) }
+        }
+        .sheet(isPresented: $showsNewEvent, onDismiss: {
+            if let group = chooseAfterNewEvent { chooseAfterNewEvent = nil; addFootage(to: group) }
+        }) {
+            CameraRollNewEventSheet(model: model) { title, about, choose in
+                let group = model.createEvent(title: title, about: about)
+                path = [.event(group)]
+                if choose { chooseAfterNewEvent = group }
+            }
         }
         .confirmationDialog("Open the updated collection?", isPresented: $model.showsLatestReview, titleVisibility: .visible) {
             Button("Open latest collection") { Task { await model.adoptLatestCollection() } }
@@ -66,7 +69,36 @@ struct CameraRollSurfaceView: View {
         }
         .task { await model.start() }
         .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(active: phase == .active) }
+        .onChange(of: model.events.map(\.id)) { _, ids in
+            // A deleted or replaced event takes its pages with it.
+            path.removeAll { page in page.group.map { !ids.contains($0) } ?? false }
+            if let group = model.selecting?.group, !ids.contains(group) { model.finishSelecting() }
+        }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: model.board.undo != nil)
+    }
+
+    @ViewBuilder private func destination(_ page: CameraRollPage) -> some View {
+        switch page {
+        case let .event(group):
+            CameraRollEventPage(model: model, group: group,
+                                openIdea: { path.append(.idea($0)) },
+                                addFootage: { addFootage(to: group) },
+                                delete: { askToDelete(group) },
+                                openTaste: { path.append(.taste) })
+        case let .idea(route):
+            detail(route)
+        case .taste:
+            CameraRollTasteView(api: model.api) { model.tasteChanged($0) }
+        }
+    }
+
+    private func addFootage(to group: String?) {
+        model.beginAdding(toGroup: group)
+        showsPicker = true
+    }
+
+    private func askToDelete(_ group: String) {
+        if model.ideas(in: group).isEmpty { model.deleteEvent(group) } else { confirmingDelete = group }
     }
 
     // MARK: Header
@@ -79,7 +111,7 @@ struct CameraRollSurfaceView: View {
             Text("Camera roll").font(KriaFont.body(15).weight(.semibold)).lineLimit(1).frame(maxWidth: .infinity)
                 .accessibilityHidden(drawerOpen).accessibilityAddTraits(.isHeader).accessibilityIdentifier("camera-roll-title")
             if model.tasteAvailable {
-                CameraRollCircleButton(identifier: "camera-roll-taste", label: "Your taste", action: { showsTaste = true }) {
+                CameraRollCircleButton(identifier: "camera-roll-taste", label: "Your taste", action: { path.append(.taste) }) {
                     Image(systemName: "slider.horizontal.3").font(.system(size: 16, weight: .semibold)).foregroundStyle(KriaColor.ink)
                 }.accessibilityHidden(drawerOpen)
             } else { Color.clear.frame(width: 44, height: 44) }
@@ -93,11 +125,25 @@ struct CameraRollSurfaceView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 banners
-                if model.isEmpty {
+                if model.events.isEmpty {
                     emptyState
                 } else {
                     progressHeader
-                    ForEach(model.events) { event in eventSection(event) }
+                    HStack(alignment: .center) {
+                        Text("Events").cameraRollTitle().accessibilityAddTraits(.isHeader)
+                        Spacer(minLength: 8)
+                        Button { showsNewEvent = true } label: {
+                            Label("New event", systemImage: "plus").font(KriaFont.body(14).weight(.bold)).foregroundStyle(KriaColor.ink)
+                                .padding(.horizontal, 16).frame(height: 40).background(KriaColor.butter, in: Capsule())
+                                .frame(minHeight: 44).contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain).disabled(model.mode == .metadataOnly).accessibilityIdentifier("camera-roll-new-event")
+                    }
+                    .padding(.top, 22).padding(.bottom, 4)
+                    ForEach(model.events) { event in
+                        CameraRollEventCard(model: model, event: event) { path = [.event(event.id)] }
+                            .padding(.top, 12)
+                    }
                 }
             }
             .padding(.horizontal, 20).padding(.bottom, 140)
@@ -108,23 +154,7 @@ struct CameraRollSurfaceView: View {
     }
 
     @ViewBuilder private var banners: some View {
-        if let notice = model.notice {
-            HStack(alignment: .top, spacing: 8) {
-                Text(notice.text).font(KriaFont.body(14).weight(.medium))
-                    .foregroundStyle(notice.kind == .error ? KriaColor.failureText : KriaColor.ink)
-                    .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("camera-roll-notice")
-                Button { model.notice = nil } label: {
-                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundStyle(KriaColor.mutedInk).frame(width: 44, height: 28)
-                }.buttonStyle(.plain).accessibilityLabel("Dismiss")
-            }
-            .padding(.leading, 16).padding(.vertical, 12)
-            .background(notice.kind == .error ? KriaColor.failureSoft : KriaColor.fill, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .padding(.top, 14)
-        }
-        if model.collectionChanged {
-            Button("Review latest collection") { Task { await model.loadLatestCollection() } }
-                .font(KriaFont.body(14).weight(.semibold)).frame(minHeight: 44).accessibilityIdentifier("camera-roll-review-latest")
-        }
+        CameraRollNoticeBanner(model: model)
         if model.accessRemovedCount > 0 {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Photos access was turned off. \(model.accessRemovedCount) \(model.accessRemovedCount == 1 ? "item was" : "items were") removed from this camera roll.")
@@ -170,7 +200,7 @@ struct CameraRollSurfaceView: View {
             Text("Pick a weekend, a trip or a whole month. Kria looks through it and finds the videos worth making.")
                 .font(KriaFont.body(16).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
             VStack(spacing: 10) {
-                Button { model.beginAdding(toGroup: nil); showsPicker = true } label: {
+                Button { addFootage(to: nil) } label: {
                     Text("Choose photos and videos").font(KriaFont.body(16).weight(.bold)).foregroundStyle(KriaColor.ink)
                         .frame(maxWidth: .infinity, minHeight: 52).background(KriaColor.butter, in: Capsule()).contentShape(Capsule())
                 }.buttonStyle(.plain).disabled(!model.canAdd).accessibilityIdentifier("camera-roll-choose")
@@ -190,7 +220,7 @@ struct CameraRollSurfaceView: View {
         let progress = model.progress
         if progress.isWorking || progress.needRetry > 0 {
             VStack(alignment: .leading, spacing: 10) {
-                Text(progress.isWorking ? "Looking at your footage" : "Almost there").cameraRollTitle()
+                Text(progress.isWorking ? "Looking at your footage" : "Almost there").font(KriaFont.body(17).weight(.bold)).foregroundStyle(KriaColor.ink)
                 KriaProgressTrack(progress: progress.fraction)
                 HStack {
                     Text("\(progress.done) of \(progress.total) done").font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
@@ -205,137 +235,7 @@ struct CameraRollSurfaceView: View {
                     }
                 }
             }
-            .padding(.top, 18).padding(.bottom, 6).accessibilityElement(children: .contain).accessibilityIdentifier("camera-roll-progress")
-        }
-    }
-
-    // MARK: Events
-
-    private func eventSection(_ event: CameraRollEvent) -> some View {
-        let ideas = model.ideas(in: event.id)
-        let generating = model.isGenerating(event.id)
-        let collapsible = event.entries.count > 3 && (!ideas.isEmpty || generating || model.finderGroup == event.id)
-        let isCollapsed = collapsible && !model.expanded.contains(event.id)
-        return VStack(alignment: .leading, spacing: 12) {
-            eventHeader(event, ideas: ideas, generating: generating)
-            if isCollapsed { collapsedStrip(event) } else { grid(event, showsHide: collapsible) }
-            if model.finderGroup == event.id, !generating {
-                CameraRollFinderPanel(model: model, event: event) { showsTaste = true }
-            }
-            if generating { CameraRollWorkingCard(ready: model.readyCount(in: event), identifier: "camera-roll-working-\(event.id)") }
-            if !ideas.isEmpty { ideasSection(event, ideas: ideas, generating: generating) }
-        }
-        .padding(.top, 22)
-        .accessibilityElement(children: .contain).accessibilityIdentifier("camera-roll-event-\(event.id)")
-    }
-
-    private func eventHeader(_ event: CameraRollEvent, ideas: [CameraRollStory], generating: Bool) -> some View {
-        let ready = model.readyCount(in: event)
-        return HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.title(for: event.id)).cameraRollKicker().lineLimit(1).accessibilityAddTraits(.isHeader)
-                Text(subtitle(event, ready: ready)).font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            HStack(spacing: 0) {
-                if generating && ideas.isEmpty {
-                    HStack(spacing: 6) { KriaSpinner(size: 12); Text("Finding").font(KriaFont.body(13).weight(.bold)) }
-                        .foregroundStyle(KriaColor.ink).padding(.horizontal, 14).frame(height: 34).background(KriaColor.butter.opacity(0.6), in: Capsule())
-                } else if ideas.isEmpty {
-                    Button { withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { model.finderGroup = model.finderGroup == event.id ? nil : event.id } } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "sparkle").font(.system(size: 11, weight: .bold))
-                            Text("Find ideas").font(KriaFont.body(13).weight(.bold))
-                        }
-                        .foregroundStyle(KriaColor.ink).padding(.horizontal, 14).frame(height: 34).background(KriaColor.butter, in: Capsule())
-                        .frame(minHeight: 44).contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain).disabled(ready == 0).opacity(ready == 0 ? 0.45 : 1)
-                    .accessibilityIdentifier("camera-roll-find-ideas-\(event.id)")
-                } else {
-                    HStack(spacing: 6) {
-                        KriaCheckShape().stroke(KriaColor.success, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round)).frame(width: 12, height: 12)
-                        Text("\(ideas.count) \(ideas.count == 1 ? "idea" : "ideas")").font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.success)
-                    }
-                    .padding(.horizontal, 10).frame(height: 28).background(KriaColor.successSoft, in: Capsule())
-                    .accessibilityElement(children: .combine).accessibilityIdentifier("camera-roll-idea-count-\(event.id)")
-                }
-                eventMenu(event, ideaCount: ideas.count)
-            }
-        }
-    }
-
-    private func subtitle(_ event: CameraRollEvent, ready: Int) -> String {
-        var parts = ["\(event.entries.count) \(event.entries.count == 1 ? "item" : "items")"]
-        let waiting = model.waitingCount(in: event)
-        if waiting == 0 { parts.append(ready == event.entries.count ? "all ready" : "\(ready) ready") }
-        else { parts.append("\(ready) ready"); parts.append("\(waiting) still looking") }
-        return parts.joined(separator: " · ")
-    }
-
-    private func eventMenu(_ event: CameraRollEvent, ideaCount: Int) -> some View {
-        Menu {
-            Button { model.beginSelecting(in: event.id, renaming: true) } label: { Label("Rename", systemImage: "pencil") }
-            Button { model.beginSelecting(in: event.id) } label: { Label("Select and move items", systemImage: "checkmark.square") }
-            Button { model.beginAdding(toGroup: event.id); showsPicker = true } label: { Label("Add photos and videos", systemImage: "plus") }
-                .disabled(!model.canAdd)
-            Button(role: .destructive) {
-                if ideaCount == 0 { model.deleteEvent(event.id) } else { confirmingDelete = event.id }
-            } label: { Label("Delete event", systemImage: "trash") }
-        } label: { CameraRollDots() }
-            .accessibilityLabel("Event options").accessibilityIdentifier("camera-roll-event-menu-\(event.id)")
-    }
-
-    private func grid(_ event: CameraRollEvent, showsHide: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(event.entries) { entry in tile(entry) }
-            }
-            if showsHide {
-                Button { model.expanded.remove(event.id) } label: {
-                    Text("Show fewer").font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.mutedInk).frame(minHeight: 44)
-                }.buttonStyle(.plain).accessibilityIdentifier("camera-roll-collapse-\(event.id)")
-            }
-        }
-    }
-
-    private func tile(_ entry: CameraRollCollection.Entry, aspect: CGFloat = 1) -> some View {
-        CameraRollTileView(entry: entry, tile: model.store.tile(entry.id), api: model.api, thumbnailsDisabled: model.thumbnailsDisabled,
-                           aspect: aspect, onRetry: { model.retry(entry) })
-    }
-
-    private func collapsedStrip(_ event: CameraRollEvent) -> some View {
-        let aspect: CGFloat = 112.0 / 72.0
-        return LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(event.entries.prefix(2)) { entry in tile(entry, aspect: aspect) }
-            Button { model.expanded.insert(event.id) } label: {
-                Color.clear.aspectRatio(aspect, contentMode: .fit)
-                    .overlay { Text("+\(event.entries.count - 2)").font(KriaFont.body(14).weight(.bold)).foregroundStyle(KriaColor.mutedInk) }
-                    .background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .buttonStyle(.plain).accessibilityLabel("Show all \(event.entries.count) items").accessibilityIdentifier("camera-roll-expand-\(event.id)")
-        }
-    }
-
-    private func ideasSection(_ event: CameraRollEvent, ideas: [CameraRollStory], generating: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Ideas for this event").cameraRollKicker().padding(.top, 6).accessibilityAddTraits(.isHeader)
-            ForEach(Array(ideas.enumerated()), id: \.element.id) { index, story in
-                CameraRollIdeaCard(model: model, story: story, event: event, isFirst: index == 0) { autoSelect in
-                    route = CameraRollIdeaRoute(group: event.id, storyID: story.id, autoSelect: autoSelect)
-                }
-            }
-            Button { model.anotherIdea(in: event.id) } label: {
-                HStack(spacing: 8) {
-                    if generating { KriaSpinner(size: 14) } else { Image(systemName: "sparkle").font(.system(size: 12, weight: .bold)) }
-                    Text(generating ? "Finding another" : "Another idea").font(KriaFont.body(15).weight(.bold))
-                }
-                .foregroundStyle(KriaColor.ink).padding(.horizontal, 18).frame(height: 44).background(KriaColor.butter, in: Capsule()).contentShape(Capsule())
-            }
-            .buttonStyle(.plain).disabled(generating || model.readyCount(in: event) == 0).opacity(generating ? 0.6 : 1)
-            .accessibilityIdentifier("camera-roll-another-idea-\(event.id)")
+            .padding(.top, 18).accessibilityElement(children: .contain).accessibilityIdentifier("camera-roll-progress")
         }
     }
 
