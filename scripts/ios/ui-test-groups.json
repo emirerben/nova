@@ -173,7 +173,11 @@
       "KriaUITests/CameraRollCollectionUITests/testTastePanelOpensFromTheHeaderAndReturns",
       "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
       "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection",
-      "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas"
+      "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas",
+      "KriaUITests/FeaturedEditPreviewUITests/testCenteredFormatOwnsPlayback",
+      "KriaUITests/FeaturedEditPreviewUITests/testOnboardingPlaysFourEditsInOrder",
+      "KriaUITests/FeaturedEditPreviewUITests/testSliderAdvancesWhenCenteredAndPauses",
+      "KriaUITests/ProductionSignInUITests/testBuildControlsDevelopmentSignIn"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",

@@ -107,6 +107,12 @@ reviewer notes as environment variables.
 
 ## Apple Beta App Review demo account
 
+The current iPhone source hides **Sign in with email** in builds without
+`DEV_AUTH`, including production Release. The reviewer endpoint remains unchanged,
+but the production app has no entry point to its form. The demo-login instructions
+below describe earlier builds. Replace the review-access path and update the
+App Store Connect review notes before the next Apple review submission.
+
 Apple rejected build 0.1.0 (46) on 2026-09-16/17 under Guideline 2.1(a): a
 sign-in-gated app must give reviewers a working demo account rather than relying
 on Sign in with Apple/Google. KRI-111 fixed this by adding a flag-gated reviewer
@@ -167,7 +173,7 @@ command above before the next review pass.
 `fly machine restart <id>`. Credentials live only in Fly secrets and the GitHub
 environment — never in the repo or app bundle.
 
-Recommended `KRIA_BETA_REVIEW_NOTES` (GitHub environment variable):
+Historical `KRIA_BETA_REVIEW_NOTES` for builds with the production email entry (GitHub environment variable):
 
 > Sign in with email using the demo credentials below (tap "Sign in with email"
 > under the Google button). Accept the AI data-sharing screen. The Gallery
