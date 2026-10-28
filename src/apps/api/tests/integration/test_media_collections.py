@@ -2640,6 +2640,72 @@ async def test_event_delete_with_a_stale_revision_is_a_409_and_changes_nothing(c
 # --- KRI-944: photos feed ideas -----------------------------------------------------------
 
 
+def _captured(day):
+    return {
+        "upload_contract": {
+            "proxy": {"original": {"capture": {"capture_time": f"2026-05-{day:02d}T10:00:00Z"}}}
+        }
+    }
+
+
+async def test_event_title_and_notes_reach_the_model_and_key_the_idea_cache(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: events dropped on read-back; an older client's PUT (no `events`)
+    wiping them; the model never seeing the title, notes or capture dates; edited notes
+    served from the old idea cache; unchanged notes paying for a second generation; an
+    empty query rejected although the event describes the outing."""
+    client, _, _, owner, _ = collection_world
+    ferry = [await _add_video(owner, metadata=_captured(day)) for day in (2, 4)]
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    members = [{"asset_id": a, "source_id": s, "group": "Ferry"} for a, s in ferry]
+    events = [
+        {"group": "Ferry", "title": "Ferry to Bozcaada", "about": "Island day with friends"},
+        {"group": "Not yet filmed", "title": "Sunset dinner"},
+    ]
+    body = {"name": "Trip", "expected_revision": 0, "members": members, "events": events}
+    saved = await client.put(path, json=body)
+    assert saved.status_code == 200, saved.text
+    assert (await client.get(path)).json()["events"] == [
+        events[0],
+        {**events[1], "about": ""},
+    ]
+    assert (await client.post(f"{path}/index", json={"expected_revision": 1})).status_code == 200
+
+    calls = _stub_ideas(monkeypatch, lambda input: [("Ferry", "A point", "Opening", [0])])
+    ask = {"expected_revision": 1, "group": "Ferry"}
+    assert (await client.post(f"{path}/stories", json={**ask, "query": ""})).status_code == 200
+    assert (calls[0].event_title, calls[0].event_about) == (
+        "Ferry to Bozcaada",
+        "Island day with friends",
+    )
+    assert calls[0].capture_span.model_dump() == {"first": "2026-05-02", "last": "2026-05-04"}
+    whole = await client.post(f"{path}/stories", json={"expected_revision": 1, "query": ""})
+    assert whole.status_code == 422, "an empty query needs an event to describe the request"
+
+    assert (await client.post(f"{path}/stories", json={**ask, "query": ""})).status_code == 200
+    assert len(calls) == 1, "same notes hit the idea cache"
+
+    older_client = {k: v for k, v in body.items() if k != "events"}
+    renamed = await client.put(
+        path, json={**older_client, "name": "Trip 2", "expected_revision": 1}
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["events"][0]["title"] == "Ferry to Bozcaada", "omitted keeps events"
+
+    edited = [{**events[0], "about": "Island day, rainy"}, events[1]]
+    changed = await client.put(
+        path, json={**body, "name": "Trip 2", "expected_revision": 2, "events": edited}
+    )
+    assert changed.status_code == 200 and changed.json()["revision"] == 3, changed.text
+    assert (await client.post(f"{path}/index", json={"expected_revision": 3})).status_code == 200
+    ask = {"expected_revision": 3, "group": "Ferry", "query": ""}
+    assert (await client.post(f"{path}/stories", json=ask)).status_code == 200
+    assert len(calls) == 2 and calls[1].event_about == "Island day, rainy"
+    assert (await client.post(f"{path}/stories", json=ask)).status_code == 200
+    assert len(calls) == 2, "unchanged notes do not regenerate"
+
+
 async def _add_photo(
     owner, *, facts_status="ready", subject="A red ferry at dusk", description="Ferry in harbour"
 ):

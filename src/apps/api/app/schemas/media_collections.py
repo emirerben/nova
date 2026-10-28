@@ -16,11 +16,26 @@ class CollectionMember(BaseModel):
     group: str | None = Field(default=None, min_length=1, max_length=80)
 
 
+class CollectionEvent(BaseModel):
+    """Creator-written context for one event, keyed by the members' `group` string.
+
+    `group` need not match any member: a brand-new event is empty until footage is added.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    group: str = Field(min_length=1, max_length=80)
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+    about: Annotated[str, StringConstraints(strip_whitespace=True, max_length=600)] = ""
+
+
 class CollectionWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=160)
     expected_revision: int = Field(ge=0)
     members: list[CollectionMember] = Field(max_length=500)
+    # None (omitted) keeps the stored events; a list, even empty, replaces them. Builds that
+    # predate events still PUT whole selections and must not erase what another device wrote.
+    events: list[CollectionEvent] | None = Field(default=None, max_length=50)
 
     @model_validator(mode="after")
     def unique_members(self):
@@ -28,6 +43,8 @@ class CollectionWrite(BaseModel):
             raise ValueError("Each catalogue asset may appear only once")
         if not self.name.strip():
             raise ValueError("Name must not be blank")
+        if self.events and len({value.group for value in self.events}) != len(self.events):
+            raise ValueError("Each event may be described only once")
         return self
 
 
@@ -37,6 +54,7 @@ class CollectionOut(BaseModel):
     revision: int
     members: list[CollectionMember]
     unavailable_asset_ids: list[UUID] = Field(default_factory=list)
+    events: list[CollectionEvent] = Field(default_factory=list)
 
 
 class CollectionIndexBody(BaseModel):
@@ -143,12 +161,16 @@ class StoryGenerationBody(SemanticSearchBody):
     # Ideas are per event: evidence is limited to the members whose group equals this.
     # Absent keeps the whole-collection behaviour of older builds.
     group: str | None = Field(default=None, min_length=1, max_length=80)
+    # An event's creator-written title and notes can stand in for a typed request.
+    query: str = Field(default="", max_length=500)
     # The event's existing ideas. Non-empty means "one more idea": it is added beside them,
     # never replaces them, and never repeats their footage or wording.
     exclude_story_ids: list[UUID] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def public_research_topic(self):
+        if not self.query and self.group is None:
+            raise ValueError("A request for the whole collection needs a query")
         if self.research_topic is not None:
             from app.services.researched_text import ResearchRequest
 
