@@ -234,7 +234,9 @@ enum NativeEditorRenderError: Error, Equatable {
             // the source span that fits that clock, then hold the last frame.
             let consumedSourceDuration = min(sourceSpan, outputDuration * requestedRate)
             let movingDuration = consumedSourceDuration / requestedRate
-            let holdDuration = max(0, outputDuration - movingDuration)
+            // A sub-microsecond gap is clock noise (the unrounded speech clock), not a held clip: it must not skip the letterbox below.
+            let rawHold = outputDuration - movingDuration
+            let holdDuration = rawHold > 0.000_001 ? rawHold : 0
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
             let narratedSourceLevel: Double

@@ -569,6 +569,17 @@ def normalize_guided_editor_revision(
     return normalized
 
 
+def _approved_source_crop(raw: object) -> GuidedEditorSourceCrop | None:
+    """A plan moment's crop as the editor's crop, or None when it has none (or one the editor
+    cannot hold: the projection never fails over a crop)."""
+    if not isinstance(raw, dict) or not raw:
+        return None
+    try:
+        return GuidedEditorSourceCrop.model_validate(raw)
+    except ValueError:
+        return None
+
+
 def guided_editor_revision_from_approval(
     *,
     proposal_version: int,
@@ -606,6 +617,11 @@ def guided_editor_revision_from_approval(
                 media_id=str(moment["media_id"]),
                 source_start_s=float(moment.get("source_start_s") or 0.0),
                 source_end_s=float(moment.get("source_end_s") or duration),
+                # KRI-1032: the editor starts from what rendered. A moment the plan silenced
+                # (the creator's "mute the rest", KRI-942) or cropped stays so in the editor,
+                # its preview, its export and its first Save.
+                source_audio_muted=True if moment.get("source_audio_muted") else None,
+                source_crop=_approved_source_crop(moment.get("source_crop")),
                 duration_s=max(MIN_GUIDED_EDITOR_SEGMENT_S, duration),
                 freeze_hold_s=moment.get("freeze_hold_s") or None,
                 # KRI-689: a rate the montage plan authored survives into the editor, so the
