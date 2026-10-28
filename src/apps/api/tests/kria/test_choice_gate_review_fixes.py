@@ -582,7 +582,13 @@ def test_async_events_do_not_close_a_durable_question() -> None:
     history = [asked, *noise, tag_event("user", {}, None, "hmm?")]
     assert count_asks(history, first.conflict_id, first.input_digest) == 1
     again = resolve_choices(strategy, brief, rows, history)
-    assert again.question is None and again.exhausted
+    # KRI-990: past its ask limit the timing question is offered again (live card, "still
+    # waiting" lead), never parked in `exhausted`; the async noise still burned no ask.
+    assert again.question is not None and not again.exhausted
+    assert again.question.conflict_id == first.conflict_id
+    assert again.question.input_digest == first.input_digest
+    assert again.question.intro.startswith("Your length choice is still waiting.")
+    assert count_asks(history, first.conflict_id, first.input_digest) == 1
 
 
 # key unification ------------------------------------------------------------
@@ -755,7 +761,9 @@ async def test_a_later_restatement_is_never_silently_overridden(
     # It asks once more (the old answer is dropped, not re-applied) ...
     assert result.plan.turn_value == "question" and not result.plan.intents
     again = _asked(result)
-    # Repeating a non-answer leaves the new length question waiting.
+    # Repeating a non-answer leaves the new length question waiting. KRI-990: shown as the same
+    # question again (live card, "still waiting" lead), not a plain line; still no default, no
+    # draft and no reuse of the old answer (KRI-492 P2-2).
     events += [again, tag_event("user", {}, None, message)]
     spent = await _gate(
         monkeypatch,
@@ -764,7 +772,13 @@ async def test_a_later_restatement_is_never_silently_overridden(
         brief=brief,
         events=tuple(events),
     )
-    assert spent.plan.turn_value == "progress" and not spent.plan.intents
+    assert spent.plan.turn_value == "question" and not spent.plan.intents
+    assert spent.plan.mode == "respond"  # nothing rewritten: no strategy, so no reused answer
+    waiting = spent.plan.choice_question
+    assert waiting["conflict"] == again[1]["choice_question"]["conflict"]
+    assert waiting["input_digest"] == again[1]["choice_question"]["input_digest"]
+    assert waiting["question_id"] != again[1]["choice_question"]["question_id"]
+    assert spent.plan.response.startswith("Your length choice is still waiting.")
 
 
 @pytest.mark.asyncio

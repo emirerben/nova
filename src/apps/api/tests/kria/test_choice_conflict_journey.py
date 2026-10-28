@@ -356,21 +356,45 @@ async def test_the_answered_clip_subset_wins_whatever_the_model_emits_next(
     assert "r1" not in _receipts(thread_id)
 
 
+def _assert_same_question_again(questions: list[dict], count: int) -> None:
+    """KRI-990: each non-answer brings the SAME timing question back as a new live card."""
+    assert len(questions) == count
+    assert {q["conflict"] for q in questions} == {questions[0]["conflict"]}
+    assert {q["input_digest"] for q in questions} == {questions[0]["input_digest"]}
+    assert len({q["question_id"] for q in questions}) == count
+
+
 @pytest.mark.asyncio
-async def test_unanswerable_replies_wait_without_rendering_or_asking_again(
+async def test_unanswerable_replies_wait_without_rendering_or_defaulting(
     monkeypatch,
 ) -> None:
-    """P2-2: no default is applied and no requirement is rewritten; repeating the request
-    is not an answer."""
+    """P2-2 (KRI-492): no default is applied, no requirement is rewritten and no draft is
+    minted; repeating the request is not an answer. KRI-990 changes only how the wait is
+    shown: the phone makes an older card read-only after any later message and a plain
+    progress line closed the question, so each non-answer gets the same question back as a
+    live card ("still waiting" lead) instead."""
     user_id, thread_id, _ = _project(monkeypatch)
     await _say(user_id, thread_id, PROMPT)
-    await _say(user_id, thread_id, "make it more fun")
-    assert len(_questions(thread_id)) == 1
+    _assert_same_question_again(_questions(thread_id), 1)
+    done = await _say(user_id, thread_id, "make it more fun")
+    _assert_same_question_again(_questions(thread_id), 2)
+    assert done["status"] == "completed"  # a question turn, no draft to approve
     assert _head_draft(thread_id) is None
+    last = [e for e in _events(thread_id) if e.role == "assistant"][-1]
+    assert "Your length choice is still waiting." in (last.content or "")
     done = await _say(user_id, thread_id, PROMPT)  # the request again is NOT an answer
     assert done["status"] == "completed"
-    assert len(_questions(thread_id)) == 1
+    _assert_same_question_again(_questions(thread_id), 3)
     assert _head_draft(thread_id) is None
+    with sync_session() as db:
+        assert (
+            db.execute(
+                select(CreatorAgentApproval).where(CreatorAgentApproval.thread_id == thread_id)
+            )
+            .scalars()
+            .first()
+            is None
+        )
 
 
 @pytest.mark.asyncio
@@ -546,4 +570,10 @@ async def test_a_later_restatement_reopens_once_and_does_not_reuse_the_old_answe
     done = await _say(user_id, thread_id, restatement + "!")
     assert done["status"] == "completed"
     assert _head_draft(thread_id).draft_revision == revision
-    assert len(_questions(thread_id)) == 2
+    # KRI-990: the repeated non-answer gets the new length question back as a live card (it
+    # used to be a plain line); the 4.1 s answer is not reused (no new draft, same revision).
+    questions = _questions(thread_id)
+    assert len(questions) == 3
+    assert questions[1]["input_digest"] == questions[2]["input_digest"]
+    assert questions[1]["question_id"] != questions[2]["question_id"]
+    assert "choice_selection" not in (_events(thread_id)[-1].payload or {})

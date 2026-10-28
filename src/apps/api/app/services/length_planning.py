@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -260,8 +260,14 @@ def build_length_plan(
     still_holds: Mapping[str, float] | None = None,
     pinned_moments: Sequence[Mapping[str, Any]] | None = None,
     skipped_moments: Sequence[Mapping[str, Any]] | None = None,
+    attached_visual_ids: Collection[str] = (),
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
+
+    KRI-989: ``attached_visual_ids`` are manifest Visuals (``asset-*`` pool media) the worker
+    places beside the footage: attached, not source rows, never missing. Their seconds stay
+    with ``asset_holds.visual_budget`` (already off the creator's target), so they are neither
+    sources nor counted twice; an id in neither the clip rows nor this set is truly gone.
 
     KRI-723: ``pinned_moments`` (``named_moments.Pin.json()``, the creator's final order) are
     the named moments of the edit's one take with their authority: the creator's own pointed
@@ -579,7 +585,7 @@ def build_length_plan(
                 "message": "Every selected source needs at least a 0.1 second usable window.",
             }
         )
-    missing_ids = set(selected_ids) - set(by_id)
+    missing_ids = set(selected_ids) - set(by_id) - set(attached_visual_ids)
     max_source_count = 4 if is_single_hero else 80
     if (eligible or single_hero_eligible) and len(sources) > max_source_count:
         conflicts.append(
@@ -597,6 +603,16 @@ def build_length_plan(
                 "requested_duration_s": creator_target_s,
                 "available_duration_s": 0.0,
                 "message": "Some selected clips no longer have usable source metadata.",
+            }
+        )
+    elif selected_ids and not sources:
+        # KRI-990: every selected id is an attached Visual (a photo): nothing to plan around.
+        conflicts.append(
+            {
+                "code": "no_video_sources",
+                "requested_duration_s": creator_target_s,
+                "available_duration_s": 0.0,
+                "message": "The selection has no video clip to plan around.",
             }
         )
     physical_capacity_s = min(
@@ -648,6 +664,9 @@ def build_length_plan(
         "windows": windows,
         "conflicts": conflicts,
     }
+    if missing_ids:
+        # KRI-989: the ids that are genuinely gone, so the question can offer to leave them out.
+        plan["missing_source_ids"] = sorted(missing_ids)
     if moments_record is not None:
         plan["moments"] = moments_record
         if skipped_moments:

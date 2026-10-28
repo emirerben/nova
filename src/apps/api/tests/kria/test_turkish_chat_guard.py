@@ -45,6 +45,7 @@ from app.services.choice_questions import (
     CONFLICT_WHICH_VOICE,
     OPT_ATTACHMENT_ORDER,
     OPT_EXTEND,
+    OPT_LEAVE_OUT_SOURCES,
     OPT_MATCH_VOICE,
     OPT_SILENT_TAIL,
     ChoiceResolution,
@@ -385,13 +386,15 @@ def test_every_answered_choice_is_disclosed_in_turkish(turkish_chat_net: Turkish
         {"kind": CONFLICT_VOICE_VS_DURATION, "option": OPT_SILENT_TAIL, "source": "creator"},
         {"kind": CONFLICT_WHICH_VOICE, "option": "clip_2", "source": "creator_delegated"},
         {"kind": CONFLICT_VOICE_VS_DURATION, "option": "length_45", "source": "creator"},
+        {"kind": CONFLICT_SOURCE_COVERAGE, "option": OPT_LEAVE_OUT_SOURCES, "source": "creator"},
     ]
     with reply_language_for("tr"):
         notes = choice_notices({"choice_answers": answers})
     english = choice_notices({"choice_answers": answers})
     # Each answer is disclosed in both languages, including the dynamic length_N key.
-    assert len(notes) == len(english) == 4
+    assert len(notes) == len(english) == 5
     assert english[3] == "I'm making it 45 seconds."
+    assert english[4] == "I left those clips out."  # KRI-990: neutral, not about attachment
     _write("Seslendirmeli bir düzenleme hazırladım. " + " ".join(notes), event_type="draft_applied")
     turkish_chat_net.assert_clean()
 

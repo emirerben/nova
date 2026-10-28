@@ -623,7 +623,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness,kri-966-take-window-length",
+                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-988-pool-photo-attached,kri-721-approval-readiness,kri-966-take-window-length",
                 ),
             ),
             (
@@ -844,7 +844,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/services/length_planning.py",
-                (True, "covered", "kri-681-named-line-windows"),
+                (
+                    True,
+                    "covered",
+                    "kri-681-named-line-windows,kri-988-pool-photo-attached",
+                ),
             ),
             (
                 "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json",

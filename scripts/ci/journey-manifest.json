@@ -960,6 +960,21 @@
       ]
     },
     {
+      "id": "kri-988-pool-photo-attached",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri988_lunch_m2_replay.py tests/services/test_kri989_pool_photo_attached.py tests/services/test_kri990_timing_choice_reask.py tests/kria/test_kri990_pending_choice_journey.py",
+      "paths": [
+        "src/apps/api/app/services/length_planning.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/tests/fixtures/kri988_donjulio_lunch_m2_turns.json",
+        "src/apps/api/tests/kria/test_kri988_lunch_m2_replay.py",
+        "src/apps/api/tests/kria/test_kri990_pending_choice_journey.py",
+        "src/apps/api/tests/services/test_kri989_pool_photo_attached.py",
+        "src/apps/api/tests/services/test_kri990_timing_choice_reask.py"
+      ]
+    },
+    {
       "id": "kri-941-listed-order",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_kri941_listed_order_replay.py tests/pipeline/test_unified_montage_sequence.py tests/services/test_order_sequence_contract.py",
