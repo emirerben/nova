@@ -13,6 +13,7 @@ Expectations supplied by the creator before implementation.
   ],
   "onboarding_behavior": "One muted video at a time; completion advances to the next; fourth wraps to first; inactive slots show opening posters.",
   "new_chat_behavior": "Only the centered card plays. Off-center cards pause. No black bars. Narrated keeps its existing image.",
+  "drawer_gestures": "Carousel swipes keep the drawer closed; swipes on the workspace heading open and close the drawer; the header button still toggles it.",
   "slider_hold_seconds": 1.2,
   "slider_transition_seconds": 0.35,
   "production_signin": [

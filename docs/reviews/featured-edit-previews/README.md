@@ -17,6 +17,7 @@ reviewer demo form stays reachable. Local-account access remains development-onl
 The report documents retain unedited `xcresulttool get test-results summary` JSON.
 `acceptance.md` records the independently supplied expectations.
 
+- `drawer-gesture.md` records the reproduced CI failure and three passing runs after correcting the swipe surface.
 - `native-integrated.md` records four focused native checks after merging current main.
 - `native-debug-final.md` covers all ten focused Debug UI checks, including
   four-edit sequencing, centered playback, Slider timing/pause, sign-in and tile sizes.

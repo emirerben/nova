@@ -178,8 +178,11 @@ final class CreationUITests: XCTestCase {
         toggle.tap()
         XCTAssertTrue(eventually { toggle.label == "Open projects" }, "Toggle still reads \(toggle.label)")
         XCTAssertTrue(eventually { abs(toggle.frame.minX - closedMenuX) <= 2 }, "Toggle stayed at x=\(toggle.frame.minX)")
-        let swipeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.55))
-        let swipeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55))
+        let swipeY = carousel.frame.minY - 20
+        XCTAssertGreaterThan(swipeY, toggle.frame.maxY)
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let swipeStart = origin.withOffset(CGVector(dx: viewport.width * 0.15, dy: swipeY))
+        let swipeEnd = origin.withOffset(CGVector(dx: viewport.width * 0.85, dy: swipeY))
         swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
         XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 3))
         XCTAssertEqual(toggle.label, "Close projects")
