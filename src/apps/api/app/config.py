@@ -1143,7 +1143,9 @@ class Settings(BaseSettings):
     # When the plan item carries no Gemini clip transcript (Kria v2 never saves
     # one), the preflight worker asks Gemini to transcribe the narration's first
     # 30 s so whisper's detected language is still cross-checked before the cut
-    # plan is built. Best-effort; False skips the call (item transcript only).
+    # plan is built (a mixed-language take also gets the rest of the take heard,
+    # see `speech_cleanup_mixed_relisten_enabled`). Best-effort; False skips the
+    # call (item transcript only).
     speech_cleanup_gemini_reference_enabled: bool = True
     # KRI-843: a take whose Gemini reference speaks two or more languages (Don Julio T1:
     # an English question, a Spanish answer, Turkish chatter) has no single right whisper
@@ -1153,6 +1155,18 @@ class Settings(BaseSettings):
     # cross-check alone (re-run the whole take in one language), byte-identical.
     # Apply: fly secret + worker restart.
     speech_cleanup_mixed_language_enabled: bool = True
+    # KRI-1016: whisper-1 decodes a whole file in ONE language, so on a mixed take (Plaza T2:
+    # English and Turkish, 48 s) the language it picks is written for every stretch, and a
+    # stretch in the other language comes back as a translation or as no words at all. With the
+    # mixed-language lane on, a mixed take gets two more things: Gemini also hears the take past
+    # its first 30 s (one more call, only when the 30 s sample already names two or more
+    # languages), so the reference covers the whole take; and every stretch of 1 s or more that
+    # the transcript left wordless but the reference heard is cut out and transcribed ALONE, in
+    # each of the take's languages (whisper-1 on those stretches only, at most 6 short calls, a
+    # few cents), then kept only where the reference confirms the words. A single-language take
+    # makes no extra call. false = byte-identical to KRI-843 (30 s reference, no re-listen).
+    # Apply: fly secret + worker restart.
+    speech_cleanup_mixed_relisten_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
