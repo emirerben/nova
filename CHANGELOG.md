@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.183.0] - 2026-10-28
+
+### Changed
+- fix(ios): text-selection handle drags extend the selection instead of opening the projects drawer (KRI-1002) (#1897) <!-- release-pr: 1897 -->
+
 ## [0.81.182.0] - 2026-10-28
 
 ### Fixed
