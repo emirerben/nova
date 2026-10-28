@@ -285,7 +285,8 @@
       "KriaUITests/NativeCaptionAnimationUITests/testLyricCaptionsAnimateAllThenOneLine",
       "KriaUITests/NativeCaptionAnimationUITests/testTextMotionPresetShowsInAllCaptions",
       "KriaUITests/NativeCaptionAnimationUITests/testWithoutTheCapabilityThereIsNoAnimationTab",
-      "KriaUITests/NativeCaptionAnimationUITests/testReduceMotionKeepsPreviewsStillUntilPlayed"
+      "KriaUITests/NativeCaptionAnimationUITests/testReduceMotionKeepsPreviewsStillUntilPlayed",
+      "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimation"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
