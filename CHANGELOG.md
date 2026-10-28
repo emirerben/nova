@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.171.0] - 2026-10-28
+
+### Changed
+- fix(kria): a selected pool photo is attached, and a waiting length choice is never a dead end (KRI-989, KRI-990) (#1878) <!-- release-pr: 1878 -->
+
 ## [0.81.170.0] - 2026-10-28
 
 ### Changed
