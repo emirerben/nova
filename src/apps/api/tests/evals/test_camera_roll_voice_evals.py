@@ -22,11 +22,7 @@ from app.agents.camera_roll_stories import CameraRollStoriesAgent
 from . import camera_roll_voice_samples as samples
 from .camera_roll_voice_fixture import PLACE, VARIANTS, build_input, candidates
 from .runners.camera_roll_voice import analyze_stories, composite, score_run, stock_copy
-from .runners.eval_runner import (
-    CassetteModelClient,
-    RecordingModelClient,
-    build_eval_run_context,
-)
+from .runners.eval_runner import CassetteModelClient, build_eval_run_context
 
 AGENT = "nova.media.camera_roll_stories"
 BASELINE_DIR = Path(__file__).parent / "baselines" / "camera_roll_voice"
@@ -165,8 +161,7 @@ def test_live_baseline(eval_mode, live_model_client, with_judge, judge_for):
         value = variant.build()
         results = []
         for n in range(runs):
-            client = RecordingModelClient(live_model_client)
-            agent = CameraRollStoriesAgent(client)
+            agent = CameraRollStoriesAgent(live_model_client)
             ctx = build_eval_run_context(f"camera-roll-voice/{variant.name}/{n}", is_live=True)
             try:
                 output = agent.run(value.model_dump(), ctx=ctx).model_dump()
@@ -176,8 +171,6 @@ def test_live_baseline(eval_mode, live_model_client, with_judge, judge_for):
             scored = score_run(
                 output, place=variant.place, agent_input=value.model_dump(), judge=judge
             )
-            scored["draft"] = agent.parse(client.invocations[0].raw_text, value).model_dump()
-            scored["edit_calls"] = len(client.invocations) - 1
             results.append(scored)
         record["variants"][variant.name] = {
             "description": variant.description,

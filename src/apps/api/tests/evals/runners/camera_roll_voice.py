@@ -18,8 +18,6 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, field
 
-from app.agents.camera_roll_copy_edit import STOCK_OPENERS, STOCK_PHRASES
-
 COPY_FIELDS = ("opening_text", "closing_text", "caption")
 GENERIC_PLACE_WORDS = frozenset(
     {"island", "trip", "weekend", "day", "holiday", "vacation", "outing", "summer", "town", "city"}
@@ -43,8 +41,71 @@ _VIEWER_DIRECTED = re.compile(
 _IMPERATIVE_OPENER = re.compile(
     r"^\s*(?:visit|go to|see|walk|watch|try|book|come|look|skip)\b", re.I
 )
-# The vocabulary is the app's (the copy edit pass shows it to its model as examples), so the
-# eval and the product mean the same thing by stock copy.
+# Stock travel-brochure vocabulary; matched as substrings of the lowercased copy.
+STOCK_PHRASES = (
+    "stunning",
+    "breathtaking",
+    "hidden gem",
+    "history meets",
+    "unique blend",
+    "magical",
+    "magic of",
+    "charm",
+    "picturesque",
+    "tranquil",
+    "serene",
+    "peaceful",
+    "timeless",
+    "unforgettable",
+    "paradise",
+    "slice of",
+    "vibes",
+    "journey through",
+    "tapestry",
+    "experience the",
+    "discover the",
+    "immerse",
+    "beauty",
+    "wonders of",
+    "soak up",
+    "every corner",
+    "something for everyone",
+    "so much to",
+    "memories",
+    "getaway",
+    "iconic",
+    "authentic",
+    "relaxing",
+    "vista",
+    "beautiful",
+    "amazing",
+    "incredible",
+    "wonderful",
+    "gorgeous",
+    "lovely",
+    "perfect",
+)
+# Sentence openers that invite the viewer to feel something instead of naming what they see.
+STOCK_OPENERS = (
+    "experience",
+    "explore",
+    "discover",
+    "wander",
+    "immerse yourself",
+    "step into",
+    "find peace",
+    "find your peace",
+    "get lost",
+    "soak up",
+    "soak in",
+    "unwind",
+    "escape to",
+    "uncover",
+    "embrace",
+    "indulge",
+    "take a moment",
+)
+
 _STOCK_OPENER = re.compile(
     r"(?:^|[.!?:]\s+)(" + "|".join(re.escape(o) for o in STOCK_OPENERS) + r")\b",
     re.IGNORECASE | re.MULTILINE,
@@ -185,14 +246,12 @@ def aggregate(runs: list[dict]) -> dict[str, float | None]:
     """Mean of every structural rate and judge dimension across a variant's runs.
 
     filler_rate is rescored from the saved output, so a file recorded under an older stock list
-    compares fairly. draft_filler_rate is the same check before the copy edit pass, when the run
-    recorded its draft.
+    compares fairly.
     """
     metrics: dict[str, float | None] = {}
     for key in ("diary_recap_rate", "missing_place_rate"):
         metrics[key] = _mean([r["voice"]["summary"][key] for r in runs])
     metrics["filler_rate"] = _mean([_filler_rate(r["output"]) for r in runs])
-    metrics["draft_filler_rate"] = _mean([_filler_rate(r["draft"]) for r in runs if "draft" in r])
     judged = [r["judge"] for r in runs if "judge" in r]
     for dim in JUDGE_DIMENSIONS:
         metrics[dim] = _mean([j["scores"].get(dim) for j in judged])

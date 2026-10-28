@@ -226,17 +226,11 @@ keeps first-person day recaps out of captions. It honours the event's title and 
 "why people should visit" allows why-visit ideas built on features the footage shows. The
 prompt starts with the `grounded-hook` runtime skill; an edit to that skill needs a
 `camera_roll_stories` `prompt_version` bump, because the idea cache is keyed on the version.
-After the ideas parse, `CameraRollStoriesAgent.run` sends their title, opening, closing and
-caption to `CameraRollCopyEditAgent` (`app/agents/camera_roll_copy_edit.py`), one extra Flash
-call. That model quotes stock travel wording ("Experience ...", "full of charm", "perfect for
-a peaceful getaway") and rewrites the line from the idea's own footage descriptions and the
-creator's words. Code applies an edit only if its quote is really in the line and
-gone from the rewrite, and the rewrite fits the field; hook and payoff follow the new wording.
-Any failure (timeout, bad JSON, budget, shared deadline) keeps the draft ideas. Researched ideas
-skip the pass, because their two review calls share the request deadline after it. The edit
-prompt's identity is part of the idea cache digest. Measure voice
-changes with `tests/evals/test_camera_roll_voice_evals.py` (DECISIONS.md "Camera-roll ideas
-are written for a stranger").
+A model copy-edit pass that stripped stock travel wording was tried and removed: the words went
+but the judge's viewer_value and specificity did not move. Copy is only as specific as the
+footage descriptions and the creator's event title and notes, so those inputs carry the quality.
+Measure voice changes with `tests/evals/test_camera_roll_voice_evals.py` (DECISIONS.md
+"Camera-roll ideas are written for a stranger").
 
 An idea may carry up to three `content_plan.open_questions` (`id`, `question`, `answer`,
 `dismissed`): facts only the creator knows. The question text is server-owned. The creator

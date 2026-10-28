@@ -12,7 +12,6 @@ from sqlalchemy import select
 
 from app.agents._model_client import default_client
 from app.agents._runtime import TerminalError
-from app.agents.camera_roll_copy_edit import CameraRollCopyEditAgent
 from app.agents.camera_roll_stories import (
     CameraRollStoriesAgent,
     CameraRollStoriesInput,
@@ -358,15 +357,12 @@ async def generate_stories(db, owner, identifier, body):
         ],
     )
     spec = CameraRollStoriesAgent.spec
-    edit = CameraRollCopyEditAgent.spec
     research_topic = getattr(body, "research_topic", None)
     rejected = await creator_editorial_taste.rejected_research(db, owner, research_topic)
     digest = hashlib.sha256(
         json.dumps(
             [
                 [spec.name, spec.model, spec.prompt_version],
-                # The copy edit pass rewrites the cached ideas, so its prompt keys them too.
-                [edit.name, edit.model, edit.prompt_version],
                 input.model_dump(),
                 [value.evidence.get("index_spec") for value in candidates],
                 body.expected_revision,
