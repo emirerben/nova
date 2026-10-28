@@ -6587,6 +6587,23 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
                 tr="Video dikey ekranı dolduruyor ve yüzün baştan sona kadrajda kalıyor",
             ),
         )
+    if facts.speaker_framing_reason == "landscape_canvas":
+        # The creator picked a landscape video, so the vertical/face framing they also asked
+        # for had nothing to do; say so rather than "met" or a face-search failure.
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "You chose a landscape video, so there was no vertical framing to do "
+                    "and your clip shows in the full wide frame"
+                ),
+                tr=(
+                    "Yatay video seçtin, o yüzden yapılacak bir dikey kadraj yoktu "
+                    "ve klibin geniş kadrajda tam görünüyor"
+                ),
+            ),
+        )
     if facts.speaker_framing_reason == "not_landscape":
         return _receipt(
             req,
