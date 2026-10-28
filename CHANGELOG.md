@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.181.0] - 2026-10-28
+
+### Changed
+- fix(ios): show selected timeline items on their first visible frame (KRI-999) (#1893) <!-- release-pr: 1893 -->
+
 ## [0.81.180.0] - 2026-10-28
 
 ### Changed
