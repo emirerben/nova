@@ -892,6 +892,11 @@ butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit thr
   the render-ready review re-judges the asks against the recipe pinned then
   (`rendered_toggle_receipt`, editor Saves included) and `brief_checks._check_sound_toggle`
   words it ("Clip sound off except the last clip, where "Super excited!" is said (17.0-17.9 s)").
+  A clip kept audible for a line the creator named ("only the clip where I say '…' keeps its
+  sound", KRI-1028) is also judged on holding that sentence: the length plan records it as
+  `kept_lines` (`app/services/kept_sound_lines.py`; the timed sentence, its window as the clip's
+  floor, `held`), and the receipt says '"…" plays whole (4.6-8.9 s of that clip)' or
+  `line_partly_in_edit` / `line_not_in_edit`.
   Reasons: `partial_unsupported`, `line_not_found`, `line_ambiguous`, `line_unknown`,
   `line_not_in_edit`, `line_partly_in_edit`, `not_in_edit`, `clip_mismatch`, `window_past_end`,
   `no_sound`, `contract_conflict`, `render_refused`, `not_built`, `overridden`.

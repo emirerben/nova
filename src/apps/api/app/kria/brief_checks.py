@@ -5876,6 +5876,30 @@ def _toggle_summary(ask: SoundToggleAsk) -> str:
     return say(en=en, tr=tr)
 
 
+def _kept_line_rows(req: BriefRequirement, facts: PlanFacts) -> list[Mapping[str, Any]]:
+    """The draft's length-plan records of clips this ask keeps for a named line (KRI-1028)."""
+    snapshot = facts.media_snapshot if isinstance(facts.media_snapshot, Mapping) else {}
+    plan = snapshot.get("length_plan")
+    return [
+        row
+        for row in (plan.get("kept_lines") if isinstance(plan, Mapping) else None) or []
+        if isinstance(row, Mapping) and row.get("requirement_id") == req.id and row.get("line")
+    ]
+
+
+def _kept_line_whole(summary: str, line: str, span: str | None = None) -> str:
+    """``summary`` plus the named line the kept clip plays whole (KRI-1028)."""
+    if span:
+        return say(
+            en=f'{summary}; "{line}" plays whole ({span} of that clip)',
+            tr=f'{summary}; "{line}" baştan sona duyuluyor (o klibin {span} kısmı)',
+        )
+    return say(
+        en=f'{summary}; "{line}" plays whole',
+        tr=f'{summary}; "{line}" baştan sona duyulacak',
+    )
+
+
 def _toggle_seconds(windows: object) -> str:
     rows = [w for w in windows or [] if isinstance(w, (list, tuple)) and len(w) == 2]
     return ", ".join(f"{float(a):.1f}-{float(b):.1f} s" for a, b in rows)
@@ -5989,6 +6013,12 @@ def _check_sound_toggle(
             summary = _toggle_summary(ask)
             if ask.exceptions and seconds:
                 summary = say(en=f"{summary} ({seconds})", tr=f"{summary} ({seconds})")
+            kept = (
+                row.get("line") if not any(p.lines for p in (ask.target, *ask.exceptions)) else None
+            )
+            if kept:
+                span = _toggle_seconds([[row.get("line_start_s"), row.get("line_end_s")]])
+                summary = _kept_line_whole(summary, str(kept), span)
             return _receipt(req, "met", summary)
         return _receipt(
             req, "partial" if status == "partial" else "not_possible", _toggle_missed(ask, row)
@@ -6042,6 +6072,20 @@ def _draft_sound_toggle(
     )
     if silences_part and not phone_clip_sound_windows_supported():
         return _receipt(req, "partial", _toggle_missed(ask, {"reason_code": "partial_unsupported"}))
+    kept = _kept_line_rows(req, facts)
+    short = next((row for row in kept if row.get("held") is False), None)
+    if short is not None:
+        line = str(short["line"])
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"\"{line}\" doesn't fit whole in the video's length, so part of it is cut",
+                tr=f'"{line}" videonun süresine tam sığmıyor, bu yüzden bir kısmı kesiliyor',
+            ),
+        )
+    if kept:
+        return _receipt(req, "met", _kept_line_whole(_toggle_summary(ask), str(kept[0]["line"])))
     return _receipt(req, "met", _toggle_summary(ask))
 
 

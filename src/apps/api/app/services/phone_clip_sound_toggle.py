@@ -25,15 +25,21 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from app.kria.clip_sound_toggle_ask import SoundToggleAsk, brief_sound_toggle_asks
+from app.kria.clip_sound_toggle_ask import (
+    SOUND_OFF,
+    SoundTarget,
+    SoundToggleAsk,
+    brief_sound_toggle_asks,
+)
 from app.pipeline.clip_sound_toggle import (
     CONTRACT_CONFLICT,
     PARTIAL_UNSUPPORTED,
     RENDER_REFUSED,
     SoundPlan,
+    _media_match,
     judge_recipe,
     resolve_sound_toggles,
     toggle_clips_from_recipe,
@@ -86,6 +92,54 @@ def _ground(media_snapshot: Mapping[str, Any], bindings: Sequence[Any]):  # noqa
         )
 
     return ground
+
+
+def _with_kept_lines(
+    asks: Sequence[SoundToggleAsk], media_snapshot: Mapping[str, Any]
+) -> tuple[SoundToggleAsk, ...]:
+    """``asks`` with each clip kept audible for a named line carrying that sentence (KRI-1028).
+
+    The approved length plan's ``kept_lines`` (`kept_sound_lines.ground_kept_lines`) say where
+    the sentence is; the part that keeps the clip is then judged on holding it, not only on
+    playing the clip's sound.
+    """
+    plan = media_snapshot.get("length_plan") if isinstance(media_snapshot, Mapping) else None
+    rows = [
+        row
+        for row in (plan.get("kept_lines") if isinstance(plan, Mapping) else None) or []
+        if isinstance(row, Mapping)
+        and isinstance(row.get("start_s"), (int, float))
+        and isinstance(row.get("end_s"), (int, float))
+    ]
+    if not rows:
+        return tuple(asks)
+
+    def kept(ask: SoundToggleAsk, part: SoundTarget) -> SoundTarget:
+        if part.media_ref is None or part.lines or part.has_window:
+            return part
+        row = next(
+            (
+                row
+                for row in rows
+                if row.get("requirement_id") == ask.requirement_id
+                and _media_match(part.media_ref, [str(row.get("media_id"))]) is not None
+            ),
+            None,
+        )
+        if row is None:
+            return part
+        return replace(
+            part,
+            kept_line=str(row.get("line") or "") or None,
+            kept_span=(float(row["start_s"]), float(row["end_s"])),
+        )
+
+    return tuple(
+        replace(ask, exceptions=tuple(kept(ask, part) for part in ask.exceptions))
+        if ask.state == SOUND_OFF
+        else replace(ask, target=kept(ask, ask.target))
+        for ask in asks
+    )
 
 
 def _camera_assets(bindings: Sequence[Any]) -> tuple[set[str], set[str]]:
@@ -155,7 +209,7 @@ def plan_toggle_lane(
     if plan.user_song is not None or plan.narration is not None:
         return None
     brief, media_snapshot = _binding_brief(snapshot)
-    asks = brief_sound_toggle_asks(brief)
+    asks = _with_kept_lines(brief_sound_toggle_asks(brief), media_snapshot)
     asset_to_media = {b.render_asset().id: b.media_id for b in bindings}
     clips = toggle_clips_from_recipe(
         recipe, video_track_id=STORY_TRACK_ID, asset_to_media=asset_to_media
@@ -264,7 +318,7 @@ def rendered_toggle_receipt(
     brief, media_snapshot = _binding_brief(
         {"creator_brief_binding": brief_binding} if brief_binding is not None else assembly
     )
-    asks = brief_sound_toggle_asks(brief)
+    asks = _with_kept_lines(brief_sound_toggle_asks(brief), media_snapshot)
     if not asks or recipe is None:
         return None
     try:
