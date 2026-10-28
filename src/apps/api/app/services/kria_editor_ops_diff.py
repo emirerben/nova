@@ -890,6 +890,51 @@ def _font_display(target: DiffTarget) -> str:
     return str(target.after) if isinstance(target.after, str) else "new font"
 
 
+_CAPTION_META_WORDS = {
+    "size_px": ("Changed the caption size", "Altyazı boyutu değişti"),
+    "color": ("Changed the caption colour", "Altyazı rengi değişti"),
+    "highlight_color": ("Changed the caption highlight colour", "Altyazı vurgu rengi değişti"),
+    "animation_phases": ("Changed the caption animation", "Altyazı animasyonu değişti"),
+}
+
+
+def _describe_caption_meta(entry: DiffEntry) -> str:
+    """Caption settings are announced in creator words, never by their field name (KRI-1008)."""
+    name, after = entry.field, entry.targets[0].after
+    is_number = isinstance(after, (int, float)) and not isinstance(after, bool)
+    if name == "y_frac" and is_number:
+        _horizontal, vertical = _where(None, float(after))
+        spot_tr = {"top": "üst", "middle": "orta", "bottom": "alt"}[vertical]
+        return say(
+            en=f"Moved the captions to the {vertical}", tr=f"Altyazılar {spot_tr} konuma taşındı"
+        )
+    if name == "enabled" and isinstance(after, bool):
+        if after:
+            return say(en="Turned the captions on", tr="Altyazılar açıldı")
+        return say(en="Turned the captions off", tr="Altyazılar kapatıldı")
+    if name == "style" and after == "word":
+        return say(
+            en="Captions now light up word by word",
+            tr="Altyazılar artık kelime kelime vurgulanıyor",
+        )
+    if name == "style" and after == "sentence":
+        return say(en="Captions now show whole lines", tr="Altyazılar artık tam satır görünüyor")
+    if name == "font" and isinstance(after, str) and after:
+        return say(en=f"Changed the caption font to {after}", tr=f"Altyazı yazı tipi {after} oldu")
+    if name == "stroke_width" and is_number:
+        if after == 0:
+            return say(en="Removed the caption outline", tr="Altyazı konturu kaldırıldı")
+        return say(en="Changed the caption outline", tr="Altyazı konturu değişti")
+    if name == "shadow_enabled" and isinstance(after, bool):
+        if after:
+            return say(en="Added a shadow to the captions", tr="Altyazılara gölge eklendi")
+        return say(en="Removed the caption shadow", tr="Altyazı gölgesi kaldırıldı")
+    if name in _CAPTION_META_WORDS:
+        en, tr = _CAPTION_META_WORDS[name]
+        return say(en=en, tr=tr)
+    return say(en="Updated the captions", tr="Altyazılar güncellendi")
+
+
 def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
     """One short sentence for an entry, in the turn's language."""
     who = describe_targets(entry, live_text_count)
@@ -973,7 +1018,7 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
             tr=f"Başlık → {_quote(str(first.after or ''))}",
         )
     if lane == "caption_meta":
-        return say(en=f"Changed the caption {name.replace('_', ' ')}", tr="Altyazı ayarı değişti")
+        return _describe_caption_meta(entry)
     if lane == "captions":
         return say(
             en=f"Edited {_plural(len(entry.targets), 'caption', 'altyazı')}",

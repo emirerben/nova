@@ -1093,3 +1093,175 @@ def test_phone_cleanup_request_keeps_spoken_captions_when_the_pass_is_empty(monk
         {"variant_id": "subtitled", "requested": "tr", "spoken": "en"}
     ]
     assert _event_payloads(events, "caption_language_requested") == []
+
+
+# --------------------------------------------------------------------------
+# Phone: KRI-1015 -- a translated caption set says which language it came from
+# --------------------------------------------------------------------------
+#
+# Failure modes (written before the code): the review of a render could not tell a creator
+# whose captions were translated that they were ("Keep every language as it was spoken" got
+# "Have a look"). `caption_translated_from` is written ONLY when the final caption language
+# differs from a KNOWN spoken language after an explicit caption-language request. It must be
+# absent when: no request was made, the request is the spoken language, the translation did
+# not happen (the variant is stamped with the spoken language), the spoken language is
+# unknown (the cleanup branch's job-language fallback), or the "spoken" label is a whisper
+# hallucination outside the languages Nova names (a mixed take read as "fi").
+
+
+def _spoken_english() -> Transcript:
+    text = "Hello there, this is plain English text."
+    return Transcript(
+        words=_words(*((token, i * 0.5, i * 0.5 + 0.5) for i, token in enumerate(text.split()))),
+        language="en",
+        full_text=text,
+    )
+
+
+def test_phone_translated_captions_record_the_spoken_language_they_came_from(monkeypatch):
+    job, _snapshot, _session, _binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["language"] = "en"
+    job.all_candidates["caption_language_request"] = "tr"
+    _whisper_by_language(monkeypatch, {None: _spoken_english(), "tr": _hinted_turkish()})
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "tr"
+    assert variant["caption_translated_from"] == "en"
+
+
+def test_phone_cleanup_translated_captions_record_the_spoken_language(monkeypatch):
+    job, snapshot = _setup_phone_cleanup(monkeypatch, request="tr")
+    whisper = Mock(
+        return_value=Transcript(
+            words=_words(*_TR_CLIP_WORDS),
+            language="tr",
+            full_text=" ".join(text for text, _, _ in _TR_CLIP_WORDS),
+        )
+    )
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", whisper)
+    _phone_events(monkeypatch)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "tr"
+    assert variant["caption_translated_from"] == "en"
+
+
+@pytest.mark.parametrize("job_language", ["en", "tr"])
+def test_phone_without_a_caption_request_records_no_translation(monkeypatch, job_language):
+    job, _snapshot, _session, _binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["language"] = job_language
+    _whisper_by_language(monkeypatch, {None: _spoken_english()})
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "en"
+    assert "caption_translated_from" not in variant
+
+
+def test_phone_request_for_the_spoken_language_records_no_translation(monkeypatch):
+    job, _snapshot, _session, _binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["caption_language_request"] = "en"
+    _whisper_by_language(monkeypatch, {None: _spoken_english()})
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "en"
+    assert "caption_translated_from" not in variant
+
+
+def test_phone_cleanup_request_for_the_spoken_language_records_no_translation(monkeypatch):
+    job, snapshot = _setup_phone_cleanup(monkeypatch, request="en")
+    monkeypatch.setattr(
+        "app.pipeline.transcribe.transcribe_whisper_cached",
+        Mock(
+            side_effect=AssertionError("a request for the spoken language must not re-transcribe")
+        ),
+    )
+    _phone_events(monkeypatch)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "en"
+    assert "caption_translated_from" not in variant
+
+
+def test_phone_a_translation_that_did_not_happen_records_no_translation(monkeypatch):
+    """The hinted pass wrote English again and the translator is off: the captions are English,
+    the variant says English, and nothing claims they were translated."""
+    monkeypatch.setattr(gb.settings, "caption_translation_enabled", False)
+    job, _snapshot, _session, _binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["caption_language_request"] = "tr"
+    _whisper_by_language(monkeypatch, {None: _spoken_english(), "tr": _spoken_english()})
+    _phone_events(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "en"
+    assert "caption_translated_from" not in variant
+
+
+def test_phone_cleanup_fallback_spoken_language_records_no_translation(monkeypatch):
+    """The cleanup branch only has the job-language fallback when nothing detected the spoken
+    language: an unknown source is never named."""
+    from app.pipeline.caption_language import SOURCE_FALLBACK
+
+    job, snapshot = _setup_phone_cleanup(monkeypatch, request="tr")
+    monkeypatch.setattr(
+        "app.pipeline.caption_language.resolve_spoken_caption_language",
+        lambda *_a, **_k: ("en", SOURCE_FALLBACK),
+    )
+    whisper = Mock(
+        return_value=Transcript(
+            words=_words(*_TR_CLIP_WORDS),
+            language="tr",
+            full_text=" ".join(text for text, _, _ in _TR_CLIP_WORDS),
+        )
+    )
+    monkeypatch.setattr("app.pipeline.transcribe.transcribe_whisper_cached", whisper)
+    _phone_events(monkeypatch)
+
+    gb._run_phone_subtitled_job(str(job.id), snapshot, job.all_candidates, ownership_epoch=3)
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "tr"
+    assert "caption_translated_from" not in variant
+
+
+def test_phone_a_spoken_label_outside_the_named_languages_is_never_claimed(monkeypatch):
+    """A mixed take whisper reads as Finnish (the Don Julio lunch clip): the captions are
+    Spanish as asked, but "translated from FI" would be a made-up sentence."""
+    job, _snapshot, _session, _binding = _setup_subtitled(monkeypatch)
+    job.all_candidates["caption_language_request"] = "es"
+    spanish = "Acá tenemos salsas tradicionales argentinas, esta es la que más me gusta de todas."
+    _whisper_by_language(
+        monkeypatch,
+        {
+            None: Transcript(
+                words=_words(("Tupana", 0.0, 0.5), ("kaikki", 0.5, 1.0)),
+                language="fi",
+                full_text="Tupana kaikki",
+            ),
+            "es": Transcript(
+                words=_words(
+                    *((token, i * 0.5, i * 0.5 + 0.5) for i, token in enumerate(spanish.split()))
+                ),
+                language="es",
+                full_text=spanish,
+            ),
+        },
+    )
+    _phone_events(monkeypatch)
+
+    gb._run_generative_job(str(job.id))
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["caption_language"] == "es"
+    assert "caption_translated_from" not in variant

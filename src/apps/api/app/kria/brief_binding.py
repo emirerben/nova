@@ -12,6 +12,9 @@ from pydantic.json_schema import SkipJsonSchema
 
 from app.kria.brief import CreativeBrief, render_brief_request
 
+# Opens the block appended to an approved request for the requirements the creator removed.
+SUPERSEDED_REQUIREMENTS_HEADING = "Superseded requirements (historical only; do not reintroduce)."
+
 
 class BriefBindingRequestTooLongError(ValueError):
     """An approved request cannot retain its full source safely."""
@@ -109,7 +112,7 @@ class BriefBinding(BaseModel):
                 # Chronological chat is evidence, not permission to resurrect an
                 # earlier request the creator subsequently removed (KRI-698).
                 request += (
-                    "\n\nSuperseded requirements (historical only; do not reintroduce). "
+                    f"\n\n{SUPERSEDED_REQUIREMENTS_HEADING} "
                     "The current creative brief above is authoritative:\n"
                     + "\n".join(f"- {req.id}: {req.text()}" for req in omitted)
                 )

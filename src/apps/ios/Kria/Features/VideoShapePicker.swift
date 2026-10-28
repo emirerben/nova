@@ -142,6 +142,14 @@ enum VideoShapeCopy {
     static func editorOrientationNote(_ orientation: String) -> String {
         orientation == RenderShapeOffer.landscape ? "Wide frame for YouTube and the web." : "Tall frame for TikTok, Reels and Shorts."
     }
+    /// The one-line reminder under the confirm card. Mentions bars/crop only when the
+    /// offer actually draws that row (`offersFit`); otherwise names the frame alone.
+    static func cardNote(for offer: RenderShapeOffer, choice: RenderShapeChoice) -> String {
+        guard offer.offersFit else { return editorOrientationNote(choice.orientation) }
+        return choice.orientation == RenderShapeOffer.landscape
+            ? "Sideways clips fill the wide frame."
+            : "Pick how sideways clips sit in the tall frame."
+    }
 }
 
 /// A two-option choice drawn as a pill pair. Each segment is a 44pt-minimum touch
@@ -297,9 +305,9 @@ struct VideoShapeCard: View {
         if offer.isChoosable {
             VStack(alignment: .leading, spacing: 10) {
                 VideoShapePicker(offer: offer, choice: $choice, isEnabled: isEnabled)
-                Text(choice.orientation == RenderShapeOffer.landscape
-                     ? "Sideways clips fill the wide frame."
-                     : "Pick how sideways clips sit in the tall frame.")
+                // The bars/crop hint only makes sense when the offer draws the fit row; an
+                // orientation-only offer gets the plain frame note instead.
+                Text(VideoShapeCopy.cardNote(for: offer, choice: choice))
                     .font(KriaFont.body(12))
                     .foregroundStyle(KriaColor.zinc)
                     .fixedSize(horizontal: false, vertical: true)
