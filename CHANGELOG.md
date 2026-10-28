@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.81.173.0] - 2026-10-28
+
+### Fixed
+- fix(kria): pre-tick the resolver's near-miss clips and keep the asking turn's matches (KRI-991) (#1879) <!-- release-pr: 1879 -->
+
 ## [0.81.172.0] - 2026-10-28
 
 ### Changed
