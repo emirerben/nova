@@ -20,7 +20,7 @@ import pytest
 from app.agents.camera_roll_stories import CameraRollStoriesAgent
 
 from . import camera_roll_voice_samples as samples
-from .camera_roll_voice_fixture import PLACE, build_input, candidates, variants
+from .camera_roll_voice_fixture import PLACE, VARIANTS, build_input, candidates
 from .runners.camera_roll_voice import analyze_stories, composite, score_run
 from .runners.eval_runner import CassetteModelClient, build_eval_run_context
 
@@ -117,7 +117,7 @@ def test_live_baseline(eval_mode, live_model_client, with_judge, judge_for):
         "judged": judge is not None,
         "variants": {},
     }
-    for variant in variants():
+    for variant in VARIANTS:
         if wanted and variant.name not in wanted:
             continue
         value = variant.build()

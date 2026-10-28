@@ -373,8 +373,8 @@ flag-on cohort, not a tap rate.
 ## Camera-roll idea voice eval
 
 Measures diary-style ideas/opening text from `nova.media.camera_roll_stories` on a 12-candidate
-no-GPS "Cunda" fixture. Files: `camera_roll_voice_fixture.py` (data + builder, event variant
-auto-enables once `CameraRollStoriesInput` has `event_title`/`event_about`),
+no-GPS "Cunda" fixture. Files: `camera_roll_voice_fixture.py` (data + builder; variants
+`bare`, `query`, and `event` with `event_title`/`event_about`),
 `runners/camera_roll_voice.py` (structural checks, free), `rubrics/camera_roll_stories.md`
 (judge: diary_voice lower-better, viewer_value, specificity, grounding).
 

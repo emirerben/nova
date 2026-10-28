@@ -2,13 +2,8 @@
 
 Twelve no-GPS candidates (eight photos, four clips) written the way the analysis pipeline
 words them in `media_moments.still_interval` / `_whole_source_context`. No candidate names
-the place: with no GPS and no event description, nothing in the evidence can.
-
-Event context is optional. `CameraRollStoriesInput` does not carry `event_title` /
-`event_about` yet (KRI-1003). Until it does, `build_input` silently drops them, so the
-"event" variant would measure the same input as "bare". `variants()` therefore leaves the
-event variant out while `event_fields_supported()` is False; nothing else here changes once
-the fields land.
+the place: with no GPS and no event description, nothing in the evidence can. Only the
+"event" variant adds the creator's event title and notes (KRI-1003).
 """
 
 from __future__ import annotations
@@ -151,24 +146,15 @@ def candidates() -> list[MomentCandidate]:
     return result
 
 
-def event_fields_supported() -> bool:
-    return {"event_title", "event_about"} <= set(CameraRollStoriesInput.model_fields)
-
-
 def build_input(
     *,
     query: str = DEFAULT_QUERY,
-    event_title: str | None = None,
-    event_about: str | None = None,
+    event_title: str = "",
+    event_about: str = "",
 ) -> CameraRollStoriesInput:
-    """The agent input for this outing. Event kwargs are dropped while the model lacks them."""
-    extra = {}
-    if event_fields_supported():
-        if event_title:
-            extra["event_title"] = event_title
-        if event_about:
-            extra["event_about"] = event_about
-    return CameraRollStoriesInput(query=query, candidates=candidates(), **extra)
+    return CameraRollStoriesInput(
+        query=query, event_title=event_title, event_about=event_about, candidates=candidates()
+    )
 
 
 @dataclass(frozen=True)
@@ -206,13 +192,9 @@ VARIANTS = (
     ),
     Variant(
         "event",
-        "event_title and event_about set (needs KRI-1003).",
+        "event_title and event_about set, default query.",
         DEFAULT_QUERY,
         event=True,
         names_place=True,
     ),
 )
-
-
-def variants() -> tuple[Variant, ...]:
-    return tuple(v for v in VARIANTS if not v.event or event_fields_supported())

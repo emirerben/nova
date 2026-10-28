@@ -50,15 +50,14 @@ AGENT_EXPECTED_OUT_TOKENS = 1500
 def plan(variant_names: list[str], runs: int, with_judge: bool) -> dict:
     from app.agents.camera_roll_stories import CameraRollStoriesAgent
     from app.services.ai_cost_control import estimate_call_cost_usd
-    from tests.evals.camera_roll_voice_fixture import VARIANTS, event_fields_supported, variants
+    from tests.evals.camera_roll_voice_fixture import VARIANTS
     from tests.evals.runners.camera_roll_voice import judge_view
 
     spec = CameraRollStoriesAgent.spec
     agent = CameraRollStoriesAgent(None)
     rubric_chars = len((API_ROOT / "tests/evals/rubrics/camera_roll_stories.md").read_text())
-    available = {v.name: v for v in variants()}
+    available = {v.name: v for v in VARIANTS}
     chosen = [available[n] for n in variant_names or available if n in available]
-    skipped = [v.name for v in VARIANTS if v.name not in available]
     rows, upper, expected = [], 0.0, 0.0
     for v in chosen:
         value = v.build()
@@ -91,9 +90,7 @@ def plan(variant_names: list[str], runs: int, with_judge: bool) -> dict:
         "prompt_version": spec.prompt_version,
         "runs_per_variant": runs,
         "with_judge": with_judge,
-        "event_fields_supported": event_fields_supported(),
         "variants": rows,
-        "skipped_variants": skipped,
         "total_calls": len(rows) * runs * (2 if with_judge else 1),
         "estimated_usd_typical": round(expected, 3),
         "estimated_usd_ceiling": round(upper, 3),
