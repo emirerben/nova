@@ -3443,7 +3443,7 @@ struct NativeEditorTemporaryVideo {
                                      sources: sources, audioSources: audio, mediaSources: media,
                                      referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                      sourceAudioPreserved: sourceAudioPreserved || songRemoved,
-                                     songBed: songBed, deviceCaptions: rendersOnDevice,
+                                     songBed: songBed, deviceCaptions: rendersOnDevice, guidedStory: isGuidedStory,
                                      songCaptionShift: lyricShift,
                                      skippedMediaOverlayIDs: skippedPreviewMedia,
                                      talkingCutaways: talkingCutaways)

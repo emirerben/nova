@@ -149,8 +149,10 @@ import KriaMediaEngine
                                                                baseGeneration: "next")
         await session.save()
         XCTAssertEqual(fake.commitCount, 1)
-        let rebuilt = await waitUntil { session.canDownloadCurrentVideo }
+        let rebuilt = await waitUntil { session.displayedSourcePreviewRecipe != nil && session.sourcePreviewState == .ready }
         XCTAssertTrue(rebuilt, "the saved document's preview must settle; state \(session.sourcePreviewState)")
+        XCTAssertFalse(session.canDownloadCurrentVideo, "export stays gated while the saved generation is rendering")
+        XCTAssertFalse(session.hasUnsavedChanges, "the edit was durably saved")
         XCTAssertEqual(try session.videoDownloadRoute(deviceLocalFile: nil), .sourcePreview)
     }
 

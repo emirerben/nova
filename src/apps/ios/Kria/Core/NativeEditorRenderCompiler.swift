@@ -79,6 +79,7 @@ enum NativeEditorRenderError: Error, Equatable {
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
                  songBed: NativeEditorSongBed? = nil,
                  deviceCaptions: Bool = false,
+                 guidedStory: Bool = false,
                  songCaptionShift: NativeSongCaptionShift? = nil,
                  skippedMediaOverlayIDs: Set<String> = [],
                  talkingCutaways: [NativePhoneTalkingSource.Cutaway] = []) throws -> NativeEditorRenderProgram {
@@ -262,8 +263,9 @@ enum NativeEditorRenderError: Error, Equatable {
             // bars. Cropped and graded clips keep the engine's cover-fill: the
             // engine rejects a look combined with a non-identity transform, and
             // the backend refuses that combination for the same reason.
-            // Held (slow / short source) clips are excluded like the backend's `_fit_eligible`.
-            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, holdDuration <= 0,
+            // Guided stories apply their authored fit before adding a final-frame hold
+            // (`phone_guided_plan`); other formats retain `_fit_eligible` behavior.
+            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, (guidedStory || holdDuration <= 0),
                authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
                 video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
             }
