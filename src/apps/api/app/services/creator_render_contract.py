@@ -61,6 +61,7 @@ from app.services.length_policy import (
     creator_duration_s,
     length_owner,
 )
+from app.services.order_mode import order_mode
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -1385,6 +1386,10 @@ def build_render_contract(
                     # server-resolved song placement IS the order authority and the
                     # render verifies it through the lip-sync receipts, so it is not
                     # an unverifiable media-order rule (and must never pin capture time).
+                    continue
+                if order_mode(requirement) is not None:
+                    # A seeded shuffle is proved by the brief receipt (`_check_order`), and
+                    # "any order" has nothing to pin: neither is an unverifiable rule.
                     continue
                 key = requirement.facts.get("key")
                 answered = order_answer is not None and (
