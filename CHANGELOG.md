@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.32.0] - 2026-10-29
+
+### Changed
+- ci: start PR simulator boot during setup (KRI-1055) (#1945) <!-- release-pr: 1945 -->
+
 ## [0.82.31.0] - 2026-10-29
 
 ### Changed
