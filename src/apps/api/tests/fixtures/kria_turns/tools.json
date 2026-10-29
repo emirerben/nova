@@ -1259,6 +1259,22 @@
               "default": null,
               "title": "Highlight Spoken Word"
             },
+            "line_overrides": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "$ref": "#/$defs/EditorCaptionLinePlacement"
+                  },
+                  "maxProperties": 500,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Line Overrides"
+            },
             "max_width_frac": {
               "anyOf": [
                 {
@@ -1341,6 +1357,55 @@
             }
           },
           "title": "EditorCaptionAppearance",
+          "type": "object"
+        },
+        "EditorCaptionLinePlacement": {
+          "additionalProperties": false,
+          "properties": {
+            "position_x_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.95,
+                  "minimum": 0.05,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position X Frac"
+            },
+            "position_y_frac": {
+              "anyOf": [
+                {
+                  "maximum": 0.9,
+                  "minimum": 0.1,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position Y Frac"
+            },
+            "size_px": {
+              "anyOf": [
+                {
+                  "maximum": 160,
+                  "minimum": 36,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Size Px"
+            }
+          },
+          "title": "EditorCaptionLinePlacement",
           "type": "object"
         },
         "EditorCommitBackgroundMusic": {
