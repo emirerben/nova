@@ -1,0 +1,34 @@
+{
+  "pr": 1837,
+  "integrated_main": "1692d1751cb78d0695f16b4170362e9e4ae4f615",
+  "validated_source_revision": "6196cb898b85c9b0cb632125d9bf136cb63584a1",
+  "recorded_at_utc": "2026-10-29T16:29:54.075549+00:00",
+  "source_sha256": {
+    "src/apps/api/app/agents/_schemas/content_plan.py": "32ad809bbfa031861e2988208a96f79957fc0d0ce0ea72b745787433b275ac36",
+    "src/apps/api/app/agents/_schemas/persona.py": "3ab64a7f3d4797d4271fa243fec0f360b34893a6caeb072075b064f5fb42e616",
+    "src/apps/api/app/agents/intro_writer.py": "b98683c19228dd01223b0a8cbb3836917efae033ab880efdfe96d8cff73ec2b2",
+    "src/apps/api/app/agents/overlay_format_matcher.py": "a041bec808eeeedfadd4ffb5de468da53dd939c056f0a46c945cd60a4447f8a4",
+    "src/apps/api/prompts/content_ideas.json": "8e138d7a9def5d7157649fef1d884d39ef7b664e816079ef9ebc4c39f44cbce7",
+    "src/apps/api/prompts/overlay_examples.json": "cbea339c6dba846c6d505a28617f7af1a4715856397248e7086b83271980d74a",
+    "src/apps/api/prompts/persona_archetypes.json": "ecf8a6b2b44daf3587b68d969a75ffc6db15b4279f57970f70acf868945a90a2",
+    "src/apps/api/prompts/tiktok_success_factors.json": "fb010167ac08eaff1017ccd3948ecff97ee76e9960f5c032d4b82c810c59c5a6",
+    "src/apps/api/tests/agents/test_market_research_banks.py": "0a2dd1d7de7b43ea54dc30782db8ea3e5115d5fc60d137b3e201d4a7e976a2f3"
+  },
+  "deployment_authorization": "pending; no merge or release performed",
+  "validation": [
+    {
+      "tests": 71,
+      "status": "passed",
+      "scope": "research banks and structural evals plus neighboring provider deadline/budget/failure-code tests",
+      "log": "/tmp/unattended-main1692-backend.log",
+      "live_providers": false
+    },
+    {
+      "tests": 164,
+      "subtests": 448,
+      "status": "passed",
+      "scope": "CI policy and iOS tooling",
+      "log": "/tmp/unattended-main1692-policies.log"
+    }
+  ]
+}
