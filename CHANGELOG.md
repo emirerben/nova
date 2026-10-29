@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.19.0] - 2026-10-29
+
+### Changed
+- fix(camera-roll): keep an event's ideas when it is saved or gains footage (KRI-1044) (#1935) <!-- release-pr: 1935 -->
+
 ## [0.82.18.0] - 2026-10-29
 
 ### Changed
