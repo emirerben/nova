@@ -3214,7 +3214,7 @@ def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
 
 # How long a provider-deadline failure keeps the creator's next turn on the lighter rung. A
 # later turn that completes, or fails differently, ends it sooner.
-_DEGRADED_START_WINDOW = timedelta(minutes=30)
+_DEGRADED_START_WINDOW = timedelta(minutes=10)
 
 
 def _previous_turn_hit_provider_deadline(db, turn: CreatorAgentTurn) -> bool:  # noqa: ANN001
@@ -3235,6 +3235,8 @@ def _previous_turn_hit_provider_deadline(db, turn: CreatorAgentTurn) -> bool:  #
             or previous.status != "failed"
             or not isinstance(previous.error, dict)
             or previous.error.get("code") != "runtime_provider_outcome_unknown"
+            # Transport and SDK outcome-unknown errors are not a slow-call signal.
+            or previous.error.get("provider_deadline") is not True
         ):
             return False
         finished = previous.completed_at
@@ -3563,13 +3565,29 @@ def _turn_failure_code(exc: BaseException) -> str:
     return code
 
 
+def _hit_provider_deadline(exc: BaseException) -> bool:
+    """Whether our own provider deadline fired anywhere on ``exc``'s cause chain."""
+    from app.agents._runtime import ProviderDeadlineExceededError  # noqa: PLC0415
+
+    seen: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and all(current is not link for link in seen):
+        if isinstance(current, ProviderDeadlineExceededError):
+            return True
+        seen.append(current)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return False
+
+
 def _project_retryable_failure(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     turn: CreatorAgentTurn,
     thread: CreationThread,
     *,
     code: str,
-    detail: dict[str, str] | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> None:
     """Fail a locked turn and tell the creator what to do next; the caller commits.
 
@@ -3656,7 +3674,7 @@ _FAILURE_MESSAGE_CHARS = 200
 _EVENT_SAFE_MESSAGE_CLASSES = frozenset({"KriaEditorOpError"})
 
 
-def _event_failure_detail(detail: dict[str, str] | None) -> dict[str, str]:
+def _event_failure_detail(detail: dict[str, Any] | None) -> dict[str, str]:
     """The slice of a failure detail that may go on a creator-visible event."""
     if not detail:
         return {}
@@ -3769,7 +3787,7 @@ def _fail_turn(
     code: str,
     lease_owner: str,
     lease_epoch: int,
-    detail: dict[str, str] | None = None,
+    detail: dict[str, Any] | None = None,
 ) -> str | None:
     try:
         with sync_session() as db:
@@ -4129,7 +4147,11 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
             code=_turn_failure_code(exc),
             lease_owner=lease_owner,
             lease_epoch=lease_epoch,
-            detail=_failure_detail(exc),
+            detail={
+                **_failure_detail(exc),
+                # KRI-1037: marks a deadline (not a transport error) for `_claim`'s lookup.
+                **({"provider_deadline": True} if _hit_provider_deadline(exc) else {}),
+            },
         )
         if successor_turn_id is not None:
             run_kria_turn.apply_async(

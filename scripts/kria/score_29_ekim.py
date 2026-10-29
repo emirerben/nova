@@ -961,12 +961,37 @@ def check_latency(fx: dict, followup_replays: dict[str, dict]) -> dict:
             "input tokens, 27 clips of full facts); T5 and T6 end at the provider deadline "
             "(179.8 s and 179.7 s of model time) and T6 retries the same call unchanged"
         )
+    # Who owns each slow turn. Lane C bounds a provider-deadline dead end (see `lane_c`); it
+    # does not shorten a Main Creator call that succeeds, and it does not remove the call.
+    owners = {}
+    for r in rows:
+        if r["under_budget"]:
+            continue
+        turn_runs = [x for x in runs if x["turn"] == r["turn"]]
+        if any(x["outcome"] != "ok" for x in turn_runs):
+            owners[r["turn"]] = (
+                "provider deadline dead end: lane C bounds and degrades it (lane_c block), but "
+                "the turn only gets under 60 s when lane E routes it away from nova.creator.main"
+            )
+        elif "nova.creator.main" in " ".join(r["model_calls"]):
+            owners[r["turn"]] = (
+                "successful nova.creator.main call at thinking high: lane C does not shorten it; "
+                "lane E removes the call on edit-shaped follow-ups, creation turns keep it"
+            )
+        else:
+            owners[r["turn"]] = "other"
     return _result(
         5,
         "every turn finishes inside 60 s (replayed latency)",
         passed,
         why,
-        {"turns": rows, "budget_ms": TURN_BUDGET_MS},
+        {
+            "turns": rows,
+            "budget_ms": TURN_BUDGET_MS,
+            "slow_turn_owner": owners,
+            "joint_check": "needs lane C (bounded failure) AND lane E (no Main Creator call on "
+            "follow-ups); lane C alone cannot turn it green",
+        },
     )
 
 
@@ -1155,6 +1180,14 @@ def lane_c_fault_injection() -> dict:
     return {
         "turn_budget_s": TURN_BUDGET_S,
         "assumed_latency_s": assumed,
+        # What the rung sizes rest on: the recorded successful high calls on THIS clip set.
+        # The first rung is capped at turn budget minus reserve (105 s), above every one of
+        # these; a call that has not answered by then is the T5/T6 shape, not a slow success.
+        "recorded_high_success_s": sorted(
+            round(r["latency_ms"] / 1000, 1)
+            for r in load_fixture()["agent_runs"]
+            if r["agent"] == "nova.creator.main" and r["outcome"] == "ok"
+        ),
         "scenarios": {k: {**v, "path": levels(v)} for k, v in scenarios.items()},
         "checks": checks,
         "all_pass": all(checks.values()),
