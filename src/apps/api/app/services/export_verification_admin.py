@@ -55,6 +55,16 @@ class ExportThresholds(BaseModel):
     audio_silent_reference_rms instead needs output rms < audio_silent_max_rms.
     Duration passes within max(duration_min_tolerance_s, duration_tolerance_frames
     / frame_rate) of the recipe plus brand tail.
+
+    Text words count at OCR confidence >= text_min_word_conf. Before v4 every visible
+    sample had to read the exact copy. From v4 (text_copy_read_once_per_layer) one
+    visible sample must read every copy word in order, with at most
+    text_max_extra_tokens other words of at most text_max_extra_token_chars; each other
+    visible sample needs ink_share >= text_min_ink_share, fill-like background share
+    <= text_max_fill_like_background_share and more than
+    text_presence_word_share_above of the copy's words in order. With
+    text_hidden_rejects_glyphs, a hidden sample that shows those glyphs also fails
+    unless another layer is due over the same area.
     """
 
     picture_exact_max_mean_pixel_error: float
@@ -68,6 +78,14 @@ class ExportThresholds(BaseModel):
     audio_silent_max_rms: float
     duration_min_tolerance_s: float
     duration_tolerance_frames: int
+    text_min_word_conf: float
+    text_copy_read_once_per_layer: bool = False
+    text_max_extra_tokens: int = 0
+    text_max_extra_token_chars: int | None = None
+    text_min_ink_share: float | None = None
+    text_max_fill_like_background_share: float | None = None
+    text_presence_word_share_above: float | None = None
+    text_hidden_rejects_glyphs: bool = False
 
 
 _BASE_THRESHOLDS = ExportThresholds(
@@ -82,22 +100,49 @@ _BASE_THRESHOLDS = ExportThresholds(
     audio_silent_max_rms=0.002,
     duration_min_tolerance_s=0.1,
     duration_tolerance_frames=2,
+    text_min_word_conf=40,
 )
+_V3_THRESHOLDS = _BASE_THRESHOLDS.model_copy(update={"whole_window_neighbour_shift_rejects": True})
 # Numeric limits are unchanged since v1; v3 (KRI-810/KRI-831) added displayed-frame
-# neighbours and rejects a window where every sample needed one.
+# neighbours and rejects a window where every sample needed one. v4 (KRI-1042) keeps
+# every picture, audio and duration rule and changes only the text proof.
 THRESHOLDS_BY_VERIFIER: dict[str, ExportThresholds] = {
     "phone-simple-cut-v1": _BASE_THRESHOLDS,
     "phone-simple-cut-v2": _BASE_THRESHOLDS,
-    "phone-simple-cut-v3": _BASE_THRESHOLDS.model_copy(
-        update={"whole_window_neighbour_shift_rejects": True}
+    "phone-simple-cut-v3": _V3_THRESHOLDS,
+    "phone-simple-cut-v4": _V3_THRESHOLDS.model_copy(
+        update={
+            "text_copy_read_once_per_layer": True,
+            "text_max_extra_tokens": 1,
+            "text_max_extra_token_chars": 2,
+            "text_min_ink_share": 0.03,
+            "text_max_fill_like_background_share": 0.5,
+            "text_presence_word_share_above": 0.5,
+            "text_hidden_rejects_glyphs": True,
+        }
     ),
 }
+
+
+class PictureSample(_Evidence):
+    """One picture sample against the source frames around the one displayed then.
+
+    Only displayed and next decide the sample; previous is measured for review.
+    """
+
+    ssim_previous: float | None = None
+    error_previous: float | None = None
+    ssim_displayed: float | None = None
+    error_displayed: float | None = None
+    ssim_next: float | None = None
+    error_next: float | None = None
 
 
 class ExportCheck(_Evidence):
     kind: Token | None = None
     status: Token | None = None
     reason: Token | None = None
+    proof: Token | None = None
     clip_id: Token | None = None
     layer_id: Token | None = None
     chunk: int | None = None
@@ -112,8 +157,17 @@ class ExportCheck(_Evidence):
     rms: float | None = None
     actual_s: float | None = None
     expected_s: float | None = None
+    sample_evidence: list[PictureSample] | None = None
     at_s: float | None = None
     expected_visible: bool | None = None
+    words_expected: int | None = None
+    words_read_in_order: int | None = None
+    extra_tokens: int | None = None
+    min_word_conf: float | None = None
+    best_view: Token | None = None
+    ink_share: float | None = None
+    fill_like_background_share: float | None = None
+    read_area: list[int] | None = None
 
 
 class ExportIdentity(_Evidence):
