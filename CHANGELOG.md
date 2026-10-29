@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.18.0] - 2026-10-29
+
+### Changed
+- feat(kria): long titles wrap, shrink or grow taller instead of failing to fit (KRI-1035) (#1927) <!-- release-pr: 1927 -->
+
 ## [0.82.17.0] - 2026-10-29
 
 ### Changed
