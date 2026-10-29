@@ -192,7 +192,7 @@ def _coerce_set_total_duration(name: str, payload: dict, snapshot: dict, state: 
     return {"target_s": target, "strategy": strategy}
 
 
-_ORDER_CRITERIA = ("capture_time", "custom")
+_ORDER_CRITERIA = ("capture_time", "custom", "random")
 _ORDER_DIRECTIONS = ("asc", "desc")
 
 
@@ -206,7 +206,10 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     ``order`` (current slot indexes in their new sequence) for asks no server
     fact grounds ("reverse it", "swap 2 and 5"); it must name every clip still
     in the edit exactly once (listing removed slots too is accepted), and
-    removed slots keep their place.
+    removed slots keep their place. ``random`` shuffles the clips still in the edit with a
+    seed: the requirement's stored one when the planner passes it, else one derived from the
+    clips' identities, so the same timeline always shuffles the same way (a retry, a replay
+    and a re-render agree) and the model never authors an order.
     """
     from app.agents import edit_copilot as ec  # noqa: PLC0415
     from app.services.clip_facts import (  # noqa: PLC0415
@@ -217,7 +220,7 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
     criterion = payload.get("criterion")
     direction = payload.get("direction", "asc")
     if criterion not in _ORDER_CRITERIA or (
-        criterion != "custom" and direction not in _ORDER_DIRECTIONS
+        criterion == "capture_time" and direction not in _ORDER_DIRECTIONS
     ):
         state.invalid_value()
         return None
@@ -227,6 +230,32 @@ def _coerce_reorder_clips_by(name: str, payload: dict, snapshot: dict, state: An
             op=name, reason="capability_unavailable", detail="there is only one clip to order"
         )
         return None
+    if criterion == "random":
+        from app.services.order_mode import derived_seed, seeded_permutation  # noqa: PLC0415
+
+        live = [index for index, slot in enumerate(slots) if not slot.get("removed")]
+        media_ids = [str(s.get("media_id") or "") for s in slots]
+        raw_seed = payload.get("seed")
+        seed = (
+            raw_seed
+            if isinstance(raw_seed, int) and not isinstance(raw_seed, bool) and raw_seed >= 0
+            else derived_seed("|".join(media_ids[i] for i in live), None)
+        )
+        permutation = list(range(len(slots)))
+        for position, index in zip(live, seeded_permutation(live, seed), strict=True):
+            permutation[position] = index
+        if permutation == list(range(len(slots))):
+            state.reorder_noop = True
+            state.reject(
+                op=name, reason="capability_unavailable", detail="there is only one clip to shuffle"
+            )
+            return None
+        return {
+            "criterion": criterion,
+            "seed": seed,
+            "permutation": permutation,
+            "media_ids": media_ids,
+        }
     if criterion == "custom":
         live = [index for index, slot in enumerate(slots) if not slot.get("removed")]
         order = payload.get("order")
@@ -775,6 +804,9 @@ def _op_reorder_clips_by(state: Any, op: dict[str, Any]) -> None:
     state.changed.add("timeline")
     if criterion == "custom":
         state.summary = "Reorder clips"
+        return
+    if criterion == "random":
+        state.summary = "Shuffle clips"
         return
     state.summary = "Order clips by filming time" + (
         ", newest first" if op.get("direction") == "desc" else ""

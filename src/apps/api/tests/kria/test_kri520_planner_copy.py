@@ -698,7 +698,6 @@ def test_turkish_non_text_asks_are_not_text_edits(message: str) -> None:
         "sadece en iyi klipleri koy",
         "yalnızca en komik anları kullan",
         "en komik kısımları seç",
-        "klipleri karıştır",
         "daha fazla klip koy",
         "daha az klip olsun",
         "daha çok klip istiyorum",
