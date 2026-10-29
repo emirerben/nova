@@ -59,6 +59,7 @@ final class GamedayAddClipUITests: XCTestCase {
         }
         XCTAssertTrue(exported.label.contains("Saved to Photos"), "Export must complete from the current composed preview")
         capture(app, "Exported current five-clip edit")
+        print("KRIA_NATIVE_TEST_PROOF gameday-stable-taps-v1")
     }
 
     private func openQuickAdd(_ app: XCUIApplication, option identifier: String) {
@@ -67,6 +68,7 @@ final class GamedayAddClipUITests: XCTestCase {
         plus.tap()
         let option = app.descendants(matching: .any)[identifier]
         XCTAssertTrue(option.waitForExistence(timeout: 5), "The menu must open; plus state: \(plus.label)")
+        XCTAssertEqual(plus.label, "Close add menu", "The add menu must own the next tap")
         waitUntilHittable(option)
         option.tap()
     }
@@ -77,21 +79,30 @@ final class GamedayAddClipUITests: XCTestCase {
         // with infinite origin and zero size. isHittable aborts on that snapshot
         // instead of returning false, so wait for usable geometry first within
         // the same deadline. A genuinely unavailable control still fails.
+        // A finite/hittable frame can still be the outgoing layout. Require
+        // the same usable bounds on two polls before synthesizing a touch,
+        // like the inspector tests' stable-row relation check.
+        var previousFrame: CGRect?
         let hittable = expectation(for: NSPredicate { _, _ in
-            guard element.exists else { return false }
+            guard element.exists else { previousFrame = nil; return false }
             let frame = element.frame
             guard frame.origin.x.isFinite, frame.origin.y.isFinite,
                   frame.width.isFinite, frame.height.isFinite,
-                  frame.width > 0, frame.height > 0 else { return false }
-            return element.isHittable
+                  frame.width > 0, frame.height > 0 else { previousFrame = nil; return false }
+            let stable = previousFrame == frame
+            previousFrame = frame
+            return stable && element.isEnabled && element.isHittable
         }, evaluatedWith: element)
-        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 5), .completed, "Control must be hittable: \(element.identifier)")
+        let result = XCTWaiter.wait(for: [hittable], timeout: 5)
+        if result != .completed { capture(XCUIApplication(), "Unsettled control " + element.identifier) }
+        XCTAssertEqual(result, .completed, "Control must be stable and hittable: \(element.identifier)")
     }
 
     private func waitFor(_ element: XCUIElement, contains value: String) {
         XCTAssertTrue(element.waitForExistence(timeout: 20))
         let ready = expectation(for: NSPredicate(format: "label CONTAINS %@", value), evaluatedWith: element)
         let result = XCTWaiter.wait(for: [ready], timeout: 25)
+        if result != .completed { capture(XCUIApplication(), "Missing fixture state " + value) }
         XCTAssertEqual(result, .completed, "Expected \(value); actual fixture state: \(element.label)")
     }
 

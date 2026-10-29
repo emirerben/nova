@@ -72,6 +72,7 @@ from app.kria.freeze_ask import (
     times_one_moment,
 )
 from app.kria.speed_ask import SpeedSpec, live_speeds
+from app.kria.text_sequence import is_text_sequence
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.font_coverage import drop_color_emoji
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
@@ -305,6 +306,13 @@ def brief_view(brief: Any) -> BriefView:
                 title_literal = _nfc(req.literal)
             elif req.scope == "global" and req.literal and global_literal is None:
                 global_literal = _nfc(req.literal)
+        elif is_text_sequence(req) and req.literal and req.scope in ("title", "global"):
+            # 29 Ekim: words shown a piece at a time are the opening title, split by the
+            # creation text pass (`compose_creation_text`). Without this bar the pass had
+            # nothing to split, so every such render failed as `creation_text_failed`. The
+            # literal is the exact wording: never decorated with a route like a `global`
+            # text, and a `title` text literal keeps the bar.
+            title_literal = title_literal or _nfc(req.literal)
         elif req.kind == "order":
             wants_order = True
             key = str((req.facts or {}).get("key") or (req.facts or {}).get("by") or "")

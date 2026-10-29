@@ -1143,6 +1143,7 @@ private struct NativeEditorInspectorView: View {
             }
         }
         .tint(KriaColor.ink)
+        .onDisappear { session.endTransaction() }
     }
 }
 

@@ -28,6 +28,23 @@ Checks (all must hold; a lane closes only on its own checks):
    per-turn numbers stay in the report (``turns``), including the ones lane C cannot shorten.
    A successful high-thinking creation call (T1: 52 s) is not shortened by a retry ladder, so
    a 60 s bar on the creation turn is not a lane C gate.
+6. Live shape, approval gate (prod thread 64bb9853, the same first message in a new thread after
+   every lane shipped): the live Main Creator, clip-intent planner and resolver answers to that
+   exact message (``29-ekim/live_new_thread_t1.json``; prod's brief, proven by its digest) go
+   through the real parsers, clip-intent planning, the planner's order fields, approval
+   readiness and the choice gate. The turn must be a draft, not a question: random order is an
+   executable seeded shuffle, the text sequence is planned for the render, nothing is
+   needs_choice or evidence_missing, and the same holds when the planner omits ``order_by``.
+7. After approval, no model: the approved job through the real phone worker
+   (``_run_phone_unified_montage_job``) hands the creation text composer exactly one text bar,
+   the opening title, carrying the text_sequence's sentence (``title_source_exists`` True).
+   Before the fix it got none, and every such render failed as ``creation_text_failed``.
+8. After approval, replay: every recorded live composer answer
+   (``29-ekim/live_post_approval.json``, pro and flash fallback, Turkish and English) through the
+   worker, the phone text style pass and the device pin (``verify_phone_recipe``): the seeded
+   shuffle of all 28 clips, one one-word piece per word in ordered contiguous windows of at least
+   0.25 s that rejoin to exactly the sentence, no static copy of it, every piece styled, and r3's
+   receipt met. Captured with ``scripts/kria/capture_29_ekim_post_approval.py`` (paid ledger).
 
 Verdicts: VERIFIED, NOT VERIFIED, INCONCLUSIVE (the check could not run).
 """
@@ -1381,6 +1398,710 @@ def lane_c_fault_injection() -> dict:
     }
 
 
+# ----------------------------------------------------------------------------- check 6
+
+LIVE_FIXTURE = FIXTURE.parent / "live_new_thread_t1.json"
+_BLOCKING = frozenset({"needs_choice", "evidence_missing", "unsupported"})
+
+
+def load_live_fixture() -> dict[str, Any]:
+    return json.loads(LIVE_FIXTURE.read_text(encoding="utf-8"))
+
+
+def _cassette(raw_text: str):  # noqa: ANN202
+    """A model client that answers with one recorded live response (any agent, any prompt)."""
+    from app.agents._runtime import ModelClient, ModelInvocation
+
+    class _Recorded(ModelClient):
+        calls = 0
+
+        def invoke(self, **_kwargs: Any) -> ModelInvocation:
+            type(self).calls += 1
+            return ModelInvocation(raw_text=raw_text)
+
+    return _Recorded()
+
+
+def _live_manifest(lf: dict):  # noqa: ANN202
+    from app.agents._schemas.creator_agent import (
+        CapabilityAvailability,
+        CreatorCatalogRef,
+        CreatorMediaRef,
+        ResolvedCreatorManifest,
+    )
+
+    on = CapabilityAvailability(available=True)
+    return ResolvedCreatorManifest(
+        item_id="29-ekim-live-item",
+        edit_format="montage",
+        render_program="guided",
+        media=[
+            CreatorMediaRef(media_id=c["id"], kind=c["kind"], duration_s=c["duration_s"])
+            for c in lf["clips"]
+        ],
+        catalog=[CreatorCatalogRef(catalog_id="music-track-1", kind="music", label="Licensed")],
+        capabilities={
+            "dispatch_render": on,
+            "draft_guided_proposal": on,
+            "edit_format:montage": on,
+        },
+        context_hash="c" * 64,
+        manifest_hash="d" * 64,
+    )
+
+
+def _live_media(lf: dict) -> dict:
+    rows = [
+        {
+            "media_id": c["id"],
+            "gcs_path": f"users/redacted/threads/redacted/analysis-proxy-ios-{c['id']}.mp4",
+            "kind": c["kind"],
+            "duration_s": c["duration_s"],
+            "generation": "1",
+            "has_analysis": True,
+        }
+        for c in lf["clips"]
+    ]
+    return {"clip_paths": [r["gcs_path"] for r in rows], "clip_assignments": rows}
+
+
+def replay_live_t1(lf: dict, *, planner_raw: str | None = None) -> dict[str, Any]:
+    """The new-thread T1 through the real parsers, clip-intent planning, the planner's order
+    fields, the approval-readiness gate and the choice gate. Only the three model calls are
+    replaced, each by the response the live model gave to this exact message.
+
+    ``planner_raw`` swaps in a variant of the clip-intent planner's answer (the same live
+    answer with one field changed), to prove the server holds when the model does not emit
+    that field exactly."""
+    from app.agents._runtime import RunContext
+    from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+    from app.config import settings
+    from app.kria import planner
+    from app.kria.approval_readiness import assess_readiness, digest
+    from app.kria.brief import CreativeBrief, apply_updates, render_brief_request
+    from app.services import clip_intent_planning, clip_intent_resolution
+    from app.services.clip_intent_planning import (
+        plan_and_resolve_clip_intents,
+        sequence_text_literals,
+        whole_video_text_asks,
+    )
+    from app.services.clip_intent_resolution import IntentClip
+    from app.services.clip_order_sequence import unconfirmed_order_groups
+    from app.tasks.kria_runtime import _unresolved_choice_plan
+
+    msg = lf["message"]
+    turn_id = lf["source"]["turn_id"]
+    live = lf["live"]
+    brief = CreativeBrief.model_validate(lf["prod_brief"])
+    manifest = _live_manifest(lf)
+    ctx = RunContext(
+        request_id="29ekim-live-replay",
+        extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True},
+    )
+    mc = MainCreatorAgent(_cassette(live["main_creator"]["raw_text"])).run(
+        MainCreatorInput(
+            user_message=msg,
+            media_context=[
+                {"media_id": c["id"], "kind": c["kind"], "duration_s": c["duration_s"]}
+                for c in lf["clips"]
+            ],
+            conversation=[{"role": "user", "content": msg}],
+            capability_manifest=manifest,
+            brief_enabled=True,
+            reply_language="tr",
+        ),
+        ctx=ctx,
+    )
+    live_brief = apply_updates(None, mc.brief_updates, source_turn_id=turn_id)
+
+    def shape(b: CreativeBrief) -> list:
+        return [(r.kind, r.scope, r.literal, r.facts) for r in b.live()]
+
+    clips = [
+        IntentClip(
+            media_id=c["id"],
+            kind=c["kind"],
+            analysis={"subject": c["subject"], "duration_s": c["duration_s"]},
+        )
+        for c in lf["clips"]
+    ]
+    clients = {
+        clip_intent_planning: _cassette(planner_raw or live["clip_intent_planner"]["raw_text"]),
+        clip_intent_resolution: _cassette(live["clip_request_resolver"]["raw_text"]),
+    }
+    with contextlib.ExitStack() as stack:
+        for module, client in clients.items():
+            stack.enter_context(patch.object(module, "default_client", lambda c=client: c))
+        stack.enter_context(patch.object(settings, "kria_compose_unmet_with_ops_enabled", True))
+        stack.enter_context(patch.object(settings, "clip_intent_exclude_enabled", True))
+        planned = asyncio.run(
+            plan_and_resolve_clip_intents(
+                creator_request=msg,
+                latest_user_message=msg,
+                generated_brief=render_brief_request(brief, latest_message=msg),
+                candidate_intents=mc.action.strategy.clip_intents,
+                clips=clips,
+                run_context=ctx,
+                whole_video_texts=whole_video_text_asks(brief),
+                sequence_texts=sequence_text_literals(brief),
+            )
+        )
+        resolved, ordering_choice = planner.brief_order_fields(
+            planned.resolution.intents, brief, None
+        )
+        plan = planner.adapt_creator_action(
+            mc.action,
+            server_clip_intents=planned.requested_intents,
+            server_resolved_clip_intents=resolved,
+            ordering_choice=ordering_choice,
+        )
+        strategy = plan.intents[0].arguments["strategy"]
+        media = _live_media(lf)
+        creator_id = uuid.uuid4()
+        report = assess_readiness(
+            brief,
+            strategy,
+            media=media,
+            manifest=manifest,
+            creator_request=msg,
+            creator_id=creator_id,
+        )
+        blocked = _unresolved_choice_plan(
+            strategy,
+            brief,
+            media,
+            contract_brief=brief,
+            has_draft=False,
+            creator_id=creator_id,
+            allow_choices=True,
+        )
+    literal = next((r.literal for r in brief.live() if r.kind == "text_sequence"), None)
+    return {
+        "brief_digest_ok": digest(brief.model_dump(mode="json")) == lf["prod_brief_digest"],
+        "live_brief_matches_prod": shape(live_brief) == shape(brief),
+        "requested_intents": [
+            {k: v for k, v in i.model_dump(mode="json").items() if k != "source_quote"}
+            for i in planned.requested_intents
+        ],
+        "unconfirmed_order_groups": sorted(
+            name for _p, name, _m in unconfirmed_order_groups(strategy.get("resolved_clip_intents"))
+        ),
+        "duplicate_sequence_captions": [
+            i.intent_id
+            for i in planned.requested_intents
+            if i.op == "caption" and literal and _nfc(i.creator_text or "") == _nfc(literal)
+        ],
+        "ordering_choice": strategy.get("ordering_choice"),
+        "random_seed": next((r.facts.get("seed") for r in brief.live() if r.kind == "order"), None),
+        "ready": report["ready"],
+        "policy_problem": report["policy_problem"],
+        "rows": [
+            {k: r[k] for k in ("requirement_id", "disposition", "evidence_owner", "reason")}
+            for r in report["requirements"]
+        ],
+        "choice_gate": None if blocked is None else blocked[1],
+        "strategy": strategy,
+    }
+
+
+# The live planner wrote `order_by: "random"`; a run that writes null (or omits it) must land
+# the same way, through the brief's random-order key rather than that field.
+_ORDER_BY_VARIANTS = {"order_by_null": ('"order_by": "random"', '"order_by": null')}
+
+
+def _gate_passes(out: dict) -> bool:
+    return bool(
+        out["ready"]
+        and out["choice_gate"] is None
+        and not out["unconfirmed_order_groups"]
+        and not [r for r in out["rows"] if r["disposition"] in _BLOCKING]
+    )
+
+
+def check_live_approval_gate() -> dict:
+    lf = load_live_fixture()
+    out = replay_live_t1(lf)
+    variants = {}
+    for name, (old, new) in _ORDER_BY_VARIANTS.items():
+        raw = lf["live"]["clip_intent_planner"]["raw_text"]
+        assert old in raw, f"variant {name} no longer applies to the recorded answer"
+        variant = replay_live_t1(lf, planner_raw=raw.replace(old, new))
+        variants[name] = {
+            "passes": _gate_passes(variant),
+            "rows": [(r["requirement_id"], r["disposition"]) for r in variant["rows"]],
+            "unconfirmed_order_groups": variant["unconfirmed_order_groups"],
+        }
+    rows = {r["requirement_id"]: r for r in out["rows"]}
+    kinds = {r["id"]: r["kind"] for r in lf["prod_brief"]["requirements"]}
+    order_row = next(r for rid, r in rows.items() if kinds.get(rid) == "order")
+    seq_row = next(r for rid, r in rows.items() if kinds.get(rid) == "text_sequence")
+    blocking = [r for r in out["rows"] if r["disposition"] in _BLOCKING]
+    passed = bool(
+        out["brief_digest_ok"]
+        and out["ready"]
+        and not blocking
+        and out["choice_gate"] is None
+        and order_row["disposition"] == "executable"
+        and out["ordering_choice"] == "random"
+        and isinstance(out["random_seed"], int)
+        and seq_row["disposition"] in {"executable", "unverified"}
+        and not out["unconfirmed_order_groups"]
+        and not out["duplicate_sequence_captions"]
+        and all(v["passes"] for v in variants.values())
+    )
+    why = []
+    for name, variant in variants.items():
+        if not variant["passes"]:
+            why.append(f"variant {name} of the live planner answer still blocks: {variant['rows']}")
+    if not out["brief_digest_ok"]:
+        why.append("the fixture brief no longer matches prod's approval_readiness.brief_digest")
+    for row in blocking:
+        why.append(
+            f"{row['requirement_id']} ({kinds.get(row['requirement_id'])}) is "
+            f"{row['disposition']}: {row['reason']!r}, so the turn becomes a question"
+        )
+    if out["unconfirmed_order_groups"]:
+        why.append(
+            "the clip-intent planner's random order became a positionless order group "
+            f"{out['unconfirmed_order_groups']} whose inner order 'wasn't recorded' "
+            "(clip_order_sequence.unconfirmed_order_groups -> _check_order needs_choice)"
+        )
+    if out["duplicate_sequence_captions"]:
+        why.append(
+            "the text-sequence words also became a clip caption intent "
+            f"{out['duplicate_sequence_captions']}: a static copy of the sentence on every clip"
+        )
+    if out["choice_gate"] is not None:
+        why.append(f"the choice gate still blocks: {out['choice_gate']}")
+    return _result(
+        6,
+        "live-shape T1 passes the approval gate (no question)",
+        passed,
+        why,
+        {
+            **{k: v for k, v in out.items() if k != "strategy"},
+            "planner_variants": variants,
+            "prod_outcome": lf["prod_outcome"],
+            "ledger": lf["source"]["ledger"],
+        },
+    )
+
+
+# ----------------------------------------------------------------------------- checks 7-8
+#
+# After approval: the job the approved T1 above dispatches, through the real phone worker
+# (`_run_phone_unified_montage_job`, then `_run_phone_guided_job` up to the device pin). Only
+# storage, the database row and the model clients are stand-ins.
+
+POST_APPROVAL_FIXTURE = FIXTURE.parent / "live_post_approval.json"
+_GENERATION = "29ekim-approved-generation"
+_APPROVED: dict[str, dict] = {}
+
+
+def approved_t1(lf: dict) -> dict:
+    """The approved T1 strategy, from the live answers to that exact message (check 6)."""
+    if "out" not in _APPROVED:
+        _APPROVED["out"] = replay_live_t1(lf)
+    return _APPROVED["out"]
+
+
+def _canonical(text: object) -> str:
+    return " ".join(unicodedata.normalize("NFC", str(text or "")).split())
+
+
+def post_approval_job(
+    lf: dict, *, brief_raw: dict | None = None, message: str | None = None
+) -> SimpleNamespace:
+    """The dispatched job: phone sources, pinned brief binding and render contract, the
+    approved strategy and the generation's phone text style policy (prod's, KRI-1024)."""
+    from app.kria.brief import CreativeBrief
+    from app.kria.brief_binding import BriefBinding
+    from app.kria.media_sources import OriginalMediaDescriptor
+    from app.services.creator_render_contract import (
+        CONTRACT_FIELD,
+        PLAN_AUTHORITY_FIELD,
+        build_render_contract,
+    )
+    from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
+    from app.services.phone_text_styling import PHONE_TEXT_STYLE_FIELD
+
+    strategy = approved_t1(lf)["strategy"]
+    brief = CreativeBrief.model_validate(brief_raw or lf["prod_brief"])
+    media = _live_media(lf)
+    rows, sources = [], []
+    for index, (clip, row) in enumerate(zip(lf["clips"], media["clip_assignments"], strict=True)):
+        rows.append(
+            {
+                **row,
+                "storage_generation": "1",
+                "analysis": {"subject": clip["subject"], "duration_s": clip["duration_s"]},
+            }
+        )
+        sources.append(
+            PhoneSourceBinding(
+                media_id=clip["id"],
+                proxy_path=row["gcs_path"],
+                generation="1",
+                original=OriginalMediaDescriptor(
+                    sha256=f"{index:x}".rjust(64, "a"),
+                    byte_count=1000 + index,
+                    duration_s=clip["duration_s"],
+                    width=1080,
+                    height=1920,
+                    has_audio=True,
+                ),
+            )
+        )
+    contract = build_render_contract(
+        strategy, generation_id=_GENERATION, brief=brief, media_snapshot=media
+    )
+    binding = BriefBinding.create(
+        uuid.uuid4(),
+        brief,
+        latest_message=message or lf["message"],
+        full_creator_request=message or lf["message"],
+        media_snapshot=media,
+    )
+    snapshot = {
+        PHONE_SOURCES_FIELD: [source.model_dump(mode="json") for source in sources],
+        "creator_generation_id": _GENERATION,
+        "creator_brief_binding": binding.model_dump(mode="json"),
+        "creator_reply_language": "tr",
+        CONTRACT_FIELD: contract.model_dump(mode="json"),
+        PHONE_TEXT_STYLE_FIELD: copy.deepcopy(load_fixture()["phone_text_style_policy"]),
+    }
+    candidates = {
+        "clip_paths": [source.proxy_path for source in sources],
+        "edit_format": "montage",
+        "creator_strategy": copy.deepcopy(strategy),
+        "creator_request": binding.creator_request,
+        PLAN_AUTHORITY_FIELD: 1,
+    }
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        assembly_plan=copy.deepcopy(snapshot),
+        all_candidates=candidates,
+        status="queued",
+        error_detail=None,
+        failure_reason=None,
+        content_plan_item_id=uuid.uuid4(),
+        rows=rows,
+        brief=binding.resolve(),
+        strategy=strategy,
+    )
+
+
+class _ComposerReached(Exception):  # noqa: N818 - a control-flow sentinel, not an error
+    pass
+
+
+def run_post_approval(
+    job: SimpleNamespace,
+    *,
+    composer_client: Any = None,
+    typography_client: Any = None,
+    stop_at_composer: bool = False,
+    force_flash_fallback: bool = False,
+) -> dict:
+    """The real phone worker on ``job`` up to the device pin. Returns what it saw.
+
+    ``stop_at_composer`` records the creation text composer's input (no model) and stops
+    there. Otherwise ``composer_client`` / ``typography_client`` answer the two model calls
+    after approval (the text composer, the phone font pick). ``force_flash_fallback`` makes
+    the pro composer's outcome unknown before it reaches the provider, so the worker takes its
+    real flash fallback (``CreationTextComposerFast``)."""
+    from app import storage
+    from app.agents import _model_client
+    from app.config import settings
+    from app.pipeline.guided_story import compile_execution_plan
+    from app.services import clip_facts, creation_text_composition, phone_destination
+    from app.tasks import generative_build as gb
+
+    seen: dict[str, Any] = {}
+    real_run = creation_text_composition.CreationTextComposer.run
+
+    def composer_run(self, inp, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        seen.setdefault("composer_inputs", []).append(copy.deepcopy(inp.variant_snapshot))
+        if stop_at_composer:
+            raise _ComposerReached
+        if force_flash_fallback and type(self) is creation_text_composition.CreationTextComposer:
+            from app.agents._runtime import ProviderOutcomeUnknownError
+
+            raise ProviderOutcomeUnknownError("forced: the pro composer's outcome is unknown")
+        return real_run(self, inp, *args, **kwargs)
+
+    @contextlib.contextmanager
+    def sessions():  # noqa: ANN202
+        yield SimpleNamespace(commit=lambda: None, rollback=lambda: None)
+
+    def guided_plan(_job_id, guided, **_kwargs):  # noqa: ANN001, ANN202
+        plan = compile_execution_plan(guided, track=None)
+        job.assembly_plan["guided_story_execution_plan"] = plan
+        return plan, None
+
+    def no_storage(*_args, **_kwargs):  # noqa: ANN202
+        raise OSError("the scorecard has no storage")
+
+    with contextlib.ExitStack() as stack:
+        patches = [
+            (gb, "_load_unified_montage_inputs", lambda _j: (job.user_id, job.rows, job.brief)),
+            (gb, "_load_unified_montage_visuals", lambda *_a, **_k: []),
+            (gb, "_sync_session", sessions),
+            (gb, "_lock_owned_entry_job", lambda *_a: (job, 1)),
+            (gb, "_guided_execution_plan", guided_plan),
+            (gb, "_emit_post_caption", lambda *_a, **_k: None),
+            (clip_facts, "enrich_clip_facts", lambda pairs, **_k: list(pairs)),
+            (phone_destination, "phone_rendering_allowed_for_job", lambda _job: True),
+            (storage, "download_to_file", no_storage),
+            (creation_text_composition.CreationTextComposer, "run", composer_run),
+            (settings, "phone_rendering_enabled", True),
+            (settings, "phone_text_styling_enabled", True),
+            (
+                settings,
+                "phone_render_verified_features",
+                [
+                    "basicComposition",
+                    "local1080Export",
+                    "positionedText",
+                    "animatedText",
+                    "authoredText",
+                    "audioMix",
+                ],
+            ),
+        ]
+        if composer_client is not None:
+            patches.append((creation_text_composition, "default_client", lambda: composer_client))
+        if typography_client is not None:
+            patches.append((_model_client, "default_client", lambda: typography_client))
+        for target, name, value in patches:
+            stack.enter_context(patch.object(target, name, value))
+        try:
+            unified = gb._run_phone_unified_montage_job(
+                str(job.id), copy.deepcopy(job.assembly_plan), job.all_candidates, ownership_epoch=1
+            )
+        except _ComposerReached:
+            return seen
+        except Exception as exc:  # noqa: BLE001 - reported as evidence, never green
+            seen["worker_error"] = f"{type(exc).__name__}: {exc}"
+            return seen
+        seen["unified"] = copy.deepcopy(unified)
+        try:
+            gb._run_phone_guided_job(
+                str(job.id),
+                copy.deepcopy(unified),
+                ownership_epoch=1,
+                creator_strategy=job.all_candidates["creator_strategy"],
+            )
+        except Exception as exc:  # noqa: BLE001 - reported as evidence, never green
+            seen["pin_error"] = f"{type(exc).__name__}: {exc}"
+    seen["assembly_plan"] = copy.deepcopy(job.assembly_plan)
+    seen["status"] = job.status
+    return seen
+
+
+def check_composer_input() -> dict:
+    """Check 7: the approved job hands the creation text composer the title bar to split."""
+    from app.pipeline.unified_montage import title_source_exists
+    from app.services.kria_editor_ops import is_caption_text_bar
+
+    lf = load_live_fixture()
+    job = post_approval_job(lf)
+    literal = next(r.literal for r in job.brief.live() if r.kind == "text_sequence")
+    seen = run_post_approval(job, stop_at_composer=True)
+    inputs = seen.get("composer_inputs") or []
+    bars = [bar for bar in inputs[0]["text_bars"] if not is_caption_text_bar(bar)] if inputs else []
+    exists = title_source_exists(job.strategy, job.brief)
+    sequence_reqs = (
+        [
+            r["id"]
+            for r in (inputs[0].get("text_requirements") or [])
+            if r["kind"] == "text_sequence"
+        ]
+        if inputs
+        else []
+    )
+    passed = bool(
+        inputs
+        and exists
+        and len(bars) == 1
+        and _canonical(bars[0]["text"]) == _canonical(literal)
+        and sequence_reqs
+    )
+    why = []
+    if not inputs:
+        why.append(f"the worker never reached the text composer: {seen.get('worker_error')}")
+    if not exists:
+        why.append(
+            "unified_montage.title_source_exists is False for the approved brief: brief_view "
+            "sets title_literal only for kind == 'text', so the text_sequence has no title bar"
+        )
+    if inputs and len(bars) != 1:
+        why.append(
+            f"the composer got {len(bars)} text bars ({[b['text'][:40] for b in bars]}): with "
+            "no bar to split it answers 'the text must already be established' / 'I couldn't "
+            "find a title' and the job fails as creation_text_failed"
+        )
+    if inputs and not sequence_reqs:
+        why.append("the composer's text brief does not carry the text_sequence requirement")
+    total = inputs[0]["total_duration_s"] if inputs else None
+    return _result(
+        7,
+        "post-approval: the text composer receives the title bar to split (no model)",
+        passed,
+        why,
+        {
+            "title_source_exists": exists,
+            "text_bars": [{k: b[k] for k in ("id", "text", "start_s", "end_s")} for b in bars],
+            "text_requirement_ids": sequence_reqs,
+            "total_duration_s": total,
+            "words": len(literal.split()),
+            "slot_order": [s["media_id"] for s in inputs[0]["slots"]] if inputs else [],
+        },
+    )
+
+
+def post_approval_verdict(lf: dict, seen: dict, *, brief_raw: dict | None = None) -> dict:
+    """(a)-(e) of the post-approval acceptance on one worker run; shared by check 8 and the
+    live capture script."""
+    import random
+
+    from app.config import settings
+    from app.kria.brief import CreativeBrief
+    from app.kria.brief_checks import check_requirement, plan_facts_from_phone_variant
+    from app.pipeline.sequence_text_evidence import sequence_lineage
+    from app.services.device_render import DEVICE_RENDER_FIELD
+
+    brief = CreativeBrief.model_validate(brief_raw or lf["prod_brief"])
+    sequence_req = next(r for r in brief.live() if r.kind == "text_sequence")
+    order_req = next(r for r in brief.live() if r.kind == "order")
+    literal = _canonical(sequence_req.literal)
+    plan = seen.get("assembly_plan") or {}
+    variant = (plan.get("variants") or [{}])[0]
+    attachment = [c["id"] for c in lf["clips"]]
+    expected = list(attachment)
+    random.Random(order_req.facts["seed"]).shuffle(expected)
+    order = [m["media_id"] for m in variant.get("story_timeline") or [] if m.get("media_id")]
+    lanes = [*variant.get("text_elements", []), *variant.get("context_label_text_elements", [])]
+    live = [row for row in lanes if not row.get("removed") and _canonical(row.get("text"))]
+    pieces = sorted(
+        (row for row in live if (sequence_lineage(row) or ("", 0))[0] == "guided-title"),
+        key=lambda row: sequence_lineage(row)[1],  # type: ignore[index]
+    )
+    frame = 1 / 30
+    windows = [(float(r["start_s"]), float(r["end_s"])) for r in pieces]
+    durations = [round(end - start, 4) for start, end in windows]
+    contiguous = all(
+        abs(windows[i][1] - windows[i + 1][0]) <= frame for i in range(len(windows) - 1)
+    )
+    static = [row["id"] for row in live if _canonical(row.get("text")) == literal]
+    styled = [
+        row["id"]
+        for row in pieces
+        if not (row.get("source_params") or {}).get("phone_text_style_version")
+    ]
+    with patch.object(settings, "kria_compose_unmet_with_ops_enabled", True):
+        receipt = check_requirement(sequence_req, plan_facts_from_phone_variant(variant))
+    pinned = (plan.get(DEVICE_RENDER_FIELD) or {}).get("guided_story")
+    words = literal.split()
+    result = {
+        "a_shuffle": bool(order == expected and order != attachment),
+        "b_one_word_pieces": bool(
+            len(pieces) == len(words)
+            and all(len(_canonical(r["text"]).split()) == 1 for r in pieces)
+            and " ".join(_canonical(r["text"]) for r in pieces) == literal
+            and contiguous
+            and windows
+            and windows[0][0] <= frame
+            and min(durations) >= 0.25 - 1e-6
+        ),
+        "c_no_static_sentence": not static,
+        "d_phone_text_style_and_pin": bool(
+            pinned and not seen.get("pin_error") and not seen.get("worker_error") and not styled
+        ),
+        "e_r3_met": receipt.status == "met",
+    }
+    return {
+        "pass": all(result.values()),
+        "parts": result,
+        "evidence": {
+            "worker_error": seen.get("worker_error"),
+            "pin_error": seen.get("pin_error"),
+            "status": seen.get("status"),
+            "slot_order": order,
+            "seeded_order": expected,
+            "pieces": len(pieces),
+            "words": len(words),
+            "title_span_s": [windows[0][0], windows[-1][1]] if windows else None,
+            "piece_durations_s": durations,
+            "min_piece_s": min(durations) if durations else None,
+            "contiguous": contiguous,
+            "static_sentence_rows": static,
+            "unstyled_pieces": styled,
+            "r3_receipt": {"status": receipt.status, "reason": receipt.reason},
+            "device_pin": bool(pinned),
+        },
+    }
+
+
+def english_variant(lf: dict, recorded: dict) -> tuple[dict, str]:
+    """The same job with r3's words (and the creator's message) in English."""
+    variant = recorded["source"]["english_variant"]
+    brief_raw = copy.deepcopy(lf["prod_brief"])
+    for row in brief_raw["requirements"]:
+        if row["kind"] == "text_sequence":
+            row["literal"] = variant["literal"]
+    return brief_raw, variant["message"]
+
+
+def check_post_approval_replay() -> dict:
+    """Check 8: every recorded live composer answer, replayed through the worker to the pin."""
+    lf = load_live_fixture()
+    recorded = json.loads(POST_APPROVAL_FIXTURE.read_text(encoding="utf-8"))
+    primary = recorded["runs"][recorded["primary"]]
+    rows = []
+    for index, run in enumerate(recorded["runs"]):
+        brief_raw, message = (
+            english_variant(lf, recorded) if run["language"] == "en" else (None, None)
+        )
+        job = post_approval_job(lf, brief_raw=brief_raw, message=message)
+        typography = run["typography"] or primary["typography"]
+        seen = run_post_approval(
+            job,
+            composer_client=_cassette(run["composer"]["raw_text"]),
+            typography_client=_cassette(typography["raw_text"]),
+        )
+        verdict = post_approval_verdict(lf, seen, brief_raw=brief_raw)
+        rows.append(
+            {
+                "run": index,
+                "language": run["language"],
+                "path": run["path"],
+                "prompt_version": run["prompt_version"],
+                "pass": verdict["pass"],
+                "failed_parts": [part for part, ok in verdict["parts"].items() if not ok],
+                "title_span_s": verdict["evidence"]["title_span_s"],
+                "min_piece_s": verdict["evidence"]["min_piece_s"],
+                "pieces": verdict["evidence"]["pieces"],
+                "worker_error": verdict["evidence"]["worker_error"],
+                **({"detail": verdict["evidence"]} if index == recorded["primary"] else {}),
+            }
+        )
+    why = [
+        f"recorded run {row['run']} ({row['language']}, {row['path']}, {row['prompt_version']}) "
+        f"fails {row['failed_parts']}: {row['worker_error'] or row.get('detail', '')}"
+        for row in rows
+        if not row["pass"]
+    ]
+    return _result(
+        8,
+        "post-approval: the recorded live composer splits render to the device pin (replay)",
+        all(row["pass"] for row in rows),
+        why,
+        {"runs": rows, "live_summary": recorded["summary"], "ledger": recorded["source"]["ledger"]},
+    )
+
+
 # ----------------------------------------------------------------------------- report
 
 
@@ -1448,7 +2169,10 @@ def run_offline() -> dict:
 
         c5a = _guarded("5a", "follow-up latency", lambda: check_followup_latency(fx, _rows()))
         c5b = _guarded("5b", "turn budget", lambda: check_turn_budget(rows, lane_c))
-    checks = [c1, c2, c3, c4, c5a, c5b]
+        c6 = _guarded(6, "live-shape approval gate", check_live_approval_gate)
+        c7 = _guarded(7, "post-approval composer input", check_composer_input)
+        c8 = _guarded(8, "post-approval live replay", check_post_approval_replay)
+    checks = [c1, c2, c3, c4, c5a, c5b, c6, c7, c8]
     return {
         "lane_c": lane_c,
         "fixture": fx["fixture_id"],

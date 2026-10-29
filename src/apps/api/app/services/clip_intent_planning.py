@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import time
+import unicodedata
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
@@ -29,6 +30,7 @@ from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
 from app.kria.reply_language import current_reply_language, say
 from app.kria.research_preview import RESEARCH_FACT
+from app.kria.text_sequence import TEXT_SEQUENCE_KIND
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
     CREATOR_EVIDENCE,
@@ -316,8 +318,27 @@ def _quotes_ask(quote: str, ask: str) -> bool:
     return len(shared) >= 2 and len(shared) >= _WHOLE_VIDEO_QUOTE_SHARE * len(said)
 
 
+def sequence_text_literals(brief: CreativeBrief | None) -> list[str]:
+    """The exact words of each live ``text_sequence`` ask (29 Ekim): shown a piece at a time
+    over the video by the text lane, never a clip caption."""
+    if brief is None:
+        return []
+    return [req.literal for req in brief.live() if req.kind == TEXT_SEQUENCE_KIND and req.literal]
+
+
+def _same_copy(text: str, literal: str) -> bool:
+    """Exact copy equality (Unicode form and spacing aside), never a reading of the words."""
+
+    def canonical(value: str) -> str:
+        return " ".join(unicodedata.normalize("NFC", value).split())
+
+    return canonical(text) == canonical(literal)
+
+
 def without_whole_video_captions(
-    intents: list[PlannedClipIntent], asks: Sequence[str]
+    intents: list[PlannedClipIntent],
+    asks: Sequence[str],
+    sequence_texts: Sequence[str] = (),
 ) -> list[PlannedClipIntent]:
     """Leave out the `caption` intents the resolver would author for a whole-video text.
 
@@ -325,14 +346,28 @@ def without_whole_video_captions(
     never grounds researched facts, and every turn asked what the caption should say. Only
     a caption with no creator words whose quote is that ask goes: the creator's own words,
     and a caption on clips asked for separately, are never touched.
+
+    ``sequence_texts`` (29 Ekim, `sequence_text_literals`): a caption whose exact words are a
+    live ``text_sequence`` ask is that ask. Live, "add this text “...”. Show each word one
+    after the other" also came back as a `caption` on "each word" with the whole sentence, the
+    resolver put it on all 28 clips, and the sentence would have sat static under its own
+    word-by-word sequence. A caption with any other words is kept.
     """
     return [
         intent
         for intent in intents
         if not (
             intent.op == "caption"
-            and intent.creator_text is None
-            and any(_quotes_ask(intent.source_quote, ask) for ask in asks)
+            and (
+                (
+                    intent.creator_text is None
+                    and any(_quotes_ask(intent.source_quote, ask) for ask in asks)
+                )
+                or (
+                    intent.creator_text is not None
+                    and any(_same_copy(intent.creator_text, text) for text in sequence_texts)
+                )
+            )
         )
     ]
 
@@ -983,6 +1018,7 @@ async def plan_and_resolve_clip_intents(
     kept_labels: Sequence[KeptLabel] = (),
     shot_captions: bool = True,
     whole_video_texts: Sequence[str] = (),
+    sequence_texts: Sequence[str] = (),
     checked_inventory: Any = None,
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
@@ -1001,6 +1037,9 @@ async def plan_and_resolve_clip_intents(
 
     ``whole_video_texts`` (KRI-945, ``whole_video_text_asks``): the brief's researched texts and
     titles. A caption the resolver would author for one is never a clip question.
+
+    ``sequence_texts`` (29 Ekim, `sequence_text_literals`): the brief's word-by-word texts; a
+    caption carrying exactly those words is never planned (`without_whole_video_captions`).
 
     ``checked_inventory`` (KRI-950): the ``inventory`` of the turn that asked the clip picker
     this turn only answers. Reused instead of a new planner call when it was read from the same
@@ -1093,7 +1132,9 @@ async def plan_and_resolve_clip_intents(
                 },
             ),
         )
-    planned_intents = without_whole_video_captions(output.intents, whole_video_texts)
+    planned_intents = without_whole_video_captions(
+        output.intents, whole_video_texts, sequence_texts
+    )
     silent_drops = dict(output.silent_drops)
     if len(planned_intents) < len(output.intents):
         silent_drops["whole_video_caption_dropped"] = len(output.intents) - len(planned_intents)

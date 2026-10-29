@@ -909,6 +909,11 @@ butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit thr
   the render-ready review re-judges the asks against the recipe pinned then
   (`rendered_toggle_receipt`, editor Saves included) and `brief_checks._check_sound_toggle`
   words it ("Clip sound off except the last clip, where "Super excited!" is said (17.0-17.9 s)").
+  A clip kept audible for a line the creator named ("only the clip where I say '…' keeps its
+  sound", KRI-1028) is also judged on holding that sentence: the length plan records it as
+  `kept_lines` (`app/services/kept_sound_lines.py`; the timed sentence, its window as the clip's
+  floor, `held`), and the receipt says '"…" plays whole (4.6-8.9 s of that clip)' or
+  `line_partly_in_edit` / `line_not_in_edit`.
   Reasons: `partial_unsupported`, `line_not_found`, `line_ambiguous`, `line_unknown`,
   `line_not_in_edit`, `line_partly_in_edit`, `not_in_edit`, `clip_mismatch`, `window_past_end`,
   `no_sound`, `contract_conflict`, `render_refused`, `not_built`, `overridden`.
@@ -2439,6 +2444,37 @@ compile only effects the creator asked for — placed in the editor or by chat
 (explicit `at_s`), or by the same grounded placer the cloud uses for a named licensed
 effect (`materialize_licensed_sfx`, trusted visual moments). See "Sound effects on
 guided / montage stories (KRI-608)" below. Talking and Voiceover are unchanged.
+
+## "Make it all vertical": sideways clips in a montage (KRI-1027)
+
+The app sends the confirm screen's preselected bars/crop back with the approval
+(`VideoShapePicker.wire(for:)`), so the preselection IS the render's choice unless the
+creator changes it. `render_shape.apply_creator_ask` moves that default to the creator's
+own words: a style requirement with `facts.landscape_fit` ("fill" / "fit", taught by the
+shared brief section from Main Creator v103 / Brief Extractor v42), or the KRI-547
+vertical / no-bars / face-in-frame wording Talking already reads, preselects crop or black
+bars on a vertical canvas (`app/kria/landscape_fit_ask.py`). No ask = the item's remembered
+`landscape_fit` as before. The thread projection and the approve validation read the same
+pinned brief, so they never disagree.
+
+On a "fill" render with such an ask, the guided/unified phone montage writer frames each
+sideways footage moment before it compiles (`app/pipeline/phone_montage_framing.py`), with
+the Talking face-fill decision (KRI-547) over that moment's source window on the proxy:
+
+- a recurring face one 9:16 window holds (every sampled face keeps its eyes/nose/mouth)
+  -> the clip slides by `fill_position_x` (`MediaTransform.position_x`, no new capability);
+- a face that moves further than one crop can hold -> that clip alone keeps bars
+  (`fill_letterbox`), never a cut face;
+- no recurring face, or sampling failed -> the engine's centre crop (today's "fill").
+
+The moment fields live in the worker plan (`_phone_editor_plan_v1`), so editor Saves and
+the face-aware text placement (`phone_guided_text_placement.shown_crop`) see the same crop;
+a "fit" Save letterboxes every sideways clip as before. The variant records
+`landscape_framing` (ask, rendered fit, per-clip mode + reason), which the render-ready
+review answers the ask from ("Cropped the 3 sideways clips to fill the vertical frame; the
+crop follows the main face on 1", or why bars were kept). Jobs without the ask sample nothing
+and compile byte-identically. Not covered: Talking reads only the KRI-547 wording, not the
+fact; the phone Voiceover montage writer does not frame faces.
 
 ## Sound effects on guided / montage stories (KRI-608)
 

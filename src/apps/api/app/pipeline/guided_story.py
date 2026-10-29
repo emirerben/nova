@@ -248,6 +248,16 @@ class GuidedStoryMoment(BaseModel):
         le=10.0,
         exclude_if=lambda value: value is None,
     )
+    # KRI-1027: how the phone worker framed this sideways clip on a vertical "fill" render
+    # for a creator who asked for a vertical video (`phone_montage_framing`): slid sideways
+    # by ``fill_position_x`` canvas px (+right) to keep its recurring face in the crop, or
+    # letterboxed (``fill_letterbox``) because no single crop holds the face. The phone
+    # compiler applies them on "fill" only ("fit" letterboxes every sideways clip anyway).
+    # Omitted when unset so every stored plan keeps its exact dump.
+    fill_position_x: float | None = Field(
+        default=None, ge=-100000, le=100000, exclude_if=lambda value: value is None
+    )
+    fill_letterbox: bool | None = Field(default=None, exclude_if=lambda value: not value)
     output_start_s: float = Field(ge=0)
     output_end_s: float = Field(gt=0)
     duration_s: float = Field(gt=0)

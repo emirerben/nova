@@ -56,7 +56,9 @@ from app.pipeline.prompt_loader import load_prompt
 # select ask.
 # v41 (29 Ekim lane D, KRI-1038): the shared brief section records words shown a piece at a
 # time as a `text_sequence` requirement, not `captions: word_by_word`. (v40 is lane B's.)
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-29-v41"
+# v42 (KRI-1027): the shared brief section records `landscape_fit` ("fill" / "fit") on a style
+# ask about how sideways clips sit in a vertical video.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-29-v42"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

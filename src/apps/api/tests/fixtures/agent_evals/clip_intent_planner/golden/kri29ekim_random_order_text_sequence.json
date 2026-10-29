@@ -1,0 +1,33 @@
+{
+ "agent": "nova.plan.clip_intent_planner",
+ "prompt_version": "2026-10-27-subject-scope-exclude-requirement-id",
+ "input": {
+  "creator_request": "Show all content in random order. add this text “Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun”. Show each word one after the other",
+  "latest_user_message": "Show all content in random order. add this text “Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun”. Show each word one after the other",
+  "generated_brief": "Creative brief v0 (everything the creator has asked for, still in force):\n- [r1] [select/global] Show all content facts={all: true}\n- [r2] [order/global] in random order facts={key: random; seed: 2771031860630456741}\n- [r3] [text_sequence/title] Show each word one after the other (\"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\") facts={mode: agent_choice; unit: word}\nLatest message: Show all content in random order. add this text “Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun”. Show each word one after the other",
+  "candidate_intents": null,
+  "available_clip_count": 28,
+  "clip_facts": true,
+  "reply_language": "tr",
+  "clip_exclusions": true
+ },
+ "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"all_content_include\",\n      \"op\": \"include\",\n      \"attribute\": \"all content\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"exclusive\": false,\n      \"requirement_id\": null,\n      \"source_quote\": \"Show all content\"\n    },\n    {\n      \"intent_id\": \"random_order\",\n      \"op\": \"order\",\n      \"attribute\": \"all content\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": \"random\",\n      \"exclusive\": false,\n      \"requirement_id\": null,\n      \"source_quote\": \"in random order\"\n    },\n    {\n      \"intent_id\": \"text_sequence\",\n      \"op\": \"caption\",\n      \"attribute\": \"each word\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"exclusive\": false,\n      \"requirement_id\": null,\n      \"source_quote\": \"add this text “Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun”. Show each word one after the other\"\n    }\n  ],\n  \"question\": null\n}",
+ "output": {},
+ "meta": {
+  "source": "live_capture",
+  "provenance": "live gemini-2.5-flash answer to prod thread 64bb9853 T1 (development ledger run kri-29ekim-live-20261029), recorded under the previous prompt",
+  "case": "29 Ekim new thread: 'Show all content in random order' came back as an order intent with order_by 'random'; the enum has no such value, so the parser nulled it into a positionless group whose inner order 'wasn't recorded' and the creator was asked to choose an order. A random / any order is the brief's order requirement: no order intent survives. 'Show all content' stays an include.",
+  "expect_intents": [
+   {
+    "op": "include",
+    "source_quote_keywords": [
+     "all content"
+    ]
+   }
+  ],
+  "expect_absent_ops": [
+   "order"
+  ],
+  "expect_question": false
+ }
+}
