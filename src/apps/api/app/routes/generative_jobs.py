@@ -8947,6 +8947,19 @@ def _active_timeline_duration_s(slots: list[dict]) -> float:
     return round(max(0.0, total), 3)
 
 
+def _stored_variant_field(job: Job, variant: dict, field: str) -> Any:
+    """``variant[field]``, read from the job's stored row when ``variant`` is a public copy.
+
+    The status route walks the public assembly plan, which drops private fields such as the
+    phone editor plan. KRI-1032: reading that copy built the editor from the approved plan
+    instead of what the phone rendered (other label height and font in the creator's copy).
+    """
+    if field in variant:
+        return variant[field]
+    stored = _find_variant(job, str(variant.get("variant_id") or ""))
+    return stored.get(field) if stored is not None else None
+
+
 def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
     """Read the active revision or derive a non-persisted initial projection."""
 
@@ -8962,7 +8975,7 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
 
     guided_snapshot = assembly.get("guided_edit")
     # Match the worker's repaired render while leaving the approval immutable.
-    execution_plan = variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly.get(
+    execution_plan = _stored_variant_field(job, variant, PHONE_EDITOR_PLAN_FIELD) or assembly.get(
         "guided_story_execution_plan"
     )
     if not isinstance(guided_snapshot, dict) or not isinstance(execution_plan, dict):
