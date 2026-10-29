@@ -7,7 +7,10 @@ retime the containing item. Short windows share their available time equally.
 from dataclasses import dataclass
 from math import floor, pi, sin
 
-from app.agents._schemas.text_animation_phases import DESIGNED_TEXT_EDGES, TextAnimationPhases
+from app.agents._schemas.text_animation_phases import (
+    TEXT_ANIMATION_EDGE_SECONDS,
+    TextAnimationPhases,
+)
 
 
 @dataclass(frozen=True)
@@ -23,8 +26,7 @@ def phase_duration(phases: TextAnimationPhases, duration: float) -> float:
     """Return the shared entrance/exit envelope used by the phase renderer."""
     if duration <= 0:
         return 0.0
-    base = 1.2 if DESIGNED_TEXT_EDGES.intersection((phases.entrance, phases.exit)) else 0.4
-    return min(base / phases.speed, duration / 2)
+    return min(TEXT_ANIMATION_EDGE_SECONDS / phases.speed, duration / 2)
 
 
 def sample_text_phases(
