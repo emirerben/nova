@@ -58,6 +58,7 @@ from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.services.choice_questions import answered_brief, tag_event
 from app.services.clip_intent_planning import apply_creator_selections
 from app.services.clip_intent_resolution import IntentClip
+from app.services.clip_none_answers import none_answer_choices
 from app.services.clip_selection import fold_clip_selections
 from app.services.creator_render_contract import build_render_contract
 from app.tasks.kria_runtime import _unresolved_choice_plan
@@ -583,3 +584,102 @@ async def test_f15_a_skipped_picker_is_not_told_as_none(monkeypatch) -> None:
     )
     assert "None of your clips" not in summary
     assert _backstop(_strategy(result), _brief(), _events(events)) is None
+
+
+def _text_none_case() -> tuple[CreativeBrief, list[tuple[str, dict[str, Any]]]]:
+    req = (
+        _brief()
+        .requirements[5]
+        .model_copy(update={"scope": "per_clip", "description": "the pink building"})
+    )
+    events = _events(
+        _picker("label", "the pink building", creator_text=req.literal, intent_id="label_casa")
+    )
+    return CreativeBrief(requirements=[req]), events
+
+
+def test_none_for_one_shot_preserves_identical_text_on_another_shot() -> None:
+    brief, events = _text_none_case()
+    other = brief.requirements[0].model_copy(update={"id": "r10", "description": "the cathedral"})
+    brief = brief.model_copy(update={"requirements": [*brief.requirements, other]})
+    answers = none_answer_choices(brief, {}, events)
+    pinned = answered_brief(brief, {"choice_answers": list(answers.answers)})
+    assert pinned.requirements[0].status == "superseded"
+    assert pinned.requirements[1] == other
+
+
+@pytest.mark.parametrize("shot", ["the cathedral", "the pink building"])
+def test_old_none_does_not_cancel_a_later_text_request(shot: str) -> None:
+    brief, events = _text_none_case()
+    changed = brief.requirements[0].model_copy(
+        update={"description": shot, "source_turn_id": "later-text-request"}
+    )
+    brief = brief.model_copy(update={"requirements": [changed]})
+    events.append(("user", {"turn_id": "later-text-request"}))
+    assert not none_answer_choices(brief, {}, events).answers
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"literal": "New title"},
+        {"description": "the cathedral"},
+        {"scope": "global"},
+        {"facts": {"placement": "bottom"}},
+        {"source_turn_id": "later-text-request"},
+    ],
+)
+def test_stored_text_absence_cannot_cancel_a_rewritten_requirement(update: dict) -> None:
+    brief, events = _text_none_case()
+    answers = none_answer_choices(brief, {}, events)
+    assert len(answers.answers) == 1
+    strategy = {"choice_answers": list(answers.answers)}
+    assert answered_brief(brief, strategy).requirements[0].status == "superseded"
+    changed = brief.model_copy(
+        update={"requirements": [brief.requirements[0].model_copy(update=update)]}
+    )
+    assert answered_brief(changed, strategy) == changed
+
+
+@pytest.mark.parametrize("source_turn_id", [None, "unobserved-request"])
+def test_text_none_requires_observed_request_provenance(source_turn_id: str | None) -> None:
+    brief, events = _text_none_case()
+    brief = brief.model_copy(
+        update={
+            "requirements": [
+                brief.requirements[0].model_copy(update={"source_turn_id": source_turn_id})
+            ]
+        }
+    )
+    assert not none_answer_choices(brief, {}, events).answers
+
+
+@pytest.mark.parametrize("digest", [None, "legacy-unbound-digest"])
+def test_unbound_stored_text_absence_keeps_the_requirement(digest: str | None) -> None:
+    brief, events = _text_none_case()
+    answer = {**none_answer_choices(brief, {}, events).answers[0], "input_digest": digest}
+    assert answered_brief(brief, {"choice_answers": [answer]}) == brief
+
+
+def test_newer_text_picker_tap_wins_over_none_for_the_same_shot() -> None:
+    brief, events = _text_none_case()
+    later = copy.deepcopy(events[-1][1])
+    selection = later["clip_selection"]
+    selection["answers"] = [{"key": selection["none_keys"][0], "media_ids": [CASA]}]
+    selection["none_keys"] = []
+    events.append(("user", later))
+    assert not none_answer_choices(brief, {}, events).answers
+
+
+def test_bound_text_absence_keeps_turkish_notice_and_is_idempotent() -> None:
+    brief, events = _text_none_case()
+    with reply_language_for("tr"):
+        answers = none_answer_choices(brief, {}, events)
+        strategy = {"choice_answers": list(answers.answers)}
+        pinned = answered_brief(brief, strategy)
+        assert answered_brief(pinned, strategy) == pinned
+    assert pinned.requirements[0].status == "superseded"
+    assert answers.notices == (
+        'Kliplerinin hiçbirinde "the pink building" yok, o yüzden "Casa Rosada" yazısını '
+        "koymadım. Yine de istersen hangi klibe gideceğini söyle.",
+    )

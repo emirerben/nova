@@ -16,6 +16,10 @@ what dispatch's contract reads, so nothing later re-asks or refuses what the cre
 already answered. The draft goes ahead without the pin or text and says so, with the way
 to change it.
 
+Text answers also bind the described shot and an observed request turn preceding the
+question. Their saved digest binds the requirement's content and source turn, so an old
+answer cannot cancel the same words moved to another shot or a rewritten requirement.
+
 Only the words the creator answered None to are voided: the newest picker answer for the
 same words (case, articles and punctuation aside) must be None or a skip, and no other
 resolved pin or placed text may already hold that spot. A typed new ending ("End on the
@@ -68,6 +72,7 @@ class _PickerAnswer:
     none: bool
     skipped: bool
     seq: int
+    question_index: int
 
 
 @dataclass(frozen=True)
@@ -82,22 +87,23 @@ def _content(text: object) -> tuple[str, ...]:
 
 def _picker_answers(events: Iterable[tuple[str, Any]]) -> list[_PickerAnswer]:
     """Every answered picker row, oldest first (the same events and rows as the fold)."""
-    questions: dict[str, dict[str, Any]] = {}
+    questions: dict[str, tuple[dict[str, Any], int]] = {}
     out: list[_PickerAnswer] = []
     seq = 0
-    for role, payload in events:
+    for event_index, (role, payload) in enumerate(events):
         if not isinstance(payload, dict):
             continue
         if role == "assistant" and isinstance(payload.get("clip_question"), dict):
             question = payload["clip_question"]
-            questions[str(question.get("question_id"))] = question
+            questions[str(question.get("question_id"))] = (question, event_index)
             continue
         selection = payload.get("clip_selection") if role == "user" else None
         if not isinstance(selection, dict):
             continue
-        question = questions.get(str(selection.get("question_id")))
-        if question is None:
+        asked = questions.get(str(selection.get("question_id")))
+        if asked is None:
             continue
+        question, question_index = asked
         seq += 1
         skipped = bool(selection.get("skipped"))
         tapped = {
@@ -128,6 +134,7 @@ def _picker_answers(events: Iterable[tuple[str, Any]]) -> list[_PickerAnswer]:
                         none=none,
                         skipped=skipped,
                         seq=seq,
+                        question_index=question_index,
                     )
                 )
     return out
@@ -252,6 +259,19 @@ def _text_notice(literal: str, label: str, *, skipped: bool) -> str:
     )
 
 
+def _text_digest(req: Any) -> str:
+    return _digest(
+        CONFLICT_TEXT_ABSENT,
+        req.id,
+        req.kind,
+        req.scope,
+        req.literal,
+        req.description,
+        req.facts,
+        req.source_turn_id,
+    )
+
+
 def none_answer_choices(
     brief: Any, strategy: Mapping[str, Any], events: Iterable[tuple[str, Any]]
 ) -> NoneAnswers:
@@ -260,11 +280,16 @@ def none_answer_choices(
     ``answers`` are ``choice_answer`` rows for the draft strategy; ``notices`` tell the
     creator, in the chat's language, what the draft does instead and how to change it.
     """
+    events = list(events)
     picked = _picker_answers(events)
     if not picked or brief is None:
         return NoneAnswers()
     placed_spots = _placed_pin_positions(strategy)
     placed_texts = _placed_texts(strategy)
+    request_turns: dict[str, int] = {}
+    for index, (role, payload) in enumerate(events):
+        if role == "user" and isinstance(payload, Mapping) and payload.get("turn_id"):
+            request_turns.setdefault(str(payload["turn_id"]), index)
     answers: list[dict[str, Any]] = []
     notices: list[str] = []
     for req in _live(brief):
@@ -295,7 +320,9 @@ def none_answer_choices(
                 )
         elif req.kind == "text" and req.literal:
             text = tuple(loose_words(req.literal))
-            if not text or text in placed_texts:
+            shot = _content(req.description)
+            request_index = request_turns.get(req.source_turn_id)
+            if not text or text in placed_texts or not shot or request_index is None:
                 continue
             newest = _newest(
                 [
@@ -304,6 +331,8 @@ def none_answer_choices(
                     if a.op in _TEXT_OPS
                     and a.creator_text
                     and tuple(loose_words(a.creator_text)) == text
+                    and shot in a.words
+                    and request_index <= a.question_index
                 ]
             )
             if newest is None or not newest.none:
@@ -314,7 +343,7 @@ def none_answer_choices(
                     "conflict": f"{CONFLICT_TEXT_ABSENT}:{req.id}",
                     "kind": CONFLICT_TEXT_ABSENT,
                     "option": OPT_LEFT_OUT,
-                    "input_digest": _digest(CONFLICT_TEXT_ABSENT, req.id, literal),
+                    "input_digest": _text_digest(req),
                     "requirement_ids": [req.id],
                     "source": "creator",
                     "value": newest.label[:300],
@@ -378,14 +407,17 @@ def apply_none_answers(
     answers does not matter; a requirement another answer superseded stays superseded.
     """
     gone: dict[str, dict[str, str]] = {}
-    left_out: set[str] = set()
+    left_out: dict[str, set[str]] = {}
     for answer in answers:
         ids = [str(i) for i in answer.get("requirement_ids") or []]
         if answer.get("kind") == CONFLICT_PIN_ABSENT and answer.get("option") in _FACT_OF:
             for req_id in ids:
                 gone.setdefault(req_id, {})[str(answer["option"])] = str(answer.get("value") or "")
-        elif answer.get("kind") == CONFLICT_TEXT_ABSENT:
-            left_out.update(ids)
+        elif answer.get("kind") == CONFLICT_TEXT_ABSENT and answer.get("option") == OPT_LEFT_OUT:
+            digest = answer.get("input_digest")
+            if isinstance(digest, str):
+                for req_id in ids:
+                    left_out.setdefault(req_id, set()).add(digest)
     if not gone and not left_out:
         return
     for req in _live(brief):
@@ -396,5 +428,5 @@ def apply_none_answers(
             updated = _without_pins(base, gone[req.id])
             if updated is not base:
                 changed[req.id] = updated
-        elif req.id in left_out and base.kind == "text":
+        elif base.kind == "text" and _text_digest(base) in left_out.get(req.id, set()):
             changed[req.id] = base.model_copy(update={"status": "superseded"})
