@@ -47,3 +47,7 @@ T6 does not require a template ledger for this recovery diff. Its exact local-te
 The approval unknown-outcome guard does not add a new check to the separate native Save HTTP endpoint. Late execution-outcome transitions at that endpoint remain outside this bounded change and must not be claimed as covered by the approval regression.
 
 No server-render fallback was introduced. Server planning is allowed; native execution capability failures remain failures. No PR approval review or deployment is part of this change.
+
+## Verification after the E merge
+
+The recovery commits rebased onto main `91838ad62` without conflicts. The final main-base run passed407 backend cases, including explicit checks for both compose settings, and25 simulator contracts. Final preship passed with845 mapped incident cases and no failed metadata, mapping or lint checks. A fresh independent review of the main-base diff and flag-state corrections found no blocking defect. The two flag-state assertions initially assumed E's old true default; they now name both settings and confirm that false retains the legacy unavailable reason.
