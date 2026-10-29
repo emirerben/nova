@@ -806,3 +806,28 @@ also checks the generated registry/API types, the 240-case structural all-format
 corpus, editor reducer, runtime state machine, HTTP envelopes, admin trace, and
 migrations. It writes duration/flakiness metadata to
 `test-results/kria-verify.json`; feature flags stay off until the live gates pass.
+
+## Provider deadlines and the Main Creator ladder (KRI-1037)
+
+A Main Creator call that ends at our own provider deadline (`ProviderDeadlineExceededError`, a
+subclass of `ProviderOutcomeUnknownError`, so the paid-call fence is unchanged) is no longer repeated:
+
+1. rung 1 keeps the spec thinking level (`high`) and gets the shared turn budget minus 75 s;
+2. a deadline steps thinking to `medium` for up to 50 s (new paid call, new reservation);
+3. a second deadline runs the fallback `gemini-3.6-flash` at `low` with what remains.
+
+The turn budget is the 200 s Celery soft limit minus the planner's 20 s reserve (180 s); the rungs
+never exceed it. "Try again" after `runtime_provider_outcome_unknown` starts at rung 2: `_claim`
+stamps `snapshot["start_degraded"]` from the thread's last finished turn (30 min window) and the
+planner reads it through `start_degraded_retry`. Kill switch: `MAIN_CREATOR_DEADLINE_LADDER_ENABLED=false`
+plus restart of api and worker (read at import). Truncation now fails as `runtime_output_truncated`
+(`TerminalOutputTruncatedError`) with its own copy instead of the generic `runtime_turn_failed`.
+
+Clip sets of `MAIN_CREATOR_COMPACT_CLIPS_THRESHOLD` (16) or more send the compact evidence tier
+(`creator_sessions.CHAT_EVIDENCE_COMPACT_*`). On a synthetic 27-clip prompt it saves 9 to 13 percent of
+input tokens; input size is not the latency lever (thinking and answer tokens are), so this is a cost
+and robustness change. Measure with `scripts/kria/measure_29_ekim_input.py`; prove the ladder with the
+`lane_c` block of `make kria-replay FIXTURE=29-ekim`.
+
+`EditCopilotAgent` has `max_output_tokens=16_384` with a 130 s timeout: a runaway call needs 124.3 s to
+reach the cap, so it must stay under the timeout (`test_edit_copilot_budget_runs_out_before_its_provider_timeout`).
