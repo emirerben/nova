@@ -453,6 +453,10 @@ class PlanFacts:
     # (`defers_caption_words_to_phone_render`). A captions ask about language or spelling
     # then gets a pre-approval line saying what the render will do, never silence.
     caption_words_at_render: bool = False
+    # KRI-1024: True when this draft renders on the phone, in any format
+    # (`defers_text_to_phone`). A creator literal no phone font draws is then a checked
+    # "Couldn't" naming the characters before approval (`undrawable_phone_text`).
+    phone_text: bool = False
     # Seconds of footage the draft would keep whole (the selected video clips' source length);
     # None = unknown, so the length line never states a number it was not given.
     take_duration_s: float | None = None
@@ -9878,6 +9882,9 @@ def _with_unclear_word(
 
 
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if facts.phone_text and (undrawable := undrawable_phone_text(req)) is not None:
+        # KRI-1024: no phone font draws it, whatever else the plan does with this text.
+        return undrawable
     receipt = _check_requirement_with_protection(req, facts)
     if facts.unclear_words is not None and asks_if_unclear(req):
         return _with_unclear_word(req, facts, receipt)
@@ -10120,6 +10127,41 @@ def _settled_by_narrated_render(req: BriefRequirement, strategy: Mapping[str, An
     if req.kind == "timing":
         return _wants_clip_timing(req)
     return req.kind == "style" and asks_caption_language(req)
+
+
+def defers_text_to_phone(*, creator_id: object, clip_paths: Iterable[object] = ()) -> bool:
+    """True when this draft renders on the phone, whatever its format (KRI-1024).
+
+    The dispatch gate's own test (a phone analysis proxy and an enrolled account), so every
+    phone writer counts: montage, Talking, Narrated and a voiceover montage all style their
+    text through the shared phone pass and draw it with the phone's fonts.
+    """
+    from app.config import settings  # noqa: PLC0415
+    from app.kria.media_sources import is_analysis_proxy_path  # noqa: PLC0415
+
+    return bool(
+        any(is_analysis_proxy_path(str(path)) for path in clip_paths or ())
+        and settings.phone_rendering_for(creator_id)
+    )
+
+
+def undrawable_phone_text(req: BriefRequirement) -> RequirementReceipt | None:
+    """KRI-1024: a checked "Couldn't" for a creator literal no curated phone font draws.
+
+    Names the text and the characters. Color emoji are the phone's own emoji face and never
+    count. The phone's text pass refuses such text after approval, and the phone painter
+    accepts no fallback face but Apple Color Emoji, so the draft says it here instead.
+    """
+    if req.kind != "text" or not req.literal:
+        return None
+    from app.pipeline.phone_text_style import undrawable_message, undrawable_text  # noqa: PLC0415
+
+    found = undrawable_text([req.literal])
+    if found is None:
+        return None
+    return _receipt(
+        req, "not_possible", undrawable_message(*found), verification="checked", stage="checked"
+    )
 
 
 # KRI-549: formats the phone Talking writer (`_run_phone_subtitled_job`) renders when the
