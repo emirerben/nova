@@ -4902,7 +4902,7 @@ async def test_run_copilot_turn_threads_memory_and_unmet_requests(monkeypatch) -
     assert seen["input"].prior_turns == [{"role": "user", "content": "hi"}]
     assert seen["ctx"].timeout_override_s == 40.0
     assert seen["ctx"].deadline_monotonic is None
-    assert EditCopilotAgent.spec.timeout_s == 120.0
+    assert EditCopilotAgent.spec.timeout_s == 130.0
     assert response.unmet_requests == [{"request": "label each clip", "reason": "no place data"}]
 
 
