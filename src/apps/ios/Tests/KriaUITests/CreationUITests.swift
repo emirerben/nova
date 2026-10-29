@@ -208,11 +208,12 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Attach footage"].exists)
         XCTAssertFalse(app.buttons["Attach footage"].isEnabled)
         XCTAssertTrue(app.staticTexts["Montage"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Narrated"].exists)
+        XCTAssertTrue(app.staticTexts["Voiceover"].exists)
 
         let toggle = app.buttons["workspace-menu-toggle"]
         let carousel = app.scrollViews["format-carousel"]
         XCTAssertTrue(carousel.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["format-montage"].frame.minX, prompt.frame.minX, accuracy: 2)
         carousel.swipeLeft()
         carousel.swipeRight()
         XCTAssertEqual(toggle.label, "Open projects", "Format-card swipes must not open the drawer")
