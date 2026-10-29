@@ -1,0 +1,26 @@
+{
+  "pr": 1890,
+  "reviewed_code_sha": "ed6718720ba6569467338de05080da3a311ef9f7",
+  "claim": "local_fix",
+  "summary": "Main b7a8b3b6 is integrated. The failed CI SDK cache is now isolated by hosted image and selected Xcode in both native workflows, including restore prefixes. No tests or acceptance gates were removed.",
+  "cache_contract": {
+    "tests": 16,
+    "command": "python3 scripts/ci/test_ci_throughput.py",
+    "red_control": "Three methods/six workflow subcases failed before cache key changes",
+    "selector_command": "python3 scripts/ci/test_select_tests.py",
+    "selector_result": "passed",
+    "hosted_validation": "pending exact new-head CI; no waiver"
+  },
+  "independent_review": "No material findings on cache boundary and final phone-text/source-range integration",
+  "remaining_gaps": [
+    "Fresh exact-head CI",
+    "Physical original incident/installed TestFlight acceptance remains unverified"
+  ],
+  "native_source_identity": {
+    "tested_sha": "02396d86e50a1f26b429623bcc2072e81a7340f2",
+    "native_tests_passed": 316,
+    "comparison": "git diff --cached --name-only 02396d86e50a1f26b429623bcc2072e81a7340f2 -- src/apps/ios src/packages/shared scripts/ios",
+    "changed_files": [],
+    "scope": "No native/shared/verification source differences from independently verified combined simulator validation; current change is cache configuration."
+  }
+}

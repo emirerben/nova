@@ -1,0 +1,34 @@
+{
+  "evidence_level": "native_output_simulator",
+  "base_sha": "19aa3b3cf40af8285c9305cd4af30919134afc10",
+  "tests": {
+    "result": "Passed",
+    "passedTests": 67,
+    "failedTests": 0,
+    "skippedTests": 0
+  },
+  "platform": "iPhone17 Simulator, iOS26.5",
+  "pre_fix": {
+    "public_tests": 3,
+    "valid_ranges_failed": 2,
+    "true_overrun_rejected": true
+  },
+  "numeric_boundary": {
+    "authored_seconds": 1.2,
+    "hydrated_seconds": 1.2000000000000002,
+    "tolerance_seconds": 1e-06,
+    "rejected_true_overrun_seconds": 0.001
+  },
+  "sources": {
+    "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift": "85e6b850344ca85f341e3a06307c2e10e8da2dc69e1bc1fe50e0ff4ec48657cb",
+    "src/apps/ios/Tests/KriaTests/SavedDraftPreviewRangeTests.swift": "6822e51d45328b9336f5369e7344f2159137edbd0e25ef3313bd26c6f3f45967",
+    "src/apps/ios/Kria/Core/Services.swift": "588d2ae56d4db221bf70acb5d8a9f4b9f5d1ee216142e8e388a9a0dabb3e5314",
+    "src/apps/ios/Kria/Core/Models.swift": "cf14f567c38ea5c6c2e9b7e36e9d598ed8b92545b57b728fe71c09f29705ddd9",
+    "src/apps/ios/Kria/Core/NativeEditorDocument.swift": "fb08c6e3fe1ec91a2a43d122c761b7f75a6c2ef2e2c8299eaaff51b6df6d6596",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift": "0e6cbc8469c1e223cbd7e6253a6fecf1c5bcb445988388af629dcd2bf1adc858"
+  },
+  "limitations": [
+    "Installed TestFlight app recovery remains unverified.",
+    "The published Cunda text overlap and original timing request remain open."
+  ]
+}
