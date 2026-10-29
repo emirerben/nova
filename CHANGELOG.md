@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.9.0] - 2026-10-29
+
+### Changed
+- fix(captions): faster designed animations and animation per word under Word display (KRI-1007) (#1917) <!-- release-pr: 1917 -->
+
 ## [0.82.8.0] - 2026-10-29
 
 ### Fixed
