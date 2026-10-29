@@ -570,11 +570,6 @@ class Settings(BaseSettings):
     # (thinking "medium", then the fallback model) inside the turn budget. Off = the old
     # behavior, where the deadline ends the turn. Read at import, so restart api + worker.
     main_creator_deadline_ladder_enabled: bool = True
-    # KRI-1037: clip sets at or above this size send the compact per-clip evidence tier to
-    # the Main Creator (fewer facts, shorter fields). 0 = never (the default): measured at
-    # -9 to -13 percent input tokens and no latency evidence, with no eval of plan quality
-    # on the thinner evidence yet, so it stays opt-in. Below the threshold, byte-identical.
-    main_creator_compact_clips_threshold: int = Field(default=0, ge=0)
     main_creator_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_copilot_model: str = "gemini-3.1-pro-preview"
     edit_copilot_thinking_level: str = "high"

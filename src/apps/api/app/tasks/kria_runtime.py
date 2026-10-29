@@ -164,6 +164,7 @@ from app.services.thought_summaries import (
     bind_thought_publisher,
     publisher_for_creation,
 )
+from app.text_fold import loose_words
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -3217,8 +3218,58 @@ def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
 _DEGRADED_START_WINDOW = timedelta(minutes=10)
 
 
-def _previous_turn_hit_provider_deadline(db, turn: CreatorAgentTurn) -> bool:  # noqa: ANN001
-    """Whether the newest finished turn before ``turn`` failed at a provider deadline."""
+# A whole message that only asks to send the failed request again, after `_request_fingerprint`.
+# Exact match on the whole message (no word guessing): a miss only means the retry opens at full
+# strength, the behavior before KRI-1037; the turn is never refused or changed otherwise.
+_BARE_RETRY_MESSAGES = frozenset(
+    {
+        "try again",
+        "try again please",
+        "please try again",
+        "retry",
+        "retry please",
+        "please retry",
+        "again",
+        "once more",
+        "one more time",
+        "do it again",
+        "send it again",
+        "tekrar dene",
+        "tekrar deneyin",
+        "tekrar dene lutfen",
+        "lutfen tekrar dene",
+        "yeniden dene",
+        "yeniden dene lutfen",
+        "lutfen yeniden dene",
+        "tekrar",
+        "yeniden",
+    }
+)
+
+
+def _request_fingerprint(text: str | None) -> str:
+    """The message's words, case, accents and punctuation folded away."""
+    return " ".join(loose_words(text or ""))
+
+
+def _is_retry_of(failed_text: str | None, new_text: str | None) -> bool:
+    """Whether ``new_text`` asks for the failed request again (KRI-1037).
+
+    True for the same words, or a bare "try again". A different request is not a retry: it
+    gets the full configuration, since the deadline says nothing about it.
+    """
+    new = _request_fingerprint(new_text)
+    if not new:
+        return False
+    return new == _request_fingerprint(failed_text) or new in _BARE_RETRY_MESSAGES
+
+
+def _previous_turn_hit_provider_deadline(
+    db,  # noqa: ANN001
+    turn: CreatorAgentTurn,
+    new_message: str | None = None,
+) -> bool:
+    """Whether ``turn`` retries the newest finished turn before it, which hit a deadline."""
     try:
         previous = db.execute(
             select(CreatorAgentTurn)
@@ -3240,7 +3291,12 @@ def _previous_turn_hit_provider_deadline(db, turn: CreatorAgentTurn) -> bool:  #
         ):
             return False
         finished = previous.completed_at
-        return finished is None or datetime.now(UTC) - finished <= _DEGRADED_START_WINDOW
+        if finished is not None and datetime.now(UTC) - finished > _DEGRADED_START_WINDOW:
+            return False
+        failed_source = db.get(CreationThreadEvent, previous.source_event_id)
+        return _is_retry_of(
+            _model_message(failed_source) if failed_source is not None else None, new_message
+        )
     except Exception:  # noqa: BLE001 - a lookup miss only costs the lighter start
         log.warning("kria_degraded_start_lookup_failed", exc_info=True)
         return False
@@ -3307,7 +3363,7 @@ def _claim(
         if sent_from is not None:
             # KRI-898: the app build that sent the message; only when stamped.
             claimed_snapshot["client_protocol"] = sent_from
-        if _previous_turn_hit_provider_deadline(db, turn):
+        if _previous_turn_hit_provider_deadline(db, turn, _model_message(source)):
             # KRI-1037: only when true, so every other snapshot is unchanged.
             claimed_snapshot["start_degraded"] = True
         return (

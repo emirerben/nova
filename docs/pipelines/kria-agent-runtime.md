@@ -819,9 +819,10 @@ subclass of `ProviderOutcomeUnknownError`, so the paid-call fence is unchanged) 
 The turn budget is the 200 s Celery soft limit minus the planner's 20 s reserve (180 s); the rungs
 never exceed it. "Try again" after a deadline starts at rung 2: the failed turn stores
 `error.provider_deadline=true` (only when our own deadline fired, not for a transport outcome-unknown),
-`_claim` stamps `snapshot["start_degraded"]` from the thread's last finished turn (10 min window; a
-new unrelated request inside it also opens on `medium`), and the planner reads it through
-`start_degraded_retry`. Kill switch: `MAIN_CREATOR_DEADLINE_LADDER_ENABLED=false`
+`_claim` stamps `snapshot["start_degraded"]` when the thread's last finished turn hit a deadline
+within 10 minutes AND the new message retries that request (same words after casefold and punctuation
+strip, or a bare "try again"; `_is_retry_of`). An unrelated new request inside the window runs at full
+strength. The planner reads the stamp through `start_degraded_retry`. Kill switch: `MAIN_CREATOR_DEADLINE_LADDER_ENABLED=false`
 plus restart of api and worker (read at import). Truncation now fails as `runtime_output_truncated`
 (`TerminalOutputTruncatedError`) with its own copy instead of the generic `runtime_turn_failed`.
 
@@ -834,13 +835,10 @@ one turn (each fenced under its own reservation; the planner is a pure call with
 Check `agent_deadline_degraded` / `agent_deadline_fallback` log lines and `deadline_degraded` on
 `agent_run` events after rollout before tuning `degraded_timeout_s` / `deadline_ladder_reserve_s`.
 
-`MAIN_CREATOR_COMPACT_CLIPS_THRESHOLD` (default 0 = off; N sends the compact evidence tier for N or
-more clips) controls the compact evidence tier
-(`creator_sessions.CHAT_EVIDENCE_COMPACT_*`). It is off because no plan-quality eval ran on the thinner
-evidence. On a synthetic 27-clip prompt it saves 9 to 13 percent of
-input tokens; input size is not the latency lever (thinking and answer tokens are), so this is a cost
-and robustness change. Measure with `scripts/kria/measure_29_ekim_input.py`; prove the ladder with the
-`lane_c` block of `make kria-replay FIXTURE=29-ekim`.
+A compact per-clip evidence tier for large clip sets was tried and removed: it saved 9 to 13 percent of
+input tokens on a synthetic 27-clip prompt, input size is not the latency lever (thinking and answer
+tokens are), and no plan-quality eval covers thinner evidence. Prove the ladder with the `lane_c`
+block of `make kria-replay FIXTURE=29-ekim`.
 
 `EditCopilotAgent` has `max_output_tokens=16_384` with a 130 s timeout: a runaway call needs 124.3 s to
 reach the cap, so it must stay under the timeout (`test_edit_copilot_budget_runs_out_before_its_provider_timeout`).
