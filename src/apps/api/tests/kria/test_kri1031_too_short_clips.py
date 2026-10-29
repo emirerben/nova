@@ -51,6 +51,7 @@ from app.services.clip_intent_resolution import IntentClip
 from app.services.clip_selection import ClipSelections, SelectionEntry
 from app.services.too_short_clips import resolve_too_short, too_short_clips
 from tests.kria.test_kri1026_plaza_exclusions import (
+    BUS,
     CASE,
     CLIPS,
     FILMING_ORDER,
@@ -367,8 +368,40 @@ async def test_no_clip_too_short_says_so_and_keeps_every_clip(prod_profile, monk
     )
     strategy, reply = _draft(planned)
     assert set(_played(strategy, REAL)) == set(REAL)
-    assert "None of your clips is too short to use, so I kept them all." in reply
+    assert "None of your clips is too short to use." in reply
     assert COULDNT_TELL not in reply
+
+
+async def test_no_short_clips_notice_does_not_claim_another_exclusion_was_kept(
+    prod_profile, monkeypatch
+) -> None:
+    real = [c for c in CLIPS if c["media_id"] not in JUNK]
+    clips = _intent_clips(real)
+    measured = resolve_too_short(
+        ClipIntent(
+            intent_id="exclude_short_clips",
+            op="exclude",
+            attribute="anything too short to use",
+            by_length="too_short",
+        ),
+        clips,
+    )
+    assert measured is not None and not measured.assignments
+    bus_exclusion = _exclude(BUS).model_copy(
+        update={"intent_id": "exclude_bus", "attribute": "the bus clip"}
+    )
+    planned = await _turn(
+        monkeypatch,
+        message="Skip anything too short to use and leave out the bus clip.",
+        strategy=_FIRST_TURN,
+        clips=real,
+        intent_clips=clips,
+        resolved=[measured, bus_exclusion],
+    )
+    strategy, reply = _draft(planned)
+    assert set(_played(strategy, REAL)) == set(REAL) - {BUS}
+    assert "None of your clips is too short to use." in reply
+    assert "kept them all" not in reply
 
 
 async def test_a_tap_answer_beats_the_length_rule(monkeypatch) -> None:

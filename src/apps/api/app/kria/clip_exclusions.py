@@ -347,7 +347,7 @@ def length_exclusion_notice(
 ) -> str | None:
     """What the draft says about a "too short to use" ask the server measured (KRI-1031).
 
-    The clips it left out, by number; or, when no clip is too short, that every clip stays.
+    The clips it left out, by number; or that no clip is too short.
     None when there is no such ask, or when every clip it matched still plays (the
     ``still_played_notice`` already says so).
     """
@@ -376,8 +376,8 @@ def length_exclusion_notice(
         )
     if not matched:
         return say(
-            en="None of your clips is too short to use, so I kept them all.",
-            tr="Kliplerinden hiçbiri kullanılamayacak kadar kısa değil, hepsini tuttum.",
+            en="None of your clips is too short to use.",
+            tr="Kliplerinden hiçbiri kullanılamayacak kadar kısa değil.",
         )
     return None
 
