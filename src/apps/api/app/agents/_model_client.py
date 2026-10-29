@@ -32,6 +32,7 @@ from app.agents._provider_errors import classify_provider_error
 from app.agents._runtime import (
     ModelClient,
     ModelInvocation,
+    ProviderDeadlineExceededError,
     ProviderOutcomeUnknownError,
     TerminalError,
     TransientError,
@@ -360,7 +361,7 @@ class GeminiClient(ModelClient):
                     completed, call_id=call_id, model=model, started=started
                 )
             )
-            raise ProviderOutcomeUnknownError(
+            raise ProviderDeadlineExceededError(
                 f"gemini provider outcome unknown after {timeout_s:.1f}s"
             ) from exc
         except genai_errors.APIError as exc:

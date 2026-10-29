@@ -839,3 +839,39 @@ also checks the generated registry/API types, the 240-case structural all-format
 corpus, editor reducer, runtime state machine, HTTP envelopes, admin trace, and
 migrations. It writes duration/flakiness metadata to
 `test-results/kria-verify.json`; feature flags stay off until the live gates pass.
+
+## Provider deadlines and the Main Creator ladder (KRI-1037)
+
+A Main Creator call that ends at our own provider deadline (`ProviderDeadlineExceededError`, a
+subclass of `ProviderOutcomeUnknownError`, so the paid-call fence is unchanged) is no longer repeated:
+
+1. rung 1 keeps the spec thinking level (`high`) and gets the shared turn budget minus 75 s;
+2. a deadline steps thinking to `medium` for up to 50 s (new paid call, new reservation);
+3. a second deadline runs the fallback `gemini-3.6-flash` at `low` with what remains.
+
+The turn budget is the 200 s Celery soft limit minus the planner's 20 s reserve (180 s); the rungs
+never exceed it. "Try again" after a deadline starts at rung 2: the failed turn stores
+`error.provider_deadline=true` (only when our own deadline fired, not for a transport outcome-unknown),
+`_claim` stamps `snapshot["start_degraded"]` when the thread's last finished turn hit a deadline
+within 10 minutes AND the new message retries that request (same words after casefold and punctuation
+strip, or a bare "try again"; `_is_retry_of`). An unrelated new request inside the window runs at full
+strength. The planner reads the stamp through `start_degraded_retry`. Kill switch: `MAIN_CREATOR_DEADLINE_LADDER_ENABLED=false`
+plus restart of api and worker (read at import). Truncation now fails as `runtime_output_truncated`
+(`TerminalOutputTruncatedError`) with its own copy instead of the generic `runtime_turn_failed`.
+
+The rung sizes (105 s first rung, 50 s medium, 75 s reserve) are not measured on a lighter rung:
+the only evidence is the recorded successful `high` calls on this 27-clip set (23.9, 41.3, 52.3 s
+single attempt; 77.6 s over two attempts), all under the first rung, while the two failed turns sat
+at the deadline for 180 s with 2k output tokens (read as a stalled call rather than a slow success; not proven). Medium and
+flash latencies in the `lane_c` replay are assumed. Worst case is three paid Main Creator calls in
+one turn (each fenced under its own reservation; the planner is a pure call with no side effects).
+Check `agent_deadline_degraded` / `agent_deadline_fallback` log lines and `deadline_degraded` on
+`agent_run` events after rollout before tuning `degraded_timeout_s` / `deadline_ladder_reserve_s`.
+
+A compact per-clip evidence tier for large clip sets was tried and removed: it saved 9 to 13 percent of
+input tokens on a synthetic 27-clip prompt, input size is not the latency lever (thinking and answer
+tokens are), and no plan-quality eval covers thinner evidence. Prove the ladder with the `lane_c`
+block of `make kria-replay FIXTURE=29-ekim`.
+
+`EditCopilotAgent` has `max_output_tokens=16_384` with a 130 s timeout: a runaway call needs 124.3 s to
+reach the cap, so it must stay under the timeout (`test_edit_copilot_budget_runs_out_before_its_provider_timeout`).

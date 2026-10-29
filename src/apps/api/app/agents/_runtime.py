@@ -117,6 +117,24 @@ def _degraded_thinking_level(model: str, thinking_level: str | None) -> str | No
     return "low" if thinking_level.strip().lower() in _DEGRADABLE_THINKING_LEVELS else None
 
 
+# KRI-1037: a provider deadline steps thinking down ONE level ("high" -> "medium"); the
+# fallback model then runs at "low". Truncation (above) jumps straight to "low" because
+# only a freed output budget helps there; a deadline needs less thinking time, not none.
+_DEADLINE_RUNG_LEVEL = {"high": "medium"}
+_DEADLINE_FALLBACK_LEVEL = "low"
+# The first rung never gets less than this of a shared turn budget, whatever is reserved.
+_MIN_FIRST_RUNG_S = 60.0
+# A lighter rung is not started with less budget than this left.
+_MIN_LIGHTER_RUNG_S = 10.0
+
+
+def _deadline_degraded_level(model: str, thinking_level: str | None) -> str | None:
+    """The thinking level the next attempt uses after a provider deadline, or None."""
+    if not model.startswith("gemini-3") or not isinstance(thinking_level, str):
+        return None
+    return _DEADLINE_RUNG_LEVEL.get(thinking_level.strip().lower())
+
+
 class TerminalError(AgentError):
     """Exhausted retries and fallbacks. Caller decides graceful degradation."""
 
@@ -145,6 +163,19 @@ class ProviderQuotaExceededError(TerminalError):
 
 class ProviderOutcomeUnknownError(TerminalError):
     """Provider work may still be running; retrying could double-charge."""
+
+
+class ProviderDeadlineExceededError(ProviderOutcomeUnknownError):
+    """Our own per-call deadline fired while the provider was still working.
+
+    The same fence as its parent (the call may still bill), but the cause is known to be
+    slowness rather than a transport failure, so an agent that opts in via
+    ``AgentSpec.degrade_on_deadline`` may spend its remaining turn budget on a lighter call.
+    """
+
+
+class TerminalOutputTruncatedError(TerminalError):
+    """The provider cut the answer off, also at the lowest thinking level the agent tries."""
 
 
 class AiBudgetExceededError(TerminalError):
@@ -241,6 +272,17 @@ class AgentSpec:
     max_tool_cost_usd: float = 0.0
     # Opt-in only; never silently fall back to JSON-only when rejected.
     response_schema: dict[str, Any] | None = None
+    # KRI-1037: a provider DEADLINE (not a transport error) is answered by a lighter call
+    # inside the same turn budget instead of ending the turn: the thinking level steps down
+    # (high -> medium), then the fallback model runs at "low". Repeating the same heavy call
+    # is what turned prod thread 729b3686 into 180 s, then 389 s, of nothing. Needs a shared
+    # turn deadline (RunContext.deadline_monotonic) to size the rungs; without one nothing
+    # changes.
+    degrade_on_deadline: bool = False
+    # Provider timeout of every lighter rung.
+    degraded_timeout_s: float = 50.0
+    # Turn budget held back from the first rung so the lighter rungs can still run.
+    deadline_ladder_reserve_s: float = 75.0
 
 
 class ThoughtSummaryAttemptPublisher(Protocol):
@@ -277,6 +319,9 @@ class RunContext:
     # Interactive callers opt in to Gemini provider-marked thought summaries.
     # This is kept out of normal traces and agent-run persistence.
     thought_summary_callback: Callable[[str], None] | ThoughtSummaryAttemptPublisher | None = None
+    # KRI-1037: the previous attempt at this request ended at a provider deadline, so start
+    # on the lighter rung. Only agents with ``degrade_on_deadline`` read it.
+    start_degraded: bool = False
 
 
 @dataclass(slots=True)
@@ -307,6 +352,8 @@ class _RunStats:
     schema_retries: int = 0
     # KRI-542: a MAX_TOKENS call was retried at thinking level "low".
     thinking_degraded: bool = False
+    # KRI-1037: a provider deadline moved the run to a lighter rung (see AgentSpec).
+    deadline_degraded: bool = False
     tokens_in: int = 0
     tokens_out: int = 0
     tokens_thoughts: int = 0
@@ -603,7 +650,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                     # A complete user restatement cannot repair a provider
                     # output-budget failure. Keep it out of the recoverable
                     # schema subtype so callers retain their retry path.
-                    raise TerminalError(self._terminal_message("output truncated", exc)) from exc
+                    raise TerminalOutputTruncatedError(
+                        self._terminal_message("output truncated", exc)
+                    ) from exc
                 raise TerminalSchemaError(self._terminal_message("schema", exc)) from exc
             except TransientError as exc:
                 remaining = self._remaining_deadline(ctx)
@@ -625,6 +674,26 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 # Try the next model in the fallback chain.
                 continue
             except TerminalError as exc:
+                if (
+                    isinstance(exc, ProviderDeadlineExceededError)
+                    and self.spec.degrade_on_deadline
+                    and model_idx < len(models_to_try) - 1
+                    and self._has_lighter_rung_budget(ctx)
+                ):
+                    # KRI-1037: the heavy call ran out its deadline; the fallback model gets
+                    # the rest of the turn at the lowest thinking level.
+                    stats.deadline_degraded = True
+                    log.warning(
+                        "agent_deadline_fallback",
+                        agent=self.spec.name,
+                        model=model,
+                        next_model=models_to_try[model_idx + 1],
+                        attempt=stats.attempts,
+                        remaining_s=self._remaining_deadline(ctx),
+                        job_id=ctx.job_id,
+                    )
+                    last_exc = exc
+                    continue
                 # Belt-and-suspenders: any TerminalError that escapes
                 # _run_on_model without going through the known outcome paths
                 # (Refusal/Schema/Transient) still emits an `agent_run` event
@@ -711,6 +780,28 @@ class Agent(ABC, Generic[InputT, OutputT]):
             timeout_s = min(timeout_s, remaining)
         return timeout_s
 
+    def _has_lighter_rung_budget(self, ctx: RunContext) -> bool:
+        """A lighter rung needs a shared turn deadline with real time left in it."""
+        remaining = self._remaining_deadline(ctx)
+        return remaining is not None and remaining >= _MIN_LIGHTER_RUNG_S
+
+    def _ladder_timeout_cap(self, ctx: RunContext, stats: _RunStats) -> float | None:
+        """Per-rung provider timeout for an agent that degrades on a deadline.
+
+        The first rung leaves ``deadline_ladder_reserve_s`` of the shared turn budget for the
+        lighter rungs (its own timeout still applies); every lighter rung is capped at
+        ``degraded_timeout_s``. None = no ladder: the agent's own timeout and the shared
+        deadline are the only bounds, exactly as before.
+        """
+        if not self.spec.degrade_on_deadline:
+            return None
+        if stats.deadline_degraded:
+            return float(self.spec.degraded_timeout_s)
+        remaining = self._remaining_deadline(ctx)
+        if remaining is None:
+            return None
+        return max(remaining - float(self.spec.deadline_ladder_reserve_s), _MIN_FIRST_RUNG_S)
+
     def _run_on_model(
         self,
         model: str,
@@ -723,6 +814,15 @@ class Agent(ABC, Generic[InputT, OutputT]):
         mime = self.media_mime(input) if media else None
         # KRI-542: lowered to "low" for the rest of the loop after a MAX_TOKENS call.
         thinking_level = self.spec.thinking_level
+        if self.spec.degrade_on_deadline:
+            if stats.deadline_degraded and model != self.spec.model:
+                # The fallback model after a deadline: lowest thinking, the rest of the turn.
+                if model.startswith("gemini-3") and thinking_level is not None:
+                    thinking_level = _DEADLINE_FALLBACK_LEVEL
+            elif ctx.start_degraded:
+                # KRI-1037: the creator's previous try ended at a provider deadline.
+                thinking_level = _deadline_degraded_level(model, thinking_level) or thinking_level
+                stats.deadline_degraded = True
 
         last_transient: BaseException | None = None
 
@@ -796,6 +896,9 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 mark_paid_call_started(reservation)
             try:
                 provider_timeout_s = self._provider_timeout(ctx)
+                ladder_cap = self._ladder_timeout_cap(ctx, stats)
+                if ladder_cap is not None:
+                    provider_timeout_s = min(provider_timeout_s, ladder_cap)
                 if provider_timeout_s < _MIN_PROVIDER_BUDGET_S:
                     raise TerminalError(
                         f"{self.spec.name}: insufficient shared turn deadline budget "
@@ -823,11 +926,37 @@ class Agent(ABC, Generic[InputT, OutputT]):
                         begin_attempt() if callable(begin_attempt) else ctx.thought_summary_callback
                     )
                 inv = self.client.invoke(**invoke_kwargs)
-            except ProviderOutcomeUnknownError:
+            except ProviderOutcomeUnknownError as exc:
                 from app.services.ai_cost_control import mark_paid_call_unknown  # noqa: PLC0415
 
                 mark_paid_call_unknown(reservation)
-                raise
+                lighter = (
+                    _deadline_degraded_level(model, thinking_level)
+                    if isinstance(exc, ProviderDeadlineExceededError)
+                    and self.spec.degrade_on_deadline
+                    and attempt < self.spec.max_attempts - 1
+                    and self._has_lighter_rung_budget(ctx)
+                    else None
+                )
+                if lighter is None:
+                    raise
+                # KRI-1037: a heavy call that ran out its deadline is not repeated. The
+                # unknown outcome stays fenced (and counted) under its own reservation; the
+                # next attempt is a new, lighter paid call inside the same turn budget.
+                stats.deadline_degraded = True
+                log.warning(
+                    "agent_deadline_degraded",
+                    agent=self.spec.name,
+                    model=model,
+                    attempt=attempt + 1,
+                    of=self.spec.max_attempts,
+                    from_level=thinking_level,
+                    to_level=lighter,
+                    remaining_s=self._remaining_deadline(ctx),
+                    job_id=ctx.job_id,
+                )
+                thinking_level = lighter
+                continue
             except TransientError as exc:
                 from app.services.ai_cost_control import release_paid_call  # noqa: PLC0415
 
@@ -1208,6 +1337,8 @@ class Agent(ABC, Generic[InputT, OutputT]):
             payload["json_repairs_applied"] = stats.json_repairs_applied
         if stats.thinking_degraded:
             payload["thinking_degraded"] = True
+        if stats.deadline_degraded:
+            payload["deadline_degraded"] = True
         # On refusal / schema failures the agent's `output_dict` is None;
         # surface the captured raw-text preview so plain-text logs are
         # diagnosable without round-tripping through Langfuse.
