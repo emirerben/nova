@@ -89,17 +89,25 @@ struct ChatWorkspaceView: View {
         setDrawerOpen(false)
     }
 
-    private var workspace: some View {
+    /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
+    /// onto the outer one, where they outlive the switch to a chat.
+    @ViewBuilder private var workspace: some View {
+        if model.showsCameraRoll, let cameraRoll {
+            WorkspaceCrossfade(dismiss: {}) { _ in
+                CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
+                    await model.loadProjects()
+                    return model.selectProject(thread.summary)
+                })
+            }
+        } else {
+            chatWorkspace
+        }
+    }
+
+    private var chatWorkspace: some View {
         NavigationStack {
             Group {
-                if model.showsCameraRoll, let cameraRoll {
-                    WorkspaceCrossfade(dismiss: {}) { _ in
-                        CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
-                            await model.loadProjects()
-                            return model.selectProject(thread.summary)
-                        })
-                    }
-                } else if let project = model.selectedProject {
+                if let project = model.selectedProject {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },

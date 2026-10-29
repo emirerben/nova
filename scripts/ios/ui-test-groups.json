@@ -172,6 +172,7 @@
       "KriaUITests/CameraRollCollectionUITests/testOpenQuestionsSayWhyUseWaitsAndAnsweringEnablesIt",
       "KriaUITests/CameraRollCollectionUITests/testUseShowsEachStepThenOpensTheChat",
       "KriaUITests/CameraRollCollectionUITests/testUseKeepsGoingAfterTheSheetCloses",
+      "KriaUITests/CameraRollCollectionUITests/testUseFromTheDrawerOpensTheIdeasChat",
       "KriaUITests/CameraRollCollectionUITests/testAFailedStepOffersRetry",
       "KriaUITests/CameraRollCollectionUITests/testUseSaysWhenTheChatCannotOpen",
       "KriaUITests/CameraRollCollectionUITests/testEveryItemStateIsVisible",

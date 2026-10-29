@@ -94,6 +94,28 @@ final class CameraRollCollectionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["camera-roll-collection-open"].isHittable)
     }
 
+    func testUseFromTheDrawerOpensTheIdeasChat() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-camera-roll-surface-fixture", "-collection-mixed-states"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "1"
+        app.launch()
+        XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
+        app.buttons["Open projects"].tap()
+        let row = app.buttons["camera-roll-collection-open"]
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.tap()
+        openEvent(app, sunday)
+        let use = element(app, "camera-roll-idea-use-\(ferryIdea)")
+        scrollTo(use, in: app)
+        use.tap()
+        XCTAssertTrue(element(app, "camera-roll-event-page-\(sunday)").waitForNonExistence(timeout: 20),
+                      "The event page the idea was used from goes with the camera roll")
+        XCTAssertTrue(app.buttons["chat-send-message"].waitForExistence(timeout: 10), "The idea's chat is on screen")
+        XCTAssertTrue(app.staticTexts["Ferry light, Sunday morning"].exists, "It is the idea's own chat")
+        XCTAssertFalse(element(app, "camera-roll-use-sheet").exists, "The progress sheet closes with the camera roll")
+        attach("Use opened the idea's chat", app.screenshot())
+    }
+
     func testHomeListsEventCardsThatOpenTheirPages() {
         let app = launch(["-collection-mixed-states"])
         let saturdayCard = card(app, saturday)
