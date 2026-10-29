@@ -73,6 +73,7 @@ from app.kria.freeze_ask import (
 )
 from app.kria.speed_ask import SpeedSpec, live_speeds
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
+from app.pipeline.font_coverage import drop_color_emoji
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
@@ -3243,10 +3244,13 @@ def _cut_record(cut: FastMontageCut) -> dict[str, Any]:
 def skia_font_covers(family: str, text: str) -> bool:
     """True when the bundled ``family`` has a glyph for every character of ``text``.
 
-    The phone lays text out from exact glyph ids, so a character the font lacks
-    (Fraunces has no "→") fails the whole recipe. Unknown environments (no
-    skia) answer True: the compile step stays the source of truth.
+    The phone draws only the recipe's own face or its system color emoji, so a
+    character the font lacks (Fraunces has no "→") fails the whole recipe. Color
+    emoji (a flag, a ZWJ sequence) are never the bundled face's and never count
+    against it (KRI-1024). Unknown environments (no skia) answer True: the
+    compile step stays the source of truth.
     """
+    text = drop_color_emoji(text)
     try:
         import skia  # noqa: PLC0415
 
@@ -3264,7 +3268,10 @@ _FALLBACK_FONTS = ("DM Sans",)
 
 
 def _strip_uncovered(text: str, family: str, covers: Callable[[str, str], bool]) -> str:
-    kept = "".join(ch for ch in text if ch.isspace() or covers(family, ch))
+    import regex  # noqa: PLC0415 - Unicode graphemes
+
+    # Whole graphemes: a flag or ZWJ sequence is kept or dropped as one.
+    kept = "".join(g for g in regex.findall(r"\X", text) if g.isspace() or covers(family, g))
     return " ".join(kept.split())
 
 
@@ -3284,13 +3291,15 @@ def _fit_typography(
     """
     if covers is None:
         return requested, title, closing, labels
-    import regex  # noqa: PLC0415 - Unicode grapheme/emoji properties
-
     texts = [
         text
         for text in (title, closing, *(label.text for label in labels.values()), *extra_texts)
         if text
     ]
+    # Color emoji are supplied by the system emoji face, not the bundled one, on
+    # both branches (KRI-1024: a flag in the creator's title failed the policy
+    # branch). Face selection still chooses DM Sans for an arrow beside an emoji.
+    font_texts = [drop_color_emoji(text) for text in texts]
     from app.schemas.phone_text_style import CURATED_PHONE_FONTS  # noqa: PLC0415
     from app.services.phone_text_styling import current_phone_text_policy  # noqa: PLC0415
 
@@ -3300,24 +3309,22 @@ def _fit_typography(
         # must not strip a label because a separately requested title font lacks
         # its glyphs. Use a drawable provisional face for the compiler dry run.
         chosen = next(
-            (font for font in CURATED_PHONE_FONTS if all(covers(font, text) for text in texts)),
+            (
+                font
+                for font in CURATED_PHONE_FONTS
+                if all(covers(font, text) for text in font_texts)
+            ),
             None,
         )
         if chosen is None:
-            from app.pipeline.phone_text_style import _style_decline
+            from app.pipeline.phone_text_style import no_font_decline
 
-            raise _style_decline("The eligible fonts cannot draw all text. Choose another font.")
+            raise no_font_decline(
+                texts,
+                covers,
+                fallback="The eligible fonts cannot draw all text. Choose another font.",
+            )
         return chosen, title, closing, labels
-    # Color emoji are supplied by iOS, not the bundled face. Let the face
-    # selection still choose DM Sans for an ordinary arrow beside an emoji.
-    font_texts = [
-        "".join(
-            grapheme
-            for grapheme in regex.findall(r"\X", text)
-            if not regex.search(r"\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\u20E3", grapheme)
-        )
-        for text in texts
-    ]
     # KRI-785: a requested face missing LETTERS of the text (Turkish ğ ş İ ı in
     # Satisfy) tries its glyph-safe partner next, the face the cloud renderer
     # and the iOS compiler swap to, before the unrelated default.
