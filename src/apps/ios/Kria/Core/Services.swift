@@ -180,6 +180,9 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItem
     /// One page of chats, newest first. `nextCursor` is nil on the last page.
     func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
+    func nativeActivities(before: String?) async throws -> NativeActivityPage
+    func nativeActivity(id: UUID) async throws -> NativeActivity
+    func readNativeActivity(id: UUID) async throws -> NativeActivity
     func creationCapabilities() async throws -> CreationCapabilities
     /// KRI-640: the last capabilities read for this session if it is at most `maxAge` seconds old, else nil. Never touches the network.
     func recentCreationCapabilities(maxAge: TimeInterval) async -> CreationCapabilities?

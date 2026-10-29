@@ -2094,6 +2094,28 @@
         "src/apps/api/tests/services/test_order_mode.py",
         "src/apps/api/tests/fixtures/kria_replay/29-ekim/fixture.json"
       ]
+    },
+    {
+      "id": "native-activity-inbox",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_native_activity_postgres.py tests/routes/test_device_render.py tests/tasks/test_device_render_reaper.py tests/routes/test_background_export_verification.py",
+      "xctests": [
+        "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
+        "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
+        "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
+      ],
+      "paths": [
+        "src/apps/api/app/routes/native_activity.py",
+        "src/apps/api/app/services/native_activity.py",
+        "src/apps/api/app/migrations/versions/0127_native_activities.py",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/tasks/device_render_reaper.py",
+        "src/apps/api/app/tasks/export_verification.py",
+        "src/apps/api/tests/routes/test_native_activity_postgres.py",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Tests/KriaUITests/ActivityUITests.swift"
+      ]
     }
   ]
 }

@@ -57,6 +57,7 @@ from app.routes import (
     memory,
     music,
     music_jobs,
+    native_activity,
     personas,
     plan_items,
     presigned,
@@ -439,6 +440,7 @@ app.include_router(media_assets.router)
 app.include_router(media_collections.router)
 app.include_router(editorial_taste.router)
 app.include_router(device_render.router, prefix="/me", tags=["phone-rendering"])
+app.include_router(native_activity.router, prefix="/me", tags=["native-activity"])
 app.include_router(memory.router, prefix="/me", tags=["memory"])
 app.include_router(memory.direction_router, tags=["direction-overrides"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])

@@ -96,6 +96,7 @@ from app.services.guided_speech_cleanup import (
     require_guided_cleanup_binding,
 )
 from app.services.job_storage_paths import project_media_reference_lock_key
+from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
@@ -274,6 +275,7 @@ async def _refuse_publication(
         )
     except (KeyError, ValueError):
         pass  # already terminal (published / needs_attention): the decline is enough
+    await record_native_activity(db, job, refusal.variant_id)
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job.id)
 
@@ -375,6 +377,7 @@ async def _expire_repair_permission(
             "review it in chat to continue."
         ),
     )
+    await record_native_activity(db, job, status.request.identity.variant_id)
     await db.commit()
     return True
 
@@ -1349,6 +1352,7 @@ async def report_device_failure(
         apply_device_failure_variant_update(
             job, body.identity.variant_id, reason_code=body.reason_code, detail=body.detail
         )
+    await record_native_activity(db, job, body.identity.variant_id)
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job_id)
     return DeviceRenderFailureOut(
@@ -1937,6 +1941,7 @@ async def _complete_device_export(
     from app.services.finished_style_learning import record_finished_style_edit
 
     await record_finished_style_edit(db, user_id, job, body.identity.variant_id, status)
+    await record_native_activity(db, job, body.identity.variant_id, kind="video_ready")
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job_id)
     return DeviceExportCompleteOut(identity=body.identity)
