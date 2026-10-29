@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.17.0] - 2026-10-29
+
+### Changed
+- fix(phone-text): flag emoji in a creator's title no longer fails the phone render; undrawable text named before approval (KRI-1024) (#1919) <!-- release-pr: 1919 -->
+
 ## [0.82.16.0] - 2026-10-29
 
 ### Changed
