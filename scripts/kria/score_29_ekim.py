@@ -28,6 +28,13 @@ Checks (all must hold; a lane closes only on its own checks):
    per-turn numbers stay in the report (``turns``), including the ones lane C cannot shorten.
    A successful high-thinking creation call (T1: 52 s) is not shortened by a retry ladder, so
    a 60 s bar on the creation turn is not a lane C gate.
+6. Live shape, approval gate (prod thread 64bb9853, the same first message in a new thread after
+   every lane shipped): the live Main Creator, clip-intent planner and resolver answers to that
+   exact message (``29-ekim/live_new_thread_t1.json``; prod's brief, proven by its digest) go
+   through the real parsers, clip-intent planning, the planner's order fields, approval
+   readiness and the choice gate. The turn must be a draft, not a question: random order is an
+   executable seeded shuffle, the text sequence is planned for the render, nothing is
+   needs_choice or evidence_missing, and the same holds when the planner omits ``order_by``.
 
 Verdicts: VERIFIED, NOT VERIFIED, INCONCLUSIVE (the check could not run).
 """
@@ -1381,6 +1388,294 @@ def lane_c_fault_injection() -> dict:
     }
 
 
+# ----------------------------------------------------------------------------- check 6
+
+LIVE_FIXTURE = FIXTURE.parent / "live_new_thread_t1.json"
+_BLOCKING = frozenset({"needs_choice", "evidence_missing", "unsupported"})
+
+
+def load_live_fixture() -> dict[str, Any]:
+    return json.loads(LIVE_FIXTURE.read_text(encoding="utf-8"))
+
+
+def _cassette(raw_text: str):  # noqa: ANN202
+    """A model client that answers with one recorded live response (any agent, any prompt)."""
+    from app.agents._runtime import ModelClient, ModelInvocation
+
+    class _Recorded(ModelClient):
+        calls = 0
+
+        def invoke(self, **_kwargs: Any) -> ModelInvocation:
+            type(self).calls += 1
+            return ModelInvocation(raw_text=raw_text)
+
+    return _Recorded()
+
+
+def _live_manifest(lf: dict):  # noqa: ANN202
+    from app.agents._schemas.creator_agent import (
+        CapabilityAvailability,
+        CreatorCatalogRef,
+        CreatorMediaRef,
+        ResolvedCreatorManifest,
+    )
+
+    on = CapabilityAvailability(available=True)
+    return ResolvedCreatorManifest(
+        item_id="29-ekim-live-item",
+        edit_format="montage",
+        render_program="guided",
+        media=[
+            CreatorMediaRef(media_id=c["id"], kind=c["kind"], duration_s=c["duration_s"])
+            for c in lf["clips"]
+        ],
+        catalog=[CreatorCatalogRef(catalog_id="music-track-1", kind="music", label="Licensed")],
+        capabilities={
+            "dispatch_render": on,
+            "draft_guided_proposal": on,
+            "edit_format:montage": on,
+        },
+        context_hash="c" * 64,
+        manifest_hash="d" * 64,
+    )
+
+
+def _live_media(lf: dict) -> dict:
+    rows = [
+        {
+            "media_id": c["id"],
+            "gcs_path": f"users/redacted/threads/redacted/analysis-proxy-ios-{c['id']}.mp4",
+            "kind": c["kind"],
+            "duration_s": c["duration_s"],
+            "generation": "1",
+            "has_analysis": True,
+        }
+        for c in lf["clips"]
+    ]
+    return {"clip_paths": [r["gcs_path"] for r in rows], "clip_assignments": rows}
+
+
+def replay_live_t1(lf: dict, *, planner_raw: str | None = None) -> dict[str, Any]:
+    """The new-thread T1 through the real parsers, clip-intent planning, the planner's order
+    fields, the approval-readiness gate and the choice gate. Only the three model calls are
+    replaced, each by the response the live model gave to this exact message.
+
+    ``planner_raw`` swaps in a variant of the clip-intent planner's answer (the same live
+    answer with one field changed), to prove the server holds when the model does not emit
+    that field exactly."""
+    from app.agents._runtime import RunContext
+    from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
+    from app.config import settings
+    from app.kria import planner
+    from app.kria.approval_readiness import assess_readiness, digest
+    from app.kria.brief import CreativeBrief, apply_updates, render_brief_request
+    from app.services import clip_intent_planning, clip_intent_resolution
+    from app.services.clip_intent_planning import (
+        plan_and_resolve_clip_intents,
+        sequence_text_literals,
+        whole_video_text_asks,
+    )
+    from app.services.clip_intent_resolution import IntentClip
+    from app.services.clip_order_sequence import unconfirmed_order_groups
+    from app.tasks.kria_runtime import _unresolved_choice_plan
+
+    msg = lf["message"]
+    turn_id = lf["source"]["turn_id"]
+    live = lf["live"]
+    brief = CreativeBrief.model_validate(lf["prod_brief"])
+    manifest = _live_manifest(lf)
+    ctx = RunContext(
+        request_id="29ekim-live-replay",
+        extra={"skip_langfuse_trace": True, "skip_agent_run_persist": True},
+    )
+    mc = MainCreatorAgent(_cassette(live["main_creator"]["raw_text"])).run(
+        MainCreatorInput(
+            user_message=msg,
+            media_context=[
+                {"media_id": c["id"], "kind": c["kind"], "duration_s": c["duration_s"]}
+                for c in lf["clips"]
+            ],
+            conversation=[{"role": "user", "content": msg}],
+            capability_manifest=manifest,
+            brief_enabled=True,
+            reply_language="tr",
+        ),
+        ctx=ctx,
+    )
+    live_brief = apply_updates(None, mc.brief_updates, source_turn_id=turn_id)
+
+    def shape(b: CreativeBrief) -> list:
+        return [(r.kind, r.scope, r.literal, r.facts) for r in b.live()]
+
+    clips = [
+        IntentClip(
+            media_id=c["id"],
+            kind=c["kind"],
+            analysis={"subject": c["subject"], "duration_s": c["duration_s"]},
+        )
+        for c in lf["clips"]
+    ]
+    clients = {
+        clip_intent_planning: _cassette(planner_raw or live["clip_intent_planner"]["raw_text"]),
+        clip_intent_resolution: _cassette(live["clip_request_resolver"]["raw_text"]),
+    }
+    with contextlib.ExitStack() as stack:
+        for module, client in clients.items():
+            stack.enter_context(patch.object(module, "default_client", lambda c=client: c))
+        stack.enter_context(patch.object(settings, "kria_compose_unmet_with_ops_enabled", True))
+        stack.enter_context(patch.object(settings, "clip_intent_exclude_enabled", True))
+        planned = asyncio.run(
+            plan_and_resolve_clip_intents(
+                creator_request=msg,
+                latest_user_message=msg,
+                generated_brief=render_brief_request(brief, latest_message=msg),
+                candidate_intents=mc.action.strategy.clip_intents,
+                clips=clips,
+                run_context=ctx,
+                whole_video_texts=whole_video_text_asks(brief),
+                sequence_texts=sequence_text_literals(brief),
+            )
+        )
+        resolved, ordering_choice = planner.brief_order_fields(
+            planned.resolution.intents, brief, None
+        )
+        plan = planner.adapt_creator_action(
+            mc.action,
+            server_clip_intents=planned.requested_intents,
+            server_resolved_clip_intents=resolved,
+            ordering_choice=ordering_choice,
+        )
+        strategy = plan.intents[0].arguments["strategy"]
+        media = _live_media(lf)
+        creator_id = uuid.uuid4()
+        report = assess_readiness(
+            brief,
+            strategy,
+            media=media,
+            manifest=manifest,
+            creator_request=msg,
+            creator_id=creator_id,
+        )
+        blocked = _unresolved_choice_plan(
+            strategy,
+            brief,
+            media,
+            contract_brief=brief,
+            has_draft=False,
+            creator_id=creator_id,
+            allow_choices=True,
+        )
+    literal = next((r.literal for r in brief.live() if r.kind == "text_sequence"), None)
+    return {
+        "brief_digest_ok": digest(brief.model_dump(mode="json")) == lf["prod_brief_digest"],
+        "live_brief_matches_prod": shape(live_brief) == shape(brief),
+        "requested_intents": [
+            {k: v for k, v in i.model_dump(mode="json").items() if k != "source_quote"}
+            for i in planned.requested_intents
+        ],
+        "unconfirmed_order_groups": sorted(
+            name for _p, name, _m in unconfirmed_order_groups(strategy.get("resolved_clip_intents"))
+        ),
+        "duplicate_sequence_captions": [
+            i.intent_id
+            for i in planned.requested_intents
+            if i.op == "caption" and literal and _nfc(i.creator_text or "") == _nfc(literal)
+        ],
+        "ordering_choice": strategy.get("ordering_choice"),
+        "random_seed": next((r.facts.get("seed") for r in brief.live() if r.kind == "order"), None),
+        "ready": report["ready"],
+        "policy_problem": report["policy_problem"],
+        "rows": [
+            {k: r[k] for k in ("requirement_id", "disposition", "evidence_owner", "reason")}
+            for r in report["requirements"]
+        ],
+        "choice_gate": None if blocked is None else blocked[1],
+    }
+
+
+# The live planner wrote `order_by: "random"`; a run that writes null (or omits it) must land
+# the same way, through the brief's random-order key rather than that field.
+_ORDER_BY_VARIANTS = {"order_by_null": ('"order_by": "random"', '"order_by": null')}
+
+
+def _gate_passes(out: dict) -> bool:
+    return bool(
+        out["ready"]
+        and out["choice_gate"] is None
+        and not out["unconfirmed_order_groups"]
+        and not [r for r in out["rows"] if r["disposition"] in _BLOCKING]
+    )
+
+
+def check_live_approval_gate() -> dict:
+    lf = load_live_fixture()
+    out = replay_live_t1(lf)
+    variants = {}
+    for name, (old, new) in _ORDER_BY_VARIANTS.items():
+        raw = lf["live"]["clip_intent_planner"]["raw_text"]
+        assert old in raw, f"variant {name} no longer applies to the recorded answer"
+        variant = replay_live_t1(lf, planner_raw=raw.replace(old, new))
+        variants[name] = {
+            "passes": _gate_passes(variant),
+            "rows": [(r["requirement_id"], r["disposition"]) for r in variant["rows"]],
+            "unconfirmed_order_groups": variant["unconfirmed_order_groups"],
+        }
+    rows = {r["requirement_id"]: r for r in out["rows"]}
+    kinds = {r["id"]: r["kind"] for r in lf["prod_brief"]["requirements"]}
+    order_row = next(r for rid, r in rows.items() if kinds.get(rid) == "order")
+    seq_row = next(r for rid, r in rows.items() if kinds.get(rid) == "text_sequence")
+    blocking = [r for r in out["rows"] if r["disposition"] in _BLOCKING]
+    passed = bool(
+        out["brief_digest_ok"]
+        and out["ready"]
+        and not blocking
+        and out["choice_gate"] is None
+        and order_row["disposition"] == "executable"
+        and out["ordering_choice"] == "random"
+        and isinstance(out["random_seed"], int)
+        and seq_row["disposition"] in {"executable", "unverified"}
+        and not out["unconfirmed_order_groups"]
+        and not out["duplicate_sequence_captions"]
+        and all(v["passes"] for v in variants.values())
+    )
+    why = []
+    for name, variant in variants.items():
+        if not variant["passes"]:
+            why.append(f"variant {name} of the live planner answer still blocks: {variant['rows']}")
+    if not out["brief_digest_ok"]:
+        why.append("the fixture brief no longer matches prod's approval_readiness.brief_digest")
+    for row in blocking:
+        why.append(
+            f"{row['requirement_id']} ({kinds.get(row['requirement_id'])}) is "
+            f"{row['disposition']}: {row['reason']!r}, so the turn becomes a question"
+        )
+    if out["unconfirmed_order_groups"]:
+        why.append(
+            "the clip-intent planner's random order became a positionless order group "
+            f"{out['unconfirmed_order_groups']} whose inner order 'wasn't recorded' "
+            "(clip_order_sequence.unconfirmed_order_groups -> _check_order needs_choice)"
+        )
+    if out["duplicate_sequence_captions"]:
+        why.append(
+            "the text-sequence words also became a clip caption intent "
+            f"{out['duplicate_sequence_captions']}: a static copy of the sentence on every clip"
+        )
+    if out["choice_gate"] is not None:
+        why.append(f"the choice gate still blocks: {out['choice_gate']}")
+    return _result(
+        6,
+        "live-shape T1 passes the approval gate (no question)",
+        passed,
+        why,
+        {
+            **out,
+            "planner_variants": variants,
+            "prod_outcome": lf["prod_outcome"],
+            "ledger": lf["source"]["ledger"],
+        },
+    )
+
+
 # ----------------------------------------------------------------------------- report
 
 
@@ -1448,7 +1743,8 @@ def run_offline() -> dict:
 
         c5a = _guarded("5a", "follow-up latency", lambda: check_followup_latency(fx, _rows()))
         c5b = _guarded("5b", "turn budget", lambda: check_turn_budget(rows, lane_c))
-    checks = [c1, c2, c3, c4, c5a, c5b]
+        c6 = _guarded(6, "live-shape approval gate", check_live_approval_gate)
+    checks = [c1, c2, c3, c4, c5a, c5b, c6]
     return {
         "lane_c": lane_c,
         "fixture": fx["fixture_id"],
