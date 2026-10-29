@@ -2094,6 +2094,22 @@
         "src/apps/api/tests/services/test_order_mode.py",
         "src/apps/api/tests/fixtures/kria_replay/29-ekim/fixture.json"
       ]
+    },
+    {
+      "id": "kri-29ekim-live-approval-gate",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_29ekim_live_approval_gate.py tests/evals/test_clip_intent_planner_evals.py tests/services/test_order_mode.py",
+      "paths": [
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/services/order_mode.py",
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/tests/fixtures/kria_replay/29-ekim/live_new_thread_t1.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/golden/kri29ekim_random_order_text_sequence.json",
+        "src/apps/api/tests/kria/test_29ekim_live_approval_gate.py",
+        "scripts/kria/score_29_ekim.py"
+      ]
     }
   ]
 }

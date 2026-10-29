@@ -819,6 +819,46 @@ not refused, asked about or re-planned.
 Default `false` (off until enabled). Flag off restores the earlier routing, cues, fast-path set and op shape
 (`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.
 
+## The approval gate on a new 29 Ekim thread (prod 64bb9853)
+
+With every lane above live, the same first message in a new thread was still a question
+("Bunu henüz yapamıyorum ... Daha basit sürümde çıkarılacak"). The brief was right (prod stores it
+redacted; it was rebuilt and proven exact against `approval_readiness.brief_digest`): r1
+`select {all}`, r2 `order {key: random, seed}`, r3 `text_sequence {unit: word, mode: agent_choice}`.
+The approval-readiness gate refused it for reasons the offline scorecard never reached, because it
+replayed hand-made strategies, not the live clip-intent planner or this gate:
+
+- r2 `needs_choice`: the live clip-intent planner wrote `{"op": "order", "attribute": "all
+  content", "order_by": "random"}`. `order_by` only knows `capture_time | route`, so it was nulled
+  into a positionless order group over all 28 clips with `ordered_members` unset, and
+  `_check_order` reports such a group's inner order as "wasn't recorded" before it looks at the
+  random key. Now an `order` whose `order_by` is a random / any order is dropped by the parser
+  (`order_mode_dropped`; the brief owns that ask), and under a brief random / any-order ask a
+  positionless group with no stated inner order is `ordered_members: false`
+  (`order_mode.confirm_unordered_groups`, in `planner.brief_order_fields`), so a model that writes
+  null instead lands the same way.
+- r2 next in line, `evidence_missing`: a strategy draft carried `ordering_choice: "random"` but the
+  gate read the order from `strategy.ordering_basis` only. A draft the phone unified montage writer
+  renders now commits to `ordering_basis: "random"` (`approval_readiness._planned_order_basis`);
+  that writer draws the stored-seed permutation and its own receipt checks it after render.
+- r3 `evidence_missing`: a `text_sequence` is composed by `compose_creation_text`, which runs after
+  approval in the render job, and is judged on the finished text lane. A strategy draft has no
+  text lane, so the gate asked before the step that does it had run. It is now `unverified` on a
+  strategy draft (approvable, named for after the render); an editor draft still proves it from
+  its ops.
+- Latent: the same planner answer also minted a `caption` on "each word" carrying the whole
+  sentence, which the resolver put on all 28 clips (a static copy under the word-by-word sequence).
+  A caption whose exact words are a live `text_sequence` literal is dropped
+  (`without_whole_video_captions`, `sequence_texts`). The clip-intent planner prompt now says both
+  asks are no clip operation.
+
+Proof: scorecard check 6 (`make kria-replay FIXTURE=29-ekim`, also
+`tests/kria/test_29ekim_live_approval_gate.py`) replays the live Main Creator, clip-intent planner
+and resolver answers to that exact message (`29-ekim/live_new_thread_t1.json`) through the real
+parsers, clip-intent planning, the planner's order fields, `assess_readiness` and the choice gate,
+plus a variant of the planner answer without `order_by`. On main it reproduces prod's dispositions
+exactly (r1 unverified, r2 needs_choice, r3 evidence_missing).
+
 ## Local proof
 
 From a prepared worktree:

@@ -162,6 +162,7 @@ from app.services.clip_intent_planning import (
     brief_label_asks,
     kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
+    sequence_text_literals,
     shot_captions_safe,
     whole_video_text_asks,
 )
@@ -959,6 +960,29 @@ async def _with_approved_copy(
                 for req_id in unbound.get(turn_id, ())
             }
     return bind_approved_copy(prior, updates, states, answered_ids=answered)
+
+
+def brief_order_fields(
+    resolved_intents: list[ResolvedClipIntent],
+    brief: CreativeBrief | None,
+    ordering_choice: str | None,
+) -> tuple[list[ResolvedClipIntent], str | None]:
+    """The server-owned order fields a strategy draft carries for the brief's order ask.
+
+    29 Ekim: a random-order ask rides the strategy as its own choice; the seed itself stays
+    on the requirement so every re-run draws the same permutation. A creator's answer to an
+    order question (``ordering_choice``) is never replaced. Under that ask a described group
+    with no stated inner order takes it as its inner order (`confirm_unordered_groups`), so
+    the draft never asks the creator to order a group they asked to have shuffled.
+    """
+    from app.services.order_mode import confirm_unordered_groups  # noqa: PLC0415
+
+    if ordering_choice is None and brief is not None:
+        from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
+
+        if brief_view(brief).random_order_seed is not None:
+            ordering_choice = "random"
+    return confirm_unordered_groups(resolved_intents, brief), ordering_choice
 
 
 def adapt_creator_action(
@@ -3564,6 +3588,7 @@ async def _plan_creator_action(
         )
         kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
         whole_video_texts = whole_video_text_asks(effective_brief)
+        sequence_texts = sequence_text_literals(effective_brief)
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
         )
@@ -3605,6 +3630,8 @@ async def _plan_creator_action(
                 **({} if shot_captions else {"shot_captions": False}),
                 # KRI-945: a caption for the brief's researched text or title is never asked.
                 **({"whole_video_texts": whole_video_texts} if whole_video_texts else {}),
+                # 29 Ekim: the brief's word-by-word text is the text lane's, never a caption.
+                **({"sequence_texts": sequence_texts} if sequence_texts else {}),
                 **({"checked_inventory": checked_inventory} if checked_inventory else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
@@ -3908,18 +3935,14 @@ async def _plan_creator_action(
                         manifest_hash=manifest.manifest_hash,
                         context_hash=manifest.context_hash,
                     )
-        if ordering_choice is None and effective_brief is not None:
-            # 29 Ekim: a random-order ask rides the strategy as its own choice; the seed
-            # itself stays on the requirement so every re-run draws the same permutation.
-            from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
-
-            if brief_view(effective_brief).random_order_seed is not None:
-                ordering_choice = "random"
+        resolved_intents, ordering_choice = brief_order_fields(
+            planned.resolution.intents, effective_brief, ordering_choice
+        )
         return PlannedKriaTurn(
             plan=adapt_creator_action(
                 action,
                 server_clip_intents=planned.requested_intents,
-                server_resolved_clip_intents=planned.resolution.intents,
+                server_resolved_clip_intents=resolved_intents,
                 server_resolved_song_takes=server_song_takes,
                 server_song_captions=server_song_captions,
                 ordering_choice=ordering_choice,
