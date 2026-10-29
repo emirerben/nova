@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.7.0] - 2026-10-29
+
+### Fixed
+- fix(ios): keep the chat in view after "Clean up speech and create" (KRI-1008) (#1903) <!-- release-pr: 1903 -->
+
 ## [0.82.6.0] - 2026-10-29
 
 ### Changed
