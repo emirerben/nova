@@ -114,3 +114,110 @@ Unedited `xcresulttool get test-results summary` JSON.
 }
 
 ```
+
+## Capacity warning label correction
+
+CI ran 2,104 unit tests with one failure and 26 explicit skips. The failing existing test still expected the previous name, “Talking supports 1 clip.” The displayed warning correctly used the creator-requested “Talk to camera” name. The same mismatch reproduced locally. Only the literal expected wording changed; the test still accepts one clip and refuses two clips at a one-clip limit. All 45 ChatWorkspace tests then passed without skips. No app code changed for this correction.
+
+Before correction, unedited `xcresulttool get test-results summary` JSON.
+
+```json
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "BD43D2A9-660A-46B5-9EE0-54E576B8B7EC",
+        "deviceName" : "Kria featured preview verification",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 1,
+      "passedTests" : 0,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Kria · Built with macOS 26.4.1",
+  "expectedFailures" : 0,
+  "failedTests" : 1,
+  "finishTime" : 1793258178.053,
+  "passedTests" : 0,
+  "result" : "Failed",
+  "skippedTests" : 0,
+  "startTime" : 1793258160.744,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+    {
+      "failureText" : "XCTAssertEqual failed: (\"Optional(\"Talk to camera supports 1 clip. Keep your current format or remove extra footage first.\")\") is not equal to (\"Optional(\"Talking supports 1 clip. Keep your current format or remove extra footage first.\")\")",
+      "targetName" : "KriaTests",
+      "testIdentifier" : 1,
+      "testIdentifierString" : "ChatWorkspaceTests/testFormatChangeRefusesAnOverCapacityTalkingCut()",
+      "testIdentifierURL" : "test://com.apple.xcode/Kria/KriaTests/ChatWorkspaceTests/testFormatChangeRefusesAnOverCapacityTalkingCut",
+      "testName" : "testFormatChangeRefusesAnOverCapacityTalkingCut()"
+    }
+  ],
+  "title" : "Test - Kria",
+  "topInsights" : [
+
+  ],
+  "totalTestCount" : 1
+}
+
+```
+
+After correction, unedited `xcresulttool get test-results summary` JSON.
+
+```json
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "BD43D2A9-660A-46B5-9EE0-54E576B8B7EC",
+        "deviceName" : "Kria featured preview verification",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23F77",
+        "osVersion" : "26.5",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 45,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Kria · Built with macOS 26.4.1",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1793258246.586,
+  "passedTests" : 45,
+  "result" : "Passed",
+  "skippedTests" : 0,
+  "startTime" : 1793258233.909,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - Kria",
+  "topInsights" : [
+
+  ],
+  "totalTestCount" : 45
+}
+
+```

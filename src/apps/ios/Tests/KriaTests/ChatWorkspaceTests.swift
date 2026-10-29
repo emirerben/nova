@@ -439,7 +439,7 @@ final class ChatWorkspaceTests: XCTestCase {
                 clipLimit: 1,
                 occupiedClipCount: 2
             ),
-            "Talking supports 1 clip. Keep your current format or remove extra footage first."
+            "Talk to camera supports 1 clip. Keep your current format or remove extra footage first."
         )
     }
 
