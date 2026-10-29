@@ -3297,8 +3297,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         max_attempts=2,
         backoff_s=(2.0,),
         # Durable Kria turns supply a shared deadline and post-processing
-        # reserve. Stateless HTTP callers override this back to 40 seconds.
-        timeout_s=120.0,
+        # reserve. Stateless HTTP callers override this back to 40 seconds. 130 s, not
+        # 120: a runaway call must hit `max_output_tokens` (5.2 s + 7.27 ms per token,
+        # 124.3 s at 16,384) before this deadline, so it ends as a retryable truncation
+        # and never as an outcome-unknown fence (same rule as the Main Creator).
+        timeout_s=130.0,
         thinking_level=settings.edit_copilot_thinking_level,
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.012,
@@ -3306,6 +3309,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
     Input = EditCopilotInput
     Output = EditCopilotOutput
     response_json = True
+    # Gemini 3 counts thinking against this budget. Unset, the 8,192 default is shared
+    # by thinking and the answer: a heavy edit at thinking "high" truncates, is retried
+    # once at "low", then fails generically (KRI-1037). Same size as the Main Creator.
+    max_output_tokens = 16_384
 
     def required_fields(self) -> list[str]:
         return ["intent", "reply"]

@@ -81,6 +81,7 @@ from app.kria.planner import (
     extract_deferred_brief,
     localized_editor_state_reply,
     plan_live_turn,
+    start_degraded_retry,
     turn_deadline,
 )
 from app.kria.registry import KRIA_TOOLS
@@ -2948,6 +2949,9 @@ async def _plan_with_live_agent(
     # Bounded waits inside planning (clip understanding) must leave the turn time to
     # finish before Celery's soft limit turns it into "I couldn't finish that step".
     deadline = turn_deadline.set(time.monotonic() + float(run_kria_turn.soft_time_limit or 90))
+    # KRI-1037: "Try again" after a provider deadline starts the Main Creator on its lighter
+    # rung (the claim stamped the snapshot from the thread's last finished turn).
+    degraded_token = start_degraded_retry.set(bool(snapshot.get("start_degraded")))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             parsed_state = parse_editor_state(editor_state)
@@ -3082,6 +3086,7 @@ async def _plan_with_live_agent(
                 return planned
     finally:
         turn_deadline.reset(deadline)
+        start_degraded_retry.reset(degraded_token)
         stop.set()
         try:
             await heartbeat
@@ -3207,6 +3212,38 @@ def _stored_editor_state(turn: Any) -> dict[str, Any] | None:
     return state if isinstance(state, dict) else None
 
 
+# How long a provider-deadline failure keeps the creator's next turn on the lighter rung. A
+# later turn that completes, or fails differently, ends it sooner.
+_DEGRADED_START_WINDOW = timedelta(minutes=30)
+
+
+def _previous_turn_hit_provider_deadline(db, turn: CreatorAgentTurn) -> bool:  # noqa: ANN001
+    """Whether the newest finished turn before ``turn`` failed at a provider deadline."""
+    try:
+        previous = db.execute(
+            select(CreatorAgentTurn)
+            .where(
+                CreatorAgentTurn.thread_id == turn.thread_id,
+                CreatorAgentTurn.id != turn.id,
+                CreatorAgentTurn.status.in_(("completed", "failed")),
+            )
+            .order_by(CreatorAgentTurn.completed_at.desc().nulls_last(), CreatorAgentTurn.id)
+            .limit(1)
+        ).scalar_one_or_none()
+        if (
+            previous is None
+            or previous.status != "failed"
+            or not isinstance(previous.error, dict)
+            or previous.error.get("code") != "runtime_provider_outcome_unknown"
+        ):
+            return False
+        finished = previous.completed_at
+        return finished is None or datetime.now(UTC) - finished <= _DEGRADED_START_WINDOW
+    except Exception:  # noqa: BLE001 - a lookup miss only costs the lighter start
+        log.warning("kria_degraded_start_lookup_failed", exc_info=True)
+        return False
+
+
 def _claim(
     turn_id: uuid.UUID, lease_owner: str
 ) -> tuple[dict[str, Any], str, int, int, dict[str, Any] | None] | _ClaimsExhausted | None:
@@ -3268,6 +3305,9 @@ def _claim(
         if sent_from is not None:
             # KRI-898: the app build that sent the message; only when stamped.
             claimed_snapshot["client_protocol"] = sent_from
+        if _previous_turn_hit_provider_deadline(db, turn):
+            # KRI-1037: only when true, so every other snapshot is unchanged.
+            claimed_snapshot["start_degraded"] = True
         return (
             claimed_snapshot,
             # KRI-694: the task binds the chat's language only after this claim.
@@ -3448,11 +3488,22 @@ def _promote_queued_successor_sync(thread_id: uuid.UUID) -> str | None:
 
 _NOT_RETRYABLE_NOW_TURN_CODES = frozenset({"ai_quota_exhausted"})
 _TURN_FAILURE_COPY: dict[str, tuple[str, str]] = {
+    # KRI-1037: not "try again in a moment" (the same heavy call repeats): say what happened
+    # and what makes the next send lighter.
     "runtime_provider_outcome_unknown": (
-        "I couldn't get a completed response from the AI service. Your request and "
-        "footage are saved. Please try again in a moment.",
-        "Yapay zekâ hizmetinden tamamlanmış bir yanıt alamadım. İsteğin ve çekimlerin "
-        "kayıtlı. Lütfen biraz sonra tekrar dene.",
+        "The AI service ran out of time on that one. Your request, footage and saved draft "
+        "are safe. Send it again, or ask for one change at a time so each step is lighter.",
+        "Yapay zekâ hizmeti bunu zamanında bitiremedi. İsteğin, çekimlerin ve kayıtlı "
+        "taslağın güvende. Yeniden gönder ya da her adım hafiflesin diye her seferinde tek "
+        "bir değişiklik iste.",
+    ),
+    "runtime_output_truncated": (
+        "My answer was cut off before it was complete. Your request, footage and saved "
+        "draft are safe. Ask for a smaller step, such as one change at a time, and I'll "
+        "take it from there.",
+        "Yanıtım tamamlanmadan kesildi. İsteğin, çekimlerin ve kayıtlı taslağın güvende. "
+        "Daha küçük bir adım iste, örneğin her seferinde tek bir değişiklik; oradan "
+        "devam ederim.",
     ),
     # A1: the provider's spend cap or the AI budget. Not "try again": it won't work yet.
     "ai_quota_exhausted": (
@@ -3490,20 +3541,26 @@ def _turn_failure_code(exc: BaseException) -> str:
     from app.agents._runtime import (  # noqa: PLC0415
         AiBudgetExceededError,
         ProviderQuotaExceededError,
+        TerminalOutputTruncatedError,
     )
 
     seen: list[BaseException] = []
     current: BaseException | None = exc
+    code = "runtime_turn_failed"
     while current is not None and all(current is not link for link in seen):
         if isinstance(current, ProviderQuotaExceededError | AiBudgetExceededError):
             return "ai_quota_exhausted"
+        # KRI-1037: found anywhere on the chain (the planner wraps a TerminalError), but a
+        # spend cap further down still wins, so keep walking.
+        if isinstance(current, ProviderOutcomeUnknownError):
+            code = "runtime_provider_outcome_unknown"
+        elif isinstance(current, TerminalOutputTruncatedError) and code == "runtime_turn_failed":
+            code = "runtime_output_truncated"
         seen.append(current)
         current = current.__cause__ or (
             None if current.__suppress_context__ else current.__context__
         )
-    if isinstance(exc, ProviderOutcomeUnknownError):
-        return "runtime_provider_outcome_unknown"
-    return "runtime_turn_failed"
+    return code
 
 
 def _project_retryable_failure(
