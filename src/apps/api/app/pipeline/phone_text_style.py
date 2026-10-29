@@ -27,14 +27,60 @@ def phone_text_measurement_scope():
         _MEASUREMENTS.reset(token)
 
 
-def _style_decline(message: str):
+def _style_decline(message: str, *, alternative: str = "Choose another font or placement"):
     from app.services.creator_render_contract import CreatorRenderContractError
 
     return CreatorRenderContractError(
         message,
         decline_reason="needs_choice",
         field_path="phone_text_style",
-        alternative="Choose another font or placement",
+        alternative=alternative,
+    )
+
+
+def undrawable_text(texts, fonts=CURATED_PHONE_FONTS, covers=None) -> tuple[str, str] | None:
+    """(text, characters) for the first text holding characters none of ``fonts`` draws.
+
+    Color emoji are the system emoji face's, never a bundled one's (KRI-1024), so they
+    are never named. ``covers`` defaults to the shared Skia coverage check.
+    """
+    import regex
+
+    from app.pipeline.font_coverage import drop_color_emoji
+
+    covers = covers or _covers
+    for text in texts:
+        missing = dict.fromkeys(
+            grapheme
+            for grapheme in regex.findall(r"\X", drop_color_emoji(text))
+            if not grapheme.isspace() and not any(covers(font, grapheme) for font in fonts)
+        )
+        if missing:
+            return text, "".join(missing)
+    return None
+
+
+def undrawable_message(text: str, characters: str) -> str:
+    from app.kria.reply_language import say
+
+    return say(
+        en=f'No phone font can draw "{characters}" in "{text}". Remove it or change the wording.',
+        tr=f'"{text}" içindeki "{characters}" hiçbir telefon yazı tipiyle yazılamıyor. '
+        "Onu çıkar ya da metni değiştir.",
+    )
+
+
+def no_font_decline(texts, covers=None, *, fallback: str):
+    """The refusal when the eligible fonts cannot draw every text (KRI-1024).
+
+    Names the text and the characters when no curated phone font draws them at all
+    (choosing another font cannot help); otherwise the caller's own ``fallback``.
+    """
+    found = undrawable_text(texts, CURATED_PHONE_FONTS, covers)
+    if found is None:
+        return _style_decline(fallback)
+    return _style_decline(
+        undrawable_message(*found), alternative="Remove that character or change the wording"
     )
 
 
@@ -573,8 +619,9 @@ def resolve_phone_text_style(
             None,
         )
         if family is None:
-            raise _style_decline(
-                "The eligible fonts cannot draw all of this text. Choose another font."
+            raise no_font_decline(
+                texts,
+                fallback="The eligible fonts cannot draw all of this text. Choose another font.",
             )
         for row in role_rows:
             row["source_params"] = {
@@ -612,8 +659,9 @@ def resolve_phone_text_style(
             ):
                 drawable = drawable_family(row["font_family"], [coverage_text(row)])
                 if drawable is None:
-                    raise _style_decline(
-                        "This font cannot draw all of your text. Choose another font."
+                    raise no_font_decline(
+                        [coverage_text(row)],
+                        fallback="This font cannot draw all of your text. Choose another font.",
                     )
                 row["font_family"] = drawable
     # The watermark is measured in the reference frame; keep its padding too.
