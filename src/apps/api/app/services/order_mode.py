@@ -40,12 +40,29 @@ _ANY_CUES = re.compile(
 )
 
 
+def _canonical_key(value: object) -> str:
+    if isinstance(value, str) and value.strip():
+        return "_".join(value.casefold().replace("-", " ").split())
+    return ""
+
+
 def _key(facts: Mapping[str, Any]) -> str:
     for name in ("key", "by", "order", "mode"):
-        value = facts.get(name)
-        if isinstance(value, str) and value.strip():
-            return "_".join(value.casefold().replace("-", " ").split())
+        key = _canonical_key(facts.get(name))
+        if key:
+            return key
     return ""
+
+
+def key_order_mode(value: object) -> OrderMode | None:
+    """``"random"`` / ``"any"`` for a model's structured order key (``"random"``, ``"any_order"``,
+    ``"shuffle"``...), else None. Exact enum membership: a value, never the creator's words."""
+    key = _canonical_key(value)
+    if key in RANDOM_ORDER_KEYS:
+        return "random"
+    if key in ANY_ORDER_KEYS:
+        return "any"
+    return None
 
 
 # Words that make a cue sentence something other than a plain "random"/"any order" ask: a
@@ -167,3 +184,46 @@ class _Probe:
         self, kind: str | None, description: str | None, literal: str | None, facts: dict[str, Any]
     ) -> None:
         self.kind, self.description, self.literal, self.facts = kind, description, literal, facts
+
+
+def brief_order_mode(brief: Any) -> OrderMode | None:
+    """The brief's live random / any-order ask, if it has one (read from ``facts.key``)."""
+    live = getattr(brief, "live", None)
+    for req in live() if callable(live) else ():
+        mode = order_mode(req)
+        if mode is not None:
+            return mode
+    return None
+
+
+def confirm_unordered_groups(resolved_intents: Sequence[Any], brief: Any) -> list[Any]:
+    """Under a random / any-order ask, a described group's inner order is that ask.
+
+    29 Ekim (prod thread 64bb9853): "show all content in random order" also reached the
+    clip-intent planner as a positionless ``order`` intent over every clip. With
+    ``ordered_members`` unset it read as a saved group whose inner order "wasn't recorded", and
+    the creator was asked to choose an order they had already given. A positionless order
+    group that never said how its members are ordered (``ordered_members`` None, no
+    ``order_by``) is marked ``ordered_members=False`` ("no internal sequence was requested")
+    when the brief's live order requirement is ``random`` / ``any_order``: the seeded shuffle
+    (or any order) IS its inner order. Where the group sits is unchanged, and a group the
+    creator ordered (``ordered_members`` true/false, first/last) is never touched. Reads the
+    brief's structured key and the intents' fields only, never the creator's words.
+    """
+    intents = list(resolved_intents)
+    if brief_order_mode(brief) is None:
+        return intents
+    out = []
+    for intent in intents:
+        members = {getattr(a, "media_id", None) for a in getattr(intent, "assignments", None) or ()}
+        if (
+            getattr(intent, "op", None) == "order"
+            and getattr(intent, "position", None) is None
+            and getattr(intent, "order_by", None) is None
+            and getattr(intent, "ordered_members", None) is None
+            and str(getattr(intent, "status", None) or "resolved") == "resolved"
+            and len(members - {None}) > 1
+        ):
+            intent = intent.model_copy(update={"ordered_members": False})
+        out.append(intent)
+    return out

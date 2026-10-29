@@ -18,6 +18,9 @@ its main part. The last paint covering an instant decides it.
 - "first" / "last" is the first / last picture clip of the edit, never the attachment order.
 - A named clip is every cut of it. Seconds count from the video's start, or from where the
   named clip starts in the edit.
+- A clip kept for a line the creator named (KRI-1028, ``SoundTarget.kept_span`` from the
+  approved length plan's ``kept_lines``) plays whole; its row is partial (``LINE_PARTLY_IN_EDIT``
+  / ``LINE_NOT_IN_EDIT``) unless its cuts hold that sentence's seconds.
 - A spoken line is grounded in that clip's timed speech (`phone_clip_sound.ground_trigger_line`,
   the KRI-842 grounding, injected as ``ground``) and mapped through every cut that holds it,
   padded by ``LINE_PAD_S`` on each side inside the cut so no word is clipped. A line that isn't
@@ -366,6 +369,21 @@ def _place(
         if held < grounded.end_s - grounded.start_s - EDGE_TOLERANCE_S:
             placed.partial = LINE_PARTLY_IN_EDIT
         windows = pieces
+    elif target.kept_span is not None and target.media_ref is not None:
+        start, end = target.kept_span
+        held = _length(
+            _merge(
+                (max(start, clip.source_start), min(end, clip.source_end))
+                for clip in candidates
+                if clip.clip_id in windows
+            )
+        )
+        placed.line, placed.line_media = target.kept_line, candidates[0].media_id
+        placed.line_window = (start, end)
+        if held <= _EPS:
+            placed.partial = LINE_NOT_IN_EDIT
+        elif held < end - start - EDGE_TOLERANCE_S:
+            placed.partial = LINE_PARTLY_IN_EDIT
     placed.intervals = {clip_id: spans for clip_id, spans in windows.items() if spans}
     if not placed.intervals:
         placed.reason = WINDOW_PAST_END

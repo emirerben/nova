@@ -83,6 +83,7 @@ def _sources(
     spoken_moments: Mapping[str, tuple[float, float]] | None = None,
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     still_holds: Mapping[str, float] | None = None,
+    kept_windows: Mapping[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     selected = set(selected_ids)
     still_holds = still_holds or {}
@@ -155,6 +156,10 @@ def _sources(
             ]
             quiet_ceiling_s = round(end - start, 3)
             spoken_floor_s = round(min(quiet_ceiling_s, QUIET_MOMENT_FLOOR_S), 3)
+        if kind == "video" and kept_windows and row["media_id"] in kept_windows:
+            # KRI-1028: a clip kept audible for a line the creator named keeps its whole
+            # sentence when lengths are shared, past the 4 s cap: the silent clips give way.
+            spoken_floor_s = round(kept_windows[row["media_id"]], 3)
         sources.append(
             {
                 "media_id": row["media_id"],
@@ -183,6 +188,25 @@ def _sources(
             }
         )
     return sources
+
+
+def _fit_kept_floors(
+    sources: Sequence[dict[str, Any]], kept_windows: Mapping[str, float], budget: float | None
+) -> None:
+    """Shrink a kept sentence's floor to what the creator's length leaves it (KRI-1028).
+
+    Every other clip keeps its own floor; a kept window the length cannot hold beside them is
+    trimmed by the selector, and the plan's ``held`` flag and the receipt say so.
+    """
+    if not kept_windows or budget is None:
+        return
+    for source in sources:
+        if source["media_id"] not in kept_windows:
+            continue
+        others = sum(s["minimum_duration_s"] for s in sources if s is not source)
+        room = round(budget - others, 3)
+        if source["minimum_duration_s"] > room:
+            source["minimum_duration_s"] = max(0.1, room)
 
 
 def _editorial_reading_floors(
@@ -257,6 +281,7 @@ def build_length_plan(
     quiet_moments: Mapping[str, tuple[float, float]] | None = None,
     spoken_order: Mapping[str, Any] | None = None,
     named_lines: Sequence[Mapping[str, Any]] | None = None,
+    kept_lines: Sequence[Mapping[str, Any]] | None = None,
     still_holds: Mapping[str, float] | None = None,
     pinned_moments: Sequence[Mapping[str, Any]] | None = None,
     skipped_moments: Sequence[Mapping[str, Any]] | None = None,
@@ -302,13 +327,31 @@ def build_length_plan(
     KRI-760: ``named_lines`` (``spoken_quotes.named_line_records``) rides on the plan as
     ``named_lines``, where each line the creator wants heard whole is said, so the receipt
     can check the finished cut holds it.
+
+    KRI-1028: ``kept_lines`` (``kept_sound_lines.kept_line_records``) are clips that keep their
+    sound for a line the creator named; the caller seats each one's window through
+    ``spoken_moments``. Here that whole window is the clip's floor, so the clips around it share
+    what is left, and a floor the creator's length can't hold shrinks to what fits (the receipt
+    then says the sentence isn't whole). Each record rides on the plan as ``kept_lines`` with
+    ``held`` true when its clip's window holds the sentence.
     """
 
     natural_owner = natural_length_owner(strategy)
     cap_s = edit_cap_s(natural_owner)
     owner = length_owner(strategy, creator_duration_proven=creator_target_s is not None)
+    kept_windows = {
+        str(row["media_id"]): float(row["window_end_s"]) - float(row["window_start_s"])
+        for row in kept_lines or ()
+        if spoken_moments and row.get("media_id") in spoken_moments
+    }
     sources = _sources(
-        media_snapshot, selected_ids, strategy, spoken_moments, quiet_moments, still_holds
+        media_snapshot,
+        selected_ids,
+        strategy,
+        spoken_moments,
+        quiet_moments,
+        still_holds,
+        kept_windows,
     )
     by_id = {source["media_id"]: source for source in sources}
     if len(by_id) != len(sources):
@@ -335,6 +378,11 @@ def build_length_plan(
         else section_duration
         if natural_owner == "song"
         else None
+    )
+    _fit_kept_floors(
+        ordered_sources,
+        kept_windows,
+        creator_target_s if creator_target_s is not None else natural_duration_s,
     )
     pre_conflicts: list[BestPartsConflict] = (
         _editorial_reading_floors(
@@ -684,6 +732,15 @@ def build_length_plan(
         plan["spoken_order"] = dict(spoken_order)
     if named_lines:
         plan["named_lines"] = [dict(row) for row in named_lines]
+    if kept_lines:
+        from app.services.kept_sound_lines import kept_line_held  # noqa: PLC0415
+
+        # A clip left out of the edit has no sentence to hold; its toggle says "not in edit".
+        plan["kept_lines"] = [
+            {**row, "held": kept_line_held(row, windows)}
+            for row in kept_lines
+            if row and row.get("media_id") in by_id
+        ]
     if licensed_music is not None:
         plan["licensed_music"] = dict(licensed_music)
     elif isinstance(strategy.get("selected_music_section"), Mapping):

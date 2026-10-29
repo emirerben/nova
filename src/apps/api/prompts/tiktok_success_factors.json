@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-22-research-18",
+  "version": "2026-10-25-research-19",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -210,6 +210,17 @@
       "provenance": "corpus",
       "evidence": "One jacket-choice caption had19,100views /3,567 account-sample median =5.3546, with13.5916% engagement in the20-post18October snapshot. This is the same post as the11October observation, not a fresh independent success or a matched-length comparison.",
       "source": "https://www.tiktok.com/@allexmarielle/video/7684196677896506642 (snapshot 2026-10-18T19:01:42.480515+00:00; observed caption and counts; causal effect unmeasured)"
+    },
+    {
+      "id": "two-word-verdict-corpus-13",
+      "factor": "Consider a concise two-word editorial caption when it fits the creator request and footage.",
+      "why": "One observed caption uses two words. Views and engagement support a reference example, not a causal claim about confidence, completion, or repeat viewing.",
+      "applies_to": [
+        "hook"
+      ],
+      "provenance": "corpus",
+      "evidence": "The 25 October 20-post snapshot records 184700 views against a 39000-view median, a view index of 4.7359 and engagement rate of 0.098051. No matched comparison or retention data was collected.",
+      "source": "https://www.tiktok.com/@nermozdemir/video/7674217682970905874 (snapshot 2026-10-25T20:01:19.977705+00:00; observed caption and counts; visual treatment and causal effect unmeasured)"
     }
   ]
 }

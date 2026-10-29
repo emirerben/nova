@@ -31,12 +31,13 @@ from app.kria.recipes import MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.cloud_render_evidence import normalize_text
 
-VERIFIER_VERSION = "phone-simple-cut-v4"
+VERIFIER_VERSION = "phone-simple-cut-v5"
 # Oldest first; append every future bump so a pin accepts itself or any later verifier.
 VERIFIER_ORDER = (
     "phone-simple-cut-v1",
     "phone-simple-cut-v2",
     "phone-simple-cut-v3",
+    "phone-simple-cut-v4",
     VERIFIER_VERSION,
 )
 HISTORICAL_VERIFIER_VERSIONS = frozenset(VERIFIER_ORDER)
@@ -47,6 +48,16 @@ POLICY_FIELD = "actual_export_policy"
 # `verify_actual_export` (guard: tests/pipeline/test_photo_story_gate.py).
 VERIFIES_STILL_PICTURES = False
 SAMPLE_RATE = 8000
+# Picture proof per sample, against the source frame displayed then (or the next one).
+PICTURE_EXACT_MAX_ERROR = 2 / 255
+PICTURE_MAX_ERROR = 0.1
+PICTURE_MIN_SSIM = 0.95
+# Frame profile (v5, KRI-1042), for a soft analysis proxy: see the picture loop.
+# Calibration and shift/wrong-picture controls: docs/reviews/kri-1042-picture-profile.md.
+PICTURE_PROFILE_MIN_SSIM = 0.85
+PICTURE_PROFILE_MIN_MEAN_SSIM = 0.93
+PICTURE_PROFILE_MIN_LEAD = 0.02
+PICTURE_REPEAT_MAX_ERROR = 1.5 / 255
 # Text proof (v4, KRI-1042), applied by `_text_verdict`. The stray allowance admits a
 # letter-like background speck in a read, never an authored extra word.
 TEXT_MIN_WORD_CONF = 40
@@ -478,6 +489,15 @@ def _picture_scores(reference, actual: np.ndarray, mask: np.ndarray) -> tuple[fl
     expected = np.asarray(reference, dtype=float)
     error = float(np.abs(expected - actual)[mask].mean() / 255)
     return error, _picture_similarity(expected, actual, mask)
+
+
+def _exact_picture(error: float, score: float) -> bool:
+    # SSIM's relative luminance term is unstable near black: an ordinary H.264
+    # round trip can move a 10-code pixel by 1-2 codes. Permit that small
+    # absolute codec error; larger changes must also preserve structure.
+    return error <= PICTURE_EXACT_MAX_ERROR or (
+        error <= PICTURE_MAX_ERROR and score >= PICTURE_MIN_SSIM
+    )
 
 
 def _watermark_bounds(width: float, height: float) -> tuple[float, float, float, float]:
@@ -954,8 +974,7 @@ def verify_actual_export(
                         _displayed(clock, shown - clip.timeline_start + clip.source_start)
                         for shown in actual_pts
                     ]
-                    # Evidence only: the source frame before the displayed one. It
-                    # never decides a sample (KRI-1042 measures it for a later rule).
+                    # The source frame before the displayed one, for the frame profile.
                     previous_times = [
                         next((t for t in reversed(clock) if t < bracket[0] - 1e-6), None)
                         if bracket
@@ -981,9 +1000,7 @@ def verify_actual_export(
                     )
                     references = [[decoded[t] for t in bracket] for bracket in brackets]
                     previous = [None if t is None else decoded[t] for t in previous_times]
-                neighbour_samples = 0
-                passes = []
-                matched = []
+                profiles = []
                 sample_evidence = []
                 for options, prior, candidate in zip(
                     references, previous, actual_frames, strict=True
@@ -993,36 +1010,85 @@ def verify_actual_export(
                     if not options:
                         raise ValueError("missing_displayed_source_frame")
                     actual = np.asarray(candidate, dtype=float)
-                    scored = []
-                    for reference in options:
-                        error, score = _picture_scores(reference, actual, mask)
-                        # SSIM's relative luminance term is unstable near black:
-                        # an ordinary H.264 round trip can move a 10-code pixel
-                        # by 1-2 codes. Permit that small absolute codec error;
-                        # larger changes must also preserve structure.
-                        scored.append(
-                            (error <= 2 / 255 or (error <= 0.1 and score >= 0.95), error, score)
-                        )
-                    seen = list(zip(("displayed", "next"), (row[1:] for row in scored)))
+                    shown = np.asarray(options[0], dtype=float)
+                    scored = [_picture_scores(reference, actual, mask) for reference in options]
+                    seen = dict(zip(("displayed", "next"), scored))
                     if prior is not None:
-                        seen.append(("previous", _picture_scores(prior, actual, mask)))
+                        seen["previous"] = _picture_scores(prior, actual, mask)
+                    # A 30 fps proxy of a 25 fps original shows some pictures twice.
+                    # A neighbour that repeats the displayed picture says nothing
+                    # about timing, so the frame profile skips it.
+                    repeats = sorted(
+                        frame
+                        for frame, picture in (
+                            ("previous", prior),
+                            ("next", options[1] if len(options) > 1 else None),
+                        )
+                        if picture is not None
+                        and np.abs(np.asarray(picture, dtype=float) - shown)[mask].mean() / 255
+                        <= PICTURE_REPEAT_MAX_ERROR
+                    )
+                    profiles.append((scored, seen, repeats))
                     sample_evidence.append(
                         {
-                            name: value
-                            for frame, (error, score) in seen
-                            for name, value in (
-                                (f"ssim_{frame}", round(score, 4)),
-                                (f"error_{frame}", round(error, 3)),
-                            )
+                            **{
+                                name: value
+                                for frame, (error, score) in seen.items()
+                                for name, value in (
+                                    (f"ssim_{frame}", round(score, 4)),
+                                    (f"error_{frame}", round(error, 3)),
+                                )
+                            },
+                            **({"repeats": repeats} if repeats else {}),
                         }
                     )
+                # Frame profile (v5, KRI-1042): below the exact bar, a soft proxy
+                # still proves the cut when, across the window, the displayed source
+                # picture clearly beats the previous and the next one. A frame shift
+                # moves that peak to a neighbour; still footage has no peak to read.
+                leads = {
+                    frame: float(
+                        np.mean(
+                            [
+                                seen["displayed"][1] - seen[frame][1]
+                                if frame in seen and frame not in repeats
+                                else 0.0
+                                for _, seen, repeats in profiles
+                            ]
+                        )
+                    )
+                    for frame in ("previous", "next")
+                }
+                mean_similarity = float(np.mean([seen["displayed"][1] for _, seen, _ in profiles]))
+                profiled = (
+                    mean_similarity >= PICTURE_PROFILE_MIN_MEAN_SSIM
+                    and min(leads.values()) >= PICTURE_PROFILE_MIN_LEAD
+                )
+                neighbour_samples = 0
+                profile_samples = 0
+                passes = []
+                matched = []
+                for options, (scored, seen, repeats) in zip(references, profiles, strict=True):
+                    error, score = scored[0]
+                    peak = (
+                        profiled
+                        and error <= PICTURE_MAX_ERROR
+                        and score >= PICTURE_PROFILE_MIN_SSIM
+                        and all(
+                            score >= seen[frame][1]
+                            for frame in ("previous", "next")
+                            if frame in seen and frame not in repeats
+                        )
+                    )
+                    exact = [_exact_picture(*row) for row in scored]
                     # The displayed frame first; a failing sample reports it.
-                    chosen = next((i for i, row in enumerate(scored) if row[0]), 0)
+                    chosen = 0 if exact[0] or peak else next((1 for ok in exact[1:] if ok), 0)
                     neighbour_samples += chosen > 0
-                    passes.append(scored[chosen][0])
+                    profile_samples += peak and not exact[0]
+                    passes.append(exact[chosen] or (chosen == 0 and peak))
                     matched.append(options[chosen])
-                    differences.append(scored[chosen][1])
-                    similarities.append(scored[chosen][2])
+                    differences.append(scored[chosen][0])
+                    similarities.append(scored[chosen][1])
                 worst = max(differences)
                 similarity = min(similarities)
                 # Neighbours absorb proxy resampling. Only when both the start
@@ -1058,6 +1124,7 @@ def verify_actual_export(
                         "samples": count,
                         "picture_clock": picture_clock,
                         "neighbour_samples": neighbour_samples,
+                        "profile_samples": profile_samples,
                         **(
                             {"reason": "whole_window_neighbour_shift"}
                             if whole_window_shifted
@@ -1065,6 +1132,9 @@ def verify_actual_export(
                         ),
                         "max_mean_pixel_error": round(worst, 6),
                         "min_local_ssim": round(similarity, 6),
+                        "mean_local_ssim": round(mean_similarity, 6),
+                        "lead_previous": round(leads["previous"], 6),
+                        "lead_next": round(leads["next"], 6),
                         "sample_evidence": sample_evidence,
                     }
                 )

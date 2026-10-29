@@ -1,0 +1,107 @@
+{
+  "integrated_main": "91838ad6226bf8fa9d8ea7a985b85d8eac8dc14b",
+  "native_primary": {
+    "bundle": "/tmp/unattended1892-result.xcresult",
+    "passed": 248,
+    "failed": 0,
+    "skipped": 0
+  },
+  "separate_gesture_runs": [
+    {
+      "bundle": "/tmp/unattended1892-pinch.xcresult",
+      "app": "candidate",
+      "passed": 0,
+      "failed": 1,
+      "failure": "guide sample count90 did not increase after corner resize at line828"
+    },
+    {
+      "bundle": "/tmp/unattended1892-main-control.xcresult",
+      "app": "main implementation; candidate test unchanged",
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "bundle": "/tmp/unattended1892-confirmation.xcresult",
+      "app": "candidate restored; assertions unchanged",
+      "passed": 1,
+      "failed": 0
+    }
+  ],
+  "causal_conclusion": "Unknown. Intermittent failure retained; passing confirmation does not erase it.",
+  "tooling": {
+    "ios_tests": 117,
+    "ios_subtests": 268,
+    "ci_policy_tests": 47,
+    "ci_policy_subtests": 180
+  },
+  "limitations": [
+    "Fresh exact-head original-runtime CI required.",
+    "Specific production deployment consent and code-owner review remain unfulfilled.",
+    "Main advanced only release/package metadata after the tested source; no native inputs changed."
+  ],
+  "corner_target_followup": {
+    "original_miss_cause": "Not established. Original failure preserved.",
+    "driver_defect": "AX outer corner includes a22point decorative resize handle; old target was near the outer edge rather than its center.",
+    "scope": "Unrotated text fixture only. No general rotated-object coordinate helper.",
+    "canvas_origin": [
+      136.33333333333331,
+      67
+    ],
+    "pre_gesture_renderer_bounds": [
+      24.121856689453125,
+      81.6561279296875,
+      33.7166748046875,
+      6.58245849609375
+    ],
+    "old_target": [
+      205,
+      167
+    ],
+    "renderer_corner": [
+      194.17186482747394,
+      155.23858642578125
+    ],
+    "new_target": [
+      194,
+      156
+    ],
+    "old_target_distance_points": 15.98684961392685,
+    "new_target_distance_points": 0.7805691192503191,
+    "unchanged_target_prefix_runs": {
+      "passed": 13,
+      "failed": 0,
+      "claim": "Diagnostic prefixes only, not full journey proof. No original rare failure reproduced."
+    },
+    "new_target_prefix_runs": {
+      "passed": 3,
+      "failed": 0,
+      "claim": "Pre-admission probe confirmed transform=true and fresh samples."
+    },
+    "full_uninstrumented_runs": {
+      "result": "Passed",
+      "totalTestCount": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "full_bundle": "/tmp/unattended1892-full-handle-fix.xcresult",
+    "test_source_sha256": "9127141237f91a8bae0380182c19722c8a20beb2906dac560b96858e7a5b93f8",
+    "app_source_sha256": "f3bdb2f23064dfe93e4f94bea4eea148ff8bbef1fbd0b5ba9c8c52e8b7d0ae79",
+    "assertions": "Fresh live-text delta>4, guide growth and all later unsafe/safe pinch, animation and cancellation checks retained. No timeout change or retry.",
+    "excluded": [
+      "Zero-test discovery result",
+      "Interrupted broad diagnostic after unrelated animation-idle wait"
+    ],
+    "independent_review": "Read-only review confirmed test-only change and stronger oracle. No app-source changes.",
+    "full_uninstrumented_iteration_passes": 3,
+    "counts_scope": "Xcresult summary groups the three passing iterations as one test case. The execution log records three passes and zero failures."
+  },
+  "original_integration_source_revision": "649550f6927d261a58ee1ebf564fff1537e01bac",
+  "original_integration_sources": {
+    "src/apps/ios/Kria/Features/NativeEditorView.swift": "3274a90e6aeac8d1cd8c32f6cd306caa74a4b2f992b435993b7f0e7c79940941",
+    "src/apps/ios/Tests/KriaUITests/NativeSpeedUITests.swift": "e8003529fe8b182405791f96806fb0d45076ff6b514bf78bd5351b3656583612",
+    "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift": "d746cb88d19085a9e4a7ae2a68c6dca87414058461ea3e89a189d7dd7f605c42",
+    "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "96a1642b29c2b61b69db6cb57b6b90355b6acad4076fe97791cb4cc3bc7b71dd"
+  },
+  "provenance_scopes": "original_integration_sources binds the original248-test source revision. corner_target_followup.test_source_sha256 binds the corrected full journey run; app source is unchanged."
+}
