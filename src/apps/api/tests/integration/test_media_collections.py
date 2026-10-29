@@ -2621,6 +2621,57 @@ async def test_deleting_an_event_keeps_other_events_and_bumps_the_revision(
     assert {story["collection_revision"] for story in final} == {3}
 
 
+async def test_adding_footage_to_an_event_keeps_its_ideas_usable(collection_world, monkeypatch):
+    """Failure catalogue: adding a clip to an event orphaning every idea it already had, so
+    the phone still shows them and "Use this idea" answers 409 "Story belongs to an older
+    collection"; an idea whose own footage left its event surviving the write."""
+    from app.config import settings
+    from app.kria.runtime import RuntimeFailure
+
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    client, _, _, owner, _ = collection_world
+    path, put_body, _, _ = await _two_events(client, owner)
+    _stub_ideas(monkeypatch, lambda input: [("Idea", "A point", "Opening", [0])])
+    ferry_idea = (
+        await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Ferry"})
+    ).json()["stories"][0]
+
+    added_asset, added_source = await _add_video(owner)
+    grown = [
+        *put_body["members"],
+        {"asset_id": added_asset, "source_id": added_source, "group": "Ferry"},
+    ]
+    written = await client.put(path, json={**put_body, "expected_revision": 1, "members": grown})
+    assert written.status_code == 200 and written.json()["revision"] == 2, written.text
+    kept = await _saved(client, path, revision=2, group="Ferry")
+    assert [story["id"] for story in kept] == [ferry_idea["id"]]
+    assert kept[0]["collection_revision"] == 2
+    selection_body = {
+        "expected_revision": 2,
+        "expected_story_revision": 1,
+        "client_event_id": f"choose-{ferry_idea['id']}-1",
+        "thread_id": str(uuid.uuid4()),
+        "expected_thread_revision": 0,
+    }
+    with pytest.raises(RuntimeFailure, match="thread_not_found"):
+        # Past every story and collection check: only the made-up chat is refused.
+        await client.post(f"{path}/stories/{ferry_idea['id']}/select", json=selection_body)
+
+    used = {moment["source_id"] for moment in ferry_idea["moments"]}
+    without_its_footage = [member for member in grown if member["source_id"] not in used]
+    shrunk = await client.put(
+        path, json={**put_body, "expected_revision": 2, "members": without_its_footage}
+    )
+    assert shrunk.status_code == 200 and shrunk.json()["revision"] == 3, shrunk.text
+    assert await _saved(client, path, revision=3, group="Ferry") == []
+    stale = await client.post(
+        f"{path}/stories/{ferry_idea['id']}/select",
+        json={**selection_body, "expected_revision": 3},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "Story belongs to an older collection"
+
+
 async def test_event_delete_with_a_stale_revision_is_a_409_and_changes_nothing(collection_world):
     client, _, _, owner, _ = collection_world
     path, _, _, _ = await _two_events(client, owner)
