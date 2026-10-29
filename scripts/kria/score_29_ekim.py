@@ -970,6 +970,199 @@ def check_latency(fx: dict, followup_replays: dict[str, dict]) -> dict:
     )
 
 
+# ----------------------------------------------------------------------------- lane C
+
+
+TURN_BUDGET_S = 180.0  # run_kria_turn soft limit (200 s) minus the planner's 20 s reserve
+
+
+def _virtual_clock():  # noqa: ANN202
+    """A clock the fault-injection client advances; nothing sleeps for real."""
+    state = {"now": 1000.0}
+    return state
+
+
+@contextlib.contextmanager
+def _patched_time(state: dict):  # noqa: ANN202
+    import time as _time
+
+    originals = (_time.monotonic, _time.sleep)
+    _time.monotonic = lambda: state["now"]  # type: ignore[assignment]
+    _time.sleep = lambda seconds: state.__setitem__("now", state["now"] + seconds)  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        _time.monotonic, _time.sleep = originals
+
+
+def _main_creator_run(
+    *,
+    latency_s_by_level: dict[str, float | None],
+    start_degraded: bool = False,
+    ladder: bool = True,
+) -> dict:
+    """Run the REAL MainCreatorAgent retry/degrade code against injected provider latency.
+
+    ``latency_s_by_level`` is the injected time a call takes at each thinking level; None means
+    the provider never answers (the deadline fires). Latencies of the lighter rungs are ASSUMED
+    (prod never completed one on this thread); the timeouts, rung order, budget arithmetic and
+    final outcome come from the production code.
+    """
+    from dataclasses import replace
+
+    from app.agents import _text_providers
+    from app.agents._runtime import (
+        ModelClient,
+        ModelInvocation,
+        ProviderDeadlineExceededError,
+        ProviderOutcomeUnknownError,
+        RunContext,
+    )
+    from app.agents.main_creator import MainCreatorAgent
+
+    state = _virtual_clock()
+    calls: list[dict] = []
+
+    class _Client(ModelClient):
+        def invoke(self, **kwargs: Any) -> ModelInvocation:
+            level = kwargs.get("thinking_level") or "none"
+            latency = latency_s_by_level.get(level, latency_s_by_level.get("*"))
+            timeout_s = float(kwargs["timeout_s"])
+            started = state["now"]
+            if latency is None or latency > timeout_s:
+                state["now"] += timeout_s
+                calls.append(
+                    {
+                        "model": kwargs["model"],
+                        "thinking_level": level,
+                        "timeout_s": round(timeout_s, 1),
+                        "outcome": "deadline",
+                        "t_start_s": round(started - 1000.0, 1),
+                    }
+                )
+                raise ProviderDeadlineExceededError(
+                    f"gemini provider outcome unknown after {timeout_s:.1f}s"
+                )
+            state["now"] += latency
+            calls.append(
+                {
+                    "model": kwargs["model"],
+                    "thinking_level": level,
+                    "timeout_s": round(timeout_s, 1),
+                    "outcome": "ok",
+                    "t_start_s": round(started - 1000.0, 1),
+                }
+            )
+            return ModelInvocation(raw_text="{}", tokens_in=1, tokens_out=1)
+
+    class _Agent(MainCreatorAgent):
+        spec = replace(MainCreatorAgent.spec, degrade_on_deadline=ladder)
+
+        def render_prompt(self, input: Any) -> str:  # noqa: A002, ANN401
+            return "fault injection"
+
+        def required_fields(self) -> list[str]:
+            return []
+
+        def parse(self, raw_text: str, input: Any) -> str:  # noqa: A002, ANN401
+            return "plan"
+
+    outcome = "ok"
+    with _patched_time(state), patch.object(_text_providers, "paid_provider", lambda _m: None):
+        ctx = RunContext(
+            request_id="fault-injection",
+            deadline_monotonic=state["now"] + TURN_BUDGET_S,
+            start_degraded=start_degraded,
+            extra={"skip_agent_run_persist": True},
+        )
+        try:
+            _Agent(_Client()).run(
+                {"user_message": "x", "capability_manifest": _EMPTY_MANIFEST}, ctx=ctx
+            )
+        except ProviderOutcomeUnknownError as exc:
+            outcome = type(exc).__name__
+        except Exception as exc:  # noqa: BLE001
+            outcome = f"{type(exc).__name__}: {exc}"
+    elapsed = state["now"] - 1000.0
+    return {
+        "calls": calls,
+        "outcome": outcome,
+        "elapsed_s": round(elapsed, 1),
+        "within_turn_budget": elapsed <= TURN_BUDGET_S + 1e-6,
+    }
+
+
+def _empty_manifest():  # noqa: ANN202
+    from app.agents._schemas.creator_agent import CapabilityAvailability, ResolvedCreatorManifest
+
+    available = CapabilityAvailability(available=True)
+    return ResolvedCreatorManifest(
+        item_id="fault-injection",
+        edit_format="montage",
+        render_program="guided",
+        media=[],
+        capabilities={"edit_format:montage": available},
+        context_hash="a" * 64,
+        manifest_hash="b" * 64,
+    )
+
+
+_EMPTY_MANIFEST: Any = None
+
+
+def lane_c_fault_injection() -> dict:
+    """Lane C proof: a provider deadline is answered by a lighter call inside the turn budget."""
+    global _EMPTY_MANIFEST
+    _EMPTY_MANIFEST = _empty_manifest()
+    assumed = {"medium": 40.0, "low": 12.0}  # ASSUMED latencies of the lighter rungs
+    scenarios = {
+        "A_high_deadline_then_medium_ok": _main_creator_run(
+            latency_s_by_level={"high": None, **assumed}
+        ),
+        "B_high_and_medium_deadline_then_flash_ok": _main_creator_run(
+            latency_s_by_level={"high": None, "medium": None, "low": 12.0}
+        ),
+        "C_try_again_starts_degraded": _main_creator_run(
+            latency_s_by_level={"high": None, **assumed}, start_degraded=True
+        ),
+        "D_every_rung_deadline_stays_in_budget": _main_creator_run(latency_s_by_level={"*": None}),
+        "E_ladder_off_is_the_legacy_single_call": _main_creator_run(
+            latency_s_by_level={"high": None, **assumed}, ladder=False
+        ),
+    }
+    a, b, c, d, e = scenarios.values()
+
+    def levels(run: dict) -> list[str]:
+        return [f"{x['model']}@{x['thinking_level']}:{x['outcome']}" for x in run["calls"]]
+
+    checks = {
+        "A: finishes ok on the medium rung": a["outcome"] == "ok"
+        and [x["thinking_level"] for x in a["calls"]] == ["high", "medium"]
+        and a["within_turn_budget"],
+        "B: finishes ok on the fallback model at low": b["outcome"] == "ok"
+        and [x["thinking_level"] for x in b["calls"]] == ["high", "medium", "low"]
+        and b["calls"][-1]["model"] == "gemini-3.6-flash"
+        and b["within_turn_budget"],
+        "C: Try again opens on medium, never repeats high": c["outcome"] == "ok"
+        and c["calls"][0]["thinking_level"] == "medium",
+        "D: when everything times out the turn still ends inside its budget": d[
+            "within_turn_budget"
+        ]
+        and d["outcome"] == "ProviderDeadlineExceededError",
+        "E: ladder off ends after the single heavy call (legacy)": len(e["calls"]) == 1
+        and e["outcome"] == "ProviderDeadlineExceededError",
+    }
+    return {
+        "turn_budget_s": TURN_BUDGET_S,
+        "assumed_latency_s": assumed,
+        "scenarios": {k: {**v, "path": levels(v)} for k, v in scenarios.items()},
+        "checks": checks,
+        "all_pass": all(checks.values()),
+        "note": "recorded T5/T6 were a 180 s dead end (attempts: 2 and 3, 2k output tokens); "
+        "lighter-rung latencies are assumed, rung order, timeouts and budget are production code",
+    }
+
+
 # ----------------------------------------------------------------------------- report
 
 
@@ -1020,7 +1213,12 @@ def run_offline() -> dict:
                 )
         c5 = _guarded(5, "latency", lambda: check_latency(fx, followups))
     checks = [c1, c2, c3, c4, c5]
+    try:
+        lane_c = lane_c_fault_injection()
+    except Exception as exc:  # noqa: BLE001 - reported, never green
+        lane_c = {"all_pass": False, "error": f"{type(exc).__name__}: {exc}"}
     return {
+        "lane_c": lane_c,
         "fixture": fx["fixture_id"],
         "mode": "offline",
         "source": {

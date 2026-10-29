@@ -321,6 +321,17 @@ def test_main_creator_budget_runs_out_before_its_provider_timeout() -> None:
     assert runaway_s < MainCreatorAgent.spec.timeout_s
 
 
+def test_edit_copilot_budget_runs_out_before_its_provider_timeout() -> None:
+    """KRI-1037: the copilot's 16,384-token cap is only safe while a runaway call reaches it
+    before its provider deadline. Raising the cap without the timeout (or lowering the timeout)
+    turns a retryable truncation back into an outcome-unknown fence."""
+    from app.agents.edit_copilot import EditCopilotAgent
+
+    assert EditCopilotAgent.max_output_tokens == 16_384
+    runaway_s = _FIRST_TOKEN_S + EditCopilotAgent.max_output_tokens * _S_PER_TOKEN
+    assert runaway_s < EditCopilotAgent.spec.timeout_s
+
+
 def test_runaway_main_creator_call_ends_as_one_truncation_not_an_unknown_outcome() -> None:
     """Behavioral twin of the check above: a call that would think and write
     past its whole output budget stops at MAX_TOKENS inside the provider
