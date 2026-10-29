@@ -135,3 +135,30 @@ def test_a_highlighted_line_restarts_after_a_lyric_line_end():
     result = project_guided_caption_overlays(rows, {"appearance": {"highlight_spoken_word": True}})
     # Without the marker these three words (no gap, no punctuation) would share one line.
     assert [row["text"] for row in result] == ["hold me", "hold me", "dance"]
+
+
+def test_word_display_animates_every_word_and_sentence_display_animates_the_line(monkeypatch):
+    """Display Word shows one word at a time, so each word enters, exits and loops on its own."""
+    from app.services import phone_rollout
+
+    monkeypatch.setattr(phone_rollout, "caption_animation_renderable", lambda: True)
+    pop_fade = {"entrance": "pop", "exit": "fade", "loop": "float", "speed": 1.0}
+    rows = [cue(1, "we go", 0, 0.4), cue(2, "home.", 0.4, 0.6)]
+
+    def edges(meta):
+        result = project_guided_caption_overlays(deepcopy(rows), meta)
+        return [
+            (row["text"], row["animation_phases"]["entrance"], row["animation_phases"]["exit"])
+            for row in result
+        ]
+
+    for highlight in (False, True):
+        appearance = {"highlight_spoken_word": highlight}
+        word = edges({"style": "word", "animation_phases": pop_fade, "appearance": appearance})
+        assert word == [("we", "pop", "fade"), ("go", "pop", "fade"), ("home.", "pop", "fade")]
+    line = edges({"style": "sentence", "animation_phases": pop_fade})
+    assert line == [("we go home.", "pop", "none"), ("we go home.", "none", "fade")]
+    unset = {"style": "word", "appearance": {"highlight_spoken_word": False}}
+    still = {**unset, "animation_phases": {"entrance": "none"}}
+    project = project_guided_caption_overlays
+    assert project(deepcopy(rows), unset) == project(deepcopy(rows), still)

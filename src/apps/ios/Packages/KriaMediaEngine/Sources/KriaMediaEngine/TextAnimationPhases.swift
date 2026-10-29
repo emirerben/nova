@@ -31,7 +31,7 @@ public extension TextAnimationPhases {
         return TextTransformSample(alpha: alpha, scale: scale, xTranslate: x, yTranslate: y, revealProgress: reveal)
     }
     func edgeDuration(duration: Double) -> Double {
-        min((entrance.isDesigned || exit.isDesigned ? 1.2 : 0.4) / speed, duration / 2)
+        min(Self.edgeSeconds / speed, duration / 2)
     }
     static func visiblePrefix(_ text: String, progress: Double) -> String {
         guard progress.isFinite else { return "" }

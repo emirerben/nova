@@ -1159,7 +1159,7 @@ def _policy_text_omission_reason(
         if req.scope == "title"
         else ("shot_labels", "pinned_texts")
         if req.scope == "per_clip" or req.scope.startswith("clip:")
-        else ("closing_title", "pinned_texts")
+        else ("opening_title", "closing_title", "pinned_texts")
         if req.scope in {"global", "closing", "ending"}
         else ()
     )
@@ -1170,10 +1170,25 @@ def _policy_text_omission_reason(
         for text in omitted_texts.get(field, ())
     ):
         return say(
-            en="The selected renderer cannot draw this requested text.",
-            tr="Seçilen oluşturucu bu istenen yazıyı gösteremiyor.",
+            en="This kind of edit can't show this text yet.",
+            tr="Bu tür düzenleme bu yazıyı henüz gösteremiyor.",
         )
     return None
+
+
+def _policy_text_reasons(
+    brief: CreativeBrief | None, omitted_texts: Mapping[str, Sequence[str]]
+) -> dict[str, str]:
+    """KRI-1009: the creator's quoted copy the compiler proved it can't draw, by requirement,
+    with that reason. The question before the draft says why, never "isn't in this draft"
+    (nothing the creator does to the draft brings it back)."""
+    if brief is None or not omitted_texts:
+        return {}
+    return {
+        req.id: reason
+        for req in brief.live()
+        if (reason := _policy_text_omission_reason(req, omitted_texts)) is not None
+    }
 
 
 def _automatic_omission_reason(req: BriefRequirement, strategy: Mapping[str, Any]) -> str | None:
@@ -1224,7 +1239,6 @@ def _automatic_omission_ids(
     readiness_report: Mapping[str, Any] | None,
     *,
     strategy: Mapping[str, Any] | None = None,
-    omitted_texts: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[str, ...]:
     """Return only deterministic text/style requirements safe to omit automatically.
 
@@ -1233,22 +1247,24 @@ def _automatic_omission_ids(
     narrower than the general ``unmet_ids`` set used by the explicit simpler-version
     flow.  Unchecked and evidence-missing rows are also excluded: they do not prove the
     renderer cannot perform the request.
+
+    KRI-1009: the creator's own quoted words are never dropped without asking, even when
+    the compiler proved it can't draw them (`_policy_text_omission_reason`). The draft is
+    held back with the "simpler version?" question that names them; a tap drops them as
+    agreed. A brightness facet beside a kept title stays automatic: no words are lost.
     """
     if brief is None:
         return ()
-    allowed = {
-        req.id
-        for req in brief.live()
-        if _policy_text_omission_reason(req, omitted_texts or {}) is not None
-    }
+    allowed: set[str] = set()
     by_id = {
         req.id: req
         for req in brief.live()
-        if _automatic_omission_reason(req, strategy or {}) is not None
+        if not (req.kind == "text" and req.literal and not wants_light_change(req))
+        and _automatic_omission_reason(req, strategy or {}) is not None
     }
     if readiness_report is not None:
         if readiness_report.get("policy_problem"):
-            return tuple(req.id for req in brief.live() if req.id in allowed)
+            return ()
         for row in readiness_report.get("requirements") or ():
             if not isinstance(row, Mapping) or row.get("disposition") != "unsupported":
                 continue
@@ -1856,6 +1872,15 @@ def _complete_draft_turn(
 
                         # KRI-775: a requirement the phone plan falls short on is judged by it.
                         receipts = with_blocker_receipts(receipts, phone_blockers)
+                    policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
+                    receipts = [
+                        receipt.model_copy(
+                            update={"reason": policy_reasons[receipt.requirement_id]}
+                        )
+                        if receipt.requirement_id in policy_reasons
+                        else receipt
+                        for receipt in receipts
+                    ]
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
                         try:
@@ -1970,6 +1995,13 @@ def _complete_draft_turn(
                 creator_id=thread.creator_id,
                 prepared_research=_readiness_research,
             )
+            policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
+            readiness_report["requirements"] = [
+                {**row, "reason": policy_reasons[row["requirement_id"]]}
+                if row["requirement_id"] in policy_reasons and row["disposition"] not in APPROVABLE
+                else row
+                for row in readiness_report["requirements"]
+            ]
             if not readiness_report["ready"]:
                 reply_text = readiness_reply(brief, readiness_report)
             elif document.prepared_collection_story is not None:
@@ -2010,7 +2042,6 @@ def _complete_draft_turn(
             requirement_receipts,
             readiness_report,
             strategy=document.strategy,
-            omitted_texts=planned.policy_omitted_texts,
         )
         # A removed title can have an unchecked/missing receipt precisely because
         # the compiler removed it. Its exact server proof supersedes that absence,

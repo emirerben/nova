@@ -41,7 +41,7 @@ struct SignInView: View {
                         KriaWordmark()
                             .signInEntrance(.wordmark, appeared: appeared, reduceMotion: effectiveReduceMotion)
 
-                        // Decorative only: at accessibility text sizes the 244pt
+                        // Decorative only: at accessibility text sizes the 204pt
                         // hero would push every action a full screen down, so it
                         // yields its space to the copy and the providers.
                         if !dynamicTypeSize.isAccessibilitySize {
@@ -271,33 +271,37 @@ enum SignInFailureCopy {
 
 private struct SignInHero: View {
     let isAnimating: Bool
-    @State private var activeIndex = 0
-    @State private var playing = false
+    @State private var playing: Set<FeaturedEdit> = []
 
     var body: some View {
-        HStack(spacing: 28) {
-            preview(.bosphorus)
-                .frame(width: 151, height: 151 / FeaturedEdit.bosphorus.aspectRatio)
-            VStack(spacing: 8) {
-                ForEach(Array(FeaturedEdit.onboarding.dropFirst())) { edit in
-                    preview(edit).frame(width: 146, height: 146 / edit.aspectRatio)
+        GeometryReader { geometry in
+            let width = min(342, geometry.size.width)
+            let landscapeWidth = width * 108 / 342
+            let portraitWidth = (width - landscapeWidth - 20) / 2
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    ForEach([FeaturedEdit.bosphorus, .talking]) { edit in
+                        preview(edit).frame(width: portraitWidth, height: portraitWidth / edit.aspectRatio)
+                    }
+                }
+                VStack(spacing: 8) {
+                    ForEach(FeaturedEdit.onboarding.filter { $0.aspectRatio > 1 }) { edit in
+                        preview(edit).frame(width: landscapeWidth, height: landscapeWidth / edit.aspectRatio)
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 342, height: 270)
+        .frame(height: 204)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Example edits")
-        .accessibilityValue("\(playing ? "Playing" : "Paused") edit \(activeIndex + 1) of 4")
+        .accessibilityValue(playing.isEmpty ? "Previews paused" : "Playing \(playing.count) of \(FeaturedEdit.onboarding.count) previews")
         .accessibilityIdentifier("signin.featured-edits")
     }
 
     private func preview(_ edit: FeaturedEdit) -> some View {
-        FeaturedEditPreview(edit: edit, active: FeaturedEdit.onboarding[activeIndex] == edit,
-                            allowed: isAnimating, completed: {
-            guard FeaturedEdit.onboarding[activeIndex] == edit else { return }
-            activeIndex = (activeIndex + 1) % FeaturedEdit.onboarding.count
-        }, playingChanged: { value in
-            if FeaturedEdit.onboarding[activeIndex] == edit { playing = value }
+        FeaturedEditPreview(edit: edit, active: true, allowed: isAnimating, loops: true, playingChanged: { value in
+            if value { playing.insert(edit) } else { playing.remove(edit) }
         })
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.12), radius: 14, x: 0, y: 6)

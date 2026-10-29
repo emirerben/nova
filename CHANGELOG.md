@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.16.0] - 2026-10-29
+
+### Changed
+- feat(kria): words shown a piece at a time are text_sequence, not captions (KRI-1038) (#1925) <!-- release-pr: 1925 -->
+
+## [0.82.15.0] - 2026-10-29
+
+### Changed
+- feat(kria): random and any-order clip orders are first-class (KRI-1036) (#1923) <!-- release-pr: 1923 -->
+
+## [0.82.14.0] - 2026-10-29
+
+### Changed
+- fix(ios): align format cards and play signup previews together (#1920) <!-- release-pr: 1920 -->
+
+## [0.82.13.0] - 2026-10-29
+
+### Changed
+- fix(ios): Use this idea opens the idea's chat instead of leaving the camera roll page on top (KRI-1041) (#1922) <!-- release-pr: 1922 -->
+
+## [0.82.12.0] - 2026-10-29
+
+### Changed
+- fix(ios): preserve guided source cuts in saved text drafts (#1918) <!-- release-pr: 1918 -->
+
+## [0.82.11.0] - 2026-10-29
+
+### Fixed
+- fix(ios): a dead upload no longer keeps Send disabled after a crash (#1921) <!-- release-pr: 1921 -->
+
+## [0.82.10.0] - 2026-10-29
+
+### Fixed
+- fix(kria): Talking title asked "at the top" renders as the opening title; quoted text is asked about, never dropped (KRI-1009) (#1912) <!-- release-pr: 1912 -->
+
+## [0.82.9.0] - 2026-10-29
+
+### Changed
+- fix(captions): faster designed animations and animation per word under Word display (KRI-1007) (#1917) <!-- release-pr: 1917 -->
+
+## [0.82.8.0] - 2026-10-29
+
+### Fixed
+- fix(kria): name the speaker, not "you", in framing and face copy (KRI-1008 Finding 3) (#1911) <!-- release-pr: 1911 -->
+
+## [0.82.7.0] - 2026-10-29
+
+### Fixed
+- fix(ios): keep the chat in view after "Clean up speech and create" (KRI-1008) (#1903) <!-- release-pr: 1903 -->
+
+## [0.82.6.0] - 2026-10-29
+
+### Changed
+- fix(editor): the creator's saved copy of a phone montage is the render (KRI-1032) (#1916) <!-- release-pr: 1916 -->
+
 ## [0.82.5.0] - 2026-10-28
 
 ### Fixed

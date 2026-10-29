@@ -94,6 +94,10 @@ final class CreationChatFixture: @unchecked Sendable {
     private var threads: [String: [String: Any]] = [:]
     private var renders: [String: Int] = [:]
     private var preparations: [String: Int] = [:]
+    /// `KRIA_CHAT_SPEECH_CLEANUP`: full reads since the approval, replaying the server's own dispatch shape
+    /// (`execute_kria_approval`): first a draft with nothing in flight, then `executing` with no event, then
+    /// `render_queued` + the waiting `plan_block` and a processing job together.
+    private var approvalDispatches: [String: Int] = [:]
     private var planVersions: [String: Int] = [:]
     private var generateConflicts: [String: Int] = [:]
     private var failedGenerates: Set<String> = []
@@ -938,6 +942,13 @@ final class CreationChatFixture: @unchecked Sendable {
                     thread["job"] = ["id": started.jobID, "status": "processing", "variants": []]
                     append("plan_block", role: "system", payload: started.event)
                 }
+            } else if parts.last == "approve", ProcessInfo.processInfo.environment["KRIA_CHAT_SPEECH_CLEANUP"] != nil {
+                // The real POST writes only `approval_approved` (`render_dispatched: false`); the job, `render_queued`
+                // and the first plan block land from the agent-control task a moment later (see `approvalDispatches`).
+                let approved = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
+                append("approval_approved", payload: ["approval_id": approvalID, "turn_id": approved?["turn_id"] as? String ?? id, "render_dispatched": false])
+                approvalDispatches[id] = 0
+                planTurnIDs[id] = approved?["turn_id"] as? String ?? id
             } else if parts.last == "approve" {
                 if let mismatch = renderShapeMismatch(body) { return response(["detail": mismatch], status: 422) }
                 let approved = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
@@ -958,6 +969,29 @@ final class CreationChatFixture: @unchecked Sendable {
                 let approvalPayload = events.last(where: { $0["event_type"] as? String == "approval_requested" })?["payload"] as? [String: Any]
                 let turnID = approvalPayload?["turn_id"] as? String ?? id
                 return response(["approval_id": approvalID, "turn_id": turnID, "draft_id": id, "draft_revision": 1, "status": "pending", "consequence_summary": "Open on the laugh and keep the pacing quick.", "expires_at": ProcessInfo.processInfo.environment["KRIA_CHAT_EXPIRED_APPROVAL"] == "1" ? "2000-09-10T10:00:00Z" : "2099-09-10T10:00:00Z", "approval_fingerprint": String(repeating: "a", count: 64)])
+            }
+        } else if parts.last == "delta", let count = approvalDispatches[id] {
+            // Ticks on the delta poll: like the server, nothing here bumps the revision until `render_queued`, so
+            // the client keeps polling deltas and only re-reads the full projection once that event lands.
+            approvalDispatches[id] = count + 1
+            if count == 1 {
+                // State B: the claim committed -- session executing, no new event, same revision.
+                thread["creator_agent"] = ["status": "executing", "summary": "Open on the laugh and keep the pacing quick."]
+            } else if count >= 2 {
+                // State C: `_finish_approval_dispatch` -- job + render_queued + all-waiting plan_block in one commit.
+                approvalDispatches.removeValue(forKey: id)
+                thread["active_job_id"] = id
+                if DeviceRenderUITestFixture.scenario != nil {
+                    // A phone project: the server only plans; the variant is handed to this iPhone.
+                    thread["job"] = ["id": id, "status": "processing", "variants": [["variant_id": DeviceRenderUITestFixture.variantID, "render_status": "awaiting_device", "render_destination": "device"]]]
+                } else {
+                    thread["job"] = ["id": id, "status": "processing", "variants": []]
+                    renders[id] = 0
+                }
+                append("render_queued", role: "system", payload: ["job_id": id, "turn_id": planTurnIDs[id] ?? id])
+                if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" {
+                    planStages[id] = 0; planTicks[id] = 0
+                }
             }
         } else if parts.count == 2, let count = preparations[id] {
             preparations[id] = count + 1
@@ -1022,7 +1056,7 @@ final class CreationChatFixture: @unchecked Sendable {
             return response(["turn_id": acceptedTurnID, "thread_revision": revision, "status": "queued"], status: 202)
         }
         if parts.last == "approve" { return response(["approval_id": approvalID, "thread_id": id, "status": "approved", "thread_revision": revision]) }
-        return response(withRenderShape(thread))
+        return response(withSpeechCleanup(withRenderShape(thread)))
     }
     /// The first job's final decided block per section, from the staged feed script (contract v2).
     private func reviewInitialBlocks() -> [String: [String: Any]] {
@@ -1100,6 +1134,19 @@ final class CreationChatFixture: @unchecked Sendable {
         ]
     }
 
+    /// `KRIA_CHAT_SPEECH_CLEANUP=choice`: the speech check is ready and the creator must choose "Clean up speech
+    /// and create" or "Keep original speech and create" on the pending approval card (the tall card a real
+    /// subtitled project shows). Gone once a job exists, like the server's projection.
+    private func withSpeechCleanup(_ thread: [String: Any]) -> [String: Any] {
+        guard ProcessInfo.processInfo.environment["KRIA_CHAT_SPEECH_CLEANUP"] == "choice", thread["active_job_id"] == nil else { return thread }
+        var result = thread
+        result["speech_cleanup"] = [
+            "applicable": true, "requires_choice": true,
+            "analysis": ["id": "cccccccc-cccc-cccc-cccc-cccccccccccc", "status": "ready", "candidate_count": 13,
+                         "estimated_removed_ms": 8765, "category_counts": ["filler_sounds": 9, "long_pauses": 4, "retakes": 0]],
+        ] as [String: Any]
+        return result
+    }
     /// KRI-306 fixture (`KRIA_CHAT_RENDER_SHAPE=1`): the server offers Vertical / Landscape and
     /// Black bars / Crop on a pending approval or plan, and nothing once a job exists.
     private func withRenderShape(_ thread: [String: Any]) -> [String: Any] {

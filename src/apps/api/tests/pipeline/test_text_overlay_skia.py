@@ -3973,3 +3973,39 @@ def test_both_renderers_compose_designed_holds_with_typewriter(entrance, exit, t
         samples.append((image[:, :, :3].sum(), np.array(Image.open(path))[:, :, :3].sum()))
     assert samples[0][0] < samples[1][0]
     assert samples[0][1] < samples[1][1]
+
+
+@pytest.mark.parametrize("phase", ["entrance", "exit"])
+@pytest.mark.parametrize(
+    "effect", ["silkReveal", "elasticCondensed", "focusPull", "ribbonWipe", "echoStack"]
+)
+def test_designed_text_animations_settle_as_fast_as_pop(phase, effect, tmp_path):
+    """A designed edge is done when the legacy 0.4 s pop is, no slower than its neighbours."""
+    from app.pipeline.text_overlay import _render_authored_phase_frame
+
+    overlay = {
+        "text": "Creator text",
+        "font_family": "Inter",
+        "text_size_px": 80,
+        "text_color": "#FFFFFF",
+        "position": "center",
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "effect": "none",
+        "start_s": 0,
+        "end_s": 3,
+        "animation_phases": {phase: effect},
+    }
+    edge_done, mid_edge = (0.4, 0.1) if phase == "entrance" else (2.6, 2.9)
+    frames = []
+    for time in [edge_done, 1.5, mid_edge]:
+        skia_image = tos._draw_frame(overlay, time, 3).toarray(
+            colorType=skia.ColorType.kRGBA_8888_ColorType,
+            alphaType=skia.AlphaType.kUnpremul_AlphaType,
+        )
+        path = tmp_path / f"{time}.png"
+        _render_authored_phase_frame(overlay, overlay["text"], "center", str(path), time, 3)
+        frames.append((skia_image, np.array(Image.open(path))))
+    for renderer in [0, 1]:
+        assert np.array_equal(frames[0][renderer], frames[1][renderer]), (effect, renderer)
+        assert not np.array_equal(frames[2][renderer], frames[1][renderer]), (effect, renderer)

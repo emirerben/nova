@@ -753,7 +753,7 @@ never the core: `arbitrate_media_overlays(strict_kinds={"face_core"})` allows ze
 overlap with it, and `hug_corners=True` adds flush top corners after the usual grid.
 Kadıköy r4 (the brewing video, 7.72-12.75 s) lands top-right at scale 0.198. When even
 the core leaves no room the card is still dropped (`no_safe_spot`), and the brief receipt
-says so ("There was no room on screen for X without covering your face or the
+says so ("There was no room on screen for X without covering a face or the
 captions"; an `overlap`/`duplicate` drop: "X would have landed on another pop-in at the
 same moment") via `PlanFacts.beat_room_drops`. Editor Save (`editor_speaker_framing`): keeps the crop,
 drops it when the creator picks bars (`creator_chose_bars`), restores it on crop. The

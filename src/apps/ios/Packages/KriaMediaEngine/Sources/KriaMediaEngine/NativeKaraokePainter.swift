@@ -53,6 +53,16 @@ final class NativeSingleWordPainter: @unchecked Sendable {
     /// The index of the word shown at a layer-local time, or nil before the first word starts.
     func activeIndex(localTime: Double) -> Int? { content.starts.lastIndex(where: { localTime >= $0 }) }
 
+    /// The layer-local window of the word shown at `localTime`. The layer's animation phases play on each
+    /// word's window, because every word is its own caption.
+    func window(localTime: Double) -> (start: Double, end: Double)? {
+        activeIndex(localTime: localTime).map(window)
+    }
+
+    private func window(_ index: Int) -> (start: Double, end: Double) {
+        (content.starts[index], index + 1 < content.starts.count ? content.starts[index + 1] : layer.end - layer.start)
+    }
+
     private func bitmap(for index: Int) throws -> RecipeTextLayer {
         if let current, current.index == index { return current.bitmap }
         let run = layer.runs[index]
@@ -60,10 +70,17 @@ final class NativeSingleWordPainter: @unchecked Sendable {
             x: run.x, baselineY: run.baselineY, letterSpacing: run.letterSpacing, shaped: run.shaped,
             fill: content.highlight, stroke: run.stroke, strokeWidth: run.strokeWidth,
             blurLayers: run.blurLayers, glyphs: run.glyphs, fontVariations: run.fontVariations)
-        let made = try RecipeTextLayer.make(NativeDiscreteRevealPainter.paintingLayer(layer, runs: [drawn]),
-                                            assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes)
+        var painting = NativeDiscreteRevealPainter.paintingLayer(layer, runs: [drawn])
+        if let phases = layer.animationPhases, phases.entrance.isDesigned || phases.exit.isDesigned {
+            let (start, end) = window(index)
+            painting = PortableTextLayer(id: layer.id, start: layer.start + start, end: layer.start + end,
+                anchorX: layer.anchorX, anchorY: layer.anchorY, rotationDegrees: layer.rotationDegrees, runs: [drawn],
+                effect: .fadeIn, background: layer.background)
+            painting.animationPhases = phases
+        }
+        let made = try RecipeTextLayer.make(painting, assetURLs: assetURLs, canvas: canvas, maxBitmapBytes: maxBitmapBytes)
         current = (index, made)
-        bitmapBytes = max(bitmapBytes, Int(made.frame.width * made.frame.height * 4) * 2)
+        bitmapBytes = max(bitmapBytes, made.designed?.bitmapBytes ?? 0, Int(made.frame.width * made.frame.height * 4) * 2)
         return made
     }
 
@@ -72,7 +89,8 @@ final class NativeSingleWordPainter: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard let index = activeIndex(localTime: localTime) else { return CIImage.empty() }
         let made = try bitmap(for: index)
-        return made.image.transformed(by: CGAffineTransform(translationX: made.frame.minX, y: made.frame.minY))
+        let image = try made.designed?.image(localTime: localTime - window(index).start, settled: made.image) ?? made.image
+        return image.transformed(by: CGAffineTransform(translationX: made.frame.minX, y: made.frame.minY))
     }
 }
 

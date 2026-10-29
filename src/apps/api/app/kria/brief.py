@@ -51,8 +51,10 @@ from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
 from app.services.creative_copy_decisions import APPROVED_COPY_FACT
 from app.services.kria_editor_ops_diff import font_family_key
+from app.services.order_mode import order_mode, stamp_order_facts
 
-RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
+# `text_sequence` (29 Ekim): the creator's own words shown on screen in pieces, never captions.
+RequirementKind = Literal["text", "order", "select", "timing", "audio", "style", "text_sequence"]
 RequirementStatus = Literal["open", "met", "partial", "not_possible", "superseded"]
 Route = Literal["replan", "editor_ops"]
 
@@ -608,7 +610,14 @@ def apply_updates(
                     "scope": update.scope,
                     "literal": update.literal,
                     "description": update.description,
-                    "facts": _carry_sticky_facts(target, update),
+                    "facts": stamp_order_facts(
+                        update.kind,
+                        update.description,
+                        update.literal,
+                        _carry_sticky_facts(target, update),
+                        req_id=target.id,
+                        turn_id=source_turn_id,
+                    ),
                     "source_turn_id": source_turn_id,
                     "status": "open",
                 }
@@ -623,7 +632,14 @@ def apply_updates(
             scope=update.scope,
             literal=update.literal,
             description=update.description,
-            facts=update.facts,
+            facts=stamp_order_facts(
+                update.kind,
+                update.description,
+                update.literal,
+                update.facts,
+                req_id=f"r{counter}",
+                turn_id=source_turn_id,
+            ),
             source_turn_id=source_turn_id,
         )
         incoming.append(
@@ -948,6 +964,24 @@ def _asks_remove(message: str) -> bool:
     return not _reads_english(message) and bool(_TR_REMOVE_MESSAGE.search(_fold_for_redo(message)))
 
 
+def is_select_all_requirement(req: BriefRequirement | BriefUpdate) -> bool:
+    """ "Show all content": the extractor marked the whole set (``facts.all`` / ``scope: all``).
+
+    A whole-set statement picks nothing, so it is never a reason to re-plan. The meaning is
+    read from the structured fact the extractor records, never from the creator's words
+    (KRI-667); a requirement that names a clip, a position or any other fact stays a real
+    selection.
+    """
+    if req.kind != "select" or req.scope != "global":
+        return False
+    facts = req.facts or {}
+    marked = facts.get("all") is True or str(facts.get("scope") or "").casefold() in {
+        "all",
+        "everything",
+    }
+    return marked and all(k in {"all", "scope"} for k in facts)
+
+
 def _structural_reqs_editable(
     reqs: list[BriefRequirement | BriefUpdate], message: str | None
 ) -> bool:
@@ -955,12 +989,14 @@ def _structural_reqs_editable(
     text = message or ""
     for req in reqs:
         if req.kind == "order":
-            if not req.facts.get("key") or _asks_move(text):
+            # A shuffle is one seeded `reorder_clips_by`; "any order" changes nothing.
+            if not req.facts.get("key") or _asks_move(text) or order_mode(req) is not None:
                 continue
             return False
         if req.kind == "select":
             if (
-                req.scope.startswith("clip:")
+                is_select_all_requirement(req)
+                or req.scope.startswith("clip:")
                 or _POSITIONAL_FACT_KEYS & set(req.facts)
                 or _asks_remove(text)
             ):
@@ -1052,6 +1088,8 @@ def route_requirements(
             if req.scope == "title" or not current_plan.can_edit_captions:
                 return "replan"
         if req.kind in {"order", "select"}:
+            if is_select_all_requirement(req):
+                continue
             if is_capture_order_requirement(req) and current_plan.can_order_by_capture_time:
                 continue
             if not current_plan.can_edit_timeline or not _structural_reqs_editable([req], message):

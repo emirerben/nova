@@ -59,6 +59,7 @@ from app.services.clip_facts import (
     order_by_capture_time,
 )
 from app.services.clip_order_sequence import ANCHOR_FACTS
+from app.services.order_mode import order_mode
 
 if TYPE_CHECKING:
     from app.services.length_policy import DurationBound
@@ -1417,6 +1418,9 @@ def _order_basis(
     rule_text: list[str] = []
     for req in _live(brief):
         if req.kind != "order":
+            continue
+        if order_mode(req) is not None:
+            # A seeded shuffle the planner proves, or "any order": nothing to ask (29 Ekim).
             continue
         key = str((req.facts or {}).get("key") or "").casefold()
         if key in CAPTURE_ORDER_KEYS:
