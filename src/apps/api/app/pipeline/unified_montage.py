@@ -73,6 +73,7 @@ from app.kria.freeze_ask import (
 )
 from app.kria.speed_ask import SpeedSpec, live_speeds
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
+from app.pipeline.font_coverage import drop_color_emoji
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
@@ -114,6 +115,8 @@ from app.services.clip_order_sequence import (
     unconfirmed_order_groups,
 )
 from app.services.length_policy import natural_length_owner
+from app.services.order_mode import order_mode, seeded_permutation
+from app.services.order_mode import random_order_seed as order_seed_of
 from app.services.spoken_quotes import is_outro_hallucination
 from app.services.spoken_roles import (
     SpokenClip,
@@ -219,6 +222,9 @@ class BriefView:
     # KRI-585: an order requirement says "the order I added them", so what the clips
     # say never moves one (filming-time keys set ``order_by_capture`` instead).
     order_basis_stated: bool = False
+    # 29 Ekim: "in random order" carries the seed stored on the requirement, so every
+    # re-plan and re-render draws the same permutation; "any order" needs no field.
+    random_order_seed: int | None = None
     # KRI-219: the per-clip text is the hour each clip was filmed, not its place.
     per_clip_text_is_time: bool = False
     # "hh_mm" or "hour" (just the hour, no minutes) for those filming-time labels.
@@ -252,6 +258,7 @@ def brief_view(brief: Any) -> BriefView:
     wants_order = False
     order_capture = False
     basis_stated = False
+    random_seed: int | None = None
     wants_time = False
     hour_only = False
     clip_literals: dict[str, str] = {}
@@ -308,6 +315,8 @@ def brief_view(brief: Any) -> BriefView:
             # A "narrative" or a first/last-clip key is not a basis: it is what the
             # creator's own sequence rows (and the clips' words, KRI-585) decide.
             basis_stated = basis_stated or key.casefold() == ATTACHMENT_ORDER_KEY
+            if order_mode(req) == "random":
+                random_seed = order_seed_of(req)
         elif req.kind == "timing" and not times_one_moment(req):
             # KRI-777: "freeze the frame for one second on the bite" is not a one-second video.
             raw = (req.facts or {}).get("duration_s")
@@ -320,6 +329,7 @@ def brief_view(brief: Any) -> BriefView:
         wants_order=wants_order,
         order_by_capture=order_capture,
         order_basis_stated=basis_stated,
+        random_order_seed=None if order_capture else random_seed,
         per_clip_text_is_time=wants_time,
         time_format="hour" if hour_only else "hh_mm",
         title_literal=title_literal,
@@ -476,6 +486,10 @@ class UnifiedMontagePlan:
     # KRI-282: the creator's answer to a chronological-vs-grouped conflict that this
     # plan followed ("group_first" | "chronological"); None when none was asked.
     ordering_choice: str | None = None
+    # 29 Ekim: the seed a "random order" plan used and the clips it shuffled, so the receipt
+    # can prove the result is a permutation of exactly the selected clips.
+    random_order_seed: int | None = None
+    random_order_source_ids: list[str] = field(default_factory=list)
     # Zone the filming hours were printed in, "" when the labels are not hours.
     label_timezone: str = ""
     label_timezone_basis: str = ""
@@ -548,6 +562,16 @@ class UnifiedMontagePlan:
         )
         outcomes = {"intent_outcomes": list(self.intent_outcomes)} if self.intent_outcomes else {}
         choice = {"ordering_choice": self.ordering_choice} if self.ordering_choice else {}
+        shuffled = (
+            {
+                "random_order": {
+                    "seed": self.random_order_seed,
+                    "source_ids": list(self.random_order_source_ids),
+                }
+            }
+            if self.random_order_seed is not None
+            else {}
+        )
         zone = (
             {
                 "label_timezone": self.label_timezone,
@@ -630,6 +654,7 @@ class UnifiedMontagePlan:
             **scope,
             **outcomes,
             **choice,
+            **shuffled,
             **zone,
             **named,
             **freeze,
@@ -1039,8 +1064,11 @@ def _order(
     if not view.order_by_capture:
         if creator_order:
             # A creator-reordered timeline is what a revision keeps; only an
-            # explicit capture-time ask in the brief overrides it.
+            # explicit capture-time ask in the brief overrides it. That includes a still-open
+            # "random order" ask: the hand reorder is the later word, and the receipt says so.
             return _creator_ordered(clips, creator_order), "creator_order", []
+        if view.random_order_seed is not None:
+            return seeded_permutation(clips, view.random_order_seed), "random", []
         return list(clips), "attachment", []
     times = {clip.media_id: clip.capture_time for clip in clips if clip.capture_time is not None}
     result = order_by_capture_time(attachment_ids, times)
@@ -1430,7 +1458,7 @@ def _seat_among_moments(slots: list[_Slot], seats: MomentSeats) -> list[_Slot]:
 
 def _ordering_choice(strategy: Mapping[str, Any], enabled: bool) -> str | None:
     choice = strategy.get("ordering_choice") if enabled else None
-    return choice if choice in ("group_first", "chronological") else None
+    return choice if choice in ("group_first", "chronological", "random") else None
 
 
 def _scatter(clips: Sequence[UnifiedClip], visuals: Sequence[UnifiedClip]) -> list[UnifiedClip]:
@@ -2468,6 +2496,8 @@ def plan_unified_montage(
             moment_record=moment_record,
         ),
         ordering_choice=choice,
+        random_order_seed=view.random_order_seed if basis == "random" else None,
+        random_order_source_ids=[clip.media_id for clip in clips] if basis == "random" else [],
         dropped_label_clip_ids=dropped,
         short_label_clip_ids=short,
         ordering_basis=basis,
@@ -3214,10 +3244,13 @@ def _cut_record(cut: FastMontageCut) -> dict[str, Any]:
 def skia_font_covers(family: str, text: str) -> bool:
     """True when the bundled ``family`` has a glyph for every character of ``text``.
 
-    The phone lays text out from exact glyph ids, so a character the font lacks
-    (Fraunces has no "→") fails the whole recipe. Unknown environments (no
-    skia) answer True: the compile step stays the source of truth.
+    The phone draws only the recipe's own face or its system color emoji, so a
+    character the font lacks (Fraunces has no "→") fails the whole recipe. Color
+    emoji (a flag, a ZWJ sequence) are never the bundled face's and never count
+    against it (KRI-1024). Unknown environments (no skia) answer True: the
+    compile step stays the source of truth.
     """
+    text = drop_color_emoji(text)
     try:
         import skia  # noqa: PLC0415
 
@@ -3235,7 +3268,10 @@ _FALLBACK_FONTS = ("DM Sans",)
 
 
 def _strip_uncovered(text: str, family: str, covers: Callable[[str, str], bool]) -> str:
-    kept = "".join(ch for ch in text if ch.isspace() or covers(family, ch))
+    import regex  # noqa: PLC0415 - Unicode graphemes
+
+    # Whole graphemes: a flag or ZWJ sequence is kept or dropped as one.
+    kept = "".join(g for g in regex.findall(r"\X", text) if g.isspace() or covers(family, g))
     return " ".join(kept.split())
 
 
@@ -3255,13 +3291,15 @@ def _fit_typography(
     """
     if covers is None:
         return requested, title, closing, labels
-    import regex  # noqa: PLC0415 - Unicode grapheme/emoji properties
-
     texts = [
         text
         for text in (title, closing, *(label.text for label in labels.values()), *extra_texts)
         if text
     ]
+    # Color emoji are supplied by the system emoji face, not the bundled one, on
+    # both branches (KRI-1024: a flag in the creator's title failed the policy
+    # branch). Face selection still chooses DM Sans for an arrow beside an emoji.
+    font_texts = [drop_color_emoji(text) for text in texts]
     from app.schemas.phone_text_style import CURATED_PHONE_FONTS  # noqa: PLC0415
     from app.services.phone_text_styling import current_phone_text_policy  # noqa: PLC0415
 
@@ -3271,24 +3309,22 @@ def _fit_typography(
         # must not strip a label because a separately requested title font lacks
         # its glyphs. Use a drawable provisional face for the compiler dry run.
         chosen = next(
-            (font for font in CURATED_PHONE_FONTS if all(covers(font, text) for text in texts)),
+            (
+                font
+                for font in CURATED_PHONE_FONTS
+                if all(covers(font, text) for text in font_texts)
+            ),
             None,
         )
         if chosen is None:
-            from app.pipeline.phone_text_style import _style_decline
+            from app.pipeline.phone_text_style import no_font_decline
 
-            raise _style_decline("The eligible fonts cannot draw all text. Choose another font.")
+            raise no_font_decline(
+                texts,
+                covers,
+                fallback="The eligible fonts cannot draw all text. Choose another font.",
+            )
         return chosen, title, closing, labels
-    # Color emoji are supplied by iOS, not the bundled face. Let the face
-    # selection still choose DM Sans for an ordinary arrow beside an emoji.
-    font_texts = [
-        "".join(
-            grapheme
-            for grapheme in regex.findall(r"\X", text)
-            if not regex.search(r"\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\u20E3", grapheme)
-        )
-        for text in texts
-    ]
     # KRI-785: a requested face missing LETTERS of the text (Turkish ğ ş İ ı in
     # Satisfy) tries its glyph-safe partner next, the face the cloud renderer
     # and the iOS compiler swap to, before the unrelated default.

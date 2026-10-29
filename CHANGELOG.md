@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.18.0] - 2026-10-29
+
+### Changed
+- feat(kria): long titles wrap, shrink or grow taller instead of failing to fit (KRI-1035) (#1927) <!-- release-pr: 1927 -->
+
+## [0.82.17.0] - 2026-10-29
+
+### Changed
+- fix(phone-text): flag emoji in a creator's title no longer fails the phone render; undrawable text named before approval (KRI-1024) (#1919) <!-- release-pr: 1919 -->
+
+## [0.82.16.0] - 2026-10-29
+
+### Changed
+- feat(kria): words shown a piece at a time are text_sequence, not captions (KRI-1038) (#1925) <!-- release-pr: 1925 -->
+
+## [0.82.15.0] - 2026-10-29
+
+### Changed
+- feat(kria): random and any-order clip orders are first-class (KRI-1036) (#1923) <!-- release-pr: 1923 -->
+
 ## [0.82.14.0] - 2026-10-29
 
 ### Changed
