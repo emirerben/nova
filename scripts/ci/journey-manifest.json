@@ -2100,8 +2100,31 @@
       "needs_native": true,
       "api_tests": "tests/kria/test_failed_draft_correction_postgres.py tests/kria/test_render_retry_postgres.py tests/routes/test_phone_text_sequence_followup.py",
       "xctests": [
-        "KriaTests/CreationConfirmationConflictTests",
-        "KriaTests/ApprovalDecisionRequestTests"
+        "KriaTests/CreationConfirmationConflictTests/testConflictCarriesServerDetailAndStillMatchesExistingConflictChecks",
+        "KriaTests/CreationConfirmationConflictTests/testConflictDetailIsNilWithoutAStringDetail",
+        "KriaTests/CreationConfirmationConflictTests/testKnownConflictDetailsKeepTheirDedicatedErrors",
+        "KriaTests/CreationConfirmationConflictTests/testStaleDirectionReasonsOfferARefresh",
+        "KriaTests/CreationConfirmationConflictTests/testRetryableReasonsKeepCreateAsTheOnlyAction",
+        "KriaTests/CreationConfirmationConflictTests/testPlanIdentityChangesWhenKriaPlansAgain",
+        "KriaTests/CreationConfirmationConflictTests/testLastAssistantErrorCodeReadsTheMostRecentEvent",
+        "KriaTests/CreationConfirmationConflictTests/testFailedCardOffersReplyForTypedDeclinesAndNothingForAnExhaustedQuota",
+        "KriaTests/CreationConfirmationConflictTests/testNonRetryableErrorCodesCoverKRI118StructuralFailuresAlongsidePhoneGate",
+        "KriaTests/CreationConfirmationConflictTests/testStoryShapeSubtitleMapsKnownShapesAndHidesEverythingElse",
+        "KriaTests/CreationConfirmationConflictTests/testWhatKriaChangedMergesAdjustmentsBeforeNoticesAndDedups",
+        "KriaTests/CreationConfirmationConflictTests/testWhatKriaChangedIsEmptyWhenBothListsAreAbsentOrEmpty",
+        "KriaTests/CreationConfirmationConflictTests/testSelectFormatConflictSurfacesTheRealServerDetail",
+        "KriaTests/CreationConfirmationConflictTests/testSelectFormatConflictFallsBackWhenTheServerSentNoDetail",
+        "KriaTests/CreationConfirmationConflictTests/testOtherNonConfirmationActionsKeepTheGenericChangedMessage",
+        "KriaTests/ApprovalDecisionRequestTests/testApproveWithNoCleanupChoiceOmitsTheOptionalFieldsButAlwaysSendsAware",
+        "KriaTests/ApprovalDecisionRequestTests/testApproveWithACleanupChoiceEncodesTheAnalysisIDAndChoice",
+        "KriaTests/ApprovalDecisionRequestTests/testCleanAfterRestartDisclosureSerializesRetakesAwareness",
+        "KriaTests/ApprovalDecisionRequestTests/testDenyAlsoAlwaysSendsSpeechCleanupAwareTrue",
+        "KriaTests/ApprovalDecisionRequestTests/testConflictSurfacesTheKriaProblemCodeAndMessage",
+        "KriaTests/ApprovalDecisionRequestTests/testSubmitTurnConflictMessagePrefersServerDetail",
+        "KriaTests/ApprovalDecisionRequestTests/testSubmitTurnConflictMessageFallbackAndExpiredApproval",
+        "KriaTests/ApprovalDecisionRequestTests/testAllSpeechCleanupConflictCodesAreRecognized",
+        "KriaTests/ApprovalDecisionRequestTests/testConflictCodeIsNilForTheLegacyDetailStringShape",
+        "KriaTests/ApprovalDecisionRequestTests/testSpeechCleanupDispatchRefusalKeepsTheFreshDraftRetry"
       ],
       "paths": [
         "src/apps/api/tests/kria/test_failed_draft_correction_postgres.py"
