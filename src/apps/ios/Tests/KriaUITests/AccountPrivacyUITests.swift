@@ -193,7 +193,10 @@ import XCTest
         XCTAssertFalse(dismiss.exists)
         let reset = app.buttons["text-learning-reset"]
         reveal(reset, app: app); reset.tap()
-        XCTAssertTrue(app.staticTexts["Learning history reset."].waitForExistence(timeout: 5))
+        // The confirmation is inserted below Reset and may be virtualized offscreen.
+        let resetConfirmation = app.staticTexts["Learning history reset."]
+        reveal(resetConfirmation, app: app)
+        XCTAssertTrue(resetConfirmation.exists)
     }
 
     func testAIConsentRequiresExplicitChoiceAndDeclineReturnsToSignInAtLargeText() {
