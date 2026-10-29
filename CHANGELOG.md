@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.23.0] - 2026-10-29
+
+### Changed
+- fix(export-verifier): read text copy once per layer, prove glyphs per sample (KRI-1042) (#1942) <!-- release-pr: 1942 -->
+
 ## [0.82.22.0] - 2026-10-29
 
 ### Changed
