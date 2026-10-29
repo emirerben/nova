@@ -1,0 +1,13 @@
+{
+  "pr": 1931,
+  "reviewed_code_sha": "d49dee827ae740f5660e8cb55163a157e7837fa6",
+  "claim": "local_fix",
+  "tests_passed_after_main_integration": 147,
+  "command": "cd src/apps/api && pytest tests/kria/test_kri1025_none_answer_pin.py tests/services/test_choice_questions.py tests/services/test_clip_selection.py tests/services/test_creator_render_contract.py",
+  "independent_review": "Full merge-base diff reviewed; no material P1/P2 findings",
+  "no_paid_calls": true,
+  "cache_contract": "Shared reviewed cache qualification e9b8118a2; throughput16 and selector suite passed",
+  "fresh_exact_head_CI": "required before merge",
+  "limitations": "Physical original iPhone incident acceptance and installed TestFlight output remain unverified",
+  "fix": "Text absence binds literal/shot and observed request before picker; stored answers revalidate requirement semantic digest. Eight new failure cases red before fix;194 focused cases passed before main merge;147 overlapping gate/selection/contract cases passed after integration."
+}
