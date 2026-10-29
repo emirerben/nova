@@ -99,6 +99,8 @@
       "Zero-test discovery result",
       "Interrupted broad diagnostic after unrelated animation-idle wait"
     ],
-    "independent_review": "Read-only review confirmed test-only change and stronger oracle. No app-source changes."
+    "independent_review": "Read-only review confirmed test-only change and stronger oracle. No app-source changes.",
+    "full_uninstrumented_iteration_passes": 3,
+    "counts_scope": "Xcresult summary groups the three passing iterations as one test case. The execution log records three passes and zero failures."
   }
 }
