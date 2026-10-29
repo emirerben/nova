@@ -50,6 +50,13 @@ class ExportThresholds(BaseModel):
 
     Picture sample passes when mean pixel error <= picture_exact_max_mean_pixel_error,
     or when error <= picture_max_mean_pixel_error and SSIM >= picture_min_local_ssim.
+    From v5 (picture_profile_min_lead set) the displayed frame also passes on its frame
+    profile: over the window, mean displayed SSIM >= picture_profile_min_mean_local_ssim
+    and mean displayed-minus-neighbour SSIM >= picture_profile_min_lead against both the
+    previous and the next source frame; the sample needs error <=
+    picture_max_mean_pixel_error, SSIM >= picture_profile_min_local_ssim and no
+    neighbour scoring higher. A neighbour within picture_repeat_max_mean_pixel_error of
+    the displayed source frame repeats it and counts as no evidence (lead 0).
     Audio chunk passes when correlation >= audio_min_correlation and gain is within
     [audio_min_gain, audio_max_gain]; a reference quieter than
     audio_silent_reference_rms instead needs output rms < audio_silent_max_rms.
@@ -71,6 +78,10 @@ class ExportThresholds(BaseModel):
     picture_max_mean_pixel_error: float
     picture_min_local_ssim: float
     whole_window_neighbour_shift_rejects: bool
+    picture_profile_min_local_ssim: float | None = None
+    picture_profile_min_mean_local_ssim: float | None = None
+    picture_profile_min_lead: float | None = None
+    picture_repeat_max_mean_pixel_error: float | None = None
     audio_min_correlation: float
     audio_min_gain: float
     audio_max_gain: float
@@ -103,22 +114,31 @@ _BASE_THRESHOLDS = ExportThresholds(
     text_min_word_conf=40,
 )
 _V3_THRESHOLDS = _BASE_THRESHOLDS.model_copy(update={"whole_window_neighbour_shift_rejects": True})
-# Numeric limits are unchanged since v1; v3 (KRI-810/KRI-831) added displayed-frame
-# neighbours and rejects a window where every sample needed one. v4 (KRI-1042) keeps
-# every picture, audio and duration rule and changes only the text proof.
+_V4_THRESHOLDS = _V3_THRESHOLDS.model_copy(
+    update={
+        "text_copy_read_once_per_layer": True,
+        "text_max_extra_tokens": 1,
+        "text_max_extra_token_chars": 2,
+        "text_min_ink_share": 0.03,
+        "text_max_fill_like_background_share": 0.5,
+        "text_presence_word_share_above": 0.5,
+        "text_hidden_rejects_glyphs": True,
+    }
+)
+# The exact picture limits are unchanged since v1; v3 (KRI-810/KRI-831) added displayed-frame
+# neighbours and rejects a window where every sample needed one. v4 (KRI-1042) changes
+# only the text proof. v5 (KRI-1042) adds the frame-profile picture proof.
 THRESHOLDS_BY_VERIFIER: dict[str, ExportThresholds] = {
     "phone-simple-cut-v1": _BASE_THRESHOLDS,
     "phone-simple-cut-v2": _BASE_THRESHOLDS,
     "phone-simple-cut-v3": _V3_THRESHOLDS,
-    "phone-simple-cut-v4": _V3_THRESHOLDS.model_copy(
+    "phone-simple-cut-v4": _V4_THRESHOLDS,
+    "phone-simple-cut-v5": _V4_THRESHOLDS.model_copy(
         update={
-            "text_copy_read_once_per_layer": True,
-            "text_max_extra_tokens": 1,
-            "text_max_extra_token_chars": 2,
-            "text_min_ink_share": 0.03,
-            "text_max_fill_like_background_share": 0.5,
-            "text_presence_word_share_above": 0.5,
-            "text_hidden_rejects_glyphs": True,
+            "picture_profile_min_local_ssim": 0.85,
+            "picture_profile_min_mean_local_ssim": 0.93,
+            "picture_profile_min_lead": 0.02,
+            "picture_repeat_max_mean_pixel_error": round(1.5 / 255, 6),
         }
     ),
 }
@@ -127,7 +147,8 @@ THRESHOLDS_BY_VERIFIER: dict[str, ExportThresholds] = {
 class PictureSample(_Evidence):
     """One picture sample against the source frames around the one displayed then.
 
-    Only displayed and next decide the sample; previous is measured for review.
+    Before v5 only displayed and next decide the sample; previous is for review. From
+    v5 all three feed the frame profile, except a neighbour listed in `repeats`.
     """
 
     ssim_previous: float | None = None
@@ -136,6 +157,7 @@ class PictureSample(_Evidence):
     error_displayed: float | None = None
     ssim_next: float | None = None
     error_next: float | None = None
+    repeats: list[Token] = []
 
 
 class ExportCheck(_Evidence):
@@ -149,8 +171,12 @@ class ExportCheck(_Evidence):
     samples: int | None = None
     picture_clock: Token | None = None
     neighbour_samples: int | None = None
+    profile_samples: int | None = None
     max_mean_pixel_error: float | None = None
     min_local_ssim: float | None = None
+    mean_local_ssim: float | None = None
+    lead_previous: float | None = None
+    lead_next: float | None = None
     correlation: float | None = None
     gain: float | None = None
     lag_samples: int | None = None

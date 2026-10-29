@@ -2227,8 +2227,52 @@
         "phone drops the text shadow (separate renderer ticket)"
       ],
       "follow_ups": [
-        "KRI-1042 PR 2: picture rule from stored per-sample evidence"
+        "KRI-1042 PR 2 (kri-1042-lisbon-export-picture-false-reject): frame-profile picture rule"
       ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1042-lisbon-export-picture-false-reject",
+      "tickets": [
+        "KRI-1042"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1042",
+      "symptom": "A correct Lisbon phone export (job 3daccc8c) was rejected by the picture check: against the 568x320 ~0.7 Mbps analysis proxy, 9 of 16 samples of detailed handheld footage scored 0.89-0.95 local SSIM, under the fixed 0.95 bar, although the displayed source frame was the best match in all 16.",
+      "boundary": "publication",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/services/actual_export_verification.py",
+        "src/apps/api/app/services/export_verification_admin.py",
+        "src/apps/api/app/services/device_render.py"
+      ],
+      "regression_tests": [
+        "tests/integration/test_actual_export_verification.py",
+        "tests/integration/test_admin_export_verification.py",
+        "tests/routes/test_actual_export_publication.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Lisbon per-sample scores (16 samples, 3 clips): v4 rejects all three clips, v5 passes all three on the frame profile (window leads >= 0.041, peak margin >= 0.0068, window mean >= 0.942). Real v4 and v5 verifiers on 564 picture windows (iOS proxy generator and exporter on 9 footage types, plus synthetic soft proxies): 0 of 241 shift or wrong-clip windows v4 rejects are accepted; 30 correct windows flip to checked; 27 tone-only wrong-picture windows (brightness, saturation, blur, low quality) flip, no zoom or offset window does.",
+        "live_model": "No model calls or paid evaluation.",
+        "native_output": "The Lisbon export and proxies were not retained, so v5 was replayed on the stored per-sample scores, not on the media.",
+        "production": "Not deployed. Requests pinned to v4 accept a v5 report after deploy."
+      },
+      "neighbours_covered": [
+        "one- and two-frame shifts either way on fast, calm and slow-zoom footage",
+        "a cut two frames late",
+        "wrong source window",
+        "2% zoom and 1% offset at the right time",
+        "25 fps original in a 30 fps proxy (repeated proxy frames)",
+        "still footage below the exact bar"
+      ],
+      "neighbours_gap": [
+        "tone changes (about 8 codes brightness, saturation, mild blur) that keep SSIM >= 0.93 pass on soft-proxy footage, as v4 passed them on sharp-proxy footage",
+        "one-frame-late export on calm footage passes through the unchanged v4 next-frame tolerance",
+        "calibrated on one real export plus generated footage, no replay corpus"
+      ],
+      "follow_ups": [],
       "red_control": "not_applicable"
     },
     {

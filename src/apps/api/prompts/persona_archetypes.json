@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-22-research-18",
+  "version": "2026-10-25-research-19",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -204,6 +204,31 @@
         "engagement_rate": 0.252727,
         "view_index": 19.7551,
         "sampled_at": "2026-10-18"
+      }
+    },
+    {
+      "id": "seasonal-culture-lens-01",
+      "niche": "city lifestyle & fashion",
+      "summary": "You filter the season through a cultural touchstone — a beloved show, film, or aesthetic movement — using that lens to make seasonal city content feel personal and shareable rather than generic.",
+      "tone": "warm, culturally fluent, lightly nostalgic",
+      "content_pillars": [
+        "seasonal mood through a pop-culture lens",
+        "city aesthetics that evoke a cultural era",
+        "outfit moments tied to a feeling or reference",
+        "short atmospheric clips where the caption is the cultural context"
+      ],
+      "audience": "people who use pop culture as a lens to feel things about places and seasons",
+      "sample_hooks": [
+        "me when it's [season]",
+        "if you know, you know",
+        "october felt like this"
+      ],
+      "source": "https://www.tiktok.com/@allexmarielle/video/7698283016300301576 (snapshot 2026-10-25T20:00:37.350170+00:00; observed caption and counts; visual treatment and causal effect unmeasured)",
+      "performance": {
+        "views": 13200,
+        "engagement_rate": 0.201742,
+        "view_index": 3.9239,
+        "sampled_at": "2026-10-25"
       }
     }
   ]
