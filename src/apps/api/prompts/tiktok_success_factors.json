@@ -212,27 +212,15 @@
       "source": "https://www.tiktok.com/@allexmarielle/video/7684196677896506642 (snapshot 2026-10-18T19:01:42.480515+00:00; observed caption and counts; causal effect unmeasured)"
     },
     {
-      "id": "no-caption-broll-corpus-12",
-      "factor": "For a 6s aesthetic lifestyle clip with a strong visual, strip all caption text — let the footage open without text",
-      "why": "When the visual quality is high enough, any caption competes with the frame; removing it forces the clip to deliver instantly and achieves near-100% completion, compounding the algorithmic signal",
-      "applies_to": [
-        "plan",
-        "hook"
-      ],
-      "provenance": "corpus",
-      "evidence": "In our fetched city-lifestyle set (October 2026), a 6s no-caption clip indexed ~18x the account median with 16.5% engagement — the top outlier across the full 20-post sample and well above every other hook-text variant",
-      "source": "tiktok market research 2026-10 (city-lifestyle account)"
-    },
-    {
       "id": "two-word-verdict-corpus-13",
-      "factor": "Caption a short aesthetic clip with exactly two words that function as both verdict and aspiration — no explanation, no hashtags",
-      "why": "A minimal editorial verdict signals confidence and leaves interpretive space; the clip's visual carries the meaning while the brevity itself invites a second watch",
+      "factor": "Consider a concise two-word editorial caption when it fits the creator request and footage.",
+      "why": "One observed caption uses two words. Views and engagement support a reference example, not a causal claim about confidence, completion, or repeat viewing.",
       "applies_to": [
         "hook"
       ],
       "provenance": "corpus",
-      "evidence": "In our fetched lifestyle set (October 2026), a 15s clip captioned with two words indexed ~4.7x the account median with 9.8% engagement on an account with a high 39k-view median — strong performance in an already high baseline",
-      "source": "tiktok market research 2026-10 (lifestyle-wellness account)"
+      "evidence": "The 25 October 20-post snapshot records 184700 views against a 39000-view median, a view index of 4.7359 and engagement rate of 0.098051. No matched comparison or retention data was collected.",
+      "source": "https://www.tiktok.com/@nermozdemir/video/7674217682970905874 (snapshot 2026-10-25T20:01:19.977705+00:00; observed caption and counts; visual treatment and causal effect unmeasured)"
     }
   ]
 }

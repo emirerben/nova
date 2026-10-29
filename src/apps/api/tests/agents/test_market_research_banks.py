@@ -251,7 +251,7 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             parallel-life-aspiration-01 ideas.
     # 2026-10-21-language: creator-language line (KRI-784); banks untouched.
     # Bump 2026-10-25-research-19: weekly refresh — added season-culture-lens-01,
-    #                  no-caption-pure-broll-01 (vi=18x outlier), minimal-verdict-aesthetic-01.
+    #                  minimal-verdict-aesthetic-01.
     assert content_ideas_version() == "2026-10-25-research-19"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-25-research-19"
 
@@ -274,13 +274,11 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     #                  (plans/015 — monkey/marketing incident); banks untouched here
     #                  (success-factor bank unchanged; overlay bank moved separately).
     # Persona/content plan bumped to 2026-10-21-language (KRI-784); banks untouched.
-    # Bump 2026-10-25-research-19: weekly refresh — added no-caption-broll-corpus-12
-    #                  (vi=18x, no-text aesthetic outlier) and two-word-verdict-corpus-13
-    #                  (vi=4.7x, 2-word minimal caption).
+    # Bump 2026-10-25-research-19: dated two-word caption reference; causal effect unmeasured.
     assert success_factors_version() == "2026-10-25-research-19"
     assert PERSONA_PROMPT_VERSION == "2026-10-25-research-19"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-25-research-19"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-25-research-19"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-29-research-19-grounded-hook-v3"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -317,7 +315,7 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # Bump 2026-10-25-research-19: weekly refresh — added minimal-verdict-static-01
     #                  (2-word aesthetic verdict form, "kinda chic" pattern).
     assert library_version() == "2026-10-25-research-19"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-25-research-19"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-29-research-19-grounded-hook-v3"
     assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-10-25-research-19"
 
 

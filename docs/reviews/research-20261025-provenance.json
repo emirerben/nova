@@ -1,0 +1,72 @@
+{
+  "snapshots": [
+    {
+      "file": "allexmarielle-20261025.json",
+      "sha256": "506dba2a1435f13caeb7e1078780059f4c36a80ec12627badb13eecd8777d38d",
+      "fetched_at": "2026-10-25T20:00:37.350170+00:00",
+      "sample_size": 20,
+      "median_views": 3364.0
+    },
+    {
+      "file": "izzsiomoi-20261025.json",
+      "sha256": "4cb6edd258cb75cd70cc24f1ec6ca3de0be5f34ddfef4037eb1522dcb6b7d43c",
+      "fetched_at": "2026-10-25T20:00:52.309247+00:00",
+      "sample_size": 20,
+      "median_views": 570.5
+    },
+    {
+      "file": "nermozdemir-20261025.json",
+      "sha256": "5da5911545520c8e5c2c0d71a368067be7e17ce988325096140546c47a2428b7",
+      "fetched_at": "2026-10-25T20:01:19.977705+00:00",
+      "sample_size": 20,
+      "median_views": 39000.0
+    },
+    {
+      "file": "patricia.turchin-20261025.json",
+      "sha256": "e1074cf7fcdd1a179821ec94512bb87ee9d9a3f47c2654f99ac67c329e4d6b6d",
+      "fetched_at": "2026-10-25T20:01:07.606656+00:00",
+      "sample_size": 20,
+      "median_views": 399.5
+    }
+  ],
+  "observations": {
+    "7691576589380848903": {
+      "view_count": 60600,
+      "like_count": 9423,
+      "comment_count": 49,
+      "repost_count": 556,
+      "duration": 6,
+      "caption": "TikTok video #7691576589380848903",
+      "account": "allexmarielle",
+      "median": 3364.0,
+      "fetched_at": "2026-10-25T20:00:37.350170+00:00"
+    },
+    "7698283016300301576": {
+      "view_count": 13200,
+      "like_count": 2610,
+      "comment_count": 20,
+      "repost_count": 33,
+      "duration": 10,
+      "caption": "me when it’s october 🍂 #fallseason #satc ",
+      "account": "allexmarielle",
+      "median": 3364.0,
+      "fetched_at": "2026-10-25T20:00:37.350170+00:00"
+    },
+    "7674217682970905874": {
+      "view_count": 184700,
+      "like_count": 17200,
+      "comment_count": 10,
+      "repost_count": 900,
+      "duration": 15,
+      "caption": "kinda chic",
+      "account": "nermozdemir",
+      "median": 39000.0,
+      "fetched_at": "2026-10-25T20:01:19.977705+00:00"
+    }
+  },
+  "excluded": [
+    "no-caption-pure-broll-01",
+    "no-caption-broll-corpus-12"
+  ],
+  "reason": "Fallback caption cannot prove absent text. No video pixels or retention data inspected. Counts are observational. Overlay treatments are authored suggestions."
+}
