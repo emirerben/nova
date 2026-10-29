@@ -28,7 +28,7 @@ The immutable recovery basis contains the canonical draft ID and snapshot hash. 
 
 ## Local verification
 
-The focused database suite passed 20 cases using a disposable UTF8 PostgreSQL database. Model/provider and queue edges were stubbed. Planner, persistence, compiler, approval admission and native recipe preparation ran locally. Neighboring planner, editor operation, retry, sequence and capability tests also passed. This is a representative state replay, not the unavailable original voice incident.
+The focused database suite passed 20 cases using a disposable UTF8 PostgreSQL database. Model/provider and queue edges were stubbed. Planner, persistence, compiler, approval admission and native recipe preparation ran locally. The final combined scope passed404 tests. All845 repository-mapped reliability tests passed with zero environment skips/errors. Neighboring planner, editor operation, retry, sequence and capability tests also passed. This is a representative state replay, not the unavailable original voice incident.
 
 The native simulator ran 25 failure-card and approval-request tests with zero failures. The task created its own iOS 26.5 simulator after the previous task simulator had been removed.
 
