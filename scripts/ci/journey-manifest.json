@@ -2110,6 +2110,21 @@
         "src/apps/api/tests/kria/test_29ekim_live_approval_gate.py",
         "scripts/kria/score_29_ekim.py"
       ]
+    },
+    {
+      "id": "kri-29ekim-post-approval-text-sequence",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_29ekim_post_approval.py tests/kria/test_29ekim_live_approval_gate.py tests/agents/test_editor_text_sequence.py",
+      "paths": [
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/fixtures/kria_replay/29-ekim/live_post_approval.json",
+        "src/apps/api/tests/kria/test_29ekim_post_approval.py",
+        "scripts/kria/score_29_ekim.py",
+        "scripts/kria/capture_29_ekim_post_approval.py"
+      ]
     }
   ]
 }

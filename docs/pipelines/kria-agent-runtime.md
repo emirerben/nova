@@ -859,6 +859,34 @@ parsers, clip-intent planning, the planner's order fields, `assess_readiness` an
 plus a variant of the planner answer without `order_by`. On main it reproduces prod's dispositions
 exactly (r1 unverified, r2 needs_choice, r3 evidence_missing).
 
+## After approval: the words need a bar to split
+
+With the gate fixed, the approved job failed every render as `creation_text_failed` ("The text
+couldn't be added"). `unified_montage.brief_view` took the opening title only from a `text`
+requirement, so a `text_sequence` seeded no title bar (`title_source_exists` was False) and the
+phone worker handed the creation text composer `text_bars == []`. The composer then answered
+"the text must already be established before it is split" (pro) or "I couldn't find a title"
+(flash), and `_check_added_text` refuses an `add_text` when no live non-title text was asked for.
+
+- `brief_view` seeds `title_literal` from a live `text_sequence` literal in `title` / `global`
+  scope (a `title` text literal keeps the bar). Everything that reads the title from it follows:
+  `_title`, `title_source_exists`, the contract's exact text, `snapshot_copy_constraints`.
+- The composer splits that bar itself (`set_texts_timing`, then `replace_text_sequence` with one
+  word per segment). There is no server-side split and no repair of its answer. Prompt
+  `v16-text-sequence-title-bar` says the sequence is the title bar, mode `agent_choice` means
+  replace unless the words should stay, and every piece gets at least 0.25 s. The composer input
+  carries `text_sequence` requirements of any scope. The "already met, skip the model" shortcut
+  judges them with `brief_checks.text_sequence_shown` whatever the compose flag says.
+- A clip-scoped `text_sequence` has no seeded bar. It allows `add_text`, like a non-title `text`.
+- The `weight` stretch in `op_replace_text_sequence` rounds its wanted end up to the millisecond
+  and compares at microsecond tolerance. A live answer with an 8.1 s window was declined because
+  the re-rounded edges measured 0.249999 s ("needs about 12.9 s and the video only leaves 12.9 s").
+
+Proof: scorecard check 7 (no model) and check 8 (every recorded live composer answer in
+`29-ekim/live_post_approval.json` through the worker, phone text style and device pin), also
+`tests/kria/test_29ekim_post_approval.py`. To capture new answers (paid, development ledger, $1 cap,
+needs a throwaway migrated database), run `scripts/kria/capture_29_ekim_post_approval.py`.
+
 ## Local proof
 
 From a prepared worktree:
