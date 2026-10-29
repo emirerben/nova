@@ -137,6 +137,25 @@ def _is_emoji(ch: str) -> bool:
     return bool(regex.match(r"\p{Emoji}", ch))
 
 
+def drop_color_emoji(text: str) -> str:
+    """``text`` without the graphemes a color emoji face draws (KRI-1024).
+
+    Flags (a regional-indicator pair), ZWJ sequences, skin tones, keycaps and
+    VS16 emoji are shaped in the system emoji face on the phone (Apple Color
+    Emoji, the only fallback its painter accepts) and in Noto Color Emoji by the
+    cloud renderer, never in a bundled face. A font check reads the rest, so a
+    text-style symbol a face lacks ("→", "©" with no VS16) still counts. For
+    coverage checks only: the creator's words keep every emoji.
+    """
+    import regex  # noqa: PLC0415 - Unicode grapheme/emoji properties
+
+    return "".join(
+        grapheme
+        for grapheme in regex.findall(r"\X", text or "")
+        if not regex.search(r"\p{Emoji_Presentation}|\p{Emoji}\uFE0F|\u20E3", grapheme)
+    )
+
+
 def needed_chars(text: str) -> str:
     """Characters a font must draw itself (NFC, deduped).
 

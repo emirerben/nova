@@ -51,7 +51,10 @@ log = structlog.get_logger()
 # v88 (KRI-821): the music redirect no longer points iOS creators at the web item page.
 # v89: reorder_clips_by criterion "custom" takes a model-reasoned order (reverse, swaps).
 # v90: reorder_clips_by criterion "random" shuffles with a server-owned seed (no order authored).
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-29-v90"
+# v91 (29 Ekim lane E, KRI-1039): compose with the ops, refuse only when no sequence reaches the
+# end state and name what is missing; words the creator gives, shown a piece at a time, are
+# replace_text_sequence (weighted windows, mode cumulative), never captions.
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-29-v91"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -3297,8 +3300,11 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         max_attempts=2,
         backoff_s=(2.0,),
         # Durable Kria turns supply a shared deadline and post-processing
-        # reserve. Stateless HTTP callers override this back to 40 seconds.
-        timeout_s=120.0,
+        # reserve. Stateless HTTP callers override this back to 40 seconds. 130 s, not
+        # 120: a runaway call must hit `max_output_tokens` (5.2 s + 7.27 ms per token,
+        # 124.3 s at 16,384) before this deadline, so it ends as a retryable truncation
+        # and never as an outcome-unknown fence (same rule as the Main Creator).
+        timeout_s=130.0,
         thinking_level=settings.edit_copilot_thinking_level,
         cost_per_1k_input_usd=0.002,
         cost_per_1k_output_usd=0.012,
@@ -3306,6 +3312,10 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
     Input = EditCopilotInput
     Output = EditCopilotOutput
     response_json = True
+    # Gemini 3 counts thinking against this budget. Unset, the 8,192 default is shared
+    # by thinking and the answer: a heavy edit at thinking "high" truncates, is retried
+    # once at "low", then fails generically (KRI-1037). Same size as the Main Creator.
+    max_output_tokens = 16_384
 
     def required_fields(self) -> list[str]:
         return ["intent", "reply"]
@@ -5046,7 +5056,8 @@ def _coerce_payload(
                 return None
 
     if name in {"edit_text", "add_text", "edit_caption"}:
-        text = _clean_user_text(out.get("text"))
+        # Captions are timed single rows; titles and labels keep the agent's own line breaks.
+        text = _clean_user_text(out.get("text"), keep_breaks=name != "edit_caption")
         if text is None:
             state.invalid_value()
             return None
@@ -5781,11 +5792,18 @@ def _motion_active_union_valid(name: str, payload: dict, blocks: list) -> bool:
     return total <= MOTION_MAX_ACTIVE_FRAMES / MOTION_FPS + 1e-6
 
 
-def _clean_user_text(value: object, *, max_chars: int = 500) -> str | None:
+def _clean_user_text(
+    value: object, *, max_chars: int = 500, keep_breaks: bool = False
+) -> str | None:
     if not isinstance(value, str):
         return None
-    clean = re.sub(r"[\x00-\x1f\x7f]+", " ", value).strip()
-    clean = re.sub(r"\s+", " ", clean)
+    if keep_breaks:
+        from app.services.kria_editor_ops_text import clean_authored_text  # noqa: PLC0415
+
+        clean = clean_authored_text(value)
+    else:
+        clean = re.sub(r"[\x00-\x1f\x7f]+", " ", value).strip()
+        clean = re.sub(r"\s+", " ", clean)
     if not clean:
         return None
     return clean[:max_chars]

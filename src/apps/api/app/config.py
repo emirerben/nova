@@ -566,6 +566,10 @@ class Settings(BaseSettings):
     # Keep the interactive executor and proactive director independently reversible.
     main_creator_model: str = "gemini-3.1-pro-preview"
     main_creator_thinking_level: str = "high"
+    # KRI-1037 kill switch: a Main Creator provider deadline is answered by a lighter call
+    # (thinking "medium", then the fallback model) inside the turn budget. Off = the old
+    # behavior, where the deadline ends the turn. Read at import, so restart api + worker.
+    main_creator_deadline_ladder_enabled: bool = True
     main_creator_output_mode: Literal["json", "native", "json_guarded"] = "json"
     edit_copilot_model: str = "gemini-3.1-pro-preview"
     edit_copilot_thinking_level: str = "high"
@@ -2365,6 +2369,12 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # 29 Ekim lane E (KRI-1039): an ask the editor ops can express is composed with them
+    # instead of refused, asked about or re-planned: a word-by-word title is one
+    # `replace_text_sequence` (weighted windows, `cumulative` mode), an edit-shaped follow-up
+    # after a failed render goes to the copilot, and a missing text sequence is composed rather
+    # than asked about. false = the previous routing, replies and ops, byte-identical.
+    kria_compose_unmet_with_ops_enabled: bool = False
     # KRI-219 latency: serve short in-place text/label/order edits with the fast copilot
     # BEFORE the pro-model requirement extraction (which then runs off the critical
     # path). false = the previous extract-first order for every post-render turn.

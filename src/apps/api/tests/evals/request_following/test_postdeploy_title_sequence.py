@@ -23,6 +23,17 @@ FIXTURE = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _legacy_equal_windows(monkeypatch):
+    """These pin the recorded ops' equal windows (the flag-off op shape).
+
+    Weighted and cumulative windows are covered by tests/kria/test_compose_unmet_with_ops.py.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_compose_unmet_with_ops_enabled", False)
+
+
 @pytest.fixture(scope="module")
 def capture() -> dict:
     return json.loads(FIXTURE.read_text())

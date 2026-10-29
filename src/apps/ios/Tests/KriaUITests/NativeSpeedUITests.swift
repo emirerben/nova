@@ -48,4 +48,42 @@ final class NativeSpeedUITests: XCTestCase {
         capture.lifetime = .keepAlways
         add(capture)
     }
+
+    func testClosingSpeedInspectorCommitsResetForSingleUndo() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-speed", "-ui-testing-editor-device"]
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let clip = app.descendants(matching: .any)["native-editor-clip-1"].firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20))
+        clip.tap()
+        app.buttons["native-editor-adjust"].tap()
+        let slider = app.sliders["native-editor-playback-rate"]
+        let duration = app.descendants(matching: .any)["native-editor-speed-duration"].firstMatch
+        func revealSpeed() {
+            for _ in 0..<3 where !slider.exists || !slider.isHittable {
+                app.collectionViews.firstMatch.swipeUp()
+            }
+            XCTAssertTrue(slider.waitForExistence(timeout: 5), app.debugDescription)
+        }
+        revealSpeed()
+        slider.adjust(toNormalizedSliderPosition: 1)
+        let chosenRate = slider.value as? String
+        let chosenDuration = duration.value as? String
+        XCTAssertEqual(chosenRate, "4.00x", "Pre-Reset rate: \(chosenRate ?? "missing"), duration: \(chosenDuration ?? "missing")")
+        XCTAssertEqual(chosenDuration, "00:01.5", "Pre-Reset duration must match the selected 4x rate")
+        app.buttons["Reset speed"].tap()
+        XCTAssertEqual(slider.value as? String, "1.00x")
+        XCTAssertEqual(duration.value as? String, "00:06.0")
+        app.buttons["native-editor-inspector-done"].tap()
+        XCTAssertFalse(app.navigationBars["Adjust"].exists)
+        let undo = app.buttons["native-editor-undo"]
+        XCTAssertTrue(undo.isEnabled, "Closing the inspector must commit its pending edit")
+        undo.tap()
+        app.buttons["native-editor-adjust"].tap()
+        revealSpeed()
+        XCTAssertEqual(slider.value as? String, chosenRate, "One Undo must restore the speed immediately before Reset")
+        XCTAssertEqual(duration.value as? String, chosenDuration, "Undo must restore rate and duration together")
+        print("KRIA_NATIVE_TEST_PROOF speed-reset-close-undo-v1")
+    }
 }

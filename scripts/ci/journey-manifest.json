@@ -166,6 +166,12 @@
         "src/apps/api/app/services/phone_sources.py",
         "src/apps/api/tests/fixtures/prompt_coverage/creation_composition.json",
         "src/apps/api/tests/evals/request_following/test_kri559_journey.py",
+        "src/apps/api/app/kria/compose_with_ops.py",
+        "src/apps/api/app/kria/editor_capability_parity.py",
+        "src/apps/api/tests/evals/request_following/test_kri524_full_conversation_routing.py",
+        "src/apps/api/tests/evals/request_following/test_kri524_live_captures.py",
+        "src/apps/api/tests/evals/request_following/test_kri524_sequence_journey.py",
+        "src/apps/api/tests/evals/request_following/test_postdeploy_title_sequence.py",
         "src/apps/ios/Kria/",
         "src/apps/ios/Packages/KriaMediaEngine/",
         "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift",
@@ -421,6 +427,20 @@
         "src/apps/ios/Kria/Core/NativeEditorSources.swift",
         "src/apps/ios/Tests/KriaTests/KRI1032MontageCopyParityE2ETests.swift",
         "src/apps/ios/Tests/Fixtures/KRI1032PlazaM1Editor.json"
+      ]
+    },
+    {
+      "id": "kri-1027-vertical-fill",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1027_m1_vertical_fill_replay.py tests/pipeline/test_kri1027_montage_vertical_framing.py tests/kria/test_landscape_fit_ask.py tests/services/test_render_shape_chat_ask.py tests/pipeline/test_phone_guided_fit.py",
+      "paths": [
+        "src/apps/api/app/kria/landscape_fit_ask.py",
+        "src/apps/api/app/pipeline/phone_montage_framing.py",
+        "src/apps/api/tests/fixtures/kri1027_m1_vertical_fill.json",
+        "src/apps/api/tests/kria/test_kri1027_m1_vertical_fill_replay.py",
+        "src/apps/api/tests/kria/test_landscape_fit_ask.py",
+        "src/apps/api/tests/pipeline/test_kri1027_montage_vertical_framing.py",
+        "src/apps/api/tests/services/test_render_shape_chat_ask.py"
       ]
     },
     {
@@ -811,7 +831,8 @@
         "KriaTests/NativeEditorInteractionTests/testMarkedTimelineUsesTheFrameClockForMixedClipAndTransitionBoundaries",
         "KriaTests/NativeEditorInteractionTests/testRemovedMarkedSpeedSlotDoesNotPutLegacySurvivorsOnFrameClock",
         "KriaTests/GuidedLabelRebaseVectorTests/testSourceBoundTextUsesMarkedThirtyFPSWindowAfterHalfFrameSpeedRetime",
-        "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector"
+        "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector",
+        "KriaUITests/NativeSpeedUITests/testClosingSpeedInspectorCommitsResetForSingleUndo"
       ]
     },
     {
@@ -1002,12 +1023,14 @@
     {
       "id": "kri-775-phone-preflight",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri775_merope_m2_replay.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri775_preflight_runtime_postgres.py",
+      "api_tests": "tests/kria/test_kri775_merope_m2_replay.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri775_preflight_runtime_postgres.py tests/kria/test_kri1024_flag_emoji_title.py",
       "paths": [
         "src/apps/api/app/services/phone_montage_preflight.py",
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/app/tasks/kria_runtime.py",
-        "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json"
+        "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json",
+        "src/apps/api/tests/fixtures/kri1024_plaza_m1_flag_title.json",
+        "src/apps/api/tests/kria/test_kri1024_flag_emoji_title.py"
       ]
     },
     {
@@ -1059,7 +1082,7 @@
         "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
         "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss"
       ],
-      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py",
+      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py tests/kria/test_kri1024_flag_emoji_title.py",
       "paths": [
         "scripts/ios/phone-text-style-e2e.py",
         "src/apps/api/app/agents/creator_memory_extractor.py",
@@ -1938,14 +1961,17 @@
     {
       "id": "kri-942-clip-sound-toggle",
       "needs_native": false,
-      "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",
+      "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/tasks/test_kri1028_kept_line_window.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",
       "paths": [
         "src/apps/api/app/kria/clip_sound_toggle_ask.py",
         "src/apps/api/app/kria/draft_sound_carry.py",
         "src/apps/api/app/pipeline/clip_sound_toggle.py",
         "src/apps/api/app/services/phone_clip_sound_toggle.py",
+        "src/apps/api/app/services/kept_sound_lines.py",
         "src/apps/api/tests/fixtures/kri942_donjulio_walkin_m1.json",
-        "src/apps/api/tests/tasks/test_kri942_clip_sound_toggle.py"
+        "src/apps/api/tests/fixtures/kri1028_plaza_m1_recoleta.json",
+        "src/apps/api/tests/tasks/test_kri942_clip_sound_toggle.py",
+        "src/apps/api/tests/tasks/test_kri1028_kept_line_window.py"
       ]
     },
     {
@@ -2089,6 +2115,37 @@
         "src/apps/api/app/services/order_mode.py",
         "src/apps/api/tests/services/test_order_mode.py",
         "src/apps/api/tests/fixtures/kria_replay/29-ekim/fixture.json"
+      ]
+    },
+    {
+      "id": "kri-29ekim-live-approval-gate",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_29ekim_live_approval_gate.py tests/evals/test_clip_intent_planner_evals.py tests/services/test_order_mode.py",
+      "paths": [
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/services/order_mode.py",
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/tests/fixtures/kria_replay/29-ekim/live_new_thread_t1.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/golden/kri29ekim_random_order_text_sequence.json",
+        "src/apps/api/tests/kria/test_29ekim_live_approval_gate.py",
+        "scripts/kria/score_29_ekim.py"
+      ]
+    },
+    {
+      "id": "kri-29ekim-post-approval-text-sequence",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_29ekim_post_approval.py tests/kria/test_29ekim_live_approval_gate.py tests/agents/test_editor_text_sequence.py",
+      "paths": [
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/fixtures/kria_replay/29-ekim/live_post_approval.json",
+        "src/apps/api/tests/kria/test_29ekim_post_approval.py",
+        "scripts/kria/score_29_ekim.py",
+        "scripts/kria/capture_29_ekim_post_approval.py"
       ]
     }
   ]

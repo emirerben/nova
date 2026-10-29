@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-22-research-18",
+  "version": "2026-10-25-research-19",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -374,6 +374,19 @@
       "highlight_color": "#A3E635",
       "niche": "wellness & daily ritual",
       "source": "https://www.tiktok.com/@nermozdemir/video/7677983862441479442 (snapshot 2026-10-18T19:02:29.536897+00:00; illustrative authored overlay from a disclosed sponsored caption; no measured organic or visual-style claim)"
+    },
+    {
+      "id": "minimal-verdict-static-01",
+      "content_profile": "Illustrative authored overlay inspired by a two-word lifestyle caption. Motion, placement, colors, and absence of narration are suggestions, not observed video properties.",
+      "effect": "static",
+      "text": "kinda chic",
+      "highlight_word": "chic",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
+      "niche": "lifestyle & fashion",
+      "source": "https://www.tiktok.com/@nermozdemir/video/7674217682970905874 (snapshot 2026-10-25T20:01:19.977705+00:00; observed caption and counts; visual treatment and causal effect unmeasured)"
     }
   ]
 }

@@ -16,9 +16,13 @@ What it judges, and why only that:
 - a clip-speed ask (KRI-689, `speed_ask.asks_clip_speed`): the plan grounds it to its cuts
   (or says why it cannot), so its receipt is returned whatever its status and the draft reads
   "Done: ... (clips 1 and 3 play at 2x)" or an honest "Couldn't" before the card.
-- never ``text``: the worker's two model steps (landmark names for per-clip labels, the
-  creation-text lane) only write text and are skipped here, so a text verdict would be a
-  guess. The render's own receipts still judge text.
+- never ``text`` placement or wording: the worker's two model steps (landmark names for
+  per-clip labels, the creation-text lane) only write text and are skipped here, so a text
+  verdict would be a guess. The render's own receipts still judge text. One exception
+  (KRI-1024): a creator literal no phone font can draw, which the worker's typography
+  step refuses whatever the model steps write. The plan runs under the same phone text
+  policy the worker does, and that refusal comes back as a "Couldn't" naming the text and
+  the characters. Color emoji are the phone's own and never refused.
 
 Cheap and safe: no model call, no storage call, no write. Blockers return ``None`` (nothing
 to say) wherever the worker would not run this planner, and fail open: any error is logged
@@ -126,6 +130,7 @@ def montage_blockers(
         plan_facts_from_unified_montage,
     )
     from app.kria.duplicate_uploads import montage_record_fields  # noqa: PLC0415
+    from app.services.creator_render_contract import CreatorRenderContractError  # noqa: PLC0415
 
     # The worker only refuses a draft whose brief was bound at approval.
     if brief is None or not settings.brief_binding_for(creator_id):
@@ -139,17 +144,29 @@ def montage_blockers(
     # not). Its receipt is returned whatever its status, so the draft says "Done: ... (clips 1
     # and 3 play at 2x)" or the honest "Couldn't" before the approval card.
     speed_asks = {req.id for req in brief.live() if asks_clip_speed(req)}
-    if not judged and not speed_asks:
-        return None
-    planned = preflight_montage_plan(
-        creator_id=creator_id,
-        edit_format=edit_format,
-        brief=brief,
-        strategy=strategy,
-        media_snapshot=media_snapshot,
-        visuals=visuals,
-        client_protocol=client_protocol,
+    # KRI-1024: creator literals no phone font draws; the plan below says whether the
+    # worker's typography step would refuse them.
+    refused = undrawable_text_receipts(
+        # 29 Ekim: a text_sequence's words are drawn too, as the opening title's pieces.
+        [req for req in brief.live() if req.kind in {"text", "text_sequence"} and req.literal]
     )
+    if not judged and not speed_asks and not refused:
+        return None
+    try:
+        planned = preflight_montage_plan(
+            creator_id=creator_id,
+            edit_format=edit_format,
+            brief=brief,
+            strategy=strategy,
+            media_snapshot=media_snapshot,
+            visuals=visuals,
+            client_protocol=client_protocol,
+        )
+    except CreatorRenderContractError as exc:
+        # KRI-1024: the worker's typography step refuses text no phone font draws.
+        if exc.field_path != "phone_text_style" or not refused:
+            raise
+        return refused
     if planned is None or planned is MontagePreflightSkip.OTHER_WRITER:
         return None
     plan, aliases = planned
@@ -164,6 +181,31 @@ def montage_blockers(
         if (receipt.requirement_id in judged and needs_creator_choice(receipt))
         or (receipt.requirement_id in speed_asks and receipt.verification == "checked")
     ]
+
+
+def undrawable_text_receipts(requirements: Sequence[BriefRequirement]) -> list[RequirementReceipt]:
+    """KRI-1024: a checked "Couldn't" for each creator literal no phone font can draw.
+
+    Names the text and the characters (color emoji are the phone's own, never named), so
+    the draft asks before the approval card instead of failing one second after it.
+    """
+    from app.kria.brief_checks import _receipt  # noqa: PLC0415
+    from app.pipeline.phone_text_style import undrawable_message, undrawable_text  # noqa: PLC0415
+
+    receipts = []
+    for req in requirements:
+        found = undrawable_text([req.literal or ""])
+        if found is not None:
+            receipts.append(
+                _receipt(
+                    req,
+                    "not_possible",
+                    undrawable_message(*found),
+                    verification="checked",
+                    stage="checked",
+                )
+            )
+    return receipts
 
 
 def preflight_montage_plan(
@@ -198,6 +240,10 @@ def preflight_montage_plan(
     from app.services.length_policy import creator_duration_s  # noqa: PLC0415
     from app.services.phone_destination import phone_drawable_visual_kinds  # noqa: PLC0415
     from app.services.phone_sources import bind_phone_sources  # noqa: PLC0415
+    from app.services.phone_text_styling import (  # noqa: PLC0415
+        approval_text_policy,
+        phone_text_policy_scope,
+    )
     from app.services.render_route import (  # noqa: PLC0415
         Route,
         resolve_route,
@@ -294,16 +340,19 @@ def preflight_montage_plan(
         {source.proxy_path: source for source in sources},
         facts_on=settings.clip_facts_for(creator_id),
     )
-    plan = _plan_phone_unified_montage(
-        clips,
-        brief_view(brief),
-        strategy=planned_strategy,
-        visuals=placed_visuals,
-        all_candidates=candidates,
-        creator_duration_proven=creator_duration_s(brief=brief) is not None,
-        approved_length_plan=envelope,
-        contract=contract,
-    )
+    # KRI-1024: the worker plans under the job's phone text policy. Without it this plan
+    # took a typography branch the worker never takes and passed text the worker refused.
+    with phone_text_policy_scope(approval_text_policy(strategy)):
+        plan = _plan_phone_unified_montage(
+            clips,
+            brief_view(brief),
+            strategy=planned_strategy,
+            visuals=placed_visuals,
+            all_candidates=candidates,
+            creator_duration_proven=creator_duration_s(brief=brief) is not None,
+            approved_length_plan=envelope,
+            contract=contract,
+        )
     return plan, aliases
 
 

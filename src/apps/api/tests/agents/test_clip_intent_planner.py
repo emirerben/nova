@@ -2520,11 +2520,21 @@ def test_kri552_the_prompt_sends_speech_cleanup_to_the_step_that_owns_it() -> No
 _OFF_PROMPT_SHA256 = "e0f6d521fbf27a58b2e429655f3f6a19d49cbf5b72881e4e5d06648b2cee39f5"
 
 
+# 29 Ekim (prod thread 64bb9853) added two paragraphs to every rendering, kill switch or not:
+# a random / any order and words shown a piece at a time are no clip operation. Without them
+# the kill-switch-OFF prompt is still byte for byte the pre-KRI-993 one.
+_29EKIM_START = "\n\nA request for NO particular sequence is not a clip operation"
+_29EKIM_END = "even when they quote the words: return no\nintent for them.\n"
+
+
 def test_kri993_kill_switch_off_prompt_is_byte_identical_to_before() -> None:
     import hashlib
 
     off = _agent().render_prompt(_input())
-    assert hashlib.sha256(off.encode()).hexdigest() == _OFF_PROMPT_SHA256
+    start = off.index(_29EKIM_START)
+    end = off.index(_29EKIM_END, start) + len(_29EKIM_END)
+    before_29ekim = off[:start] + "\n" + off[end:]
+    assert hashlib.sha256(before_29ekim.encode()).hexdigest() == _OFF_PROMPT_SHA256
 
 
 def test_kri993_on_prompt_keeps_a_blank_line_around_the_scope_paragraph() -> None:

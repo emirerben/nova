@@ -130,6 +130,56 @@ python scripts/admin.py --prod GET creation-threads/<thread_id>/events
 python scripts/admin.py --prod GET "creation-threads/<thread_id>/turns?limit=10"
 ```
 
+## Phone export verification evidence (read-only)
+
+`GET /admin/jobs/{job_id}/export-verification` returns the measured evidence the server
+stored when it checked a phone-rendered export (KRI-1042). The `/debug` view strips the
+private `_device_render_v1` record, so use this route to see why an export was refused.
+
+Each entry in `variants` has the device record's `phase`, `reason_code`, pinned
+`identity`, `actual_export_policy` (pinned `verifier_version`), `contract_decline`
+(reason, field path, stage), and:
+
+- `attempts`: the uploads of the current pinned request. `index` orders them by when
+  verification queued; an upload that never queued comes last. Each has
+  `verification_task` state and `actual_export_verification`: overall `status`
+  (`checked` / `rejected` / `partial` / `unsupported`), `verifier_version`, and `checks`.
+  A `picture` check carries `min_local_ssim`, `max_mean_pixel_error`, `samples`,
+  `neighbour_samples` and `picture_clock`. From v4 it also has `sample_evidence`: per
+  sample, SSIM and mean pixel error against the source frame displayed then, the next
+  frame and the previous frame (`ssim_displayed`, `error_displayed`, ...). In v4 only
+  displayed and next decide the sample; previous is there to review a one-frame lag.
+  From v5 all three feed the frame profile: the check adds `profile_samples` (samples
+  that passed on the profile, not the exact bar), `mean_local_ssim` (displayed frames)
+  and `lead_previous` / `lead_next` (mean displayed-minus-neighbour SSIM), and a sample
+  lists in `repeats` a neighbour that repeats the displayed source picture. An `audio`
+  check carries `correlation`, `gain` and `lag_samples`, or `rms` for a silent reference.
+  A `text` check carries `at_s` and `expected_visible`; from v4 also `proof` (`copy`,
+  `presence`, `absent`, `other_layer`) or `reason` (for example `copy_not_read`,
+  `no_glyph_ink`, `copy_words_missing`, `glyphs_still_visible`), `words_expected`,
+  `words_read_in_order`, `extra_tokens`, `min_word_conf`, `best_view`, `ink_share`,
+  `fill_like_background_share` and `read_area` (canvas pixels). The OCR text itself is
+  never stored. Reports from v1 to v3 return `null` for these fields. An `evidence` row
+  with status `missing` names the exception that stopped measurement in `reason`.
+- `thresholds` on every report: the pass rules for its `verifier_version`. The verifier
+  does not store them. They come from `THRESHOLDS_BY_VERIFIER` in
+  `app/services/export_verification_admin.py`, which must change with any verifier
+  threshold change. An unknown verifier version returns `null`.
+- `repair_history`: one row per automatic source-normalisation repair, with the rejected
+  attempt's `report`, the `cause` (requirement ids, recipe field paths) and the repaired
+  attempt's `result`. An automatic repair keeps this history across its re-pin. A creator
+  or admin retry (`retry_device_render`) pins a fresh record, so it drops both `attempts`
+  and `repair_history`: evidence from before the last manual retry is gone.
+
+The response is an allowlist of numbers, enum or id tokens, storage object paths and
+timestamps. Signed URLs, decline messages, failure detail text and the recipe never
+leave the record. A stored value that does not fit its field returns as `null`.
+Guard: `tests/integration/test_admin_export_verification.py` (real Postgres).
+
+```bash
+python scripts/admin.py --prod GET jobs/<job_id>/export-verification
+```
+
 ## Eval harness opt-out
 
 The eval RunContext sets `extra={"skip_agent_run_persist": True}` so replay-mode evals

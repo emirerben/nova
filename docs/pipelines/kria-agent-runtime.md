@@ -802,8 +802,109 @@ voiceover is recorded, and the message does not talk about words said in the foo
 
 Deploy order: roll api and worker together. A thread stored with `text_sequence` fails
 `CreativeBrief` validation on an older api or worker machine (autostopped machines, or a revert),
-and this kind has no kill switch of its own. Nothing judges it until the editor-op lane lands, so
-the draft shows the sentence whole.
+and this kind has no kill switch of its own.
+
+## Compose with the editor ops (KRI-1039, `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`)
+
+The copilot's ops are the base layer: an ask a person could do in the editor is composed with them,
+not refused, asked about or re-planned.
+
+- A `text_sequence` ask is one `replace_text_sequence`: windows are weighted by character count
+  (`weight: "length"`, the default; `"equal"` keeps equal windows), and `mode: "cumulative"` builds
+  the sentence up (step k shows the first k words, children carry `source_params.sequence_mode`,
+  the full sentence holds the last quarter). Both fields are written into the op when it is
+  authored, so replaying a saved draft never depends on the flag. Evidence
+  (`sequence_text_evidence.complete_sequences`) reads a cumulative chain as its last step.
+- Creation: Main Creator plans the footage; `compose_creation_text` is the one op pass on the
+  new draft, in the same render job, and it reads `text_sequence` requirements. `check_requirement`
+  judges one (`PlanFacts.sequence_texts`): met when the words are on screen in pieces, otherwise a
+  neutral receipt, so an uncomposed sequence is never a creator question.
+- Follow-ups: an edit-shaped turn on a draft that has a render goes to the copilot with no
+  `nova.creator.main` call; `replace_text_sequence` is on the fast path. A job that FAILED before
+  producing any variant has no editable lanes (prod job debug: no `variants` key), so its follow-up
+  is still a re-plan; the fix for that case is that the render no longer fails (title fit, lane A).
+  The re-plan cues are unchanged.
+- Readability floor: an op authored with `weight` gives every piece at least 0.25 s
+  (`_MIN_PIECE_S`). When the source window is too short the compiler lengthens it, up to the end of
+  the video or the next text in the same role and place; if even that cannot hold the pieces, or the
+  video length cannot be read, the op fails naming the seconds needed and left (never an unbounded
+  stretch).
+- Capability parity: `kria/editor_capability_parity.py` maps every public action of
+  `NativeEditorSession.swift` and the files extending it (`NativeEditorRetiming.swift`,
+  `NativeTextEditing.swift`) to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
+  `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when
+  an action has none.
+
+Default `false` (off until enabled). Flag off restores the earlier routing, cues, fast-path set and op shape
+(`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.
+
+## The approval gate on a new 29 Ekim thread (prod 64bb9853)
+
+With every lane above live, the same first message in a new thread was still a question
+("Bunu henüz yapamıyorum ... Daha basit sürümde çıkarılacak"). The brief was right (prod stores it
+redacted; it was rebuilt and proven exact against `approval_readiness.brief_digest`): r1
+`select {all}`, r2 `order {key: random, seed}`, r3 `text_sequence {unit: word, mode: agent_choice}`.
+The approval-readiness gate refused it for reasons the offline scorecard never reached, because it
+replayed hand-made strategies, not the live clip-intent planner or this gate:
+
+- r2 `needs_choice`: the live clip-intent planner wrote `{"op": "order", "attribute": "all
+  content", "order_by": "random"}`. `order_by` only knows `capture_time | route`, so it was nulled
+  into a positionless order group over all 28 clips with `ordered_members` unset, and
+  `_check_order` reports such a group's inner order as "wasn't recorded" before it looks at the
+  random key. Now an `order` whose `order_by` is a random / any order is dropped by the parser
+  (`order_mode_dropped`; the brief owns that ask), and under a brief random / any-order ask a
+  positionless group with no stated inner order is `ordered_members: false`
+  (`order_mode.confirm_unordered_groups`, in `planner.brief_order_fields`), so a model that writes
+  null instead lands the same way.
+- r2 next in line, `evidence_missing`: a strategy draft carried `ordering_choice: "random"` but the
+  gate read the order from `strategy.ordering_basis` only. A draft the phone unified montage writer
+  renders now commits to `ordering_basis: "random"` (`approval_readiness._planned_order_basis`);
+  that writer draws the stored-seed permutation and its own receipt checks it after render.
+- r3 `evidence_missing`: a `text_sequence` is composed by `compose_creation_text`, which runs after
+  approval in the render job, and is judged on the finished text lane. A strategy draft has no
+  text lane, so the gate asked before the step that does it had run. It is now `unverified` on a
+  strategy draft (approvable, named for after the render); an editor draft still proves it from
+  its ops.
+- Latent: the same planner answer also minted a `caption` on "each word" carrying the whole
+  sentence, which the resolver put on all 28 clips (a static copy under the word-by-word sequence).
+  A caption whose exact words are a live `text_sequence` literal is dropped
+  (`without_whole_video_captions`, `sequence_texts`). The clip-intent planner prompt now says both
+  asks are no clip operation.
+
+Proof: scorecard check 6 (`make kria-replay FIXTURE=29-ekim`, also
+`tests/kria/test_29ekim_live_approval_gate.py`) replays the live Main Creator, clip-intent planner
+and resolver answers to that exact message (`29-ekim/live_new_thread_t1.json`) through the real
+parsers, clip-intent planning, the planner's order fields, `assess_readiness` and the choice gate,
+plus a variant of the planner answer without `order_by`. On main it reproduces prod's dispositions
+exactly (r1 unverified, r2 needs_choice, r3 evidence_missing).
+
+## After approval: the words need a bar to split
+
+With the gate fixed, the approved job failed every render as `creation_text_failed` ("The text
+couldn't be added"). `unified_montage.brief_view` took the opening title only from a `text`
+requirement, so a `text_sequence` seeded no title bar (`title_source_exists` was False) and the
+phone worker handed the creation text composer `text_bars == []`. The composer then answered
+"the text must already be established before it is split" (pro) or "I couldn't find a title"
+(flash), and `_check_added_text` refuses an `add_text` when no live non-title text was asked for.
+
+- `brief_view` seeds `title_literal` from a live `text_sequence` literal in `title` / `global`
+  scope (a `title` text literal keeps the bar). Everything that reads the title from it follows:
+  `_title`, `title_source_exists`, the contract's exact text, `snapshot_copy_constraints`.
+- The composer splits that bar itself (`set_texts_timing`, then `replace_text_sequence` with one
+  word per segment). There is no server-side split and no repair of its answer. Prompt
+  `v16-text-sequence-title-bar` says the sequence is the title bar, mode `agent_choice` means
+  replace unless the words should stay, and every piece gets at least 0.25 s. The composer input
+  carries `text_sequence` requirements of any scope. The "already met, skip the model" shortcut
+  judges them with `brief_checks.text_sequence_shown` whatever the compose flag says.
+- A clip-scoped `text_sequence` has no seeded bar. It allows `add_text`, like a non-title `text`.
+- The `weight` stretch in `op_replace_text_sequence` rounds its wanted end up to the millisecond
+  and compares at microsecond tolerance. A live answer with an 8.1 s window was declined because
+  the re-rounded edges measured 0.249999 s ("needs about 12.9 s and the video only leaves 12.9 s").
+
+Proof: scorecard check 7 (no model) and check 8 (every recorded live composer answer in
+`29-ekim/live_post_approval.json` through the worker, phone text style and device pin), also
+`tests/kria/test_29ekim_post_approval.py`. To capture new answers (paid, development ledger, $1 cap,
+needs a throwaway migrated database), run `scripts/kria/capture_29_ekim_post_approval.py`.
 
 ## Local proof
 
@@ -825,3 +926,39 @@ also checks the generated registry/API types, the 240-case structural all-format
 corpus, editor reducer, runtime state machine, HTTP envelopes, admin trace, and
 migrations. It writes duration/flakiness metadata to
 `test-results/kria-verify.json`; feature flags stay off until the live gates pass.
+
+## Provider deadlines and the Main Creator ladder (KRI-1037)
+
+A Main Creator call that ends at our own provider deadline (`ProviderDeadlineExceededError`, a
+subclass of `ProviderOutcomeUnknownError`, so the paid-call fence is unchanged) is no longer repeated:
+
+1. rung 1 keeps the spec thinking level (`high`) and gets the shared turn budget minus 75 s;
+2. a deadline steps thinking to `medium` for up to 50 s (new paid call, new reservation);
+3. a second deadline runs the fallback `gemini-3.6-flash` at `low` with what remains.
+
+The turn budget is the 200 s Celery soft limit minus the planner's 20 s reserve (180 s); the rungs
+never exceed it. "Try again" after a deadline starts at rung 2: the failed turn stores
+`error.provider_deadline=true` (only when our own deadline fired, not for a transport outcome-unknown),
+`_claim` stamps `snapshot["start_degraded"]` when the thread's last finished turn hit a deadline
+within 10 minutes AND the new message retries that request (same words after casefold and punctuation
+strip, or a bare "try again"; `_is_retry_of`). An unrelated new request inside the window runs at full
+strength. The planner reads the stamp through `start_degraded_retry`. Kill switch: `MAIN_CREATOR_DEADLINE_LADDER_ENABLED=false`
+plus restart of api and worker (read at import). Truncation now fails as `runtime_output_truncated`
+(`TerminalOutputTruncatedError`) with its own copy instead of the generic `runtime_turn_failed`.
+
+The rung sizes (105 s first rung, 50 s medium, 75 s reserve) are not measured on a lighter rung:
+the only evidence is the recorded successful `high` calls on this 27-clip set (23.9, 41.3, 52.3 s
+single attempt; 77.6 s over two attempts), all under the first rung, while the two failed turns sat
+at the deadline for 180 s with 2k output tokens (read as a stalled call rather than a slow success; not proven). Medium and
+flash latencies in the `lane_c` replay are assumed. Worst case is three paid Main Creator calls in
+one turn (each fenced under its own reservation; the planner is a pure call with no side effects).
+Check `agent_deadline_degraded` / `agent_deadline_fallback` log lines and `deadline_degraded` on
+`agent_run` events after rollout before tuning `degraded_timeout_s` / `deadline_ladder_reserve_s`.
+
+A compact per-clip evidence tier for large clip sets was tried and removed: it saved 9 to 13 percent of
+input tokens on a synthetic 27-clip prompt, input size is not the latency lever (thinking and answer
+tokens are), and no plan-quality eval covers thinner evidence. Prove the ladder with the `lane_c`
+block of `make kria-replay FIXTURE=29-ekim`.
+
+`EditCopilotAgent` has `max_output_tokens=16_384` with a 130 s timeout: a runaway call needs 124.3 s to
+reach the cap, so it must stay under the timeout (`test_edit_copilot_budget_runs_out_before_its_provider_timeout`).

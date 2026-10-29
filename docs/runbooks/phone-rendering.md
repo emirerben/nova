@@ -909,6 +909,11 @@ butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit thr
   the render-ready review re-judges the asks against the recipe pinned then
   (`rendered_toggle_receipt`, editor Saves included) and `brief_checks._check_sound_toggle`
   words it ("Clip sound off except the last clip, where "Super excited!" is said (17.0-17.9 s)").
+  A clip kept audible for a line the creator named ("only the clip where I say '…' keeps its
+  sound", KRI-1028) is also judged on holding that sentence: the length plan records it as
+  `kept_lines` (`app/services/kept_sound_lines.py`; the timed sentence, its window as the clip's
+  floor, `held`), and the receipt says '"…" plays whole (4.6-8.9 s of that clip)' or
+  `line_partly_in_edit` / `line_not_in_edit`.
   Reasons: `partial_unsupported`, `line_not_found`, `line_ambiguous`, `line_unknown`,
   `line_not_in_edit`, `line_partly_in_edit`, `not_in_edit`, `clip_mismatch`, `window_past_end`,
   `no_sound`, `contract_conflict`, `render_refused`, `not_built`, `overridden`.
@@ -2440,6 +2445,37 @@ compile only effects the creator asked for — placed in the editor or by chat
 effect (`materialize_licensed_sfx`, trusted visual moments). See "Sound effects on
 guided / montage stories (KRI-608)" below. Talking and Voiceover are unchanged.
 
+## "Make it all vertical": sideways clips in a montage (KRI-1027)
+
+The app sends the confirm screen's preselected bars/crop back with the approval
+(`VideoShapePicker.wire(for:)`), so the preselection IS the render's choice unless the
+creator changes it. `render_shape.apply_creator_ask` moves that default to the creator's
+own words: a style requirement with `facts.landscape_fit` ("fill" / "fit", taught by the
+shared brief section from Main Creator v103 / Brief Extractor v42), or the KRI-547
+vertical / no-bars / face-in-frame wording Talking already reads, preselects crop or black
+bars on a vertical canvas (`app/kria/landscape_fit_ask.py`). No ask = the item's remembered
+`landscape_fit` as before. The thread projection and the approve validation read the same
+pinned brief, so they never disagree.
+
+On a "fill" render with such an ask, the guided/unified phone montage writer frames each
+sideways footage moment before it compiles (`app/pipeline/phone_montage_framing.py`), with
+the Talking face-fill decision (KRI-547) over that moment's source window on the proxy:
+
+- a recurring face one 9:16 window holds (every sampled face keeps its eyes/nose/mouth)
+  -> the clip slides by `fill_position_x` (`MediaTransform.position_x`, no new capability);
+- a face that moves further than one crop can hold -> that clip alone keeps bars
+  (`fill_letterbox`), never a cut face;
+- no recurring face, or sampling failed -> the engine's centre crop (today's "fill").
+
+The moment fields live in the worker plan (`_phone_editor_plan_v1`), so editor Saves and
+the face-aware text placement (`phone_guided_text_placement.shown_crop`) see the same crop;
+a "fit" Save letterboxes every sideways clip as before. The variant records
+`landscape_framing` (ask, rendered fit, per-clip mode + reason), which the render-ready
+review answers the ask from ("Cropped the 3 sideways clips to fill the vertical frame; the
+crop follows the main face on 1", or why bars were kept). Jobs without the ask sample nothing
+and compile byte-identically. Not covered: Talking reads only the KRI-547 wording, not the
+fact; the phone Voiceover montage writer does not frame faces.
+
 ## Sound effects on guided / montage stories (KRI-608)
 
 **What it does.** A phone-rendered guided story or montage (`resolved_archetype ==
@@ -3581,6 +3617,29 @@ phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_
 `phone-simple-cut-v3` is a forward-only verifier policy. New v3 code accepts the pinned older supported verifier versions; an older server cannot interpret a newly pinned v3 policy and refuses it rather than publishing unchecked output. After v3 policies exist, rolling the API back below v3 can therefore leave those exports blocked. Do not downgrade the pin/minimum verifier or relabel an old report to recover them; preserve the attempt and restore a compatible server before the normal output-check retry.
 
 The existing Fly Deploy workflow checks all managed process groups, including stopped Machines, for one converged image digest before declaring deployment successful. That post-deploy check does not establish compatibility during a rolling deploy and does not make old binaries understand v3. Observe the actual merged revision's successful convergence separately; before that, KRI-832 remains pending. No source-only receipt or local replay proves production convergence or complete rollback compatibility.
+
+## Actual-export verifier v4 text proof (KRI-1042)
+
+`phone-simple-cut-v4` changes only the text check. Picture, audio and duration rules are the same as v3; per-sample picture scores are stored but decide nothing.
+
+- **Copy proof.** One visible sample per layer must read every copy word in order, each exact (case and punctuation kept), at OCR confidence 40. One extra token of at most two characters is allowed (a letter-like background speck). An extra authored word, a wrong word or a missing word still fails.
+- **Presence proof.** Every other visible sample must show the layer's glyphs: fill-coloured ink against the source picture beneath it (`ink_share` >= 0.03 of the measurable read area, fill-like background <= 0.5) and more than half the copy's words in order.
+- **Hidden samples** fail on the whole copy, as before, and now also on those glyphs unless another layer is due over the same area.
+- **Why.** v3 needed an exact read in every visible sample. White phone titles over white shirts (Lisbon job `3daccc8c`) broke one word in two of three samples, so a correct export was rejected. The Tesseract TSV is also read without CSV quoting now: a word starting with `"` used to swallow later words, so a copy with a straight quote could never pass.
+- **Known gap.** A layer whose pixels change mid-window to a different copy that shares more than half its words passes the presence samples. The copy proof still needs the exact copy once.
+
+Rollout follows the v3 boundary above: v4 is forward-only. A request pinned to v3 accepts a v4 report; a v4 pin never accepts a v3 report, and a server older than v4 refuses v4 pins. Each text row stores `proof` or `reason`, word counts, `best_view`, `ink_share` and the read area; read them with `GET /admin/jobs/{id}/export-verification` ([admin-job-debug](admin-job-debug.md)). Guards: `tests/integration/test_actual_export_verification.py` (KRI-1042 section).
+
+## Actual-export verifier v5 picture frame profile (KRI-1042)
+
+`phone-simple-cut-v5` adds a second way for a picture sample to pass. Text, audio and duration rules are the same as v4, and every sample the v4 picture rule passes still passes.
+
+- **Exact bar (unchanged).** Mean pixel error <= 2/255, or error <= 0.1 and local SSIM >= 0.95, against the source frame displayed at the sample, or the next one (a neighbour sample). A window where every on-grid sample needed the next frame still fails.
+- **Frame profile (new).** The phone's analysis proxy is 568x320 at ~0.7 Mbps. Against it, a correct export of detailed handheld footage scores 0.89-0.95. Below the bar, the displayed frame still passes when the window shows it is the right moment: the mean displayed SSIM is >= 0.93, the mean lead of displayed over the previous and over the next source frame is >= 0.02 each, and the sample has error <= 0.1, SSIM >= 0.85 and no neighbour scoring higher. A neighbour that repeats the displayed picture (a 30 fps proxy of a 25 fps original, mean difference <= 1.5 codes) counts as lead 0.
+- **Why.** v4 rejected the correct Lisbon export (job `3daccc8c`): 9 of its 16 samples scored 0.89-0.95 against the proxy, and the displayed frame was the best match in all 16. A shift moves the best match to a neighbour, so the lead goes negative in one direction.
+- **Known gaps.** Still footage has no best frame and keeps the exact bar. A tone change (brightness about 8 codes, saturation, mild blur, a low-quality re-encode) that keeps SSIM >= 0.93 passes on soft-proxy footage, as v4 already passed it on sharp-proxy footage. A one-frame-late export on calm footage can pass through the unchanged next-frame tolerance, as in v4. Calibration and controls: [kri-1042-picture-profile](../reviews/kri-1042-picture-profile.md).
+
+Rollout follows the v3 boundary above: v5 is forward-only. A request pinned to v4 accepts a v5 report; a v5 pin never accepts a v4 report. Each picture check stores `profile_samples`, `mean_local_ssim`, `lead_previous` and `lead_next`; read them with `GET /admin/jobs/{id}/export-verification`. Guards: `tests/integration/test_actual_export_verification.py` (KRI-1042 frame profile section).
 
 ## Freeze frames (KRI-828)
 
