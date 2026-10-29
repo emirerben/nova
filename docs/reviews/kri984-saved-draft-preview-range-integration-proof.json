@@ -1,0 +1,26 @@
+{
+  "evidence_level": "native_output_simulator",
+  "source_revision": "7ccc6b5e0cfbf82d700d10789f1e959e0aa522fc",
+  "integrated_main": "5d8df48b1a9e4df4e06e3657ceb5757fa42d46a9",
+  "tests": {
+    "result": "Passed",
+    "passedTests": 67,
+    "failedTests": 0,
+    "skippedTests": 0
+  },
+  "result_bundle": "/tmp/unattended1890-tests.xcresult",
+  "platform": "iPhone17 Simulator, iOS26.5",
+  "sources": {
+    "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift": "d93c6f0a65ded49e036c5b43bd1579c474eac5ce481aa3b9ec43aea382259ca4",
+    "src/apps/ios/Tests/KriaTests/SavedDraftPreviewRangeTests.swift": "6822e51d45328b9336f5369e7344f2159137edbd0e25ef3313bd26c6f3f45967",
+    "src/apps/ios/Kria/Core/Services.swift": "9b7f3d1552f02f725a1ec71ee27ce1cd3eb51e120fdce9f6dfbc9f2912d1ad8a",
+    "src/apps/ios/Kria/Core/Models.swift": "cf14f567c38ea5c6c2e9b7e36e9d598ed8b92545b57b728fe71c09f29705ddd9",
+    "src/apps/ios/Kria/Core/NativeEditorDocument.swift": "427ffaac3f9471e490534cdc3225c5fb47db713c004bfc967bd2631a12a6577b",
+    "src/apps/ios/Kria/Features/NativeEditorSession.swift": "dc337bf7dedcb1f6631f5f25792f07b9d8a35fedcd9ab5fe8b2fb7906e2149cf"
+  },
+  "limitations": [
+    "This is the current integration public saved-range and neighboring compiler suite only.",
+    "The prior physical QA and private Cunda evidence remain historical, not refreshed exact-head proof.",
+    "Installed TestFlight, Photos export, original timing and broader Cunda request remain unverified."
+  ]
+}
