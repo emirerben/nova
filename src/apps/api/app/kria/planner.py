@@ -4847,6 +4847,11 @@ async def _gate_unresolved_choices(
         events,
         can_ask=answers_moment_questions and settings.clip_intents_enabled,
     )
+    if moments.recovery is not None:
+        return replace(
+            planned,
+            plan=KriaTurnPlan(mode="respond", turn_value="question", response=moments.recovery),
+        )
     if moments.question is not None:
         from app.services.named_moments import question_text  # noqa: PLC0415
 
@@ -5039,14 +5044,24 @@ def _moment_decision(
 ) -> Any:
     """KRI-723: the named moments' pins, or the question that gets them (no model call)."""
     from app.services.length_planning import DEFAULT_MOMENT_S  # noqa: PLC0415
-    from app.services.named_moments import decide, named_moments  # noqa: PLC0415
+    from app.services.named_moments import (  # noqa: PLC0415
+        MomentDecision,
+        MomentOrderError,
+        decide,
+        named_moments,
+    )
 
     if not settings.clip_intents_enabled:
         return decide(None, (), can_ask=False, default_window_s=DEFAULT_MOMENT_S)
     ask = brief_moment_ask(brief)
-    moment_set = named_moments(
-        strategy, media_snapshot, moment_count=ask.count if ask is not None else None
-    )
+    try:
+        moment_set = named_moments(
+            strategy, media_snapshot, moment_count=ask.count if ask is not None else None
+        )
+    except MomentOrderError as exc:
+        if can_ask:
+            return MomentDecision(recovery=str(exc))
+        moment_set = None
     return decide(
         moment_set,
         events,
