@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.14.0] - 2026-10-29
+
+### Changed
+- fix(ios): align format cards and play signup previews together (#1920) <!-- release-pr: 1920 -->
+
 ## [0.82.13.0] - 2026-10-29
 
 ### Changed
