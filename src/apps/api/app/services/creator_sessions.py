@@ -182,9 +182,28 @@ CHAT_EVIDENCE_FIELD_CHARS = {
 }
 CHAT_EVIDENCE_MOMENT_CHARS = 80
 CHAT_EVIDENCE_PEOPLE_NOTE_CHARS = 80
+# KRI-1037: a large clip set (`main_creator_compact_clips_threshold`) sends this tighter tier.
+# The Main Creator picks and orders clips by what they show and when they were filmed, so
+# subject, setting and the first facts (capture time and place rank first) stay; transcripts,
+# timed sentences, extra moments and long summaries are what the clip-detail steps read.
+CHAT_EVIDENCE_COMPACT_TRANSCRIPT_CHARS = 80
+CHAT_EVIDENCE_COMPACT_SEGMENT_CHARS = 160
+CHAT_EVIDENCE_COMPACT_MAX_MOMENTS = 1
+CHAT_EVIDENCE_COMPACT_MAX_FACTS = 3
+CHAT_EVIDENCE_COMPACT_FIELD_CHARS = {
+    "subject": 100,
+    "summary": 100,
+    "setting": 60,
+    "activity": 60,
+    "on_screen_text": 60,
+}
+CHAT_EVIDENCE_COMPACT_MOMENT_CHARS = 50
+CHAT_EVIDENCE_COMPACT_PEOPLE_NOTE_CHARS = 40
 
 
-def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) -> dict[str, Any]:
+def _chat_evidence(
+    analysis: object, *, kind: str, include_facts: bool = False, compact: bool = False
+) -> dict[str, Any]:
     """Compact per-clip AI evidence for the chat agent (KRI-127).
 
     Routes through the same ``clip_record`` projection the edit planner and
@@ -194,31 +213,41 @@ def _chat_evidence(analysis: object, *, kind: str, include_facts: bool = False) 
     once per clip for up to ``MAX_CREATOR_MEDIA_REFS`` clips in one prompt:
     brands carry no clip-identification value for chat (no sponsor/rights
     decision happens here) and only the first few notable moments are kept.
+    ``compact`` (KRI-1037) applies the tighter large-set caps; False is unchanged.
     """
+    transcript_chars = (
+        CHAT_EVIDENCE_COMPACT_TRANSCRIPT_CHARS if compact else CHAT_EVIDENCE_TRANSCRIPT_CHARS
+    )
+    segment_chars = CHAT_EVIDENCE_COMPACT_SEGMENT_CHARS if compact else CHAT_EVIDENCE_SEGMENT_CHARS
+    field_chars = CHAT_EVIDENCE_COMPACT_FIELD_CHARS if compact else CHAT_EVIDENCE_FIELD_CHARS
+    max_moments = CHAT_EVIDENCE_COMPACT_MAX_MOMENTS if compact else CHAT_EVIDENCE_MAX_MOMENTS
+    moment_chars = CHAT_EVIDENCE_COMPACT_MOMENT_CHARS if compact else CHAT_EVIDENCE_MOMENT_CHARS
+    people_note_chars = (
+        CHAT_EVIDENCE_COMPACT_PEOPLE_NOTE_CHARS if compact else CHAT_EVIDENCE_PEOPLE_NOTE_CHARS
+    )
     record = clip_record(analysis if isinstance(analysis, dict) else None, kind=kind)
     view = record.prompt_view(
-        transcript_chars=CHAT_EVIDENCE_TRANSCRIPT_CHARS,
+        transcript_chars=transcript_chars,
         include_facts=include_facts,
         # KRI-282: timed sentences for a talking clip (empty/omitted until stored).
         include_segments=settings.speech_excerpt_montage_enabled,
-        segment_chars=CHAT_EVIDENCE_SEGMENT_CHARS,
+        segment_chars=segment_chars,
     )
     view.pop("brands", None)
     # KRI-845: the clip resolver reads props / actions / visual_quality; the chat agent's input
     # stays as it was (it must not start dropping "blurry" clips nobody asked it to).
     for key in ("props", "actions", "visual_quality"):
         view.pop(key, None)
-    for key, limit in CHAT_EVIDENCE_FIELD_CHARS.items():
+    for key, limit in field_chars.items():
         if key in view:
             view[key] = view[key][:limit]
     people = view.get("people")
     if isinstance(people, dict) and people.get("note"):
-        people["note"] = people["note"][:CHAT_EVIDENCE_PEOPLE_NOTE_CHARS]
+        people["note"] = people["note"][:people_note_chars]
     moments = view.get("notable_moments")
     if isinstance(moments, list):
         view["notable_moments"] = [
-            {**m, "description": m["description"][:CHAT_EVIDENCE_MOMENT_CHARS]}
-            for m in moments[:CHAT_EVIDENCE_MAX_MOMENTS]
+            {**m, "description": m["description"][:moment_chars]} for m in moments[:max_moments]
         ]
     return view
 
@@ -404,6 +433,10 @@ async def resolve_item_creator_context(
     # KRI-189: when/where facts (capture time, place, best-guess landmark, each
     # with provenance) are shown to the chat agent only when the flag is on.
     facts_on = settings.clip_facts_for(persona.user_id)
+    # KRI-1037: a large clip set sends the compact evidence tier; below it, unchanged.
+    compact_threshold = settings.main_creator_compact_clips_threshold
+    clip_count = len((item.clip_assignments or [])[:MAX_CREATOR_MEDIA_REFS])
+    compact = bool(compact_threshold) and clip_count >= compact_threshold
     seen: set[str] = set()
     for index, assignment in enumerate((item.clip_assignments or [])[:MAX_CREATOR_MEDIA_REFS]):
         if not isinstance(assignment, dict):
@@ -444,11 +477,15 @@ async def resolve_item_creator_context(
             # assignment (app/tasks/edit_proposal_build.py); empty before
             # that (the raw clip has no other analysis source).
             "analysis_only_not_copy": _chat_evidence(
-                assignment.get("analysis"), kind=clip_kind, include_facts=False
+                assignment.get("analysis"), kind=clip_kind, include_facts=False, compact=compact
             ),
         }
         if facts_on:
-            facts = facts_for_prompt(assignment_facts(assignment)[:CHAT_EVIDENCE_MAX_FACTS])
+            facts = facts_for_prompt(
+                assignment_facts(assignment)[
+                    : CHAT_EVIDENCE_COMPACT_MAX_FACTS if compact else CHAT_EVIDENCE_MAX_FACTS
+                ]
+            )
             if facts:
                 clip_entry["facts"] = facts
         media_context.append(clip_entry)
@@ -515,7 +552,12 @@ async def resolve_item_creator_context(
             "filename": _clean(getattr(asset, "source_filename", None), 160) or None,
             # AI evidence is clearly segregated and must never be copied to
             # on-screen text (also enforced in the main prompt).
-            "analysis_only_not_copy": _chat_evidence(analysis, kind=kind),
+            "analysis_only_not_copy": _chat_evidence(
+                analysis,
+                kind=kind,
+                compact=compact
+                or (bool(compact_threshold) and len(media_refs) >= compact_threshold),
+            ),
         }
         if not analysis_ready:
             # Tell the planner the file exists but its evidence is still on
