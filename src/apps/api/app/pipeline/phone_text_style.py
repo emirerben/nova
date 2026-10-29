@@ -151,17 +151,22 @@ def _glyph_overhang(family: str, size: int, text: str) -> float:
 
 
 _READABLE_FLOOR_PX = 40
+# Lowest size the title cascade may place; every later measurement of a title must accept it.
+_TITLE_FLOOR_PX = 30
 _CONNECTED_FLOOR_PX = 24
 
 
 def measure_box(
-    row: dict, canvas: Canvas = PORTRAIT, *, floor: int = _READABLE_FLOOR_PX
+    row: dict, canvas: Canvas = PORTRAIT, *, floor: int | None = None
 ) -> tuple[float, float, float, float]:
     import json
 
     from app.agents._schemas.text_element import TextElement
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.text_overlay_skia import measure_text_overlay_box
+
+    if floor is None:
+        floor = _TITLE_FLOOR_PX if text_role(row) == "title" else _READABLE_FLOOR_PX
 
     element = TextElement.model_validate({k: v for k, v in row.items() if k != "phone_text_style"})
     overlays = build_overlays_from_text_elements(
@@ -397,6 +402,7 @@ class _FitStrategy:
     max_width_frac: float
     size_floor: int
     height_cap: float
+    keeps_authored_width: bool = False
     offsets: tuple[float, ...] = (0,)
     extra_positions: tuple[str, ...] = ()
 
@@ -406,14 +412,14 @@ class _FitStrategy:
 # floor is the smallest title that is still legible on a 1080x1920 frame, and the taller
 # block only opens once the text no longer fits at the normal height.
 _TITLE_FIT_CASCADE: tuple[_FitStrategy, ...] = (
-    _FitStrategy("baseline", 0.68, _READABLE_FLOOR_PX, 0.18),
+    _FitStrategy("baseline", 0.68, _READABLE_FLOOR_PX, 0.18, keeps_authored_width=True),
     _FitStrategy("wider_box", 0.76, _READABLE_FLOOR_PX, 0.18),
-    _FitStrategy("lower_floor", 0.76, 30, 0.18),
-    _FitStrategy("taller_block", 0.76, 30, 0.26),
+    _FitStrategy("lower_floor", 0.76, _TITLE_FLOOR_PX, 0.18),
+    _FitStrategy("taller_block", 0.76, _TITLE_FLOOR_PX, 0.26),
     _FitStrategy(
         "more_anchors",
         0.76,
-        30,
+        _TITLE_FLOOR_PX,
         0.34,
         offsets=(0, 0.06, 0.12, 0.18),
         extra_positions=("top", "bottom", "bottom_right"),
@@ -545,9 +551,9 @@ def _fit_with(
             x = 0.06
         row.update(position="custom", x_frac=x, y_frac=y, alignment=alignment)
         row["max_width_frac"] = (
-            strategy.max_width_frac
-            if strategy.name != "baseline"
-            else min(float(original.get("max_width_frac") or 0.68), 0.68)
+            min(float(original.get("max_width_frac") or 0.68), strategy.max_width_frac)
+            if strategy.keeps_authored_width
+            else strategy.max_width_frac
         )
         if "max_width_frac" in authored:
             row["max_width_frac"] = original["max_width_frac"]
