@@ -1082,6 +1082,10 @@ def route_requirements(
         # (`unified_montage._ground_freezes`); the editor copilot has no freeze operation.
         return "replan"
     for req in reqs:
+        if req.kind == "text_sequence" and current_plan.can_edit_text is False:
+            # 29 Ekim: words shown a piece at a time are text ops; a render with no text lane
+            # at all is the only one the planner has to rebuild.
+            return "replan"
         if req.kind in {"text", "style"} and current_plan.can_edit_text is False:
             # Captions are editable text on a separate lane. Title-specific
             # requests still require the actual title/text capability.

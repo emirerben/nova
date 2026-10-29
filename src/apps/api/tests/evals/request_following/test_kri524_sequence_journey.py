@@ -13,6 +13,17 @@ from tests.evals.runners.snapshot_variant import build_synthetic_job
 from tests.test_edit_copilot import _parse
 
 
+@pytest.fixture(autouse=True)
+def _legacy_equal_windows(monkeypatch):
+    """These pin the recorded ops' equal windows (the flag-off op shape).
+
+    Weighted and cumulative windows are covered by tests/kria/test_compose_unmet_with_ops.py.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_compose_unmet_with_ops_enabled", False)
+
+
 def test_sequence_journey_saves_generated_children_and_preserves_source_audio():
     variant = _variant()
     variant["original_audio_level"] = 0.4
