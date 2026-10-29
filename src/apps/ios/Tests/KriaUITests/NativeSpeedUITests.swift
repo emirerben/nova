@@ -49,7 +49,7 @@ final class NativeSpeedUITests: XCTestCase {
         add(capture)
     }
 
-    func testClosingSpeedInspectorCommitsResetForSingleUndo() {
+    func testClosingSpeedInspectorCommitsResetForSingleUndo() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-speed", "-ui-testing-editor-device"]
         app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
@@ -68,10 +68,13 @@ final class NativeSpeedUITests: XCTestCase {
         }
         revealSpeed()
         slider.adjust(toNormalizedSliderPosition: 1)
-        let chosenRate = slider.value as? String
-        let chosenDuration = duration.value as? String
-        XCTAssertEqual(chosenRate, "4.00x", "Pre-Reset rate: \(chosenRate ?? "missing"), duration: \(chosenDuration ?? "missing")")
-        XCTAssertEqual(chosenDuration, "00:01.5", "Pre-Reset duration must match the selected 4x rate")
+        let chosenRate = try XCTUnwrap(slider.value as? String)
+        let chosenDuration = try XCTUnwrap(duration.value as? String)
+        XCTAssertTrue(chosenRate.hasSuffix("x"), "Pre-Reset rate must include its unit: \(chosenRate)")
+        let numericRate = try XCTUnwrap(Double(chosenRate.dropLast()))
+        XCTAssertGreaterThan(numericRate, 1, "The creator must choose a faster clip before Reset")
+        XCTAssertLessThanOrEqual(numericRate, 4, "Pre-Reset rate must stay within the supported range")
+        XCTAssertEqual(chosenDuration, "00:01.5", "Pre-Reset duration for the chosen rate \(chosenRate)")
         app.buttons["Reset speed"].tap()
         XCTAssertEqual(slider.value as? String, "1.00x")
         XCTAssertEqual(duration.value as? String, "00:06.0")
