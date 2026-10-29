@@ -192,7 +192,11 @@ import XCTest
                       "Loaded preferences must appear before checking persistence")
         XCTAssertFalse(dismiss.exists)
         let reset = app.buttons["text-learning-reset"]
-        reveal(reset, app: app); reset.tap()
+        reveal(reset, app: app)
+        let saveBarButton = app.buttons["text-preferences-save"]
+        XCTAssertLessThanOrEqual(reset.frame.maxY, saveBarButton.frame.minY - 8,
+                                 "Reset must be above the fixed Save bar before tapping")
+        reset.tap()
         // The confirmation is inserted below Reset and may be virtualized offscreen.
         let resetConfirmation = app.staticTexts["Learning history reset."]
         reveal(resetConfirmation, app: app)
