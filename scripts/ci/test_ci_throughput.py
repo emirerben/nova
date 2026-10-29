@@ -1,8 +1,12 @@
 """KRI-605 failure contracts, written before the workflow implementation."""
 
 import importlib.util
+import os
 from pathlib import Path
+import re
+import subprocess
 import tempfile
+import textwrap
 import unittest
 
 
@@ -17,6 +21,74 @@ def load(name, filename):
 
 ci = load("throughput_selector", "select-tests.py")
 evidence = load("throughput_evidence", "journey-gate.py")
+
+
+class XcodeCacheTests(unittest.TestCase):
+    """A restored SDK module must belong to this image and selected Xcode."""
+
+    def cache(self, workflow, image="20260907.0337.1", xcode="/Applications/Xcode.app"):
+        source = (Path(__file__).resolve().parents[2] / ".github/workflows" / workflow).read_text()
+        identify = source.split("- name: Identify Xcode cache", 1)[1]
+        script = re.search(r"run: \|\n((?:          [^\n]*\n)+)", identify).group(1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name, body in {
+                "xcodebuild": "printf 'Xcode 26.3\\nBuild version 17C529\\n'",
+                "xcode-select": 'printf "%s\\n" "$CACHE_TEST_XCODE"',
+            }.items():
+                command = root / name
+                command.write_text("#!/bin/bash\n" + body + "\n")
+                command.chmod(0o755)
+            output = root / "output"
+            env = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}",
+                   "GITHUB_OUTPUT": str(output), "CACHE_TEST_XCODE": xcode}
+            env.pop("ImageVersion", None)
+            if image is not None:
+                env["ImageVersion"] = image
+            result = subprocess.run(
+                ["bash", "-eo", "pipefail", "-c", textwrap.dedent(script)],
+                env=env, capture_output=True, text=True,
+            )
+            values = dict(line.split("=", 1) for line in output.read_text().splitlines()) if output.exists() else {}
+        if result.returncode:
+            return result, None, None
+        key = re.search(r"key: (ios-build[^\n]+)", source).group(1)
+        prefix = re.search(r"restore-keys: \|\n\s+(ios-build[^\n]+)", source).group(1)
+
+        def render(match):
+            expression = match.group(1).strip()
+            fixed = {"runner.os": "macOS", "runner.arch": "ARM64", "github.sha": "source-sha"}
+            if expression.startswith("hashFiles("):
+                return "project-hash"
+            if expression.startswith("steps.xcode-cache.outputs."):
+                return values[expression.rsplit(".", 1)[1]]
+            return fixed[expression]
+
+        return result, re.sub(r"\$\{\{(.*?)\}\}", render, key), re.sub(r"\$\{\{(.*?)\}\}", render, prefix)
+
+    def test_sdk_cache_cannot_cross_runner_images_even_with_identical_xcode_versions(self):
+        for workflow in ("ci.yml", "ios.yml"):
+            with self.subTest(workflow=workflow):
+                _, september, september_prefix = self.cache(workflow)
+                _, october, october_prefix = self.cache(workflow, image="20261028.0489.1")
+                self.assertTrue(september.startswith(september_prefix))
+                self.assertTrue(october.startswith(october_prefix))
+                self.assertFalse(september.startswith(october_prefix))
+                self.assertFalse(october.startswith(september_prefix))
+
+    def test_selected_xcode_path_is_part_of_cache_identity(self):
+        for workflow in ("ci.yml", "ios.yml"):
+            with self.subTest(workflow=workflow):
+                _, stable, stable_prefix = self.cache(workflow)
+                _, alternate, alternate_prefix = self.cache(workflow, xcode="/Applications/Other Xcode.app")
+                self.assertFalse(stable.startswith(alternate_prefix))
+                self.assertFalse(alternate.startswith(stable_prefix))
+
+    def test_unknown_image_cannot_silently_restore_an_old_sdk_cache(self):
+        for workflow in ("ci.yml", "ios.yml"):
+            with self.subTest(workflow=workflow):
+                result, _, _ = self.cache(workflow, image=None)
+                self.assertNotEqual(result.returncode, 0)
 
 
 class ThroughputTests(unittest.TestCase):

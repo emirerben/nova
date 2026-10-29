@@ -70,6 +70,10 @@ class SoundTarget:
     from_s: float | None = None
     to_s: float | None = None
     lines: tuple[str, ...] = ()
+    # KRI-1028: a clip kept audible for a line the creator named must hold that sentence
+    # (source seconds, from the approved length plan's ``kept_lines``); never read off the brief.
+    kept_line: str | None = None
+    kept_span: tuple[float, float] | None = None
 
     @property
     def names_clip(self) -> bool:

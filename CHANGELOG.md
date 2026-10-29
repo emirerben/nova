@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.30.0] - 2026-10-29
+
+### Changed
+- fix(ios): finish inspector edits on close and verify native journeys (#1892) <!-- release-pr: 1892 -->
+
+## [0.82.29.0] - 2026-10-29
+
+### Fixed
+- fix(kria): "make it all vertical" crops a montage's sideways clips, keeping faces (KRI-1027) (#1932) <!-- release-pr: 1932 -->
+
+## [0.82.28.0] - 2026-10-29
+
+### Changed
+- fix(montage): keep a named line's whole sentence and check it in the receipt (KRI-1028) (#1929) <!-- release-pr: 1929 -->
+
+## [0.82.27.0] - 2026-10-29
+
+### Changed
+- fix(kria): a shuffle plus a word-by-word title reaches an approved draft and renders (#1944) <!-- release-pr: 1944 -->
+
+## [0.82.26.0] - 2026-10-29
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-10-25 (#1837) <!-- release-pr: 1837 -->
+
+## [0.82.25.0] - 2026-10-29
+
+### Changed
+- fix(export-verifier): pass soft-proxy pictures on the displayed frame's lead (KRI-1042) (#1943) <!-- release-pr: 1943 -->
+
 ## [0.82.24.0] - 2026-10-29
 
 ### Changed

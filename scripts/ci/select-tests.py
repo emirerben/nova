@@ -75,6 +75,7 @@ LEG_JOURNEYS = {
         "kri-524-creation",
         "kri-492-length-ownership",
         "kri-669-gameday",
+        "kri-689-clip-speed",
         "kri-729-camera-roll-recommendations",
     ),
     "screens": (

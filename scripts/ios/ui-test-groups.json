@@ -310,6 +310,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
       "KriaUITests/NativeEditorInspectorUITests/testQuickSwipeAcrossAClipSeeksInsteadOfReordering",
       "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector",
+      "KriaUITests/NativeSpeedUITests/testClosingSpeedInspectorCommitsResetForSingleUndo",
       "KriaUITests/NativeCaptionAnimationUITests/testCueCaptionsAnimateAllThenOneLine",
       "KriaUITests/NativeCaptionAnimationUITests/testLyricCaptionsAnimateAllThenOneLine",
       "KriaUITests/NativeCaptionAnimationUITests/testTextMotionPresetShowsInAllCaptions",

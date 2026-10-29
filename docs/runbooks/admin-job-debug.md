@@ -147,8 +147,12 @@ Each entry in `variants` has the device record's `phase`, `reason_code`, pinned
   A `picture` check carries `min_local_ssim`, `max_mean_pixel_error`, `samples`,
   `neighbour_samples` and `picture_clock`. From v4 it also has `sample_evidence`: per
   sample, SSIM and mean pixel error against the source frame displayed then, the next
-  frame and the previous frame (`ssim_displayed`, `error_displayed`, ...). Only displayed
-  and next decide the sample; previous is there to review a one-frame lag. An `audio`
+  frame and the previous frame (`ssim_displayed`, `error_displayed`, ...). In v4 only
+  displayed and next decide the sample; previous is there to review a one-frame lag.
+  From v5 all three feed the frame profile: the check adds `profile_samples` (samples
+  that passed on the profile, not the exact bar), `mean_local_ssim` (displayed frames)
+  and `lead_previous` / `lead_next` (mean displayed-minus-neighbour SSIM), and a sample
+  lists in `repeats` a neighbour that repeats the displayed source picture. An `audio`
   check carries `correlation`, `gain` and `lag_samples`, or `rms` for a silent reference.
   A `text` check carries `at_s` and `expected_visible`; from v4 also `proof` (`copy`,
   `presence`, `absent`, `other_layer`) or `reason` (for example `copy_not_read`,
