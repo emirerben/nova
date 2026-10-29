@@ -9909,6 +9909,16 @@ def _check_text_sequence(req: BriefRequirement, facts: PlanFacts) -> Requirement
     return _receipt(req, "partial", _NO_CHECKER)
 
 
+def text_sequence_shown(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """Whether a complete fragment sequence on screen reads as the requirement's words.
+
+    The same test as the receipt above, without the compose flag: the creation text pass
+    composes a live ``text_sequence`` whatever the flag says, so it never skips one that only
+    sits on screen as a static title.
+    """
+    return _check_text_sequence(req, facts).status == "met"
+
+
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if req.kind == "text_sequence" and compose_unmet_with_ops():
         return _check_text_sequence(req, facts)
@@ -10772,5 +10782,6 @@ __all__ = [
     "render_block_recovery",
     "reply_from_receipts",
     "speech_cleanup_review_note",
+    "text_sequence_shown",
     "wants_lipsync",
 ]

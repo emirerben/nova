@@ -1,0 +1,330 @@
+{
+ "fixture_id": "29-ekim-live-new-thread-t1",
+ "schema_version": 1,
+ "source": {
+  "thread_id": "64bb9853-ddbd-450d-8825-8240791a5f84",
+  "turn_id": "7f36adde-f876-4a90-b3b9-4d06c547aeb3",
+  "server_revision": "a6e79aafba41429a95135015bd1b9d0955cda930",
+  "client_protocol": 24,
+  "captured": "2026-10-29 via read-only admin GETs + a development-ledger live run",
+  "redacted": [
+   "user ids",
+   "storage paths",
+   "library ids",
+   "file names",
+   "media ids (now clip-NN)"
+  ],
+  "brief": "prod stores the brief redacted; `prod_brief` was rebuilt from the reply and proven exact: its digest equals approval_readiness.brief_digest",
+  "live": "Main Creator, clip-intent planner and clip resolver raw outputs captured live on this exact message (test_run_id kri-29ekim-live-20261029, development ledger, no judge)",
+  "ledger": {
+   "test_run_id": "kri-29ekim-live-20261029",
+   "settled_usd": 0.089935,
+   "calls": [
+    {
+     "agent": "nova.creator.main",
+     "model": "gemini-3.1-pro-preview",
+     "settled_usd": 0.074278
+    },
+    {
+     "agent": "nova.plan.clip_intent_planner",
+     "model": "gemini-2.5-flash",
+     "settled_usd": 0.003579
+    },
+    {
+     "agent": "nova.plan.clip_request_resolver",
+     "model": "gemini-2.5-flash",
+     "settled_usd": 0.012078
+    }
+   ]
+  }
+ },
+ "message": "Show all content in random order. add this text “Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun”. Show each word one after the other",
+ "clips": [
+  {
+   "id": "clip-01",
+   "kind": "video",
+   "duration_s": 7.166667,
+   "subject": "panoramic view of ancient ruins closer view of library facade"
+  },
+  {
+   "id": "clip-02",
+   "kind": "video",
+   "duration_s": 4.166667,
+   "subject": "passenger boat moving across water scenic view of Bosphorus with boats and city"
+  },
+  {
+   "id": "clip-03",
+   "kind": "video",
+   "duration_s": 5.8667,
+   "subject": "ferry boat cruising past city city panorama with moving boat"
+  },
+  {
+   "id": "clip-04",
+   "kind": "video",
+   "duration_s": 3.7,
+   "subject": "ornate palace gate establishing shot"
+  },
+  {
+   "id": "clip-05",
+   "kind": "video",
+   "duration_s": 3.6,
+   "subject": "static view of clock tower camera slightly zooms out from clock tower"
+  },
+  {
+   "id": "clip-06",
+   "kind": "video",
+   "duration_s": 6.566667,
+   "subject": "calm water with distant green hills boat moving across the water"
+  },
+  {
+   "id": "clip-07",
+   "kind": "video",
+   "duration_s": 3.8,
+   "subject": "camera passes a beige building on a corner camera glides past multiple colorful historic buildings"
+  },
+  {
+   "id": "clip-08",
+   "kind": "video",
+   "duration_s": 2.066667,
+   "subject": "water surface rippling"
+  },
+  {
+   "id": "clip-09",
+   "kind": "video",
+   "duration_s": 1.933333,
+   "subject": "wide shot of ancient ruins"
+  },
+  {
+   "id": "clip-10",
+   "kind": "video",
+   "duration_s": 2.4,
+   "subject": "display of ancient statues and carvings static shot of museum exhibit"
+  },
+  {
+   "id": "clip-11",
+   "kind": "video",
+   "duration_s": 2.9,
+   "subject": "museum visitor enters frame visitors observe sarcophagus"
+  },
+  {
+   "id": "clip-12",
+   "kind": "video",
+   "duration_s": 8.166667,
+   "subject": "aerial view of dry hills with ruins camera pans to reveal calm blue sea wide shot of sea and distant mountains"
+  },
+  {
+   "id": "clip-13",
+   "kind": "video",
+   "duration_s": 1.933333,
+   "subject": "view of cobblestone street"
+  },
+  {
+   "id": "clip-14",
+   "kind": "video",
+   "duration_s": 2.9,
+   "subject": "person walks across rocky hill person continues walking on hill"
+  },
+  {
+   "id": "clip-15",
+   "kind": "video",
+   "duration_s": 3.033333,
+   "subject": "man exiting the vintage car"
+  },
+  {
+   "id": "clip-16",
+   "kind": "video",
+   "duration_s": 3.0,
+   "subject": "men stand in a field with harvested crops"
+  },
+  {
+   "id": "clip-17",
+   "kind": "video",
+   "duration_s": 2.033333,
+   "subject": "illuminated Hagia Sophia against evening sky"
+  },
+  {
+   "id": "clip-18",
+   "kind": "video",
+   "duration_s": 8.3,
+   "subject": "boat motors away from harbor boat moves across the water at sunset"
+  },
+  {
+   "id": "clip-19",
+   "kind": "video",
+   "duration_s": 3.0,
+   "subject": "tractor pulls seed drill tractor wheel spinning quickly"
+  },
+  {
+   "id": "clip-20",
+   "kind": "video",
+   "duration_s": 3.066667,
+   "subject": "aerial view of travertine pools"
+  },
+  {
+   "id": "clip-21",
+   "kind": "video",
+   "duration_s": 3.0,
+   "subject": "women folding white fabric"
+  },
+  {
+   "id": "clip-22",
+   "kind": "video",
+   "duration_s": 4.0,
+   "subject": "team huddles in ecstatic celebration"
+  },
+  {
+   "id": "clip-23",
+   "kind": "video",
+   "duration_s": 4.0,
+   "subject": "women gather around subject women adjust garment on subject"
+  },
+  {
+   "id": "clip-24",
+   "kind": "video",
+   "duration_s": 1.033333,
+   "subject": "camera slowly pans across travertine terraces camera continues panning over the white terraces and blue pools"
+  },
+  {
+   "id": "clip-25",
+   "kind": "video",
+   "duration_s": 3.0,
+   "subject": "static display of portrait with text"
+  },
+  {
+   "id": "clip-26",
+   "kind": "video",
+   "duration_s": 2.033333,
+   "subject": ""
+  },
+  {
+   "id": "clip-27",
+   "kind": "video",
+   "duration_s": 4.0,
+   "subject": "prominent men walk forward"
+  },
+  {
+   "id": "clip-28",
+   "kind": "video",
+   "duration_s": 2.0,
+   "subject": "chariots and riders advance across field chariots and riders pause in distance"
+  }
+ ],
+ "prod_brief": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "select",
+    "scope": "global",
+    "literal": null,
+    "description": "Show all content",
+    "facts": {
+     "all": true
+    },
+    "source_turn_id": "7f36adde-f876-4a90-b3b9-4d06c547aeb3",
+    "status": "open"
+   },
+   {
+    "id": "r2",
+    "kind": "order",
+    "scope": "global",
+    "literal": null,
+    "description": "Show in random order",
+    "facts": {
+     "key": "random",
+     "seed": 2771031860630456741
+    },
+    "source_turn_id": "7f36adde-f876-4a90-b3b9-4d06c547aeb3",
+    "status": "open"
+   },
+   {
+    "id": "r3",
+    "kind": "text_sequence",
+    "scope": "title",
+    "literal": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+    "description": "Show each word one after the other",
+    "facts": {
+     "unit": "word",
+     "mode": "agent_choice"
+    },
+    "source_turn_id": "7f36adde-f876-4a90-b3b9-4d06c547aeb3",
+    "status": "open"
+   }
+  ]
+ },
+ "prod_brief_digest": "2e4bcee2b4e56bf15e64abdb665f461945eae3a3238668f2428a6630edf77e26",
+ "prod_outcome": {
+  "turn_value": "question",
+  "reply": "Bunu henüz yapamıyorum:\n- Show in random order: Kaydedilmiş bu grubun iç sırası belirtilmemiş. Sırayı seç ya da grup içindeki herhangi bir sıranın uygun olduğunu onayla.\n- Show each word one after the other (\"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\"): Bu taslağın bunu yaptığını henüz doğrulayamıyorum.\nBu ilk taslağı şimdilik beklettim. Daha basit sürümde çıkarılacak: Show in random order; Show each word one after the other (\"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\"). Bunlar olmadan mı hazırlayayım, yoksa isteğini mi değiştirmek istersin?",
+  "brief_coverage_reason": "approval_requirements_not_ready",
+  "readiness_rows": [
+   {
+    "requirement_id": "r1",
+    "disposition": "unverified",
+    "evidence_owner": "brief_checks"
+   },
+   {
+    "requirement_id": "r2",
+    "disposition": "needs_choice",
+    "evidence_owner": "brief_checks"
+   },
+   {
+    "requirement_id": "r3",
+    "disposition": "evidence_missing",
+    "evidence_owner": "brief_checks"
+   }
+  ],
+  "choice_conflict": "simplification_requires_choice",
+  "omitted_requirement_ids": [
+   "r2",
+   "r3"
+  ]
+ },
+ "live": {
+  "main_creator": {
+   "prompt_version": "2026-10-29-v102",
+   "model": "gemini-3.1-pro-preview",
+   "raw_text": "{\n  \"brief_updates\": [\n    {\n      \"operation\": \"add\",\n      \"kind\": \"select\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"Show all content\",\n      \"facts\": {\n        \"all\": true\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"order\",\n      \"scope\": \"global\",\n      \"literal\": null,\n      \"description\": \"in random order\",\n      \"facts\": {\n        \"key\": \"random\"\n      }\n    },\n    {\n      \"operation\": \"add\",\n      \"kind\": \"text_sequence\",\n      \"scope\": \"title\",\n      \"literal\": \"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\",\n      \"description\": \"Show each word one after the other\",\n      \"facts\": {\n        \"unit\": \"word\",\n        \"mode\": \"agent_choice\"\n      }\n    }\n  ],\n  \"delegates_all_choices\": false,\n  \"starts_fresh\": false,\n  \"action\": {\n    \"kind\": \"propose_strategy\",\n    \"strategy\": {\n      \"direction\": \"guided_story\",\n      \"edit_format\": \"montage\",\n      \"audio_strategy\": \"licensed_music\",\n      \"media_scope\": \"all\",\n      \"story_structure\": [\n        \"Tüm kliplerin rastgele sırayla gösterilmesi\",\n        \"29 Ekim Cumhuriyet Bayramı mesajının kelime kelime ekrana gelmesi\"\n      ],\n      \"pacing\": \"balanced\",\n      \"target_duration_s\": 45,\n      \"render_program\": \"guided\",\n      \"selected_media_ids\": [],\n      \"rationale\": \"İsteğinize uygun olarak 28 klibin tamamı rastgele bir sırayla kurguya dahil edildi. Anlamlı 29 Ekim mesajınız, videonun akışına eşlik edecek şekilde kelime kelime ekranda belirecek biçimde ayarlandı.\",\n      \"summary\": \"Tüm içeriklerinizi rastgele sırayla birleştirdim ve 29 Ekim mesajınızın ekranda kelime kelime belirmesini sağladım. Görüntülere eşlik edecek güzel bir müzikle harika bir kutlama videosu olacak.\"\n    }\n  }\n}"
+  },
+  "clip_intent_planner": {
+   "prompt_version": "2026-10-27-subject-scope-exclude-requirement-id",
+   "model": "gemini-2.5-flash",
+   "generated_brief": "Creative brief v0 (everything the creator has asked for, still in force):\n- [r1] [select/global] Show all content facts={all: true}\n- [r2] [order/global] in random order facts={key: random; seed: 2771031860630456741}\n- [r3] [text_sequence/title] Show each word one after the other (\"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\") facts={mode: agent_choice; unit: word}\nLatest message: Show all content in random order. add this text “Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun”. Show each word one after the other",
+   "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"all_content_include\",\n      \"op\": \"include\",\n      \"attribute\": \"all content\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"exclusive\": false,\n      \"requirement_id\": null,\n      \"source_quote\": \"Show all content\"\n    },\n    {\n      \"intent_id\": \"random_order\",\n      \"op\": \"order\",\n      \"attribute\": \"all content\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": null,\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": \"random\",\n      \"exclusive\": false,\n      \"requirement_id\": null,\n      \"source_quote\": \"in random order\"\n    },\n    {\n      \"intent_id\": \"text_sequence\",\n      \"op\": \"caption\",\n      \"attribute\": \"each word\",\n      \"label_source\": \"clip\",\n      \"transcript_kind\": null,\n      \"creator_text\": \"Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun\",\n      \"caption_attribute\": null,\n      \"position\": null,\n      \"placeholder\": false,\n      \"order_by\": null,\n      \"exclusive\": false,\n      \"requirement_id\": null,\n      \"source_quote\": \"add this text “Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun”. Show each word one after the other\"\n    }\n  ],\n  \"question\": null\n}"
+  },
+  "clip_request_resolver": {
+   "model": "gemini-2.5-flash",
+   "alias_to_media": {
+    "m001": "clip-01",
+    "m002": "clip-02",
+    "m003": "clip-03",
+    "m004": "clip-04",
+    "m005": "clip-05",
+    "m006": "clip-06",
+    "m007": "clip-07",
+    "m008": "clip-08",
+    "m009": "clip-09",
+    "m010": "clip-10",
+    "m011": "clip-11",
+    "m012": "clip-12",
+    "m013": "clip-13",
+    "m014": "clip-14",
+    "m015": "clip-15",
+    "m016": "clip-16",
+    "m017": "clip-17",
+    "m018": "clip-18",
+    "m019": "clip-19",
+    "m020": "clip-20",
+    "m021": "clip-21",
+    "m022": "clip-22",
+    "m023": "clip-23",
+    "m024": "clip-24",
+    "m025": "clip-25",
+    "m026": "clip-26",
+    "m027": "clip-27",
+    "m028": "clip-28"
+   },
+   "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"all_content_include\",\n      \"assignments\": [\n        {\n          \"media\": \"m001\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m003\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m007\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m008\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m009\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m010\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m011\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m012\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m013\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m014\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m015\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m016\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m017\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m018\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m019\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m020\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m021\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m022\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m023\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m024\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m025\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m026\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m027\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m028\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested all content\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"random_order\",\n      \"assignments\": [\n        {\n          \"media\": \"m001\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m003\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m007\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m008\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m009\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m010\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m011\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m012\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m013\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m014\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m015\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m016\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m017\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m018\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m019\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m020\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m021\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m022\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m023\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m024\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m025\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m026\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m027\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m028\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested random order for all content\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"text_sequence\",\n      \"assignments\": [\n        {\n          \"media\": \"m001\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m002\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m003\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m004\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m005\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m006\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m007\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m008\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m009\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m010\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m011\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m012\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m013\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m014\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m015\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m016\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m017\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m018\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m019\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m020\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m021\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m022\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m023\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m024\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m025\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m026\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m027\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        },\n        {\n          \"media\": \"m028\",\n          \"value\": \"\",\n          \"evidence\": \"creator requested a caption sequence for content\",\n          \"confidence\": 1.0\n        }\n      ],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}"
+  }
+ }
+}

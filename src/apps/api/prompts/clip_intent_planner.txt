@@ -88,6 +88,19 @@ group, city labels, and activity labels. Do not use any category allowlist.
 Pure style, timing, transitions, titles, music, or duration requests produce an
 empty intents list.
 
+A request for NO particular sequence is not a clip operation: "show all content in
+random order", "shuffle the clips", "any order is fine", "rastgele sırayla göster",
+"sıra fark etmez". The Creative Brief records it and the server shuffles every clip,
+so return no `order` intent for it, never one ordered "random". Example:
+`Show all content in random order.` yields at most one `include` intent for "all
+content" and no `order` intent.
+
+Words the creator wants SHOWN on screen a piece at a time over the video ("add this
+text “...”. Show each word one after the other", "show the title word by word",
+"yazıyı kelime kelime göster") are one whole-video text sequence that another step
+lays out. They are never a `caption` intent, even when they quote the words: return no
+intent for them.
+
 For a sequence listing several different subjects inside one order intent, set
 `ordered_members` true. This means its resolved members must play in the listed
 order. Prefer one order intent per subject. For a group such as "the volleyball
