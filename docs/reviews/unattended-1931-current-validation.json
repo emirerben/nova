@@ -9,5 +9,15 @@
   "cache_contract": "Shared reviewed cache qualification e9b8118a2; throughput16 and selector suite passed",
   "fresh_exact_head_CI": "required before merge",
   "limitations": "Physical original iPhone incident acceptance and installed TestFlight output remain unverified",
-  "fix": "Text absence binds literal/shot and observed request before picker; stored answers revalidate requirement semantic digest. Eight new failure cases red before fix;194 focused cases passed before main merge;147 overlapping gate/selection/contract cases passed after integration."
+  "fix": "Text absence binds literal/shot and observed request before picker; stored answers revalidate requirement semantic digest. Eight new failure cases red before fix;194 focused cases passed before main merge;147 overlapping gate/selection/contract cases passed after integration.",
+  "native_ci_repair": {
+    "prior_head": "297d20f880f93ea4b3d06bcfb31180236e3fe4f3",
+    "prior_CI": 40953623466,
+    "prior_passed": "All portable/API and native unit/screens; creation failed before Video tap on test helper hit metadata",
+    "test_only": "Menu row must be stable, finite, enabled and fully visible; actual center tap, unchanged fifth-clip/Undo/save/reopen/Photos assertions. Plus retains hit-test check.",
+    "local_proof": "3 full positives; disabled Video fails before tap; restored full positive; actual xcresult metadata verified",
+    "validation": "docs/reviews/gameday-menu-driver-validation.md",
+    "API_source": "Unchanged by native test-only repair;147 focused current-main tests previously passed.",
+    "fresh_exact_head_CI": "required; no waiver"
+  }
 }
