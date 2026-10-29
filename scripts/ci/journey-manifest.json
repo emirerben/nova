@@ -893,6 +893,19 @@
       ]
     },
     {
+      "id": "kri-1038-text-sequence-not-captions",
+      "needs_native": false,
+      "api_tests": "tests/evals/test_main_creator_evals.py tests/kria/test_kri667_no_new_intent_regexes.py",
+      "paths": [
+        "src/apps/api/app/agents/main_creator.py",
+        "src/apps/api/app/kria/text_sequence.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/kria_replay/29-ekim/fixture.json",
+        "src/apps/api/tests/evals/test_main_creator_evals.py"
+      ]
+    },
+    {
       "id": "kri-708-caption-correction",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_caption_correct.py",

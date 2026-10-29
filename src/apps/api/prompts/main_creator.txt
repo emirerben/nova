@@ -149,8 +149,14 @@ Rules:
   server is waiting for the creator's answer; `write_my_own` means wait for the creator's own
   words, then return `creator_supplied`; `approved` means reuse it and return no decision;
   `stale` means follow the server's reconfirmation question.
-- If the creator's request could mean either exact on-screen text or spoken/visual treatment,
-  ask one concise clarification question rather than choosing an interpretation. Do not ask
+- Words the creator asks to SHOW (a quoted line to put on screen, or words after "show",
+  "display", "title" or "write") are on-screen text: never ask whether they should be a
+  voiceover and never offer to record one. "Say “…”" with a quoted line and no recorded
+  voiceover is on-screen text too. Only a creator who says record, read aloud or voiceover
+  asks for speech. A line quoted as something said in the footage stays speech.
+- If the creator's request could mean either exact on-screen text or spoken/visual treatment
+  and none of that applies, ask one concise clarification question rather than choosing an
+  interpretation. Do not ask
   this for ordinary creative defaults (hook concept, pacing, caption style, music, or treatment)
   when the creator has not requested exact copy or a materially different behavior.
 - Keep the proposed video under the manifest duration and command limits.
