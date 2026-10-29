@@ -5509,14 +5509,16 @@ async def _plan_live_turn(
     if item.current_job_id is not None:
         latest_job = await db.get(Job, item.current_job_id)
         latest_job_failed = str(getattr(latest_job, "status", "") or "").endswith("failed")
+    latest_variants = [
+        row
+        for row in (getattr(latest_job, "assembly_plan", None) or {}).get("variants") or []
+        if isinstance(row, dict)
+    ]
     failed_render = bool(
         latest_job is not None
         and (
             latest_job_failed
-            or any(
-                isinstance(row, dict) and row.get("render_status") == "needs_attention"
-                for row in (getattr(latest_job, "assembly_plan", None) or {}).get("variants") or []
-            )
+            or any(row.get("render_status") == "needs_attention" for row in latest_variants)
         )
     )
     correction_candidate = (
@@ -5530,8 +5532,7 @@ async def _plan_live_turn(
         correction_candidate
         and not failed_editor_correction
         and any(
-            isinstance(row, dict) and row.get("render_status") in {"failed", "needs_attention"}
-            for row in (latest_job.assembly_plan or {}).get("variants") or []
+            row.get("render_status") in {"failed", "needs_attention"} for row in latest_variants
         )
     ):
         saved_heads = (
@@ -5556,9 +5557,8 @@ async def _plan_live_turn(
             is not None
             for head in saved_heads
             if isinstance(head, CreatorEditDraft)
-            for row in (latest_job.assembly_plan or {}).get("variants") or []
-            if isinstance(row, dict)
-            and row.get("variant_id") == head.variant_key
+            for row in latest_variants
+            if row.get("variant_id") == head.variant_key
             and row.get("render_status") in {"failed", "needs_attention"}
         )
     extract_first = (
