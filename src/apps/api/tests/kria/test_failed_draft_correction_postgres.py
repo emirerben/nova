@@ -657,3 +657,31 @@ async def test_separate_explicit_render_approval_blocks_late_unknown_outcome(mon
         assert execution.error["code"] == "render_outcome_unknown"
         assert db.get(Job, case.job_id).assembly_plan == before
         assert db.get(CreatorEditDraft, approval.draft_id).is_head
+
+
+@pytest.mark.asyncio
+async def test_provider_deadline_context_keeps_supported_correction_on_the_editor(monkeypatch):
+    case, item_id = _seed()
+    copilot, creator = _agents(monkeypatch, item_id)
+    with sync_session() as db:
+        db.get(CreatorAgentTurn, case.turn_id).error = {
+            "code": "runtime_provider_outcome_unknown",
+            "provider_deadline": True,
+        }
+        db.commit()
+    token = planner.start_degraded_retry.set(True)
+    try:
+        async with session_factory() as db:
+            result = await planner.plan_live_turn(
+                db,
+                thread_id=case.thread_id,
+                item_id=item_id,
+                creator_id=case.user_id,
+                user_message="Change the title to Keep every word",
+            )
+    finally:
+        planner.start_degraded_retry.reset(token)
+    assert [intent.tool_name for intent in result.plan.intents] == ["draft.apply_editor_ops"]
+    assert result.plan.diagnostics["editor_recovery_basis"]["draft_id"] == str(case.draft_id)
+    copilot.assert_awaited_once()
+    creator.assert_not_called()
