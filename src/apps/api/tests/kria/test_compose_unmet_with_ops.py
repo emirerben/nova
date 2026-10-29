@@ -157,7 +157,8 @@ def test_a_cumulative_chain_is_read_as_its_last_step_not_a_longer_sentence(monke
     )
 
 
-def test_an_uncomposed_text_sequence_never_becomes_a_question() -> None:
+def test_an_uncomposed_text_sequence_never_becomes_a_question(monkeypatch) -> None:
+    _flag(monkeypatch, True)
     brief = CreativeBrief.model_validate(
         {
             "version": 1,
@@ -198,8 +199,9 @@ def test_an_uncomposed_text_sequence_never_becomes_a_question() -> None:
     ],
 )
 def test_a_text_sequence_ask_routes_to_the_editor_when_there_is_text_to_edit(
-    shape, expected
+    shape, expected, monkeypatch
 ) -> None:
+    _flag(monkeypatch, True)
     brief = CreativeBrief.model_validate(
         {
             "version": 1,
@@ -290,6 +292,29 @@ def test_a_video_too_short_for_the_pieces_refuses_naming_the_seconds(monkeypatch
 
     with pytest.raises(KriaEditorOpError, match=r"needs about \d+\.\d+s.*only leaves \d+\.\d+s"):
         _short_window_rows([f"w{i}" for i in range(12)], video_s=2.0, window_s=1.0)
+
+
+def test_an_unreadable_video_length_declines_instead_of_stretching(monkeypatch) -> None:
+    _flag(monkeypatch, True)
+    from app.services.kria_editor_ops import KriaEditorOpError
+
+    with pytest.raises(KriaEditorOpError, match=r"needs about \d+\.\d+s.*only leaves"):
+        _short_window_rows([f"w{i}" for i in range(12)], video_s=0.0, window_s=1.0)
+
+
+def test_the_stretch_stops_at_the_next_text_in_the_same_place(monkeypatch) -> None:
+    _flag(monkeypatch, True)
+    from app.services.kria_editor_ops import KriaEditorOpError
+
+    words = [f"w{i}" for i in range(12)]
+    text = " ".join(words)
+    variant = _variant(text, end=1.0)
+    variant["duration_s"] = 30.0
+    neighbour = dict(variant["text_elements"][0], id="next", text="later", start_s=1.5, end_s=4.0)
+    variant["text_elements"].append(neighbour)
+    parsed = _parse([_op(words)], snapshot=_snapshot(text))
+    with pytest.raises(KriaEditorOpError, match="only leaves 1.5s"):
+        compile_editor_ops(_job(variant), variant, parsed.ops)
 
 
 def test_flag_off_keeps_the_recorded_short_window(monkeypatch) -> None:

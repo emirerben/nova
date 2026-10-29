@@ -813,10 +813,25 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
         smallest = min(w_end - w_start for w_start, w_end in windows)
         if smallest < _MIN_PIECE_S - 1e-9:
             # Edges scale linearly with the window, so the end that gives every piece its
-            # minimum is exact; the video's own length is the only ceiling.
+            # minimum is exact; the video's length (and the next sibling text) is the ceiling.
             wanted_end = start + (end - start) * _MIN_PIECE_S / smallest
             limit = _variant_total(state) or _number(state.variant.get("duration_s")) or 0.0
-            new_end = wanted_end if not limit else max(end, min(wanted_end, limit))
+            if limit > 0.0:
+                # Never stretch into the next text that shares this one's role and place.
+                for other in state.text:
+                    other_start = _number(other.get("start_s"))
+                    if (
+                        other is not source
+                        and not other.get("removed")
+                        and other.get("role") == source.get("role")
+                        and other.get("position") == source.get("position")
+                        and other_start is not None
+                        and other_start >= end - 1e-9
+                    ):
+                        limit = min(limit, other_start)
+            # An unreadable video length is no licence to stretch without a ceiling: the
+            # window stays as authored and the check below declines honestly.
+            new_end = max(end, min(wanted_end, limit)) if limit > 0.0 else end
             windows = _sequence_windows(
                 clean_segments, start, new_end, weighted=weight == "length", cumulative=cumulative
             )

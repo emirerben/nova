@@ -2370,7 +2370,7 @@ class Settings(BaseSettings):
     # `replace_text_sequence` (weighted windows, `cumulative` mode), an edit-shaped follow-up
     # after a failed render goes to the copilot, and a missing text sequence is composed rather
     # than asked about. false = the previous routing, replies and ops, byte-identical.
-    kria_compose_unmet_with_ops_enabled: bool = True
+    kria_compose_unmet_with_ops_enabled: bool = False
     # KRI-219 latency: serve short in-place text/label/order edits with the fast copilot
     # BEFORE the pro-model requirement extraction (which then runs off the critical
     # path). false = the previous extract-first order for every post-render turn.

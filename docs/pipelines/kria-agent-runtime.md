@@ -807,13 +807,16 @@ not refused, asked about or re-planned.
   The re-plan cues are unchanged.
 - Readability floor: an op authored with `weight` gives every piece at least 0.25 s
   (`_MIN_PIECE_S`). When the source window is too short the compiler lengthens it, up to the end of
-  the video; if even that cannot hold the pieces the op fails naming the seconds needed and left.
+  the video or the next text in the same role and place; if even that cannot hold the pieces, or the
+  video length cannot be read, the op fails naming the seconds needed and left (never an unbounded
+  stretch).
 - Capability parity: `kria/editor_capability_parity.py` maps every public action of
-  `NativeEditorSession.swift` to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
+  `NativeEditorSession.swift` and the files extending it (`NativeEditorRetiming.swift`,
+  `NativeTextEditing.swift`) to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
   `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when
   an action has none.
 
-Flag off restores the earlier routing, cues, fast-path set and op shape
+Default `false` (off until enabled). Flag off restores the earlier routing, cues, fast-path set and op shape
 (`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.
 
 ## Local proof

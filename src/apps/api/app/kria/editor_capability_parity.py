@@ -3,7 +3,8 @@
 The creator asked Kria for things a person does by hand in the editor (show a title one word at a
 time, shuffle the clips) and the agent refused or failed each one. The agent's ops had grown by
 request, not by what the editor can do. This table is the lesson in structure: each public
-function of the phone editor session (``NativeEditorSession.swift``) belongs to exactly one group,
+function of the phone editor session (``NativeEditorSession.swift`` and the files that extend
+it: ``NativeEditorRetiming.swift``, ``NativeTextEditing.swift``) belongs to exactly one group,
 and a group is one of
 
 * ``agent_ops``: the edit reaches the agent through these ops (names checked against the copilot's
@@ -102,8 +103,14 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     "clip_speed": _g(
         "agent_unsupported",
-        "setMotionSpeed",
+        "setMotionSpeed setFootagePlaybackRate",
         reason="Playback speed of a clip has no agent op; the phone montage plays natural speed.",
+    ),
+    "clip_crop": _g(
+        "agent_unsupported",
+        "setFootageCrop",
+        reason="Cropping a clip's frame is a hand gesture on the phone; no agent op reframes "
+        "a single clip.",
     ),
     "clip_audio": _g(
         "agent_ops",
@@ -210,7 +217,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "motionRuntimeMismatchReason isMotionSceneReadOnly isClipAudioOn isCaptionUnitEdited "
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
-        "soundEffectPreviewURL visualLayerSelections visualRaw",
+        "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
+        "textElement textAnchor",
         reason="Read-only queries the UI uses to decide what to offer.",
     ),
 }

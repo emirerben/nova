@@ -18,14 +18,15 @@ import pytest
 from app.agents.edit_copilot import _VALID_OPS
 from app.kria.editor_capability_parity import PARITY_GROUPS, grouped_actions
 
-SWIFT = (
-    Path(__file__).resolve().parents[4]
-    / "apps"
-    / "ios"
-    / "Kria"
-    / "Features"
-    / "NativeEditorSession.swift"
+FEATURES = Path(__file__).resolve().parents[4] / "apps" / "ios" / "Kria" / "Features"
+# The session file and every file that extends it. An extension file is read from its
+# `extension NativeEditorSession` line, so protocol requirements above it are not counted.
+SWIFT_FILES = (
+    "NativeEditorSession.swift",
+    "NativeEditorRetiming.swift",
+    "NativeTextEditing.swift",
 )
+_SESSION_DECL = re.compile(r"^extension NativeEditorSession\b", re.M)
 _FUNC = re.compile(
     r"^    (?:@discardableResult )?(?:@MainActor )?(?:public |internal )?(?:nonisolated )?"
     r"func ([A-Za-z0-9_]+)",
@@ -36,10 +37,23 @@ _PRIVATE_FUNC = re.compile(
 )
 
 
+def _session_source() -> str:
+    sources = []
+    for name in SWIFT_FILES:
+        path = FEATURES / name
+        if not path.exists():
+            pytest.skip("iOS sources are not in this checkout")
+        source = path.read_text()
+        if name != SWIFT_FILES[0]:
+            match = _SESSION_DECL.search(source)
+            assert match, f"{name} no longer extends NativeEditorSession"
+            source = source[match.start() :]
+        sources.append(source)
+    return "\n".join(sources)
+
+
 def _public_actions() -> set[str]:
-    if not SWIFT.exists():
-        pytest.skip("iOS sources are not in this checkout")
-    source = SWIFT.read_text()
+    source = _session_source()
     private = set(_PRIVATE_FUNC.findall(source))
     declared = set(_FUNC.findall(source))
     # An overload is public when any of its declarations is.
@@ -56,12 +70,24 @@ def test_ios_editor_actions_have_agent_ops() -> None:
     actions = _public_actions()
     missing = sorted(actions - mapped)
     assert not missing, (
-        "NativeEditorSession.swift gained public functions with no capability-parity group: "
+        "The editor session (or an extension of it) gained public functions with no parity group: "
         f"{missing}. Add each to a group in app/kria/editor_capability_parity.py: the agent op(s) "
         "that do it, an agent_unsupported reason, or not_an_edit."
     )
     stale = sorted(mapped - actions)
     assert not stale, f"groups name functions that are gone from the editor session: {stale}"
+
+
+def test_every_file_extending_the_session_is_scanned() -> None:
+    if not FEATURES.exists():
+        pytest.skip("iOS sources are not in this checkout")
+    extenders = {
+        path.name for path in FEATURES.glob("*.swift") if _SESSION_DECL.search(path.read_text())
+    }
+    assert extenders <= set(SWIFT_FILES), (
+        f"{sorted(extenders - set(SWIFT_FILES))} extend NativeEditorSession: add them to "
+        "SWIFT_FILES so their public functions need a capability-parity group"
+    )
 
 
 def test_every_group_states_its_answer() -> None:
