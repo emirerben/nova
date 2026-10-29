@@ -693,8 +693,58 @@ def _sequence_canonical(value: str) -> str:
     return " ".join(unicodedata.normalize("NFC", value).split())
 
 
+# Characters a segment is "worth" on top of its own, so a two-letter word still registers.
+_SEQUENCE_WEIGHT_PAD = 2
+# Share of the source window the cumulative build-up takes; the full sentence holds the rest.
+_CUMULATIVE_BUILD_SHARE = 0.75
+# A piece on screen for less than this is a flicker, not a word. An op authored with `weight`
+# (the compose path) lengthens its window to honor it, up to the end of the video.
+_MIN_PIECE_S = 0.25
+
+
+def _sequence_windows(
+    segments: list[str], start: float, end: float, *, weighted: bool, cumulative: bool
+) -> list[tuple[float, float]]:
+    """Contiguous ``(start, end)`` windows that tile ``[start, end]`` exactly."""
+    count = len(segments)
+    duration = end - start
+    if cumulative:
+        steps = segments[:-1]
+        build_end = start + duration * _CUMULATIVE_BUILD_SHARE
+        edges = _sequence_edges(steps, start, build_end, weighted=weighted)
+        edges.append(end)
+    else:
+        edges = _sequence_edges(segments, start, end, weighted=weighted)
+    assert len(edges) == count + 1
+    return [(edges[i], edges[i + 1]) for i in range(count)]
+
+
+def _sequence_edges(
+    segments: list[str], start: float, end: float, *, weighted: bool
+) -> list[float]:
+    count = len(segments)
+    weights = (
+        [len(segment) + _SEQUENCE_WEIGHT_PAD for segment in segments] if weighted else [1] * count
+    )
+    total = sum(weights)
+    edges = [round(start, 6)]
+    seen = 0
+    for index, weight in enumerate(weights):
+        seen += weight
+        edges.append(round(end if index == count - 1 else start + (end - start) * seen / total, 6))
+    return edges
+
+
 def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
-    """Replace one text bar with conserved, equal-duration text segments atomically."""
+    """Replace one text bar with conserved, contiguous text segments atomically.
+
+    Windows are equal unless the op says ``weight: "length"`` (each segment gets time in
+    proportion to its characters, so a long word is not on screen as briefly as "ve").
+    ``mode: "cumulative"`` builds the sentence up: step ``k`` shows the first ``k`` words, the
+    steps are paced like the replace windows over the first part of the source window, and
+    the full sentence holds to the source's end. Both fields are written into the op when it
+    is authored, so replaying a saved draft never depends on a flag.
+    """
     segments = op.get("segments")
     if not isinstance(segments, list) or not 0 < len(segments) <= MAX_SELECTOR_LIST:
         raise KriaEditorOpError("A text sequence must contain 1 to 100 segments")
@@ -747,11 +797,50 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     )
     if len(set(child_ids)) != len(child_ids) or existing_ids.intersection(child_ids):
         raise KriaEditorOpError("Those sequence text ids already exist")
-    duration = end - start
     replacements: list[dict[str, Any]] = []
     if "patch" in op and (not isinstance(op["patch"], dict) or not op["patch"]):
         raise KriaEditorOpError("No portable text style fields were supplied")
     patch = op.get("patch")
+    mode = op.get("mode", "replace")
+    weight = op.get("weight", "equal")
+    if mode not in {"replace", "cumulative"} or weight not in {"equal", "length"}:
+        raise KriaEditorOpError("That text sequence timing isn't valid")
+    cumulative = mode == "cumulative" and len(clean_segments) > 1
+    windows = _sequence_windows(
+        clean_segments, start, end, weighted=weight == "length", cumulative=cumulative
+    )
+    if "weight" in op:
+        smallest = min(w_end - w_start for w_start, w_end in windows)
+        if smallest < _MIN_PIECE_S - 1e-9:
+            # Edges scale linearly with the window, so the end that gives every piece its
+            # minimum is exact; the video's length (and the next sibling text) is the ceiling.
+            wanted_end = start + (end - start) * _MIN_PIECE_S / smallest
+            limit = _variant_total(state) or _number(state.variant.get("duration_s")) or 0.0
+            if limit > 0.0:
+                # Never stretch into the next text that shares this one's role and place.
+                for other in state.text:
+                    other_start = _number(other.get("start_s"))
+                    if (
+                        other is not source
+                        and not other.get("removed")
+                        and other.get("role") == source.get("role")
+                        and other.get("position") == source.get("position")
+                        and other_start is not None
+                        and other_start >= end - 1e-9
+                    ):
+                        limit = min(limit, other_start)
+            # An unreadable video length is no licence to stretch without a ceiling: the
+            # window stays as authored and the check below declines honestly.
+            new_end = max(end, min(wanted_end, limit)) if limit > 0.0 else end
+            windows = _sequence_windows(
+                clean_segments, start, new_end, weighted=weight == "length", cumulative=cumulative
+            )
+            if min(w_end - w_start for w_start, w_end in windows) < _MIN_PIECE_S - 1e-9:
+                raise KriaEditorOpError(
+                    f"Showing that text in {len(clean_segments)} pieces needs about "
+                    f"{wanted_end - start:.1f}s on screen and the video only leaves "
+                    f"{max(new_end - start, 0.0):.1f}s from where it starts"
+                )
     for index, segment in enumerate(clean_segments):
         row = copy.deepcopy(source)
         row["id"] = child_ids[index]
@@ -759,10 +848,11 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
         child_params = copy.deepcopy(child_params) if isinstance(child_params, dict) else {}
         if len(clean_segments) > 1:
             child_params["sequence_source_id"] = sequence_source_id
+            if cumulative:
+                child_params["sequence_mode"] = "cumulative"
             row["source_params"] = child_params
-        row["text"] = segment
-        row["start_s"] = round(start + duration * index / len(clean_segments), 6)
-        row["end_s"] = round(start + duration * (index + 1) / len(clean_segments), 6)
+        row["text"] = " ".join(clean_segments[: index + 1]) if cumulative else segment
+        row["start_s"], row["end_s"] = windows[index]
         if row["end_s"] <= row["start_s"]:
             raise KriaEditorOpError("That sequence would create a zero-duration text")
         if isinstance(patch, dict):

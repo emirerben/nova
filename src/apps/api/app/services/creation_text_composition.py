@@ -70,10 +70,13 @@ with the actual bars. Compose operations for arbitrary chunks, simultaneous or s
 and independent entrances/exits; an entrance effect alone does not change segmentation.
 The typewriter entrance reveals CHARACTERS inside one bar, never separate words. For a
 word-by-word title, use replace_text_sequence with one exact word per segment and the
-requested entrance in its patch. Preserve the combined wording and choose readable timing
-inside the requested clip. Apply timing and shared style operations BEFORE splitting the
-title. Selectors bind the original draft: after splitting, the original title id no longer
-exists, so never follow the split with a title/all-text selector containing that old id.
+requested entrance in its patch. A brief requirement of kind text_sequence is this ask: its
+literal is the exact wording, facts.unit says word or phrase, and facts.mode says replace (each
+piece replaces the last), cumulative (the sentence builds up and holds, "mode":"cumulative") or
+agent_choice (you pick, and say which in the reply). Preserve the combined wording and choose
+readable timing inside the requested clip. Apply timing and shared style operations BEFORE
+splitting the title. Selectors bind the original draft: after splitting, the original title id
+no longer exists, so never follow the split with a title/all-text selector containing that old id.
 Put per-word styles in the replacement's patch, or style the original before splitting.
 Use readable timing within the existing video and requested clip window; extend a short default
 title window before splitting when needed. Never leave an unintended static duplicate of a
@@ -131,7 +134,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v14-hidden-song-caption-lane",
+        prompt_version="v15-text-sequence-brief",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -328,7 +331,13 @@ def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
             raise CreationTextCompositionError("Text composition changed confirmed copy")
         rows = [row for row in live if _owns(row, source_id)]
         if rows:
-            actual = " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
+            ordered = sorted(rows, key=lambda row: row["start_s"])
+            # A cumulative build-up shows the first k words at step k: the copy is its last step.
+            cumulative = len(ordered) > 1 and all(
+                (row.get("source_params") or {}).get("sequence_mode") == "cumulative"
+                for row in ordered
+            )
+            actual = ordered[-1]["text"] if cumulative else " ".join(row["text"] for row in ordered)
             if _copy_key(actual) != _copy_key(expected):
                 raise CreationTextCompositionError("Text composition changed confirmed copy")
             continue

@@ -90,6 +90,7 @@ from app.kria.clip_exclusions import (
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope, apply_subject_scope
 from app.kria.clip_ties import left_out, tie_question, voiceover_ties, with_tie_categories
+from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import KriaTurnPlan
 from app.kria.draft_sound_carry import sound_asks_unchanged
 from app.kria.duplicate_send import is_duplicate_answer
@@ -1954,6 +1955,11 @@ _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar
 turn_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "kria_turn_deadline", default=None
 )
+# KRI-1037: set by the turn task when the thread's last turn ended at a provider deadline, so
+# the Main Creator starts on its lighter rung instead of repeating the call that timed out.
+start_degraded_retry: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "kria_start_degraded_retry", default=False
+)
 # Sequence of the creator message the running turn answers (set by the turn task). A later
 # message is a queued follow-up with its own turn, so the history this turn plans from stops
 # here. None = no bound.
@@ -2485,6 +2491,7 @@ async def _call_main_creator(
                     deadline - _POST_UNDERSTANDING_RESERVE_S if deadline is not None else None
                 ),
                 thought_summary_callback=current_thought_publisher(),
+                start_degraded=start_degraded_retry.get(),
             ),
         )
 
@@ -4371,6 +4378,9 @@ _FAST_PATH_OPS = frozenset(
         "reorder_clips_by",
     }
 )
+# 29 Ekim: a word-by-word title is one in-place text op, so it rides the fast path too
+# (`KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`; off = the set above, unchanged).
+_COMPOSE_FAST_PATH_OPS = frozenset({"replace_text_sequence"})
 _GROUNDED_REORDERS = (None, "capture_time", "random")
 _FAST_PATH_MAX_CHARS = 280
 # A text/label/caption ask: when the copilot answers it with a question or a refusal, that
@@ -4456,7 +4466,9 @@ def _is_fast_path_plan(plan: KriaTurnPlan | None) -> bool:
             return False
         for op in ops:
             name = op.get("op") if isinstance(op, dict) else getattr(op, "op", None)
-            if str(name) not in _FAST_PATH_OPS:
+            if str(name) not in _FAST_PATH_OPS and not (
+                str(name) in _COMPOSE_FAST_PATH_OPS and compose_unmet_with_ops()
+            ):
                 return False
             # A model-authored clip order is no in-place text/label op: only the
             # server-grounded capture_time and seeded random reorders ride the fast path.

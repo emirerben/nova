@@ -783,8 +783,41 @@ voiceover is recorded, and the message does not talk about words said in the foo
 
 Deploy order: roll api and worker together. A thread stored with `text_sequence` fails
 `CreativeBrief` validation on an older api or worker machine (autostopped machines, or a revert),
-and this kind has no kill switch of its own. Nothing judges it until the editor-op lane lands, so
-the draft shows the sentence whole.
+and this kind has no kill switch of its own.
+
+## Compose with the editor ops (KRI-1039, `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`)
+
+The copilot's ops are the base layer: an ask a person could do in the editor is composed with them,
+not refused, asked about or re-planned.
+
+- A `text_sequence` ask is one `replace_text_sequence`: windows are weighted by character count
+  (`weight: "length"`, the default; `"equal"` keeps equal windows), and `mode: "cumulative"` builds
+  the sentence up (step k shows the first k words, children carry `source_params.sequence_mode`,
+  the full sentence holds the last quarter). Both fields are written into the op when it is
+  authored, so replaying a saved draft never depends on the flag. Evidence
+  (`sequence_text_evidence.complete_sequences`) reads a cumulative chain as its last step.
+- Creation: Main Creator plans the footage; `compose_creation_text` is the one op pass on the
+  new draft, in the same render job, and it reads `text_sequence` requirements. `check_requirement`
+  judges one (`PlanFacts.sequence_texts`): met when the words are on screen in pieces, otherwise a
+  neutral receipt, so an uncomposed sequence is never a creator question.
+- Follow-ups: an edit-shaped turn on a draft that has a render goes to the copilot with no
+  `nova.creator.main` call; `replace_text_sequence` is on the fast path. A job that FAILED before
+  producing any variant has no editable lanes (prod job debug: no `variants` key), so its follow-up
+  is still a re-plan; the fix for that case is that the render no longer fails (title fit, lane A).
+  The re-plan cues are unchanged.
+- Readability floor: an op authored with `weight` gives every piece at least 0.25 s
+  (`_MIN_PIECE_S`). When the source window is too short the compiler lengthens it, up to the end of
+  the video or the next text in the same role and place; if even that cannot hold the pieces, or the
+  video length cannot be read, the op fails naming the seconds needed and left (never an unbounded
+  stretch).
+- Capability parity: `kria/editor_capability_parity.py` maps every public action of
+  `NativeEditorSession.swift` and the files extending it (`NativeEditorRetiming.swift`,
+  `NativeTextEditing.swift`) to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
+  `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when
+  an action has none.
+
+Default `false` (off until enabled). Flag off restores the earlier routing, cues, fast-path set and op shape
+(`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.
 
 ## Local proof
 
@@ -806,3 +839,39 @@ also checks the generated registry/API types, the 240-case structural all-format
 corpus, editor reducer, runtime state machine, HTTP envelopes, admin trace, and
 migrations. It writes duration/flakiness metadata to
 `test-results/kria-verify.json`; feature flags stay off until the live gates pass.
+
+## Provider deadlines and the Main Creator ladder (KRI-1037)
+
+A Main Creator call that ends at our own provider deadline (`ProviderDeadlineExceededError`, a
+subclass of `ProviderOutcomeUnknownError`, so the paid-call fence is unchanged) is no longer repeated:
+
+1. rung 1 keeps the spec thinking level (`high`) and gets the shared turn budget minus 75 s;
+2. a deadline steps thinking to `medium` for up to 50 s (new paid call, new reservation);
+3. a second deadline runs the fallback `gemini-3.6-flash` at `low` with what remains.
+
+The turn budget is the 200 s Celery soft limit minus the planner's 20 s reserve (180 s); the rungs
+never exceed it. "Try again" after a deadline starts at rung 2: the failed turn stores
+`error.provider_deadline=true` (only when our own deadline fired, not for a transport outcome-unknown),
+`_claim` stamps `snapshot["start_degraded"]` when the thread's last finished turn hit a deadline
+within 10 minutes AND the new message retries that request (same words after casefold and punctuation
+strip, or a bare "try again"; `_is_retry_of`). An unrelated new request inside the window runs at full
+strength. The planner reads the stamp through `start_degraded_retry`. Kill switch: `MAIN_CREATOR_DEADLINE_LADDER_ENABLED=false`
+plus restart of api and worker (read at import). Truncation now fails as `runtime_output_truncated`
+(`TerminalOutputTruncatedError`) with its own copy instead of the generic `runtime_turn_failed`.
+
+The rung sizes (105 s first rung, 50 s medium, 75 s reserve) are not measured on a lighter rung:
+the only evidence is the recorded successful `high` calls on this 27-clip set (23.9, 41.3, 52.3 s
+single attempt; 77.6 s over two attempts), all under the first rung, while the two failed turns sat
+at the deadline for 180 s with 2k output tokens (read as a stalled call rather than a slow success; not proven). Medium and
+flash latencies in the `lane_c` replay are assumed. Worst case is three paid Main Creator calls in
+one turn (each fenced under its own reservation; the planner is a pure call with no side effects).
+Check `agent_deadline_degraded` / `agent_deadline_fallback` log lines and `deadline_degraded` on
+`agent_run` events after rollout before tuning `degraded_timeout_s` / `deadline_ladder_reserve_s`.
+
+A compact per-clip evidence tier for large clip sets was tried and removed: it saved 9 to 13 percent of
+input tokens on a synthetic 27-clip prompt, input size is not the latency lever (thinking and answer
+tokens are), and no plan-quality eval covers thinner evidence. Prove the ladder with the `lane_c`
+block of `make kria-replay FIXTURE=29-ekim`.
+
+`EditCopilotAgent` has `max_output_tokens=16_384` with a 130 s timeout: a runaway call needs 124.3 s to
+reach the cap, so it must stay under the timeout (`test_edit_copilot_budget_runs_out_before_its_provider_timeout`).

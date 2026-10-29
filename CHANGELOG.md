@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.22.0] - 2026-10-29
+
+### Changed
+- feat(kria): provider deadlines degrade the next attempt instead of repeating it (KRI-1037) (#1934) <!-- release-pr: 1934 -->
+
+## [0.82.21.0] - 2026-10-29
+
+### Changed
+- feat(kria): follow-up and creation requests compose editor ops instead of being refused (KRI-1039) (#1936) <!-- release-pr: 1936 -->
+
+## [0.82.20.0] - 2026-10-29
+
+### Changed
+- feat(api): add admin read of stored phone-export verification evidence (KRI-1042) (#1938) <!-- release-pr: 1938 -->
+
 ## [0.82.19.0] - 2026-10-29
 
 ### Changed

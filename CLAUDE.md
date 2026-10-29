@@ -89,13 +89,7 @@ Localhost sign-in bypasses Google consent via the `dev-login` NextAuth provider,
 
 ### Local-render parity (high-fidelity, slow iteration)
 
-Use `make local-render` when you need byte-equivalent output before merging a render-affecting change — it runs the prod Docker image with matching FFmpeg and fonts. See `docs/runbooks/local-render.md` for full usage, divergence sources, and cache-busting instructions.
-
-```bash
-cp .env.local-render.example .env.local-render
-make local-render CLIP=/path/to/clip.mp4 TEMPLATE=<uuid> [MODE=template|music]
-make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
-```
+Use `make local-render` when you need byte-equivalent output before merging a render-affecting change — it runs the prod Docker image with matching FFmpeg and fonts. Usage, divergence sources, cache-busting: `docs/runbooks/local-render.md`.
 
 ## Quality checks
 - Backend tests: `cd src/apps/api && pytest` (asyncio mode auto; tests live in `src/apps/api/tests/`)
@@ -199,6 +193,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `KRIA_RUNTIME_V2_PHONE_ENABLED` / `_USER_IDS` — default `false` / `[]` (KRI-187): offers phone-pilot accounts runtime v2; off ⇒ `[1]`. Runbook: `docs/runbooks/phone-rendering.md`.
 - `IOS_DEVICE_ONLY_MODE` / `KRIA_MINIMUM_CLIENT_PROTOCOL` / `CLOUD_RENDER_EXECUTION_ENABLED` — defaults `false` / `2` / `true`. Staged cutover; API and workers must share the flags. Runbook: `docs/runbooks/ios-device-only-runtime.md`; narrative: DECISIONS.md "CLAUDE.md flag detail".
 - `COPILOT_HONEST_REPLIES_ENABLED` — default `true` (KRI-186 kill switch); `false` ⇒ legacy chat-edit reply. Guard: `test_flag_off_is_byte_identical_to_legacy`. Apply: fly secret + restart.
+- `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED` — default `false` (KRI-1039); on ⇒ asks the ops can express are composed. Guards: `test_compose_unmet_flag_off_is_byte_identical`, `test_ios_editor_actions_have_agent_ops`.
 - `EDIT_WIDE_LOOKS_ENABLED` — off; rollout: `docs/pipelines/generative.md`.
 - `CLIP_INTENTS_ENABLED` / `CLIP_FACTS_ENABLED` — **ON in prod** (code default `false`); intents since 2026-10-01. Rollout/rollback: `docs/pipelines/clip-understanding.md`.
 - `CLIP_EXPOSURE_FACT_ENABLED` — default `false` (KRI-680); measured brightness in clip records. `docs/pipelines/clip-understanding.md`.

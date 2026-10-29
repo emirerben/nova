@@ -27,6 +27,18 @@ from tests._prod_profile import apply_prod_profile
 from tests.evals.runners.snapshot_variant import build_synthetic_job, build_synthetic_variant
 from tests.kria.test_creative_brief import _ASK, _wire_planner
 
+
+@pytest.fixture(autouse=True)
+def _recorded_prod_windows(monkeypatch):
+    """These replay captured prod videos whose title windows are shorter than a quarter second
+    per word; the flag-off op shape keeps those recorded windows. The readable-window floor is
+    covered by tests/kria/test_compose_unmet_with_ops.py.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_compose_unmet_with_ops_enabled", False)
+
+
 _SEQUENCE_FIXTURE = (
     Path(__file__).resolve().parents[2] / "fixtures/prompt_coverage/postdeploy_title_sequence.json"
 )
