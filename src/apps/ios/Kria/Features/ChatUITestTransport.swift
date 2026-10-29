@@ -634,9 +634,10 @@ final class CreationChatFixture: @unchecked Sendable {
             } else if action == "remove_media" { state["media"] = []; append("action_remove_media") }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
-            if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SEND_FAILURE"], mode != "lost-response", !sendRefused {
+            if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SEND_FAILURE"], mode != "lost-response", !sendRefused,
+               mode != "offline-structured" || body["song_range"] != nil {
                 sendRefused = true
-                if mode == "offline" { return nil }
+                if mode == "offline" || mode == "offline-structured" { return nil }
                 return response(["detail": "Fixture rejected this prompt"], status: 422)
             }
             if events.contains(where: { $0["client_event_id"] as? String == turnID && $0["event_type"] as? String == "user_message" }) {

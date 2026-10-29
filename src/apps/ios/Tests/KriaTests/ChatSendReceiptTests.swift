@@ -32,6 +32,27 @@ import Combine
         XCTAssertEqual(store.draft(for: id), "")
     }
 
+    func testStructuredAnswerContextSurvivesRelaunch() throws {
+        let suite = "send-context-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        for context in [ChatSendResponseContext.songRange("song-question"),
+                        .momentOrder("moment-question"), .protectedRegion("mark-question")] {
+            let id = UUID()
+            var receipt = ChatSendReceipt(message: "Card answer", clientEventID: UUID().uuidString,
+                expectedRevision: 2, afterSequence: 4, draft: "", runtimeVersion: 2)
+            receipt.phase = .unconfirmed
+            receipt.responseContext = context
+            try ChatDraftStore(defaults: defaults).setSubmission(receipt, for: id)
+            let restored = try XCTUnwrap(ChatDraftStore(defaults: defaults).submission(for: id))
+            XCTAssertEqual(restored.responseContext, context)
+            XCTAssertEqual(restored.responseContext?.songRangeQuestionID, context.songRangeQuestionID)
+            XCTAssertEqual(restored.responseContext?.momentOrderQuestionID, context.momentOrderQuestionID)
+            XCTAssertEqual(restored.responseContext?.protectedRegionQuestionID, context.protectedRegionQuestionID)
+            XCTAssertEqual(restored.responseContext?.isProtectedRegion, context.isProtectedRegion)
+        }
+    }
+
     func testAcceptanceIsDistinctFromUnconfirmedAndClearsOnlyMatchingIdentity() throws {
         let suite = "send-receipt-\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

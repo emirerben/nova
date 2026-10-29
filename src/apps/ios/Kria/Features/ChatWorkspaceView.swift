@@ -2154,6 +2154,13 @@ private struct CreationWorkspaceView: View {
         var receipt = retrying ?? ChatSendReceipt(message: message, clientEventID: submission.clientEventID,
             expectedRevision: submission.expectedRevision, afterSequence: afterSequence,
             draft: draftToRestore, runtimeVersion: currentProject.runtimeVersion ?? 1)
+        if retrying == nil {
+            if let songRange { receipt.responseContext = .songRange(songRange.questionID) }
+            else if let momentOrder { receipt.responseContext = .momentOrder(momentOrder.questionID) }
+            else if protectedRegion != nil { receipt.responseContext = .protectedRegion(markQuestionID) }
+        }
+        let songRangeQuestionID = receipt.responseContext?.songRangeQuestionID
+        let momentOrderQuestionID = receipt.responseContext?.momentOrderQuestionID
         ownsSendAttempt = true
         do {
             guard try chatDrafts.beginSubmission(receipt, for: project.id) else {
@@ -2291,24 +2298,24 @@ private struct CreationWorkspaceView: View {
         } catch let error as APIError where error == .conflict {
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
-            let staleSongRange = songRange != nil && error.conflictCode == SongRangeAnswer.staleConflictCode
+            let staleSongRange = songRangeQuestionID != nil && error.conflictCode == SongRangeAnswer.staleConflictCode
             // KRI-723: a moments answer is the card's, never composer text to restore.
-            if !staleSongRange && momentOrder == nil { recoverSubmissionDraft() }
+            if !staleSongRange && momentOrderQuestionID == nil { recoverSubmissionDraft() }
             pendingTurnSubmission = nil
             submissionAnchor = nil
             clearSubmissionReceipt()
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
             // KRI-588: the question is already closed on the server. Refresh and close the card here too, with
             // no alert: there is nothing left for the creator to fix.
-            if staleSongRange, let songRange {
-                closedSongRangeQuestions.insert(songRange.questionID)
+            if staleSongRange, let songRangeQuestionID {
+                closedSongRangeQuestions.insert(songRangeQuestionID)
                 return
             }
             // KRI-374: the order was answered against a question Kria has since replaced. The thread refresh above
             // brings the new question (or the settled plan); say so instead of a generic conflict.
             // KRI-723: the moments question was replaced (or the take re-uploaded). The refresh above brings the newest
             // card (the old one hides as superseded); say why, in the chat's language, instead of a generic conflict.
-            if momentOrder != nil, error.conflictCode == MomentOrderAnswer.staleCode {
+            if momentOrderQuestionID != nil, error.conflictCode == MomentOrderAnswer.staleCode {
                 failure = ChatFailure(MomentOrderStrings(ClipAnswerLanguage(threadState: threadState)).stale)
                 return
             }
@@ -2321,35 +2328,37 @@ private struct CreationWorkspaceView: View {
                 detail: error.conflictDetail, approvalExpired: approvalNotice != nil
             ).map { ChatFailure($0) }
             return
-        } catch let error as APIError where protectedRegion != nil && ProtectedRegionProblem.isMarkProblem(error) {
+        } catch let error as APIError where receipt.responseContext?.isProtectedRegion == true && ProtectedRegionProblem.isMarkProblem(error) {
             // KRI-901: the server refused the mark (not this thread's clip, or too small). Say why on the card.
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             pendingTurnSubmission = nil
             submissionAnchor = nil
             clearSubmissionReceipt()
-            if let markQuestionID { protectedRegionProblem = ProtectedRegionProblem(questionID: markQuestionID, error: error) }
+            if let questionID = receipt.responseContext?.protectedRegionQuestionID {
+                protectedRegionProblem = ProtectedRegionProblem(questionID: questionID, error: error)
+            }
             return
-        } catch let error as APIError where momentOrder != nil && MomentOrderProblem.isAnswerProblem(error) {
+        } catch let error as APIError where momentOrderQuestionID != nil && MomentOrderProblem.isAnswerProblem(error) {
             // KRI-723: the server refused the answer (not this thread's take, bad bounds, overlap). Say why on the card.
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             pendingTurnSubmission = nil
             submissionAnchor = nil
             clearSubmissionReceipt()
-            if let momentOrder {
-                momentOrderProblem = MomentOrderProblem(questionID: momentOrder.questionID, error: error,
+            if let momentOrderQuestionID {
+                momentOrderProblem = MomentOrderProblem(questionID: momentOrderQuestionID, error: error,
                                                         language: ClipAnswerLanguage(threadState: threadState))
             }
             return
-        } catch let error as APIError where songRange != nil && SongRangeProblem.isInvalid(error) {
+        } catch let error as APIError where songRangeQuestionID != nil && SongRangeProblem.isInvalid(error) {
             // KRI-588: the server refused the range. Say why on the card; the answer is not a draft to restore.
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             pendingTurnSubmission = nil
             submissionAnchor = nil
             clearSubmissionReceipt()
-            if let songRange { songRangeProblem = SongRangeProblem(questionID: songRange.questionID, error: error) }
+            if let songRangeQuestionID { songRangeProblem = SongRangeProblem(questionID: songRangeQuestionID, error: error) }
             return
         } catch {
             thoughtRequestID = nil; liveThoughtSummaries = []

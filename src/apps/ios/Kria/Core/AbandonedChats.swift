@@ -155,12 +155,39 @@ struct ChatSendReceipt: Codable, Equatable, Sendable {
     var phase: Phase = .preparing
     var requestBody: Data?
     var turnID: String?
+    var responseContext: ChatSendResponseContext?
     let message: String
     let clientEventID: String
     var expectedRevision: Int
     let afterSequence: Int
     let draft: String
     let runtimeVersion: Int
+}
+
+enum ChatSendResponseContext: Codable, Equatable, Sendable {
+    case songRange(String)
+    case momentOrder(String)
+    case protectedRegion(String?)
+
+    var songRangeQuestionID: String? {
+        guard case .songRange(let id) = self else { return nil }
+        return id
+    }
+
+    var momentOrderQuestionID: String? {
+        guard case .momentOrder(let id) = self else { return nil }
+        return id
+    }
+
+    var protectedRegionQuestionID: String? {
+        guard case .protectedRegion(let id) = self else { return nil }
+        return id
+    }
+
+    var isProtectedRegion: Bool {
+        if case .protectedRegion = self { return true }
+        return false
+    }
 }
 
 extension ChatSendReceipt {

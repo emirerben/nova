@@ -104,6 +104,7 @@
       "KriaUITests/SongRangeUITests/testMovingFromPastToPushesToOut",
       "KriaUITests/SongRangeUITests/testThereIsNoRowWhenTheServerDoesNotAdvertiseTheRange",
       "KriaUITests/SongRangeQuestionUITests/testPickingAPartSendsItAndTheCardCollapsesToWhatWasChosen",
+      "KriaUITests/SongRangeQuestionUITests/testUnconfirmedRangeRetryKeepsTheRejectionOnTheCard",
       "KriaUITests/SongRangeQuestionUITests/testUseTheWholeSongSendsNullEndsAndShowsWholeSong",
       "KriaUITests/SongRangeQuestionUITests/testUnderFiveSecondsDisablesUseThisPartAndSaysWhy",
       "KriaUITests/SongRangeQuestionUITests/testMovingFromPastToPushesToOut",
