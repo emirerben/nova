@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-10-29T15:09:00.607143+00:00",
+  "recorded_at": "2026-10-29T15:17:27.711084+00:00",
   "implementation_head": "8d13cc470df688b7d7d79c94ef6315aa0037337a",
   "evidence_level": "offline_transport_replay_real_postgresql_and_native_simulator",
   "scope": "Metered optional image generation/editing, script-bound narration, existing online evaluation; Gemini default and iPhone final rendering retained.",
@@ -70,7 +70,7 @@
     "Verified billing organization, credits and bounded spend authorization before any live call",
     "Eligible real cohort enrollment and sealed comparison",
     "Physical phone inspection before claiming export quality",
-    "Deployment authorization before main merge because existing Fly workflow auto-deploys"
+    "Terminal exact-head CI, conditional admin merge and verification of automatic backend/TestFlight outcomes."
   ],
   "artifact_retention": "Raw local test bundles are outside Git; this safe summary and test sources remain in Git. CI artifacts will be linked separately.",
   "reconciled_head": "9c128d23b8a04e195def48e49d36851ddaca14c6",
@@ -131,13 +131,22 @@
     "inspected_head": "193b40fba072fbb505e0b7833da8b1080344d585",
     "completed_workflows_successful": 11,
     "main_ci_status": "queued",
-    "final_head_status": "pending push and CI",
-    "note": "Old-head green checks are not final-head acceptance."
+    "final_head_status": "See PR checks for current-head status; this receipt records local results, not terminal GitHub acceptance.",
+    "note": "Earlier-head check snapshots remain historical and do not establish current-head acceptance."
   },
   "metadata_approvals": {
-    "linear_issue_creation": "denied; no issue created; explicit approval pending",
-    "release_labels": "release:minor and release:added denied; neither applied; explicit approval pending",
-    "merge": "held: existing main push workflow deploys; deployment separately unauthorized"
+    "owner_authorization_utc": "2026-10-29T15:15:00Z",
+    "scope": "Create ticket, apply required release labels, eligible review/admin merge when ready, and automatic backend/TestFlight consequences; no paid tests, spending, credentials, billing changes or feature activation.",
+    "linear_issue_creation": "Earlier denial superseded by new explicit approval; one bounded retry succeeded.",
+    "linear_issue": "https://linear.app/kria/issue/KRI-1051/implement-metered-api-credit-capabilities-for-native-kria",
+    "release_labels": [
+      "release:minor",
+      "release:added"
+    ],
+    "labels_applied": true,
+    "approval_review": "Not submitted: authenticated actor emirerben is PR author and is ineligible to self-approve.",
+    "merge": "Authorized conditional on terminal passing exact-head checks; not yet attempted.",
+    "deployment": "Automatic backend/TestFlight consequences authorized; verify actual outcomes after merge."
   },
   "verified_files_sha256": {
     ".env.example": "91d65a65e5b73e0c68d9abad8e2f333d94f57600f8ec9322ce010e5217461c8b",
@@ -226,16 +235,37 @@
     "fix": "Register all five actual test IDs and generated-media source paths in the creation group; retain all prior classifications and fail-closed behavior.",
     "existing_selector_tests_passed": 121,
     "inventory_matches": true,
-    "independent_review": "No blocking finding; no selector logic, tests or workflows weakened."
+    "independent_review": "No blocking finding; no selector logic, tests or workflows weakened.",
+    "local_red_failures": 4,
+    "published_correction_head": "ef1cbe50b770e25ad8ef91e3995329c0f502351d",
+    "remote_selection_result": "success",
+    "remote_run": "https://github.com/emirerben/nova/actions/runs/40898903046"
   },
   "final_broad_parallel": {
-    "status": "running",
+    "status": "passed",
     "workers": 4,
     "distribution": "loadfile",
     "per_test_timeout_seconds": 60,
     "database": "task-owned nova_test on localhost:55479",
     "artifact": "credit-evidence/final-broad-parallel.xml",
     "source_head": "6fd5614d10b5b6078f354702f38dde8470a42655 plus UI inventory correction only",
-    "live_calls": 0
+    "live_calls": 0,
+    "passed": 34753,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 37,
+    "xfailed": 15,
+    "subtests_passed": 24,
+    "duration_seconds": 510.38,
+    "credit_cases_checked": 83,
+    "credit_cases_skipped": 0,
+    "credit_cases_failed": 0,
+    "qualification": "API source tree unchanged throughout the run; creation UI inventory correction was present before collection. Runtime provider replay, actual task-owned PostgreSQL, four CI-style workers. This is local macOS evidence, not a CI or live-provider claim."
+  },
+  "native_ci_script_tests": {
+    "passed": 117,
+    "failed": 0,
+    "duration_seconds": 82.991,
+    "artifact": "credit-evidence/ios-ci-metadata.log"
   }
 }
