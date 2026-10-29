@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.6.0] - 2026-10-29
+
+### Changed
+- fix(editor): the creator's saved copy of a phone montage is the render (KRI-1032) (#1916) <!-- release-pr: 1916 -->
+
 ## [0.82.5.0] - 2026-10-28
 
 ### Fixed
