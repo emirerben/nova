@@ -271,9 +271,11 @@ beside the existing ones and drops anything with the same wording or the exact s
 through `record_deleted_idea` when personalization is on; deleted ideas are never re-offered
 for their event even when it is off. `POST .../stories/{id}/restore` undoes it.
 `DELETE .../groups` removes an event's members (revision bumps) and soft-deletes its ideas.
-Ideas are pinned to a collection revision, so a write that leaves an event's members identical
-re-stamps that event's ideas (`carry_forward_stories`); only rows from the revision being left
-move. No migration: group and deletion live in `story_json`.
+Ideas are pinned to a collection revision, so every write re-stamps each idea whose own clips are
+all still in its event (`carry_forward_stories`, the same `footage_in_event` rule restore uses).
+Adding footage, renaming or editing an event's notes keeps its ideas; removing a clip drops only
+the ideas that cite it. Only rows from the revision being left move. No migration: group and
+deletion live in `story_json`.
 
 Photos (KRI-944). `index_collection` turns a photo's image analysis into ONE still moment held
 for `STILL_HOLD_S` (3 s; `start_s=0`, `evidence.media="still"`, `time_basis="still_hold"`), stamped
