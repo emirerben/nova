@@ -15,7 +15,9 @@ import KriaMediaEngine
 ///  (g) an "All captions" change takes more than one Undo, or does not reach Save as the default plus override-free rows;
 ///  (h) the stored default does not come back on reload (cue-native variants store it as `caption_animation_phases`);
 ///  (i) an entrance stored by the older Style > Text motion (`appearance.animation_phases`) stops drawing, is not the
-///      shown default, or survives an All captions change beside the new default.
+///      shown default, or survives an All captions change beside the new default;
+///  (j) Display Word animates only a line's first and last word instead of every word, or switching Display (or
+///      turning the highlight on) resets the chosen animation to None.
 @MainActor final class CaptionAnimationTests: XCTestCase {
     private let fade: [String: JSONValue] = ["entrance": .string("fade"), "exit": .string("fade"), "loop": .string("pulse"), "speed": .number(1.5)]
     private let still: [String: JSONValue] = ["entrance": .string("none"), "exit": .string("none"), "loop": .string("none"), "speed": .number(1)]
@@ -144,6 +146,14 @@ import KriaMediaEngine
         XCTAssertEqual(cue.first?.animationPhases, phases(silk))
     }
 
+    func testWordDisplayAnimatesEveryTextLaneWord() throws {
+        let layers = try laneLayers(sentenceRows, meta: ["style": .string("word"), "animation_phases": .object(fade)])
+        XCTAssertEqual(layers.count, 5)
+        for (id, layer) in layers {
+            XCTAssertEqual(layer.animationPhases, phases(fade), "word \(id) enters, exits and loops on its own")
+        }
+    }
+
     // MARK: Session: scope, capability, undo, Save, reload
 
     private func loaded(capability: Bool = true, storedDefault: [String: JSONValue]? = nil,
@@ -152,6 +162,7 @@ import KriaMediaEngine
         var capabilities: [String: JSONValue] = [
             "caption_cues": .object(["editable": .bool(true)]),
             "caption_meta": .object(["editable": .bool(true)]),
+            "caption_editor_style": .bool(true),
         ]
         if capability { capabilities["caption_animation"] = .bool(true) }
         var variant: [String: JSONValue] = [
@@ -252,6 +263,29 @@ import KriaMediaEngine
         let request = try XCTUnwrap(fake.lastRequest)
         XCTAssertNil(request.captionMeta?["appearance"]?.objectValue?["animation_phases"])
         XCTAssertEqual(request.captionMeta?["animation_phases"]?.objectValue?["entrance"], .string("echoStack"))
+    }
+
+    func testSwitchingDisplayOrHighlightKeepsTheChosenAnimation() async throws {
+        let (session, fake) = await loaded(storedTextMotion: silk)
+        session.setCaptionDisplay("word")
+        XCTAssertEqual(session.captionAnimationPhases(.all), silk, "Word display keeps the Text motion entrance")
+        XCTAssertNil(session.document.captionMeta["appearance"]?.objectValue?["animation_phases"])
+        session.setCaptionDisplay("sentence")
+        session.setCaptionAppearance(key: "highlight_spoken_word", value: .bool(true))
+        session.setCaptionDisplay("word")
+        XCTAssertEqual(session.captionAnimationPhases(.all), silk)
+        await session.save()
+        XCTAssertEqual(try XCTUnwrap(fake.lastRequest).captionMeta?["animation_phases"]?.objectValue, silk)
+
+        let (chosen, _) = await loaded(storedDefault: popBounce)
+        for display in ["word", "sentence", "word"] {
+            chosen.setCaptionDisplay(display)
+            XCTAssertEqual(chosen.captionAnimationPhases(.all), popBounce, display)
+        }
+
+        let (older, _) = await loaded(capability: false, storedTextMotion: silk)
+        older.setCaptionDisplay("word")
+        XCTAssertNil(older.document.captionMeta["animation_phases"], "a build that cannot save caption phases writes none")
     }
 
     func testATextLaneLineChangeLeavesOnlyThatRowsPhasesOnItsLine() async throws {

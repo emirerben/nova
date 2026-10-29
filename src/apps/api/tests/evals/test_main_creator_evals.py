@@ -51,6 +51,23 @@ def test_main_creator_eval(
         assert action["strategy"]["montage_audio"]["preserve_source_audio"] is True
         assert action["strategy"]["montage_audio"]["source_media_ids"] == []
 
+    expected_text = fixture.meta.get("text_vs_speech")
+    if expected_text:
+        # 29 Ekim / KRI-1038: words the creator wants SHOWN a piece at a time are a
+        # `text_sequence`; a captions / subtitles / voiceover ask stays the speech lane.
+        assert result.output is not None
+        updates = result.output["brief_updates"]
+        captions = [u for u in updates if (u.get("facts") or {}).get("captions")]
+        assert len(captions) == expected_text["captions_filings"]
+        sequences = [u for u in updates if u["kind"] == "text_sequence"]
+        want = expected_text["text_sequence"]
+        if want is None:
+            assert not sequences
+        else:
+            assert len(sequences) == 1
+            assert sequences[0]["literal"] == want["literal"]
+            assert sequences[0]["facts"] == {"unit": want["unit"], "mode": want["mode"]}
+
     pinned = fixture.meta.get("pinned_texts")
     if pinned:
         # KRI-523: corner / whole-video text is `pinned_texts` (in stack order), never a

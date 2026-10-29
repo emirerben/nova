@@ -66,6 +66,7 @@ import XCTest
         let google = app.buttons["signin.google"]
         XCTAssertTrue(google.waitForExistence(timeout: 1))
         XCTAssertTrue(google.isHittable)
+        XCTAssertEqual(app.otherElements["signin.featured-edits"].value as? String, "Previews paused")
     }
 
     func testExistingAccountRefusalIsReadableOnScreen() {

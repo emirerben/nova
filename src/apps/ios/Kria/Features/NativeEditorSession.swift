@@ -1259,6 +1259,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
+        if let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile) { return rendered }
         switch sourcePreviewState {
         case .ready:
             guard sourcePreviewSettled, let sourcePreview,
@@ -1280,6 +1281,26 @@ struct NativeEditorTemporaryVideo {
             return .server(target)
         }
         throw NativeEditorVideoDownloadError.unavailable
+    }
+
+    /// KRI-1032: with no edit on top of the finished render, the creator's saved or shared copy IS
+    /// that render: the file the phone made (or its upload), never a recompile of the editor
+    /// document. The recompile only approximates the render: it lost the clip-sound mutes, the
+    /// bars and the label placement the render had, and "Done: only the Recoleta clip keeps its
+    /// sound" described a video the creator never got. A saved edit makes the render stale
+    /// (`acknowledge`) until its re-render lands, and the editable preview is the copy then.
+    private func finishedRenderRoute(deviceLocalFile: URL?) -> NativeEditorVideoDownloadRoute? {
+        guard let finishedRenderURL, finishedRenderIsCurrent, !hasUnsavedChanges, chatStagedDocument == nil,
+              !isSaving, pendingPreviewGeneration == nil, let target = videoDownloadTarget else { return nil }
+        if let deviceLocalFile, let deviceOutputURL,
+           deviceLocalFile.standardizedFileURL == deviceOutputURL.standardizedFileURL {
+            return .localFile(deviceLocalFile)
+        }
+        // This phone's own render file stands in for the upload (`showDeviceOutput`).
+        if finishedRenderURL.isFileURL {
+            return FileManager.default.fileExists(atPath: finishedRenderURL.path) ? .localFile(finishedRenderURL) : nil
+        }
+        return .server(target)
     }
 
     /// Exports the exact composition on screen. On device this competes with
@@ -3422,7 +3443,7 @@ struct NativeEditorTemporaryVideo {
                                      sources: sources, audioSources: audio, mediaSources: media,
                                      referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                      sourceAudioPreserved: sourceAudioPreserved || songRemoved,
-                                     songBed: songBed, deviceCaptions: rendersOnDevice,
+                                     songBed: songBed, deviceCaptions: rendersOnDevice, guidedStory: isGuidedStory,
                                      songCaptionShift: lyricShift,
                                      skippedMediaOverlayIDs: skippedPreviewMedia,
                                      talkingCutaways: talkingCutaways)
@@ -5581,7 +5602,7 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             appearance[key] = value
-            if key == "highlight_spoken_word", value == .bool(true) { appearance["animation_phases"] = nil }
+            if key == "highlight_spoken_word", value == .bool(true) { Self.keepTextMotion(&appearance, in: &$0.captionMeta, canKeep: offersCaptionAnimation) }
             if key == "alignment", appearance["position_x_frac"] != nil {
                 appearance["position_x_frac"] = .number(value.stringValue == "left" ? 0.06 : value.stringValue == "right" ? 0.82 : 0.5)
             }
@@ -5595,9 +5616,19 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             if appearance["highlight_spoken_word"] == nil { appearance["highlight_spoken_word"] = .bool(false) }
-            if style == "word" { appearance["animation_phases"] = nil }
+            if style == "word" { Self.keepTextMotion(&appearance, in: &$0.captionMeta, canKeep: offersCaptionAnimation) }
             $0.captionMeta["appearance"] = .object(appearance)
             $0.captionMeta["style"] = .string(style)
+        }
+    }
+
+    /// A Style > Text motion entrance draws lines whole, which word display and spoken-word highlighting cannot.
+    /// Where captions animate, it becomes the all-captions default (drawn per word), so the creator's choice
+    /// survives the switch; elsewhere it is dropped as before.
+    private static func keepTextMotion(_ appearance: inout [String: JSONValue], in meta: inout [String: JSONValue], canKeep: Bool) {
+        guard let phases = appearance.removeValue(forKey: "animation_phases") else { return }
+        if canKeep, meta["animation_phases"] == nil, NativeEditorRenderCompiler.captionPhases(phases) != nil {
+            meta["animation_phases"] = phases
         }
     }
 

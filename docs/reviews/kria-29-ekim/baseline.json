@@ -1,0 +1,249 @@
+{
+  "fixture": "29-ekim",
+  "mode": "offline",
+  "source": {
+    "prod_main_sha": "4e06062dc",
+    "thread_id": "729b3686-291b-4a8a-9593-218e36c7e57b",
+    "model_outputs": "nova.creator.main outputs are stored by prod as key names only; T4 (recorded strategy) is exact, T1 to T3 are reconstructed from the persisted ledger and replies, T5 and T6 never returned (provider deadline)."
+  },
+  "network_attempts_blocked": 0,
+  "passed": 0,
+  "failed": 5,
+  "all_green": false,
+  "checks": [
+    {
+      "id": 1,
+      "name": "T1 clip order is a seeded permutation of all 27 clips",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the choice gate asks the creator a order_basis question instead of making a draft: the key-less order requirement is an ordering rule it 'cannot verify' (services/choice_questions._order_basis); shuffle is not a known basis",
+        "the montage planner compiled attachment order (ordering_basis='attachment'): no random order exists in plan_unified_montage or in CreativeStrategy.ordering_choice (group_first | chronological only)",
+        "the order receipt for r1 is not_possible: \"I couldn't match your description to the clips, so they stay in the order you attached them.\""
+      ],
+      "evidence": {
+        "route": "replan",
+        "order_questions_asked": [
+          "order_basis"
+        ],
+        "ordering_basis": "attachment",
+        "clip_count": 27,
+        "is_permutation": true,
+        "differs_from_attachment": false,
+        "stable_on_rerun": true,
+        "r1_receipt": {
+          "status": "not_possible",
+          "reason": "I couldn't match your description to the clips, so they stay in the order you attached them."
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "no captions/voiceover filing; quoted sentence stored verbatim as on-screen text",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "the word-by-word ask is filed as a captions requirement (the speech lane): T1 r2 facts.captions=word_by_word; T2 r2 facts.captions=word_by_word (Main Creator prompt maps 'one word at a time' to facts.captions, and brief_checks._WORD_CAPTION_RE backs it up)",
+        "a turn offers to record the sentence as a voiceover instead of showing it as text: I'll record it"
+      ],
+      "evidence": {
+        "captions_filings": [
+          {
+            "turn": "T1",
+            "requirement": "r2",
+            "kind": "style",
+            "captions_fact": "word_by_word",
+            "description": "Show each word one by one"
+          },
+          {
+            "turn": "T2",
+            "requirement": "r2",
+            "kind": "style",
+            "captions_fact": "word_by_word",
+            "description": "Show each word one by one"
+          }
+        ],
+        "voiceover_offers": [
+          {
+            "turn_id": "7023be87-bb58-4053-a9ab-b0ac728c0754",
+            "option": "I'll record it"
+          }
+        ],
+        "sentence_verbatim_in_contract": true,
+        "first_ledger_holding_the_sentence": "v3 (T4); r3 content before T4 was not persisted"
+      }
+    },
+    {
+      "id": 3,
+      "name": "phone_text_style places the title for every candidate font",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "phone_text_style._place fails closed for 5 of 11 fonts that draw the sentence (Montserrat, Montserrat Bold, Pacifico, Poppins Bold, Unbounded); the typography agent may pick ['Inter', 'Montserrat'] and the recorded render failed with CreatorRenderContractError / phone_plan_unsupported: the 0.18-of-canvas height cap, 4 title anchors, 40 px floor and no fallback leave a 178-character title nowhere to go"
+      ],
+      "evidence": {
+        "agent_eligible_fonts": [
+          "Inter",
+          "Montserrat"
+        ],
+        "agent_font_failures": [
+          "Montserrat"
+        ],
+        "outcome_by_font": {
+          "Inter": "placed size=42",
+          "Montserrat": "CreatorRenderContractError",
+          "Hanken Grotesk": "placed size=42",
+          "Inter Tight": "placed size=42",
+          "Montserrat Bold": "CreatorRenderContractError",
+          "Nunito ExtraBold": "placed size=42",
+          "Pacifico": "CreatorRenderContractError",
+          "Poppins Bold": "CreatorRenderContractError",
+          "TikTok Sans Bold": "placed size=40",
+          "Unbounded": "CreatorRenderContractError",
+          "Inter Medium": "placed size=42"
+        },
+        "block_height_at_the_40px_floor_vs_0.18_cap": {
+          "Montserrat": 0.2,
+          "Montserrat Bold": 0.2,
+          "Pacifico": 0.203,
+          "Poppins Bold": 0.196,
+          "Unbounded": 0.204
+        },
+        "recorded_render_failure": {
+          "code": "phone_plan_unsupported",
+          "error_class": "CreatorRenderContractError",
+          "error_tail": "This text cannot fit clearly in the requested area. Choose another placement or shorter text.",
+          "field_path": "phone_text_style",
+          "decline_reason": "needs_choice"
+        },
+        "note": "prod's typography pick is stored as key names only; the recorded failure is consistent with a pick from the failing set"
+      }
+    },
+    {
+      "id": 4,
+      "name": "word-by-word follow-up becomes N one-word text elements via editor ops, 0 Main Creator",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "[failed_render] T5 reaches nova.creator.main (1 call) and no editor op is ever tried: planner._plan_live_turn treats a turn after a FAILED latest job as a fresh plan (extract_first needs a non-failed job), so the full replan is the only path; prod's real call hit the provider deadline at 179.8 s",
+        "[failed_render] no editor op reaches the turn plan (replace_text_sequence is not in planner._FAST_PATH_OPS and Main Creator's strategy has no field for it)"
+      ],
+      "evidence": {
+        "turn_state_by_t4_outcome": {
+          "failed_render": {
+            "model_calls": [
+              "nova.creator.main"
+            ],
+            "route": null,
+            "tools": [],
+            "error": "ProviderOutcomeUnknownError: recorded provider deadline (179.7 s)",
+            "creator_main_calls": 1,
+            "editor_ops_reach_the_plan": false
+          },
+          "ready_render": {
+            "model_calls": [
+              "nova.brief.extractor",
+              "nova.edit.copilot"
+            ],
+            "route": "editor_ops",
+            "tools": [
+              "draft.apply_editor_ops"
+            ],
+            "error": null,
+            "creator_main_calls": 0,
+            "editor_ops_reach_the_plan": true
+          }
+        },
+        "state_the_system_is_in": "failed_render",
+        "op_compile": {
+          "elements": 27,
+          "words": 27,
+          "one_word_each": true,
+          "ordered_windows": true,
+          "covers_title_span": true,
+          "min_window_s": 0.08148099999999991,
+          "text_conserved": true
+        },
+        "readability_note": "recorded title window is 2.2 s for 27 words (0.081 s each); the op conserves wording and spans the window, it does not make the window readable",
+        "copilot_output": "assumed: the prod copilot never ran on this thread, so the op the copilot authors is a fixture value; routing and the op compile are real code"
+      }
+    },
+    {
+      "id": 5,
+      "name": "every turn finishes inside 60 s (replayed latency)",
+      "pass": false,
+      "verdict": "NOT VERIFIED",
+      "why_it_fails": [
+        "turns over the 60 s budget: T1 65.6 s, T2 78.0 s, T4 74.6 s, T5 186.6 s, T6 388.7 s. Every one runs nova.creator.main (gemini-3.1-pro, thinking high; 31k to 63k input tokens, 27 clips of full facts); T5 and T6 end at the provider deadline (179.8 s and 179.7 s of model time) and T6 retries the same call unchanged"
+      ],
+      "evidence": {
+        "turns": [
+          {
+            "turn": "T1",
+            "recorded_wall_ms": 65632,
+            "replayed_ms": 65632,
+            "basis": "recorded",
+            "under_budget": false,
+            "model_calls": [
+              "nova.creator.main 52306 ms x1",
+              "nova.audio.music_matcher 4161 ms x1"
+            ]
+          },
+          {
+            "turn": "T2",
+            "recorded_wall_ms": 77960,
+            "replayed_ms": 77960,
+            "basis": "recorded",
+            "under_budget": false,
+            "model_calls": [
+              "nova.creator.main 77581 ms x2"
+            ]
+          },
+          {
+            "turn": "T3",
+            "recorded_wall_ms": 38378,
+            "replayed_ms": 38378,
+            "basis": "recorded",
+            "under_budget": true,
+            "model_calls": [
+              "nova.creator.main 23921 ms x1",
+              "nova.audio.music_matcher 3794 ms x1"
+            ]
+          },
+          {
+            "turn": "T4",
+            "recorded_wall_ms": 74605,
+            "replayed_ms": 74605,
+            "basis": "recorded",
+            "under_budget": false,
+            "model_calls": [
+              "nova.creator.main 41251 ms x1",
+              "nova.audio.music_matcher 3974 ms x1"
+            ]
+          },
+          {
+            "turn": "T5",
+            "recorded_wall_ms": 186591,
+            "replayed_ms": 186591,
+            "basis": "recorded",
+            "under_budget": false,
+            "model_calls": [
+              "nova.creator.main"
+            ]
+          },
+          {
+            "turn": "T6",
+            "recorded_wall_ms": 388661,
+            "replayed_ms": 388661,
+            "basis": "recorded",
+            "under_budget": false,
+            "model_calls": [
+              "nova.creator.main"
+            ]
+          }
+        ],
+        "budget_ms": 60000
+      }
+    }
+  ]
+}

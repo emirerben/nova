@@ -296,7 +296,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                         frame = image.composited(over: frame).cropped(to: canvas)
                         continue
                     }
-                    let state = try layer.animationPhases?.sample(time: time - text.start, duration: text.end - text.start) ?? TextTransformTiming.sample(effect: PortableTextEffect(rawValue: layer.effect.rawValue)!,
+                    let word = text.singleWord?.window(localTime: time - text.start)
+                    let state = try layer.animationPhases?.sample(time: time - text.start - (word?.start ?? 0),
+                        duration: word.map { $0.end - $0.start } ?? text.end - text.start) ?? TextTransformTiming.sample(effect: PortableTextEffect(rawValue: layer.effect.rawValue)!,
                         text: layer.smoothReveal?.text ?? layer.discreteReveal?.text ?? layer.handwriting?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: time - text.start,
                         duration: text.end - text.start, motion: layer.motion, fade: layer.fade)
                     // The bitmap already contains rotation. Cloud translation occurs in

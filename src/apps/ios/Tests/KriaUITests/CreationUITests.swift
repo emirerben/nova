@@ -208,11 +208,12 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Attach footage"].exists)
         XCTAssertFalse(app.buttons["Attach footage"].isEnabled)
         XCTAssertTrue(app.staticTexts["Montage"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Narrated"].exists)
+        XCTAssertTrue(app.staticTexts["Voiceover"].exists)
 
         let toggle = app.buttons["workspace-menu-toggle"]
         let carousel = app.scrollViews["format-carousel"]
         XCTAssertTrue(carousel.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["format-montage"].frame.minX, prompt.frame.minX, accuracy: 2)
         carousel.swipeLeft()
         carousel.swipeRight()
         XCTAssertEqual(toggle.label, "Open projects", "Format-card swipes must not open the drawer")
@@ -815,6 +816,78 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [latestDismissed], timeout: 3), .completed)
         XCTAssertTrue(response.waitForExistence(timeout: 3))
         XCTAssertTrue(response.isHittable)
+    }
+
+    /// "Clean up speech and create" replaces the tall approval card with the render stage while the server has
+    /// not queued the render yet (its decision writes only `approval_approved`). Failure modes pinned: the
+    /// footage stage ("Add your footage") comes back for a poll or two; the viewport stays where the card's
+    /// buttons were with the "Latest" pill up, so nothing of the conversation is on screen; the plan feed then
+    /// lands below the fold.
+    func testCleanUpSpeechApprovalShowsTheRenderStageAndKeepsTheConversationInView() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_SPEECH_CLEANUP"] = "choice"
+        app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        send.tap()
+        // DirectionStage's own identifier is inherited by everything inside it, so the button is found by its words.
+        let clean = app.buttons["Clean up speech and create"]
+        XCTAssertTrue(clean.waitForExistence(timeout: 15), "the approval card offers the cleanup choice")
+
+        // Read the card the way a creator does: scroll up past its buttons, then bring "Clean up" back into
+        // view. "Keep original" and "Change direction" stay below it, so the reader is still above the
+        // follow threshold and the "Latest" pill is up when the button is tapped.
+        let history = app.scrollViews.firstMatch
+        history.swipeDown()
+        let pill = app.buttons["chat-jump-to-latest"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 3))
+        let composer = app.buttons["chat-send-message"]
+        func cleanIsClear() -> Bool { clean.isHittable && clean.frame.maxY <= composer.frame.minY - 4 }
+        // A swipe flings; drag by exactly what is needed so the buttons below "Clean up" stay off screen.
+        for _ in 0..<8 where !cleanIsClear() {
+            let needed = min(320, max(40, clean.frame.maxY - composer.frame.minY + 12))
+            let from = history.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+            let to = from.withOffset(CGVector(dx: 0, dy: -needed))
+            from.press(forDuration: 0.1, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        XCTAssertTrue(cleanIsClear(), "Clean up must be on screen above the composer")
+        XCTAssertTrue(pill.exists, "precondition: the reader is above the card's buttons")
+        clean.tap()
+
+        // The server still reports a plain draft for a poll or two after Create (its decision writes only
+        // `approval_approved`): the footage stage must not come back in that window, and the render stage
+        // must replace the card at once, in view, until the plan feed takes over.
+        let footage = app.staticTexts["Add your footage"]
+        let shaping = app.staticTexts["I’m shaping your video"]
+        let feed = app.otherElements["plan-feed"]
+        let settle = Date().addingTimeInterval(1.5)
+        while Date() < settle {
+            XCTAssertFalse(footage.exists, "the footage stage must not return after Create")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(eventually(timeout: 5) { shaping.exists || feed.exists }, "approving shows the render stage")
+        let deadline = Date().addingTimeInterval(4)
+        while Date() < deadline, !feed.exists {
+            XCTAssertFalse(footage.exists, "the footage stage must not flash while the render is queued")
+            XCTAssertTrue(shaping.exists, "the render stage stays until the plan feed takes over")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(eventually(timeout: 3) { !pill.exists }, "the conversation sits at its end, so no Latest pill")
+        XCTAssertTrue(eventually(timeout: 3) { (shaping.exists && shaping.isHittable) || feed.exists },
+                      "the render stage is in view, not below the fold")
+        attach(app, "render-stage-after-cleanup-approval")
+
+        // The queued render's live plan then lands in view, and the reader still follows the end.
+        XCTAssertTrue(feed.waitForExistence(timeout: 30), "the plan feed follows the render stage")
+        XCTAssertTrue(eventually(timeout: 5) { app.staticTexts["plan-feed.header"].isHittable }, "the plan feed is in view")
+        XCTAssertFalse(pill.exists)
+        attach(app, "plan-feed-after-cleanup-approval")
     }
 
     func testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse() {

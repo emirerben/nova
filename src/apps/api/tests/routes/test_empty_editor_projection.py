@@ -97,6 +97,54 @@ def test_empty_timeline_preserves_authorized_pool_but_never_old_slots(monkeypatc
     assert result["draft"]["snapshot"]["editor_payload"]["sections"]["text_elements"] == []
 
 
+@pytest.mark.parametrize("explicit_empty", [False, True])
+def test_saved_guided_text_draft_preserves_cut_unless_clips_were_explicitly_cleared(
+    monkeypatch, explicit_empty
+):
+    from app.services.editor_empty_drafts import editor_sections
+    from tests.routes._editor_save_matrix import guided_phone_job
+
+    job, variant, _ = guided_phone_job(monkeypatch, count=2, clip_s=3)
+    original = routes.dispatch_get_timeline(
+        job, "guided_story", sign_url=lambda path, ttl: "https://evidence.invalid/source"
+    )
+    assert len(original["slots"]) == 2
+    sections = editor_sections(job, "guided_story")
+    assert "timeline_slots" not in sections
+    if explicit_empty:
+        sections["timeline_slots"] = []
+    variant.update(editor_state_version=2, editor_draft={"draft_id": "draft"})
+    job._saved_editor_drafts = {
+        "guided_story": DraftSnapshotOut(
+            draft_id="draft",
+            item_id="item",
+            variant_key="guided_story",
+            draft_revision=2,
+            snapshot_hash="a" * 64,
+            etag='"draft-a"',
+            can_undo=True,
+            base_generation_id="first",
+            created_at=datetime.now(UTC),
+            snapshot={
+                "kind": "editor",
+                "editor_payload": {
+                    "editor_state_version": 2,
+                    "base_generation": "first",
+                    "sections": sections,
+                },
+            },
+        )
+    }
+    before = copy.deepcopy(job.assembly_plan)
+    reopened = routes.dispatch_get_timeline(
+        job, "guided_story", sign_url=lambda path, ttl: "https://evidence.invalid/source"
+    )
+    assert reopened["slots"] == ([] if explicit_empty else original["slots"])
+    assert reopened["clips"] == original["clips"]
+    assert reopened["base_generation"] == original["base_generation"]
+    assert job.assembly_plan == before
+
+
 @pytest.mark.parametrize(
     "version,generation,detail",
     [
