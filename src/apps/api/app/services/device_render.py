@@ -406,11 +406,11 @@ def checked_export_report(record: dict, status: DeviceRenderStatus, attempt_id: 
         and policy.get("version") == 1
         and policy.get("verifier_version", "phone-simple-cut-v1") in HISTORICAL_VERIFIER_VERSIONS
         and report.get("status") == "checked"
-        # A pinned policy accepts its own verifier or any later one: every
-        # current control is a superset of a historical one (KRI-810), so a
-        # request pinned before a verifier repair can still publish exact bytes
-        # re-checked by the repaired verifier. An older report never satisfies
-        # a newer pin.
+        # A pinned policy accepts its own verifier or any later one: a later
+        # verifier keeps every earlier wrong-output control (KRI-810, KRI-1042
+        # replay those controls), so a request pinned before a verifier repair
+        # can still publish exact bytes re-checked by the repaired verifier. An
+        # older report never satisfies a newer pin.
         and report.get("verifier_version")
         in (
             set(VERIFIER_ORDER[VERIFIER_ORDER.index(policy["verifier_version"]) :])
