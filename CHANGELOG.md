@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.33.0] - 2026-10-29
+
+### Changed
+- fix(kria): localize named moments with first/last photos before approval (#1947) <!-- release-pr: 1947 -->
+
 ## [0.82.32.0] - 2026-10-29
 
 ### Changed
