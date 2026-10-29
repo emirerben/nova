@@ -2116,6 +2116,37 @@
         "src/apps/ios/Kria/Features/ActivityView.swift",
         "src/apps/ios/Tests/KriaUITests/ActivityUITests.swift"
       ]
+    },
+    {
+      "id": "apns-transport-contract",
+      "needs_native": false,
+      "api_tests": "tests/services/test_apns.py",
+      "paths": [
+        "src/apps/api/app/services/apns.py",
+        "src/apps/api/tests/services/test_apns.py"
+      ]
+    },
+    {
+      "id": "native-continued-processing-admission",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/ContinuedProcessingExportTests/testAutomaticRecoveryAndBackgroundCallersNeverSubmit",
+        "KriaTests/ContinuedProcessingExportTests/testUnsupportedGPUResourcesNeverSubmit",
+        "KriaTests/ContinuedProcessingExportTests/testRejectionFallsBackOnceAndLateLaunchCannotStartWork",
+        "KriaTests/ContinuedProcessingExportTests/testLaunchStartsOnceAndCompletionIsExplicit",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationInterruptsOnceAndLateSuccessCannotWin",
+        "KriaTests/ContinuedProcessingExportTests/testCancellationBeforeLaunchClosesLateTaskWithoutFallback",
+        "KriaTests/ContinuedProcessingExportTests/testFailedExportAndInvalidProgressNeverReportSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationBeforeMainActorDeliveryPreventsRacingSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationDuringCompletionInterruptsWithoutReportingSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testReleasingActiveRunnerInterruptsAndFinishesUnsuccessfully",
+        "KriaTests/ContinuedProcessingExportTests/testFinishedRunnerReleasesExportClosuresWhileRegistrationRemains",
+        "KriaTests/ContinuedProcessingExportTests/testRetainedLaunchHandlerDoesNotRetainRunnerOrExport"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/ContinuedProcessingExport.swift",
+        "src/apps/ios/Tests/KriaTests/ContinuedProcessingExportTests.swift"
+      ]
     }
   ]
 }
