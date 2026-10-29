@@ -1,0 +1,20 @@
+{
+  "pr": 1930,
+  "reviewed_code_sha": "bede7efa5cf3184a64c5697a3a60764464cb5ff3",
+  "claim": "local_fix",
+  "integration": "Preserves main text_sequence_shown checks and PR words_only for other requirements; current main v103/v42 retained with no agent prompt-file change",
+  "tests_passed": 114,
+  "commands": [
+    "cd src/apps/api && pytest tests/kria/test_kri1029_1030_plaza_title_replay.py tests/kria/test_kri1024_flag_emoji_title.py tests/pipeline/test_authored_text_sequence.py tests/pipeline/test_unified_montage_song.py tests/pipeline/test_user_song_integration.py tests/routes/test_phone_text_sequence_followup.py",
+    "cd src/apps/api && pytest tests/services/test_creator_composition.py tests/services/test_creator_composition_verifier.py tests/services/test_creation_text_copy_guard.py tests/services/test_sequence_text_evidence.py"
+  ],
+  "source_identity": "No API differences between tested b4ea65f72 integration and current-main/cache merge bede7efa5",
+  "independent_review": "Full title/curve diff and main conflict resolution reviewed; no material findings. No demonstrated cloud/user-song regression.",
+  "compatibility": "Glyph integration merges cleanly; root separately validates combined None/exclusion/glyph/title tree before serial merges.",
+  "cache": "Shared independently reviewed image/Xcode-qualified namespace;16 throughput tests and selector passed",
+  "limitations": [
+    "Fresh exact-head CI required",
+    "Physical M1 iPhone resend unverified",
+    "No paid live-model eval or new provider/renderer activation"
+  ]
+}
