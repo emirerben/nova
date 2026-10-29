@@ -3887,9 +3887,7 @@ async def _plan_creator_action(
                     policy_notices = (*policy_notices, notice)
             # KRI-1031: "skip anything too short to use" names the clips it left out (or says
             # none is too short), so the creator sees what the measured rule did.
-            measured = length_exclusion_notice(
-                planned.resolution.intents, still_played, media_ids
-            )
+            measured = length_exclusion_notice(planned.resolution.intents, still_played, media_ids)
             if measured is not None and measured not in policy_notices:
                 action = action.model_copy(
                     update={"summary": " ".join([action.summary.strip(), measured]).strip()}

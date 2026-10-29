@@ -220,6 +220,10 @@ _CLIP_INTENT_LEAVES = (
     "exclusive",
     # KRI-994: the brief `select` ask an exclusion carries out; read only by receipts.
     "requirement_id",
+    # KRI-1031: a length-only exclusion, settled from clip lengths while planning (the
+    # narrowed pick is what the contract sees).
+    "by_length",
+    "under_s",
 )
 
 FIELD_MATRIX: dict[str, FieldRule] = {
