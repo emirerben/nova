@@ -9008,14 +9008,20 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         return None
     try:
         rendered_source_durations = None
-        if _stored_variant_field(job, variant, PHONE_EDITOR_PLAN_FIELD):
-            from app.services.phone_sources import (
-                PHONE_SOURCES_FIELD,
-                PHONE_VISUALS_FIELD,
-                PhoneSourceBinding,
-                PhoneVisualBinding,
-            )
+        from app.services.device_render import DEVICE_RENDER_FIELD
+        from app.services.phone_sources import (
+            PHONE_SOURCES_FIELD,
+            PHONE_VISUALS_FIELD,
+            PhoneSourceBinding,
+            PhoneVisualBinding,
+        )
 
+        # Private editor plans predate original receipts; they alone do not opt into a new clock.
+        has_native_state = any(
+            key in assembly
+            for key in (PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, DEVICE_RENDER_FIELD)
+        )
+        if has_native_state and _stored_variant_field(job, variant, PHONE_EDITOR_PLAN_FIELD):
             bindings = [
                 PhoneSourceBinding.model_validate(row)
                 for row in assembly.get(PHONE_SOURCES_FIELD) or []

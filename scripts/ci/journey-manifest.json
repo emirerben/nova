@@ -2151,7 +2151,7 @@
     {
       "id": "rendered-editor-original-clock",
       "needs_native": true,
-      "api_tests": "tests/routes/test_phone_editor_rendered_clock.py",
+      "api_tests": "tests/routes/test_phone_editor_rendered_clock.py tests/routes/test_phone_editor_rendered_clock_receipts.py",
       "xctests": [
         "KriaTests/RenderedOriginalClockTests/testRenderedPhotoWindowBuildsAndExportsAfterHydration",
         "KriaTests/RenderedOriginalClockTests/testRenderedVideoWindowBuildsAndExportsAfterHydration",
@@ -2168,7 +2168,8 @@
         "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
         "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
         "src/apps/ios/Kria/Core/Services.swift",
-        "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift"
+        "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift",
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock_receipts.py"
       ]
     }
   ]

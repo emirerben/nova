@@ -3718,13 +3718,12 @@
     {
       "id": "rendered-editor-original-clock",
       "tickets": [
-        "KRI-1039",
-        "KRI-984"
+        "KRI-934"
       ],
       "symptom": "A successful native original window1.920s reopens as1.933333s after editor frame normalization and fails source bounds.",
       "boundary": "persistence",
       "status": "open_pr",
-      "owner": "KRI-1039",
+      "owner": "https://github.com/emirerben/nova/pull/1946",
       "journey": "rendered-editor-original-clock",
       "paths": [
         "src/apps/api/app/schemas/guided_edit_revision.py",
@@ -3734,12 +3733,13 @@
         "src/apps/ios/Kria/Features/NativeEditorRetiming.swift"
       ],
       "regression_tests": [
-        "tests/routes/test_phone_editor_rendered_clock.py"
+        "tests/routes/test_phone_editor_rendered_clock.py",
+        "tests/routes/test_phone_editor_rendered_clock_receipts.py"
       ],
       "harness": "real_compiler",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "Initial projection and text Save failed1.933333 versus1.920 before fix;167 focused tests pass with1expected failure; retained28moment normalization is idempotent.",
+        "offline_replay": "180 focused backend tests passed,1known expected failure, including unchanged KRI1032 mute/crop golden projection and modern missing-receipt controls. Retained28moment clock replay is idempotent.",
         "live_model": "Not run; no provider or prompt change.",
         "native_output": "Final iOS26.5 simulator run117 passed0failures: measured25fps1.920s source, saved-draft hydration, compiler, preview and MP4 export; incorrect1.933333 window rejected. Export duration checked; blue pixel checked in preview only.",
         "production": "Not deployed; original-phone reopen pending protocol25 API/worker/client release."
@@ -3750,7 +3750,9 @@
         "text-only Save/reopen",
         "old/missing/current protocol",
         "actual source overrun",
-        "rate and transition reflow"
+        "rate and transition reflow",
+        "Legacy private plan without modern identity state",
+        "Present-but-empty modern state refuses missing originals"
       ],
       "neighbours_gap": [
         "original physical-phone stack/local binding duration",
@@ -3760,7 +3762,11 @@
       "follow_ups": [
         "KRI-1039"
       ],
-      "red_control": "not_applicable"
+      "red_control": "not_applicable",
+      "fix_prs": [
+        1946
+      ],
+      "gap_reason": "Dedicated source-clock Linear tracking is not authorized yet. KRI-934 is related failure-screen ancestry, not the source-clock owner. The PR request-evidence gate remains blocked."
     }
   ]
 }

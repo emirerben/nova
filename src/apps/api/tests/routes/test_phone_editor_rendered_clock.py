@@ -13,10 +13,18 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
 )
-from app.services.device_render import device_status, pin_device_request
+from app.services.client_protocol import clear_request_context
+from app.services.device_render import DEVICE_RENDER_FIELD, device_status, pin_device_request
 from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from tests.routes.test_phone_editor_commit import phone_job
+
+
+@pytest.fixture(autouse=True)
+def isolated_client_context():
+    clear_request_context()
+    yield
+    clear_request_context()
 
 
 def rendered_clock_job(monkeypatch):
@@ -162,6 +170,25 @@ def test_rendered_revision_rejects_real_source_overrun(monkeypatch):
     revision["state_hash"] = ""
     with pytest.raises(ValueError, match="exceeds original duration"):
         normalize_guided_editor_revision(revision)
+
+
+def test_legacy_private_plan_without_native_state_keeps_legacy_clock(monkeypatch):
+    job = rendered_clock_job(monkeypatch)
+    job.assembly_plan.pop(PHONE_SOURCES_FIELD)
+    job.assembly_plan.pop(DEVICE_RENDER_FIELD)
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    assert "timing_mode" not in revision
+    assert revision["segments"][0]["duration_s"] == 1.933333
+
+
+@pytest.mark.parametrize("empty_record", [False, True])
+def test_modern_device_state_without_original_receipts_refuses(monkeypatch, empty_record):
+    job = rendered_clock_job(monkeypatch)
+    job.assembly_plan.pop(PHONE_SOURCES_FIELD)
+    if empty_record:
+        job.assembly_plan[DEVICE_RENDER_FIELD] = {}
+    assert gj._guided_v2_revision(job, job.assembly_plan["variants"][0]) is None
 
 
 @pytest.mark.parametrize("protocol", [None, 24, 25])
