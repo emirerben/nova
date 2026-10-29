@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.10.0] - 2026-10-29
+
+### Fixed
+- fix(kria): Talking title asked "at the top" renders as the opening title; quoted text is asked about, never dropped (KRI-1009) (#1912) <!-- release-pr: 1912 -->
+
 ## [0.82.9.0] - 2026-10-29
 
 ### Changed
