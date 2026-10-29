@@ -94,7 +94,7 @@ from app.services.length_policy import (
     length_owner,
     natural_length_owner,
 )
-from app.services.order_mode import order_mode
+from app.services.order_mode import order_mode, seeded_permutation
 from app.services.phone_noise_reduction import engine_noise_reduction_available
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
@@ -2896,20 +2896,27 @@ def _listed_order_miss(facts: PlanFacts) -> str:
 
 
 _RANDOM_ORDER_NOT_APPLIED = "I couldn't confirm the clips are in a random order."
+_RANDOM_ORDER_OVERRIDDEN = "You moved the clips yourself, so your own order is kept."
 
 
 def _check_random_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    """A random order is met when the plan says it shuffled and still holds exactly the clips.
+    """A random order is met when the plan's order IS the stored seed's permutation.
 
-    The planner stores the seed and the clips it shuffled; the editor op's change list says it
-    shuffled. Either way the result must be a permutation of the selected clips, no clip lost
-    or repeated, which is the whole of what "random" can promise.
+    A unified montage records the seed and the clips it shuffled, so the check recomputes
+    ``seeded_permutation(source, seed)`` and compares it with the order the plan used (an
+    explicit start/end sequence outranks it, so there only "a permutation, nothing lost or
+    repeated" can be promised). The editor op only says "Shuffle clips", which can prove the
+    permutation but not the seed. A creator's own later hand reorder displaces the ask.
     """
     required = facts.strict_order and _order_is_required(req)
     if not facts.ordering_basis:
         if required and facts.rendered_output:
             return _receipt(req, "not_possible", _ORDER_NOT_RECORDED)
         return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
+    if facts.ordering_basis == "creator_order":
+        return _receipt(
+            req, "met", say(en=_RANDOM_ORDER_OVERRIDDEN, tr=_REASON_TR[_RANDOM_ORDER_OVERRIDDEN])
+        )
     unmet = "not_possible" if required else "partial"
     reason = say(en=_RANDOM_ORDER_NOT_APPLIED, tr=_REASON_TR[_RANDOM_ORDER_NOT_APPLIED])
     if facts.ordering_basis != "random":
@@ -2917,7 +2924,14 @@ def _check_random_order(req: BriefRequirement, facts: PlanFacts) -> RequirementR
     source = facts.random_order_source_ids
     if source:
         wanted = set(source)
-        if sorted(c for c in facts.clip_ids if c in wanted) != sorted(source):
+        used = [c for c in facts.clip_ids if c in wanted]
+        if sorted(used) != sorted(source):
+            return _receipt(req, unmet, reason)
+        if (
+            facts.random_order_seed is not None
+            and not facts.sequence_statuses
+            and used != seeded_permutation(source, facts.random_order_seed)
+        ):
             return _receipt(req, unmet, reason)
     return _receipt(req, "met", None)
 
@@ -4346,6 +4360,7 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_TARGET_CLIP_TEXT: "Bu taslakta o klibin yazısını doğrulayamıyorum.",
     _CANT_CONFIRM_ORDER: "Bu taslağın kullandığı sırayı doğrulayamıyorum.",
     _RANDOM_ORDER_NOT_APPLIED: "Kliplerin rastgele sırada olduğunu doğrulayamadım.",
+    _RANDOM_ORDER_OVERRIDDEN: "Klipleri kendin taşıdığın için senin sıran korundu.",
     _CANT_CHECK_ORDER_RULE: "Bu sıralamayı otomatik olarak doğrulayamıyorum.",
     _ORDER_NOT_APPLIED: (
         "Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı."

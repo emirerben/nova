@@ -1063,7 +1063,8 @@ def _order(
     if not view.order_by_capture:
         if creator_order:
             # A creator-reordered timeline is what a revision keeps; only an
-            # explicit capture-time ask in the brief overrides it.
+            # explicit capture-time ask in the brief overrides it. That includes a still-open
+            # "random order" ask: the hand reorder is the later word, and the receipt says so.
             return _creator_ordered(clips, creator_order), "creator_order", []
         if view.random_order_seed is not None:
             return seeded_permutation(clips, view.random_order_seed), "random", []
@@ -1456,7 +1457,7 @@ def _seat_among_moments(slots: list[_Slot], seats: MomentSeats) -> list[_Slot]:
 
 def _ordering_choice(strategy: Mapping[str, Any], enabled: bool) -> str | None:
     choice = strategy.get("ordering_choice") if enabled else None
-    return choice if choice in ("group_first", "chronological") else None
+    return choice if choice in ("group_first", "chronological", "random") else None
 
 
 def _scatter(clips: Sequence[UnifiedClip], visuals: Sequence[UnifiedClip]) -> list[UnifiedClip]:

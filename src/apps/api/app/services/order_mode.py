@@ -48,16 +48,45 @@ def _key(facts: Mapping[str, Any]) -> str:
     return ""
 
 
-# A requirement the extractor filed with no ``facts.key`` (every one stored before the brief
-# prompt asks for it, e.g. prod 29 Ekim r1) is read once, here, and the canonical key + seed
-# are stamped onto the stored row (`stamp_order_facts`), so the words are never re-read. New
-# extractor output should carry ``facts.key = "random" | "any_order"`` and skip this path.
+# Words that make a cue sentence something other than a plain "random"/"any order" ask: a
+# negation ("not random", "don't shuffle", "olmasin"), a second order rule ("chronological",
+# "start with the beach", "the order I added them") or a contrast ("but", "ama"). Checked on
+# what is LEFT after the cue itself is removed, so "order doesn't matter" keeps its own "not".
+_NOT_PLAIN = re.compile(
+    r"\b(?:not|no|never|without|don'?t|do not|doesn'?t|does not|isn'?t|aren'?t|won'?t|"
+    r"instead|rather|except|but|however|only|keep|same|reverse\w*|"
+    r"chronolog\w*|captur\w*|filmed|shot|recorded|added|attach\w*|upload\w*|oldest|newest|"
+    r"latest|earliest|alphabet\w*|sorted|group\w*|first|last|start\w*|begin\w*|end\w*|"
+    r"finish\w*|"
+    r"olmasin|olmayacak|degil|deme|demiyorum|istemiyorum|yerine|haric|ama|fakat|sadece|"
+    r"kronolojik|cekildig\w*|eklendig\w*|ters|ilk|son|basla\w*|bitir\w*|ayni)\b"
+)
+
+
+# A requirement the extractor filed with no ``facts.key`` (stored before the brief prompt asked
+# for it, e.g. prod 29 Ekim r1) is read once, here, and the canonical key + seed are stamped
+# onto the stored row (`stamp_order_facts`), so the words are never re-read. The brief prompt now
+# emits ``facts.key = "random" | "any_order"``; this fallback only exists for those older rows,
+# so it is deliberately narrow: any negation, contrast or second order rule beside the cue
+# means "not a plain ask" and the requirement stays unknown rather than being guessed.
+def _plain_cue(text: str) -> OrderMode | None:
+    text = text.replace("\u2019", "'")
+    random_hit = _RANDOM_CUES.search(text)
+    any_hit = _ANY_CUES.search(text)
+    if not (random_hit or any_hit):
+        return None
+    residue = _ANY_CUES.sub(" ", _RANDOM_CUES.sub(" ", text))
+    if _NOT_PLAIN.search(residue):
+        return None
+    return "random" if random_hit else "any"
+
+
 def order_mode(req: Any) -> OrderMode | None:
     """``"random"`` / ``"any"`` when an order requirement asks for exactly that, else None.
 
-    An explicit fact key decides. A key-less requirement is judged by the creator's words,
-    because the brief extractor routinely files "random order" with no key (prod 29 Ekim r1).
-    Any other key (capture time, attachment, a route) is a different rule and returns None.
+    An explicit fact key decides. A key-less requirement is judged by the creator's words only
+    when they are a plain ask (see `_plain_cue`). Any other key (capture time, attachment, a
+    route) is a different rule and returns None.
     """
     if getattr(req, "kind", None) != "order":
         return None
@@ -72,14 +101,11 @@ def order_mode(req: Any) -> OrderMode | None:
     if any(facts.get(name) for name in ("first_clip", "last_clip")):
         # Clip pins are the clip-intent resolver's; they are not an order mode.
         return None
-    text = loose_text(
-        f"{getattr(req, 'description', None) or ''} {getattr(req, 'literal', None) or ''}"
+    return _plain_cue(
+        loose_text(
+            f"{getattr(req, 'description', None) or ''} {getattr(req, 'literal', None) or ''}"
+        )
     )
-    if _RANDOM_CUES.search(text):
-        return "random"
-    if _ANY_CUES.search(text):
-        return "any"
-    return None
 
 
 def derived_seed(req_id: str | None, turn_id: str | None) -> int:

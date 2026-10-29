@@ -158,7 +158,9 @@ log = structlog.get_logger()
 # v100 (KRI-994): a select ask records the media kind it restricts to / includes
 # (`only_media_kind` "video", `include_media_kind` "photo"), so the server can judge "clips
 # only" on the finished timeline and withdraw an earlier photo ask a later clips-only ask replaces.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-27-v100"
+# v101 (29 Ekim): random / any-order asks carry `facts.key` ("random" / "any_order") and a
+# whole-set select carries `facts.all`, so the server never reads those from the creator's words.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-29-v101"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -561,6 +563,13 @@ everyone", "end_line": "see you tomorrow"}} with the quoted words exactly as the
 them (just `start_line` or just `end_line` when only one line is named), never an `order`
 requirement and never `triggers`. Record it even when no length is stated; a stated length
 stays its own `timing` requirement.
+A request for no particular sequence is an `order` requirement too, with the key the server
+checks: "show everything in random order", "shuffle them", "rastgele sırayla" =>
+{"kind": "order", "scope": "global", "facts": {"key": "random"}}; "any order is fine", "sıra
+fark etmez" => {"key": "any_order"}. Never put the creator's negation in that key: "keep my order,
+not random" is the attachment order, not `random`. Showing every attached clip ("show all
+content", "tüm içeriği göster") is a `select` requirement {"kind": "select", "scope": "global",
+"facts": {"all": true}}, not a request to re-plan.
 A clip the creator wants FIRST or LAST ("start with the video that is blue", "end on the
 sunset") goes in that SAME order requirement as `first_clip` / `last_clip`: the creator's own
 words for the clip ({"key": "capture_time", "first_clip": "the video that is blue"}); the
