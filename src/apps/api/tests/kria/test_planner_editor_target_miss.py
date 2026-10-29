@@ -91,7 +91,7 @@ async def test_no_ready_variant_logs_variants_seen() -> None:
     )
     target, logs = await _load(_db(thread, session, job), item)
     assert target is None
-    assert [e["reason"] for e in logs] == ["no_ready_variant"]
+    assert [e["reason"] for e in logs] == ["failed_draft_unavailable"]
     assert logs[0]["variants_seen"] == [{"variant_id": "v1", "render_status": "failed"}]
     assert logs[0]["target_variant_id"] == "v1"
 
@@ -506,7 +506,7 @@ async def test_failed_job_with_a_ready_variant_is_not_a_first_render(
     job["variants"].append({"variant_id": "v0", "render_status": "ready"})
     # The session still points at the failed variant: nothing editable is ready for it.
     await planner._load_editor_target(db, thread_id=uuid.uuid4(), item=item)
-    assert planner._editor_target_miss.get() == "no_ready_variant"
+    assert planner._editor_target_miss.get() == "failed_draft_unavailable"
     assert planner._editor_target_miss_guarded()
 
 

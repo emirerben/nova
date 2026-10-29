@@ -151,9 +151,11 @@ from app.services.kria_editor_ops import (
     _clip_label_links,
     compile_editor_ops,
     editor_state_has_lanes,
+    failed_editor_draft_basis,
     merge_editor_draft,
     parse_editor_state,
     resolve_editor_base,
+    unknown_editor_render_query,
 )
 from app.services.kria_editor_ops_diff import describe_diff
 from app.services.phone_rollout import stamped_client_protocol
@@ -1488,6 +1490,35 @@ def _complete_draft_turn(
                 or variant.get("variant_id") != session.target_variant_id
             ):
                 raise RuntimeError("The exact editor target is no longer available")
+            if (plan.diagnostics or {}).get("editor_recovery_basis") is not None or variant.get(
+                "render_status"
+            ) in {"failed", "needs_attention"}:
+                basis = failed_editor_draft_basis(
+                    head,
+                    job,
+                    variant,
+                    thread_id=thread.id,
+                    creator_id=thread.creator_id,
+                    item_id=item.id,
+                )
+                if (
+                    basis is None
+                    or (plan.diagnostics or {}).get("editor_recovery_basis") != basis._asdict()
+                ):
+                    raise KriaEditorOpError(
+                        "The saved draft changed. Your correction was not applied; "
+                        "review the current draft first."
+                    )
+                if (
+                    db.execute(
+                        unknown_editor_render_query(session, job, variant)
+                    ).scalar_one_or_none()
+                    is not None
+                ):
+                    raise KriaEditorOpError(
+                        "The previous render's outcome is still unknown. "
+                        "Check its status before starting another render."
+                    )
             # The SAME resolver the planner used for the snapshot the model saw, re-run
             # here under the row locks so a state that went stale during the model
             # call is refused instead of silently rebased.
@@ -4542,10 +4573,41 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 )
             except ValueError:
                 target_valid = False
+        unknown_outcome = False
+        if (
+            target_valid
+            and document is not None
+            and document.kind == "editor"
+            and current_job is not None
+            and execution.status == "awaiting_approval"
+        ):
+            current_variant = next(
+                (
+                    row
+                    for row in (current_job.assembly_plan or {}).get("variants") or []
+                    if isinstance(row, dict)
+                    and row.get("variant_id") == execution.target_variant_id
+                ),
+                None,
+            )
+            if current_variant and current_variant.get("render_status") in {
+                "failed",
+                "needs_attention",
+            }:
+                unknown_outcome = (
+                    db.execute(
+                        unknown_editor_render_query(session, current_job, current_variant)
+                    ).scalar_one_or_none()
+                    is not None
+                )
+                if unknown_outcome:
+                    target_valid = False
         now = datetime.now(UTC)
         if not target_valid:
             stale_code = (
-                CREATIVE_COPY_PENDING
+                "render_outcome_unknown"
+                if unknown_outcome
+                else CREATIVE_COPY_PENDING
                 if copy_problem
                 else prepared_failure.code
                 if prepared_failure is not None
@@ -4569,7 +4631,22 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 thread,
                 role="assistant",
                 event_type="assistant_error",
-                content=copy_problem
+                content=(
+                    say(
+                        en=(
+                            "The previous render's outcome is still unknown. "
+                            "I kept your corrected draft and did not start another render. "
+                            "Refresh the project to check its status."
+                        ),
+                        tr=(
+                            "Önceki videonun sonucu hâlâ bilinmiyor. "
+                            "Düzeltilmiş taslağını sakladım ve başka bir video başlatmadım. "
+                            "Sonucu kontrol etmek için projeyi yenile."
+                        ),
+                    )
+                    if unknown_outcome
+                    else copy_problem
+                )
                 or say(
                     en=(
                         "The project changed before I could start that render. "

@@ -2094,6 +2094,18 @@
         "src/apps/api/tests/services/test_order_mode.py",
         "src/apps/api/tests/fixtures/kria_replay/29-ekim/fixture.json"
       ]
+    },
+    {
+      "id": "kri-1039-failed-editor-recovery",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_failed_draft_correction_postgres.py tests/kria/test_render_retry_postgres.py tests/routes/test_phone_text_sequence_followup.py",
+      "xctests": [
+        "KriaTests/CreationConfirmationConflictTests",
+        "KriaTests/ApprovalDecisionRequestTests"
+      ],
+      "paths": [
+        "src/apps/api/tests/kria/test_failed_draft_correction_postgres.py"
+      ]
     }
   ]
 }
