@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-10-29T14:58:30.183816+00:00",
+  "recorded_at": "2026-10-29T15:09:00.607143+00:00",
   "implementation_head": "8d13cc470df688b7d7d79c94ef6315aa0037337a",
   "evidence_level": "offline_transport_replay_real_postgresql_and_native_simulator",
   "scope": "Metered optional image generation/editing, script-bound narration, existing online evaluation; Gemini default and iPhone final rendering retained.",
@@ -189,9 +189,10 @@
     "src/apps/ios/Kria/Features/VoiceoverScriptCard.swift": "bf5e156c25a8f937fcdf0e584083faecea8150e91fd9c70eaebc323b70ccbad7",
     "src/apps/ios/Kria/Generated/openapi.yaml": "87e44c2abd5c86158aa8908c1981b3cb5750bade4415532dc0c621f9bef99b13",
     "src/apps/ios/Tests/KriaTests/GeneratedMediaTests.swift": "64a614d2ff1940684e11538e5759e5117f6f17223e30edf2fb80a115c62427e9",
-    "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "18d4c28258e5d029cd0f0d9942561715d703c6e061860e6859e3b70649bf8ffa"
+    "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "18d4c28258e5d029cd0f0d9942561715d703c6e061860e6859e3b70649bf8ffa",
+    "scripts/ios/ui-test-groups.json": "10fe039efe992655f5fc4485a18be49b46ea57fc5a5a871186085dbb3aabb589"
   },
-  "code_tree_sha256": "144b8f3bee014ecf9658dfe61f57a15cdbbfc9248ffe4966a85b5953a062ee07",
+  "code_tree_sha256": "d54c4234f9c20a41c152ac5f03f01b368140e934c45271f99e29e76781681c63",
   "final_independent_review": {
     "verdict": "no_remaining_blocking_finding",
     "family": "same-family independent review",
@@ -217,5 +218,24 @@
     "artifact": "credit-evidence/final-consolidated-api.xml",
     "scope": "All credit capabilities, budget/judge/provider tests, real PostgreSQL admission, canonical lock/schema guards, Apple-revocation fixtures and all root API tests.",
     "skip_reason": "Two PR1934-only runtime checks; exact PR overlay independently passed six."
+  },
+  "ci_selector_correction": {
+    "failed_head": "6fd5614d10b5b6078f354702f38dde8470a42655",
+    "failed_run": "https://github.com/emirerben/nova/actions/runs/40897151932",
+    "cause": "Five new GeneratedMedia UI tests were not classified in the native UI inventory, forcing full selection and breaking existing focused-selection contracts.",
+    "fix": "Register all five actual test IDs and generated-media source paths in the creation group; retain all prior classifications and fail-closed behavior.",
+    "existing_selector_tests_passed": 121,
+    "inventory_matches": true,
+    "independent_review": "No blocking finding; no selector logic, tests or workflows weakened."
+  },
+  "final_broad_parallel": {
+    "status": "running",
+    "workers": 4,
+    "distribution": "loadfile",
+    "per_test_timeout_seconds": 60,
+    "database": "task-owned nova_test on localhost:55479",
+    "artifact": "credit-evidence/final-broad-parallel.xml",
+    "source_head": "6fd5614d10b5b6078f354702f38dde8470a42655 plus UI inventory correction only",
+    "live_calls": 0
   }
 }

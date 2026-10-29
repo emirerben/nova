@@ -23,3 +23,7 @@ See [verification.json](verification.json) for safe artifact summaries, [REVIEW.
 The refreshed [offline preflight](offline-preflight.json) estimates 0.384148 USD for the existing montage development fixture, frozen against the reconciled runtime and existing price table. It authorizes no spending and establishes no quality winner. No fresh real holdout is claimed.
 
 Live calls, billing verification, eligible real cohorts and inspected physical-phone exports remain unverified. Transcript agreement does not establish pronunciation or audible fidelity; generated images still need inspection for unwanted lettering. All new flags remain false and budgets zero.
+
+## CI continuation
+
+Final-head CI exposed a missing native UI inventory registration before API jobs started. All five generated-media UI tests are now classified in the creation group; all 121 existing CI selector tests pass and independent review confirmed no guard, fallback or prior mapping was weakened. A full four-worker API rerun is in progress on task-owned `nova_test`, using replay, no-op keys, existing full FFmpeg and CI-style per-test timeouts. Its result remains pending.
