@@ -52,6 +52,7 @@ from app.agents._schemas.creator_policy import (
 from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS, NARRATED_EDIT_FORMATS
 from app.kria.reply_language import current_reply_language, say
 from app.kria.voiceover_scope import lost_visual_asks, resolve_native_all_scope
+from app.pipeline.narrated_title import TITLE_MAX_CHARS
 from app.schemas.clip_intents import ClipIntent
 from app.schemas.edit_proposal import MAX_CREATOR_PINNED_TEXTS, PINNED_TEXT_MAX_CHARS
 from app.services.creator_capabilities import (
@@ -61,6 +62,7 @@ from app.services.creator_capabilities import (
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
     compile_strategy_to_plan,
+    phone_talking_title_lane_open,
     resolve_creator_image_media_ref,
     resolve_creator_visual_video_media_ref,
 )
@@ -963,6 +965,46 @@ def _repair_detail(before: CreativeStrategy, after: CreativeStrategy) -> str:
     return " ".join(lines)
 
 
+def _talking_top_text_as_title(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, str | None]:
+    """KRI-1009: 'Title "The Cabildo 🇦🇷" at the top' written as one top corner line.
+
+    A Talking edit has no corner-text lane (KRI-523), so that line was left out, while the
+    phone Talking title lane draws an opening title at the top, off the speaker's face
+    (KRI-467). One whole-video line in a top corner, with no title beside it, becomes that
+    title. Anything else (a bottom corner, several lines, a line scoped to seconds or a clip,
+    a line longer than the title lane draws, no title lane) stays a corner text: it is left
+    out and, when the creator quoted it, asked about.
+    """
+
+    pins = strategy.pinned_texts or []
+    if (
+        strategy.edit_format != "subtitled"
+        or strategy.opening_title
+        or len(pins) != 1
+        or not pins[0].corner.startswith("top_")
+        or not pins[0].is_whole_video
+        or len(" ".join(pins[0].text.split())) > TITLE_MAX_CHARS
+        or not phone_talking_title_lane_open(manifest)
+    ):
+        return strategy, None
+    text = pins[0].text
+    return (
+        strategy.model_copy(update={"opening_title": text, "pinned_texts": None}),
+        say(
+            en=(
+                f'"{text}" shows as the opening title for the first few seconds. '
+                "Talking edits can't keep text on screen the whole time yet."
+            ),
+            tr=(
+                f'"{text}" ilk birkaç saniye açılış başlığı olarak görünüyor. Konuşmalı '
+                "düzenlemeler yazıyı henüz videonun tamamında ekranda tutamıyor."
+            ),
+        ),
+    )
+
+
 def _pin_range_refusal(strategy: CreativeStrategy) -> RefusedStrategy | None:
     """KRI-525: ask instead of guessing when a clip-scoped pin names a clip that isn't there.
 
@@ -1054,6 +1096,10 @@ def check_strategy_for_runtime_v2(
         # is a notice, never that question (the next turn would only ask it again).
         strategy = strategy.model_copy(update={"clip_intents": kept_intents or None})
         notices.append(transcript_labels_dropped_notice())
+    # Before the baseline is taken: the title keeps the creator's words, so nothing is lost.
+    strategy, title_notice = _talking_top_text_as_title(manifest, strategy)
+    if title_notice:
+        notices.append(title_notice)
     original = strategy
     # What a dropped request is judged against: the creator's strategy, with a guided
     # voiceover contract already swapped out when its downgrade keeps every request.

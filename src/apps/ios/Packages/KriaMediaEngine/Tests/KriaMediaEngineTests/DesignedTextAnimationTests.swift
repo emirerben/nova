@@ -42,7 +42,7 @@ final class DesignedTextAnimationTests: XCTestCase {
                 if let output = ProcessInfo.processInfo.environment["KRIA_TEXT_MOTION_EVIDENCE"], content.contains("Somewhere") {
                     let directory = URL(fileURLWithPath: output)
                     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                    for time in [0.12, 0.4, 0.8, 2.0] {
+                    for time in [0.05, 0.12, 0.25, 2.0] {
                         let image = try RecipeVideoCompositor.paintText([text], over: background, canvas: background.extent, time: time)
                         try CIContext().writePNGRepresentation(of: image, to: directory.appendingPathComponent("\(name)-\(time).png"),
                             format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
@@ -58,8 +58,8 @@ final class DesignedTextAnimationTests: XCTestCase {
             fontURL: font, canvas: canvas, phases: phases)
         let made = try RecipeTextLayer.make(layer, assetURLs: ["font": font], canvas: CGSize(width: 360, height: 640))
         let background = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 360, height: 640))
-        let a = pixels(try RecipeVideoCompositor.paintText([made], over: background, canvas: background.extent, time: 1.1999))
-        let b = pixels(try RecipeVideoCompositor.paintText([made], over: background, canvas: background.extent, time: 1.2001))
+        let a = pixels(try RecipeVideoCompositor.paintText([made], over: background, canvas: background.extent, time: TextAnimationPhases.edgeSeconds - 0.0001))
+        let b = pixels(try RecipeVideoCompositor.paintText([made], over: background, canvas: background.extent, time: TextAnimationPhases.edgeSeconds + 0.0001))
         let difference = zip(a, b).reduce(0) { $0 + abs(Int($1.0) - Int($1.1)) }
         XCTAssertLessThan(Double(difference) / Double(a.count), 0.01, "A line must not change its curve when the entrance ends")
     }
@@ -81,6 +81,45 @@ final class DesignedTextAnimationTests: XCTestCase {
             }
             if entrance == "typewriter" { XCTAssertLessThan(try ink(0.2), try ink(1.4)) }
             else { XCTAssertGreaterThan(try ink(2.2), try ink(2.8)) }
+        }
+    }
+
+    /// Display Word (KRI-1007): a one-word-at-a-time caption plays its phases on every word's own window.
+    /// Failure modes: only the first word enters; the last word alone exits; a designed edge draws the whole
+    /// line instead of the active word; an animated word does not settle to the same pixels as an unanimated one.
+    func testOneWordAtATimeCaptionsAnimateEveryWord() throws {
+        let style = AuthoredTextLayout.Style(fontAssetID: "font", size: 48, color: .init(red: 1, green: 1, blue: 1, alpha: 1))
+        let background = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 360, height: 640))
+        func layer(_ phases: TextAnimationPhases?) throws -> RecipeTextLayer {
+            var words = try XCTUnwrap(AuthoredTextLayout.compileSingleWords(id: "caption", text: "Bu alan var", start: 0, end: 1.8,
+                starts: [0, 0.6, 1.2], highlight: style.color, style: style, fontURL: font, canvas: canvas))[0]
+            words.animationPhases = phases
+            return try RecipeTextLayer.make(words, assetURLs: ["font": font], canvas: CGSize(width: 360, height: 640))
+        }
+        func frame(_ text: RecipeTextLayer, _ time: Double) throws -> [UInt8] {
+            pixels(try RecipeVideoCompositor.paintText([text], over: background, canvas: background.extent, time: time))
+        }
+        func ink(_ bytes: [UInt8]) -> Int { stride(from: 0, to: bytes.count, by: 4).reduce(0) { $0 + Int(bytes[$1]) } }
+        let plain = try layer(nil)
+        for edges in [("pop", "fade"), ("silkReveal", "echoStack"), ("focusPull", "none")] {
+            let text = try layer(try JSONDecoder().decode(TextAnimationPhases.self,
+                from: Data("{\"entrance\":\"\(edges.0)\",\"exit\":\"\(edges.1)\"}".utf8)))
+            for start in [0.0, 0.6, 1.2] {
+                let entering = try frame(text, start + 0.04), settled = try frame(text, start + 0.31)
+                XCTAssertTrue(try settled == frame(plain, start + 0.31), "\(edges) word at \(start) settles to the plain word alone")
+                XCTAssertTrue(entering != settled, "\(edges) word at \(start) enters")
+                if edges.1 != "none" { XCTAssertTrue(try frame(text, start + 0.58) != settled, "\(edges) word at \(start) exits") }
+                if edges.0 == "pop" { XCTAssertLessThan(ink(entering), ink(settled), "a popping word starts faint") }
+            }
+            if let output = ProcessInfo.processInfo.environment["KRIA_TEXT_MOTION_EVIDENCE"] {
+                let directory = URL(fileURLWithPath: output)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                for time in [0.6, 0.64, 0.7, 0.8, 0.95, 1.15] {
+                    let image = try RecipeVideoCompositor.paintText([text], over: background, canvas: background.extent, time: time)
+                    try CIContext().writePNGRepresentation(of: image, to: directory.appendingPathComponent("word-\(edges.0)-\(time).png"),
+                        format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+                }
+            }
         }
     }
 

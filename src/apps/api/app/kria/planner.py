@@ -3930,6 +3930,13 @@ async def _plan_creator_action(
                         manifest_hash=manifest.manifest_hash,
                         context_hash=manifest.context_hash,
                     )
+        if ordering_choice is None and effective_brief is not None:
+            # 29 Ekim: a random-order ask rides the strategy as its own choice; the seed
+            # itself stays on the requirement so every re-run draws the same permutation.
+            from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
+
+            if brief_view(effective_brief).random_order_seed is not None:
+                ordering_choice = "random"
         return PlannedKriaTurn(
             plan=adapt_creator_action(
                 action,
@@ -4397,6 +4404,7 @@ _FAST_PATH_OPS = frozenset(
         "reorder_clips_by",
     }
 )
+_GROUNDED_REORDERS = (None, "capture_time", "random")
 _FAST_PATH_MAX_CHARS = 280
 # A text/label/caption ask: when the copilot answers it with a question or a refusal, that
 # answer stands (a full re-plan would write labels from place/time facts and re-render).
@@ -4415,13 +4423,13 @@ _TEXT_EDIT_ASK_TR = re.compile(
 _REPLAN_CUES = re.compile(
     r"\b(vibe|different|another version|new (edit|video|version|cut)|recut|re-?cut|re-?do|"
     r"from scratch|best \d+|top \d+|\d+ best|use (only|just)|only (the )?(best|funniest|top)|"
-    r"funniest|shuffle|more clips|fewer clips|farkl\w*|yeniden|bastan|ba\u015ftan)\b"
+    r"funniest|more clips|fewer clips|farkl\w*|yeniden|bastan|ba\u015ftan)\b"
 )
 # KRI-520: Turkish re-plan wording on `loose_text`, at the English cues' precision: a new
-# version, "from scratch", a best/funniest-N selection, shuffle, more/fewer clips. A bare
+# version, "from scratch", a best/funniest-N selection, more/fewer clips. A bare
 # "en iyi" or "tekrar" stays out (they also appear in ordinary edits).
 _REPLAN_CUES_TR = re.compile(
-    r"\b(?:farkl|yeniden|bastan|sifirdan|karistir|en iyi \d|\d+ en iyi|"
+    r"\b(?:farkl|yeniden|bastan|sifirdan|en iyi \d|\d+ en iyi|"
     r"(?:sadece|yalnizca) en (?:iyi|komik)|en komik|"
     r"daha (?:fazla|cok|az) klip|"
     r"yeni (?:bir )?(?:video|versiyon|surum|duzenleme|kesim)|"
@@ -4484,11 +4492,15 @@ def _is_fast_path_plan(plan: KriaTurnPlan | None) -> bool:
             if str(name) not in _FAST_PATH_OPS:
                 return False
             # A model-authored clip order is no in-place text/label op: only the
-            # server-grounded capture_time reorder rides the fast path.
+            # server-grounded capture_time and seeded random reorders ride the fast path.
             criterion = (
                 op.get("criterion") if isinstance(op, dict) else getattr(op, "criterion", None)
             )
-            if str(name) == "reorder_clips_by" and criterion not in (None, "capture_time"):
+            if str(name) == "reorder_clips_by" and criterion not in (
+                None,
+                "capture_time",
+                "random",
+            ):
                 return False
     return True
 

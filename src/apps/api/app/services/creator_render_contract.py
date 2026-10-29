@@ -61,6 +61,7 @@ from app.services.length_policy import (
     creator_duration_s,
     length_owner,
 )
+from app.services.order_mode import order_mode
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -1296,7 +1297,9 @@ def build_render_contract(
                     # the approved strategy carries it (target_duration_s, requested).
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
-            if requirement.kind == "text" and requirement.literal:
+            # 29 Ekim: a `text_sequence` pins the same words as a `text` ask; the draft shows
+            # them whole.
+            if requirement.kind in {"text", "text_sequence"} and requirement.literal:
                 if (talking_edit or voiceover_spoken_text) and (
                     requirement_spoken_text(requirement) is not None
                     or is_spoken_text_cue(requirement)
@@ -1389,6 +1392,10 @@ def build_render_contract(
                     # server-resolved song placement IS the order authority and the
                     # render verifies it through the lip-sync receipts, so it is not
                     # an unverifiable media-order rule (and must never pin capture time).
+                    continue
+                if order_mode(requirement) is not None:
+                    # A seeded shuffle is proved by the brief receipt (`_check_order`), and
+                    # "any order" has nothing to pin: neither is an unverifiable rule.
                     continue
                 key = requirement.facts.get("key")
                 answered = order_answer is not None and (

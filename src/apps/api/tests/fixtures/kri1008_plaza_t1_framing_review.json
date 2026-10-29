@@ -1,0 +1,27 @@
+{
+  "source": "Plaza de Mayo T1 'maximo 1', job c7430eed, event seq 17 (assistant_review), prod 884d90d7e, 2026-10-28. The creator filmed a guide (Maximo), who is off screen for the first 16 s.",
+  "requirement": {
+    "id": "r5",
+    "kind": "style",
+    "scope": "global",
+    "description": "Make it vertical, no black bars, and keep his face in frame the whole time"
+  },
+  "speaker_framing": {
+    "version": 1,
+    "mode": "letterbox",
+    "reason": "no_face",
+    "eligible": false,
+    "asked_by": ["r5"],
+    "faces": {
+      "face_sampling": "ok",
+      "anchors": 24,
+      "decoded": 24,
+      "detected": 7,
+      "used": 6,
+      "ignored": 1
+    }
+  },
+  "prod_reason": "I couldn't find your face reliably in the clip, so the whole frame shows with black bars above and below",
+  "expected_line": "- Partly: Make it vertical, no black bars, and keep his face in frame the whole time (I could only find the speaker's face in part of the clip, not enough to fit one vertical crop around it, so the whole frame shows with black bars above and below)",
+  "expected_reason_tr": "Konuşan kişinin yüzünü klibin yalnızca bir kısmında bulabildim, tek bir dikey kadrajı ona göre ayarlamaya yetmedi, o yüzden görüntünün tamamı üstte ve altta siyah bantlarla görünüyor"
+}

@@ -50,7 +50,8 @@ log = structlog.get_logger()
 # v86: removing added text preserves speech subtitles unless explicitly targeted.
 # v88 (KRI-821): the music redirect no longer points iOS creators at the web item page.
 # v89: reorder_clips_by criterion "custom" takes a model-reasoned order (reverse, swaps).
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-24-v89"
+# v90: reorder_clips_by criterion "random" shuffles with a server-owned seed (no order authored).
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-29-v90"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

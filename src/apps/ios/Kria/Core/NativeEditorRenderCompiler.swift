@@ -79,6 +79,7 @@ enum NativeEditorRenderError: Error, Equatable {
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
                  songBed: NativeEditorSongBed? = nil,
                  deviceCaptions: Bool = false,
+                 guidedStory: Bool = false,
                  songCaptionShift: NativeSongCaptionShift? = nil,
                  skippedMediaOverlayIDs: Set<String> = [],
                  talkingCutaways: [NativePhoneTalkingSource.Cutaway] = []) throws -> NativeEditorRenderProgram {
@@ -234,7 +235,9 @@ enum NativeEditorRenderError: Error, Equatable {
             // the source span that fits that clock, then hold the last frame.
             let consumedSourceDuration = min(sourceSpan, outputDuration * requestedRate)
             let movingDuration = consumedSourceDuration / requestedRate
-            let holdDuration = max(0, outputDuration - movingDuration)
+            // A sub-microsecond gap is clock noise (the unrounded speech clock), not a held clip: it must not skip the letterbox below.
+            let rawHold = outputDuration - movingDuration
+            let holdDuration = rawHold > 0.000_001 ? rawHold : 0
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
             let narratedSourceLevel: Double
@@ -260,8 +263,9 @@ enum NativeEditorRenderError: Error, Equatable {
             // bars. Cropped and graded clips keep the engine's cover-fill: the
             // engine rejects a look combined with a non-identity transform, and
             // the backend refuses that combination for the same reason.
-            // Held (slow / short source) clips are excluded like the backend's `_fit_eligible`.
-            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, holdDuration <= 0,
+            // Guided stories apply their authored fit before adding a final-frame hold
+            // (`phone_guided_plan`); other formats retain `_fit_eligible` behavior.
+            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, (guidedStory || holdDuration <= 0),
                authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
                 video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
             }
@@ -1056,7 +1060,7 @@ enum NativeEditorRenderError: Error, Equatable {
 
     /// KRI-1007, the server's `_group_phases` + `_stamp_line_phases`: a line's first row with its own
     /// phases governs the whole displayed line, else `caption_meta.animation_phases`. The line's first row
-    /// enters, its last exits, every row loops. Phases that animate nothing, or that do not parse, leave the
+    /// enters, its last exits, every row loops; under Display Word every row is a word of its own and plays all three. Phases that animate nothing, or that do not parse, leave the
     /// line as it is drawn today. `groups` index both arrays, which share their order.
     /// Without either, the older `appearance.animation_phases` (Style > Text motion) draws the line as one
     /// row, unless a word display or spoken-word highlight is on (`guided_caption_presentation`).
@@ -1070,6 +1074,7 @@ enum NativeEditorRenderError: Error, Equatable {
         let appearancePhases = captionMeta["style"] != .string("word") && appearance["highlight_spoken_word"] != .bool(true)
             ? appearance["animation_phases"].flatMap { captionPhases($0) == nil ? nil : $0 } : nil
         var hidden = Set<Int>()
+        let wordDisplay = captionMeta["style"] == .string("word")
         for group in captionLineGroups(source, captionMeta: captionMeta) {
             guard let phases = captionLinePhases(group.map { source[$0] }, captionMeta: captionMeta) else {
                 guard let appearancePhases, let first = group.first, let last = group.last else { continue }
@@ -1082,8 +1087,8 @@ enum NativeEditorRenderError: Error, Equatable {
             }
             for (position, index) in group.enumerated() {
                 var row = phases
-                if position > 0 { row.entrance = .none }
-                if position < group.count - 1 { row.exit = .none }
+                if position > 0 && !wordDisplay { row.entrance = .none }
+                if position < group.count - 1 && !wordDisplay { row.exit = .none }
                 if row.entrance == .none, row.exit == .none, row.loop == .none { continue }
                 stamped[index].raw["animation_phases"] = .object([
                     "entrance": .string(row.entrance.rawValue), "exit": .string(row.exit.rawValue),

@@ -1,0 +1,612 @@
+{
+ "_generator": "src/apps/api/tests/routes/test_kri1032_editor_matches_render.py",
+ "render": {
+  "landscape_fit": "fit",
+  "muted_slots": [
+   "unified-cut-1",
+   "unified-cut-2",
+   "unified-cut-3",
+   "unified-cut-4",
+   "unified-cut-6",
+   "unified-cut-7"
+  ],
+  "text": [
+   {
+    "id": "guided-title",
+    "x_frac": 0.06,
+    "y_frac": 0.14448
+   },
+   {
+    "id": "clip-label-unified-cut-1",
+    "x_frac": 0.5,
+    "y_frac": 0.68177
+   },
+   {
+    "id": "clip-label-unified-cut-2",
+    "x_frac": 0.5,
+    "y_frac": 0.68177
+   },
+   {
+    "id": "clip-label-unified-cut-7",
+    "x_frac": 0.5,
+    "y_frac": 0.68177
+   }
+  ]
+ },
+ "slots": [
+  {
+   "clip_index": 0,
+   "duration_beats": null,
+   "duration_s": 2.7,
+   "in_s": 5.3,
+   "layout": "fullscreen",
+   "look_adjustments": null,
+   "look_preset": "none",
+   "muted": true,
+   "order": 0,
+   "output_end_s": 2.7,
+   "output_start_s": 0.0,
+   "parent_segment_id": null,
+   "removed": false,
+   "segment_id": "unified-cut-1",
+   "slot_id": "unified-cut-1",
+   "source_duration_s": 14.334,
+   "transition_after": "cut",
+   "transition_duration_s": 0.0
+  },
+  {
+   "clip_index": 1,
+   "duration_beats": null,
+   "duration_s": 4.0,
+   "in_s": 1.0,
+   "layout": "fullscreen",
+   "look_adjustments": null,
+   "look_preset": "none",
+   "muted": true,
+   "order": 1,
+   "output_end_s": 6.7,
+   "output_start_s": 2.7,
+   "parent_segment_id": null,
+   "removed": false,
+   "segment_id": "unified-cut-2",
+   "slot_id": "unified-cut-2",
+   "source_duration_s": 14.0,
+   "transition_after": "cut",
+   "transition_duration_s": 0.0
+  },
+  {
+   "clip_index": 2,
+   "duration_beats": null,
+   "duration_s": 0.966667,
+   "in_s": 0.0,
+   "layout": "fullscreen",
+   "look_adjustments": null,
+   "look_preset": "none",
+   "muted": true,
+   "order": 2,
+   "output_end_s": 7.666667,
+   "output_start_s": 6.7,
+   "parent_segment_id": null,
+   "removed": false,
+   "segment_id": "unified-cut-3",
+   "slot_id": "unified-cut-3",
+   "source_duration_s": 0.96,
+   "transition_after": "cut",
+   "transition_duration_s": 0.0
+  },
+  {
+   "clip_index": 3,
+   "duration_beats": null,
+   "duration_s": 2.8,
+   "in_s": 8.1,
+   "layout": "fullscreen",
+   "look_adjustments": null,
+   "look_preset": "none",
+   "muted": true,
+   "order": 3,
+   "output_end_s": 10.466667,
+   "output_start_s": 7.666667,
+   "parent_segment_id": null,
+   "removed": false,
+   "segment_id": "unified-cut-4",
+   "slot_id": "unified-cut-4",
+   "source_duration_s": 11.634,
+   "transition_after": "cut",
+   "transition_duration_s": 0.0
+  },
+  {
+   "clip_index": 4,
+   "duration_beats": null,
+   "duration_s": 5.366667,
+   "in_s": 3.833333,
+   "layout": "fullscreen",
+   "look_adjustments": null,
+   "look_preset": "none",
+   "order": 4,
+   "output_end_s": 15.833333,
+   "output_start_s": 10.466667,
+   "parent_segment_id": null,
+   "removed": false,
+   "segment_id": "unified-cut-5",
+   "slot_id": "unified-cut-5",
+   "source_duration_s": 14.5,
+   "transition_after": "cut",
+   "transition_duration_s": 0.0
+  },
+  {
+   "clip_index": 5,
+   "duration_beats": null,
+   "duration_s": 0.166667,
+   "in_s": 0.0,
+   "layout": "fullscreen",
+   "look_adjustments": null,
+   "look_preset": "none",
+   "muted": true,
+   "order": 5,
+   "output_end_s": 16.0,
+   "output_start_s": 15.833333,
+   "parent_segment_id": null,
+   "removed": false,
+   "segment_id": "unified-cut-6",
+   "slot_id": "unified-cut-6",
+   "source_duration_s": 0.16683333333333333,
+   "transition_after": "cut",
+   "transition_duration_s": 0.0
+  },
+  {
+   "clip_index": 6,
+   "duration_beats": null,
+   "duration_s": 4.0,
+   "in_s": 0.0,
+   "layout": "fullscreen",
+   "look_adjustments": null,
+   "look_preset": "none",
+   "muted": true,
+   "order": 6,
+   "output_end_s": 20.0,
+   "output_start_s": 16.0,
+   "parent_segment_id": null,
+   "removed": false,
+   "segment_id": "unified-cut-7",
+   "slot_id": "unified-cut-7",
+   "source_duration_s": 23.4,
+   "transition_after": "cut",
+   "transition_duration_s": 0.0
+  }
+ ],
+ "sources": [
+  {
+   "aspect": 0.5625,
+   "clip_index": 0,
+   "duration_s": 14.334,
+   "kind": "video"
+  },
+  {
+   "aspect": 1.7777777777777777,
+   "clip_index": 1,
+   "duration_s": 14.0,
+   "kind": "video"
+  },
+  {
+   "aspect": 1.7777777777777777,
+   "clip_index": 2,
+   "duration_s": 0.96,
+   "kind": "video"
+  },
+  {
+   "aspect": 1.7777777777777777,
+   "clip_index": 3,
+   "duration_s": 11.634,
+   "kind": "video"
+  },
+  {
+   "aspect": 0.5625,
+   "clip_index": 4,
+   "duration_s": 14.5,
+   "kind": "video"
+  },
+  {
+   "aspect": 0.5625,
+   "clip_index": 5,
+   "duration_s": 0.16683333333333333,
+   "kind": "video"
+  },
+  {
+   "aspect": 0.5625,
+   "clip_index": 6,
+   "duration_s": 23.4,
+   "kind": "video"
+  }
+ ],
+ "variant": {
+  "duration_s": 21.6,
+  "edit_duration_s": 20.0,
+  "editor_capabilities": {
+   "automatic_cut": false,
+   "automatic_cut_reason": "guided_story_edit_unsupported",
+   "background_music": false,
+   "camera_effects": false,
+   "caption_cues": {
+    "editable": true,
+    "reason": null
+   },
+   "caption_editor_style": true,
+   "caption_meta": {
+    "editable": true,
+    "reason": null
+   },
+   "carousel": false,
+   "carousel_reason": "guided_story_edit_unsupported",
+   "clips": {
+    "add": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "audio": {
+     "editable": true,
+     "reason": null
+    },
+    "edit_wide_looks": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "looks": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "playback_rate": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "remove": {
+     "editable": true,
+     "reason": null
+    },
+    "reorder": {
+     "editable": true,
+     "reason": null
+    },
+    "source_crop": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "split": {
+     "editable": true,
+     "reason": null
+    },
+    "transitions": {
+     "editable": false,
+     "reason": "transitions_disabled"
+    },
+    "trim": {
+     "editable": true,
+     "reason": null
+    }
+   },
+   "copilot_snapshot_max_bytes": 524288,
+   "copilot_snapshot_wire_version": 1,
+   "drawings": {
+    "add": {
+     "editable": false,
+     "reason": "drawing_unavailable"
+    },
+    "delete": {
+     "editable": true,
+     "reason": null
+    },
+    "edit": {
+     "editable": false,
+     "reason": "drawing_unavailable"
+    },
+    "trim": {
+     "editable": false,
+     "reason": "drawing_unavailable"
+    }
+   },
+   "evolving_type": false,
+   "intro_controls": false,
+   "landscape_fit": {
+    "editable": true,
+    "reason": null,
+    "value": "fit"
+   },
+   "lanes": {
+    "motion_scenes": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "orientation": {
+     "editable": false,
+     "reason": "disabled"
+    },
+    "overlays": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "sfx": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "text": {
+     "editable": true,
+     "reason": null
+    },
+    "visual_blocks": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    }
+   },
+   "lyrics": {
+    "can_toggle_on": false,
+    "editable": false,
+    "enabled": false,
+    "lyrics_model": "elements",
+    "reason": "disabled"
+   },
+   "media_source_controls": {
+    "playback_rate": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    },
+    "source_crop": {
+     "editable": false,
+     "reason": "phone_edit_unsupported"
+    }
+   },
+   "mix": false,
+   "motion_runtime_hash": null,
+   "motion_scenes": false,
+   "motion_scenes_reason": "phone_edit_unsupported",
+   "music_operations": {
+    "level": {
+     "editable": false,
+     "reason": "song_added_when_posting"
+    },
+    "remove": {
+     "editable": false,
+     "reason": "song_added_when_posting"
+    },
+    "swap": {
+     "editable": false,
+     "reason": "song_added_when_posting"
+    },
+    "window": {
+     "editable": false,
+     "reason": "song_added_when_posting"
+    }
+   },
+   "nova": {
+    "remove_music": {
+     "editable": false,
+     "reason": "song_added_when_posting"
+    },
+    "trim_clip_start": {
+     "editable": true,
+     "reason": null
+    },
+    "trim_output_start": {
+     "editable": true,
+     "reason": null
+    }
+   },
+   "orientation": {
+    "editable": false,
+    "reason": "disabled"
+   },
+   "original_audio": {
+    "editable": true,
+    "reason": null
+   },
+   "overlays": false,
+   "overlays_reason": "phone_edit_unsupported",
+   "reason": null,
+   "sfx": false,
+   "sfx_reason": "phone_edit_unsupported",
+   "split_clips": true,
+   "suggestions": false,
+   "swap_song": false,
+   "text": {
+    "editable": true,
+    "reason": null
+   },
+   "text_elements": true,
+   "text_elements_max": 5000,
+   "timeline": true,
+   "timeline_max_slots": 120,
+   "visual_blocks": false,
+   "visual_blocks_reason": "phone_edit_unsupported",
+   "visual_editor_style": false
+  },
+  "landscape_fit": "fit",
+  "music_playback_mode": "reference_only",
+  "orientation": "portrait",
+  "render_destination": "device",
+  "render_generation_id": "53d6a9f3-a2a5-4781-b26e-22d4bec99bcc",
+  "render_status": "ready",
+  "resolved_archetype": "guided_story",
+  "source_audio_preserved": true,
+  "text_elements": [
+   {
+    "alignment": "left",
+    "animation_phases": null,
+    "background_color": null,
+    "behind_subject": false,
+    "color": "#FFFFFF",
+    "editor_preset": null,
+    "effect": "static",
+    "end_s": 2.2,
+    "fade_out_ms": null,
+    "font_family": "Unbounded",
+    "glow_color": null,
+    "glow_strength": 0.0,
+    "highlight_color": "#D9FF70",
+    "id": "guided-title",
+    "letter_spacing": null,
+    "line_spacing": null,
+    "max_width_frac": 0.68,
+    "motion": null,
+    "position": "custom",
+    "removed": false,
+    "reveal_s": null,
+    "role": "generative_intro",
+    "rotation_deg": null,
+    "shadow_color": null,
+    "shadow_enabled": false,
+    "shadow_opacity": null,
+    "shadow_style": "standard",
+    "size_class": null,
+    "size_px": 76.0,
+    "source_params": {
+     "phone_text_style_version": 1
+    },
+    "start_s": 0.0,
+    "stroke_color": null,
+    "stroke_width": 0.0,
+    "text": "Plaza de Mayo",
+    "text_case": null,
+    "theme_transition": null,
+    "visual_block_id": null,
+    "word_timings": null,
+    "x_frac": 0.06,
+    "y_frac": 0.14448,
+    "z": null
+   },
+   {
+    "alignment": "center",
+    "animation_phases": null,
+    "background_color": null,
+    "behind_subject": false,
+    "color": "#000000",
+    "editor_preset": null,
+    "effect": "static",
+    "end_s": 2.7,
+    "fade_out_ms": null,
+    "font_family": "Montserrat",
+    "glow_color": null,
+    "glow_strength": 0.0,
+    "highlight_color": "#D9FF70",
+    "id": "clip-label-unified-cut-1",
+    "letter_spacing": null,
+    "line_spacing": null,
+    "max_width_frac": 0.68,
+    "motion": null,
+    "position": "custom",
+    "removed": false,
+    "reveal_s": null,
+    "role": "generative_intro",
+    "rotation_deg": null,
+    "shadow_color": null,
+    "shadow_enabled": false,
+    "shadow_opacity": null,
+    "shadow_style": "standard",
+    "size_class": null,
+    "size_px": 58.0,
+    "source_params": {
+     "phone_text_style_version": 1
+    },
+    "start_s": 0.0,
+    "stroke_color": null,
+    "stroke_width": 0.0,
+    "text": "Plaza de Mayo",
+    "text_case": null,
+    "theme_transition": null,
+    "visual_block_id": null,
+    "word_timings": null,
+    "x_frac": 0.5,
+    "y_frac": 0.68177,
+    "z": null
+   },
+   {
+    "alignment": "center",
+    "animation_phases": null,
+    "background_color": null,
+    "behind_subject": false,
+    "color": "#FFFFFF",
+    "editor_preset": null,
+    "effect": "static",
+    "end_s": 6.707,
+    "fade_out_ms": null,
+    "font_family": "Montserrat",
+    "glow_color": null,
+    "glow_strength": 0.0,
+    "highlight_color": "#D9FF70",
+    "id": "clip-label-unified-cut-2",
+    "letter_spacing": null,
+    "line_spacing": null,
+    "max_width_frac": 0.68,
+    "motion": null,
+    "position": "custom",
+    "removed": false,
+    "reveal_s": null,
+    "role": "generative_intro",
+    "rotation_deg": null,
+    "shadow_color": null,
+    "shadow_enabled": false,
+    "shadow_opacity": null,
+    "shadow_style": "standard",
+    "size_class": null,
+    "size_px": 58.0,
+    "source_params": {
+     "phone_text_style_version": 1
+    },
+    "start_s": 2.7,
+    "stroke_color": null,
+    "stroke_width": 0.0,
+    "text": "Casa Rosada",
+    "text_case": null,
+    "theme_transition": null,
+    "visual_block_id": null,
+    "word_timings": null,
+    "x_frac": 0.5,
+    "y_frac": 0.68177,
+    "z": null
+   },
+   {
+    "alignment": "center",
+    "animation_phases": null,
+    "background_color": null,
+    "behind_subject": false,
+    "color": "#FFF8F0",
+    "editor_preset": null,
+    "effect": "static",
+    "end_s": 20.0,
+    "fade_out_ms": null,
+    "font_family": "Montserrat",
+    "glow_color": null,
+    "glow_strength": 0.0,
+    "highlight_color": "#D9FF70",
+    "id": "clip-label-unified-cut-7",
+    "letter_spacing": null,
+    "line_spacing": null,
+    "max_width_frac": 0.68,
+    "motion": null,
+    "position": "custom",
+    "removed": false,
+    "reveal_s": null,
+    "role": "generative_intro",
+    "rotation_deg": null,
+    "shadow_color": null,
+    "shadow_enabled": false,
+    "shadow_opacity": null,
+    "shadow_style": "standard",
+    "size_class": null,
+    "size_px": 58.0,
+    "source_params": {
+     "phone_text_style_version": 1
+    },
+    "start_s": 15.993,
+    "stroke_color": null,
+    "stroke_width": 0.0,
+    "text": "Catedral",
+    "text_case": null,
+    "theme_transition": null,
+    "visual_block_id": null,
+    "word_timings": null,
+    "x_frac": 0.5,
+    "y_frac": 0.68177,
+    "z": null
+   }
+  ],
+  "variant_id": "guided_story"
+ }
+}

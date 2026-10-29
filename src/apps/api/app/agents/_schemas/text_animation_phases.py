@@ -4,6 +4,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Entrance and exit length at speed 1, for every edge. One value so a designed edge is never
+# slower than the pop or fade beside it; the native mirror is generated from this constant.
+TEXT_ANIMATION_EDGE_SECONDS = 0.4
+
 DESIGNED_TEXT_EDGES = frozenset(
     {
         "silkReveal",

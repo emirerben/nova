@@ -89,17 +89,25 @@ struct ChatWorkspaceView: View {
         setDrawerOpen(false)
     }
 
-    private var workspace: some View {
+    /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
+    /// onto the outer one, where they outlive the switch to a chat.
+    @ViewBuilder private var workspace: some View {
+        if model.showsCameraRoll, let cameraRoll {
+            WorkspaceCrossfade(dismiss: {}) { _ in
+                CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
+                    await model.loadProjects()
+                    return model.selectProject(thread.summary)
+                })
+            }
+        } else {
+            chatWorkspace
+        }
+    }
+
+    private var chatWorkspace: some View {
         NavigationStack {
             Group {
-                if model.showsCameraRoll, let cameraRoll {
-                    WorkspaceCrossfade(dismiss: {}) { _ in
-                        CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
-                            await model.loadProjects()
-                            return model.selectProject(thread.summary)
-                        })
-                    }
-                } else if let project = model.selectedProject {
+                if let project = model.selectedProject {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },
@@ -1428,7 +1436,11 @@ private struct CreationWorkspaceView: View {
             hasFormat: selectedFormat != nil,
             preparationIsActive: fullThread?.preparationIsActive == true,
             preparationFailed: fullThread?.preparationFailed == true,
-            approvedRenderRetryPending: approval?.retryOfExecutionID != nil
+            approvedRenderRetryPending: approval?.retryOfExecutionID != nil,
+            // An approval the creator just gave (or one the server recorded) whose render the
+            // agent-control task has not started yet: show the render stage at once instead of
+            // falling back to the footage stage for a poll or two.
+            renderDispatchPending: thinkingSettlesOnJobStatus || fullThread?.awaitsRenderDispatch == true
         )
     }
 
@@ -2835,6 +2847,11 @@ private struct CreationWorkspaceView: View {
             thinkingTurnID = decision == "approve" ? approval.turnID : nil
             thinkingSettlesOnJobStatus = decision == "approve"
             isThinking = decision == "approve"
+            // The tall approval card is about to be replaced by a short render row. Like Send,
+            // re-pin the conversation to its end so the viewport (and the "Latest" pill, which
+            // stays up while the reader was above the card's buttons) follows the new stage
+            // instead of staying stranded where the card used to be.
+            if decision == "approve" { scrollRequest += 1 }
             failure = await acceptedMutationRefreshError(
                 "Kria recorded that decision, but the conversation couldn’t refresh.",
                 refresh: { try await refreshDelta() }
@@ -2857,13 +2874,18 @@ enum WorkspaceStage {
         hasFormat: Bool,
         preparationIsActive: Bool = false,
         preparationFailed: Bool = false,
-        approvedRenderRetryPending: Bool = false
+        approvedRenderRetryPending: Bool = false,
+        renderDispatchPending: Bool = false
     ) -> WorkspaceStage {
         // A failed native job retains awaiting_device until consent re-pins it.
         // Its fresh retry approval must be visible before any new export starts.
         if approvedRenderRetryPending && awaitsNewPlanConfirmation { return .direction }
         if preparationIsActive { return .rendering }
         if preparationFailed { return .failed }
+        // Approved, render not yet queued: the server's projection is still a plain draft
+        // (or the previous cut), but the creator just pressed Create. Never show the
+        // footage or ready stage in that window; the render stage reads "Preparing".
+        if renderDispatchPending && !awaitsNewPlanConfirmation { return .rendering }
         switch status {
         case .rendering:
             // A render already in flight wins even over a freshly proposed
@@ -3138,16 +3160,16 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .montage: "Montage"
-        case .narrated: "Narrated"
-        case .talkingToCamera: "Talking"
+        case .narrated: "Voiceover"
+        case .talkingToCamera: "Talk to camera"
         case .slides: "Slider"
         }
     }
     var choiceSentence: String {
         switch self {
         case .montage: "Let’s make a montage"
-        case .narrated: "Let’s make it narrated"
-        case .talkingToCamera: "Let’s make a talking video"
+        case .narrated: "Let’s make a voiceover video"
+        case .talkingToCamera: "Let’s make a talk to camera video"
         case .slides: "Let’s make a slider"
         }
     }
