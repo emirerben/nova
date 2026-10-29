@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from datetime import date
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -35,7 +36,7 @@ def generated(monkeypatch):
         "generated_narration_enabled": True,
         "generated_media_live_approved": True,
         "generated_media_billing_organization": "org-offline",
-        "generated_media_price_verified_at": "2026-10-29",
+        "generated_media_price_verified_at": date.today().isoformat(),
         "generated_media_max_request_usd": 2.0,
         "ai_openai_monthly_budget_usd": 1000,
         "ai_openai_image_budget_usd": 1000,
@@ -193,12 +194,22 @@ def test_disabled_and_foreign_owner_never_submit(generated, monkeypatch):
 def test_narration_requires_current_script_and_explicit_accept(generated, monkeypatch):
     import hashlib
 
+    from sqlalchemy import event
+
+    from app.models import CreationThread
     from app.services.generated_asset_contracts import NarrationRequest, decode_narration
     from app.services.generated_media import GeneratedMediaAccept, accept_generated_media
     from tests.agents.test_credit_plan_contracts import CreditPlanContracts
 
     db, owner, item, client, transport, ctx = generated
     item.voiceover_script = {"version": 1, "text": "Merhaba dünya.", "read_time_s": 1}
+    db.add(
+        CreationThread(
+            creator_id=owner.id,
+            content_plan_id=item.content_plan_id,
+            active_plan_item_id=item.id,
+        )
+    )
     db.commit()
     script_hash = hashlib.sha256("Merhaba dünya.".encode()).hexdigest()
     body = GeneratedMediaRequest(
@@ -230,7 +241,26 @@ def test_narration_requires_current_script_and_explicit_accept(generated, monkey
     accept = GeneratedMediaAccept(
         script_id=body.script_id, script_version=1, approved_script_sha256=script_hash
     )
-    accept_generated_media(db, result.id, owner_id=owner.id, item_id=item.id, body=accept)
+    locked_tables = []
+
+    def record_locks(connection, cursor, statement, parameters, context, executemany):
+        sql = " ".join(statement.split())
+        if "FOR UPDATE" in sql or "FOR NO KEY UPDATE" in sql:
+            for table in ("personas", "content_plans", "plan_items", "creation_threads"):
+                if f"FROM {table} " in sql:
+                    locked_tables.append(table)
+
+    event.listen(sync_engine, "before_cursor_execute", record_locks)
+    try:
+        accept_generated_media(db, result.id, owner_id=owner.id, item_id=item.id, body=accept)
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", record_locks)
+    assert list(dict.fromkeys(locked_tables)) == [
+        "personas",
+        "content_plans",
+        "plan_items",
+        "creation_threads",
+    ]
     db.refresh(item)
     assert item.voiceover_gcs_path == result.output_path and item.audio_mode == "voiceover"
     item.voiceover_script = {"version": 2, "text": "New words", "read_time_s": 1}

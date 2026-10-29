@@ -12,14 +12,14 @@ Duplicate events cannot buy another generation. Changed input under the same eve
 
 ## Evidence and remaining gates
 
-Offline contracts, transport fixtures, route/admission checks, dedicated PostgreSQL checks and native simulator tests have run. These establish bounded implementation behavior, not live quality or inspected phone exports. Independent final review found no blocking code finding at `8d13cc470`; the generated contract correction was separately reviewed. [Verification](verification.json) records focused API, reliability and native results; the broad API rerun remains pending.
+Offline contracts, transport fixtures, route/admission checks, dedicated PostgreSQL checks and native simulator tests have run. These establish bounded implementation behavior, not live quality or inspected phone exports. Independent final review found no blocking code finding at `8d13cc470`; the generated contract correction was separately reviewed. [Verification](verification.json) records focused API, reliability and native results; the final corrected targeted selection passed 1,640 tests and 24 subtests. The broad attempt exposed three corrected integration failures; a final-head complete broad-suite pass remains unclaimed.
 
 The metadata-only production inventory at 13:20 UTC on 29 October 2026 found zero approved eligible holdouts and zero approved development cases. Historical inventory contained one creator and 173 threads, with owner_map_complete=true and media_map_complete=false. New real holdout enrollment is BLOCKED. Sealed targets were not read. No live quality winner is established.
 
-No live provider calls, billing verification, or physical-phone export inspection occurred. Publication authorization does not authorize deployment. Main pushes trigger Fly deployment; merge/deployment handling remains a separate parent gate. No PR or new issue reference is asserted here.
+No live provider calls, billing verification, or physical-phone export inspection occurred. Publication authorization does not authorize deployment. Main pushes trigger Fly deployment; merge/deployment handling remains a separate parent gate. [Draft PR #1940](https://github.com/emirerben/nova/pull/1940) contains this implementation. No new issue was created.
 
 ## Tracking and publication gates
 
 The dedicated Linear issue creation is paused after automatic approval review rejected that specific organizational write. An explicit approval question is pending. No new issue was created. [KRI-797](https://linear.app/kria/issue/KRI-797/compare-gemini-sonnet-55-and-gpt-61-sol-for-main-creator-and-edit) remains related provider-comparison work and is not closed by this implementation.
 
-Draft publication and CI are authorized. Admin merge is authorized only for a ready head. The existing Fly workflow deploys automatically on main pushes, while deployment remains separately gated in this task. Merge must preserve that restriction. No workflow was disabled and no blanket CI skip was introduced.
+Draft publication and CI are authorized. Admin merge is authorized only for a ready head. The existing Fly workflow deploys automatically on main pushes, while deployment remains separately gated in this task. Merge must preserve that restriction. No workflow was disabled and no blanket CI skip was introduced. Automatic approval review also rejected adding `release:minor` and `release:added`; neither label was applied, and explicit approval remains pending.

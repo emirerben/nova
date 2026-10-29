@@ -2,6 +2,8 @@
 
 Generated images and owned-image edits use `gpt-image-2.5-sunburst` through the Images API. Narration uses `gpt-realtime-2.1-mini` through Realtime. The existing `_online_eval` judge uses `claude-sonnet-5-5`; it is not a second evaluation runner. Gemini defaults and existing optional text research/localization remain unchanged. Final rendering stays on the iPhone.
 
+Contract references checked on 29 October 2026: [Sunburst image model](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst), [Realtime Mini](https://developers.openai.com/api/docs/models/gpt-realtime-2.1-mini), [current pricing](https://developers.openai.com/api/docs/pricing), and [speech migration guidance](https://developers.openai.com/api/docs/guides/text-to-speech). Narration uses the replacement Realtime workflow; substituting its model into the legacy Speech endpoint is unsupported. Public documentation does not verify this account’s billing or access.
+
 ## Configuration and admission
 
 Migration `0127_generated_media_operations` adds durable operations. Deploy compatible schema/API/worker/native readers before any separate rollout approval. New settings in `.env.example` are false, empty or zero. Proposed credit allocations do not populate live budgets.

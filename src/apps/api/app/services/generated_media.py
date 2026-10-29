@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app import storage
 from app.agents._runtime import RunContext
 from app.config import settings
+from app.db_locks import acquire_locked_rows_sync
 from app.models import (
     ContentPlan,
     CreationThread,
@@ -129,15 +130,29 @@ def owned_item(db, owner_id, item_id, *, lock=False):
     item = db.get(PlanItem, item_id)
     if item is None:
         raise ValueError("Plan item not found")
-    plan = db.get(ContentPlan, item.content_plan_id, with_for_update=lock, populate_existing=lock)
+    plan = db.get(ContentPlan, item.content_plan_id)
     if plan is None or plan.user_id != owner_id:
         raise ValueError("Plan item not found")
-    persona = db.get(Persona, plan.persona_id, with_for_update=lock, populate_existing=lock)
+    persona = db.get(Persona, plan.persona_id)
     if persona is None or persona.user_id != owner_id:
         raise ValueError("Plan item not found")
     if lock:
-        item = db.get(PlanItem, item_id, with_for_update=True, populate_existing=True)
-        if item is None or item.content_plan_id != plan.id:
+        plan_id, persona_id = plan.id, persona.id
+        rows = acquire_locked_rows_sync(
+            db,
+            {Persona: persona_id, ContentPlan: plan_id, PlanItem: item_id},
+            populate_existing=True,
+        )
+        persona, plan, item = rows[Persona], rows[ContentPlan], rows[PlanItem]
+        if (
+            persona is None
+            or persona.user_id != owner_id
+            or plan is None
+            or plan.user_id != owner_id
+            or plan.persona_id != persona_id
+            or item is None
+            or item.content_plan_id != plan_id
+        ):
             raise ValueError("Plan item not found")
     return item
 
@@ -432,7 +447,6 @@ def accept_generated_media(db, operation_id, *, owner_id, item_id, body: Generat
         )
         if receipt.generation != generation or receipt.fingerprint.sha256 != digest:
             raise ValueError("Generated narration changed")
-        narration_script(db, owner_id, item_id, lock=True)
     item = owned_item(db, owner_id, item_id, lock=True)
     operation = get_generated_operation(
         db, operation_id, owner_id=owner_id, item_id=item_id, lock=True
@@ -459,18 +473,6 @@ def accept_generated_media(db, operation_id, *, owner_id, item_id, body: Generat
         operation.request_metadata = {**operation.request_metadata, "accepted": True}
         db.commit()
         return operation
-    script = narration_script(db, owner_id, item_id)
-    _script_matches(script, operation.request_metadata)
-    _script_matches(script, body.model_dump())
-    current_matches = (
-        item.voiceover_gcs_path == operation.output_path
-        and str(item.voiceover_generation) == operation.output_generation
-    )
-    if operation.request_metadata.get("accepted") and not current_matches:
-        raise ValueError("Voiceover changed after acceptance")
-    if current_matches:
-        db.commit()
-        return operation
     from app.services.plan_item_media import (
         current_detector_policy,
         mutate_plan_item_media,
@@ -482,6 +484,18 @@ def accept_generated_media(db, operation_id, *, owner_id, item_id, body: Generat
     )
 
     current = mutation_current_analysis_sync(db, item.id, for_update=True)
+    script = narration_script(db, owner_id, item_id, lock=True)
+    _script_matches(script, operation.request_metadata)
+    _script_matches(script, body.model_dump())
+    current_matches = (
+        item.voiceover_gcs_path == operation.output_path
+        and str(item.voiceover_generation) == operation.output_generation
+    )
+    if operation.request_metadata.get("accepted") and not current_matches:
+        raise ValueError("Voiceover changed after acceptance")
+    if current_matches:
+        db.commit()
+        return operation
     mutate_plan_item_media(
         item,
         detector_policy=current_detector_policy(),
