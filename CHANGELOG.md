@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.16.0] - 2026-10-29
+
+### Changed
+- feat(kria): words shown a piece at a time are text_sequence, not captions (KRI-1038) (#1925) <!-- release-pr: 1925 -->
+
 ## [0.82.15.0] - 2026-10-29
 
 ### Changed
