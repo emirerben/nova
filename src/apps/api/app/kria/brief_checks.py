@@ -3898,6 +3898,8 @@ def _wants_no_captions(req: BriefRequirement) -> bool:
 
 
 def _wants_word_captions(req: BriefRequirement) -> bool:
+    if req.kind == "text_sequence":
+        return False  # 29 Ekim: the creator's words shown in pieces are text, never captions
     stated = _caption_fact(req)
     if stated is not None:
         return stated == "word_by_word"

@@ -69,11 +69,13 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # creator's own last voiceover words: brief-on hashes re-pinned; brief-off unchanged.
 # v100 (KRI-994) teaches the select media-kind facts (`only_media_kind`, `include_media_kind`):
 # brief-on hashes re-pinned; brief-off unchanged.
+# v102 (29 Ekim lane D, KRI-1038): text_sequence in the brief section (brief-on) and the
+# "words to SHOW are on-screen text" rule in main_creator.txt (all four hashes re-pinned).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "0ce27887a159a5c18c27532f0a6cde9f4cbf751c4b2d6a67a97dac1c6f035c6f",
-    (True, False): "08ca6790e63f9522dff8b85d4c84906c0b1e784b9fc21dc1f812d753dbc6fe9d",
-    (False, True): "070b206bdf71a0ede6988f5b95be68e0cd3a2950781e383f50edec6444624921",
-    (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
+    (True, True): "9208a7af03ac58f81d86a2358aeeac7ed0a0d07c32c754657369f87ab0c0be38",
+    (True, False): "7750407c6061324b3a6c034144f94e1f2340dfe337f24957b8b4f88bd29ace8f",
+    (False, True): "78541de09846db199e44f49278c86e9758918273935e099531325ef85e7b7616",
+    (False, False): "48f744f1f02dfc89d44310431a53150ca269664efc22d552f161ede6c02f0760",
 }
 
 
@@ -154,7 +156,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-27-v100"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-29-v102"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

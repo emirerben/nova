@@ -256,14 +256,109 @@ def check_order(fx: dict) -> dict:
 # ----------------------------------------------------------------------------- check 2
 
 
+EVAL_FIXTURES = API / "tests" / "fixtures" / "agent_evals" / "main_creator"
+T1_CASE = "kri1038_t1_29ekim_tr_quote_legacy"
+T2_CASE = "kri1038_t2_29ekim_followup_legacy"
+
+
+def replay_interpretation(fx: dict) -> dict[str, Any]:
+    """Run the recorded old-prompt replies for T1, T2 and T4 through the REAL Main Creator
+    parse (the replay eval runner) and ``apply_updates``, and return the ledger after each turn.
+
+    Prod's own ledger (``ledger_at``) is the OLD code's reading of these messages, so check 2
+    cannot judge it. The recorded model output is the fixed input; what the server does with
+    it is what the lane changes."""
+    sys.path.insert(0, str(API))
+    from app.kria.brief import BriefUpdate, CreativeBrief, apply_updates, parse_brief_updates
+    from tests.evals.runners.eval_runner import load_fixture, run_eval
+
+    brief = CreativeBrief()
+    ledgers: dict[str, Any] = {}
+    for turn, case in (("T1", T1_CASE), ("T2", T2_CASE)):
+        with contextlib.redirect_stdout(sys.stderr):  # the agent runtime logs to stdout
+            result = run_eval(load_fixture(EVAL_FIXTURES / f"{case}.json"))
+        updates = parse_brief_updates((result.output or {}).get("brief_updates"))
+        brief = apply_updates(brief, updates, source_turn_id=message(fx, turn)["turn_id"])
+        ledgers[turn] = brief
+    ledgers["T3"] = brief
+    r3 = next(r for r in fx["brief_ledger_v3"] if r["id"] == "r3")
+    brief = apply_updates(
+        brief,
+        [
+            BriefUpdate(
+                kind="text", scope=r3["scope"], literal=r3["literal"], description=r3["description"]
+            )
+        ],
+        source_turn_id=message(fx, "T4")["turn_id"],
+    )
+    # The creator answered "make it without these": the order ask is withdrawn, as in prod.
+    order_ids = [r.id for r in brief.live() if r.kind == "order"]
+    if order_ids:
+        brief = apply_updates(
+            brief,
+            [
+                BriefUpdate(
+                    operation="remove", target_requirement_id=i, expected_version=brief.version
+                )
+                for i in order_ids
+            ],
+            source_turn_id=message(fx, "T4")["turn_id"],
+        )
+    for turn in ("T4", "T5", "T6"):
+        ledgers[turn] = brief
+    return ledgers
+
+
+def run_golden_cases() -> list[dict]:
+    """Every ``text_vs_speech`` golden eval fixture (the 29 Ekim T1/T2 messages, paraphrases in
+    Turkish and English, and decoys where captions IS the right reading) through the replay
+    eval runner, checked against the expectation the fixture carries."""
+    sys.path.insert(0, str(API))
+    from tests.evals.runners.eval_runner import load_fixture, run_eval
+
+    rows = []
+    for path in sorted(EVAL_FIXTURES.glob("*kri1038_*.json")):
+        fixture = load_fixture(path)
+        want = fixture.meta["text_vs_speech"]
+        with contextlib.redirect_stdout(sys.stderr):  # the agent runtime logs to stdout
+            result = run_eval(fixture)
+        updates = (result.output or {}).get("brief_updates") or []
+        captions = [u for u in updates if (u.get("facts") or {}).get("captions")]
+        sequences = [u for u in updates if u["kind"] == "text_sequence"]
+        ok = result.passed and len(captions) == want["captions_filings"]
+        if want["text_sequence"] is None:
+            ok = ok and not sequences
+        else:
+            expected = want["text_sequence"]
+            ok = (
+                ok
+                and len(sequences) == 1
+                and sequences[0]["literal"] == expected["literal"]
+                and sequences[0]["facts"] == {"unit": expected["unit"], "mode": expected["mode"]}
+            )
+        rows.append(
+            {
+                "case": path.stem,
+                "ok": ok,
+                "captions_filings": len(captions),
+                "text_sequences": [
+                    {"literal": u["literal"], "facts": u["facts"]} for u in sequences
+                ],
+            }
+        )
+    return rows
+
+
 def check_text_vs_speech(fx: dict) -> dict:
+    from app.agents.main_creator import MainCreatorAgent, MainCreatorInput
     from app.kria import brief_checks as bc
     from app.services.creator_render_contract import build_render_contract
 
     sentence = _nfc(fx["exact_texts"][0]["text"])
+    ledgers = replay_interpretation(fx)
     violations: list[dict] = []
-    for turn in ("T1", "T2", "T3", "T4", "T5", "T6"):
-        for req in ledger_at(fx, turn).live():
+    for turn, ledger in ledgers.items():
+        for req in ledger.live():
             stated = bc._caption_fact(req)
             if stated is not None or bc._wants_captions(req) or bc._wants_word_captions(req):
                 violations.append(
@@ -275,12 +370,28 @@ def check_text_vs_speech(fx: dict) -> dict:
                         "description": req.description,
                     }
                 )
+    sequences = [r for r in ledgers["T1"].live() if r.kind == "text_sequence"]
+    stored_t1 = [(_nfc(r.literal or ""), r.facts) for r in sequences]
+    t1_ok = any(lit == sentence for lit, _ in stored_t1)
+
+    # The offer to record a voiceover came from the captions requirement the model was looking
+    # at (its reply text is model-authored and cannot be regenerated offline). It is reachable
+    # only while the ledger entering that turn still holds a captions filing.
     offers = []
-    for turn_id, reply in fx["replies"].items():
+    for turn in ("T1", "T2", "T3", "T4", "T5", "T6"):
+        reply = fx["replies"][message(fx, turn)["turn_id"]]
         for option in reply["choice_options"]:
             if any(word in option["label"].casefold() for word in ("record", "voiceover", "voice")):
-                offers.append({"turn_id": turn_id, "option": option["label"]})
-    final = ledger_at(fx, "T5")
+                premise = any(
+                    bc._caption_fact(r) is not None or bc._wants_word_captions(r)
+                    for r in ledgers[turn].live()
+                )
+                offers.append(
+                    {"turn": turn, "option": option["label"], "captions_premise_remains": premise}
+                )
+    reachable_offers = [o for o in offers if o["captions_premise_remains"]]
+
+    final = ledgers["T5"]
     contract = build_render_contract(
         generation_id="scorecard",
         strategy=strategy(fx),
@@ -289,7 +400,33 @@ def check_text_vs_speech(fx: dict) -> dict:
     )
     stored = [_nfc(t.text) for t in (contract.exact_texts if contract else ())]
     verbatim = sentence in stored
-    passed = not violations and not offers and verbatim
+
+    from app.agents.main_creator import _BRIEF_PROMPT_SECTION
+
+    prompt = MainCreatorAgent(None).render_prompt(  # type: ignore[arg-type]
+        MainCreatorInput(
+            user_message="x",
+            capability_manifest=_golden_manifest(),
+            brief_enabled=True,
+        )
+    )
+    prompt_ok = (
+        "text_sequence" in _BRIEF_PROMPT_SECTION
+        and "one word at a time" not in _BRIEF_PROMPT_SECTION.split("Captions =>")[1][:400]
+        and "text_sequence" in prompt
+    )
+
+    golden = run_golden_cases()
+    golden_fail = [g["case"] for g in golden if not g["ok"]]
+    passed = (
+        not violations
+        and not reachable_offers
+        and t1_ok
+        and verbatim
+        and prompt_ok
+        and bool(golden)
+        and not golden_fail
+    )
     why = []
     if violations:
         why.append(
@@ -298,28 +435,47 @@ def check_text_vs_speech(fx: dict) -> dict:
                 f"{v['turn']} {v['requirement']} facts.captions={v['captions_fact']}"
                 for v in violations[:3]
             )
-            + " (Main Creator prompt maps 'one word at a time' to facts.captions, and "
-            "brief_checks._WORD_CAPTION_RE backs it up)"
         )
-    if offers:
+    if reachable_offers:
         why.append(
-            "a turn offers to record the sentence as a voiceover instead of showing it as text: "
-            + ", ".join(o["option"] for o in offers)
+            "a turn offers to record the sentence as a voiceover while a captions requirement "
+            "is still in the ledger: " + ", ".join(o["option"] for o in reachable_offers)
         )
+    if not t1_ok:
+        why.append("T1 does not store the quoted sentence verbatim as a text_sequence")
     if not verbatim:
         why.append("the quoted sentence is not in the render contract's exact_texts verbatim")
+    if not prompt_ok:
+        why.append("the Main Creator brief prompt does not teach text_sequence over captions")
+    if golden_fail:
+        why.append("golden cases failed: " + ", ".join(golden_fail))
     return _result(
         2,
         "no captions/voiceover filing; quoted sentence stored verbatim as on-screen text",
         passed,
         why,
         {
+            "basis": (
+                "recorded old-prompt replies replayed through the real extractor parse + "
+                "apply_updates; golden eval fixtures through the replay runner; offers judged by "
+                "whether their captions premise survives (model-authored reply text is not "
+                "regenerated offline; live proof needs the paid ledger)"
+            ),
             "captions_filings": violations,
             "voiceover_offers": offers,
+            "t1_text_sequence": [{"literal": lit, "facts": facts} for lit, facts in stored_t1],
             "sentence_verbatim_in_contract": verbatim,
-            "first_ledger_holding_the_sentence": "v3 (T4); r3 content before T4 was not persisted",
+            "prompt_teaches_text_sequence": prompt_ok,
+            "golden_cases": golden,
         },
     )
+
+
+def _golden_manifest():  # noqa: ANN202
+    from app.agents.main_creator import MainCreatorInput
+
+    data = json.loads((EVAL_FIXTURES / f"{T1_CASE}.json").read_text(encoding="utf-8"))
+    return MainCreatorInput.model_validate(data["input"]).capability_manifest
 
 
 # ----------------------------------------------------------------------------- check 3

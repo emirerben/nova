@@ -37,6 +37,7 @@ from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
 from app.kria.take_trim import refile_take_trim
+from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MAX_OPENING_TITLE_DURATION_S,
@@ -158,7 +159,10 @@ log = structlog.get_logger()
 # v100 (KRI-994): a select ask records the media kind it restricts to / includes
 # (`only_media_kind` "video", `include_media_kind` "photo"), so the server can judge "clips
 # only" on the finished timeline and withdraw an earlier photo ask a later clips-only ask replaces.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-27-v100"
+# v102 (29 Ekim lane D, KRI-1038): words shown a piece at a time are a `text_sequence`
+# requirement, not `captions: word_by_word`; "say" plus a quote with no voiceover is on-screen
+# text. (v101 is lane B's order-key edit; they merge in that order.)
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-29-v102"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -505,8 +509,8 @@ ADDITION to `action`, return a top-level `brief_updates` list (at most 16 object
 JSON object as `action`) holding ONLY the requirements the CURRENT USER MESSAGE newly states or
 changes -- never re-list a requirement that is already in the contract and unchanged. For a new
 requirement use `operation`: "add" and include `kind`, `scope`, `literal`, `description`, and
-`facts`. An add object is: {"operation":"add", "kind": "text|order|select|timing|audio|style",
-"scope":
+`facts`. An add object is: {"operation":"add", "kind":
+"text|order|select|timing|audio|style|text_sequence", "scope":
 "title|per_clip|clip:<media_id>|global", "literal": "the creator's exact words to print, or
 null", "description": "what is wanted in the creator's own framing, or null", "facts": {}}.
 `literal` is ONLY text the creator wrote out; described text ("the landmark on each clip") goes
@@ -530,9 +534,9 @@ style or timing requirement as well. Never shorten a compound request to the one
 strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
 Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
 
-Captions and subtitles are the speech lane (Turkish: "altyazı"); titles, labels, callouts
-and decorative words are separate authored text. Record speech subtitles as a `style`
-requirement with `facts.captions` and, when requested, `facts.caption_language`, never as
+Captions and subtitles are the speech lane (Turkish: "altyazı") and only that; titles,
+labels, callouts and decorative words are separate authored text. Record speech subtitles as a
+`style` requirement with `facts.captions` and, when requested, `facts.caption_language`, never as
 literal text to print. Keep its description about subtitles; record source-audio and
 visual-cue instructions as separate requirements. "English subtitles; title X; no text
 except the title" and
@@ -545,6 +549,23 @@ follow-up requests to remove extra text: preserve existing subtitle language and
 Only an explicit request to remove captions/subtitles, or all writing INCLUDING
 subtitles, turns off that speech-caption requirement. A named smaller heading under a
 title remains authored text. Keep explicit wording, scope and later corrections intact.
+
+Words shown on screen a piece at a time are NOT captions. When the creator quotes words, or
+says show / display / title / write, and asks for them one word (or phrase) at a time ("show
+each word one by one and say “…”", "yazıyı kelime kelime göster", "split it into pieces, word
+by word"), record ONE `text_sequence` requirement: {"kind": "text_sequence", "scope": "title",
+"literal": "<the quoted words, exactly as written>", "description": "<their ask>", "facts":
+{"unit": "word", "mode": "agent_choice"}}. Keep the whole quoted sentence in `literal`, never
+shortened or translated, and never record it as a `style` captions requirement. `unit` is
+"phrase" when they ask for phrases or chunks. `mode` is "replace" when each piece takes the last
+one's place, "cumulative" when the words stay and build up, otherwise "agent_choice": the editor
+chooses and says which in its reply. A follow-up that points back at the words ("show each word
+after the other in the text") keeps the earlier quoted words as `literal`. "One word at a
+time" or "word by word" is a captions ask ONLY when it is about speech that exists in the
+footage or a recorded voiceover, or the creator names captions, subtitles, karaoke or "altyazı".
+"Say “…”" with a quoted line and no recorded voiceover means on-screen text, not speech. A
+voiceover is only what the creator asks for with record, read aloud or voiceover; never offer
+to record one for words the creator asked to see.
 
 When a real requirement is present, ALWAYS record the structured facts that belong to it, even
 when the same words also sit in a title or sentence: a distance, activity, start point, or end
@@ -608,10 +629,11 @@ Quoted speech
 bounds use the timing requirement's "start_line"/"end_line", never a cut line; ordered clips
 or places still use the order requirement's "start"/"end". Captions =>
 {"captions": "on"}, {"captions": "off"} or {"captions":
-"word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
-code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus {"spellings":
-["Oblea de la Casa", "Merope"]} when they list words or names to spell a certain way in the
-captions, each exactly as the creator wrote it (never corrected or translated), plus
+"word_by_word"} (karaoke: the words of speech that exists light up as they are said), plus
+{"caption_language": "en"} (a two-letter code) when they name the captions' language
+("Türkçe altyazı" => "tr"), plus {"spellings": ["Oblea de la Casa", "Merope"]} when they list
+words or names to spell a certain way in the captions, each exactly as the creator wrote it
+(never corrected or translated), plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions
@@ -1165,7 +1187,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         strategy = strategy.model_copy(update={"editorial_plan": None})
                 action = action.model_copy(update={"strategy": strategy})
             brief_updates = (
-                _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input)
+                _refile_text_sequences(
+                    _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input),
+                    input,
+                )
                 if input.brief_enabled
                 else []
             )
@@ -1766,6 +1791,33 @@ def _refile_take_trims(
     moved = sum(new is not old for new, old in zip(refiled, updates, strict=True))
     if moved:
         log.info("main_creator_take_trim_refiled", count=moved)
+    return refiled
+
+
+def _refile_text_sequences(
+    updates: list[BriefUpdate], agent_input: MainCreatorInput
+) -> list[BriefUpdate]:
+    """29 Ekim: words the creator wants SHOWN one at a time are a `text_sequence`, not captions.
+
+    The prompt teaches the shape; this keeps a reply that still files the ask as
+    `captions: word_by_word` from reaching the brief (see `kria.text_sequence`).
+    """
+    if not updates:
+        return updates
+    earlier = [
+        str(row.get("content") or "")
+        for row in agent_input.conversation
+        if isinstance(row, dict) and row.get("role") == "user"
+    ]
+    refiled = refile_text_sequences(
+        updates,
+        creator_message=agent_input.user_message,
+        known_literal=last_quoted_literal(earlier),
+        has_voiceover=agent_input.capability_manifest.has_voiceover,
+    )
+    moved = sum(new is not old for new, old in zip(refiled, updates, strict=True))
+    if moved:
+        log.info("main_creator_text_sequence_refiled", count=moved)
     return refiled
 
 

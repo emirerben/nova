@@ -52,7 +52,8 @@ from app.schemas.text_style_intent import normalize_title_animation
 from app.services.creative_copy_decisions import APPROVED_COPY_FACT
 from app.services.kria_editor_ops_diff import font_family_key
 
-RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
+# `text_sequence` (29 Ekim): the creator's own words shown on screen in pieces, never captions.
+RequirementKind = Literal["text", "order", "select", "timing", "audio", "style", "text_sequence"]
 RequirementStatus = Literal["open", "met", "partial", "not_possible", "superseded"]
 Route = Literal["replan", "editor_ops"]
 
