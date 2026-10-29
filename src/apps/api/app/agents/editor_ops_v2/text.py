@@ -161,6 +161,7 @@ def _coerce_rewrite_text(name: str, payload: dict, snapshot: dict, state: Any) -
         MAX_TEXT_CHARS,
         apply_replace,
         bars_from_snapshot,
+        clean_authored_text,
         clean_text,
     )
 
@@ -183,9 +184,9 @@ def _coerce_rewrite_text(name: str, payload: dict, snapshot: dict, state: Any) -
         if not find or len(find) > 200 or len(replace["with"]) > MAX_TEXT_CHARS:
             state.invalid_value()
             return None
-        out["replace"] = {"find": find, "with": clean_text(replace["with"])}
+        out["replace"] = {"find": find, "with": clean_authored_text(replace["with"])}
     else:
-        cleaned = clean_text(text) if isinstance(text, str) else ""
+        cleaned = clean_authored_text(text) if isinstance(text, str) else ""
         if not cleaned or len(cleaned) > MAX_TEXT_CHARS:
             state.invalid_value()
             return None

@@ -773,6 +773,19 @@ publication follows the commit through the existing deterministic Job dispatcher
 or editor rerender task. Accepted editor executions persist enough dispatch
 metadata for the reconciler to publish the same generation after process death.
 
+## On-screen text shown in sequence (KRI-1038)
+
+A quoted sentence the creator wants shown a word at a time is a `text_sequence` brief requirement
+(`kria/text_sequence.py`), not `captions: word_by_word`. The Main Creator prompt teaches it;
+`refile_text_sequence` only re-files a captions reply when the creator did not name captions, no
+voiceover is recorded, and the message does not talk about words said in the footage
+(`names_footage_speech`: "when I say", "dediğim yerde").
+
+Deploy order: roll api and worker together. A thread stored with `text_sequence` fails
+`CreativeBrief` validation on an older api or worker machine (autostopped machines, or a revert),
+and this kind has no kill switch of its own. Nothing judges it until the editor-op lane lands, so
+the draft shows the sentence whole.
+
 ## Local proof
 
 From a prepared worktree:
