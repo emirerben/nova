@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-29T14:14:57.808341+00:00",
+  "implementation_head": "8d13cc470df688b7d7d79c94ef6315aa0037337a",
+  "evidence_level": "offline_transport_replay_real_postgresql_and_native_simulator",
+  "scope": "Metered optional image generation/editing, script-bound narration, existing online evaluation; Gemini default and iPhone final rendering retained.",
+  "focused_api": {
+    "passed": 60,
+    "failed": 0,
+    "review": "Independent final same-family review; no blocking code finding."
+  },
+  "mapped_reliability": {
+    "passed": 286,
+    "failed": 0,
+    "artifact": "credit-evidence/reliability-gates.log",
+    "note": "Overlaps focused tests; do not add counts."
+  },
+  "native": {
+    "passed": 14,
+    "failed": 0,
+    "skipped": 0,
+    "unit": 9,
+    "ui": 5,
+    "artifact": ".dev/generated-media-final-journeys.xcresult",
+    "screenshots": ".dev/generated-media-final-journey-attachments/manifest.json",
+    "platform": "iPhone 17 Pro simulator, iOS 26.5",
+    "note": "Native implementation unchanged through main merge; no physical phone export claim."
+  },
+  "broad_api_initial": {
+    "passed": 16450,
+    "failed": 3,
+    "skipped": 29,
+    "xfailed": 13,
+    "subtests_passed": 24,
+    "duration_seconds": 762.01,
+    "artifact": "credit-evidence/final-api-tests.xml",
+    "failures": [
+      "mobile OpenAPI snapshot drift; regenerated capability and generation fields",
+      "FFmpeg drawtext filter unavailable in default Mac build (two tests)"
+    ]
+  },
+  "ffmpeg_environment_confirmation": {
+    "passed": 2,
+    "failed": 0,
+    "artifact": "credit-evidence/ffmpeg-full-tests.xml",
+    "command": "PATH=/opt/homebrew/opt/ffmpeg-full/bin:$PATH python -m pytest tests/pipeline/test_slide_post_build.py::TestNormalizeImageSlide::test_text_overlay_edit_changes_pixels_but_not_dimensions tests/pipeline/test_slide_post_build.py::TestNormalizeImageSlide::test_text_overlay_with_filter_delimiter_characters_does_not_break_ffmpeg -q",
+    "note": "Existing installed full build; no package installation or system change."
+  },
+  "broad_api_rerun": {
+    "status": "running",
+    "artifact": "credit-evidence/api-regression-after-contract.xml",
+    "deselected": 2,
+    "note": "Exact two environmental tests above deselected; both separately passed with full FFmpeg."
+  },
+  "deadline_compatibility": "docs/reviews/api-credit-plan/deadline-compatibility.json",
+  "live_calls": 0,
+  "production_enabled": false,
+  "live_quality": "unassessed",
+  "fresh_eligible_holdouts": 0,
+  "remaining_gates": [
+    "Verified billing organization, credits and bounded spend authorization before any live call",
+    "Eligible real cohort enrollment and sealed comparison",
+    "Physical phone inspection before claiming export quality",
+    "Deployment authorization before main merge because existing Fly workflow auto-deploys"
+  ],
+  "artifact_retention": "Raw local test bundles are outside Git; this safe summary and test sources remain in Git. CI artifacts will be linked separately."
+}
