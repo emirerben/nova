@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.25.0] - 2026-10-29
+
+### Changed
+- fix(export-verifier): pass soft-proxy pictures on the displayed frame's lead (KRI-1042) (#1943) <!-- release-pr: 1943 -->
+
 ## [0.82.24.0] - 2026-10-29
 
 ### Changed
