@@ -2025,15 +2025,19 @@ async def _load_editor_target(
         None,
     )
     head = (
-        await db.execute(
-            select(CreatorEditDraft).where(
-                CreatorEditDraft.item_id == item_id,
-                CreatorEditDraft.variant_key == session.target_variant_id,
-                CreatorEditDraft.base_job_id == job.id,
-                CreatorEditDraft.is_head.is_(True),
+        (
+            await db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.item_id == item_id,
+                    CreatorEditDraft.variant_key == session.target_variant_id,
+                    CreatorEditDraft.base_job_id == job.id,
+                    CreatorEditDraft.is_head.is_(True),
+                )
             )
-        )
-    ).scalar_one_or_none()
+        ).scalar_one_or_none()
+        if target_row is not None
+        else None
+    )
     recovery_basis = None
     if (
         compose_unmet_with_ops()
@@ -5522,7 +5526,14 @@ async def _plan_live_turn(
         and _fast_path_eligible(user_message)
     )
     failed_editor_correction = correction_candidate and _is_text_edit_ask(user_message)
-    if correction_candidate and not failed_editor_correction:
+    if (
+        correction_candidate
+        and not failed_editor_correction
+        and any(
+            isinstance(row, dict) and row.get("render_status") in {"failed", "needs_attention"}
+            for row in (latest_job.assembly_plan or {}).get("variants") or []
+        )
+    ):
         saved_heads = (
             (
                 await db.execute(

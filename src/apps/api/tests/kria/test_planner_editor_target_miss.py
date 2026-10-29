@@ -860,3 +860,18 @@ async def test_same_short_message_without_selection_still_takes_the_copilot(
     )
     await _ask(db, item, creator_id, "Dodgeball: clip 21")
     copilot.assert_awaited()
+
+
+@pytest.mark.parametrize("compose", [False, True])
+async def test_missing_variant_never_looks_up_an_editor_head(monkeypatch, compose):
+    monkeypatch.setattr(planner.settings, "kria_compose_unmet_with_ops_enabled", compose)
+    job_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=job_id)
+    thread = SimpleNamespace(active_creator_agent_session_id=uuid.uuid4())
+    session = SimpleNamespace(id=uuid.uuid4(), target_job_id=job_id, target_variant_id="v1")
+    job = SimpleNamespace(id=job_id, status="processing_failed", assembly_plan={"variants": []})
+    db = _db(thread, session, job)
+    target, logs = await _load(db, item)
+    assert target is None
+    assert [row["reason"] for row in logs] == ["no_render"]
+    db.execute.assert_not_awaited()

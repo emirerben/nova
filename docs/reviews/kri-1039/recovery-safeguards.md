@@ -51,3 +51,9 @@ No server-render fallback was introduced. Server planning is allowed; native exe
 ## Verification after the E merge
 
 The recovery commits rebased onto main `91838ad62` without conflicts. The final main-base run passed407 backend cases, including explicit checks for both compose settings, and25 simulator contracts. Final preship passed with845 mapped incident cases and no failed metadata, mapping or lint checks. A fresh independent review of the main-base diff and flag-state corrections found no blocking defect. The two flag-state assertions initially assumed E's old true default; they now name both settings and confirm that false retains the legacy unavailable reason.
+
+## CI fixture and no-variant follow-up
+
+The first full main-target CI run exposed test targets built as `SimpleNamespace` without the new optional recovery basis. The affected helper and direct fixtures now use the real immutable `_EditorTarget`; changing a snapshot constructs a fresh target. No application fallback was added for an invalid internal type. CI also exposed an unnecessary saved-head scan for a failed job with no variant. Recovery now queries a head only when a target row exists, and scans failed saved heads only when a failed/needs-attention variant exists. A two-setting regression confirms no editor-head query for a missing variant. The existing identity check remains mandatory.
+
+The expanded local matrix passed469 tests, including system-chain replay, real-session fallthrough, editor-state turns and all recovery cases. The reviewer found no production blocker. The deliberately incomplete new fixture initially missed its job ID; that fixture was completed and the final run passed. Full CI must pass on the repaired head before merge.

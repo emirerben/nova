@@ -1101,7 +1101,7 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
     target = (
         None
         if snapshot is None
-        else SimpleNamespace(job_id=item.current_job_id, snapshot=snapshot, conversation=[])
+        else planner._EditorTarget(job_id=item.current_job_id, snapshot=snapshot, conversation=[])
     )
 
     async def load_target(_db, *, thread_id, item):  # noqa: ANN001, ANN202
