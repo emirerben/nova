@@ -8490,8 +8490,9 @@ def dispatch_get_timeline(
 
         draft = saved_editor_draft(job, variant_id)
         sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
+        if "timeline_slots" in sections:
+            timeline["slots"] = copy.deepcopy(sections["timeline_slots"] or [])
         timeline.update(
-            slots=copy.deepcopy(sections.get("timeline_slots") or []),
             draft=draft.model_dump(mode="json"),
             base_generation=variant_render_baseline(variant),
             has_user_edits=True,
