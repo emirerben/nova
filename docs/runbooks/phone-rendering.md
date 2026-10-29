@@ -683,6 +683,23 @@ word (seen in the simulator render of the `subtitled_word` E2E case);
 behind `PHONE_TALKING_HEAD_RENDERING_ENABLED` (KRI-136), as cutaways over the
 speaker clip and without speech cleanup.
 
+*Landscape output on phone Talking.* A phone-rendered `subtitled` edit (multi-clip
+Talking included) can now be a landscape video: the creator picks it on the confirm
+screen (`render_shape.creation_offer`, `subtitled` is offered the same landscape + bars/crop
+choice as montage while `LANDSCAPE_OUTPUT_ENABLED` is on and the render is on the device)
+or in the editor's Video shape sheet (`orientation` capability, open while the Talking
+editor lanes are -- `PHONE_SUBTITLED_EDITOR_LANES_ENABLED`; `phone_edit_unsupported` when
+off, `disabled` when the output flag is off). The worker and the editor Save pass
+`output_orientation="landscape"` to `compile_phone_subtitled_plan`, which compiles onto the
+1920x1080 canvas with no bars (`landscape_fit` is forced to `fill`) and no face-fill shift
+(`speaker_position_x` ignored; with a framing ask the `speaker_framing` receipt says
+`centre_fill` / `landscape_canvas` and samples no face); the variant records
+`orientation="landscape"` + `landscape_fit="fill"`. Title, closing, spoken text and the
+protected-text plan are placed and measured on the 1920x1080 canvas. The cloud subtitled
+render has no landscape canvas and stays `orientation_unsupported`. An editor Save that
+changes the canvas marks the protected-text receipt `stale` (`edited_geometry`; it does not
+re-place the text), and keeps the framing receipt's face window so portrait + crop restores it.
+
 #### Talking-to-camera media lanes: stickers, photo cards, SFX, ending clip (KRI-174 Phase 1)
 
 `PHONE_SUBTITLED_MEDIA_LANES_ENABLED` (`settings.phone_subtitled_media_lanes

@@ -1,6 +1,6 @@
 # Designed text animations
 
-The iPhone editor offers six animations on editable video text. They preserve the creator's content, font, size, color, placement and time window. The Animation tab selects an entrance or exit independently. Captions offer the same six choices under Style > Text motion.
+The iPhone editor offers six animations on editable video text. They preserve the creator's content, font, size, color, placement and time window. The Animation tab selects an entrance or exit independently. Captions offer the same six choices in the caption Animation tab (All captions or one line, KRI-1007), which replaced Style > Text motion. A caption entrance stored by Text motion in `caption_meta.appearance.animation_phases` still renders and shows as the All captions choice until the creator changes it.
 
 | Picker name | Wire value | Motion |
 | --- | --- | --- |

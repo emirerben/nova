@@ -27,6 +27,10 @@ Pure helpers:
   explicit caption-language request from the creator's own words. Requires a
   caption/subtitle keyword AND a language name in the same clause, so a prompt
   merely *written* in Turkish never changes the caption language.
+- ``caption_language_decision`` — KRI-1015: the same parse as a decision, one message per
+  line (a later message corrects an earlier one). A creator who captions two languages each
+  as itself ("English captions for the English, Turkish captions for my Turkish") keeps the
+  take as spoken: no target, ``keep_spoken``.
 - ``coerce_caption_language_request`` — render-time re-validation of the persisted
   request (supported code or None).
 - ``infer_language_from_text`` — a conservative EN/TR guess from transcript text,
@@ -228,8 +232,8 @@ _TARGET_MARKER = re.compile(r"\b(?:in|into|to)\s+$")
 _DATIVE = re.compile(r"\w*y[ae]\b|\w+['’]y[ae]\b")
 
 
-def _bound_mentions(clause: str) -> list[tuple[int, str]]:
-    """(position, code) of every language in ``clause`` that is bound to its captions."""
+def _bound_mentions(clause: str) -> list[tuple[int, int, str]]:
+    """(start, end, code) of every language in ``clause`` that is bound to its captions."""
     bound: list[tuple[int, int, str]] = []
     for code, patterns in _BINDINGS:
         for pattern in patterns:
@@ -260,7 +264,83 @@ def _bound_mentions(clause: str) -> list[tuple[int, str]]:
             ):
                 bound.append((start, end, code))
                 changed = True
-    return [(pos, code) for pos, _, code in bound]
+    return bound
+
+
+@dataclass(frozen=True)
+class CaptionLanguageDecision:
+    """What the creator's words say about the caption language (KRI-1015).
+
+    ``target`` is the one language the captions are asked in. ``keep_spoken`` is the
+    creator captioning two languages each as itself (a mixed take keeps every stretch in
+    the language it is spoken in): no target, and nothing may be translated.
+    """
+
+    target: str | None = None
+    keep_spoken: bool = False
+
+
+def _message_decision(message: str) -> CaptionLanguageDecision | None:
+    """The caption-language decision of ONE creator message; None when it makes none."""
+    asked: set[str] = set()
+    keep_spoken = False
+    for clause in _CLAUSE_SPLIT.split(message):
+        if not clause or not _CAPTION_KEYWORD.search(clause):
+            continue
+        if _NEGATION.search(clause):
+            continue
+        hits = _bound_mentions(clause)
+        codes = {code for _, _, code in hits}
+        if not codes:
+            continue
+        # "captions in English where he speaks English": captioned in the language spoken
+        # there, so the take stays as spoken.
+        if any(
+            code in codes
+            and (m.start(), m.end(), code) not in hits
+            and _SPOKEN_BEFORE.search(clause[: m.start()])
+            for code, pattern in _LANGUAGE_PATTERNS
+            for m in pattern.finditer(clause)
+        ):
+            keep_spoken = True
+            continue
+        if len(codes) == 1:
+            asked.add(next(iter(codes)))
+            continue
+        targeted = {code for pos, _, code in hits if _TARGET_MARKER.search(clause[:pos])}
+        # Turkish dative marks the target too: "İngilizceye çevir".
+        targeted |= {code for pos, _, code in hits if _DATIVE.match(clause, pos)}
+        # "subtitles in English and Turkish": a language joined to a targeted one is
+        # targeted with it.
+        grown = True
+        while grown:
+            grown = False
+            for start, end, code in hits:
+                if code not in targeted and any(
+                    (_JOINED.match(clause[t_end:start]) and t_end <= start)
+                    or (_JOINED.match(clause[end:t_start]) and end <= t_start)
+                    for t_start, t_end, t_code in hits
+                    if t_code in targeted
+                ):
+                    targeted.add(code)
+                    grown = True
+        if len(targeted) == 1:
+            asked.update(targeted)
+        else:
+            keep_spoken = True
+    if keep_spoken or len(asked) > 1:
+        return CaptionLanguageDecision(keep_spoken=True)
+    return CaptionLanguageDecision(target=asked.pop()) if asked else None
+
+
+def caption_language_decision(text: str | None) -> CaptionLanguageDecision:
+    """The caption-language decision in ``text``: each line is one creator message, and the
+    last message that decides wins (a later message corrects an earlier one)."""
+    folded = _fold(text or "").replace("’", "'")
+    decision = CaptionLanguageDecision()
+    for line in folded.splitlines():
+        decision = _message_decision(line) or decision
+    return decision
 
 
 def parse_caption_language_request(text: str | None) -> str | None:
@@ -271,30 +351,12 @@ def parse_caption_language_request(text: str | None) -> str | None:
     "make the subtitles Spanish", "İspanyolca altyazı"), and must not be negated. Returns
     None otherwise — including when the prompt is merely written in a language, names a
     language as a topic, the voice or the audience ("Spanish food with subtitles", "his
-    English voice", "Spanish speakers"), or requests conflict.
+    English voice", "Spanish speakers"), or requests conflict. Two languages each
+    captioned as itself in one message ("English captions for the English, Turkish
+    captions for my Turkish") request nothing; across messages (one per line) the later
+    message decides.
     """
-    folded = _fold(text or "").replace("’", "'")
-    if not folded.strip():
-        return None
-    requested: str | None = None
-    for clause in _CLAUSE_SPLIT.split(folded):
-        if not clause or not _CAPTION_KEYWORD.search(clause):
-            continue
-        if _NEGATION.search(clause):
-            continue
-        hits = _bound_mentions(clause)
-        codes = {code for _, code in hits}
-        if not codes:
-            continue
-        if len(codes) == 1:
-            requested = codes.pop()
-            continue
-        targeted = {code for pos, code in hits if _TARGET_MARKER.search(clause[:pos])}
-        # Turkish dative marks the target too: "İngilizceye çevir".
-        targeted |= {code for pos, code in hits if _DATIVE.match(clause, pos)}
-        if len(targeted) == 1:
-            requested = targeted.pop()
-    return requested
+    return caption_language_decision(text).target
 
 
 def coerce_caption_language_request(value: object) -> str | None:

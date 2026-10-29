@@ -24,6 +24,7 @@
       "KriaUITests/CreationUITests/testNewChatShowsUsableFormatsWithoutWaitingForMoreReads",
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap",
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
+      "KriaUITests/CreationUITests/testPendingServerSuggestionChipsShowOnlyTheDefaultEdit",
       "KriaUITests/CreationUITests/testServerSuggestionChipsSendOnTapAndReplaceFixedChips",
       "KriaUITests/CreationUITests/testServerSuggestionChipTapNamesTheOfferedChipOnTheTurn",
       "KriaUITests/SlidePostUITests/testSlidePostCreationIsTheRichLayoutThenCreateThenKriaPropose",
@@ -142,6 +143,7 @@
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
       "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss",
       "KriaUITests/CreationUITests/testOpenEditorInsideTheEditorsKriaSheetReturnsToTheEditor",
+      "KriaUITests/CreationUITests/testOpenEditorInsideTheEditorsKriaSheetWithKeyboardOpenReturnsToTheEditor",
       "KriaUITests/SavedUploadsUITests/testReuseAcrossTwoPostsWithoutAnotherUpload",
       "KriaUITests/SavedUploadsUITests/testExpiringCloudCopyWarnsAndRemainsReusableAcrossPosts",
       "KriaUITests/SavedUploadsUITests/testSearchPaginationAndRetry",
@@ -160,6 +162,17 @@
       "KriaUITests/VoiceoverScriptCardUITests/testRecordWithThisScriptOpensTheVoiceoverStepWithTheScript",
       "KriaUITests/VoiceoverScriptCardUITests/testWithoutTheCapabilityTheScriptIsReplyText",
       "KriaUITests/CameraRollCollectionUITests/testDrawerOpensTheCameraRollFullScreen",
+      "KriaUITests/CameraRollCollectionUITests/testHomeListsEventCardsThatOpenTheirPages",
+      "KriaUITests/CameraRollCollectionUITests/testEventPageShowsOneRowOfMediaUntilShowAll",
+      "KriaUITests/CameraRollCollectionUITests/testNewEventWithTitleAndAboutReachesTheServer",
+      "KriaUITests/CameraRollCollectionUITests/testAboutThisEventIsSavedToTheServer",
+      "KriaUITests/CameraRollCollectionUITests/testAnOlderServerKeepsTitlesOnThePhoneAndHidesAbout",
+      "KriaUITests/CameraRollCollectionUITests/testEveryIdeaCardShowsItsClipsAndUse",
+      "KriaUITests/CameraRollCollectionUITests/testOpenQuestionsSayWhyUseWaitsAndAnsweringEnablesIt",
+      "KriaUITests/CameraRollCollectionUITests/testUseShowsEachStepThenOpensTheChat",
+      "KriaUITests/CameraRollCollectionUITests/testUseKeepsGoingAfterTheSheetCloses",
+      "KriaUITests/CameraRollCollectionUITests/testAFailedStepOffersRetry",
+      "KriaUITests/CameraRollCollectionUITests/testUseSaysWhenTheChatCannotOpen",
       "KriaUITests/CameraRollCollectionUITests/testEveryItemStateIsVisible",
       "KriaUITests/CameraRollCollectionUITests/testReduceMotionKeepsEveryStateReadable",
       "KriaUITests/CameraRollCollectionUITests/testRetryFlipsTheTileToAnalyzing",
@@ -173,7 +186,12 @@
       "KriaUITests/CameraRollCollectionUITests/testTastePanelOpensFromTheHeaderAndReturns",
       "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
       "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection",
-      "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas"
+      "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas",
+      "KriaUITests/FeaturedEditPreviewUITests/testCenteredFormatOwnsPlayback",
+      "KriaUITests/FeaturedEditPreviewUITests/testOnboardingPlaysFourEditsInOrder",
+      "KriaUITests/FeaturedEditPreviewUITests/testSliderAdvancesWhenCenteredAndPauses",
+      "KriaUITests/ProductionSignInUITests/testBuildControlsDevelopmentSignIn",
+      "KriaUITests/CreationUITests/testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -280,7 +298,12 @@
       "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
       "KriaUITests/NativeEditorInspectorUITests/testQuickSwipeAcrossAClipSeeksInsteadOfReordering",
-      "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector"
+      "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector",
+      "KriaUITests/NativeCaptionAnimationUITests/testCueCaptionsAnimateAllThenOneLine",
+      "KriaUITests/NativeCaptionAnimationUITests/testLyricCaptionsAnimateAllThenOneLine",
+      "KriaUITests/NativeCaptionAnimationUITests/testTextMotionPresetShowsInAllCaptions",
+      "KriaUITests/NativeCaptionAnimationUITests/testWithoutTheCapabilityThereIsNoAnimationTab",
+      "KriaUITests/NativeCaptionAnimationUITests/testReduceMotionKeepsPreviewsStillUntilPlayed"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -425,12 +448,15 @@
     "src/apps/ios/Kria/Core/CameraRollItemState.swift": "creation",
     "src/apps/ios/Kria/Core/CameraRollUploadEngine.swift": "creation",
     "src/apps/ios/Kria/Core/CameraRollSurface.swift": "creation",
+    "src/apps/ios/Kria/Core/CameraRollIdeaUse.swift": "creation",
     "src/apps/ios/Kria/Features/IdeaFeedbackView.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceView.swift": "creation",
+    "src/apps/ios/Kria/Features/CameraRoll/CameraRollEventPage.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollTileView.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollThumbnail.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollIdeaViews.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollTasteView.swift": "creation",
-    "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift": "creation"
+    "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift": "creation",
+    "src/apps/ios/Kria/Features/NativeAnimationPhasePicker.swift": "editor"
   }
 }

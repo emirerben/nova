@@ -283,6 +283,8 @@ struct NativeEditorPanelTabs<Tab: Hashable & RawRepresentable>: View where Tab.R
     let accessibilityPrefix: String
     /// Reuses the control where an existing screen already publishes its own tab identifiers.
     var identifier: ((Tab) -> String)?
+    /// A segment that cannot be chosen right now; the screen shows why next to the control.
+    var isEnabled: ((Tab) -> Bool)?
 
     var body: some View {
         HStack(spacing: 2) {
@@ -299,6 +301,8 @@ struct NativeEditorPanelTabs<Tab: Hashable & RawRepresentable>: View where Tab.R
                         .background(value == selection ? KriaColor.paper : .clear, in: Capsule())
                 }
                 .buttonStyle(.plain)
+                .disabled(!(isEnabled?(value) ?? true))
+                .opacity(isEnabled?(value) ?? true ? 1 : 0.45)
                 .accessibilityAddTraits(value == selection ? .isSelected : [])
                 .accessibilityIdentifier(identifier?(value) ?? accessibilityPrefix + "-tab-" + value.rawValue)
             }

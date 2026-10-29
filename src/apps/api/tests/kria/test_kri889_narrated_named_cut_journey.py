@@ -70,6 +70,7 @@ from app.services.device_narration_binding import authorized_device_narration
 from app.services.device_render import device_record, device_status, pin_device_request
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from app.tasks import generative_build as gb
+from tests._silent_pcm import silent_pcm
 from tests.pipeline.test_phone_voiceover_montage_plan import _binding
 from tests.tasks.test_generative_build import _Meta
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _job_and_session
@@ -443,6 +444,7 @@ def _cleanup_snapshot(item_generation: str) -> dict:
             spans=[(pause["end_s"] + 0.05, pause["end_s"] + GAP_S + PAUSE_S - 0.05)],
             status="ok",
         ),
+        pcm_loader=silent_pcm,
     )
     return {
         "schema_version": 1,

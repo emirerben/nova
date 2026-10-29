@@ -1,0 +1,145 @@
+{
+ "dispatched_request": "Full creator request (chronological):\nTalking video, filmed horizontally: make it vertical and keep his face in frame. Maximo explains in English and I translate to Turkish in the middle, then we both say \"1810\". Keep every language as it was spoken: English captions for the English, Turkish captions for my Turkish, nothing translated. When he first says \"1810\", put a big \"1810\" on screen for a moment. When he says \"on the other side of the square\", show my Casa Rosada photo full screen for about two seconds with his voice still playing, then come back to him. Start at \"Okay, I'll translate it to Turkish\" and end after \"the government of the whole country\".\n\nCreative brief v1 (everything the creator has asked for, still in force):\n- [r1] [timing/global] Start and end at specific spoken lines facts={end_line: the government of the whole country; start_line: Okay, I'll translate it to Turkish}\n- [r2] [style/global] Keep every language as it was spoken with no translation facts={captions: on}\n- [r3] [text/global] Big text on screen for a moment when he first says 1810 (\"1810\") facts={triggers: [\"1810\"]}\n- [r4] [style/global] Show the Casa Rosada photo full screen for about two seconds when he mentions the other side of the square facts={display_mode: fullscreen; hold_s: 2.0; triggers: [\"on the other side of the square\"]}\n- [r5] [style/global] Make the horizontal video vertical and keep his face in frame facts={framing: vertical; keep_face_in_frame: true}\nLatest message: Talking video, filmed horizontally: make it vertical and keep his face in frame. Maximo explains in English and I translate to Turkish in the middle, then we both say \"1810\". Keep every language as it was spoken: English captions for the English, Turkish captions for my Turkish, nothing translated. When he first says \"1810\", put a big \"1810\" on screen for a moment. When he says \"on the other side of the square\", show my Casa Rosada photo full screen for about two seconds with his voice still playing, then come back to him. Start at \"Okay, I'll translate it to Turkish\" and end after \"the government of the whole country\".",
+ "prompt_txt": "Talking video, filmed horizontally: make it vertical and keep his face in frame. Maximo explains in English and I translate to Turkish in the middle, then we both say \"1810\". Keep every language as it was spoken: English captions for the English, Turkish captions for my Turkish, nothing translated. When he first says \"1810\", put a big \"1810\" on screen for a moment. When he says \"on the other side of the square\", show my Casa Rosada photo full screen for about two seconds with his voice still playing, then come back to him. Start at \"Okay, I'll translate it to Turkish\" and end after \"the government of the whole country\".",
+ "stamped_in_prod": "tr",
+ "r2": {
+  "kind": "style",
+  "facts": {
+   "captions": "on"
+  },
+  "description": "Keep every language as it was spoken with no translation"
+ },
+ "original_duration_s": 48.0,
+ "removed": [
+  {
+   "end_s": 5.99,
+   "reason": "filler_acoustic",
+   "start_s": 5.11
+  },
+  {
+   "end_s": 6.85,
+   "reason": "filler_acoustic",
+   "start_s": 6.49
+  },
+  {
+   "end_s": 11.27,
+   "reason": "silence",
+   "start_s": 10.53
+  },
+  {
+   "end_s": 13.37,
+   "reason": "silence",
+   "start_s": 12.98
+  },
+  {
+   "end_s": 21.72,
+   "reason": "silence",
+   "start_s": 20.505
+  },
+  {
+   "end_s": 24.57,
+   "reason": "silence",
+   "start_s": 23.83
+  },
+  {
+   "end_s": 26.77,
+   "reason": "silence",
+   "start_s": 26.505
+  },
+  {
+   "end_s": 28.52,
+   "reason": "silence",
+   "start_s": 28.08
+  },
+  {
+   "end_s": 31.555,
+   "reason": "silence",
+   "start_s": 31.33
+  },
+  {
+   "end_s": 35.035,
+   "reason": "silence",
+   "start_s": 34.365
+  },
+  {
+   "end_s": 38.87,
+   "reason": "silence",
+   "start_s": 37.245
+  },
+  {
+   "end_s": 41.52,
+   "reason": "silence",
+   "start_s": 41.045
+  },
+  {
+   "end_s": 48.0,
+   "reason": "silence",
+   "start_s": 47.26
+  }
+ ],
+ "prod_variant": {
+  "caption_language": "tr",
+  "caption_cues": [
+   {
+    "text": "Tamam, Türkçe çevireceğim.",
+    "start": 0.36,
+    "end": 2.58
+   },
+   {
+    "text": "Peki ismin neydi?",
+    "start": 3.92,
+    "end": 4.4
+   },
+   {
+    "text": "Maksimo.",
+    "start": 5.06,
+    "end": 5.5
+   },
+   {
+    "text": "Neden ve ne zaman?",
+    "start": 11.01,
+    "end": 13.93
+   },
+   {
+    "text": "Neden ve ne zaman ne?",
+    "start": 14.47,
+    "end": 16.51
+   },
+   {
+    "text": "İndependansı kazandın.",
+    "start": 16.69,
+    "end": 18.01
+   },
+   {
+    "text": "1810.",
+    "start": 18.215,
+    "end": 19.535
+   },
+   {
+    "text": "215 yıl önce.",
+    "start": 20.675,
+    "end": 21.955
+   },
+   {
+    "text": "Neden bu binaların özellikleri?",
+    "start": 26.445,
+    "end": 29.065
+   },
+   {
+    "text": "Çünkü Buenos Aires'in şehir hükümeti binalarıydı.",
+    "start": 30.075,
+    "end": 33.575
+   },
+   {
+    "text": "Diğer tarafta, gerçek hükümeti vardı.",
+    "start": 34.515,
+    "end": 37.935
+   },
+   {
+    "text": "Bütün...",
+    "start": 38.355,
+    "end": 39.055
+   }
+  ]
+ }
+}

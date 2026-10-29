@@ -273,6 +273,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// One per asset the user is currently choosing (debounce → load → enqueue), so un-choosing it
     /// can cancel the work. Keyed `"<projectID>|<assetIdentifier>"`.
     private var selectionTasks: [String: Task<Void, Never>] = [:]
+    private var earlyPreviewTasks: [UUID: Task<Void, Never>] = [:]
     /// Crash-resume tasks, so un-choosing a clip that a relaunch is resuming can stop it. Without this
     /// the resumed upload would carry on and attach a clip the user had already un-ticked.
     private var resumeTasks: [UUID: Task<Void, Never>] = [:]
@@ -448,7 +449,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 if let recoveryCopy { try? FileManager.default.removeItem(at: recoveryCopy) }
                 if staged { Self.clearPreparingUpload(id: recordID, key: defaultsKey, deleteLocalFile: true) }
                 if let preparedToDiscard { Self.discardPrepared(preparedToDiscard.0, asset: preparedToDiscard.1, project: projectID) }
-                CreationMediaPreview.discard(recordID: recordID)
+                discardEarlyPreview(recordID: recordID)
                 // KRI-300: nothing was uploaded, so the remembered date/place has no consumer.
                 ClipCaptureStore.shared.remove(recordID)
             }
@@ -610,10 +611,24 @@ struct PreparingUpload: Codable, Sendable, Equatable {
     /// can be shown while it is still being prepared and uploaded. Best-effort: on failure there is
     /// simply no thumbnail yet, and the attach step tries again.
     private func startEarlyPreview(of file: URL, recordID: UUID) {
-        Task { @MainActor [weak self] in
-            if await CreationMediaPreview.saveEarly(localURL: file, recordID: recordID) { self?.previewVersion += 1 }
+        guard earlyPreviewTasks[recordID] == nil else { return }
+        earlyPreviewTasks[recordID] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { earlyPreviewTasks[recordID] = nil }
+            if await CreationMediaPreview.saveEarly(localURL: file, recordID: recordID) { previewVersion += 1 }
         }
     }
+
+    private func discardEarlyPreview(recordID: UUID) {
+        earlyPreviewTasks[recordID]?.cancel()
+        CreationMediaPreview.discard(recordID: recordID)
+    }
+
+    #if DEBUG
+    func finishEarlyPreviewForTesting(recordID: UUID) async {
+        await earlyPreviewTasks[recordID]?.value
+    }
+    #endif
 
     /// Duration is UI metadata, never an admission requirement. Start this from
     /// the durable staged source so a picker/provider URL cannot disappear
@@ -1050,7 +1065,7 @@ struct PreparingUpload: Codable, Sendable, Equatable {
             try? await api.cancelUpload(reservationID: reservationID)
         }
         releaseSelection(recordID: recordID, projectID: record.projectID)
-        CreationMediaPreview.discard(recordID: recordID)
+        discardEarlyPreview(recordID: recordID)
         ClipCaptureStore.shared.remove(recordID)
         remove(recordID, deleteLocalFile: true)
     }
@@ -1894,7 +1909,7 @@ enum CreationUploadError: LocalizedError {
     /// Generates a thumbnail from the local file as soon as it exists. Returns whether one was written.
     @discardableResult
     static func saveEarly(localURL: URL, recordID: UUID) async -> Bool {
-        guard let data = await jpegData(for: localURL) else { return false }
+        guard !Task.isCancelled, let data = await jpegData(for: localURL), !Task.isCancelled else { return false }
         return write(data, to: url(recordID: recordID))
     }
 

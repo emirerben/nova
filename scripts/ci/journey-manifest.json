@@ -601,7 +601,7 @@
     {
       "id": "kri-653-silent-take",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_silence_cut_no_speech.py tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/services/test_audio_presence.py tests/services/test_transcript_quality.py tests/tasks/test_silent_audio_gate.py",
+      "api_tests": "tests/pipeline/test_silence_cut_no_speech.py tests/pipeline/test_silence_cut_squeezed_filler_golden.py tests/pipeline/test_speech_cleanup_filler_check_golden.py tests/pipeline/test_voice_guard_cleanup_e2e.py tests/pipeline/test_kri1017_maximo2_replay.py tests/services/test_audio_presence.py tests/services/test_transcript_quality.py tests/tasks/test_silent_audio_gate.py",
       "paths": [
         "src/apps/api/app/pipeline/silence_cut.py",
         "src/apps/api/app/services/clip_speech.py",
@@ -610,7 +610,11 @@
         "src/apps/api/tests/fixtures/kri970_provolone_takes.json",
         "src/apps/api/app/pipeline/speech_cleanup_alignment.py",
         "src/apps/api/tests/pipeline/test_speech_cleanup_filler_check_golden.py",
-        "src/apps/api/tests/fixtures/kri970_cafe_late_stamps.json"
+        "src/apps/api/tests/fixtures/kri970_cafe_late_stamps.json",
+        "src/apps/api/app/pipeline/speech_voice_guard.py",
+        "src/apps/api/tests/pipeline/test_voice_guard_cleanup_e2e.py",
+        "src/apps/api/tests/pipeline/test_kri1017_maximo2_replay.py",
+        "src/apps/api/tests/fixtures/kri1017_maximo2_cleanup.json"
       ]
     },
     {
@@ -1769,6 +1773,21 @@
       ]
     },
     {
+      "id": "kri-1015-mixed-caption-language",
+      "needs_native": false,
+      "api_tests": "tests/tasks/test_kri1015_mixed_caption_language_replay.py tests/kria/test_kri1015_caption_language_receipts.py tests/services/test_kri1015_dispatch_caption_language.py tests/pipeline/test_caption_language.py tests/tasks/test_subtitled_caption_language.py",
+      "paths": [
+        "src/apps/api/app/pipeline/caption_language.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/services/generative_jobs.py",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/README.md",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/incident.json",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/spoken_words.json",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/truth_words_en.json",
+        "src/apps/api/tests/fixtures/kri1015_mixed_caption_language/truth_words_tr.json"
+      ]
+    },
+    {
       "id": "kri-798-render-worker-restart",
       "needs_native": false,
       "api_tests": "tests/services/test_fly_machines.py tests/tasks/test_render_worker_lifecycle.py tests/tasks/test_render_worker_activity_sql.py tests/test_render_worker_wake.py",
@@ -1854,11 +1873,12 @@
     {
       "id": "kri-843-mixed-language-talking",
       "needs_native": false,
-      "api_tests": "tests/pipeline/test_kri843_mixed_language_transcript.py tests/services/test_speech_cleanup_language_crosscheck.py tests/tasks/test_speech_cleanup_analysis.py",
+      "api_tests": "tests/pipeline/test_kri843_mixed_language_transcript.py tests/pipeline/test_kri1016_mixed_language_relisten.py tests/services/test_speech_cleanup_language_crosscheck.py tests/tasks/test_speech_cleanup_analysis.py",
       "paths": [
         "src/apps/api/app/services/mixed_language_transcript.py",
         "src/apps/api/app/pipeline/speech_cleanup_analysis.py",
-        "src/apps/api/tests/fixtures/kri843_don_julio_t1_passes.json"
+        "src/apps/api/tests/fixtures/kri843_don_julio_t1_passes.json",
+        "src/apps/api/tests/fixtures/kri1016_plaza_t2_passes.json"
       ]
     },
     {

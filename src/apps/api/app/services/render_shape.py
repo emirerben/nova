@@ -41,7 +41,11 @@ _PORTRAIT_ASPECT = 0.95
 # Format table (see plans/kri-285-and-kri-286). `montage` covers guided/unified
 # and voiceover montage; day_vlog / single_hero are story shapes layered on it.
 _LANDSCAPE_AND_FIT_FORMATS = frozenset({"montage", "day_vlog", "single_hero"})
-_FIT_ONLY_FORMATS = frozenset({"subtitled"})
+# Phone "Talking to camera": offers the same landscape + bars/crop choice once the
+# phone compiler takes a landscape canvas (`output_orientation`). It is a separate
+# set because the spoken-excerpt montage gate below is a montage-only concern, and
+# only a DEVICE render honours the choice (the cloud subtitled render stays portrait).
+_TALKING_FORMATS = frozenset({"subtitled"})
 
 REASON_FORMAT_CLOSED = "format_unsupported"
 REASON_MIXED_MEDIA = "mixed_media_timing"
@@ -231,9 +235,9 @@ def creation_offer(
     if edit_format in _LANDSCAPE_AND_FIT_FORMATS:
         fit_choices: tuple[str, ...] = FIT_CHOICES
         landscape_allowed = True
-    elif edit_format in _FIT_ONLY_FORMATS:
+    elif edit_format in _TALKING_FORMATS:
         fit_choices = FIT_CHOICES
-        landscape_allowed = False
+        landscape_allowed = True
     else:
         # narrated / speech-spined / slides: closed (a follow-up ticket).
         return RenderShapeOffer(
@@ -269,7 +273,14 @@ def creation_offer(
     default_orientation = "portrait"
     if landscape_allowed:
         previous = previous_orientation if previous_orientation in ORIENTATIONS else None
-        voted = vote_orientation(getattr(item, "clip_assignments", None))
+        # The phone Talking worker never picks a canvas on its own (no choice =
+        # portrait), so the preselected shape must not vote landscape from the
+        # clips either: only a re-render keeps the previous pick.
+        voted = (
+            None
+            if edit_format in _TALKING_FORMATS
+            else vote_orientation(getattr(item, "clip_assignments", None))
+        )
         default_orientation = previous or voted or "portrait"
     return RenderShapeOffer(
         orientations=orientations,
@@ -400,12 +411,15 @@ def device_editor_offer(
     voiceover_lanes: bool = False,
     guided_revision: bool = False,
     all_candidates: Mapping[str, Any] | None = None,
+    landscape_enabled: bool | None = None,
 ) -> EditorShapeOffer:
     """What Save accepts for a phone-rendered variant (never advertise more).
 
     ``subtitled_lanes`` / ``voiceover_lanes`` / ``guided_revision`` are the same
     predicates the matching Save branch checks first; passing them keeps the
-    advertised capability and the Save gate in lockstep.
+    advertised capability and the Save gate in lockstep. ``landscape_enabled``
+    is the ``LANDSCAPE_OUTPUT_ENABLED`` flag as the caller reads it (None = read
+    the environment at call time, like ``creation_offer``).
     """
     from app.services.phone_editor import (  # noqa: PLC0415
         is_phone_voiceover_montage_editor_variant,
@@ -419,7 +433,14 @@ def device_editor_offer(
         return ShapeAxis(False, reason, value)
 
     if variant.get("editor_timeline_mode") == "authored":
-        return EditorShapeOffer(None, closed("unsupported_archetype"))
+        return EditorShapeOffer(
+            # Only the subtitled map is opened by `_orientation_unsupported_reason`, so an
+            # authored-timeline one (whose Save never re-canvases) is closed here.
+            ShapeAxis(False, "unsupported_archetype", orientation_value)
+            if archetype == "subtitled"
+            else None,
+            closed("unsupported_archetype"),
+        )
 
     if orientation_value == "landscape":
         # Landscape never has bars: nothing to choose.
@@ -448,7 +469,20 @@ def device_editor_offer(
                 if subtitled_lanes
                 else closed("phone_edit_unsupported")
             )
-        return EditorShapeOffer(None, fit_axis)
+        # A phone Talking Save recompiles onto the chosen canvas (portrait or
+        # 1920x1080), so orientation is advertised exactly when the Save lane is
+        # open and the output flag is on. The base capability map closes
+        # `subtitled` for the CLOUD renderer; the route's `_orientation_unsupported_reason`
+        # lets a device-rendered subtitled variant through on the same two predicates.
+        if landscape_enabled is None:
+            landscape_enabled = landscape_output_enabled()
+        if not landscape_enabled:
+            orientation_axis = ShapeAxis(False, REASON_DISABLED, orientation_value)
+        elif not subtitled_lanes:
+            orientation_axis = ShapeAxis(False, "phone_edit_unsupported", orientation_value)
+        else:
+            orientation_axis = ShapeAxis(True, None, orientation_value)
+        return EditorShapeOffer(orientation_axis, fit_axis)
     if is_phone_voiceover_montage_editor_variant(variant, dict(assembly)):
         if fit_axis is None:
             if not voiceover_lanes:

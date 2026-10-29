@@ -127,7 +127,7 @@ PHONE_EDITOR_SAVED_PLAN_FIELD = "_phone_editor_saved_plan_v1"
 # KRI-216). Everything else the generic `_prepare_editor_commit` validators
 # already accepted for this archetype on cloud (`visual_blocks`,
 # `motion_scenes`, `camera_effects`, `timeline`, `mix`, `music`,
-# `orientation`, `text_elements`, ...) stays CLOSED on a device variant -- the
+# `text_elements`, ...) stays CLOSED on a device variant -- the
 # phone subtitled compiler has no lane for any of them, and Save must never
 # silently apply one it can't recompile.
 _SUBTITLED_EDITOR_SECTIONS = frozenset(
@@ -137,6 +137,11 @@ _SUBTITLED_EDITOR_SECTIONS = frozenset(
         "caption_cues",
         "caption_meta",
         "landscape_fit",
+        # A Talking edit re-canvases on Save: the same recipe recompiles onto the
+        # portrait (1080x1920) or the landscape (1920x1080) canvas. The capability
+        # (`render_shape.device_editor_offer`) and `_orientation_unsupported_reason`
+        # advertise it on the same lane-rollout predicate this branch checks first.
+        "orientation",
         # KRI-589: freehand drawings compile into the recipe's `drawing_layers`.
         "drawings",
     }
@@ -193,6 +198,25 @@ def _resolved_landscape_fit(
     if isinstance(previous_recipe, EditRecipeV2):
         return landscape_fit_from_recipe(previous_recipe)
     return "fill"
+
+
+def _resolved_output_orientation(
+    variant: dict, previous_recipe: Any, override: str | None = None
+) -> str:
+    """Canvas for a phone Talking Save: the section's choice -> the variant's persisted
+    ``orientation`` -> the canvas the pinned recipe was compiled on -> portrait."""
+    for candidate in (override, variant.get("orientation")):
+        if candidate in ("portrait", "landscape"):
+            return str(candidate)
+    return _recipe_orientation(previous_recipe) or "portrait"
+
+
+def _recipe_orientation(recipe: Any) -> str | None:
+    canvas = getattr(recipe, "canvas", None)
+    width, height = getattr(canvas, "width", None), getattr(canvas, "height", None)
+    if isinstance(width, int | float) and isinstance(height, int | float):
+        return "landscape" if width > height else "portrait"
+    return None
 
 
 def is_phone_narrated_editor_variant(variant: object) -> bool:
@@ -1208,6 +1232,16 @@ def _compile_subtitled_editor_commit(
     landscape_fit = _resolved_landscape_fit(
         variant, previous.recipe, prep.get("landscape_fit_override")
     )
+    # A landscape canvas never has bars and has no sideways overflow to face-fill, so it
+    # compiles "fill" with no speaker shift whatever bars choice is persisted (the choice
+    # re-opens, as persisted, when the creator switches back to portrait).
+    output_orientation = _resolved_output_orientation(
+        variant, previous.recipe, prep.get("orientation_override")
+    )
+    landscape_canvas = output_orientation == "landscape"
+    canvas_changed = (_recipe_orientation(previous.recipe) or "portrait") != output_orientation
+    if landscape_canvas:
+        landscape_fit = "fill"
     # KRI-547: a face-filled speaker keeps its crop on Save, drops it when the
     # creator picks black bars, and gets it back when they pick crop again.
     # A variant without a framing receipt compiles exactly as before. Imported here:
@@ -1216,11 +1250,19 @@ def _compile_subtitled_editor_commit(
     from app.pipeline.phone_speaker_framing import (  # noqa: PLC0415
         SPEAKER_FRAMING_FIELD,
         editor_speaker_framing,
+        landscape_canvas_framing,
     )
 
-    speaker_position_x, framing_receipt = editor_speaker_framing(
-        variant.get(SPEAKER_FRAMING_FIELD), landscape_fit=landscape_fit
-    )
+    if landscape_canvas:
+        # No face-fill on a wide canvas: the receipt says so (`landscape_canvas`) but keeps its
+        # window, checks and prior mode, so a switch back to portrait + crop re-derives the
+        # face crop (`editor_speaker_framing`).
+        speaker_position_x = None
+        framing_receipt = landscape_canvas_framing(variant.get(SPEAKER_FRAMING_FIELD))
+    else:
+        speaker_position_x, framing_receipt = editor_speaker_framing(
+            variant.get(SPEAKER_FRAMING_FIELD), landscape_fit=landscape_fit
+        )
 
     recipe = compile_phone_subtitled_plan(
         (speaker,),
@@ -1239,6 +1281,8 @@ def _compile_subtitled_editor_commit(
         text_elements=variant.get("text_elements") or [],
         text_elements_user_edited=bool(variant.get("text_elements_user_edited")),
         **({"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}),
+        # Only a landscape canvas names itself: the portrait call stays byte-identical.
+        **({"output_orientation": "landscape"} if landscape_canvas else {}),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
     # A native same-source cut normally borrows 25 ms of removed audio to
@@ -1309,12 +1353,19 @@ def _compile_subtitled_editor_commit(
             row["caption_cues"] = caption_cues
         if framing_receipt is not None:
             row[SPEAKER_FRAMING_FIELD] = framing_receipt
+        if landscape_canvas:
+            row["orientation"] = "landscape"
+            # The variant carries the canvas's own truth: a landscape one never has bars.
+            row["landscape_fit"] = "fill"
+        elif canvas_changed or "orientation" in prep["sections"]:
+            row["orientation"] = "portrait"
         _restale_protected_text(
             row,
             speaker=speaker,
             keep_segments=keep_segments,
             landscape_fit=landscape_fit,
             speaker_position_x=speaker_position_x,
+            canvas_changed=canvas_changed,
         )
         _persist_lane_state(
             row, lanes, labels, paths, caption_style=caption_style, duck_receipt=duck_receipt
@@ -1328,6 +1379,7 @@ def _restale_protected_text(
     keep_segments: list[tuple[float, float]] | None,
     landscape_fit: str,
     speaker_position_x: float | None,
+    canvas_changed: bool = False,
 ) -> None:
     """KRI-827: a Save that changed the cut, the crop or the bars the protected-text
     receipt was measured with marks it ``stale`` (the review then says the text was not
@@ -1341,6 +1393,17 @@ def _restale_protected_text(
 
     receipt = row.get(PROTECTED_TEXT_FIELD)
     if not isinstance(receipt, Mapping):
+        return
+    if canvas_changed:
+        # The receipt's boxes were measured on the other canvas (portrait <-> landscape);
+        # nothing it stores says which, so the verdict is never carried across.
+        from app.kria.protected_targets import stale_protected_text  # noqa: PLC0415
+
+        row[PROTECTED_TEXT_FIELD] = (
+            receipt
+            if receipt.get("stale_reason")
+            else stale_protected_text(receipt, "edited_geometry")
+        )
         return
     try:
         width, height = display_dims(speaker.original)
