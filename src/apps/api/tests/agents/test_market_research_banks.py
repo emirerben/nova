@@ -224,8 +224,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     #                  (allexmarielle 9to5 professional aesthetic lane).
     # Bump 2026-07-11-kria: product rename only; banks untouched.
     # Bump 2026-10-21-language: creator-language line (KRI-784); banks untouched.
-    assert archetypes_version() == "2026-10-22-research-18"
-    assert PERSONA_PROMPT_VERSION == "2026-10-22-research-18"
+    # Bump 2026-10-25-research-19: weekly refresh — added seasonal-culture-lens-01
+    #                  (allexmarielle pop-culture season filter, vi=3.92x).
+    assert archetypes_version() == "2026-10-25-research-19"
+    assert PERSONA_PROMPT_VERSION == "2026-10-25-research-19"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -248,8 +250,10 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
     # 2026-10-21-language: creator-language line (KRI-784); banks untouched.
-    assert content_ideas_version() == "2026-10-22-research-18"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-22-research-18"
+    # Bump 2026-10-25-research-19: weekly refresh — added season-culture-lens-01,
+    #                  minimal-verdict-aesthetic-01.
+    assert content_ideas_version() == "2026-10-25-research-19"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-25-research-19"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -270,11 +274,11 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     #                  (plans/015 — monkey/marketing incident); banks untouched here
     #                  (success-factor bank unchanged; overlay bank moved separately).
     # Persona/content plan bumped to 2026-10-21-language (KRI-784); banks untouched.
-    assert success_factors_version() == "2026-10-22-research-18"
-    assert PERSONA_PROMPT_VERSION == "2026-10-22-research-18"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-22-research-18"
-    # Runtime hook guidance changes the consuming prompt, not the research bank.
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-25-grounded-hook-v3"
+    # Bump 2026-10-25-research-19: dated two-word caption reference; causal effect unmeasured.
+    assert success_factors_version() == "2026-10-25-research-19"
+    assert PERSONA_PROMPT_VERSION == "2026-10-25-research-19"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-25-research-19"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-29-research-19-grounded-hook-v3"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -308,9 +312,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  every exemplar against the slop pattern class.
     # Bump 2026-10-11: weekly research refresh — added early-morning-commitment-scaleup-01
     #                  and series-comeback-fadein-01; bumped both consuming agents.
-    assert library_version() == "2026-10-22-research-18"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-25-grounded-hook-v3"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-10-22-research-18"
+    # Bump 2026-10-25-research-19: weekly refresh — added minimal-verdict-static-01
+    #                  (2-word aesthetic verdict form, "kinda chic" pattern).
+    assert library_version() == "2026-10-25-research-19"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-29-research-19-grounded-hook-v3"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-10-25-research-19"
 
 
 @pytest.mark.parametrize(
