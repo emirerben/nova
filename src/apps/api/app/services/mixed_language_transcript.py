@@ -26,7 +26,15 @@ So the language is decided per stretch, from evidence, and never forced onto the
   inside a take reads as a pause to the speech-cleanup cut plan, which then removes it. On T1 that
   cut 12-14.4 s of table sound; a short Gemini reference erased 13-20 s of real Turkish speech.
   Only the first-pass stretches an extra pass replaced are gone. Past what the reference covers
-  (Gemini only hears the first 30 s) no extra pass is a candidate at all.
+  (Gemini's first look hears only the first 30 s; the preflight worker asks again for the rest of
+  a mixed take) no extra pass is a candidate at all.
+* A stretch no pass wrote a word for, where the reference has speech, is listened to again alone
+  (``unheard_stretches``, KRI-1016). Plaza T2 (48 s, English and Turkish): the Turkish pass wrote
+  nothing over 6.4-13.4 s and 26.3-31.7 s of real Turkish and the English pass had nothing there
+  either, so no pass could win them and the cleanup read them as pauses. Cut out on its own, a
+  stretch has no other-language speech to be translated into, so whisper writes it in its own
+  language. The caller transcribes it once per language and hands the words back as extra passes:
+  they are kept only where the reference confirms them, so a translation is not.
 
 Pure functions; the caller supplies the transcription passes.
 """
@@ -41,6 +49,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.pipeline.silence_cut import is_filler_token
 from app.services.clip_speech_check import MIN_HEARD_SHARE, clean_words
 from app.services.speech_segments import sentence_groups
 from app.services.transcript_quality import speech_tokens
@@ -234,7 +243,13 @@ class _Reference:
         return sorted(found)
 
     def heard(self, tokens: Sequence[str]) -> list[bool]:
-        """Which of ``tokens`` sit, in order, where the reference has them.
+        """Which of ``tokens`` sit, in order, where the reference has them."""
+        matched = self.matches(tokens)
+        return [j in matched for j in range(len(tokens))]
+
+    def matches(self, tokens: Sequence[str]) -> dict[int, int]:
+        """Each of ``tokens`` that sits, in order, where the reference has it: index -> its
+        place in the reference.
 
         The longest common subsequence under exact-or-close matching (Hunt-Szymanski), so a
         word counts only if the words before and after it also line up.
@@ -252,12 +267,12 @@ class _Reference:
                 else:
                     thresholds[k] = i
                     chains[k] = node
-        flags = [False] * len(tokens)
+        found: dict[int, int] = {}
         node = chains[-1] if chains else None
         while node is not None:
-            flags[node[0]] = True
+            found[node[0]] = node[1]
             node = node[2]
-        return flags
+        return found
 
 
 # -- 3. which pass wins which stretch? -----------------------------------------------------------
@@ -311,7 +326,13 @@ class _Group:
         )
 
 
-def _groups(index: int, mixed: MixedPass, reference: _Reference, words: list[dict]) -> list[_Group]:
+def _groups(
+    index: int,
+    mixed: MixedPass,
+    reference: _Reference,
+    words: list[dict],
+    keep_tokenless: bool = False,
+) -> list[_Group]:
     owners: list[int] = []
     tokens: list[str] = []
     for position, word in enumerate(words):
@@ -338,7 +359,9 @@ def _groups(index: int, mixed: MixedPass, reference: _Reference, words: list[dic
                 if flag:
                     group.heard += 1
                     group.content_heard += len(token) >= _CONTENT_MIN_LEN
-        if group.length:
+        # A sentence with no speech token ("1810.") can never be confirmed (heard stays 0), but
+        # the first pass wrote it: with ``keep_tokenless`` it stands like any unconfirmed stretch.
+        if group.length or (keep_tokenless and index == 0):
             groups.append(group)
     return groups
 
@@ -397,6 +420,7 @@ def merge_passes(
     *,
     duration_s: float,
     covers_s: float | None = None,
+    keep_tokenless: bool = False,
 ) -> MixedMerge | None:
     """The first pass, with each stretch another pass has confirmed better taken from that pass.
 
@@ -406,6 +430,9 @@ def merge_passes(
     ``covers_s`` is how much of the take the reference heard (None: all of it); no extra-pass
     stretch starting at or after it is a candidate. Returns None when no extra pass confirms
     anything the first pass does not (the caller then keeps the first pass as it is).
+    ``keep_tokenless`` keeps the first pass's sentences with no word in them to compare ("1810."),
+    which the single-language path keeps too: dropped, they leave wordless sound that the
+    cleanup cut reads as a pause.
     """
     reference = _Reference(reference_text)
     if not reference.tokens:
@@ -417,7 +444,7 @@ def merge_passes(
     candidates: list[_Group] = []
     first_groups: list[_Group] = []
     for index, mixed in enumerate(passes):
-        for group in _groups(index, mixed, reference, list(mixed.words)):
+        for group in _groups(index, mixed, reference, list(mixed.words), keep_tokenless):
             if index == 0:
                 first_groups.append(group)
             if group.confirmed and (covers_s is None or group.start_s < covers_s):
@@ -481,11 +508,120 @@ def merge_passes(
     )
 
 
+# -- 4. which stretches did no pass hear? --------------------------------------------------------
+
+# A wordless stretch at least this long (shorter ones are ordinary pauses) that stands for at
+# least this many reference words nothing matched is listened to again. A take re-listens to at
+# most this many stretches, with at most this many transcription calls in all (one per language
+# per stretch), each cut this much wider than the stretch so no word is clipped at its edge.
+RELISTEN_MIN_GAP_S = 1.0
+RELISTEN_MIN_TOKENS = 2
+RELISTEN_MAX_STRETCHES = 3
+RELISTEN_MAX_CALLS = 6
+RELISTEN_PAD_S = 0.25
+
+
+@dataclass(frozen=True)
+class UnheardStretch:
+    """A stretch of the take with no transcript word where the reference has speech."""
+
+    start_s: float
+    end_s: float
+    reference_tokens: int  # reference words, fillers not counted, that no transcript word matched
+
+
+def _widest_gap(
+    start_s: float, spans: Sequence[tuple[float, float]], end_s: float
+) -> tuple[float, float]:
+    """The longest part of ``[start_s, end_s]`` that none of ``spans`` (time order) covers."""
+    best = (start_s, start_s)
+    cursor = start_s
+    for span_start, span_end in [*spans, (end_s, end_s)]:
+        if span_start - cursor > best[1] - best[0]:
+            best = (cursor, span_start)
+        cursor = max(cursor, span_end)
+    return best
+
+
+def unheard_stretches(
+    words: Sequence[dict[str, Any]],
+    reference_text: str,
+    *,
+    duration_s: float,
+    covers_s: float | None = None,
+) -> tuple[UnheardStretch, ...]:
+    """Where ``words`` (the transcript to store) are silent but the reference heard speech.
+
+    The merge above only ever picks between words some pass wrote, so a stretch no pass wrote
+    anything for stays wordless, and the cleanup cut reads it as a pause (Plaza T2, KRI-1016:
+    two stretches of real Turkish, about 12 s of a 48 s take). The words are aligned to the
+    reference in order; between two words the reference confirms, the reference words nothing
+    matched stand for the stretch between them. Such a stretch is returned when at least
+    `RELISTEN_MIN_TOKENS` of them are not fillers and the widest part with no word of any kind
+    in it is at least `RELISTEN_MIN_GAP_S` long: a word that matches nothing still occupies its
+    own time. Nothing past ``covers_s`` (how much of the take the reference heard) is returned.
+    At most `RELISTEN_MAX_STRETCHES`, the ones standing for the most reference words, in time
+    order.
+    """
+    reference = _Reference(reference_text)
+    if not reference.tokens:
+        return ()
+    limit = min(duration_s, duration_s if covers_s is None else covers_s)
+    ordered = sorted(
+        (word for word in words if float(word["start_s"]) < limit),
+        key=lambda word: (float(word["start_s"]), float(word["end_s"])),
+    )
+    tokens: list[str] = []
+    owners: list[int] = []
+    for position, word in enumerate(ordered):
+        for token in _fold_tokens(word["text"]):
+            tokens.append(token)
+            owners.append(position)
+    matched = reference.matches(tokens)
+    places: dict[int, list[int]] = defaultdict(list)
+    for index in sorted(matched):
+        places[owners[index]].append(matched[index])
+
+    found: list[UnheardStretch] = []
+    previous_end, previous_place = 0.0, -1
+    loose: list[tuple[float, float]] = []  # words since the last anchor that matched nothing
+    for position, word in [*enumerate(ordered), (len(ordered), None)]:
+        if word is None:  # the end of what the reference covers closes the last stretch
+            next_start, first, last = limit, len(reference.tokens), len(reference.tokens)
+        elif position in places:
+            next_start = float(word["start_s"])
+            first, last = places[position][0], places[position][-1]
+        else:
+            loose.append((float(word["start_s"]), float(word["end_s"])))
+            continue
+        missing = sum(
+            not is_filler_token(token) for token in reference.tokens[previous_place + 1 : first]
+        )
+        if missing >= RELISTEN_MIN_TOKENS:
+            start, end = _widest_gap(previous_end, loose, next_start)
+            end = min(end, limit)
+            if end - start >= RELISTEN_MIN_GAP_S:
+                found.append(UnheardStretch(start, end, missing))
+        if word is not None:
+            previous_end = float(word["end_s"])
+        previous_place, loose = last, []
+    # `sorted` is stable: of equally long stretches the earlier one stays.
+    most = sorted(found, key=lambda stretch: -stretch.reference_tokens)[:RELISTEN_MAX_STRETCHES]
+    return tuple(sorted(most, key=lambda stretch: stretch.start_s))
+
+
 __all__ = [
     "LEXICONS",
     "MAX_EXTRA_PASSES",
+    "RELISTEN_MAX_CALLS",
+    "RELISTEN_MAX_STRETCHES",
+    "RELISTEN_MIN_GAP_S",
+    "RELISTEN_MIN_TOKENS",
+    "RELISTEN_PAD_S",
     "MixedMerge",
     "MixedPass",
+    "UnheardStretch",
     "merge_passes",
     "reference_languages",
+    "unheard_stretches",
 ]

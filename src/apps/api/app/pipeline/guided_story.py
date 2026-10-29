@@ -2079,7 +2079,10 @@ def _narration_caption_meta(snapshot: EditProposalSnapshot) -> dict[str, Any] | 
     if narration is None:
         # KRI-569: a song montage's lyric captions use the same caption controls.
         track = snapshot.song_captions
-        return {"style": track.caption_style, "y_frac": 0.7} if track is not None else None
+        if track is None:
+            return None
+        meta = {"style": track.caption_style, "y_frac": 0.7}
+        return {**meta, "enabled": False} if track.hidden else meta
     if narration.caption_style is None:
         return None
     return {"style": narration.caption_style, "y_frac": 0.7}

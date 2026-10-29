@@ -383,8 +383,38 @@ def test_phone_save_persists_highlight_preset_and_bumps_generation(monkeypatch, 
 
 @pytest.mark.parametrize(
     ("phase", "value"),
-    [("entrance", value) for value in ("none", "fade", "pop", "slide", "typewriter")]
-    + [("exit", value) for value in ("none", "fade", "pop", "slide", "typewriter")]
+    [
+        ("entrance", value)
+        for value in (
+            "none",
+            "fade",
+            "pop",
+            "slide",
+            "typewriter",
+            "silkReveal",
+            "elasticCondensed",
+            "focusPull",
+            "wordRelay",
+            "ribbonWipe",
+            "echoStack",
+        )
+    ]
+    + [
+        ("exit", value)
+        for value in (
+            "none",
+            "fade",
+            "pop",
+            "slide",
+            "typewriter",
+            "silkReveal",
+            "elasticCondensed",
+            "focusPull",
+            "wordRelay",
+            "ribbonWipe",
+            "echoStack",
+        )
+    ]
     + [("loop", value) for value in ("none", "pulse", "bounce", "float")],
 )
 @pytest.mark.parametrize("guided_v2", [False, True], ids=["legacy", "guided-v2"])
@@ -407,6 +437,20 @@ def test_phone_save_persists_every_native_text_phase(monkeypatch, phase, value, 
     assert prep["generation"] != "first"
     assert request.identity.recipe_revision == 2
     assert getattr(request.recipe.text_layers[0].animation_phases, phase) == value
+    if value in {
+        "silkReveal",
+        "elasticCondensed",
+        "focusPull",
+        "wordRelay",
+        "ribbonWipe",
+        "echoStack",
+    }:
+        from app.routes import device_render
+
+        monkeypatch.setattr(device_render, "_caller_protocol", lambda: 22)
+        detail = device_render._client_update_detail(job, {}, device_status(job, "guided_story"))
+        assert detail["feature"] == "designed_text_motion"
+        assert detail["minimum_client_protocol"] == 23
 
 
 @pytest.mark.parametrize("speed", [0.25, 3.0])

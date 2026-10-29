@@ -2,6 +2,7 @@
 
 import uuid
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +57,8 @@ def _for_client(value, client_protocol: int | None):
                 story.content_plan.open_questions = []
     return value
 
+
+log = structlog.get_logger()
 
 router = APIRouter(
     prefix="/me/media-collections",
@@ -294,14 +297,24 @@ async def select_story(
     from app.services.media_collection_stories import select_story as select
     from app.tasks.kria_runtime import run_kria_turn
 
-    accepted, publish = await select(
-        db,
-        user.id,
-        identifier,
-        story_id,
-        body,
-        gate_open_questions=_asks_open_questions(client_protocol),
-    )
+    try:
+        accepted, publish = await select(
+            db,
+            user.id,
+            identifier,
+            story_id,
+            body,
+            gate_open_questions=_asks_open_questions(client_protocol),
+        )
+    except HTTPException as error:
+        if error.status_code == 409:
+            log.warning(
+                "story_select_conflict",
+                collection_id=str(identifier),
+                story_id=str(story_id),
+                detail=error.detail,
+            )
+        raise
     if publish:
         try:
             run_kria_turn.delay(accepted.turn_id)

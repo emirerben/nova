@@ -1,0 +1,743 @@
+{
+ "fixture_id": "29-ekim",
+ "schema_version": 1,
+ "source": {
+  "thread_id": "729b3686-291b-4a8a-9593-218e36c7e57b",
+  "plan_item_id": "9b336be0-d2df-475c-abbc-0f6577cdcb04",
+  "job_id": "51f7124f-d790-48dc-b9bc-eb789220c9d6",
+  "prod_main_sha": "4e06062dc",
+  "captured": "2026-10-29 via read-only admin GETs",
+  "redacted": [
+   "user ids",
+   "storage paths",
+   "signed urls",
+   "library ids",
+   "file names",
+   "hashes",
+   "media ids (now clip-NN)",
+   "music beat timestamps"
+  ],
+  "model_outputs": "nova.creator.main outputs are stored by prod as key names only; T4 (recorded strategy) is exact, T1 to T3 are reconstructed from the persisted ledger and replies, T5 and T6 never returned (provider deadline)."
+ },
+ "messages": [
+  {
+   "turn": "T1",
+   "turn_id": "9a8ede4e-756c-4e7d-ac28-b22f4ac6655a",
+   "text": "Show all content in random order. Show each word one by one for as long as it takes and say “Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun”",
+   "choice_selection": null
+  },
+  {
+   "turn": "T2",
+   "turn_id": "7023be87-bb58-4053-a9ab-b0ac728c0754",
+   "text": "I meant say to nean show as a title. Show each word after the other in the text",
+   "choice_selection": null
+  },
+  {
+   "turn": "T3",
+   "turn_id": "20b5604c-72bd-4f2e-97cf-7125c7ee2609",
+   "text": "Standard title",
+   "choice_selection": {
+    "option_key": "option_1"
+   }
+  },
+  {
+   "turn": "T4",
+   "turn_id": "a196a4f7-a553-423b-8617-6461546ec2b2",
+   "text": "Make it without these",
+   "choice_selection": {
+    "option_key": "simpler_version"
+   }
+  },
+  {
+   "turn": "T5",
+   "turn_id": "257460a2-429a-43f5-bee4-a06e6d631ade",
+   "text": "Split it into pieces, word by word",
+   "choice_selection": null
+  },
+  {
+   "turn": "T6",
+   "turn_id": "5f3c259d-eaac-4862-b93f-ba8712aa0966",
+   "text": "Try again",
+   "choice_selection": null
+  }
+ ],
+ "clips": [
+  {
+   "id": "clip-01",
+   "kind": "video",
+   "duration_s": 7.135,
+   "subject": "panoramic view of ancient ruins closer view of library facade",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-02",
+   "kind": "video",
+   "duration_s": 4.167,
+   "subject": "passenger boat moving across water scenic view of Bosphorus with boats and city",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-03",
+   "kind": "video",
+   "duration_s": 5.867,
+   "subject": "ferry boat cruising past city city panorama with moving boat",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-04",
+   "kind": "video",
+   "duration_s": 3.7,
+   "subject": "ornate palace gate establishing shot",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-05",
+   "kind": "video",
+   "duration_s": 3.6,
+   "subject": "static view of clock tower camera slightly zooms out from clock tower",
+   "best_part": {
+    "source_start_s": 3.0,
+    "source_end_s": 3.6
+   }
+  },
+  {
+   "id": "clip-06",
+   "kind": "video",
+   "duration_s": 6.535,
+   "subject": "calm water with distant green hills boat moving across the water",
+   "best_part": {
+    "source_start_s": 3.5,
+    "source_end_s": 4.169
+   }
+  },
+  {
+   "id": "clip-07",
+   "kind": "video",
+   "duration_s": 3.798,
+   "subject": "camera passes a beige building on a corner camera glides past multiple colorful historic buildings",
+   "best_part": {
+    "source_start_s": 2.0,
+    "source_end_s": 2.669
+   }
+  },
+  {
+   "id": "clip-08",
+   "kind": "video",
+   "duration_s": 2.067,
+   "subject": "water surface rippling",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-09",
+   "kind": "video",
+   "duration_s": 1.92,
+   "subject": "wide shot of ancient ruins",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-10",
+   "kind": "video",
+   "duration_s": 2.4,
+   "subject": "display of ancient statues and carvings static shot of museum exhibit",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-11",
+   "kind": "video",
+   "duration_s": 2.88,
+   "subject": "museum visitor enters frame visitors observe sarcophagus",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-12",
+   "kind": "video",
+   "duration_s": 8.16,
+   "subject": "aerial view of dry hills with ruins camera pans to reveal calm blue sea wide shot of sea and distant mountains",
+   "best_part": {
+    "source_start_s": 3.0,
+    "source_end_s": 3.669
+   }
+  },
+  {
+   "id": "clip-13",
+   "kind": "video",
+   "duration_s": 1.92,
+   "subject": "view of cobblestone street",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-14",
+   "kind": "video",
+   "duration_s": 2.88,
+   "subject": "person walks across rocky hill person continues walking on hill",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-15",
+   "kind": "video",
+   "duration_s": 3.003,
+   "subject": "man exiting the vintage car",
+   "best_part": {
+    "source_start_s": 1.1,
+    "source_end_s": 1.769
+   }
+  },
+  {
+   "id": "clip-16",
+   "kind": "video",
+   "duration_s": 3.0,
+   "subject": "men stand in a field with harvested crops",
+   "best_part": {
+    "source_start_s": 1.1,
+    "source_end_s": 1.769
+   }
+  },
+  {
+   "id": "clip-17",
+   "kind": "video",
+   "duration_s": 2.002,
+   "subject": "illuminated Hagia Sophia against evening sky",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-18",
+   "kind": "video",
+   "duration_s": 8.303,
+   "subject": "boat motors away from harbor boat moves across the water at sunset",
+   "best_part": {
+    "source_start_s": 4.0,
+    "source_end_s": 4.669
+   }
+  },
+  {
+   "id": "clip-19",
+   "kind": "video",
+   "duration_s": 3.0,
+   "subject": "tractor pulls seed drill tractor wheel spinning quickly",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-20",
+   "kind": "video",
+   "duration_s": 3.036,
+   "subject": "aerial view of travertine pools",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-21",
+   "kind": "video",
+   "duration_s": 4.0,
+   "subject": "team huddles in ecstatic celebration",
+   "best_part": {
+    "source_start_s": 1.0,
+    "source_end_s": 1.669
+   }
+  },
+  {
+   "id": "clip-22",
+   "kind": "video",
+   "duration_s": 4.0,
+   "subject": "women gather around subject women adjust garment on subject",
+   "best_part": {
+    "source_start_s": 2.0,
+    "source_end_s": 2.669
+   }
+  },
+  {
+   "id": "clip-23",
+   "kind": "video",
+   "duration_s": 1.001,
+   "subject": "camera slowly pans across travertine terraces camera continues panning over the white terraces and blue pools",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-24",
+   "kind": "video",
+   "duration_s": 3.0,
+   "subject": "static display of portrait with text",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-25",
+   "kind": "video",
+   "duration_s": 2.002,
+   "subject": "",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-26",
+   "kind": "video",
+   "duration_s": 4.0,
+   "subject": "prominent men walk forward",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  },
+  {
+   "id": "clip-27",
+   "kind": "video",
+   "duration_s": 2.0,
+   "subject": "chariots and riders advance across field chariots and riders pause in distance",
+   "best_part": {
+    "source_start_s": 0.0,
+    "source_end_s": 0.669
+   }
+  }
+ ],
+ "timeline": [
+  {
+   "turn": "T1",
+   "status": "completed",
+   "wall_ms": 65632,
+   "error": null
+  },
+  {
+   "turn": "T2",
+   "status": "completed",
+   "wall_ms": 77960,
+   "error": null
+  },
+  {
+   "turn": "T3",
+   "status": "completed",
+   "wall_ms": 38378,
+   "error": null
+  },
+  {
+   "turn": "T4",
+   "status": "failed",
+   "wall_ms": 74605,
+   "error": {
+    "code": "phone_plan_unsupported",
+    "recovery": "ask_user",
+    "retryable": false,
+    "field_path": "phone_text_style",
+    "decline_reason": "needs_choice"
+   }
+  },
+  {
+   "turn": "T5",
+   "status": "failed",
+   "wall_ms": 186591,
+   "error": {
+    "code": "runtime_provider_outcome_unknown",
+    "recovery": "retry",
+    "retryable": true,
+    "error_class": "ProviderOutcomeUnknownError",
+    "error_message": "gemini provider outcome unknown after 91.5s"
+   }
+  },
+  {
+   "turn": "T6",
+   "status": "failed",
+   "wall_ms": 388661,
+   "error": {
+    "code": "runtime_provider_outcome_unknown",
+    "recovery": "retry",
+    "retryable": true,
+    "error_class": "ProviderOutcomeUnknownError",
+    "error_message": "gemini provider outcome unknown after 27.6s"
+   }
+  }
+ ],
+ "agent_runs": [
+  {
+   "turn": "T1",
+   "agent": "nova.creator.main",
+   "model": "gemini-3.1-pro-preview",
+   "prompt_version": "2026-10-27-v100",
+   "outcome": "ok",
+   "attempts": 1,
+   "tokens_in": 31062,
+   "tokens_out": 580,
+   "latency_ms": 52306,
+   "error": null,
+   "output_keys": [
+    "action",
+    "brief_updates"
+   ]
+  },
+  {
+   "turn": "T1",
+   "agent": "nova.audio.music_matcher",
+   "model": "gemini-2.5-flash",
+   "prompt_version": "2026-10-15",
+   "outcome": "ok",
+   "attempts": 1,
+   "tokens_in": 15297,
+   "tokens_out": 496,
+   "latency_ms": 4161,
+   "error": null,
+   "output_keys": null
+  },
+  {
+   "turn": "T2",
+   "agent": "nova.creator.main",
+   "model": "gemini-3.1-pro-preview",
+   "prompt_version": "2026-10-27-v100",
+   "outcome": "ok",
+   "attempts": 2,
+   "tokens_in": 62319,
+   "tokens_out": 932,
+   "latency_ms": 77581,
+   "error": null,
+   "output_keys": [
+    "action",
+    "brief_updates"
+   ]
+  },
+  {
+   "turn": "T3",
+   "agent": "nova.creator.main",
+   "model": "gemini-3.1-pro-preview",
+   "prompt_version": "2026-10-27-v100",
+   "outcome": "ok",
+   "attempts": 1,
+   "tokens_in": 31160,
+   "tokens_out": 419,
+   "latency_ms": 23921,
+   "error": null,
+   "output_keys": [
+    "action"
+   ]
+  },
+  {
+   "turn": "T3",
+   "agent": "nova.audio.music_matcher",
+   "model": "gemini-2.5-flash",
+   "prompt_version": "2026-10-15",
+   "outcome": "ok",
+   "attempts": 1,
+   "tokens_in": 15297,
+   "tokens_out": 503,
+   "latency_ms": 3794,
+   "error": null,
+   "output_keys": null
+  },
+  {
+   "turn": "T4",
+   "agent": "nova.creator.main",
+   "model": "gemini-3.1-pro-preview",
+   "prompt_version": "2026-10-27-v100",
+   "outcome": "ok",
+   "attempts": 1,
+   "tokens_in": 31270,
+   "tokens_out": 627,
+   "latency_ms": 41251,
+   "error": null,
+   "output_keys": [
+    "action",
+    "brief_updates"
+   ]
+  },
+  {
+   "turn": "T4",
+   "agent": "nova.audio.music_matcher",
+   "model": "gemini-2.5-flash",
+   "prompt_version": "2026-10-15",
+   "outcome": "ok",
+   "attempts": 1,
+   "tokens_in": 15297,
+   "tokens_out": 506,
+   "latency_ms": 3974,
+   "error": null,
+   "output_keys": null
+  },
+  {
+   "turn": "T5",
+   "agent": "nova.creator.main",
+   "model": "gemini-3.1-pro-preview",
+   "prompt_version": "2026-10-27-v100",
+   "outcome": "terminal_unknown",
+   "attempts": 2,
+   "tokens_in": 31492,
+   "tokens_out": 2050,
+   "latency_ms": 179761,
+   "error": "sensitive_agent_error",
+   "output_keys": null
+  },
+  {
+   "turn": "T6",
+   "agent": "nova.creator.main",
+   "model": "gemini-3.1-pro-preview",
+   "prompt_version": "2026-10-27-v100",
+   "outcome": "terminal_unknown",
+   "attempts": 3,
+   "tokens_in": 63109,
+   "tokens_out": 2448,
+   "latency_ms": 179711,
+   "error": "sensitive_agent_error",
+   "output_keys": null
+  }
+ ],
+ "replies": {
+  "9a8ede4e-756c-4e7d-ac28-b22f4ac6655a": {
+   "kind": "assistant_response",
+   "text": "Bunu henüz yapamıyorum:\n- Show all content in random order: Kaydedilmiş bu grubun iç sırası belirtilmemiş. Sırayı seç ya da grup içindeki herhangi bir sıranın uygun olduğunu onayla.\n- Show each word one by one: Bu taslağın bunu yaptığını henüz doğrulayamıyorum.\nBu ilk taslağı şimdilik beklettim. Daha basit sürümde çıkarılacak: Show all content in random order; Show each word one by one. Bunlar olmadan mı hazırlayayım, yoksa isteğini mi değiştirmek istersin?",
+   "code": null,
+   "choice_options": [
+    {
+     "key": "change_request",
+     "label": "İsteğimi değiştir"
+    },
+    {
+     "key": "simpler_version",
+     "label": "Bunlar olmadan hazırla"
+    }
+   ],
+   "conflict": "simplification_requires_choice"
+  },
+  "7023be87-bb58-4053-a9ab-b0ac728c0754": {
+   "kind": "assistant_response",
+   "text": "Since word-by-word animation (karaoke style) is currently only available for spoken voiceovers, I can't apply it to a regular title. Should we show this as a standard on-screen title, or would you rather record yourself reading it to get that exact word-by-word effect?\n1. Standard title\n2. I'll record it\nTap an option, or tell me in your own words.",
+   "code": null,
+   "choice_options": [
+    {
+     "key": "option_1",
+     "label": "Standard title"
+    },
+    {
+     "key": "option_2",
+     "label": "I'll record it"
+    }
+   ],
+   "conflict": "ask_user:word_by_word_unsupported"
+  },
+  "20b5604c-72bd-4f2e-97cf-7125c7ee2609": {
+   "kind": "assistant_response",
+   "text": "I can't make this yet:\n- Show all content in random order: The order inside this saved group wasn't recorded. Choose the order, or confirm that any order within the group is fine.\nI held this first draft back. The simpler version leaves out: Show all content in random order. Should I make it without these, or do you want to change your request?",
+   "code": null,
+   "choice_options": [
+    {
+     "key": "change_request",
+     "label": "Change my request"
+    },
+    {
+     "key": "simpler_version",
+     "label": "Make it without these"
+    }
+   ],
+   "conflict": "simplification_requires_choice"
+  },
+  "a196a4f7-a553-423b-8617-6461546ec2b2": {
+   "kind": "assistant_render_failed",
+   "text": "This text cannot fit clearly in the requested area. Choose another placement or shorter text. Choose another font or placement",
+   "code": "phone_plan_unsupported",
+   "choice_options": [],
+   "conflict": null
+  },
+  "257460a2-429a-43f5-bee4-a06e6d631ade": {
+   "kind": "assistant_error",
+   "text": "I couldn't get a completed response from the AI service. Your request and footage are saved. Please try again in a moment.",
+   "code": "runtime_provider_outcome_unknown",
+   "choice_options": [],
+   "conflict": null
+  },
+  "5f3c259d-eaac-4862-b93f-ba8712aa0966": {
+   "kind": "assistant_error",
+   "text": "I couldn't get a completed response from the AI service. Your request and footage are saved. Please try again in a moment.",
+   "code": "runtime_provider_outcome_unknown",
+   "choice_options": [],
+   "conflict": null
+  }
+ },
+ "brief_ledger_v3": [
+  {
+   "id": "r1",
+   "kind": "order",
+   "facts": {},
+   "scope": "global",
+   "status": "superseded",
+   "literal": null,
+   "description": "Show all content in random order",
+   "source_turn_id": "9a8ede4e-756c-4e7d-ac28-b22f4ac6655a"
+  },
+  {
+   "id": "r2",
+   "kind": "style",
+   "facts": {
+    "captions": "word_by_word",
+    "caption_language": "tr"
+   },
+   "scope": "global",
+   "status": "superseded",
+   "literal": null,
+   "description": "Show each word one by one",
+   "source_turn_id": "9a8ede4e-756c-4e7d-ac28-b22f4ac6655a"
+  },
+  {
+   "id": "r3",
+   "kind": "text",
+   "facts": {},
+   "scope": "title",
+   "status": "open",
+   "literal": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+   "description": "Show as a standard title",
+   "source_turn_id": "a196a4f7-a553-423b-8617-6461546ec2b2"
+  }
+ ],
+ "strategy_t4": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "rationale": "I'm grouping your 27 clips into a sweeping 60-second tribute. We'll start by showcasing the beautiful landscapes and heritage, transition into the modern achievements of the people, and conclude with the historical footage of Atatürk and the Republic's founding. The long tribute text will be displayed as a standard opening title for 7 seconds to ensure it is readable.",
+  "edit_format": "montage",
+  "media_scope": "all",
+  "caption_style": "auto",
+  "opening_title": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+  "audio_strategy": "licensed_music",
+  "render_program": "guided",
+  "story_structure": [
+   "The beautiful landscapes and heritage of the homeland",
+   "The strength and modern achievements of the Turkish people",
+   "Honoring Atatürk and the historical struggle for the Republic"
+  ],
+  "target_duration_s": 60,
+  "selected_media_ids": [],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "selected_music_section": {
+   "end_s": 148.0,
+   "title": "Instant Crush (Official Video) ft. Julian Casablancas",
+   "artist": "Daft Punk",
+   "status": "selected",
+   "start_s": 130.0,
+   "track_id": "82053916-6e91-45ea-8c8a-72bb8ff36a6d",
+   "catalog_duration_s": 339.792
+  }
+ },
+ "title_row": {
+  "z": null,
+  "id": "guided-title",
+  "role": "generative_intro",
+  "text": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+  "color": "#FFF8F0",
+  "end_s": 2.2,
+  "effect": "static",
+  "motion": null,
+  "x_frac": 0.5,
+  "y_frac": 0.16,
+  "removed": false,
+  "size_px": 76.0,
+  "start_s": 0.0,
+  "position": "custom",
+  "reveal_s": null,
+  "alignment": "center",
+  "text_case": null,
+  "glow_color": null,
+  "size_class": null,
+  "fade_out_ms": null,
+  "font_family": "Hanken Grotesk",
+  "line_spacing": null,
+  "rotation_deg": null,
+  "shadow_color": null,
+  "shadow_style": "standard",
+  "stroke_color": null,
+  "stroke_width": 0.0,
+  "word_timings": null,
+  "editor_preset": null,
+  "glow_strength": null,
+  "source_params": null,
+  "behind_subject": false,
+  "letter_spacing": null,
+  "max_width_frac": 0.84,
+  "shadow_enabled": true,
+  "shadow_opacity": null,
+  "highlight_color": "#D9FF70",
+  "visual_block_id": null,
+  "animation_phases": null,
+  "background_color": null,
+  "theme_transition": null
+ },
+ "phone_text_style_policy": {
+  "version": 1,
+  "requested": {},
+  "preferences": {
+   "all_text": {
+    "position": "bottom_left",
+    "stroke_width": 0.0,
+    "automatic_font": true,
+    "excluded_fonts": [
+     "Fraunces"
+    ],
+    "favorite_fonts": [
+     "Big Curls",
+     "Inter",
+     "Montserrat"
+    ],
+    "shadow_enabled": false
+   }
+  }
+ },
+ "render_failure": {
+  "code": "phone_plan_unsupported",
+  "error_class": "CreatorRenderContractError",
+  "error_tail": "This text cannot fit clearly in the requested area. Choose another placement or shorter text.",
+  "field_path": "phone_text_style",
+  "decline_reason": "needs_choice"
+ },
+ "exact_texts": [
+  {
+   "role": "opening",
+   "text": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+   "media_id": null,
+   "duration_s": null,
+   "shot_index": null
+  },
+  {
+   "role": "any",
+   "text": "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız kutlu olsun",
+   "media_id": null,
+   "duration_s": null,
+   "shot_index": null
+  }
+ ]
+}

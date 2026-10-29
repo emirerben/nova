@@ -949,7 +949,7 @@ struct NativeEditorView: View {
             ? SourceAssetError.missingOriginal("fixture-source")
             : arguments.contains("-ui-testing-editor-source-failure-permanent") ? NativeEditorRenderError.missingVideoTrack
             : arguments.contains("-ui-testing-editor-source-failure") ? APIError.invalidResponse : nil
-        if forcedFailure != nil || arguments.contains("-ui-testing-editor-source-text") || arguments.contains("-ui-testing-editor-captured-creation") {
+        if forcedFailure != nil || arguments.contains("-ui-testing-editor-source-text") || arguments.contains("-ui-testing-editor-live-preview") || arguments.contains("-ui-testing-editor-selection-boundary") || arguments.contains("-ui-testing-editor-captured-creation") {
             let delayed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source")
             if delayed, session.loadState == .loaded { return }
             let url = forcedFailure != nil

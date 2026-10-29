@@ -219,6 +219,19 @@ stays version 1 and omits a null form when serializing, so stored JSON, digests 
 bindings of those rows are byte-identical. A wording edit keeps the stored form (builds that
 predate the field send none back).
 
+Idea copy is written for a stranger scrolling a feed (KRI-1004). The prompt prefers guide,
+review, factual and performance ideas over `atmosphere`, makes the opening a concrete hook and
+keeps first-person day recaps out of captions. It honours the event's title and notes
+(`creator_provided_event_context`): a named place goes into each idea, and a stated aim such as
+"why people should visit" allows why-visit ideas built on features the footage shows. The
+prompt starts with the `grounded-hook` runtime skill; an edit to that skill needs a
+`camera_roll_stories` `prompt_version` bump, because the idea cache is keyed on the version.
+A model copy-edit pass that stripped stock travel wording was tried and removed: the words went
+but the judge's viewer_value and specificity did not move. Copy is only as specific as the
+footage descriptions and the creator's event title and notes, so those inputs carry the quality.
+Measure voice changes with `tests/evals/test_camera_roll_voice_evals.py` (DECISIONS.md
+"Camera-roll ideas are written for a stranger").
+
 An idea may carry up to three `content_plan.open_questions` (`id`, `question`, `answer`,
 `dismissed`): facts only the creator knows. The question text is server-owned. The creator
 answers or skips through the existing `PATCH .../stories/{id}` wording edit (a new story
@@ -258,9 +271,11 @@ beside the existing ones and drops anything with the same wording or the exact s
 through `record_deleted_idea` when personalization is on; deleted ideas are never re-offered
 for their event even when it is off. `POST .../stories/{id}/restore` undoes it.
 `DELETE .../groups` removes an event's members (revision bumps) and soft-deletes its ideas.
-Ideas are pinned to a collection revision, so a write that leaves an event's members identical
-re-stamps that event's ideas (`carry_forward_stories`); only rows from the revision being left
-move. No migration: group and deletion live in `story_json`.
+Ideas are pinned to a collection revision, so every write re-stamps each idea whose own clips are
+all still in its event (`carry_forward_stories`, the same `footage_in_event` rule restore uses).
+Adding footage, renaming or editing an event's notes keeps its ideas; removing a clip drops only
+the ideas that cite it. Only rows from the revision being left move. No migration: group and
+deletion live in `story_json`.
 
 Photos (KRI-944). `index_collection` turns a photo's image analysis into ONE still moment held
 for `STILL_HOLD_S` (3 s; `start_s=0`, `evidence.media="still"`, `time_basis="still_hold"`), stamped

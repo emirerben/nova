@@ -357,7 +357,12 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
                 try? FileManager.default.removeItem(at: marker)
             }
         }
-        let reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex, brandTail: brandTail))
+        let reservation: DeviceExportUploadTarget
+        do {
+            reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex, brandTail: brandTail))
+        } catch let error as APIError where error.conflictDetail == "Upload attempt reused for different bytes" {
+            throw DeviceExportAttemptReused()
+        }
         guard reservation.attemptID == attemptID, Self.acceptsStorageURL(reservation.uploadURL), reservation.expiresAt > Date() else { throw APIError.invalidResponse }
         var put = URLRequest(url: reservation.uploadURL)
         put.httpMethod = "PUT"

@@ -683,6 +683,23 @@ word (seen in the simulator render of the `subtitled_word` E2E case);
 behind `PHONE_TALKING_HEAD_RENDERING_ENABLED` (KRI-136), as cutaways over the
 speaker clip and without speech cleanup.
 
+*Landscape output on phone Talking.* A phone-rendered `subtitled` edit (multi-clip
+Talking included) can now be a landscape video: the creator picks it on the confirm
+screen (`render_shape.creation_offer`, `subtitled` is offered the same landscape + bars/crop
+choice as montage while `LANDSCAPE_OUTPUT_ENABLED` is on and the render is on the device)
+or in the editor's Video shape sheet (`orientation` capability, open while the Talking
+editor lanes are -- `PHONE_SUBTITLED_EDITOR_LANES_ENABLED`; `phone_edit_unsupported` when
+off, `disabled` when the output flag is off). The worker and the editor Save pass
+`output_orientation="landscape"` to `compile_phone_subtitled_plan`, which compiles onto the
+1920x1080 canvas with no bars (`landscape_fit` is forced to `fill`) and no face-fill shift
+(`speaker_position_x` ignored; with a framing ask the `speaker_framing` receipt says
+`centre_fill` / `landscape_canvas` and samples no face); the variant records
+`orientation="landscape"` + `landscape_fit="fill"`. Title, closing, spoken text and the
+protected-text plan are placed and measured on the 1920x1080 canvas. The cloud subtitled
+render has no landscape canvas and stays `orientation_unsupported`. An editor Save that
+changes the canvas marks the protected-text receipt `stale` (`edited_geometry`; it does not
+re-place the text), and keeps the framing receipt's face window so portrait + crop restores it.
+
 #### Talking-to-camera media lanes: stickers, photo cards, SFX, ending clip (KRI-174 Phase 1)
 
 `PHONE_SUBTITLED_MEDIA_LANES_ENABLED` (`settings.phone_subtitled_media_lanes
@@ -3422,6 +3439,15 @@ caption lane, reported the ask as unmet and the job died as `phone_plan_unsuppor
   restart): no lyric track is planned and no ask is made, so output is byte-identical
   to before (and a lip-sync + captions ask fails as it did). Already-approved plans
   keep their captions; the compiler never reads the flag.
+- **Available but hidden.** With no captions ask (legacy: no ask in the request;
+  plan authority: no `song_captions` pin), the worker still pins the track with
+  `hidden: true` in the planned style. `editor_caption_meta` (and the revision's
+  `caption_meta`) then carry `enabled: false`, so the phone recipe draws no lyric layers
+  and the receipt is `available_hidden`, never `placed`. Show captions in the editor
+  commits `caption_meta.enabled: true`, which recompiles through
+  `compile_guided_runtime_plan` and draws them. A song with no words in the window pins
+  nothing and never declines. Kill switch `SONG_CAPTIONS_AVAILABLE_BY_DEFAULT=false`
+  (same apply): unasked montages carry no track, as before. New videos only.
 - **Limits.** Whisper timing on singing is "close", not frame-exact; lyrics follow
   whatever language whisper returned. Lip-sync trim does not re-time other text.
 
@@ -3520,6 +3546,35 @@ Prod step before the Bend control appears: add `textBend` to `PHONE_RENDER_VERIF
 (fly secret, api + worker, restart). Builds below protocol 9 get `426 client_update_required`
 (`feature: "text_bend"`) from `device-render` and `editor-commit` for a variant with bent text.
 The app reads `capabilities.text_bend` (creation) and `editor_capabilities.text_bend` (per variant).
+
+## Caption animation (KRI-1007)
+
+Captions take the same `animation_phases` as text, validated by the one
+`TextAnimationPhases` model (`app/agents/_schemas/text_animation_phases.py`): `entrance`/`exit`
+include the designed edges (`docs/pipelines/designed-text-animations.md`), `loop` in
+`none|pulse|bounce|float`, `speed` 0.25..3.
+
+| Where | Wire field | Stored as |
+|---|---|---|
+| One line, cue-native (narrated, subtitled, phone voiceover) | `caption_cues[i].animation_phases` | the cue row |
+| One line, guided / song / montage | `animation_phases` on the `caption_cue`-source text row | the revision text row |
+| All captions | `caption_meta.animation_phases` (explicit `null` clears) | `caption_animation_phases` on a cue-native variant; `caption_meta.animation_phases` in a guided revision |
+
+Precedence: line > all-captions default > `caption_meta.appearance.animation_phases` (#1898,
+stored in `caption_editor_style`; it turns the karaoke sweep off and collapses a guided line)
+> today's look (pop-in, or the karaoke sweep). Unset
+compiles byte-identical recipes (`tests/routes/test_caption_animation.py` golden). The phone
+draws the recipe's existing `animationPhases`, so the layer needs `authoredText`. A word
+highlight line keeps its karaoke sweep and the phases move the whole line (typewriter shows the
+line without a reveal). Guided captions animate the displayed line: its first interval enters,
+its last exits, every interval loops. Cloud caption burns do not draw phases.
+
+Gate: `CAPTION_ANIMATION_ENABLED` (default on; off compiles stored phases away and hides the
+capability) + `authoredText` verified + client protocol >= `CAPTION_ANIMATION_MIN_CLIENT_PROTOCOL`
+(24; protocol 23 is the designed-edge build, which does not keep line phases) for
+`editor_capabilities.caption_animation`. A Save from an older build that carries caption
+phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_update_required`
+(`feature: "caption_animation"`).
 
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 

@@ -767,6 +767,16 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
+    # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
+    # recipe's existing `animationPhases`. Default TRUE; the editor capability
+    # `caption_animation` needs `authoredText` in PHONE_RENDER_VERIFIED_FEATURES and an app
+    # build declaring `X-Kria-Client-Protocol` >= `caption_animation_min_client_protocol`;
+    # an older build's Save that carries (or would drop) caption phases gets 426. False:
+    # the capability is hidden and captions compile as before (stored phases are kept).
+    # Apply: `fly secrets set CAPTION_ANIMATION_ENABLED=false` (api + worker) + restart.
+    caption_animation_enabled: bool = True
+    caption_animation_min_client_protocol: int = 24
     # Text behind people ON THE PHONE (the device twin of `text_behind_subject_enabled`
     # below, which is the cloud Skia lane). When True, `compile_text_overlay` stamps
     # `behind_subject` on a phone recipe text layer whose text element asks for it, and
@@ -834,6 +844,11 @@ class Settings(BaseSettings):
     # captions are planned and no ask is made, byte-identical to before. Recompiles of
     # already-approved plans do not read it. Only effective while USER_SONG_MONTAGE_ENABLED holds.
     song_captions_enabled: bool = True
+    # A creator-song montage nobody asked captions for still pins its lyrics, hidden, so
+    # the editor's Show captions toggle can reveal them. Kill switch:
+    # `fly secrets set SONG_CAPTIONS_AVAILABLE_BY_DEFAULT=false` + restart (api + worker):
+    # new montages without a captions ask carry no lyric track, as before.
+    song_captions_available_by_default: bool = True
     # KRI-443: live plan block feed. After Create on a v2 thread, the render emits
     # `plan_block` events into CreationThreadEvent (read via GET /delta), and
     # POST /creation-threads/{id}/turns/{turn}/cancel-render is enabled. Default
@@ -1128,7 +1143,9 @@ class Settings(BaseSettings):
     # When the plan item carries no Gemini clip transcript (Kria v2 never saves
     # one), the preflight worker asks Gemini to transcribe the narration's first
     # 30 s so whisper's detected language is still cross-checked before the cut
-    # plan is built. Best-effort; False skips the call (item transcript only).
+    # plan is built (a mixed-language take also gets the rest of the take heard,
+    # see `speech_cleanup_mixed_relisten_enabled`). Best-effort; False skips the
+    # call (item transcript only).
     speech_cleanup_gemini_reference_enabled: bool = True
     # KRI-843: a take whose Gemini reference speaks two or more languages (Don Julio T1:
     # an English question, a Spanish answer, Turkish chatter) has no single right whisper
@@ -1138,6 +1155,18 @@ class Settings(BaseSettings):
     # cross-check alone (re-run the whole take in one language), byte-identical.
     # Apply: fly secret + worker restart.
     speech_cleanup_mixed_language_enabled: bool = True
+    # KRI-1016: whisper-1 decodes a whole file in ONE language, so on a mixed take (Plaza T2:
+    # English and Turkish, 48 s) the language it picks is written for every stretch, and a
+    # stretch in the other language comes back as a translation or as no words at all. With the
+    # mixed-language lane on, a mixed take gets two more things: Gemini also hears the take past
+    # its first 30 s (one more call, only when the 30 s sample already names two or more
+    # languages), so the reference covers the whole take; and every stretch of 1 s or more that
+    # the transcript left wordless but the reference heard is cut out and transcribed ALONE, in
+    # each of the take's languages (whisper-1 on those stretches only, at most 6 short calls, a
+    # few cents), then kept only where the reference confirms the words. A single-language take
+    # makes no extra call. false = byte-identical to KRI-843 (30 s reference, no re-listen).
+    # Apply: fly secret + worker restart.
+    speech_cleanup_mixed_relisten_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
@@ -2336,6 +2365,12 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # 29 Ekim lane E (KRI-1039): an ask the editor ops can express is composed with them
+    # instead of refused, asked about or re-planned: a word-by-word title is one
+    # `replace_text_sequence` (weighted windows, `cumulative` mode), an edit-shaped follow-up
+    # after a failed render goes to the copilot, and a missing text sequence is composed rather
+    # than asked about. false = the previous routing, replies and ops, byte-identical.
+    kria_compose_unmet_with_ops_enabled: bool = False
     # KRI-219 latency: serve short in-place text/label/order edits with the fast copilot
     # BEFORE the pro-model requirement extraction (which then runs off the critical
     # path). false = the previous extract-first order for every post-render turn.

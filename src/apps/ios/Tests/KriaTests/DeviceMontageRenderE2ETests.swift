@@ -155,7 +155,7 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
     }
 
     func testGenerationPinnedTextStylesPreviewAndExport() async throws {
-        // This test exports all 27 cases serially. Hosted Mac runners exceeded
+        // This test exports every generated case serially. Hosted Mac runners exceeded
         // 180 seconds while still advancing through the palette; keep a bounded
         // batch allowance without relaxing the individual render assertions.
         executionTimeAllowance = 600
@@ -163,6 +163,12 @@ private final class RequestLog: @unchecked Sendable { var urls: [String] = [] }
         let meta = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: input.appendingPathComponent("e2e.json"))) as? [String: Any])
         let cases = try XCTUnwrap(meta["cases"] as? [String: Any])
         XCTAssertGreaterThanOrEqual(cases.keys.filter { $0.hasPrefix("kri648_") }.count, 7)
+        // The hosted signup videos otherwise decode alongside these offscreen exports.
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first(where: \.isKeyWindow))
+        let applicationRoot = window.rootViewController
+        window.rootViewController = UIViewController()
+        defer { window.rootViewController = applicationRoot }
         let wasDisabled = UIApplication.shared.isIdleTimerDisabled
         UIApplication.shared.isIdleTimerDisabled = true
         defer { UIApplication.shared.isIdleTimerDisabled = wasDisabled }

@@ -9,7 +9,7 @@ final class EditorSaveErrorTests: XCTestCase {
 
     func testKnownEditorSaveCodesUseSafeRecoveryCopy() async throws {
         let cases: [(String, EditorSaveError, String)] = [
-            (#"{"detail":{"code":"unsupported_phone_edit","reason":"secret internals"}}"#, .unsupportedPhoneEdit, "text style or layout"),
+            (#"{"detail":{"code":"unsupported_phone_edit","reason":"secret internals"}}"#, .unsupportedPhoneEdit, "This edit couldn’t be prepared"),
             (#"{"detail":{"code":"phone_rendering_unavailable"}}"#, .phoneRenderingUnavailable, "edits are still here"),
             (#"{"detail":"guided_story_source_stale"}"#, .guidedStorySourceStale, "source changed or is unavailable"),
         ]
@@ -22,7 +22,7 @@ final class EditorSaveErrorTests: XCTestCase {
                 XCTAssertEqual(error, expected)
                 XCTAssertTrue(error.localizedDescription.contains(copy))
                 if expected == .unsupportedPhoneEdit {
-                    XCTAssertEqual(error.localizedDescription, "This text style or layout can’t be saved on this iPhone yet. Your edits are still here; adjust the style or size and try again.")
+                    XCTAssertEqual(error.localizedDescription, "This edit couldn’t be prepared for this iPhone. Your edits are still here. Undo the last change and try saving again.")
                 }
             }
         }

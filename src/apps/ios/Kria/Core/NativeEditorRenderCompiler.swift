@@ -79,6 +79,7 @@ enum NativeEditorRenderError: Error, Equatable {
                  referenceOnlyMusic: Bool = false, sourceAudioPreserved: Bool = true,
                  songBed: NativeEditorSongBed? = nil,
                  deviceCaptions: Bool = false,
+                 guidedStory: Bool = false,
                  songCaptionShift: NativeSongCaptionShift? = nil,
                  skippedMediaOverlayIDs: Set<String> = [],
                  talkingCutaways: [NativePhoneTalkingSource.Cutaway] = []) throws -> NativeEditorRenderProgram {
@@ -239,7 +240,9 @@ enum NativeEditorRenderError: Error, Equatable {
             // the source span that fits that clock, then hold the last frame.
             let consumedSourceDuration = min(sourceSpan, outputDuration * requestedRate)
             let movingDuration = consumedSourceDuration / requestedRate
-            let holdDuration = max(0, outputDuration - movingDuration)
+            // A sub-microsecond gap is clock noise (the unrounded speech clock), not a held clip: it must not skip the letterbox below.
+            let rawHold = outputDuration - movingDuration
+            let holdDuration = rawHold > 0.000_001 ? rawHold : 0
             let hasExplicitClipAudio = authoredSlot?.raw["muted"] != nil
             let sourceGain: Double = hasExplicitOriginalGain || hasExplicitClipAudio || sourceAudioPreserved ? 1 : 0
             let narratedSourceLevel: Double
@@ -265,8 +268,9 @@ enum NativeEditorRenderError: Error, Equatable {
             // bars. Cropped and graded clips keep the engine's cover-fill: the
             // engine rejects a look combined with a non-identity transform, and
             // the backend refuses that combination for the same reason.
-            // Held (slow / short source) clips are excluded like the backend's `_fit_eligible`.
-            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, holdDuration <= 0,
+            // Guided stories apply their authored fit before adding a final-frame hold
+            // (`phone_guided_plan`); other formats retain `_fit_eligible` behavior.
+            if document.previewLetterboxesSidewaysClips, canvas.height > canvas.width, (guidedStory || holdDuration <= 0),
                authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
                 video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
             }
@@ -549,8 +553,9 @@ enum NativeEditorRenderError: Error, Equatable {
         // KRI-576: lyric rows follow the song window as it is NOW (preview only). The shift works on a copy;
         // a row it hides is `removed` here, so the interval check below never sees a reversed window.
         let timedTextElements = songCaptionShift.map { $0.apply(to: document.textElements) } ?? document.textElements
-        let renderedTextElements = Self.projectSentenceCaptions(
-            timedTextElements, captionMeta: captionMeta
+        let renderedTextElements = Self.stampingCaptionLinePhases(
+            Self.projectSentenceCaptions(timedTextElements, captionMeta: captionMeta),
+            source: timedTextElements, captionMeta: captionMeta
         )
         // KRI-785: one glyph-safe face per requested family across the video (the
         // union of its texts), like the cloud's `glyph_safe_overlays`, so a Turkish
@@ -675,6 +680,8 @@ enum NativeEditorRenderError: Error, Equatable {
                 color: try ink(meta["color"], fallback: "#FFFFFF"), stroke: try ink(appearance["stroke_color"], fallback: "#000000"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
                 shadows: meta["shadow_enabled"] == .bool(false) ? [] : [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)],
                 bottomAligned: appearance["position_y_frac"] == nil, fontVariations: fontInstances[family] ?? [:])
+            // KRI-1007: a cue's own phases win over the all-captions default (`phone_captions.compile_caption_layers`).
+            let defaultCaptionPhases = Self.captionPhases(meta["animation_phases"])
             var previousWordEnd = 0.0
             // KRI-202: two caption_cues rows can reach the client already
             // overlapping in time (the cloud's own de-overlap guard,
@@ -701,6 +708,7 @@ enum NativeEditorRenderError: Error, Equatable {
                 guard item.end > item.start else { throw RecipeError.invalidTimeline }
                 let cueEnd = min(item.end, clampedCueEnd[cue.id] ?? item.end)
                 if cueEnd <= item.start { continue }
+                let phases = Self.captionPhases(cue.raw["animation_phases"]) ?? defaultCaptionPhases
                 if wordStyle || explicitHighlight == true {
                     let tokens = cue.text.split(whereSeparator: \.isWhitespace).map(String.init)
                     let wordValues: [JSONValue]
@@ -738,18 +746,26 @@ enum NativeEditorRenderError: Error, Equatable {
                                start: first, end: layerEnd, starts: starts.map { $0 - first },
                                highlight: highlighted ? try ink(meta["highlight_color"], fallback: "#C5F82A") : captionStyle.color,
                                style: captionStyle, fontURL: font, canvas: canvas) {
-                            text.append(contentsOf: singles)
+                            // A word-highlight line keeps its sweep; the phases move the whole line.
+                            text.append(contentsOf: singles.map { Self.layer($0, phases: phases) })
                             continue
                         }
                         if layerEnd <= first { continue }
                     }
-                    text.append(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
+                    text.append(Self.layer(try AuthoredTextLayout.compileHighlightedWords(id: "caption-" + cue.id, text: cue.text,
                         start: first, end: min(total, explicitHighlight == nil ? previousWordEnd : min(cueEnd, previousWordEnd)), starts: starts.map { $0 - first },
                         highlight: explicitHighlight == false ? captionStyle.color : try ink(meta["highlight_color"], fallback: "#C5F82A"),
-                        style: captionStyle, fontURL: font, canvas: canvas))
+                        style: captionStyle, fontURL: font, canvas: canvas), phases: phases))
+                } else if let phases {
+                    text.append(try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
+                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: phases))
                 } else {
+                    let captionPhases = try appearance["animation_phases"].map {
+                        try JSONDecoder().decode(TextAnimationPhases.self, from: JSONEncoder().encode($0))
+                    }
                     let layout = try AuthoredTextLayout.compile(id: "caption-" + cue.id, text: cue.text,
-                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas)
+                        start: item.start, end: cueEnd, style: captionStyle, fontURL: font, canvas: canvas, phases: captionPhases)
+                    if captionPhases != nil { text.append(layout); continue }
                     text.append(PortableTextLayer(id: layout.id, start: layout.start, end: layout.end,
                         anchorX: layout.anchorX, anchorY: layout.anchorY, rotationDegrees: 0, runs: layout.runs,
                         effect: appearance["position_y_frac"] != nil ? .popIn : talkingCaptionFrame ? .captionPop : .none))
@@ -962,15 +978,7 @@ enum NativeEditorRenderError: Error, Equatable {
     ) -> [EditorTextElement] {
         guard captionMeta["style"] == .string("sentence") else { return elements }
         var projected = elements
-        let captionIndices = projected.indices.filter { projected[$0].isCaption }.sorted {
-            if projected[$0].startS != projected[$1].startS {
-                return projected[$0].startS < projected[$1].startS
-            }
-            return projected[$0].id < projected[$1].id
-        }
-        var sentence: [Int] = []
-        func emitSentence() {
-            guard !sentence.isEmpty else { return }
+        for sentence in sentenceGroups(elements) {
             let display = sentence.map { projected[$0].text.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .joined(separator: " ")
             for (position, index) in sentence.enumerated() {
@@ -982,18 +990,34 @@ enum NativeEditorRenderError: Error, Equatable {
                     projected[index].endS = projected[sentence[position + 1]].startS
                 }
             }
+        }
+        return projected
+    }
+
+    /// The visible caption rows of each spoken sentence, as indices into `elements`, in time order.
+    private static func sentenceGroups(_ elements: [EditorTextElement]) -> [[Int]] {
+        let captionIndices = elements.indices.filter { elements[$0].isCaption }.sorted {
+            if elements[$0].startS != elements[$1].startS {
+                return elements[$0].startS < elements[$1].startS
+            }
+            return elements[$0].id < elements[$1].id
+        }
+        var groups: [[Int]] = []
+        var sentence: [Int] = []
+        func emitSentence() {
+            guard !sentence.isEmpty else { return }
+            groups.append(sentence)
             sentence.removeAll()
         }
         for index in captionIndices {
-            let spoken = projected[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let spoken = elements[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !spoken.isEmpty else { continue }
             let punctuated = spoken.range(of: #"[.!?]+["'’”\)\]]*$"#, options: .regularExpression) != nil
             // KRI-569: song lyrics carry no terminal punctuation. The server marks the
             // last word of each lyric line with `source_params.line_end`; narration rows
             // never carry it, so only lyric lines are split by it.
-            let lineEnd = projected[index].raw["source_params"]?.objectValue?["line_end"] == .bool(true)
-            let terminal = punctuated || lineEnd
-            guard projected[index].raw["enabled"] != .bool(false), projected[index].raw["removed"] != .bool(true) else {
+            let terminal = punctuated || isLineEnd(elements[index])
+            guard elements[index].raw["enabled"] != .bool(false), elements[index].raw["removed"] != .bool(true) else {
                 // A hidden word must not leak into the display. Its terminal
                 // punctuation still separates the adjacent visible sentences.
                 if terminal { emitSentence() }
@@ -1007,7 +1031,100 @@ enum NativeEditorRenderError: Error, Equatable {
             }
         }
         emitSentence()
-        return projected
+        return groups
+    }
+
+    private static func isLineEnd(_ element: EditorTextElement) -> Bool {
+        element.raw["source_params"]?.objectValue?["line_end"] == .bool(true)
+    }
+
+    /// KRI-1007: the displayed lines of text-lane (guided, song, montage) captions, as indices into
+    /// `elements`. Sentence display splits as `projectSentenceCaptions` draws it; any other display uses the
+    /// server's `guided_caption_presentation._legacy_groups`.
+    static func captionLineGroups(_ elements: [EditorTextElement], captionMeta: [String: JSONValue]) -> [[Int]] {
+        if captionMeta["style"] == .string("sentence") { return sentenceGroups(elements) }
+        let rows = elements.indices.filter {
+            elements[$0].isCaption && elements[$0].raw["enabled"] != .bool(false) && elements[$0].raw["removed"] != .bool(true)
+                && !elements[$0].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.sorted { (elements[$0].startS, elements[$0].id) < (elements[$1].startS, elements[$1].id) }
+        var groups: [[Int]] = []
+        for index in rows {
+            let text = elements[index].text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let group = groups.last, let last = group.last {
+                let combined = (group.map { elements[$0].text.trimmingCharacters(in: .whitespacesAndNewlines) } + [text]).joined(separator: " ")
+                let previous = elements[last].text.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
+                let splits = elements[index].startS - elements[last].endS > 0.35
+                    || [".", "!", "?"].contains(where: previous.hasSuffix) || isLineEnd(elements[last])
+                    || combined.split(whereSeparator: \.isWhitespace).count > 6 || combined.count > 42
+                if !splits { groups[groups.count - 1].append(index); continue }
+            }
+            groups.append([index])
+        }
+        return groups
+    }
+
+    /// KRI-1007, the server's `_group_phases` + `_stamp_line_phases`: a line's first row with its own
+    /// phases governs the whole displayed line, else `caption_meta.animation_phases`. The line's first row
+    /// enters, its last exits, every row loops; under Display Word every row is a word of its own and plays all three. Phases that animate nothing, or that do not parse, leave the
+    /// line as it is drawn today. `groups` index both arrays, which share their order.
+    /// Without either, the older `appearance.animation_phases` (Style > Text motion) draws the line as one
+    /// row, unless a word display or spoken-word highlight is on (`guided_caption_presentation`).
+    private static func stampingCaptionLinePhases(_ rendered: [EditorTextElement], source: [EditorTextElement],
+                                                  captionMeta: [String: JSONValue]) -> [EditorTextElement] {
+        var stamped = rendered
+        for index in stamped.indices where stamped[index].isCaption {
+            stamped[index].raw.removeValue(forKey: "animation_phases")
+        }
+        let appearance = captionMeta["appearance"]?.objectValue ?? [:]
+        let appearancePhases = captionMeta["style"] != .string("word") && appearance["highlight_spoken_word"] != .bool(true)
+            ? appearance["animation_phases"].flatMap { captionPhases($0) == nil ? nil : $0 } : nil
+        var hidden = Set<Int>()
+        let wordDisplay = captionMeta["style"] == .string("word")
+        for group in captionLineGroups(source, captionMeta: captionMeta) {
+            guard let phases = captionLinePhases(group.map { source[$0] }, captionMeta: captionMeta) else {
+                guard let appearancePhases, let first = group.first, let last = group.last else { continue }
+                stamped[first].text = group.map { source[$0].text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .joined(separator: " ")
+                stamped[first].endS = source[last].endS
+                stamped[first].raw["animation_phases"] = appearancePhases
+                hidden.formUnion(group.dropFirst())
+                continue
+            }
+            for (position, index) in group.enumerated() {
+                var row = phases
+                if position > 0 && !wordDisplay { row.entrance = .none }
+                if position < group.count - 1 && !wordDisplay { row.exit = .none }
+                if row.entrance == .none, row.exit == .none, row.loop == .none { continue }
+                stamped[index].raw["animation_phases"] = .object([
+                    "entrance": .string(row.entrance.rawValue), "exit": .string(row.exit.rawValue),
+                    "loop": .string(row.loop.rawValue), "speed": .number(row.speed),
+                ])
+            }
+        }
+        return stamped.enumerated().filter { !hidden.contains($0.offset) }.map(\.element)
+    }
+
+    /// The phases one displayed text-lane caption line draws with, or nil for today's static line.
+    static func captionLinePhases(_ line: [EditorTextElement], captionMeta: [String: JSONValue]) -> TextAnimationPhases? {
+        let own = line.lazy.compactMap { row -> JSONValue? in
+            guard let value = row.raw["animation_phases"], value != .null else { return nil }
+            return value
+        }.first
+        guard let phases = captionPhases(own ?? captionMeta["animation_phases"]),
+              phases.entrance != .none || phases.exit != .none || phases.loop != .none else { return nil }
+        return phases
+    }
+
+    /// A valid `animation_phases` object, else nil: the server's `phone_captions._phases_or_none`.
+    static func captionPhases(_ value: JSONValue?) -> TextAnimationPhases? {
+        guard let object = value?.objectValue, let data = try? JSONEncoder().encode(object) else { return nil }
+        return try? JSONDecoder().decode(TextAnimationPhases.self, from: data)
+    }
+
+    private static func layer(_ layer: PortableTextLayer, phases: TextAnimationPhases?) -> PortableTextLayer {
+        var layer = layer
+        if let phases { layer.animationPhases = phases }
+        return layer
     }
 
     /// KRI-110: overlay caption_meta styling onto a caption_cue-tagged text

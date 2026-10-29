@@ -527,6 +527,29 @@ extension CreationThread {
         return !events.contains(where: { $0.sequence > lastRequest.sequence && terminalTypes.contains($0.eventType) })
     }
 
+    /// Runtime v2: the creator approved the latest draft and the server has not yet
+    /// started the render for it. The approval decision writes only
+    /// `approval_approved` (`render_dispatched: false`); the job, `render_queued`
+    /// and the first `plan_block` land from the agent-control task moments later.
+    /// In between, the projection still reads as a plain draft, which would send the
+    /// workspace back to the footage stage right after "Create" (the blank-looking
+    /// screen after "Clean up speech and create"). Terminal and render events after
+    /// the approval end the window, as does an active job.
+    var awaitsRenderDispatch: Bool {
+        guard runtimeVersion == 2, activeJobID == nil, job == nil else { return false }
+        guard let lastRequest = events.last(where: { $0.eventType == "approval_requested" }),
+              let approved = events.last(where: { $0.sequence > lastRequest.sequence && $0.eventType == "approval_approved" })
+        else { return false }
+        let settlingTypes: Set<String> = [
+            "approval_requested", "approval_denied", "approval_cancelled", "approval_expired",
+            "render_queued", "render_started", "rendering", "plan_block", "generation_started",
+            "generation_ready", "generation_failed", "render_failed",
+            "assistant_render_failed", "agent_assistant_render_failed", "assistant_error", "agent_assistant_error",
+            "draft_applied", "user_message",
+        ]
+        return !events.contains { $0.sequence > approved.sequence && settlingTypes.contains($0.eventType) }
+    }
+
     /// True while a newly proposed plan hasn't been confirmed or declined yet,
     /// across both the runtime-v1 (`creatorAgent.status`) and runtime-v2
     /// (`approval_requested` events) mechanisms. This can be true even when

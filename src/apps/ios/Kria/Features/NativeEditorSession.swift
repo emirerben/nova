@@ -1259,6 +1259,7 @@ struct NativeEditorTemporaryVideo {
     }
 
     func videoDownloadRoute(deviceLocalFile: URL?) throws -> NativeEditorVideoDownloadRoute {
+        if let rendered = finishedRenderRoute(deviceLocalFile: deviceLocalFile) { return rendered }
         switch sourcePreviewState {
         case .ready:
             guard sourcePreviewSettled, let sourcePreview,
@@ -1280,6 +1281,26 @@ struct NativeEditorTemporaryVideo {
             return .server(target)
         }
         throw NativeEditorVideoDownloadError.unavailable
+    }
+
+    /// KRI-1032: with no edit on top of the finished render, the creator's saved or shared copy IS
+    /// that render: the file the phone made (or its upload), never a recompile of the editor
+    /// document. The recompile only approximates the render: it lost the clip-sound mutes, the
+    /// bars and the label placement the render had, and "Done: only the Recoleta clip keeps its
+    /// sound" described a video the creator never got. A saved edit makes the render stale
+    /// (`acknowledge`) until its re-render lands, and the editable preview is the copy then.
+    private func finishedRenderRoute(deviceLocalFile: URL?) -> NativeEditorVideoDownloadRoute? {
+        guard let finishedRenderURL, finishedRenderIsCurrent, !hasUnsavedChanges, chatStagedDocument == nil,
+              !isSaving, pendingPreviewGeneration == nil, let target = videoDownloadTarget else { return nil }
+        if let deviceLocalFile, let deviceOutputURL,
+           deviceLocalFile.standardizedFileURL == deviceOutputURL.standardizedFileURL {
+            return .localFile(deviceLocalFile)
+        }
+        // This phone's own render file stands in for the upload (`showDeviceOutput`).
+        if finishedRenderURL.isFileURL {
+            return FileManager.default.fileExists(atPath: finishedRenderURL.path) ? .localFile(finishedRenderURL) : nil
+        }
+        return .server(target)
     }
 
     /// Exports the exact composition on screen. On device this competes with
@@ -1619,7 +1640,9 @@ struct NativeEditorTemporaryVideo {
         selection = value
         selectionRequest &+= 1
         guard seekToStart, let value, let start = startTime(for: value) else { return }
-        seek(to: start)
+        let frameDuration = player?.currentItem?.videoComposition?.frameDuration.seconds ?? 1.0 / 30
+        // A sub-frame start otherwise decodes the preceding frame, before this item exists.
+        seek(to: (start / frameDuration).rounded(.up) * frameDuration)
     }
 
     func select(_ item: NativeEditorTimelineItem, seekToStart: Bool = true) {
@@ -1939,6 +1962,7 @@ struct NativeEditorTemporaryVideo {
             // A save/load completed while this request was suspended. Its newer
             // authority wins, even when the local document is now clean.
             guard cleanDocument == baseline else { syncNeedsRetry = true; return }
+            if sameTarget { refreshEditingPermissions(from: variant, document: nextDocument) }
             guard !sameTarget || nextDocument != cleanDocument || staged != nil else { return }
             // Only the previous chat draft is unsaved: the newer cumulative
             // head replaces it wholesale instead of conflicting with it.
@@ -3419,7 +3443,7 @@ struct NativeEditorTemporaryVideo {
                                      sources: sources, audioSources: audio, mediaSources: media,
                                      referenceOnlyMusic: musicPlaybackMode == .referenceOnly,
                                      sourceAudioPreserved: sourceAudioPreserved || songRemoved,
-                                     songBed: songBed, deviceCaptions: rendersOnDevice,
+                                     songBed: songBed, deviceCaptions: rendersOnDevice, guidedStory: isGuidedStory,
                                      songCaptionShift: lyricShift,
                                      skippedMediaOverlayIDs: skippedPreviewMedia,
                                      talkingCutaways: talkingCutaways)
@@ -4404,10 +4428,14 @@ struct NativeEditorTemporaryVideo {
     }
     func setTextPhase(id: String, phase: String, effect: String) {
         guard canEditSection(.text), ["entrance", "exit", "loop"].contains(phase),
-              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : ["none", "fade", "pop", "slide", "typewriter"]).contains(effect) else { return }
+              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : TextAnimationPhases.Edge.allCases.map(\.rawValue)).contains(effect) else { return }
         mutateText(id: id) {
             var phases = Self.textPhases(for: $0)
             phases[phase] = .string(effect)
+            if TextAnimationPhases.Edge(rawValue: effect)?.isDesigned == true {
+                $0.raw["theme_transition"] = nil
+                $0.raw["effect"] = .string("static")
+            }
             $0.raw["animation_phases"] = .object(phases)
         }
     }
@@ -5574,6 +5602,7 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             appearance[key] = value
+            if key == "highlight_spoken_word", value == .bool(true) { Self.keepTextMotion(&appearance, in: &$0.captionMeta, canKeep: offersCaptionAnimation) }
             if key == "alignment", appearance["position_x_frac"] != nil {
                 appearance["position_x_frac"] = .number(value.stringValue == "left" ? 0.06 : value.stringValue == "right" ? 0.82 : 0.5)
             }
@@ -5587,8 +5616,19 @@ struct NativeEditorTemporaryVideo {
         transactDocument(section: .captionMeta) {
             var appearance = $0.captionMeta["appearance"]?.objectValue ?? [:]
             if appearance["highlight_spoken_word"] == nil { appearance["highlight_spoken_word"] = .bool(false) }
+            if style == "word" { Self.keepTextMotion(&appearance, in: &$0.captionMeta, canKeep: offersCaptionAnimation) }
             $0.captionMeta["appearance"] = .object(appearance)
             $0.captionMeta["style"] = .string(style)
+        }
+    }
+
+    /// A Style > Text motion entrance draws lines whole, which word display and spoken-word highlighting cannot.
+    /// Where captions animate, it becomes the all-captions default (drawn per word), so the creator's choice
+    /// survives the switch; elsewhere it is dropped as before.
+    private static func keepTextMotion(_ appearance: inout [String: JSONValue], in meta: inout [String: JSONValue], canKeep: Bool) {
+        guard let phases = appearance.removeValue(forKey: "animation_phases") else { return }
+        if canKeep, meta["animation_phases"] == nil, NativeEditorRenderCompiler.captionPhases(phases) != nil {
+            meta["animation_phases"] = phases
         }
     }
 
@@ -5606,6 +5646,114 @@ struct NativeEditorTemporaryVideo {
     func setCaptionStrokeWidth(_ width: Double?) { setCaptionMeta(key: "stroke_width", value: width.map(JSONValue.number)) }
     func setCaptionShadowEnabled(_ enabled: Bool) { setCaptionMeta(key: "shadow_enabled", value: .bool(enabled)) }
     func setCaptionPositionY(_ y: Double?) { setCaptionMeta(key: "y_frac", value: y.map { .number(min(max(0.30, $0), 0.90)) }) }
+
+    // MARK: - KRI-1007 caption animation
+
+    /// What an Animation-tab change applies to: every caption, or one line of Edit captions.
+    enum CaptionAnimationScope: Equatable { case all, line(String) }
+
+    /// `editor_capabilities.caption_animation`: absent where the server or this variant cannot keep caption phases.
+    var offersCaptionAnimation: Bool { canEdit("caption_animation") }
+
+    func canEditCaptionAnimation(_ scope: CaptionAnimationScope) -> Bool {
+        guard offersCaptionAnimation, canEditCaptions else { return false }
+        switch scope {
+        case .all: return canEditCaptionMeta && (captionAnimationOverrideIDs.isEmpty || canEditCaptionLines)
+        case .line(let id): return canEditCaptionLines && document.captionUnits.contains { $0.id == id }
+        }
+    }
+
+    /// The phases the picker shows as selected, in the renderer's order: the line's own, else the
+    /// all-captions default, else today's look (cue captions pop in; a word highlight and text-lane
+    /// captions hold still).
+    func captionAnimationPhases(_ scope: CaptionAnimationScope) -> [String: JSONValue] {
+        let meta = document.captionMeta
+        let sweep = meta["style"] == .string("word") || meta["appearance"]?.objectValue?["highlight_spoken_word"] == .bool(true)
+        let today: [String: JSONValue] = ["entrance": .string(document.isCueNative && !sweep ? "pop" : "none"),
+                                          "exit": .string("none"), "loop": .string("none"), "speed": .number(1)]
+        // Style > Text motion (before KRI-1007) stored the all-captions entrance in `appearance`; it stays the
+        // effective default until All captions writes `caption_meta.animation_phases`.
+        let fallback = meta["animation_phases"]?.objectValue
+            ?? meta["appearance"]?.objectValue?["animation_phases"]?.objectValue ?? today
+        guard case .line(let id) = scope else { return fallback }
+        if document.isCueNative {
+            return document.captionCues.first { $0.id == id }?.raw["animation_phases"]?.objectValue ?? fallback
+        }
+        let line = captionLineRowIDs(containing: id)
+        return document.textElements.lazy.filter { line.contains($0.id) }
+            .compactMap { $0.raw["animation_phases"]?.objectValue }.first ?? fallback
+    }
+
+    func setCaptionPhase(_ scope: CaptionAnimationScope, phase: String, effect: String) {
+        guard ["entrance", "exit", "loop"].contains(phase),
+              (phase == "loop" ? ["none", "pulse", "bounce", "float"] : TextAnimationPhases.Edge.allCases.map(\.rawValue)).contains(effect) else { return }
+        var phases = captionAnimationPhases(scope)
+        phases[phase] = .string(effect)
+        writeCaptionPhases(scope, phases)
+    }
+
+    func setCaptionAnimationSpeed(_ scope: CaptionAnimationScope, speed: Double) {
+        guard speed.isFinite else { return }
+        var phases = captionAnimationPhases(scope)
+        phases["speed"] = .number(min(3, max(0.25, speed)))
+        writeCaptionPhases(scope, phases)
+    }
+
+    /// Lines with phases of their own. All captions removes them, so every line truly matches.
+    var captionAnimationOverrideIDs: [String] {
+        document.isCueNative
+            ? document.captionCues.filter { $0.raw["animation_phases"] != nil }.map(\.id)
+            : document.textElements.filter { $0.isCaption && $0.raw["animation_phases"] != nil }.map(\.id)
+    }
+
+    /// The rows drawn as one line with `id` (a text-lane line spans several word rows); the row alone otherwise.
+    private func captionLineRowIDs(containing id: String) -> Set<String> {
+        let rows = document.textElements
+        let line = NativeEditorRenderCompiler.captionLineGroups(rows, captionMeta: document.captionMeta)
+            .first { $0.contains { rows[$0].id == id } }
+        return Set(line?.map { rows[$0].id } ?? [id])
+    }
+
+    private func writeCaptionPhases(_ scope: CaptionAnimationScope, _ phases: [String: JSONValue]) {
+        guard canEditCaptionAnimation(scope) else { return }
+        let value = JSONValue.object(phases)
+        let cueNative = document.isCueNative
+        switch scope {
+        case .all:
+            var sections: Set<EditorSection> = [.captionMeta]
+            if !captionAnimationOverrideIDs.isEmpty { sections.insert(cueNative ? .captions : .text) }
+            transactDocument(sections: sections) { doc in
+                doc.captionMeta["animation_phases"] = value
+                if var appearance = doc.captionMeta["appearance"]?.objectValue, appearance["animation_phases"] != nil {
+                    appearance["animation_phases"] = nil
+                    doc.captionMeta["appearance"] = .object(appearance)
+                }
+                if cueNative {
+                    for index in doc.captionCues.indices { doc.captionCues[index].raw.removeValue(forKey: "animation_phases") }
+                } else {
+                    for index in doc.textElements.indices where doc.textElements[index].isCaption {
+                        doc.textElements[index].raw.removeValue(forKey: "animation_phases")
+                    }
+                }
+            }
+        case .line(let id) where cueNative:
+            guard let index = document.captionCues.firstIndex(where: { $0.id == id }) else { return }
+            transactDocument(section: .captions) { $0.captionCues[index].raw["animation_phases"] = value }
+        case .line(let id):
+            // The line's first row with phases governs the line (`_group_phases`), so this row keeps the
+            // only phases on its line.
+            let line = captionLineRowIDs(containing: id)
+            transactDocument(section: .text) { doc in
+                for index in doc.textElements.indices where line.contains(doc.textElements[index].id) {
+                    if doc.textElements[index].id == id {
+                        doc.textElements[index].raw["animation_phases"] = value
+                    } else {
+                        doc.textElements[index].raw.removeValue(forKey: "animation_phases")
+                    }
+                }
+            }
+        }
+    }
 
     func updateCaptionCue(id: String, text: String? = nil, startS: Double? = nil, endS: Double? = nil) {
         guard canEditSection(.captions) else { return }
@@ -7762,6 +7910,36 @@ struct NativeEditorTemporaryVideo {
         songCaptionLipsyncCarryS = 0
         rendersOnDevice = variant?["render_destination"]?.stringValue == "device"
         guidedRevisionNumber = Self.number(variant?["editor_revision_number"]).flatMap { $0 >= 1 && $0 <= Double(Int32.max) ? Int($0) : nil }
+        configureEditingPermissions(from: variant)
+    }
+
+    private func refreshEditingPermissions(from variant: [String: JSONValue]?, document latest: EditorDocument) {
+        guard cloudEditorUnavailableMessage == nil, document.capabilities != latest.capabilities else { return }
+        func refreshed(_ value: EditorDocument) -> EditorDocument {
+            var value = value
+            value.capabilities = latest.capabilities
+            return value
+        }
+        document = refreshed(document)
+        cleanDocument = refreshed(cleanDocument)
+        undoStack = undoStack.map(refreshed)
+        redoStack = redoStack.map(refreshed)
+        if let transactionBaseline { self.transactionBaseline = refreshed(transactionBaseline) }
+        if var activeTrim {
+            activeTrim.baseline = refreshed(activeTrim.baseline)
+            activeTrim.redoBaseline = activeTrim.redoBaseline.map(refreshed)
+            self.activeTrim = activeTrim
+        }
+        if var activeTimedEdit {
+            activeTimedEdit.baseline = refreshed(activeTimedEdit.baseline)
+            activeTimedEdit.redoBaseline = activeTimedEdit.redoBaseline.map(refreshed)
+            self.activeTimedEdit = activeTimedEdit
+        }
+        previewVariant["editor_capabilities"] = variant?["editor_capabilities"]
+        configureEditingPermissions(from: variant)
+    }
+
+    private func configureEditingPermissions(from variant: [String: JSONValue]?) {
         guard let variant else {
             // Preview fixtures remain interactive, but production never claims
             // renderer support without an authoritative status response.

@@ -58,6 +58,7 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
     private let lock = NSLock()
     private var revision = 0
     private var item: [String: Any]?
+    private var recentOperation: [String: Any]?
     private var learningInitialized = false
     private var learningEnabled = false
     private var learningDecided = false
@@ -93,7 +94,7 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
             let body: [String: Any] = ["feature_available": true, "text_preferences_available": true, "enabled": true, "revision": revision,
                                       "active": item.map { [$0] } ?? [],
                                       "suggestions": learningEnabled && !learningDecided ? [learningSuggestion] : [],
-                                      "edit_learning": ["available": learning, "enabled": learningEnabled], "recent_undo": NSNull()]
+                                      "edit_learning": ["available": learning, "enabled": learningEnabled], "recent_undo": recentOperation as Any? ?? NSNull()]
             let data = try! JSONSerialization.data(withJSONObject: body)
             return (200, String(decoding: data, as: UTF8.self))
         }
@@ -116,7 +117,10 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
             item = value
         }
         revision += 1
-        return (200, "{\"id\":\"00000000-0000-0000-0000-000000000649\"}")
+        recentOperation = ["operation_id": "00000000-0000-0000-0000-000000000649",
+                           "item_id": item?["id"] as Any? ?? NSNull(), "revision": revision,
+                           "undo_expires_at": "2099-01-01T00:00:00Z"]
+        return (200, String(decoding: try! JSONSerialization.data(withJSONObject: recentOperation!), as: UTF8.self))
     }
 }
 

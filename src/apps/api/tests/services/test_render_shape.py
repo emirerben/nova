@@ -45,11 +45,63 @@ def test_montage_family_offers_landscape_and_bars(edit_format):
     assert offer.fit_choices == ("fit", "fill")
 
 
-def test_subtitled_offers_bars_only():
+def test_subtitled_offers_landscape_and_bars_on_the_device():
     offer = _offer("subtitled")
-    assert offer.orientations == ("portrait",)
+    assert offer.orientations == ("portrait", "landscape")
     assert offer.fit_choices == ("fit", "fill")
     assert offer.has_choice is True
+    assert offer.reason is None
+
+
+def test_subtitled_landscape_needs_the_flag_the_device_and_no_mixed_media():
+    off = _offer("subtitled", landscape_enabled=False)
+    assert (off.orientations, off.reason) == (("portrait",), rs.REASON_DISABLED)
+    # The cloud subtitled renderer has no landscape canvas: never offered there.
+    cloud = _offer("subtitled", device_render=False)
+    assert (cloud.orientations, cloud.reason) == (("portrait",), rs.REASON_NOT_ON_DEVICE)
+    assert cloud.fit_choices == ("fit", "fill")
+    strategy = CreativeStrategy(
+        edit_format="subtitled",
+        mixed_media_timing={"mode": "quick_photo_long_video", "photo_s": 1.0},
+    )
+    if strategy.mixed_media_timing is None:  # schema shape guard
+        pytest.skip("mixed_media_timing did not validate")
+    mixed = rs.creation_offer(_item(), strategy, landscape_enabled=True)
+    assert (mixed.orientations, mixed.reason) == (("portrait",), rs.REASON_MIXED_MEDIA)
+
+
+def test_subtitled_is_never_routed_to_the_speech_montage_gate(monkeypatch):
+    """The spoken-excerpt montage rules are a montage-only concern: a Talking clip IS speech."""
+    monkeypatch.setattr(
+        rs,
+        "_may_route_to_speech_montage",
+        lambda *a, **k: pytest.fail("subtitled must not reach the montage speech gate"),
+    )
+    assert _offer("subtitled").orientations == ("portrait", "landscape")
+
+
+def test_subtitled_default_stays_portrait_whatever_the_clips_are():
+    """The Talking worker never picks a canvas on its own, so the preselected shape must
+    not vote landscape from sideways clips (montage's auto path does; this one cannot)."""
+    sideways = _item([_assignment(1920, 1080), _assignment(1920, 1080)])
+    assert _offer("subtitled", sideways).default_orientation == "portrait"
+    assert _offer("montage", sideways).default_orientation == "landscape"
+    # A re-render keeps what the previous ready variant was.
+    assert (
+        _offer("subtitled", sideways, previous_orientation="landscape").default_orientation
+        == "landscape"
+    )
+
+
+def test_subtitled_landscape_choice_resolves_without_bars():
+    assert rs.resolve_choice(_offer("subtitled"), "landscape", "fit") == {
+        "output_orientation": "landscape",
+        "landscape_fit": "fill",
+    }
+    assert rs.resolve_choice(_offer("subtitled"), None, "fit") == {
+        "output_orientation": "portrait",
+        "landscape_fit": "fit",
+    }
 
 
 @pytest.mark.parametrize("edit_format", ["narrated", "narrated_planned", "narrated_ready"])
@@ -188,7 +240,7 @@ def test_landscape_choice_never_carries_bars():
 
 def test_unavailable_choice_is_unsupported():
     with pytest.raises(rs.RenderShapeError) as exc:
-        rs.resolve_choice(_offer("subtitled"), "landscape", None)
+        rs.resolve_choice(_offer("subtitled", device_render=False), "landscape", None)
     assert exc.value.code == "render_shape_unsupported"
     with pytest.raises(rs.RenderShapeError) as exc:
         rs.resolve_choice(_offer(landscape_enabled=False), "landscape", None)
@@ -221,11 +273,58 @@ def _device_variant(archetype: str, **extra) -> dict:
 
 
 def test_editor_offer_subtitled_needs_its_lane_rollout():
-    open_offer = rs.device_editor_offer(_device_variant("subtitled"), {}, subtitled_lanes=True)
+    open_offer = rs.device_editor_offer(
+        _device_variant("subtitled"), {}, subtitled_lanes=True, landscape_enabled=True
+    )
     assert open_offer.landscape_fit.editable is True
-    assert open_offer.orientation is None  # base map already closes it
-    closed = rs.device_editor_offer(_device_variant("subtitled"), {}, subtitled_lanes=False)
+    # A phone Talking Save recompiles onto either canvas: orientation is advertised.
+    assert open_offer.orientation == rs.ShapeAxis(True, None, "portrait")
+    closed = rs.device_editor_offer(
+        _device_variant("subtitled"), {}, subtitled_lanes=False, landscape_enabled=True
+    )
     assert closed.landscape_fit.editable is False
+    assert closed.orientation == rs.ShapeAxis(False, "phone_edit_unsupported", "portrait")
+
+
+def test_editor_offer_subtitled_orientation_follows_the_output_flag(monkeypatch):
+    explicit = rs.device_editor_offer(
+        _device_variant("subtitled"), {}, subtitled_lanes=True, landscape_enabled=False
+    )
+    assert explicit.orientation == rs.ShapeAxis(False, "disabled", "portrait")
+    # Bars/crop is independent of the output flag (it was open before landscape existed).
+    assert explicit.landscape_fit.editable is True
+    # No explicit flag: read at call time, like `creation_offer`.
+    monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "true")
+    assert rs.device_editor_offer(
+        _device_variant("subtitled"), {}, subtitled_lanes=True
+    ).orientation == rs.ShapeAxis(True, None, "portrait")
+    monkeypatch.setenv("LANDSCAPE_OUTPUT_ENABLED", "false")
+    assert rs.device_editor_offer(
+        _device_variant("subtitled"), {}, subtitled_lanes=True
+    ).orientation == rs.ShapeAxis(False, "disabled", "portrait")
+
+
+def test_editor_offer_landscape_subtitled_shows_its_canvas_and_no_bars():
+    offer = rs.device_editor_offer(
+        _device_variant("subtitled", orientation="landscape", landscape_fit="fit"),
+        {},
+        subtitled_lanes=True,
+        landscape_enabled=True,
+    )
+    assert offer.orientation == rs.ShapeAxis(True, None, "landscape")
+    # A stale "fit" never shows: landscape has no bars.
+    assert offer.landscape_fit == rs.ShapeAxis(False, "landscape_output", "fill")
+
+
+def test_editor_offer_authored_subtitled_stays_closed():
+    offer = rs.device_editor_offer(
+        _device_variant("subtitled", editor_timeline_mode="authored"),
+        {},
+        subtitled_lanes=True,
+        landscape_enabled=True,
+    )
+    assert offer.orientation == rs.ShapeAxis(False, "unsupported_archetype", "portrait")
+    assert offer.landscape_fit.editable is False
 
 
 def test_editor_offer_voiceover_montage_fit_only():

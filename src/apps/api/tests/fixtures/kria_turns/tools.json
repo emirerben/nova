@@ -1236,6 +1236,17 @@
               "default": null,
               "title": "Alignment"
             },
+            "animation_phases": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAnimationPhases"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "highlight_spoken_word": {
               "anyOf": [
                 {
@@ -1403,6 +1414,17 @@
         },
         "EditorCommitCaptionMeta": {
           "properties": {
+            "animation_phases": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAnimationPhases"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "appearance": {
               "anyOf": [
                 {
@@ -3401,6 +3423,67 @@
             "time_s"
           ],
           "title": "SyncAnchor",
+          "type": "object"
+        },
+        "TextAnimationPhases": {
+          "additionalProperties": false,
+          "properties": {
+            "entrance": {
+              "default": "none",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slide",
+                "typewriter",
+                "silkReveal",
+                "elasticCondensed",
+                "focusPull",
+                "wordRelay",
+                "ribbonWipe",
+                "echoStack"
+              ],
+              "title": "Entrance",
+              "type": "string"
+            },
+            "exit": {
+              "default": "none",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slide",
+                "typewriter",
+                "silkReveal",
+                "elasticCondensed",
+                "focusPull",
+                "wordRelay",
+                "ribbonWipe",
+                "echoStack"
+              ],
+              "title": "Exit",
+              "type": "string"
+            },
+            "loop": {
+              "default": "none",
+              "enum": [
+                "none",
+                "pulse",
+                "bounce",
+                "float"
+              ],
+              "title": "Loop",
+              "type": "string"
+            },
+            "speed": {
+              "default": 1,
+              "maximum": 3,
+              "minimum": 0.25,
+              "title": "Speed",
+              "type": "number"
+            }
+          },
+          "title": "TextAnimationPhases",
           "type": "object"
         },
         "TextCardBlock": {

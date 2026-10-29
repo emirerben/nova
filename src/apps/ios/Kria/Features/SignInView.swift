@@ -12,11 +12,6 @@ struct SignInView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var message: String?
     @State private var appleNonce = UUID().uuidString
-    // Visible in every build configuration, Release included — the server,
-    // not the client, decides whether `auth/mobile/reviewer-login` is
-    // available (404 when the feature is disabled). Exists so Apple's Beta
-    // App Review team can sign in with a demo username/password instead of
-    // Sign in with Apple/Google. See KRI-111.
     @State private var showsReviewerSignIn = false
     @State private var appeared = false
     @State private var heroReady = false
@@ -35,7 +30,7 @@ struct SignInView: View {
     }
 
     private var heroAnimating: Bool {
-        heroReady && !effectiveReduceMotion && scenePhase == .active && !showsReviewerSignIn
+        heroReady && UIAccessibility.isVideoAutoplayEnabled && !effectiveReduceMotion && scenePhase == .active && !showsReviewerSignIn
     }
 
     var body: some View {
@@ -46,7 +41,7 @@ struct SignInView: View {
                         KriaWordmark()
                             .signInEntrance(.wordmark, appeared: appeared, reduceMotion: effectiveReduceMotion)
 
-                        // Decorative only: at accessibility text sizes the 244pt
+                        // Decorative only: at accessibility text sizes the 204pt
                         // hero would push every action a full screen down, so it
                         // yields its space to the copy and the providers.
                         if !dynamicTypeSize.isAccessibilitySize {
@@ -274,57 +269,42 @@ enum SignInFailureCopy {
     }
 }
 
-/// Three overlapping portrait frames, not interactive and hidden from
-/// accessibility — purely decorative. Drifts gently forever once its own
-/// entrance has settled; sits at rest under Reduce Motion, background, or
-/// while the reviewer sign-in sheet is up.
 private struct SignInHero: View {
     let isAnimating: Bool
-
-    private enum Phase: CaseIterable { case rest, drift }
+    @State private var playing: Set<FeaturedEdit> = []
 
     var body: some View {
-        Group {
-            if isAnimating {
-                PhaseAnimator(Phase.allCases) { phase in
-                    frames(drift: phase == .drift)
-                } animation: { _ in
-                    .easeInOut(duration: SignInMotion.ambientPeriod / 2)
+        GeometryReader { geometry in
+            let width = min(342, geometry.size.width)
+            let landscapeWidth = width * 108 / 342
+            let portraitWidth = (width - landscapeWidth - 20) / 2
+            HStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    ForEach([FeaturedEdit.bosphorus, .talking]) { edit in
+                        preview(edit).frame(width: portraitWidth, height: portraitWidth / edit.aspectRatio)
+                    }
                 }
-            } else {
-                frames(drift: false)
+                VStack(spacing: 8) {
+                    ForEach(FeaturedEdit.onboarding.filter { $0.aspectRatio > 1 }) { edit in
+                        preview(edit).frame(width: landscapeWidth, height: landscapeWidth / edit.aspectRatio)
+                    }
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 342, height: 244)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+        .frame(height: 204)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Example edits")
+        .accessibilityValue(playing.isEmpty ? "Previews paused" : "Playing \(playing.count) of \(FeaturedEdit.onboarding.count) previews")
+        .accessibilityIdentifier("signin.featured-edits")
     }
 
-    @ViewBuilder
-    private func frames(drift: Bool) -> some View {
-        let dy: CGFloat = drift ? SignInMotion.ambientDrift : -SignInMotion.ambientDrift
-        let tilt: Double = drift ? SignInMotion.ambientTilt : -SignInMotion.ambientTilt
-        ZStack {
-            heroFrame("voiceover")
-                .shadow(color: .black.opacity(0.14), radius: 22, x: 0, y: 10)
-                .rotationEffect(.degrees(-11 + tilt), anchor: .bottom)
-                .position(x: 58 + 59, y: 44 + 79 + dy)
-            heroFrame("broll")
-                .shadow(color: .black.opacity(0.14), radius: 22, x: 0, y: 10)
-                .rotationEffect(.degrees(11 + tilt), anchor: .bottom)
-                .position(x: 166 + 59, y: 44 + 79 - dy)
-            heroFrame("montage")
-                .shadow(color: .black.opacity(0.18), radius: 30, x: 0, y: 14)
-                .position(x: 112 + 59, y: 24 + 79 - dy)
-        }
-    }
-
-    private func heroFrame(_ name: String) -> some View {
-        BundledPosterImage(name: name)
-            .scaledToFill()
-            .frame(width: 118, height: 158)
-            .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private func preview(_ edit: FeaturedEdit) -> some View {
+        FeaturedEditPreview(edit: edit, active: true, allowed: isAnimating, loops: true, playingChanged: { value in
+            if value { playing.insert(edit) } else { playing.remove(edit) }
+        })
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 14, x: 0, y: 6)
     }
 }
 

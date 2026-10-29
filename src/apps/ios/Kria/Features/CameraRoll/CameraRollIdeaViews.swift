@@ -140,40 +140,58 @@ struct CameraRollWorkingCard: View {
 
 // MARK: - Idea card (Paper A2)
 
+/// Every idea has the same card: its form and length, its clips, any open questions, and Use this idea.
 struct CameraRollIdeaCard: View {
     @Bindable var model: CameraRollSurfaceModel
     let story: CameraRollStory
     let event: CameraRollEvent
-    let isFirst: Bool
-    let open: (_ autoSelect: Bool) -> Void
+    let isBestFit: Bool
+    let open: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let unresolved = story.contentPlan?.unresolvedQuestions.count ?? 0
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text(summary).font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.mutedInk).lineLimit(1)
                 Spacer(minLength: 0)
-                if isFirst {
+                if isBestFit {
                     Text("Best fit").font(KriaFont.body(11).weight(.bold)).foregroundStyle(KriaColor.ink)
                         .padding(.horizontal, 8).frame(height: 22).background(KriaColor.butter, in: Capsule())
+                        .accessibilityIdentifier("camera-roll-idea-best-fit")
                 }
                 menu
             }
-            Button { open(false) } label: {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(story.title).font(KriaFont.body(isFirst ? 19 : 17).weight(.bold)).tracking(isFirst ? -0.19 : 0)
-                        .foregroundStyle(KriaColor.ink).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
-                    if isFirst { clips }
-                }.contentShape(Rectangle())
+            Button(action: open) {
+                Text(story.title).font(KriaFont.body(19).weight(.bold)).tracking(-0.19)
+                    .foregroundStyle(KriaColor.ink).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityIdentifier("camera-roll-idea-open-\(story.id)")
-            if isFirst {
-                Button { open(true) } label: {
-                    Text("Use this idea").font(KriaFont.body(15).weight(.bold)).foregroundStyle(KriaColor.ink)
-                        .frame(maxWidth: .infinity, minHeight: 44).background(KriaColor.butter, in: Capsule()).contentShape(Capsule())
-                }.buttonStyle(.plain).accessibilityIdentifier("camera-roll-idea-use-\(story.id)")
+            clips
+            if let plan = story.contentPlan, unresolved > 0 {
+                CameraRollOpenQuestionsView(story: story, plan: plan) { revised in await model.answerQuestions(story, plan: revised) }
+            }
+            Button { model.use(story) } label: { Text(useTitle).frame(maxWidth: .infinity) }
+                .buttonStyle(KriaPrimaryButtonStyle(minHeight: 48)).disabled(unresolved > 0)
+                .accessibilityIdentifier("camera-roll-idea-use-\(story.id)")
+            if unresolved > 0 {
+                Text(unresolved == 1 ? "Answer or skip the question above to use this idea." : "Answer or skip the \(unresolved) questions above to use this idea.")
+                    .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
+                    .frame(maxWidth: .infinity).multilineTextAlignment(.center)
+                    .accessibilityIdentifier("camera-roll-idea-use-reason-\(story.id)")
             }
         }
         .padding(14).background(KriaColor.fill, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .accessibilityElement(children: .contain).accessibilityIdentifier("camera-roll-idea-\(story.id)")
+    }
+
+    /// While the idea is being built, Use reopens its progress.
+    private var useTitle: String {
+        guard let use = model.uses[story.id] else { return "Use this idea" }
+        switch use.phase {
+        case .running: return "Building · Show progress"
+        case .failed, .needsOriginals, .blocked: return "Needs you · Show progress"
+        case .opened: return "Use this idea"
+        }
     }
 
     private var summary: String {
@@ -186,7 +204,7 @@ struct CameraRollIdeaCard: View {
         Menu {
             Button { model.anotherIdea(in: event.id) } label: { Label("More like this", systemImage: "sparkles") }
                 .disabled(model.isGenerating(event.id))
-            Button { open(false) } label: { Label("Edit opening text", systemImage: "pencil") }
+            Button(action: open) { Label("Edit opening text", systemImage: "pencil") }
             Button(role: .destructive) { model.deleteIdea(story, in: event.id) } label: { Label("Delete idea", systemImage: "trash") }
         } label: { CameraRollDots(size: 32, fill: .white) }
             .accessibilityLabel("Idea options").accessibilityIdentifier("camera-roll-idea-menu-\(story.id)")
@@ -198,10 +216,118 @@ struct CameraRollIdeaCard: View {
         }
         return HStack(spacing: 6) {
             ForEach(entries.prefix(4)) { entry in
-                CameraRollCollectionThumbnail(entry: entry, api: model.api, metadataOnly: model.thumbnailsDisabled, size: CGSize(width: 52, height: 66))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                CameraRollCollectionThumbnail(entry: entry, api: model.api, metadataOnly: model.thumbnailsDisabled, size: CGSize(width: 56, height: 72))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            if entries.count > 4 {
+                Text("+\(entries.count - 4)").font(KriaFont.body(13).weight(.bold)).foregroundStyle(KriaColor.mutedInk)
+                    .frame(width: 56, height: 72).background(Color.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
+        .contentShape(Rectangle()).onTapGesture(perform: open)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(entries.count) \(entries.count == 1 ? "clip" : "clips")").accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("camera-roll-idea-clips-\(story.id)")
+    }
+}
+
+// MARK: - Use this idea
+
+/// The progress of turning an idea into a chat. Closing it leaves the work running; Use on the card reopens it.
+struct CameraRollUseSheet: View {
+    let use: CameraRollIdeaUse
+    @Environment(\.dismiss) private var dismiss
+    @State private var choosingOriginals = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                Text(use.story.title).font(KriaFont.headline(22)).foregroundStyle(KriaColor.ink).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                CameraRollCircleButton(identifier: "camera-roll-use-close", label: "Close", action: { dismiss() }) {
+                    Image(systemName: "xmark").font(.system(size: 14, weight: .bold)).foregroundStyle(KriaColor.ink)
+                }
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(CameraRollIdeaUse.Step.allCases, id: \.self) { step in row(step) }
+            }
+            outcome
+            Spacer(minLength: 0)
+            Text("You can close this. Kria keeps going and opens your chat when it is ready.")
+                .font(KriaFont.body(13).weight(.medium)).foregroundStyle(KriaColor.mutedInk)
+        }
+        .padding(.horizontal, 20).padding(.top, 24).padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(KriaColor.paper)
+        .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+        .accessibilityElement(children: .contain).accessibilityIdentifier("camera-roll-use-sheet")
+        .sheet(isPresented: $choosingOriginals) {
+            if let owner = use.owner {
+                CollectionOriginalsReview(assets: use.missingOriginals, owner: owner) { choosingOriginals = false; use.start() }
+            }
+        }
+    }
+
+    private enum RowState: String { case waiting = "Waiting", active = "In progress", done = "Done", failed = "Failed" }
+
+    private func state(_ step: CameraRollIdeaUse.Step) -> RowState {
+        func relative(_ current: CameraRollIdeaUse.Step, at: RowState) -> RowState {
+            step.rawValue < current.rawValue ? .done : step == current ? at : .waiting
+        }
+        switch use.phase {
+        case let .running(current): return relative(current, at: .active)
+        case let .failed(current, _): return relative(current, at: .failed)
+        case .needsOriginals: return relative(.originals, at: .failed)
+        case .blocked: return relative(.chat, at: .failed)
+        case .opened: return .done
+        }
+    }
+
+    private func row(_ step: CameraRollIdeaUse.Step) -> some View {
+        let state = state(step)
+        let title = step == .clips && use.clipsTotal > 0 ? "\(step.title) \(use.clipsDone)/\(use.clipsTotal)" : step.title
+        return HStack(spacing: 12) {
+            ZStack {
+                switch state {
+                case .done:
+                    Circle().fill(KriaColor.successSoft)
+                    KriaCheckShape().stroke(KriaColor.success, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)).frame(width: 12, height: 12)
+                case .active: KriaSpinner(size: 18)
+                case .failed:
+                    Circle().fill(KriaColor.failureSoft)
+                    Image(systemName: "exclamationmark").font(.system(size: 13, weight: .bold)).foregroundStyle(KriaColor.failureText)
+                case .waiting: Circle().fill(KriaColor.fill)
+                }
+            }.frame(width: 28, height: 28)
+            Text(title).font(KriaFont.body(16).weight(state == .waiting ? .medium : .semibold))
+                .foregroundStyle(state == .waiting ? KriaColor.mutedInk : KriaColor.ink)
+        }
+        .accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(state.rawValue)
+        .accessibilityIdentifier("camera-roll-use-step-\(step)")
+    }
+
+    @ViewBuilder private var outcome: some View {
+        switch use.phase {
+        case let .failed(_, message):
+            failure(message)
+            Button { use.start() } label: { Text("Retry").frame(maxWidth: .infinity) }
+                .buttonStyle(KriaPrimaryButtonStyle(minHeight: 52)).accessibilityIdentifier("camera-roll-use-retry")
+        case let .blocked(message):
+            failure(message)
+        case .needsOriginals:
+            failure("\(use.missingOriginals.count) \(use.missingOriginals.count == 1 ? "video needs its" : "videos need their") full-quality original from Photos.")
+            Button { choosingOriginals = true } label: { Text("Choose originals").frame(maxWidth: .infinity) }
+                .buttonStyle(KriaPrimaryButtonStyle(minHeight: 52)).accessibilityIdentifier("camera-roll-use-choose-originals")
+        case .running, .opened:
+            EmptyView()
+        }
+    }
+
+    private func failure(_ message: String) -> some View {
+        Text(message).font(KriaFont.body(14).weight(.medium)).foregroundStyle(KriaColor.failureText)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+            .background(KriaColor.failureSoft, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .accessibilityIdentifier("camera-roll-use-error")
     }
 }
 

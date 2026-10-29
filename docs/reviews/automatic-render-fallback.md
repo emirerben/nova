@@ -20,8 +20,10 @@ The regression fixtures specify these expectations independently of the result:
   the model's claim that an omitted label will appear, or says “as agreed” before
   the creator agrees.
 - Only proven capability limits may be superseded automatically in the brief:
-  exact compiler-removed text, unavailable per-clip text on native/Talking edits,
-  and the typed footage-brightness request. A merely missing supported label and a
+  unquoted per-clip text on native/Talking edits and the typed footage-brightness
+  request. Superseded by KRI-1009: text the creator quoted (exact compiler-removed
+  copy included) is asked about before the draft, never dropped automatically
+  ([review](kri-1009-talking-top-text-title.md)). A merely missing supported label and a
   missing spoken trigger stay unresolved. Unknown evidence, missing sources,
   source-audio/mute restrictions, selection, order and timing retain their checks.
 - Newly received requirements survive rollback if a genuine choice still blocks

@@ -558,7 +558,7 @@ def test_subtitled_reaction_beats_missed_reasons_map_to_specific_sentences() -> 
         "Placed 0 of 5 moments you named",
         'Couldn\'t find the photo or sticker for "a" in your Visuals',
         'Couldn\'t find a sound for "b" in the library',
-        'No room to show "c" without covering your face or the captions',
+        'No room to show "c" without covering a face or the captions',
         'Couldn\'t add "d" to the phone render',
         'I never heard "e", so its photo or sound wasn\'t shown',
     ]
@@ -621,7 +621,7 @@ def test_beat_miss_sentence_reason_buckets() -> None:
         == 'Couldn\'t find a sound for "x" in the library'
     )
 
-    no_room = 'No room to show "x" without covering your face or the captions'
+    no_room = 'No room to show "x" without covering a face or the captions'
     assert beat_miss_sentence("x", "no_safe_spot") == no_room
     assert beat_miss_sentence("x", "too_short") == no_room
     assert beat_miss_sentence("x", "overlap") == no_room
@@ -680,7 +680,7 @@ def test_render_notes_from_beat_receipt_placed_and_missed_and_closing() -> None:
     assert render_notes_from_beat_receipt(receipt) == [
         "Placed 1 of 2 moments you named",
         'I never heard "when he scores", so its photo or sound wasn\'t shown',
-        "Couldn't place the closing photo without covering your face or the captions",
+        "Couldn't place the closing photo without covering a face or the captions",
     ]
 
 
@@ -704,7 +704,7 @@ def test_render_notes_from_beat_receipt_reason_specific_sentences() -> None:
         "Placed 0 of 4 moments you named",
         'Couldn\'t find the photo or sticker for "goal photo" in your Visuals',
         'Couldn\'t find a sound for "cheer sound" in the library',
-        'No room to show "final whistle" without covering your face or the captions',
+        'No room to show "final whistle" without covering a face or the captions',
         'Couldn\'t add "confetti" to the phone render',
         # A non-no-room closing reason keeps the generic sentence.
         "Couldn't place the closing photo",
@@ -801,7 +801,7 @@ def test_render_notes_from_overlay_receipt_no_spoken_match_and_no_room_buckets()
         'Couldn\'t find a spoken moment for "hook one"',
         'Couldn\'t place "unknown reason"',
         'Couldn\'t place "empty reason"',
-        'No room to show "no safe spot" without covering your face or the captions',
+        'No room to show "no safe spot" without covering a face or the captions',
         '"dup" overlapped another visual, so it was skipped',
         '"overlaps" overlapped another visual, so it was skipped',
         '"short one" had too little time on screen to show',

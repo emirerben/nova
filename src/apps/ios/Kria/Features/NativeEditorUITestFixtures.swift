@@ -11,6 +11,7 @@ enum NativeEditorUITestFixtures {
         case captionVisuals = "caption-visuals"
         case projectedCaptions = "projected-captions"
         case sourceText = "source-text"
+        case selectionBoundary = "selection-boundary"
         case gamedayAdd = "gameday-add"
         case twoText = "two-text"
         case boundary = "boundary"
@@ -20,6 +21,8 @@ enum NativeEditorUITestFixtures {
         case autoScrollExtend = "autoscroll-extend"
         case guidedText = "guided-text"
         case talkingCaptions = "talking-captions"
+        /// KRI-1007: lip-sync lyrics as caption_cue text rows (one per word, `line_end` closes a line).
+        case songCaptions = "song-captions"
         case retimedClips = "retimed-clips"
         /// Four 2.5 s cuts on four takes (KRI-561): a lip-sync song trim visibly drops cuts.
         case songTrim = "song-trim"
@@ -66,6 +69,29 @@ enum NativeEditorUITestFixtures {
             caps["text_bend"] = .bool(true)
             value.serverSnapshot["editor_capabilities"] = .object(caps)
         }
+        if arguments.contains("-ui-testing-editor-caption-animation") {
+            // KRI-1007: the server advertises `editor_capabilities.caption_animation` to a protocol-24 build.
+            var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+            caps["caption_animation"] = .bool(true)
+            caps["caption_editor_style"] = .bool(true)
+            value.serverSnapshot["editor_capabilities"] = .object(caps)
+        }
+        if arguments.contains("-ui-testing-editor-caption-text-motion") {
+            // An all-captions entrance stored by Style > Text motion before it folded into Animation (KRI-1007).
+            var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            var meta = sections["caption_meta"]?.objectValue ?? [:]
+            var appearance = meta["appearance"]?.objectValue ?? [:]
+            appearance["animation_phases"] = .object([
+                "entrance": .string("silkReveal"), "exit": .string("none"), "loop": .string("none"), "speed": .number(1),
+            ])
+            appearance["highlight_spoken_word"] = .bool(false)
+            meta["appearance"] = .object(appearance)
+            meta["style"] = .string("sentence")
+            sections["caption_meta"] = .object(meta)
+            payload["sections"] = .object(sections)
+            value.serverSnapshot["editor_payload"] = .object(payload)
+        }
         if arguments.contains("-ui-testing-editor-research-sources") {
             // Offline UI coverage only; live research is verified separately on device.
             var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
@@ -99,6 +125,7 @@ enum NativeEditorUITestFixtures {
         case .captionVisuals: captionVisuals
         case .projectedCaptions: projectedCaptions
         case .sourceText: sourceText
+        case .selectionBoundary: selectionBoundary
         case .gamedayAdd: gamedayAdd
         case .twoText: twoText
         case .boundary: boundary
@@ -108,6 +135,7 @@ enum NativeEditorUITestFixtures {
         case .autoScrollExtend: autoScrollExtend
         case .guidedText: guidedText
         case .talkingCaptions: talkingCaptions
+        case .songCaptions: songCaptions
         case .retimedClips: retimedClips
         case .songTrim: songTrim
         case .drawing: drawing
@@ -266,6 +294,16 @@ enum NativeEditorUITestFixtures {
         return draft(clips: clips, text: [layer], captions: false, music: false, sections: [
             "timeline_slots": slots(for: clips),
             "text_elements": .array([textRecord(layer, start: 0, end: 4, z: 1,
+                extra: ["font_family": .string("Inter"), "size_px": .number(72)])]),
+        ])
+    }()
+
+    static let selectionBoundary: EditorDraft = {
+        let clips = [clip(0, start: 0, duration: 2.001), clip(1, start: 2.001, duration: 2)]
+        let layer = text(100, content: "Selected text", x: 0.5, y: 0.4)
+        return draft(clips: clips, text: [layer], captions: false, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array([textRecord(layer, start: 2.001, end: 4.001, z: 1,
                 extra: ["font_family": .string("Inter"), "size_px": .number(72)])]),
         ])
     }()
@@ -490,6 +528,37 @@ enum NativeEditorUITestFixtures {
                 "caption_cues": .object(["editable": .bool(true)]),
                 "caption_meta": .object(["editable": .bool(true)]),
                 "text_elements": .object(["editable": .bool(false), "reason": .string("Text isn’t editable for this edit on this iPhone.")]),
+            ]),
+        ])
+    }()
+
+    static let songCaptions: EditorDraft = {
+        let clips = [clip(910, start: 0, duration: 6)]
+        let lines = [["Midnight", "drive", "again"], ["Hold", "on", "tight"]]
+        var rows: [JSONValue] = []
+        var start = 0.6
+        for (lineIndex, words) in lines.enumerated() {
+            for (wordIndex, word) in words.enumerated() {
+                var params: [String: JSONValue] = ["source": .string("caption_cue")]
+                if wordIndex == words.count - 1 { params["line_end"] = .bool(true) }
+                rows.append(.object([
+                    "id": .string("song-caption-\(lineIndex)-\(wordIndex)"), "text": .string(word),
+                    "start_s": .number(start), "end_s": .number(start + 0.8), "role": .string("generative_narration_caption"),
+                    "position": .string("bottom"), "alignment": .string("center"), "source_params": .object(params),
+                ]))
+                start += 0.8
+            }
+            start += 0.4
+        }
+        return draft(clips: clips, text: [], captions: true, music: false, sections: [
+            "timeline_slots": slots(for: clips),
+            "text_elements": .array(rows),
+            "caption_meta": .object(["enabled": .bool(true), "style": .string("sentence")]),
+        ], rootExtras: [
+            "render_destination": .string("device"),
+            "editor_capabilities": .object([
+                "timeline": .bool(true), "text_elements": .bool(true),
+                "caption_meta": .object(["editable": .bool(true)]), "caption_editor_style": .bool(true),
             ]),
         ])
     }()

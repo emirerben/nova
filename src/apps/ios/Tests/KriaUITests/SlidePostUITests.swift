@@ -95,7 +95,7 @@ import XCTest
         carousel.swipeLeft()
         let slides = app.buttons["format-slides"]
         XCTAssertTrue(slides.waitForExistence(timeout: 5))
-        XCTAssertEqual(slides.frame.height, 164, accuracy: 0.5, "same 156x164 picture as the other format tiles")
+        XCTAssertEqual(slides.frame.height, 228, accuracy: 0.5, "same 156x228 picture as the other format tiles")
         XCTAssertEqual(slides.frame.width, 156, accuracy: 0.5)
         // Let it swipe once so the screenshot shows a settled frame, not half of two.
         _ = eventually(timeout: 3.6) { false }

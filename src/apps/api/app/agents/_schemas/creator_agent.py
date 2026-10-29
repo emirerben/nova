@@ -466,8 +466,8 @@ class CreativeStrategy(_CreatorModel):
     # KRI-282: the creator's answer to an instruction conflict (chronological vs grouped
     # by sport). Server-owned like ``resolved_clip_intents``: the planner always sets it
     # from the thread's stored ``choice_selection``, never from model output.
-    ordering_choice: SkipJsonSchema[Literal["group_first", "chronological"] | None] = Field(
-        default=None
+    ordering_choice: SkipJsonSchema[Literal["group_first", "chronological", "random"] | None] = (
+        Field(default=None)
     )
     # KRI-476 (PR-C): the creator's answers to material conflicts (duration vs clip
     # count, order basis, text placement). Server-owned exactly like

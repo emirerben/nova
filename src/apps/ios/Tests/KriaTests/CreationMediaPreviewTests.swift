@@ -62,6 +62,16 @@ import UIKit
         XCTAssertTrue(exists(CreationMediaPreview.url(recordID: recordID)))
     }
 
+    func testCancelledEarlyPreviewNeverWritesAThumbnail() async throws {
+        let recordID = newRecordID()
+        let file = try bundled("montage", "jpg")
+        let task = Task { await CreationMediaPreview.saveEarly(localURL: file, recordID: recordID) }
+        task.cancel()
+        let written = await task.value
+        XCTAssertFalse(written)
+        XCTAssertFalse(exists(CreationMediaPreview.url(recordID: recordID)))
+    }
+
     func testFinalizeHandsTheEarlyThumbnailToTheMediaIDWithoutRegeneratingIt() async throws {
         let recordID = newRecordID(), mediaID = newMediaID()
         await CreationMediaPreview.saveEarly(localURL: try bundled("montage", "mp4"), recordID: recordID)

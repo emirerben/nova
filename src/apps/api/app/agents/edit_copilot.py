@@ -50,7 +50,11 @@ log = structlog.get_logger()
 # v86: removing added text preserves speech subtitles unless explicitly targeted.
 # v88 (KRI-821): the music redirect no longer points iOS creators at the web item page.
 # v89: reorder_clips_by criterion "custom" takes a model-reasoned order (reverse, swaps).
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-24-v89"
+# v90: reorder_clips_by criterion "random" shuffles with a server-owned seed (no order authored).
+# v91 (29 Ekim lane E, KRI-1039): compose with the ops, refuse only when no sequence reaches the
+# end state and name what is missing; words the creator gives, shown a piece at a time, are
+# replace_text_sequence (weighted windows, mode cumulative), never captions.
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-29-v91"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -5045,7 +5049,8 @@ def _coerce_payload(
                 return None
 
     if name in {"edit_text", "add_text", "edit_caption"}:
-        text = _clean_user_text(out.get("text"))
+        # Captions are timed single rows; titles and labels keep the agent's own line breaks.
+        text = _clean_user_text(out.get("text"), keep_breaks=name != "edit_caption")
         if text is None:
             state.invalid_value()
             return None
@@ -5780,11 +5785,18 @@ def _motion_active_union_valid(name: str, payload: dict, blocks: list) -> bool:
     return total <= MOTION_MAX_ACTIVE_FRAMES / MOTION_FPS + 1e-6
 
 
-def _clean_user_text(value: object, *, max_chars: int = 500) -> str | None:
+def _clean_user_text(
+    value: object, *, max_chars: int = 500, keep_breaks: bool = False
+) -> str | None:
     if not isinstance(value, str):
         return None
-    clean = re.sub(r"[\x00-\x1f\x7f]+", " ", value).strip()
-    clean = re.sub(r"\s+", " ", clean)
+    if keep_breaks:
+        from app.services.kria_editor_ops_text import clean_authored_text  # noqa: PLC0415
+
+        clean = clean_authored_text(value)
+    else:
+        clean = re.sub(r"[\x00-\x1f\x7f]+", " ", value).strip()
+        clean = re.sub(r"\s+", " ", clean)
     if not clean:
         return None
     return clean[:max_chars]

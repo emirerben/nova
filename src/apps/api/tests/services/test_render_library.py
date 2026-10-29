@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app import storage
 from app.services import render_library as library
 
 
@@ -38,14 +39,14 @@ async def test_only_published_ready_catalog_audio(catalog, prefix):
 
 def test_pin_hashes_exact_generation(monkeypatch):
     monkeypatch.setattr(
-        library.storage, "object_metadata", lambda _: SimpleNamespace(size=3, generation="42")
+        storage, "object_metadata", lambda _: SimpleNamespace(size=3, generation="42")
     )
 
     def download(path, local, *, generation):
         assert generation == "42"
         Path(local).write_bytes(b"abc")
 
-    monkeypatch.setattr(library.storage, "download_generation_to_file", download)
+    monkeypatch.setattr(storage, "download_generation_to_file", download)
     result = library.inspect_library_asset(
         "music/track/audio.mp3", asset_id="a", catalog="music", catalog_id="track"
     )
@@ -56,10 +57,10 @@ def test_pin_hashes_exact_generation(monkeypatch):
 
 def test_pin_rejects_metadata_size_mismatch(monkeypatch):
     monkeypatch.setattr(
-        library.storage, "object_metadata", lambda _: SimpleNamespace(size=4, generation="42")
+        storage, "object_metadata", lambda _: SimpleNamespace(size=4, generation="42")
     )
     monkeypatch.setattr(
-        library.storage,
+        storage,
         "download_generation_to_file",
         lambda path, local, **kw: Path(local).write_bytes(b"abc"),
     )

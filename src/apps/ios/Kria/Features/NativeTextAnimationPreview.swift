@@ -87,6 +87,9 @@ struct NativeTextAnimationPreview: View {
     @ObservedObject var clock: NativeTextAnimationPreviewClock
 
     var body: some View {
+        if let edge = TextAnimationPhases.Edge(rawValue: effect), edge.isDesigned {
+            NativeDesignedAnimationTile(edge: edge, phase: phase, speed: speed, clock: clock)
+        } else {
         GeometryReader { proxy in
             let sample = NativeTextAnimationPreviewMath.displaySample(
                 phase: phase, effect: effect, speed: speed, clockTime: clock.elapsed,
@@ -105,6 +108,39 @@ struct NativeTextAnimationPreview: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .accessibilityHidden(true)
         }
+        }
+    }
+}
+
+private struct NativeDesignedAnimationTile: View {
+    let edge: TextAnimationPhases.Edge
+    let phase: String
+    let speed: Double
+    @ObservedObject var clock: NativeTextAnimationPreviewClock
+    @State private var renderer: DesignedTextAnimationPreview?
+    @State private var image: CGImage?
+
+    var body: some View {
+        Group {
+            if let image { Image(decorative: image, scale: 1).resizable().scaledToFit() }
+            else { Text("Text").font(KriaFont.body(18).weight(.semibold)) }
+        }
+        .accessibilityHidden(true)
+        .task(id: "\(edge.rawValue)-\(phase)-\(speed)") {
+            guard let font = NativeFontCatalog.shared.fontURL(for: "Inter") else { return }
+            renderer = try? DesignedTextAnimationPreview(fontURL: font, effect: edge, exit: phase == "exit", speed: speed,
+                duration: NativeTextAnimationPreviewMath.layerDuration(speed: speed))
+            refresh()
+        }
+        .onChange(of: clock.elapsed) { _, _ in refresh() }
+    }
+    private func refresh() {
+        // The same cycle as the legacy cards, so every card plays at one pace.
+        let speed = NativeTextAnimationPreviewMath.normalizedSpeed(speed)
+        let time = clock.hasEverPlayed
+            ? NativeTextAnimationPreviewMath.layerTime(phase: phase, speed: speed, clockTime: clock.elapsed)
+            : NativeTextAnimationPreviewMath.edgeDuration(speed: speed) + NativeTextAnimationPreviewMath.readableHold
+        image = try? renderer?.image(time: time ?? NativeTextAnimationPreviewMath.layerDuration(speed: speed))
     }
 }
 
@@ -122,7 +158,21 @@ enum NativeTextAnimationPreviewMath {
     static let readableHold = 0.9
     static let resetGap = 0.55
 
-    static func edgeDuration(speed: Double) -> Double { 0.4 / normalizedSpeed(speed) }
+    static func edgeDuration(speed: Double) -> Double { TextAnimationPhases.edgeSeconds / normalizedSpeed(speed) }
+
+    /// One preview layer: entrance edge, readable hold, exit edge.
+    static func layerDuration(speed: Double) -> Double { 2 * edgeDuration(speed: speed) + readableHold }
+
+    /// The preview layer's local time for an In or Out card at `clockTime`, or nil while the card is blank.
+    static func layerTime(phase: String, speed: Double, clockTime: Double) -> Double? {
+        let edge = edgeDuration(speed: speed)
+        let cycleTime = clockTime.truncatingRemainder(dividingBy: cycleDuration(phase: phase, speed: speed))
+        switch phase {
+        case "entrance": return cycleTime < edge + readableHold ? cycleTime : nil
+        case "exit": return cycleTime < readableHold + edge ? (cycleTime < readableHold ? edge : edge + cycleTime) : nil
+        default: return nil
+        }
+    }
 
     static func cycleDuration(phase: String, speed: Double) -> Double {
         phase == "loop" ? 1.2 / normalizedSpeed(speed) : edgeDuration(speed: speed) + readableHold + resetGap
@@ -140,17 +190,9 @@ enum NativeTextAnimationPreviewMath {
         let cycleTime = clockTime.truncatingRemainder(dividingBy: duration)
 
         switch phase {
-        case "entrance":
-            guard cycleTime < edgeDuration(speed: speed) + readableHold else { return hidden }
-            return fromEngine(phase: phase, effect: effect, speed: speed,
-                              localTime: min(cycleTime, edgeDuration(speed: speed)), duration: edgeDuration(speed: speed) * 2)
-        case "exit":
-            guard cycleTime < readableHold + edgeDuration(speed: speed) else { return hidden }
-            let localTime = cycleTime < readableHold
-                ? edgeDuration(speed: speed)
-                : edgeDuration(speed: speed) + (cycleTime - readableHold)
-            return fromEngine(phase: phase, effect: effect, speed: speed, localTime: localTime,
-                              duration: edgeDuration(speed: speed) * 2)
+        case "entrance", "exit":
+            guard let localTime = layerTime(phase: phase, speed: speed, clockTime: clockTime) else { return hidden }
+            return fromEngine(phase: phase, effect: effect, speed: speed, localTime: localTime, duration: layerDuration(speed: speed))
         case "loop":
             return fromEngine(phase: phase, effect: effect, speed: speed, localTime: cycleTime,
                               duration: max(cycleTime + 1, 2))
@@ -169,7 +211,7 @@ enum NativeTextAnimationPreviewMath {
             visibleText: TextAnimationPhases.visiblePrefix(previewText, progress: value.revealProgress))
     }
 
-    private static func normalizedSpeed(_ speed: Double) -> Double { min(3, max(0.25, speed.isFinite ? speed : 1)) }
+    static func normalizedSpeed(_ speed: Double) -> Double { min(3, max(0.25, speed.isFinite ? speed : 1)) }
     private static func edge(_ value: String) -> TextAnimationPhases.Edge { TextAnimationPhases.Edge(rawValue: value) ?? .none }
     private static func loop(_ value: String) -> TextAnimationPhases.Loop { TextAnimationPhases.Loop(rawValue: value) ?? .none }
     static let stableSample = NativeTextAnimationPreviewSample(alpha: 1, scale: 1, xTranslate: 0, yTranslate: 0, visibleText: previewText)

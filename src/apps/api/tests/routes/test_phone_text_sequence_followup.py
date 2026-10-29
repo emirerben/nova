@@ -48,7 +48,7 @@ def test_sequence_save_and_later_style_edit_preserve_words_windows_and_footage(
         for layer in recipe.text_layers
     )
     windows = [(layer.start, layer.end) for layer in recipe.text_layers]
-    assert windows[0][0] == 0 and windows[-1][1] == 2
+    assert windows[0][0] == 0 and windows[-1][1] >= 2  # lengthened when a piece would flicker
     assert all(a[1] <= b[0] for a, b in zip(windows, windows[1:]))
     assert recipe.model_dump(mode="json")["tracks"] == before["tracks"]
 

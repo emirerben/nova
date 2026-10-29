@@ -2087,19 +2087,17 @@ struct NativeMiniStrip: View {
 
     private func select(_ item: NativeEditorTimelineItem) {
         guard !suppressTimelineSelection else { return }
-        alignTimeline(to: item.start)
-        session.select(item, seekToStart: false)
+        alignTimeline(to: item.selection)
     }
 
     private func select(_ clip: EditorClip) {
         guard !suppressTimelineSelection else { return }
-        alignTimeline(to: clip.start)
-        session.selectClip(clip.id)
+        alignTimeline(to: EditorSelection(kind: .clip, id: clip.id.uuidString))
     }
 
-    private func alignTimeline(to start: TimeInterval) {
+    private func alignTimeline(to selection: EditorSelection) {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-            session.seek(to: start)
+            session.select(selection)
         }
     }
 

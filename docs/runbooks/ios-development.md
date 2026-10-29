@@ -546,6 +546,25 @@ well as revisions because reconciliation can change a projection without
 appending an event. `testSlowDirectionAndPreJobFailureNeverReturnToUploading`
 exercises the delayed response, pre-job failure, retry and ready transition.
 
+### Caption animation (KRI-1007)
+
+Captions → Animation shows the Text panel's In / Out / Loop cards and speed slider
+(`NativeAnimationPhasePicker`, shared with Text) under an `All captions | Line N` switch.
+All captions is the default and writes `caption_meta.animation_phases` while removing every
+line's own phases in one undo step. Line N is the line last tapped in Edit captions; with
+none picked it is disabled and a visible line says why. The tab appears only with
+`editor_capabilities.caption_animation` (client protocol 24). In and Out offer the six designed
+edges beside the legacy ones, for text and captions alike. The older Style > Text motion row
+folded into this tab: its `caption_meta.appearance.animation_phases` shows as the All captions
+choice until All captions writes `caption_meta.animation_phases`, which clears the appearance
+entrance in the same undo step. The preview compiler follows the server: line > all-captions
+default > Text motion entrance > today's look. A word-highlight line keeps its sweep under the
+all-captions default, a text-lane (guided, song) line animates as one line, and a Text motion
+entrance draws each text-lane line as one row (`guided_caption_presentation`). Wire shape: phone-rendering.md
+"Caption animation". Proof: `CaptionAnimationTests` and `NativeCaptionAnimationUITests`
+(`-ui-testing-editor-caption-animation`, `-ui-testing-editor-song-captions`,
+`-ui-testing-editor-live-preview` for the compiled preview on any fixture).
+
 ### Caption line editing (KRI-240)
 
 Captions → Edit captions lists lines with their start time; there is no chevron,

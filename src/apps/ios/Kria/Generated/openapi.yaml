@@ -644,7 +644,8 @@
               "select",
               "timing",
               "audio",
-              "style"
+              "style",
+              "text_sequence"
             ],
             "title": "Kind",
             "type": "string"
@@ -1052,6 +1053,36 @@
         "title": "CoarseLocation",
         "type": "object"
       },
+      "CollectionEvent": {
+        "additionalProperties": false,
+        "description": "Creator-written context for one event, keyed by the members' `group` string.\n\n`group` need not match any member: a brand-new event is empty until footage is added.",
+        "properties": {
+          "about": {
+            "default": "",
+            "maxLength": 600,
+            "title": "About",
+            "type": "string"
+          },
+          "group": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Group",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "title"
+        ],
+        "title": "CollectionEvent",
+        "type": "object"
+      },
       "CollectionIndexBody": {
         "additionalProperties": false,
         "properties": {
@@ -1289,6 +1320,13 @@
       },
       "CollectionOut": {
         "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1465,6 +1503,15 @@
       "CollectionWrite": {
         "additionalProperties": false,
         "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionEvent"
+            },
+            "maxItems": 50,
+            "nullable": true,
+            "title": "Events",
+            "type": "array"
+          },
           "expected_revision": {
             "minimum": 0.0,
             "title": "Expected Revision",
@@ -3321,6 +3368,11 @@
             "title": "Alignment",
             "type": "string"
           },
+          "animation_phases": {
+            "$ref": "#/components/schemas/TextAnimationPhases",
+            "default": null,
+            "nullable": true
+          },
           "highlight_spoken_word": {
             "default": null,
             "nullable": true,
@@ -3422,6 +3474,11 @@
       },
       "EditorCommitCaptionMeta": {
         "properties": {
+          "animation_phases": {
+            "$ref": "#/components/schemas/TextAnimationPhases",
+            "default": null,
+            "nullable": true
+          },
           "appearance": {
             "$ref": "#/components/schemas/EditorCaptionAppearance",
             "default": null,
@@ -11074,8 +11131,8 @@
             "type": "string"
           },
           "query": {
+            "default": "",
             "maxLength": 500,
-            "minLength": 1,
             "title": "Query",
             "type": "string"
           },
@@ -11088,8 +11145,7 @@
           }
         },
         "required": [
-          "expected_revision",
-          "query"
+          "expected_revision"
         ],
         "title": "StoryGenerationBody",
         "type": "object"
@@ -11566,7 +11622,13 @@
               "fade",
               "pop",
               "slide",
-              "typewriter"
+              "typewriter",
+              "silkReveal",
+              "elasticCondensed",
+              "focusPull",
+              "wordRelay",
+              "ribbonWipe",
+              "echoStack"
             ],
             "title": "Entrance",
             "type": "string"
@@ -11578,7 +11640,13 @@
               "fade",
               "pop",
               "slide",
-              "typewriter"
+              "typewriter",
+              "silkReveal",
+              "elasticCondensed",
+              "focusPull",
+              "wordRelay",
+              "ribbonWipe",
+              "echoStack"
             ],
             "title": "Exit",
             "type": "string"

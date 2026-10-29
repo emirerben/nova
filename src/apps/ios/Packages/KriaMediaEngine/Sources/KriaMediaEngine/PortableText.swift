@@ -257,7 +257,7 @@ public struct PortableTextLayer: Codable, Equatable, Sendable {
     public let karaoke: KaraokeContent?
     public let dissolveSeed: UInt32?
     public let effect: Effect
-    public let animationPhases: TextAnimationPhases?
+    public var animationPhases: TextAnimationPhases?
     public let background: TextBackground?
     /// KRI-646: curve the lines along an arc, -100...100 (positive bows up like a rainbow, 0/nil is
     /// straight). Resolved at paint time (`TextBend`), so it only exists on effects that keep a

@@ -596,6 +596,45 @@ def text_bend_client_supported(*, require_client: bool | None = None) -> bool:
     return protocol is not None and protocol >= settings.text_bend_min_client_protocol
 
 
+def caption_animation_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build author and round-trip caption ``animation_phases``?
+
+    At least ``caption_animation_min_client_protocol`` keeps a caption row's phases and the
+    all-captions default on Save; an older build would drop them. ``require_client`` as in
+    `text_bend_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.caption_animation_min_client_protocol
+
+
+def caption_animation_renderable() -> bool:
+    """Do caption phases reach the compiled caption layers (KRI-1007)?
+
+    A layer with ``animation_phases`` requires ``authoredText``; without it verified, or
+    with the kill switch off, captions compile exactly as they did before phases existed.
+    """
+    return bool(
+        settings.caption_animation_enabled
+        and "authoredText" in set(settings.phone_render_verified_features)
+    )
+
+
+def caption_animation_supported(*, require_client: bool | None = None) -> bool:
+    """May a creator author caption animation now (``editor_capabilities.caption_animation``)?"""
+    return caption_animation_renderable() and caption_animation_client_supported(
+        require_client=require_client
+    )
+
+
 def text_bend_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "may a creator author Bend right now" (KRI-646).
 

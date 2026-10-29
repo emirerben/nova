@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "issue": "KRI-1009",
+  "script": "scripts/ios/kri-1009-talking-title.py",
+  "commands": [
+    "src/apps/api/.venv/bin/python scripts/ios/kri-1009-talking-title.py prepare OUT",
+    "KRIA_AUDIO_PARITY_DIR=OUT swift test --package-path src/apps/ios/Packages/KriaMediaEngine --arch arm64 --scratch-path SWIFT_SCRATCH --filter AudioParityFixtureTests",
+    "src/apps/api/.venv/bin/python scripts/ios/kri-1009-talking-title.py compare OUT"
+  ],
+  "run_date": "2026-10-28",
+  "engine": "KriaMediaEngine AVFoundationLocalExporter, macOS arm64 host build, shared with iOS",
+  "macos": "26.6.2",
+  "swift": "swift-driver version: 1.148.6 Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)",
+  "evidence_type": "Synthetic footage, real strategy policy, worker title row and phone Talking compiler, AVFoundationLocalExporter on macOS. Not a device run.",
+  "title": "The Cabildo 🇦🇷",
+  "title_window_s": [
+    0.0,
+    2.5
+  ],
+  "band_height_fraction": [
+    0.1,
+    0.2
+  ],
+  "strategy": {
+    "fixed_opening_title": "The Cabildo 🇦🇷",
+    "fixed_pinned_texts": null,
+    "pre_fix_opening_title": null,
+    "pre_fix_notice": [
+      "This edit cannot render your on-screen texts, so I left it out: \"The Cabildo 🇦🇷\"."
+    ]
+  },
+  "cases": {
+    "kri1009_title": {
+      "recipe_sha256": "54bb6ac6e7037c2f9ae27b55f289994911b287800dfe029af88d3d6436afead3",
+      "movie_sha256": "c37c2758d7ab664b98c8a0077364ad2bbb12fe94a15b221c2634f360f586a9ab",
+      "samples": [
+        {
+          "t": 0.5,
+          "mean_luma": 88.8,
+          "max_luma": 255.0,
+          "bright_fraction": 0.1192,
+          "looks_like": "title"
+        },
+        {
+          "t": 1.0,
+          "mean_luma": 88.8,
+          "max_luma": 255.0,
+          "bright_fraction": 0.1194,
+          "looks_like": "title"
+        },
+        {
+          "t": 1.5,
+          "mean_luma": 88.8,
+          "max_luma": 255.0,
+          "bright_fraction": 0.1194,
+          "looks_like": "title"
+        },
+        {
+          "t": 2.0,
+          "mean_luma": 88.8,
+          "max_luma": 255.0,
+          "bright_fraction": 0.1194,
+          "looks_like": "title"
+        },
+        {
+          "t": 4.0,
+          "mean_luma": 66.0,
+          "max_luma": 66.0,
+          "bright_fraction": 0.0,
+          "looks_like": "background"
+        },
+        {
+          "t": 6.0,
+          "mean_luma": 66.0,
+          "max_luma": 66.0,
+          "bright_fraction": 0.0,
+          "looks_like": "background"
+        }
+      ]
+    },
+    "kri1009_notitle": {
+      "recipe_sha256": "d7905301268e5d8bfc472a10d727290dd4e8fd10542fa972691a36aff96ceee1",
+      "movie_sha256": "aad783e230d6835d81c9718a89ee02082c8709cec0e497dcbece3050f6a8a2e6",
+      "samples": [
+        {
+          "t": 0.5,
+          "mean_luma": 66.0,
+          "max_luma": 66.0,
+          "bright_fraction": 0.0,
+          "looks_like": "background"
+        },
+        {
+          "t": 1.0,
+          "mean_luma": 66.0,
+          "max_luma": 66.0,
+          "bright_fraction": 0.0,
+          "looks_like": "background"
+        },
+        {
+          "t": 1.5,
+          "mean_luma": 66.0,
+          "max_luma": 66.0,
+          "bright_fraction": 0.0,
+          "looks_like": "background"
+        },
+        {
+          "t": 2.0,
+          "mean_luma": 66.0,
+          "max_luma": 66.0,
+          "bright_fraction": 0.0,
+          "looks_like": "background"
+        },
+        {
+          "t": 4.0,
+          "mean_luma": 66.0,
+          "max_luma": 66.0,
+          "bright_fraction": 0.0,
+          "looks_like": "background"
+        },
+        {
+          "t": 6.0,
+          "mean_luma": 66.0,
+          "max_luma": 66.0,
+          "bright_fraction": 0.0,
+          "looks_like": "background"
+        }
+      ]
+    }
+  },
+  "results": {
+    "title_case_passed": true,
+    "no_title_twin_passed": true,
+    "compare_passed": true,
+    "compare_negative_check": {
+      "what": "compare run on a copy of OUT whose title movie is replaced by the no-title movie",
+      "exit_code": 1,
+      "failed_checks": [
+        "title_drawn_in_window"
+      ],
+      "passed": true
+    },
+    "built_in_negative_control_passed": true
+  }
+}
