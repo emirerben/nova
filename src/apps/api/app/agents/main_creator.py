@@ -880,6 +880,11 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
         # deadline, so a runaway call truncates (retried once at "low") instead
         # of ending outcome-unknown. A typical "high" call there takes 57-106 s.
         timeout_s=130.0,
+        # KRI-1037: prod thread 729b3686 (27 clips) ended twice at the provider deadline
+        # (91.5 s and 27.6 s left of a 180 s turn, 2k output tokens, so not a token limit)
+        # and "Try again" repeated the same call. A deadline now steps thinking down to
+        # "medium", then runs the fallback model at "low", inside the turn budget.
+        degrade_on_deadline=settings.main_creator_deadline_ladder_enabled,
         # Reserve output capacity for the full source manifest.
         thinking_level=settings.main_creator_thinking_level,
         sensitive_io=True,
