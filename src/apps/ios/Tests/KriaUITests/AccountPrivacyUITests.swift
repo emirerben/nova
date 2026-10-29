@@ -188,7 +188,8 @@ import XCTest
         XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5), "Dismiss must finish its asynchronous save and reload")
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["account-text-preferences"].tap()
-        XCTAssertTrue(learn.waitForExistence(timeout: 5), "Preferences must reload before checking persistence")
+        XCTAssertTrue(app.buttons["text-preference-role"].waitForExistence(timeout: 5),
+                      "Loaded preferences must appear before checking persistence")
         XCTAssertFalse(dismiss.exists)
         let reset = app.buttons["text-learning-reset"]
         reveal(reset, app: app); reset.tap()
