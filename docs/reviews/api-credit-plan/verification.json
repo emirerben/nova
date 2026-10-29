@@ -150,7 +150,7 @@
   },
   "verified_files_sha256": {
     ".env.example": "91d65a65e5b73e0c68d9abad8e2f333d94f57600f8ec9322ce010e5217461c8b",
-    "scripts/ci/journey-manifest.json": "cab5ca64294e25ed8e25fbcfa57f5ce877effef3e51e82f99d5e47af6fc70496",
+    "scripts/ci/journey-manifest.json": "a0d6195b4f7a2d7b72c15aaf167a5dbb1db4664e7503c5796f57befd365c884c",
     "src/apps/api/OBSERVABILITY.md": "dd1bc0bbaade0561358e0fb67c7b0a6e9887e46c7ec11e886f350cb8b5391b5d",
     "src/apps/api/app/agents/_model_client.py": "9bcb082c48a3d6865b8207b0aae1e2d624ad4a2ecac92b77cc3be7f69a7abb31",
     "src/apps/api/app/agents/_online_eval.py": "bade9e51426557ef93a83133a489e71b4efe45b03295f0f53bfa8d842acd79a8",
@@ -199,9 +199,10 @@
     "src/apps/ios/Kria/Generated/openapi.yaml": "87e44c2abd5c86158aa8908c1981b3cb5750bade4415532dc0c621f9bef99b13",
     "src/apps/ios/Tests/KriaTests/GeneratedMediaTests.swift": "64a614d2ff1940684e11538e5759e5117f6f17223e30edf2fb80a115c62427e9",
     "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "18d4c28258e5d029cd0f0d9942561715d703c6e061860e6859e3b70649bf8ffa",
-    "scripts/ios/ui-test-groups.json": "10fe039efe992655f5fc4485a18be49b46ea57fc5a5a871186085dbb3aabb589"
+    "scripts/ios/ui-test-groups.json": "10fe039efe992655f5fc4485a18be49b46ea57fc5a5a871186085dbb3aabb589",
+    "scripts/ci/test_journey_gate.py": "10734d3830af7ec1b6c883a5b4cda2f1132182c839d3689d88d2c9d34f255562"
   },
-  "code_tree_sha256": "d54c4234f9c20a41c152ac5f03f01b368140e934c45271f99e29e76781681c63",
+  "code_tree_sha256": "96f72c69c8b2fd3deb5f2182fbfef35fba10911253e3149cea1b60ea95273efb",
   "final_independent_review": {
     "verdict": "no_remaining_blocking_finding",
     "family": "same-family independent review",
@@ -267,5 +268,20 @@
     "failed": 0,
     "duration_seconds": 82.991,
     "artifact": "credit-evidence/ios-ci-metadata.log"
+  },
+  "named_native_selector_correction": {
+    "cause": "The named-unit verifier matches individual test-case receipts, so the prior suite-only GeneratedMediaTests selector would not match nine passed methods.",
+    "red_artifact": "credit-evidence/named-selector-red.log",
+    "red_failures": 1,
+    "green_artifact": "credit-evidence/named-selector-green.log",
+    "green_tests": 7,
+    "all_ci_contract_tests_passed": 122,
+    "all_ci_contract_artifact": "credit-evidence/ci-exact-selectors.log",
+    "actual_xcresult_report": "credit-evidence/native-local-test-report.json",
+    "actual_individual_unit_cases_verified": 9,
+    "gate_logic_unchanged": true,
+    "ui_selectors_retained": 5,
+    "independent_review": "All nine selectors exactly match existing Swift methods; no gate, workflow, runtime or existing assertion weakened.",
+    "qualification": "Five generated-media UI cases remain local same-source evidence; current PR policy selects named unit journeys and smoke, not those five UI cases."
   }
 }
