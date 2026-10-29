@@ -237,7 +237,7 @@ def clean_authored_text(value: str) -> str:
 
 
 def keep_authored_breaks(row: dict[str, Any]) -> None:
-    """Explicit line breaks make the row the author's own layout: no re-wrap (iOS editor contract)."""
+    """Explicit breaks mean the author laid the text out: no re-wrap (iOS editor contract)."""
     if "\n" in str(row.get("text") or ""):
         row["wrap_lines"] = False
 
