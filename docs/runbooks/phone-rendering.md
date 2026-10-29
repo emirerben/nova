@@ -3582,6 +3582,18 @@ phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_
 
 The existing Fly Deploy workflow checks all managed process groups, including stopped Machines, for one converged image digest before declaring deployment successful. That post-deploy check does not establish compatibility during a rolling deploy and does not make old binaries understand v3. Observe the actual merged revision's successful convergence separately; before that, KRI-832 remains pending. No source-only receipt or local replay proves production convergence or complete rollback compatibility.
 
+## Actual-export verifier v4 text proof (KRI-1042)
+
+`phone-simple-cut-v4` changes only the text check. Picture, audio and duration rules are the same as v3; per-sample picture scores are stored but decide nothing.
+
+- **Copy proof.** One visible sample per layer must read every copy word in order, each exact (case and punctuation kept), at OCR confidence 40. One extra token of at most two characters is allowed (a letter-like background speck). An extra authored word, a wrong word or a missing word still fails.
+- **Presence proof.** Every other visible sample must show the layer's glyphs: fill-coloured ink against the source picture beneath it (`ink_share` >= 0.03 of the measurable read area, fill-like background <= 0.5) and more than half the copy's words in order.
+- **Hidden samples** fail on the whole copy, as before, and now also on those glyphs unless another layer is due over the same area.
+- **Why.** v3 needed an exact read in every visible sample. White phone titles over white shirts (Lisbon job `3daccc8c`) broke one word in two of three samples, so a correct export was rejected. The Tesseract TSV is also read without CSV quoting now: a word starting with `"` used to swallow later words, so a copy with a straight quote could never pass.
+- **Known gap.** A layer whose pixels change mid-window to a different copy that shares more than half its words passes the presence samples. The copy proof still needs the exact copy once.
+
+Rollout follows the v3 boundary above: v4 is forward-only. A request pinned to v3 accepts a v4 report; a v4 pin never accepts a v3 report, and a server older than v4 refuses v4 pins. Each text row stores `proof` or `reason`, word counts, `best_view`, `ink_share` and the read area; read them with `GET /admin/jobs/{id}/export-verification` ([admin-job-debug](admin-job-debug.md)). Guards: `tests/integration/test_actual_export_verification.py` (KRI-1042 section).
+
 ## Freeze frames (KRI-828)
 
 "Freeze the frame for one second on Atakan's bite" on a phone montage renders a real hold.
