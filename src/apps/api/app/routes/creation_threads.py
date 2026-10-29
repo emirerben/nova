@@ -360,6 +360,9 @@ class CreationMediaCapabilitiesOut(BaseModel):
 
 
 class CreationCapabilitiesOut(BaseModel):
+    generated_images: bool = False
+    generated_image_editing: bool = False
+    generated_narration: bool = False
     media_library: bool = False
     media_collections: bool = False
     media_collection_cache_only: bool = False
@@ -3830,7 +3833,10 @@ async def capabilities(
         else "web"
     )
     formats = _available_formats(native_mode=native_mode)
+    from app.routes.generated_media import generated_capabilities
+
     return {
+        **generated_capabilities(user.id, native_client, client_protocol),
         # A pilot account is offered v2 only once `KRIA_RUNTIME_V2_PHONE_ENABLED`
         # covers it (KRI-187): a v2 approval then reaches a device job via
         # `dispatch_item_render_for` / `prepare_phone_editor_commit`. Off, it

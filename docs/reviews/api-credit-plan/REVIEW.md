@@ -1,15 +1,11 @@
-# Offline implementation review
+# API credit implementation review
 
-The independent `credit_architecture` agent recommended separate binary asset ownership after inspecting the text runtime, reservation ledger, and native asset admission. The parent implemented the offline contracts in this checkout.
+The initial independent architecture review selected separate binary asset ownership. Initial contract review reproduced invalid PNG pixel acceptance and mismatched audio/transcript content identity. Corrections were independently confirmed. The historical first increment passed 53 tests and 24 subtests. Those counts cover the initial contracts only.
 
-The independent `credit_review` agent used `gpt-6-astra` at medium effort. This was an independent agent from the same model family. A different model family was unavailable in the runtime, so cross-family review remains unfulfilled.
+The integrated branch now includes transport, persistent operation state, atomic budgets, owned admission, native routes and UI, and the upgraded existing online evaluator. It is no longer an offline-contract-only implementation. See [WORKFLOW.md](WORKFLOW.md) for scope and [VERIFY.md](VERIFY.md) for evidence boundaries.
 
-The reviewer reproduced two defects before correction. PNG structure verification accepted invalid compressed pixels with valid chunk CRCs. Response-level identity allowed audio and transcript to come from different content items. New negative controls failed against those defects. The parent added pixel loading and item, output, and content identity checks. The reviewer independently confirmed both corrections and all 11 contract test methods. Additional review probes rejected nine missing-identity combinations and confirmed that decoding stops at response completion.
+Reported intermediate backend evidence comprises 16 selected suites with 245 tests and 24 subtests, followed by 13 boundary/concurrency tests. Judge verification reported 107 runtime/provider/judge tests and 74 ledger/judge tests. These runs overlap and must not be added together. Final consolidated results and commit-bound review remain pending.
 
-The final documented focused suite passed 53 tests and 24 subtests on 29 October 2026. Three warnings concern existing Python and provider dependency deprecations. Scoped Ruff, formatting, diff whitespace, and the existing CLAUDE.md size guard passed. No application rollout or native build was needed for this offline increment. A whole-backend test run and pre-publication gates were not run.
+Native evidence currently reports nine simulator tests, seven wire-contract and two UI tests, in `.dev/generated-media-complete-tests.xcresult`. Image UI and relaunch-recovery coverage is being extended. This is not physical-device or live-provider evidence.
 
-The saved aggregate report estimates 0.384148 USD for two potential text calls from the existing synthetic fixture and existing price table. This is an offline estimate, not spending, verified current pricing, an approved batch, or evidence of model quality. No paid submission occurred. No remaining code defect was found within this offline scope.
-
-Generated image and audio bytes remain unregistered. Live provider behavior, authoritative prices, available credit balances, atomic per-capability spend caps, audible fidelity, native ownership admission, and inspected iPhone exports remain unverified or unimplemented as listed in WORKFLOW.md.
-
-Principles applied in this run were Model the Domain for typed requests and allocations, Foundational Thinking for contracts before transport, Sequence Work into Verifiable Units for the offline increment, and Prove It Works for executable corrupt-image and mismatched-content controls. Their leaf skills were read in this session.
+Cross-family review was unavailable in the original increment. The earlier independent same-family review does not establish review coverage for all integrated changes. No live quality winner, verified billing balance, or inspected final iPhone export is claimed. Fresh real holdouts remain blocked by eligibility inventory.

@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import asdict
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import text
+
+from app.agents._runtime import ModelInvocation, ProviderOutcomeUnknownError
+from app.config import settings
+from app.database import sync_engine
+from tests.services.test_ai_cost_control import _request
+from tests.services.test_ai_cost_control import ledger as ledger
 
 
 @pytest.fixture(autouse=True)
-def _reset_modules(monkeypatch):
-    """Each test resets env + module cache so the lazy singletons re-init."""
+def _clear_judge_environment(monkeypatch):
+    """Keep sampling and external score clients disabled unless explicitly mocked."""
     for k in (
         "LANGFUSE_PUBLIC_KEY",
         "LANGFUSE_SECRET_KEY",
@@ -18,11 +26,7 @@ def _reset_modules(monkeypatch):
         "NOVA_ONLINE_EVAL_SAMPLE_RATE",
     ):
         monkeypatch.delenv(k, raising=False)
-    for mod in ("app.agents._langfuse", "app.agents._online_eval"):
-        sys.modules.pop(mod, None)
     yield
-    for mod in ("app.agents._langfuse", "app.agents._online_eval"):
-        sys.modules.pop(mod, None)
 
 
 # ── _should_sample / _sample_rate ────────────────────────────────────────────
@@ -72,216 +76,221 @@ def test_should_sample_full_rate_always_fires(monkeypatch):
         assert _should_sample()
 
 
-# ── maybe_schedule_judge ────────────────────────────────────────────────────
+# Failure modes: disabled or unauthorised spend, dropped attribution, budget bypass,
+# duplicate delivery, unknown outcome retry, invalid scores and proposal mutation.
 
 
-def test_maybe_schedule_judge_noop_when_not_sampled(monkeypatch):
-    """Sample rate 0 → never even checks rubric or API key."""
-    from app.agents import _online_eval
+@pytest.fixture
+def approved(ledger, monkeypatch):
+    monkeypatch.setattr(settings, "credit_quality_review_enabled", True)
+    monkeypatch.setattr(settings, "credit_quality_review_billing_verified", True)
+    monkeypatch.setattr(settings, "anthropic_api_key", "test-key")
+    monkeypatch.setattr(settings, "ai_usage_environment", "development")
+    ctx = _request(ledger, "judge", estimate=0.01).ctx
+    yield ctx
+    with sync_engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM ai_cost_reservations WHERE test_run_id=:run"),
+            {"run": ctx.test_run_id},
+        )
 
-    fake_task = MagicMock()
-    monkeypatch.setitem(
-        sys.modules,
-        "app.tasks.online_eval",
-        MagicMock(score_trace_async=fake_task),
-    )
 
-    _online_eval.maybe_schedule_judge(
-        trace_id="t-abc",
+def _args(ctx):
+    return dict(
+        trace_id=ctx.request_id,
         agent_name="nova.compose.template_recipe",
-        input_dict={},
-        output_dict={},
-    )
-    fake_task.delay.assert_not_called()
-
-
-def test_maybe_schedule_judge_noop_without_anthropic_key(monkeypatch):
-    monkeypatch.setenv("NOVA_ONLINE_EVAL_SAMPLE_RATE", "1.0")
-    # ANTHROPIC_API_KEY deliberately unset
-
-    fake_task = MagicMock()
-    monkeypatch.setitem(
-        sys.modules,
-        "app.tasks.online_eval",
-        MagicMock(score_trace_async=fake_task),
-    )
-
-    from app.agents._online_eval import maybe_schedule_judge
-
-    maybe_schedule_judge(
-        trace_id="t-abc",
-        agent_name="nova.compose.template_recipe",
-        input_dict={},
-        output_dict={},
-    )
-    fake_task.delay.assert_not_called()
-
-
-def test_maybe_schedule_judge_noop_when_rubric_missing(monkeypatch, tmp_path):
-    monkeypatch.setenv("NOVA_ONLINE_EVAL_SAMPLE_RATE", "1.0")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-
-    fake_task = MagicMock()
-    monkeypatch.setitem(
-        sys.modules,
-        "app.tasks.online_eval",
-        MagicMock(score_trace_async=fake_task),
-    )
-
-    from app.agents import _online_eval
-
-    # Re-point rubrics dir to a known-empty path
-    monkeypatch.setattr(_online_eval, "_RUBRICS_ROOT", tmp_path)
-
-    _online_eval.maybe_schedule_judge(
-        trace_id="t-abc",
-        agent_name="nova.unknown.agent",
-        input_dict={},
-        output_dict={},
-    )
-    fake_task.delay.assert_not_called()
-
-
-def test_maybe_schedule_judge_dispatches_when_all_conditions_met(monkeypatch):
-    monkeypatch.setenv("NOVA_ONLINE_EVAL_SAMPLE_RATE", "1.0")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-
-    fake_task = MagicMock()
-    monkeypatch.setitem(
-        sys.modules,
-        "app.tasks.online_eval",
-        MagicMock(score_trace_async=fake_task),
-    )
-
-    from app.agents._online_eval import maybe_schedule_judge
-
-    maybe_schedule_judge(
-        trace_id="t-abc",
-        agent_name="nova.compose.template_recipe",  # real agent with a rubric
-        input_dict={"file_uri": "files/x"},
+        input_dict={"scene": "coffee"},
         output_dict={"shot_count": 4},
+        attribution=asdict(ctx),
     )
-    fake_task.delay.assert_called_once()
-    call_kwargs = fake_task.delay.call_args.kwargs
-    assert call_kwargs["trace_id"] == "t-abc"
-    assert call_kwargs["agent_name"] == "nova.compose.template_recipe"
 
 
-def test_maybe_schedule_judge_swallows_task_import_error(monkeypatch):
-    """If the Celery task module fails to import, fail open."""
-    monkeypatch.setenv("NOVA_ONLINE_EVAL_SAMPLE_RATE", "1.0")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+def _transport(monkeypatch, *, error=None):
+    from app.agents._text_providers import AnthropicTextClient
 
-    def broken_import(name, *args, **kwargs):
-        if name == "app.tasks.online_eval":
-            raise ImportError("boom")
-        return real_import(name, *args, **kwargs)
+    invoke = MagicMock(
+        side_effect=error,
+        return_value=ModelInvocation(
+            raw_text='{"scores":{"slot_design":4,"transition_appropriateness":5},"reasoning":"fits"}',
+            tokens_in=100,
+            tokens_out=30,
+            model_used="claude-sonnet-5-5",
+        ),
+    )
+    monkeypatch.setattr(AnthropicTextClient, "invoke", invoke)
+    from app.agents import _langfuse
 
-    import builtins
+    score = MagicMock()
+    monkeypatch.setattr(_langfuse, "score_trace", score)
+    return invoke, score
 
-    real_import = builtins.__import__
-    monkeypatch.setattr(builtins, "__import__", broken_import)
 
-    from app.agents._online_eval import maybe_schedule_judge
+def test_schedule_keeps_bounded_context_without_callbacks(approved, monkeypatch):
+    from app.agents import _online_eval
 
-    # Must not raise
-    maybe_schedule_judge(
-        trace_id="t-abc",
+    monkeypatch.setenv("NOVA_ONLINE_EVAL_SAMPLE_RATE", "1")
+    fake_task = MagicMock()
+    monkeypatch.setitem(
+        sys.modules, "app.tasks.online_eval", MagicMock(score_trace_async=fake_task)
+    )
+    approved.extra = {"unrelated_secret": "must-not-serialize"}
+    approved.thought_summary_callback = lambda _: None
+    _online_eval.maybe_schedule_judge(
+        trace_id="trace",
         agent_name="nova.compose.template_recipe",
         input_dict={},
         output_dict={},
+        ctx=approved,
     )
+    payload = fake_task.delay.call_args.kwargs["attribution"]
+    assert "thought_summary_callback" not in payload
+    assert "unrelated_secret" not in str(payload)
+    assert payload["test_run_id"] == approved.test_run_id
 
 
-# ── run_judge_and_score (the worker-side function) ──────────────────────────
-
-
-def test_run_judge_and_score_posts_per_dimension_scores(monkeypatch):
-    """End-to-end: mock Anthropic + Langfuse, verify judge runs + scores post."""
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
-
-    # Fake Langfuse SDK
-    fake_lf = MagicMock()
-    fake_client = MagicMock()
-    fake_lf.Langfuse.return_value = fake_client
-    monkeypatch.setitem(sys.modules, "langfuse", fake_lf)
-
-    # Fake Anthropic SDK
-    fake_anthropic = MagicMock()
-    fake_client_a = MagicMock()
-    fake_response = MagicMock()
-    fake_block = MagicMock()
-    fake_block.text = (
-        '{"scores": {"slot_design": 4, "transition_appropriateness": 5}, "reasoning": "looks good"}'
-    )
-    fake_response.content = [fake_block]
-    fake_client_a.messages.create.return_value = fake_response
-    fake_anthropic.Anthropic.return_value = fake_client_a
-    monkeypatch.setitem(sys.modules, "anthropic", fake_anthropic)
-
+@pytest.mark.parametrize(
+    "gate",
+    [
+        "credit_quality_review_enabled",
+        "credit_quality_review_billing_verified",
+        "ai_cost_control_enabled",
+    ],
+)
+def test_judge_disabled_gate_never_contacts_provider(approved, monkeypatch, gate):
     from app.agents._online_eval import run_judge_and_score
 
-    scores = run_judge_and_score(
-        trace_id="t-prod-123",
-        agent_name="nova.compose.template_recipe",
-        input_dict={"file_uri": "files/x"},
-        output_dict={"shot_count": 4},
-    )
-
-    assert scores == {"slot_design": 4.0, "transition_appropriateness": 5.0}
-    # 4 score posts: 2 dimensions + judge_avg + judge_passed
-    assert fake_client.score.call_count == 4
-    posted_names = sorted(call.kwargs["name"] for call in fake_client.score.call_args_list)
-    assert posted_names == [
-        "judge_avg",
-        "judge_passed",
-        "judge_slot_design",
-        "judge_transition_appropriateness",
-    ]
+    invoke, score = _transport(monkeypatch)
+    monkeypatch.setattr(settings, gate, False)
+    assert run_judge_and_score(**_args(approved)) is None
+    invoke.assert_not_called()
+    score.assert_not_called()
 
 
-def test_run_judge_and_score_returns_none_on_judge_failure(monkeypatch):
-    """Anthropic call raises → no scores posted, returns None."""
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-anthropic-test")
-
-    fake_lf = MagicMock()
-    fake_client = MagicMock()
-    fake_lf.Langfuse.return_value = fake_client
-    monkeypatch.setitem(sys.modules, "langfuse", fake_lf)
-
-    fake_anthropic = MagicMock()
-    fake_client_a = MagicMock()
-    fake_client_a.messages.create.side_effect = RuntimeError("rate limit")
-    fake_anthropic.Anthropic.return_value = fake_client_a
-    monkeypatch.setitem(sys.modules, "anthropic", fake_anthropic)
-
+def test_real_ledger_judge_settles_and_posts_scores_once(approved, monkeypatch):
     from app.agents._online_eval import run_judge_and_score
 
-    result = run_judge_and_score(
-        trace_id="t-prod-123",
+    invoke, score = _transport(monkeypatch)
+    args = _args(approved)
+    assert run_judge_and_score(**args) == {"slot_design": 4.0, "transition_appropriateness": 5.0}
+    assert run_judge_and_score(**args) is None
+    assert invoke.call_count == 1
+    assert invoke.call_args.kwargs["max_output_tokens"] == 800
+    assert invoke.call_args.kwargs["model"] == "claude-sonnet-5-5"
+    assert score.call_count == 4
+    with sync_engine.connect() as conn:
+        row = (
+            conn.execute(
+                text("SELECT status,usage_json FROM ai_cost_reservations WHERE test_run_id=:run"),
+                {"run": approved.test_run_id},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["status"] == "settled"
+    assert row["usage_json"]["_budget_capability"] == "evaluation"
+    assert args["output_dict"] == {"shot_count": 4}
+
+
+def test_unknown_judge_outcome_retained_and_never_retried(approved, monkeypatch):
+    from app.agents._online_eval import run_judge_and_score
+
+    invoke, score = _transport(monkeypatch, error=ProviderOutcomeUnknownError("transport lost"))
+    assert run_judge_and_score(**_args(approved)) is None
+    assert run_judge_and_score(**_args(approved)) is None
+    assert invoke.call_count == 1
+    score.assert_not_called()
+    with sync_engine.connect() as conn:
+        row = (
+            conn.execute(
+                text(
+                    "SELECT status,estimated_cost_usd FROM ai_cost_reservations "
+                    "WHERE test_run_id=:run"
+                ),
+                {"run": approved.test_run_id},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["status"] == "unknown"
+    assert row["estimated_cost_usd"] > 0
+
+
+def test_judge_requires_approval_and_evaluation_budget(approved, monkeypatch):
+    from app.agents._online_eval import run_judge_and_score
+
+    invoke, _ = _transport(monkeypatch)
+    approved.reservation_approved = False
+    assert run_judge_and_score(**_args(approved)) is None
+    approved.reservation_approved = True
+    monkeypatch.setattr(settings, "ai_anthropic_evaluation_budget_usd", 0.0)
+    assert run_judge_and_score(**_args(approved)) is None
+    invoke.assert_not_called()
+
+
+def test_production_cannot_use_test_context_to_authorize_judge(approved, monkeypatch):
+    from app.agents._online_eval import run_judge_and_score
+
+    invoke, _ = _transport(monkeypatch)
+    monkeypatch.setattr(settings, "ai_usage_environment", "production")
+    monkeypatch.setattr(settings, "credit_quality_review_approved_run_id", "")
+    monkeypatch.setattr(settings, "credit_quality_review_max_run_usd", 0.0)
+    assert run_judge_and_score(**_args(approved)) is None
+    invoke.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "raw", ['{"scores":{"accuracy":NaN}}', '{"scores":{"accuracy":6}}', "[]", '{"scores":"bad"}']
+)
+def test_invalid_judge_scores_are_not_reported(raw):
+    from app.agents._online_eval import _parse_judge_json
+
+    assert _parse_judge_json(raw) == ({}, "")
+
+
+def test_missing_attribution_never_schedules(monkeypatch):
+    from app.agents._online_eval import maybe_schedule_judge
+
+    monkeypatch.setenv("NOVA_ONLINE_EVAL_SAMPLE_RATE", "1")
+    task = MagicMock()
+    monkeypatch.setitem(sys.modules, "app.tasks.online_eval", MagicMock(score_trace_async=task))
+    maybe_schedule_judge(
+        trace_id="no-owner",
         agent_name="nova.compose.template_recipe",
         input_dict={},
         output_dict={},
     )
-    assert result is None
-    fake_client.score.assert_not_called()
+    task.delay.assert_not_called()
 
 
-def test_run_judge_and_score_returns_none_when_rubric_missing(monkeypatch, tmp_path):
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+def test_production_approval_uses_server_run_and_runtime_owner(approved, monkeypatch):
+    from app.agents._online_eval import _approved_context
+
+    monkeypatch.setattr(settings, "ai_usage_environment", "production")
+    monkeypatch.setattr(settings, "credit_quality_review_approved_run_id", "operator-run")
+    monkeypatch.setattr(settings, "credit_quality_review_max_run_usd", 0.1)
+    assert _approved_context(_args(approved)["attribution"]) is None
+    approved.creator_id = "owner-from-runtime"
+    approved.extra = {"paid_experiment_envelope_id": "client-header-envelope"}
+    ctx = _approved_context(_args(approved)["attribution"])
+    assert ctx.creator_id == "owner-from-runtime"
+    assert ctx.test_run_id == "operator-run"
+    assert ctx.estimated_max_cost_usd == 0.1
+    assert ctx.usage_purpose == "customer"
+    assert ctx.extra == {}
+
+
+def test_judge_task_forwards_attribution_without_retries(monkeypatch):
     from app.agents import _online_eval
+    from app.tasks.online_eval import score_trace_async
 
-    monkeypatch.setattr(_online_eval, "_RUBRICS_ROOT", tmp_path)
-
-    result = _online_eval.run_judge_and_score(
-        trace_id="t-prod-123",
-        agent_name="nova.unknown.agent",
+    execute = MagicMock()
+    monkeypatch.setattr(_online_eval, "run_judge_and_score", execute)
+    score_trace_async.run(
+        trace_id="trace",
+        agent_name="agent",
         input_dict={},
         output_dict={},
+        attribution={"creator_id": "owner"},
     )
-    assert result is None
+    assert execute.call_args.kwargs["attribution"] == {"creator_id": "owner"}
+    assert score_trace_async.max_retries == 0

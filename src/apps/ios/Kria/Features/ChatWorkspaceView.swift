@@ -1263,7 +1263,8 @@ private struct CreationWorkspaceView: View {
             isSending: isSending || isActing || isThinking,
             record: { openVoiceoverStep(with: $0) },
             importVoiceover: { openVoiceoverStep(with: $0) },
-            planWithVoiceover: { script in Task { await send(message: script.recordedMessage) } }
+            planWithVoiceover: { script in Task { await send(message: script.recordedMessage) } },
+            generateNarration: capabilities?.generatedNarration == true ? { openVoiceoverStep(with: $0) } : nil
         )
     }
 

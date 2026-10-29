@@ -1,31 +1,21 @@
-# Verify the offline credit increment
+# Verify API credit capabilities without live calls
 
-Run these commands from the repository root with the existing API environment active. No provider credentials are required.
+Historical first-increment evidence is 53 tests and 24 subtests. Intermediate integrated evidence is 245 tests and 24 subtests across 16 selected backend suites, then 13 boundary/concurrency tests. Judge runs reported 107 and 74 tests in overlapping selections. Do not sum these counts. Final consolidated evidence remains pending.
 
-1. Run the contract checks and the existing comparison guards.
-
-```sh
-python -m pytest -c src/apps/api/pyproject.toml src/apps/api/tests/agents/test_credit_plan_contracts.py src/apps/api/tests/agents/test_comparison_workflow.py src/apps/api/tests/agents/test_text_provider_contracts.py src/apps/api/tests/agents/test_sealed_comparison.py -q
-```
-
-2. Create a private directory outside Git. Keep packets there because future inputs may contain private creator material.
+From the repository root with the API environment active, run the fixture-backed checks below. They require no live-provider submission.
 
 ```sh
-credit_workspace=$(mktemp -d /tmp/kria-credit-plan.XXXXXX)
+python -m pytest -c src/apps/api/pyproject.toml src/apps/api/tests/agents/test_credit_plan_contracts.py src/apps/api/tests/agents/test_comparison_workflow.py src/apps/api/tests/agents/test_text_provider_contracts.py src/apps/api/tests/agents/test_sealed_comparison.py src/apps/api/tests/agents/test_online_eval.py src/apps/api/tests/services/test_credit_cap_budgets.py src/apps/api/tests/services/test_credit_deadline_compatibility.py src/apps/api/tests/services/test_generated_media_transport.py src/apps/api/tests/services/test_generated_media_service.py src/apps/api/tests/services/test_generated_media_admission.py src/apps/api/tests/routes/test_generated_media.py -q
 ```
 
-3. Freeze the existing synthetic fixture. The local settings below satisfy configuration validation. These offline operations do not open a database connection.
+The actual PostgreSQL admission check needs a dedicated disposable scratch database. Set `NOVA_ADMISSION_TEST_DATABASE_URL` to that database before running this command. Never point it at production or a shared development database. A skip is missing coverage.
 
 ```sh
-STORAGE_BUCKET=nova-test DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nova_test PYTHONPATH=src/apps/api python -m app.cli.compare_creator_models freeze --case src/apps/api/tests/fixtures/agent_evals/main_creator/montage_strategy.json --arm O:gpt-6.1-sol:medium --arm S:claude-sonnet-5-5:high --output "$credit_workspace/packet.json"
+python -m pytest -c src/apps/api/pyproject.toml src/apps/api/tests/services/test_generated_media_admission_postgres.py -q
 ```
 
-4. Produce the provider allocation report.
+Recorded dedicated PostgreSQL databases were `nova_generated_test` and `admission_test`. Native simulator evidence is `.dev/generated-media-complete-tests.xcresult`, currently nine tests (seven wire and two UI); additional image and relaunch checks are pending. Use the repository iOS verification workflow for the selected simulator and preserve its result bundle.
 
-```sh
-STORAGE_BUCKET=nova-test DATABASE_URL=postgresql://postgres:postgres@localhost:5432/nova_test PYTHONPATH=src/apps/api python -m app.cli.compare_creator_models credit-preflight --packet "$credit_workspace/packet.json"
-```
+The retained `offline-preflight.json` is an aggregate estimate for a synthetic packet, not spending or model-quality evidence. Its 0.384148 USD estimate uses the earlier price table. Regenerate packet preflight after prompt, schema, pricing or runtime changes. Expected report values remain `live_authorized: false`, `quality_verdict: unassessed`, and `actual_export: unassessed`.
 
-The report must say `live_authorized: false`, `quality_verdict: unassessed`, and `actual_export: unassessed`. Adding a Gemini arm must report Google as unfunded by the OpenAI and Claude credit plan. The existing `live` and `sealed-run` approval gates remain separate. This command does not approve, charge, or execute a packet.
-
-The retained `offline-preflight.json` contains aggregate costs only. Its packet digest refers to the fixture frozen in this checkout. Freeze a new packet after prompt, schema, price, or runtime changes.
+Live calls, billing verification, fresh eligible holdouts and inspected physical-phone exports remain unverified. Synthetic audio matching the transcript does not prove pronunciation or audible fidelity. Generated images still require human inspection for unwanted lettering.

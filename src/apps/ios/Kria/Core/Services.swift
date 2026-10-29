@@ -180,6 +180,12 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItem
     /// One page of chats, newest first. `nextCursor` is nil on the last page.
     func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
+    func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation
+    func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript
+    func generateMedia(itemID: String, body: GeneratedMediaRequest) async throws -> GeneratedMediaOperation
+    func generatedMedia(itemID: String, operationID: String) async throws -> GeneratedMediaOperation
+    func retryGeneratedMediaStorage(itemID: String, operationID: String) async throws -> GeneratedMediaOperation
+    func acceptGeneratedMedia(itemID: String, operationID: String, body: GeneratedMediaAcceptance) async throws -> GeneratedMediaOperation
     func creationCapabilities() async throws -> CreationCapabilities
     /// KRI-640: the last capabilities read for this session if it is at most `maxAge` seconds old, else nil. Never touches the network.
     func recentCreationCapabilities(maxAge: TimeInterval) async -> CreationCapabilities?
@@ -342,6 +348,14 @@ struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
 }
 
 extension KriaAPIClient {
+    func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
+
+    func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript { throw APIError.unsupported }
+    func generateMedia(itemID: String, body: GeneratedMediaRequest) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
+    func generatedMedia(itemID: String, operationID: String) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
+    func retryGeneratedMediaStorage(itemID: String, operationID: String) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
+    func acceptGeneratedMedia(itemID: String, operationID: String, body: GeneratedMediaAcceptance) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
+
     func decideApproval(threadID: UUID, approvalID: UUID, decision: String, expectedThreadRevision: Int, expectedDraftRevision: Int, fingerprint: String, speechCleanupAware: Bool, speechCleanupRetakesAware: Bool, speechCleanupAnalysisID: String?, speechCleanupChoice: String?, outputOrientation: String?, landscapeFit: String?, automaticRepairAttempts: Int) async throws {
         try await decideApproval(threadID: threadID, approvalID: approvalID, decision: decision, expectedThreadRevision: expectedThreadRevision, expectedDraftRevision: expectedDraftRevision, fingerprint: fingerprint, speechCleanupAware: speechCleanupAware, speechCleanupAnalysisID: speechCleanupAnalysisID, speechCleanupChoice: speechCleanupChoice, outputOrientation: outputOrientation, landscapeFit: landscapeFit, automaticRepairAttempts: automaticRepairAttempts)
     }
@@ -1353,6 +1367,24 @@ struct KriaAPI: KriaAPIClient {
         return ProjectPage(projects: result.value.map(\.summary), nextCursor: result.response.value(forHTTPHeaderField: "X-Next-Cursor"))
     }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
+    func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation {
+        try await request(path: "plan-items/\(itemID)/generated-media/by-event/\(clientEventID)", method: "GET", bodyData: nil, decode: GeneratedMediaOperation.self)
+    }
+    func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript {
+        try await request(path: "plan-items/\(itemID)/generated-media/narration-script", method: "GET", bodyData: nil, decode: GeneratedNarrationScript.self)
+    }
+    func generateMedia(itemID: String, body: GeneratedMediaRequest) async throws -> GeneratedMediaOperation {
+        try await request(path: "plan-items/\(itemID)/generated-media", method: "POST", bodyData: JSONEncoder().encode(body), decode: GeneratedMediaOperation.self)
+    }
+    func generatedMedia(itemID: String, operationID: String) async throws -> GeneratedMediaOperation {
+        try await request(path: "plan-items/\(itemID)/generated-media/\(operationID)", method: "GET", bodyData: nil, decode: GeneratedMediaOperation.self)
+    }
+    func retryGeneratedMediaStorage(itemID: String, operationID: String) async throws -> GeneratedMediaOperation {
+        try await request(path: "plan-items/\(itemID)/generated-media/\(operationID)/retry-storage", method: "POST", bodyData: Data("{}".utf8), decode: GeneratedMediaOperation.self)
+    }
+    func acceptGeneratedMedia(itemID: String, operationID: String, body: GeneratedMediaAcceptance) async throws -> GeneratedMediaOperation {
+        try await request(path: "plan-items/\(itemID)/generated-media/\(operationID)/accept", method: "POST", bodyData: JSONEncoder().encode(body), decode: GeneratedMediaOperation.self)
+    }
     func creationCapabilities() async throws -> CreationCapabilities {
         try await capabilitiesCache.fetch(owner: capabilitiesOwner) { try await fetchCreationCapabilities() }
     }

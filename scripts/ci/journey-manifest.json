@@ -2086,6 +2086,43 @@
         "src/apps/api/tests/services/test_order_mode.py",
         "src/apps/api/tests/fixtures/kria_replay/29-ekim/fixture.json"
       ]
+    },
+    {
+      "id": "api-credit-capabilities",
+      "needs_native": true,
+      "api_tests": "tests/services/test_generated_media_service.py tests/services/test_generated_media_transport.py tests/services/test_generated_media_admission.py tests/services/test_credit_cap_budgets.py tests/services/test_text_provider_ledger.py tests/agents/test_online_eval.py tests/routes/test_generated_media.py",
+      "xctests": [
+        "KriaTests/GeneratedMediaTests",
+        "KriaUITests/GeneratedMediaUITests/testApprovedNarrationPreviewThenUseAttachesAudioWithoutImageAsset",
+        "KriaUITests/GeneratedMediaUITests/testDisabledCapabilitiesPreserveRecordImportAndHideGeneration",
+        "KriaUITests/GeneratedMediaUITests/testGeneratedImagePreviewUseRefreshesVisualPool",
+        "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain",
+        "KriaUITests/GeneratedMediaUITests/testValidationRejectionRequiresEditAndExplicitNewSubmission"
+      ],
+      "paths": [
+        "src/apps/api/app/routes/generated_media.py",
+        "src/apps/api/app/services/generated_media.py",
+        "src/apps/api/app/services/generated_media_admission.py",
+        "src/apps/api/app/services/generated_media_transport.py",
+        "src/apps/api/app/services/generated_asset_contracts.py",
+        "src/apps/api/app/services/credit_plan.py",
+        "src/apps/api/app/agents/_online_eval.py",
+        "src/apps/api/app/tasks/online_eval.py",
+        "src/apps/api/app/services/ai_cost_control.py",
+        "src/apps/api/app/migrations/versions/0127_generated_media_operations.py",
+        "src/apps/api/tests/routes/test_generated_media.py",
+        "src/apps/api/tests/services/test_generated_media_service.py",
+        "src/apps/api/tests/services/test_generated_media_transport.py",
+        "src/apps/api/tests/services/test_generated_media_admission.py",
+        "src/apps/api/tests/services/test_credit_cap_budgets.py",
+        "src/apps/api/tests/agents/test_credit_plan_contracts.py",
+        "src/apps/ios/Kria/Core/GeneratedMedia.swift",
+        "src/apps/ios/Kria/Features/GeneratedMediaSheet.swift",
+        "src/apps/ios/Kria/Features/CreationAttachments.swift",
+        "src/apps/ios/Kria/Features/VoiceoverScriptCard.swift",
+        "src/apps/ios/Tests/KriaTests/GeneratedMediaTests.swift",
+        "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift"
+      ]
     }
   ]
 }

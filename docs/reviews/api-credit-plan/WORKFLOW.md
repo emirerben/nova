@@ -1,60 +1,25 @@
 # API credit implementation workflow
 
-## Acceptance
+This branch integrates metered generated images, owned image edits, generated narration, and the existing online evaluation judge for native Kria. Gemini remains the production default. Final video rendering remains entirely on the iPhone. Optional research, script and localization paths retain their existing text-provider behavior. There is no automatic model promotion.
 
-This increment prepares API experiments without spending credits. The offline command must reject unsupported provider capabilities, invalid allocations, empty output, truncated audio, and a provider transcript that differs from the approved script. It must preserve editable image titles outside the generated pixels. Model comparison must use the existing packet preflight, with provider totals reported separately. Gemini remains the production default. Final video rendering stays on the iPhone.
+The first increment supplied offline contracts and allocation preflight. The integrated implementation adds migration 0127, durable operations, provider transport, atomic provider/capability budgets, authenticated native routes, immutable storage admission, and SwiftUI controls. See the [operational runbook](../../runbooks/api-credit-capabilities.md) and [verification record](VERIFY.md).
 
-The creator sees no new controls in this increment. Native asset registration, authenticated ownership, approval, storage retention, and device export remain required before product exposure.
+## Acceptance and failure boundaries
 
-## Phases
+A credit grant or proposed 40/40/20 allocation never authorizes spending. All new feature switches default false and all new budgets default zero. Billing organization, recent price verification, explicit live approval, attribution and applicable phone capabilities must pass before submission. The $2 image reservation is a conservative operator-verified estimate, not an independently proved hard provider bound.
 
-- [x] Read poteto-mode Principles.
-- [x] Phase A: Frame. Inspect existing comparison, ledger and native asset ownership.
-- [x] Phase B: Design the workflow. Compare shared text-runtime extension against a separate generated-asset contract. Select the latter because binary output and streaming completion have different contracts.
-- [x] Phase C: Run the loop. Verify comparison allocation preflight, then generated-image and narration contracts with offline transport fixtures.
-- [x] Phase D: Keep the audit trail. Record decisions in decisions.tsv.
-- [x] Phase E: Verify and hand back. Run contract checks and independent review. Report all unverified product boundaries.
+Duplicate events cannot buy another generation. Changed input under the same event is rejected. Ambiguous provider outcomes retain liability and must not be resubmitted automatically. Storage failures retain completed bytes for storage-only retry. Images enter the owned asset pool; narration acceptance rechecks approved script identity. Editable titles remain separate from generated pixels. No generated-asset route dispatches a final render.
 
-## Throughput checkpoint
+## Evidence and remaining gates
 
-One bounded checkout owns three small modules and focused offline tests. No native build, media download, live provider call, deployment, or production configuration change is needed. Verify each unit before adding the next. Keep the existing experiment CLI and ledger as the live execution authority.
+Offline contracts, transport fixtures, route/admission checks, dedicated PostgreSQL checks and native simulator tests have run. These establish bounded implementation behavior, not live quality or inspected phone exports. Final consolidated verification and review binding remain pending with the integrating parent.
 
-## Failure modes recorded before implementation
+The metadata-only production inventory at 13:20 UTC on 29 October 2026 found zero approved eligible holdouts and zero approved development cases. Historical inventory contained one creator and 173 threads, with owner_map_complete=true and media_map_complete=false. New real holdout enrollment is BLOCKED. Sealed targets were not read. No live quality winner is established.
 
-- A grant amount becomes permission to spend, or reserve dollars become an allocation.
-- A packet exceeds one provider's allocation while staying under the combined total.
-- An unknown model is assigned to the wrong provider.
-- A synthetic control is represented as an independent real holdout.
-- Image edits include a Gemini URI, or generated title text replaces editable text.
-- A response contains a URL rather than inspected bytes, malformed base64, missing usage, or extra images.
-- Narration returns partial audio, a failed terminal event, excessive bytes, a different transcript, or a different response identity.
-- A model alias is sent to the deprecated Speech API.
-- An SDK retry or a duplicated submission silently adds cost.
-- A mock success is reported as a working phone asset or a live model result.
+No live provider calls, billing verification, or physical-phone export inspection occurred. Publication authorization does not authorize deployment. Main pushes trigger Fly deployment; merge/deployment handling remains a separate parent gate. No PR or new issue reference is asserted here.
 
-## Design sketch
+## Tracking and publication gates
 
-`CreditAllocation` maps provider and capability to planning ceilings in USD. These ceilings never authorize execution. `comparison_credit_preflight(packet)` delegates packet validation and pricing to `prepare_packet`, then groups existing priced rows by provider. It does not create another runner.
+The dedicated Linear issue creation is paused after automatic approval review rejected that specific organizational write. An explicit approval question is pending. No new issue was created. [KRI-797](https://linear.app/kria/issue/KRI-797/compare-gemini-sonnet-55-and-gpt-61-sol-for-main-creator-and-edit) remains related provider-comparison work and is not closed by this implementation.
 
-`ImageRequest` owns prompt, image dimensions, quality and separately editable title. `image_payload` produces an Images API generation payload. `decode_image` accepts PNG bytes and token usage only. Image editing waits for an owned immutable input contract.
-
-`NarrationRequest` owns the approved script and preset voice. `narration_events` creates an isolated Realtime response. `decode_narration` requires completed audio, completed transcript and a successful response with matching identity. It returns WAV bytes for later owned asset registration. No network client is constructed by these modules.
-
-## Source checks on 29 October 2026
-
-- [OpenAI image generation](https://developers.openai.com/api/docs/guides/image-generation) documents `gpt-image-2.5-sunburst` and direct Images API generation.
-- [OpenAI speech migration](https://developers.openai.com/api/docs/guides/text-to-speech) directs new work to `gpt-realtime-2.1-mini` through Realtime, not `/audio/speech`.
-- [Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations) documents audio delta events, response completion, and 24 kHz PCM output.
-- [Claude models](https://platform.claude.com/docs/en/models/overview) lists `claude-sonnet-5-5` with text output and image input.
-
-The existing text adapters already support current documented model IDs. No automatic provider promotion is justified by the earlier comparison. No paid usage or remaining credit balance was verified in this run.
-
-## Remaining implementation
-
-This is the first offline increment. It does not implement a paid provider transport, live spend caps, image editing, native asset insertion, or a narration control. Planning ceilings do not change the existing ledger budgets. The generated-asset request builders are not registered with any HTTP route, task, or agent capability. No feature flag can activate them in production.
-
-The next unit needs a persistent operation identity, separate image and narration flags that default to false, ledger reservations, per-provider and per-capability atomic caps, zero SDK retries, and retained unknown liability. Verify authoritative worst-case request prices before that unit can contact a provider. A provider success followed by failed storage must settle billing separately and retry storage without regenerating.
-
-Then admit owned image bytes through the existing `PlanItemAsset` pool and source registration contracts. Admit narration through the existing voiceover identity and duration checks. Keep image titles in editable text lanes. Image editing needs an owned immutable reference-image contract first. Native export must verify both paths before any exposure. Optional grounded script and localization work can reuse the existing text comparison after independent eligible sources are available. This run enrolled zero fresh real holdouts.
-
-The audio tests use synthetic PCM. Matching the provider transcript establishes a text consistency check only. It does not establish what a human hears, timing, pronunciation, or whether a generated image obeys the request to omit lettering. These need independent inspection in the future live and native evidence.
+Draft publication and CI are authorized. Admin merge is authorized only for a ready head. The existing Fly workflow deploys automatically on main pushes, while deployment remains separately gated in this task. Merge must preserve that restriction. No workflow was disabled and no blanket CI skip was introduced.
