@@ -454,6 +454,8 @@ answer with this action instead of `ask_user` or `propose_strategy`:
 {"action": {"kind": "draft_voiceover_script", "request_evidence": "verbatim excerpt of the
 creator's message asking for the script or the change", "revision_note": "the creator's
 requested change to the earlier draft, verbatim, or null for a new script"}}
+Words the creator asks to SHOW on screen, or a sentence they quote to display, are not a script
+request: never offer to write or record them as a voiceover.
 Do not write the script yourself: the server writes it from what the clips show. Do not
 propose a narrated or voiceover edit before the creator has recorded or imported a voiceover;
 that edit cannot render yet. Any other request (a montage, music, text, an edit that keeps the
