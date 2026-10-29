@@ -783,8 +783,34 @@ voiceover is recorded, and the message does not talk about words said in the foo
 
 Deploy order: roll api and worker together. A thread stored with `text_sequence` fails
 `CreativeBrief` validation on an older api or worker machine (autostopped machines, or a revert),
-and this kind has no kill switch of its own. Nothing judges it until the editor-op lane lands, so
-the draft shows the sentence whole.
+and this kind has no kill switch of its own.
+
+## Compose with the editor ops (KRI-1039, `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`)
+
+The copilot's ops are the base layer: an ask a person could do in the editor is composed with them,
+not refused, asked about or re-planned.
+
+- A `text_sequence` ask is one `replace_text_sequence`: windows are weighted by character count
+  (`weight: "length"`, the default; `"equal"` keeps equal windows), and `mode: "cumulative"` builds
+  the sentence up (step k shows the first k words, children carry `source_params.sequence_mode`,
+  the full sentence holds the last quarter). Both fields are written into the op when it is
+  authored, so replaying a saved draft never depends on the flag. Evidence
+  (`sequence_text_evidence.complete_sequences`) reads a cumulative chain as its last step.
+- Creation: Main Creator plans the footage; `compose_creation_text` is the one op pass on the
+  new draft, in the same render job, and it reads `text_sequence` requirements. `check_requirement`
+  judges one (`PlanFacts.sequence_texts`): met when the words are on screen in pieces, otherwise a
+  neutral receipt, so an uncomposed sequence is never a creator question.
+- Follow-ups: an edit-shaped turn goes to the copilot with no `nova.creator.main` call, also after a
+  failed latest render when the item still has an editor target (`_plan_live_turn` probes it). A job
+  that never produced a variant has nothing to edit and still re-plans. The fast path includes
+  `replace_text_sequence`; "different" and "farkli" no longer force a re-plan.
+- Capability parity: `kria/editor_capability_parity.py` maps every public action of
+  `NativeEditorSession.swift` to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
+  `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when
+  an action has none.
+
+Flag off restores the earlier routing, cues, fast-path set and op shape
+(`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.
 
 ## Local proof
 
