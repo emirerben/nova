@@ -9,3 +9,8 @@ The original refresh changed intro writer version away from the newer grounded-h
 KRI-64 supplies related responsible-performance-data context. This bounded reference-data contribution does not fulfill its larger creator-consent, metrics or insight-model work.
 
 Verification on the integrated copy passed 27 bank and structural eval tests, with no paid calls. Scoped Ruff passed. Independent read-only review verified source hashes and the five retained entries. Live creator output, native export and rollout are unverified. Merge requires current exact-head CI and explicit authorization for the automatic production deployment.
+
+
+## Later main deadline integration
+
+Main advanced to `fc0c8ff847dd0c96a649bbabc54e98a67c953762` with the separately owned provider-deadline change. It changes backend runtime/configuration and release metadata, with no native source delta. The normal merge is conflict-free and preserves this PR's reference-data correction. All 27 focused bank and structural tests passed again on this integrated tree. Fresh exact-head CI is required; the previous green workflow belongs to the earlier head.
