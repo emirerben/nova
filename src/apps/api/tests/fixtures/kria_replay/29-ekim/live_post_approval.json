@@ -1,0 +1,229 @@
+{
+  "fixture_id": "29-ekim-live-post-approval",
+  "schema_version": 1,
+  "source": {
+    "what": "Live answers of the two model calls after approval (creation text composer, phone font pick) on the approved T1 job of live_new_thread_t1.json, run through the real phone worker (scripts/kria/capture_29_ekim_post_approval.py).",
+    "captured": "2026-10-29, development ledger, manual-QA envelope, no judge",
+    "redacted": [
+      "job ids",
+      "user ids",
+      "storage paths (none reach the model)"
+    ],
+    "english_variant": {
+      "literal": "Thank you, Atatürk, for this beautiful homeland, for modern opportunities and for our independence, for everything we have. Happy Republic Day on the 29th of October",
+      "message": "Show all content in random order. add this text \"Thank you, Atatürk, for this beautiful homeland, for modern opportunities and for our independence, for everything we have. Happy Republic Day on the 29th of October\". Show each word one after the other",
+      "note": "language 'en' runs swap r3's literal and the creator message for these; everything else is the same job"
+    },
+    "flash_fallback": "path 'flash_fallback' runs made the pro composer's outcome unknown before the provider, so the worker took its real CreationTextComposerFast fallback",
+    "compose_flag": "KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED=true during capture",
+    "ledger": {
+      "test_run_id": "kri-29ekim-live2-20261029",
+      "settled_usd": 0.324453,
+      "cap_usd": 1.0
+    }
+  },
+  "primary": 0,
+  "summary": {
+    "runs": 9,
+    "ai_split_correct": 9,
+    "rendered_at_capture": 8,
+    "note": "the one run that did not render at capture (v15, pro) had a correct split; the server's 0.25 s stretch declined it on a microsecond rounding of its own window edges (fixed in kria_editor_ops_text)"
+  },
+  "runs": [
+    {
+      "language": "tr",
+      "path": "pro",
+      "prompt_version": "v16-text-sequence-title-bar",
+      "composer": {
+        "model": "gemini-3.1-pro-preview",
+        "thinking_level": "high",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I split the title to show one word at a time, replacing the previous word, and extended its duration to ensure each word is on screen long enough to be readable.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0.0,\n      \"end_s\": 13.5\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Bu\",\n        \"güzel\",\n        \"vatan,\",\n        \"çağdaş\",\n        \"imkanlar\",\n        \"ve\",\n        \"başımsızlık\",\n        \"için,\",\n        \"yani\",\n        \"her\",\n        \"şeyimiz\",\n        \"için\",\n        \"sana\",\n        \"ve\",\n        \"seninle\",\n        \"mücadele\",\n        \"veren\",\n        \"Türk\",\n        \"halkına\",\n        \"teşekkürler\",\n        \"Atam.\",\n        \"29\",\n        \"Ekim\",\n        \"Cumhuriyet\",\n        \"Bayramımız\",\n        \"kutlu\",\n        \"olsun\"\n      ],\n      \"mode\": \"replace\"\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+        "tokens_in": 13872,
+        "tokens_out": 379
+      },
+      "typography": {
+        "model": "gemini-2.5-flash",
+        "raw_text": "{\n  \"fonts\": {\n    \"title\": \"Montserrat\"\n  }\n}"
+      },
+      "spend_usd": 0.071724,
+      "live_verdict": {
+        "pass": true,
+        "worker_error": null
+      },
+      "composer_reply": "I split the title to show one word at a time, replacing the previous word, and extended its duration to ensure each word is on screen long enough to be readable."
+    },
+    {
+      "language": "tr",
+      "path": "pro",
+      "prompt_version": "v16-text-sequence-title-bar",
+      "composer": {
+        "model": "gemini-3.1-pro-preview",
+        "thinking_level": "high",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I've extended the title's timing and split it word by word, with each word replacing the previous one. Let me know if you would prefer the words to build up on screen instead.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0.0,\n      \"end_s\": 13.5\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Bu\",\n        \"güzel\",\n        \"vatan,\",\n        \"çağdaş\",\n        \"imkanlar\",\n        \"ve\",\n        \"başımsızlık\",\n        \"için,\",\n        \"yani\",\n        \"her\",\n        \"şeyimiz\",\n        \"için\",\n        \"sana\",\n        \"ve\",\n        \"seninle\",\n        \"mücadele\",\n        \"veren\",\n        \"Türk\",\n        \"halkına\",\n        \"teşekkürler\",\n        \"Atam.\",\n        \"29\",\n        \"Ekim\",\n        \"Cumhuriyet\",\n        \"Bayramımız\",\n        \"kutlu\",\n        \"olsun\"\n      ],\n      \"mode\": \"replace\"\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+        "tokens_in": 13872,
+        "tokens_out": 385
+      },
+      "typography": {
+        "model": "gemini-2.5-flash",
+        "raw_text": "{\"fonts\": {\"title\": \"Montserrat\"}}"
+      },
+      "spend_usd": 0.049147,
+      "live_verdict": {
+        "pass": true,
+        "worker_error": null
+      },
+      "composer_reply": "I've extended the title's timing and split it word by word, with each word replacing the previous one. Let me know if you would prefer the words to build up on screen instead."
+    },
+    {
+      "language": "tr",
+      "path": "pro",
+      "prompt_version": "v16-text-sequence-title-bar",
+      "composer": {
+        "model": "gemini-3.1-pro-preview",
+        "thinking_level": "high",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I extended the title's duration so it's readable and set it to show each word one after the other, replacing the previous word. Let me know if you would prefer the words to stay and build up on screen instead!\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0.0,\n      \"end_s\": 12.15\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Bu\",\n        \"güzel\",\n        \"vatan,\",\n        \"çağdaş\",\n        \"imkanlar\",\n        \"ve\",\n        \"başımsızlık\",\n        \"için,\",\n        \"yani\",\n        \"her\",\n        \"şeyimiz\",\n        \"için\",\n        \"sana\",\n        \"ve\",\n        \"seninle\",\n        \"mücadele\",\n        \"veren\",\n        \"Türk\",\n        \"halkına\",\n        \"teşekkürler\",\n        \"Atam.\",\n        \"29\",\n        \"Ekim\",\n        \"Cumhuriyet\",\n        \"Bayramımız\",\n        \"kutlu\",\n        \"olsun\"\n      ],\n      \"mode\": \"replace\"\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+        "tokens_in": 13872,
+        "tokens_out": 393
+      },
+      "typography": {
+        "model": "gemini-2.5-flash",
+        "raw_text": "{\n  \"fonts\": {\n    \"title\": \"Montserrat\"\n  }\n}"
+      },
+      "spend_usd": 0.039435,
+      "live_verdict": {
+        "pass": true,
+        "worker_error": null
+      },
+      "composer_reply": "I extended the title's duration so it's readable and set it to show each word one after the other, replacing the previous word. Let me know if you would prefer the words to stay and build up on screen instead!"
+    },
+    {
+      "language": "tr",
+      "path": "flash_fallback",
+      "prompt_version": "v16-text-sequence-title-bar",
+      "composer": {
+        "model": "gemini-3.6-flash",
+        "thinking_level": "low",
+        "raw_text": "{\"intent\":\"edit\",\"confidence\":1.0,\"reply\":\"I extended the title duration to 12.15 seconds and configured the text to reveal word by word in replace mode.\",\"ops\":[{\"op\":\"set_texts_timing\",\"selector\":{\"bar_indexes\":[0]},\"start_s\":0,\"end_s\":12.15},{\"op\":\"replace_text_sequence\",\"selector\":{\"bar_indexes\":[0]},\"segments\":[\"Bu\",\"güzel\",\"vatan,\",\"çağdaş\",\"imkanlar\",\"ve\",\"başımsızlık\",\"için,\",\"yani\",\"her\",\"şeyimiz\",\"için\",\"sana\",\"ve\",\"seninle\",\"mücadele\",\"veren\",\"Türk\",\"halkına\",\"teşekkürler\",\"Atam.\",\"29\",\"Ekim\",\"Cumhuriyet\",\"Bayramımız\",\"kutlu\",\"olsun\"],\"mode\":\"replace\"}],\"needs_clarification\":false,\"unmet_requests\":[]}",
+        "tokens_in": 13872,
+        "tokens_out": 201
+      },
+      "typography": {
+        "model": "gemini-2.5-flash",
+        "raw_text": "{\n  \"fonts\": {\n    \"title\": \"Montserrat\"\n  }\n}"
+      },
+      "spend_usd": 0.015237,
+      "live_verdict": {
+        "pass": true,
+        "worker_error": null
+      },
+      "composer_reply": "I extended the title duration to 12.15 seconds and configured the text to reveal word by word in replace mode."
+    },
+    {
+      "language": "tr",
+      "path": "flash_fallback",
+      "prompt_version": "v16-text-sequence-title-bar",
+      "composer": {
+        "model": "gemini-3.6-flash",
+        "thinking_level": "low",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I extended the title duration to 12.15 seconds for readability and split it word by word using replace mode.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"group\": \"title\"\n      },\n      \"start_s\": 0,\n      \"end_s\": 12.15\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"group\": \"title\"\n      },\n      \"segments\": [\n        \"Bu\",\n        \"güzel\",\n        \"vatan,\",\n        \"çağdaş\",\n        \"imkanlar\",\n        \"ve\",\n        \"başımsızlık\",\n        \"için,\",\n        \"yani\",\n        \"her\",\n        \"şeyimiz\",\n        \"için\",\n        \"sana\",\n        \"ve\",\n        \"seninle\",\n        \"mücadele\",\n        \"veren\",\n        \"Türk\",\n        \"halkına\",\n        \"teşekkürler\",\n        \"Atam.\",\n        \"29\",\n        \"Ekim\",\n        \"Cumhuriyet\",\n        \"Bayramımız\",\n        \"kutlu\",\n        \"olsun\"\n      ],\n      \"mode\": \"replace\"\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+        "tokens_in": 13872,
+        "tokens_out": 357
+      },
+      "typography": {
+        "model": "gemini-2.5-flash",
+        "raw_text": "{\n  \"fonts\": {\n    \"title\": \"Montserrat\"\n  }\n}"
+      },
+      "spend_usd": 0.009021,
+      "live_verdict": {
+        "pass": true,
+        "worker_error": null
+      },
+      "composer_reply": "I extended the title duration to 12.15 seconds for readability and split it word by word using replace mode."
+    },
+    {
+      "language": "en",
+      "path": "pro",
+      "prompt_version": "v16-text-sequence-title-bar",
+      "composer": {
+        "model": "gemini-3.1-pro-preview",
+        "thinking_level": "high",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I lengthened the title so it's readable and set it to show each word one after the other, replacing the previous word. Let me know if you want the words to build up on screen instead.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0.0,\n      \"end_s\": 12.0\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Thank\",\n        \"you,\",\n        \"Atatürk,\",\n        \"for\",\n        \"this\",\n        \"beautiful\",\n        \"homeland,\",\n        \"for\",\n        \"modern\",\n        \"opportunities\",\n        \"and\",\n        \"for\",\n        \"our\",\n        \"independence,\",\n        \"for\",\n        \"everything\",\n        \"we\",\n        \"have.\",\n        \"Happy\",\n        \"Republic\",\n        \"Day\",\n        \"on\",\n        \"the\",\n        \"29th\",\n        \"of\",\n        \"October\"\n      ],\n      \"mode\": \"replace\"\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+        "tokens_in": 13789,
+        "tokens_out": 353
+      },
+      "typography": {
+        "model": "gemini-2.5-flash",
+        "raw_text": "{\n  \"fonts\": {\n    \"title\": \"Montserrat\"\n  }\n}"
+      },
+      "spend_usd": 0.052191,
+      "live_verdict": {
+        "pass": true,
+        "worker_error": null
+      },
+      "composer_reply": "I lengthened the title so it's readable and set it to show each word one after the other, replacing the previous word. Let me know if you want the words to build up on screen instead."
+    },
+    {
+      "language": "en",
+      "path": "flash_fallback",
+      "prompt_version": "v16-text-sequence-title-bar",
+      "composer": {
+        "model": "gemini-3.6-flash",
+        "thinking_level": "low",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I extended the title timing and split the message into a word-by-word sequence, showing one word at a time.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0,\n      \"end_s\": 11.7\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Thank\",\n        \"you,\",\n        \"Atatürk,\",\n        \"for\",\n        \"this\",\n        \"beautiful\",\n        \"homeland,\",\n        \"for\",\n        \"modern\",\n        \"opportunities\",\n        \"and\",\n        \"for\",\n        \"our\",\n        \"independence,\",\n        \"for\",\n        \"everything\",\n        \"we\",\n        \"have.\",\n        \"Happy\",\n        \"Republic\",\n        \"Day\",\n        \"on\",\n        \"the\",\n        \"29th\",\n        \"of\",\n        \"October\"\n      ],\n      \"mode\": \"replace\"\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+        "tokens_in": 13789,
+        "tokens_out": 335
+      },
+      "typography": {
+        "model": "gemini-2.5-flash",
+        "raw_text": "{\n  \"fonts\": {\n    \"title\": \"Montserrat\"\n  }\n}"
+      },
+      "spend_usd": 0.016844,
+      "live_verdict": {
+        "pass": true,
+        "worker_error": null
+      },
+      "composer_reply": "I extended the title timing and split the message into a word-by-word sequence, showing one word at a time."
+    },
+    {
+      "language": "tr",
+      "path": "pro",
+      "prompt_version": "v15-text-sequence-brief",
+      "composer": {
+        "model": "gemini-3.1-pro-preview",
+        "thinking_level": "high",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I expanded the title's duration to give you enough reading time and set it to show word by word, each replacing the last. Let me know if you'd prefer the words to build up and stay on screen instead!\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0.0,\n      \"end_s\": 8.1\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"segments\": [\n        \"Bu\",\n        \"güzel\",\n        \"vatan,\",\n        \"çağdaş\",\n        \"imkanlar\",\n        \"ve\",\n        \"başımsızlık\",\n        \"için,\",\n        \"yani\",\n        \"her\",\n        \"şeyimiz\",\n        \"için\",\n        \"sana\",\n        \"ve\",\n        \"seninle\",\n        \"mücadele\",\n        \"veren\",\n        \"Türk\",\n        \"halkına\",\n        \"teşekkürler\",\n        \"Atam.\",\n        \"29\",\n        \"Ekim\",\n        \"Cumhuriyet\",\n        \"Bayramımız\",\n        \"kutlu\",\n        \"olsun\"\n      ],\n      \"mode\": \"replace\"\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+        "tokens_in": 13773,
+        "tokens_out": 391
+      },
+      "typography": null,
+      "spend_usd": 0.053082,
+      "live_verdict": {
+        "pass": false,
+        "worker_error": "CreationTextCompositionError: Text composition could not compile: Showing that text in 27 pieces needs about 12.9s on screen and the video only leaves 12.9s from where it starts"
+      },
+      "composer_reply": "I expanded the title's duration to give you enough reading time and set it to show word by word, each replacing the last. Let me know if you'd prefer the words to build up and stay on screen instead!"
+    },
+    {
+      "language": "tr",
+      "path": "flash_fallback",
+      "prompt_version": "v15-text-sequence-brief",
+      "composer": {
+        "model": "gemini-3.6-flash",
+        "thinking_level": "low",
+        "raw_text": "{\n  \"intent\": \"edit\",\n  \"confidence\": 1.0,\n  \"reply\": \"I split the text to display each word one after another using replace mode and extended the timing for readability.\",\n  \"ops\": [\n    {\n      \"op\": \"set_texts_timing\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"start_s\": 0,\n      \"end_s\": 12.0\n    },\n    {\n      \"op\": \"replace_text_sequence\",\n      \"selector\": {\n        \"bar_indexes\": [\n          0\n        ]\n      },\n      \"mode\": \"replace\",\n      \"segments\": [\n        \"Bu\",\n        \"güzel\",\n        \"vatan,\",\n        \"çağdaş\",\n        \"imkanlar\",\n        \"ve\",\n        \"başımsızlık\",\n        \"için,\",\n        \"yani\",\n        \"her\",\n        \"şeyimiz\",\n        \"için\",\n        \"sana\",\n        \"ve\",\n        \"seninle\",\n        \"mücadele\",\n        \"veren\",\n        \"Türk\",\n        \"halkına\",\n        \"teşekkürler\",\n        \"Atam.\",\n        \"29\",\n        \"Ekim\",\n        \"Cumhuriyet\",\n        \"Bayramımız\",\n        \"kutlu\",\n        \"olsun\"\n      ]\n    }\n  ],\n  \"needs_clarification\": false,\n  \"unmet_requests\": []\n}",
+        "tokens_in": 13773,
+        "tokens_out": 364
+      },
+      "typography": {
+        "model": "gemini-2.5-flash",
+        "raw_text": "{\n  \"fonts\": {\n    \"title\": \"Montserrat\"\n  }\n}"
+      },
+      "spend_usd": 0.017772,
+      "live_verdict": {
+        "pass": true,
+        "worker_error": null
+      },
+      "composer_reply": "I split the text to display each word one after another using replace mode and extended the timing for readability."
+    }
+  ]
+}

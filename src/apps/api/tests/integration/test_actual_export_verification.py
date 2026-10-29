@@ -75,12 +75,11 @@ def test_concurrent_text_evidence_survives_an_oversubscribed_parent(monkeypatch)
     )
     monkeypatch.setenv("OMP_NUM_THREADS", "64")
     monkeypatch.setenv("OMP_THREAD_LIMIT", "64")
-    wanted = measured.normalize_text("Approved")
     with ThreadPoolExecutor(max_workers=32) as pool:
         results = list(
-            pool.map(lambda _: measured._read_text(image, [(0, 0, 0)], wanted=wanted), range(32))
+            pool.map(lambda _: measured._read_text(image, [(0, 0, 0)], ["Approved"]), range(32))
         )
-    assert all(wanted in result for result in results)
+    assert all(result.complete for result in results)
 
 
 def ffmpeg(*args):
@@ -846,6 +845,42 @@ def test_on_grid_whole_clip_frame_shift_never_counts_as_checked(
     assert pictures
     if shift_frames:
         assert any(check["status"] == "failed" for check in pictures), report
+    # KRI-1042: the stored per-sample evidence names the source frame the export
+    # really showed (the previous one included), while the verdict above is unchanged.
+    (picture,) = pictures
+    shown = {0: "displayed", 1: "next", -1: "previous"}[shift_frames]
+    assert len(picture["sample_evidence"]) == picture["samples"], picture
+    for sample in picture["sample_evidence"]:
+        assert sample[f"ssim_{shown}"] >= 0.95, picture["sample_evidence"]
+        assert all(
+            sample[f"ssim_{frame}"] < 0.95
+            for frame in ("previous", "displayed", "next")
+            if frame != shown and f"ssim_{frame}" in sample
+        ), picture["sample_evidence"]
+
+
+@pytest.mark.parametrize("order,expected", [(("a", "b"), "checked"), (("b", "a"), "rejected")])
+def test_unknown_source_frame_clock_keeps_the_nominal_verdict_and_its_evidence(
+    exports, monkeypatch, order, expected
+):
+    """KRI-1042: per-sample evidence never turns the nominal-clock fallback into missing."""
+    root, sources, recipe = exports
+    output = encode(root, sources, order=order)
+
+    def unknown_clock(*args, **kwargs):
+        raise ValueError("missing_frame_clock")
+
+    monkeypatch.setattr(measured, "_frame_clock", unknown_clock)
+    report = verify_actual_export(output, status(recipe), sources)
+    assert report["status"] == expected, report
+    pictures = [c for c in report["checks"] if c["kind"] == "picture"]
+    assert {c["picture_clock"] for c in pictures} == {"nominal-v1"}
+    for picture in pictures:
+        assert len(picture["sample_evidence"]) == picture["samples"]
+        assert all(
+            set(sample) == {"ssim_displayed", "error_displayed"}
+            for sample in picture["sample_evidence"]
+        )
 
 
 def test_on_grid_single_neighbour_frame_remains_allowed(exports, moving):
@@ -1075,3 +1110,418 @@ def test_overlay_isolation_cannot_accept_text_without_a_decoded_background(
     monkeypatch.setattr(measured, "_frames", no_background)
     report = verify_actual_export(output, status(recipe), {"a": high_key})
     assert report["status"] != "checked", report
+
+
+# --- KRI-1042: copy read once per layer, glyphs shown in every visible sample ---
+#
+# Failure modes written before the verifier change. A correct export must pass when:
+# - a white "shirt" sits behind the title's first letters in the early samples, so
+#   no view reads the whole copy there (the Lisbon export, job 3daccc8c);
+# - the copy contains a straight quote mark (Tesseract TSV is not CSV-quoted);
+# - a short letter-like mark in the picture adds one stray token to every read;
+# - a second layer replaces the first in the same place.
+# A wrong export must still fail when the text is missing, has a wrong or extra
+# word, appears late, sits outside its region, or is still shown (readable or not)
+# after the layer ends.
+
+PLAIN_TITLE = "Ancient City of Troy"
+
+
+def _crowd_source(root, name, *, shirt=False, mark=None):
+    """Dark moving texture; an optional white shirt and a static letter-like mark.
+
+    The shirt covers the title's first letters and the read area's left border for
+    source time < 2 s and from 2.55 s (export time < 1.5 s and from 2.05 s).
+    """
+    base = "60+25*sin(X/9+T*2)*cos(Y/13)"
+    lum = (
+        f"if(lt(X\\,100)*between(Y\\,40\\,170)*(lt(T\\,2)+gte(T\\,2.55))\\,245\\,{base})"
+        if shirt
+        else base
+    )
+    graph = f"nullsrc=s=640x360:r=30:d=4,geq=lum='{lum}':cb=128:cr=128,format=yuv420p"
+    if mark:
+        graph += f",drawtext=fontfile={FONT}:text={mark}:fontsize=30:fontcolor=white:x=560:y=103"
+    path = root / f"{name}.mp4"
+    ffmpeg("-f", "lavfi", "-i", graph, "-c:v", "libx264", "-preset", "fast", path)
+    return path
+
+
+@pytest.fixture(scope="module")
+def crowd(exports):
+    root, _, _ = exports
+    assert FONT is not None
+    return {
+        "plain": _crowd_source(root, "crowd-plain"),
+        "shirt": _crowd_source(root, "crowd-shirt", shirt=True),
+        "marked": _crowd_source(root, "crowd-marked", mark="x"),
+    }
+
+
+def _plain_title(root, text, *, baseline=125):
+    """Fixture-only painting: plain white fill, no stroke or shadow (as the phone draws)."""
+    overlay = Image.new("RGBA", (640, 360), (0, 0, 0, 0))
+    ImageDraw.Draw(overlay).text(
+        (60, baseline),
+        text,
+        fill=(255, 255, 255, 255),
+        font=ImageFont.truetype(str(FONT), 40),
+        anchor="ls",
+    )
+    path = root / f"plain-title-{uuid.uuid4()}.png"
+    overlay.save(path)
+    return path
+
+
+def _titled_export(root, source, titles):
+    """Cut source 0.5-3.0 s and paint each (text, start, end[, baseline]) title."""
+    path = root / f"{uuid.uuid4()}.mp4"
+    inputs = ["-i", source]
+    graph = "[0:v]trim=start=0.5:duration=2.5,setpts=PTS-STARTPTS[v0]"
+    for index, (text, start, end, *baseline) in enumerate(titles, start=1):
+        inputs += ["-loop", "1", "-i", _plain_title(root, text, baseline=(baseline or [125])[0])]
+        graph += (
+            f";[v{index - 1}][{index}:v]overlay=0:0:shortest=1:"
+            f"enable='between(t,{start},{end})'[v{index}]"
+        )
+    ffmpeg(
+        *inputs,
+        "-filter_complex",
+        graph,
+        "-map",
+        f"[v{len(titles)}]",
+        "-t",
+        "2.5",
+        "-r",
+        30,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-pix_fmt",
+        "yuv420p",
+        path,
+    )
+    return path
+
+
+def _titled_recipe(recipe, layers):
+    """One clip (source 0.5-3.0 s) with each (id, copy, start, end) layer at (60, 125)."""
+    template = recipe.text_layers[0]
+    built = []
+    for layer_id, text, start, end in layers:
+        layer = copy.deepcopy(template)
+        layer.id, layer.start, layer.end = layer_id, start, end
+        run = layer.runs[0]
+        run.text, run.font_size, run.x, run.baseline_y = text, 40, 60, 125
+        built.append(layer)
+    return _single_clip(recipe, start=0.5, duration=2.5, text_layers=built)
+
+
+def _texts(report):
+    return [c for c in report["checks"] if c["kind"] == "text"]
+
+
+@pytest.mark.parametrize(
+    "case,source,copy_text,titles,proof",
+    [
+        ("plain", "plain", PLAIN_TITLE, [(PLAIN_TITLE, 0, 2)], "copy"),
+        ("shirt_behind_first_letters", "shirt", PLAIN_TITLE, [(PLAIN_TITLE, 0, 2)], "presence"),
+        (
+            "straight_quote",
+            "plain",
+            'Ancient "City" of Troy',
+            [('Ancient "City" of Troy', 0, 2)],
+            "copy",
+        ),
+        ("stray_mark", "marked", PLAIN_TITLE, [(PLAIN_TITLE, 0, 2)], "copy"),
+    ],
+)
+def test_correct_titles_pass_when_the_copy_is_read_once_and_drawn_throughout(
+    exports, crowd, case, source, copy_text, titles, proof
+):
+    root, _, recipe = exports
+    recipe = _titled_recipe(recipe, [("title", copy_text, 0, 2)])
+    output = _titled_export(root, crowd[source], titles)
+    report = verify_actual_export(output, status(recipe), {"a": crowd[source]})
+    (root / f"kri1042-{case}.json").write_text(json.dumps(report, indent=2))
+    assert report["status"] == "checked", (case, _texts(report))
+    visible = [c for c in _texts(report) if c["expected_visible"]]
+    assert len(visible) == 3 and any(c["proof"] == "copy" for c in visible), visible
+    assert any(c["proof"] == proof for c in visible), (case, visible)
+    if case == "stray_mark":
+        assert any(c["extra_tokens"] == 1 for c in visible), visible
+
+
+@pytest.mark.parametrize("second", ["Ancient City of Rome", f"{PLAIN_TITLE} 2"])
+def test_a_second_layer_in_the_same_place_is_not_the_first_layer_lingering(exports, crowd, second):
+    """The second copy shares most words, or is the first plus one short token."""
+    root, _, recipe = exports
+    recipe = _titled_recipe(recipe, [("first", PLAIN_TITLE, 0, 1), ("second", second, 1, 2)])
+    output = _titled_export(root, crowd["plain"], [(PLAIN_TITLE, 0, 0.99), (second, 1, 2)])
+    report = verify_actual_export(output, status(recipe), {"a": crowd["plain"]})
+    assert report["status"] == "checked", _texts(report)
+    assert {(c["layer_id"], c["expected_visible"]) for c in _texts(report)} >= {
+        ("first", False),
+        ("second", False),
+    }
+
+
+@pytest.mark.parametrize(
+    "case,source,titles,failing",
+    [
+        ("missing", "plain", [], "visible"),
+        ("wrong_word", "plain", [("Ancient Town of Troy", 0, 2)], "visible"),
+        ("extra_word", "plain", [("Ancient City of old Troy", 0, 2)], "visible"),
+        ("late", "plain", [(PLAIN_TITLE, 1.4, 2)], "visible"),
+        ("outside_region", "plain", [(PLAIN_TITLE, 0, 2, 300)], "visible"),
+        ("lingers_readable", "plain", [(PLAIN_TITLE, 0, 2.5)], "hidden"),
+        ("lingers_behind_shirt", "shirt", [(PLAIN_TITLE, 0, 2.5)], "hidden"),
+    ],
+)
+def test_wrong_titles_still_fail_the_relaxed_text_check(
+    exports, crowd, case, source, titles, failing
+):
+    root, _, recipe = exports
+    recipe = _titled_recipe(recipe, [("title", PLAIN_TITLE, 0, 2)])
+    output = _titled_export(root, crowd[source], titles)
+    report = verify_actual_export(output, status(recipe), {"a": crowd[source]})
+    (root / f"kri1042-negative-{case}.json").write_text(json.dumps(report, indent=2))
+    assert report["status"] == "rejected", (case, _texts(report))
+    assert any(
+        c["status"] == "failed" and c["expected_visible"] == (failing == "visible")
+        for c in _texts(report)
+    ), (case, _texts(report))
+
+
+# --- KRI-1042: frame profile against a soft analysis proxy (verifier v5) ---
+#
+# Failure modes written before the verifier change:
+# - the phone's analysis proxy is 568x320 at ~0.7 Mbps; against it a correct export of
+#   detailed handheld footage scores 0.91-0.95 SSIM, under the 0.95 bar (Lisbon job
+#   3daccc8c), so the export is rejected;
+# - a one- or two-frame shift either way, or a cut two frames late, moves the best match
+#   to a neighbouring source frame; a lower bar must still reject it, on fast footage,
+#   and on a slow zoom where the shifted picture still scores 0.89-0.95;
+# - a 30 fps proxy of a 25 fps original shows some pictures twice; a repeated neighbour
+#   must not read as a shift, and is no evidence against one;
+# - still footage has no best frame, so below the exact bar it must not pass;
+# - a wrong clip, a 2% zoom or a 1% offset keeps the timing but not the picture.
+
+SOFT_SOURCES = {
+    # Mandelbrot detail (still at this scale), then the camera over 1600x900 of it.
+    "handheld": (
+        0.06,
+        "crop=1280:720:x='160+80*sin(2*PI*0.9*t)+16*sin(2*PI*5.3*t)'"
+        ":y='90+50*sin(2*PI*0.6*t+1)+12*sin(2*PI*4.1*t)',tmix=frames=2",
+    ),
+    "calm": (0.02, "crop=1280:720:x='160+45*t':y='90+10*t'"),
+    "zoom": (
+        0.02,
+        "zoompan=z=1+0.08*it:d=1:x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2):s=1280x720:fps=25",
+    ),
+    "still_grain": (0.06, "crop=1280:720:x=160:y=90,noise=alls=40:allf=t"),
+}
+SOFT_EXPORT = (270, 480)
+SOFT_GEOMETRY = {
+    "cover": "crop=ih*9/16:ih",
+    "zoom2": "crop=ih*9/16/1.02:ih/1.02",
+    "offset1": "crop=ih*9/16:ih:(iw-ih*9/16)/2+0.01*ih*9/16:0",
+}
+
+
+def _raw_frames(source, vf, size):
+    raw = subprocess.run(
+        [FFMPEG, "-v", "error", "-i", str(source), "-vf", f"{vf},scale={size[0]}:{size[1]}"]
+        + ["-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    ).stdout
+    frame = size[0] * size[1] * 3
+    return [raw[i * frame : (i + 1) * frame] for i in range(len(raw) // frame)]
+
+
+def _held(frames, fps_in, windows, fps=30):
+    """Frame n of each window shows the last source frame at/before start + n/fps."""
+    return b"".join(
+        frames[min(int((start + n / fps) * fps_in + 1e-6), len(frames) - 1)]
+        for start, duration in windows
+        for n in range(round(duration * fps))
+    )
+
+
+def _encode_raw(data, size, path, *quality):
+    subprocess.run(
+        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo"]
+        + ["-pix_fmt", "rgb24", "-s", f"{size[0]}x{size[1]}", "-r", "30", "-i", "-"]
+        + ["-c:v", "libx264", "-pix_fmt", "yuv420p", *quality, str(path)],
+        input=data,
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def soft_proxy(exports):
+    """Per footage: a 568x320 ~0.7 Mbps 30 fps proxy, and an exporter of 9:16 cuts."""
+    root, _, _ = exports
+    stills, built = {}, {}
+
+    def footage(name):
+        if name in built:
+            return built[name]
+        kind, fps_in = name.rsplit("_", 1)
+        scale, camera = SOFT_SOURCES[kind]
+        if scale not in stills:
+            stills[scale] = root / f"mandelbrot-{scale}.png"
+            ffmpeg(
+                "-f",
+                "lavfi",
+                "-i",
+                f"mandelbrot=s=1600x900:maxiter=300:start_scale={scale}:end_scale={scale}",
+                "-frames:v",
+                1,
+                stills[scale],
+            )
+        source = root / f"soft-{name}.mp4"
+        ffmpeg(
+            "-loop",
+            1,
+            "-framerate",
+            fps_in,
+            "-i",
+            stills[scale],
+            "-t",
+            4,
+            "-vf",
+            f"{camera},format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            14,
+            source,
+        )
+        frames = _raw_frames(source, "null", (568, 320))
+        proxy = _encode_raw(
+            _held(frames, int(fps_in), [(0, len(frames) / int(fps_in))]),
+            (568, 320),
+            root / f"soft-{name}-proxy.mp4",
+            *("-preset", "medium", "-b:v", "700k", "-maxrate", "800k", "-bufsize", "1400k"),
+        )
+        cache = {}
+
+        def cut(windows, geometry="cover"):
+            if geometry not in cache:
+                cache[geometry] = _raw_frames(source, SOFT_GEOMETRY[geometry], SOFT_EXPORT)
+            return _encode_raw(
+                _held(cache[geometry], int(fps_in), windows),
+                SOFT_EXPORT,
+                root / f"{uuid.uuid4()}.mp4",
+                *("-preset", "fast", "-crf", "17"),
+            )
+
+        built[name] = proxy, cut
+        return built[name]
+
+    return footage
+
+
+def _portrait(recipe, windows):
+    """Contiguous clips of source "a" at (source_start, duration), on a 9:16 canvas."""
+    recipe = _single_clip(recipe, start=windows[0][0], duration=windows[0][1])
+    recipe.canvas = recipe.canvas.model_copy(update={"width": 1080, "height": 1920})
+    template = recipe.tracks[0].clips[0]
+    clips, cursor = [], 0.0
+    for index, (start, duration) in enumerate(windows):
+        clip = copy.deepcopy(template)
+        clip.id = f"c{index}"
+        clip.source_start, clip.source_duration, clip.timeline_start = start, duration, cursor
+        clips.append(clip)
+        cursor += duration
+    recipe.tracks[0].clips = clips
+    return recipe
+
+
+SOFT_WINDOWS = [(0.5, 1.9)]
+ZOOM_WINDOWS = [(1.5, 1.9)]
+
+
+@pytest.mark.parametrize("footage", ["handheld_25", "handheld_30"])
+def test_correct_export_against_a_soft_proxy_passes_on_its_frame_profile(
+    exports, soft_proxy, footage
+):
+    root, _, recipe = exports
+    proxy, cut = soft_proxy(footage)
+    report = verify_actual_export(
+        cut(SOFT_WINDOWS), status(_portrait(recipe, SOFT_WINDOWS)), {"a": proxy}
+    )
+    (root / f"kri1042-profile-{footage}.json").write_text(json.dumps(report, indent=2))
+    assert report["status"] == "checked", report
+    (picture,) = [c for c in report["checks"] if c["kind"] == "picture"]
+    below_bar = [s for s in picture["sample_evidence"] if s["ssim_displayed"] < 0.95]
+    assert below_bar and picture["profile_samples"] == len(below_bar), picture
+
+
+@pytest.mark.parametrize(
+    "footage,export_windows,geometry,recipe_windows",
+    [
+        ("handheld_25", [(0.5 + 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_25", [(0.5 - 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_25", [(0.5 + 2 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_25", [(0.5 - 2 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_30", [(0.5 + 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_30", [(0.5 - 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("calm_25", [(0.5 - 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("zoom_25", [(1.5 - 1 / 30, 1.9)], "cover", ZOOM_WINDOWS),
+        ("zoom_25", [(1.5 + 2 / 30, 1.9)], "cover", ZOOM_WINDOWS),
+        ("zoom_25", [(1.5 - 2 / 30, 1.9)], "cover", ZOOM_WINDOWS),
+        ("handheld_25", [(0.5, 1.2 + 2 / 30), (2.6, 1.0 - 2 / 30)], "cover", None),
+        ("handheld_25", [(2.0, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_25", SOFT_WINDOWS, "zoom2", SOFT_WINDOWS),
+        ("handheld_25", SOFT_WINDOWS, "offset1", SOFT_WINDOWS),
+    ],
+    ids=[
+        "handheld25-1-frame-late",
+        "handheld25-1-frame-early",
+        "handheld25-2-frames-late",
+        "handheld25-2-frames-early",
+        "handheld30-1-frame-late",
+        "handheld30-1-frame-early",
+        "calm25-1-frame-early",
+        "zoom25-1-frame-early",
+        "zoom25-2-frames-late",
+        "zoom25-2-frames-early",
+        "handheld25-cut-2-frames-late",
+        "handheld25-wrong-window",
+        "handheld25-zoom-2pct",
+        "handheld25-offset-1pct",
+    ],
+)
+def test_frame_profile_never_accepts_a_shifted_or_wrong_picture(
+    exports, soft_proxy, footage, export_windows, geometry, recipe_windows
+):
+    root, _, recipe = exports
+    proxy, cut = soft_proxy(footage)
+    recipe_windows = recipe_windows or [(0.5, 1.2), (2.6, 1.0)]
+    report = verify_actual_export(
+        cut(export_windows, geometry), status(_portrait(recipe, recipe_windows)), {"a": proxy}
+    )
+    assert report["status"] == "rejected", report
+    assert any(c["kind"] == "picture" and c["status"] == "failed" for c in report["checks"])
+
+
+def test_still_footage_below_the_exact_bar_has_no_profile_to_pass_on(exports, soft_proxy):
+    """Grain over a still: every frame differs, none is the best match."""
+    root, _, recipe = exports
+    proxy, cut = soft_proxy("still_grain_25")
+    report = verify_actual_export(
+        cut(SOFT_WINDOWS), status(_portrait(recipe, SOFT_WINDOWS)), {"a": proxy}
+    )
+    (picture,) = [c for c in report["checks"] if c["kind"] == "picture"]
+    assert min(s["ssim_displayed"] for s in picture["sample_evidence"]) < 0.95, picture
+    assert (picture["status"], picture["profile_samples"]) == ("failed", 0), picture

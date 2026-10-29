@@ -193,6 +193,37 @@ def contract_drawn_texts(
     return tuple(row.text for row in contract.exact_texts if contract_text_drawn(row, route=route))
 
 
+def _planned_order_basis(
+    contract: Any,
+    strategy: Mapping[str, Any],
+    *,
+    media: Mapping[str, Any],
+    manifest: ResolvedCreatorManifest | None,
+    creator_id: object,
+) -> str | None:
+    """The order the draft's writer commits to before it renders, when it is a server rule.
+
+    29 Ekim: the planner stamps ``ordering_choice: "random"`` from the brief's random-order
+    ask, and the phone unified montage writer draws exactly the requirement's stored-seed
+    permutation (`unified_montage._order`), recording seed and source for the
+    render's own receipt. That is an executable commitment, like a pinned title the writer
+    draws. Any other writer, or no stamp, commits to nothing here.
+    """
+    if strategy.get("ordering_choice") != "random":
+        return None
+    try:
+        route = _phone_route(
+            contract,
+            strategy,
+            media=media,
+            edit_format=strategy.get("edit_format") or (manifest.edit_format if manifest else None),
+            creator_id=creator_id,
+        )
+    except ValueError:
+        return None
+    return "random" if route == "unified_montage" else None
+
+
 def _no_pre_render_checker(req: Any) -> bool:
     """KRI-983: no draft check can settle this ask: none owns it, or its only check reads the
     finished video (`judged_at_render`). A researched-text ask and a keep-text-off mark are
@@ -200,11 +231,21 @@ def _no_pre_render_checker(req: Any) -> bool:
     from app.kria.brief_checks import judged_at_render  # noqa: PLC0415
     from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
     from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
+    from app.kria.text_sequence import is_text_sequence  # noqa: PLC0415
 
     if (req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping)) or _fact_entries(
         req.facts.get(KEEP_TEXT_OFF_KEY)
     ):
         return False
+    if is_text_sequence(req):
+        # 29 Ekim (prod thread 64bb9853): words shown a piece at a time are laid out by the
+        # creation text pass, which runs after approval on the planned draft
+        # (`compose_creation_text`), and are judged on the finished text lane
+        # (`plan_facts_from_phone_variant` reads the fragments). A strategy draft has no text
+        # lane, so "I can't confirm this draft does it yet" blocked approval on a question no
+        # one could answer, before the step that does it had run. An editor draft still
+        # proves it from its own ops (the caller never reaches here for one).
+        return True
     # A text ask's words are checked on the draft even when its look is judged at render.
     return not _has_checker(req) or (req.kind != "text" and judged_at_render(req))
 
@@ -321,6 +362,13 @@ def assess_readiness(
             user_song_attached=bool(media.get("song_path")),
         )
     )
+    if editor_payload is None and facts.ordering_basis is None:
+        facts = dataclasses.replace(
+            facts,
+            ordering_basis=_planned_order_basis(
+                contract, strategy, media=media, manifest=manifest, creator_id=creator_id
+            ),
+        )
     # Use the existing source-bounded execution plan, never the model's duration
     # target as proof. The same validator is used by the render path.
     envelope = media.get("length_plan")
@@ -419,6 +467,11 @@ def assess_readiness(
         reason = policy_problem or (
             receipt.reason
             if checked
+            else say(
+                en="I'll show these words one at a time when I prepare the video, then check.",
+                tr="Bu kelimeleri videoyu hazırlarken tek tek göstereceğim, sonra kontrol ederim.",
+            )
+            if disposition == "unverified" and req.kind == "text_sequence"
             else say(
                 en="I can't check this before the video is made; I'll point it out after.",
                 tr="Bunu video hazırlanmadan önce kontrol edemiyorum; sonra sana göstereceğim.",

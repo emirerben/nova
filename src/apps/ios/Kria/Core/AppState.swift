@@ -589,6 +589,7 @@ enum WorkspaceDestination: Equatable, Sendable {
     /// Silently deletes a chat the user walked away from without sending anything, staging media,
     /// or leaving unsent text. Any doubt (fetch failure, conflict, still uploading) keeps the chat.
     func discardIfAbandoned(_ id: UUID) async {
+        guard chatDrafts.submission(for: id) == nil else { return }
         guard !deletedProjectIDs.contains(id), !reapingChatIDs.contains(id), !chatKeepers.contains(id),
               let project = projects.first(where: { $0.id == id }), project.status == .draft else { return }
         reapingChatIDs.insert(id)
@@ -601,7 +602,8 @@ enum WorkspaceDestination: Equatable, Sendable {
                 hasPendingUploads: uploads.records.contains { $0.projectID == id }
               ) else { return }
         // The user may have come back and typed while the thread was loading.
-        guard chatDrafts.draft(for: id).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard chatDrafts.submission(for: id) == nil,
+              chatDrafts.draft(for: id).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         try? await deleteProject(thread.summary)
         chatDrafts.setDraft("", for: id)
     }

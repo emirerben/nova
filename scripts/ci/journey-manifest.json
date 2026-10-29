@@ -2142,6 +2142,37 @@
         "src/apps/api/tests/test_content_plan_schema.py",
         "src/apps/api/tests/services/test_credit_deadline_compatibility.py"
       ]
+    },
+    {
+      "id": "kri-29ekim-live-approval-gate",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_29ekim_live_approval_gate.py tests/evals/test_clip_intent_planner_evals.py tests/services/test_order_mode.py",
+      "paths": [
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/services/order_mode.py",
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/prompts/clip_intent_planner.txt",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/tests/fixtures/kria_replay/29-ekim/live_new_thread_t1.json",
+        "src/apps/api/tests/fixtures/agent_evals/clip_intent_planner/golden/kri29ekim_random_order_text_sequence.json",
+        "src/apps/api/tests/kria/test_29ekim_live_approval_gate.py",
+        "scripts/kria/score_29_ekim.py"
+      ]
+    },
+    {
+      "id": "kri-29ekim-post-approval-text-sequence",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_29ekim_post_approval.py tests/kria/test_29ekim_live_approval_gate.py tests/agents/test_editor_text_sequence.py",
+      "paths": [
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/app/services/creation_text_composition.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/tests/fixtures/kria_replay/29-ekim/live_post_approval.json",
+        "src/apps/api/tests/kria/test_29ekim_post_approval.py",
+        "scripts/kria/score_29_ekim.py",
+        "scripts/kria/capture_29_ekim_post_approval.py"
+      ]
     }
   ]
 }

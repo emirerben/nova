@@ -145,9 +145,22 @@ Each entry in `variants` has the device record's `phase`, `reason_code`, pinned
   `verification_task` state and `actual_export_verification`: overall `status`
   (`checked` / `rejected` / `partial` / `unsupported`), `verifier_version`, and `checks`.
   A `picture` check carries `min_local_ssim`, `max_mean_pixel_error`, `samples`,
-  `neighbour_samples` and `picture_clock`. An `audio` check carries `correlation`, `gain`
-  and `lag_samples`, or `rms` for a silent reference. An `evidence` row with status
-  `missing` names the exception that stopped measurement in `reason`.
+  `neighbour_samples` and `picture_clock`. From v4 it also has `sample_evidence`: per
+  sample, SSIM and mean pixel error against the source frame displayed then, the next
+  frame and the previous frame (`ssim_displayed`, `error_displayed`, ...). In v4 only
+  displayed and next decide the sample; previous is there to review a one-frame lag.
+  From v5 all three feed the frame profile: the check adds `profile_samples` (samples
+  that passed on the profile, not the exact bar), `mean_local_ssim` (displayed frames)
+  and `lead_previous` / `lead_next` (mean displayed-minus-neighbour SSIM), and a sample
+  lists in `repeats` a neighbour that repeats the displayed source picture. An `audio`
+  check carries `correlation`, `gain` and `lag_samples`, or `rms` for a silent reference.
+  A `text` check carries `at_s` and `expected_visible`; from v4 also `proof` (`copy`,
+  `presence`, `absent`, `other_layer`) or `reason` (for example `copy_not_read`,
+  `no_glyph_ink`, `copy_words_missing`, `glyphs_still_visible`), `words_expected`,
+  `words_read_in_order`, `extra_tokens`, `min_word_conf`, `best_view`, `ink_share`,
+  `fill_like_background_share` and `read_area` (canvas pixels). The OCR text itself is
+  never stored. Reports from v1 to v3 return `null` for these fields. An `evidence` row
+  with status `missing` names the exception that stopped measurement in `reason`.
 - `thresholds` on every report: the pass rules for its `verifier_version`. The verifier
   does not store them. They come from `THRESHOLDS_BY_VERIFIER` in
   `app/services/export_verification_admin.py`, which must change with any verifier

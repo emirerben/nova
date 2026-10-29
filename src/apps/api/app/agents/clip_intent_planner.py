@@ -22,6 +22,7 @@ from app.schemas.clip_intents import (
     MAX_CLIP_INTENTS,
     ClipIntent,
 )
+from app.services.order_mode import key_order_mode
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _ROLE_MARKERS = re.compile(r"(?i)(^|[\s.;!?])(system|assistant|user|tool|developer)\s*[:>]")
@@ -836,12 +837,21 @@ def _silent_non_clip_drop(data: dict[str, Any], *, exclusions: bool = False) -> 
     ``spelling_dropped`` (how names are spelled), ``speech_caption_dropped`` (a
     non-caption op whose target is the spoken captions). The creator's words stay
     in the Creative Brief, which the Main Creator and the caption steps read.
+    ``order_mode_dropped`` (29 Ekim): an ``order`` whose ``order_by`` is a random / any order
+    is the brief's order requirement, never a clip sequence.
     ``exclusions`` (KRI-667): ``_repair_exclusion`` already settled every exclusion,
     so an ``exclude`` here is a real op.
     """
     op = data.get("op")
     quote = data.get("source_quote")
     quote_text = quote if isinstance(quote, str) else ""
+    if op == "order" and data.get("position") is None and key_order_mode(data.get("order_by")):
+        # 29 Ekim: "show all content in random order" came back as an order intent with
+        # `order_by: "random"`. The enum has no such value, so it was nulled into a
+        # positionless group whose inner order "wasn't recorded", and the creator was asked to
+        # choose one. A random / any order is the brief's `order` requirement (facts.key), which
+        # the planner shuffles by its stored seed; it is never a clip sequence.
+        return "order_mode_dropped"
     if not exclusions and isinstance(op, str) and op.strip().casefold() in _EXCLUSION_OPS:
         return "exclusion_dropped"
     if not exclusions and op == "include" and _is_exclusion_ask(quote_text):
@@ -1065,7 +1075,9 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         #
         # KRI-993: "only about X" is one `include` with `exclusive` true (same kill switch).
         # KRI-994: an `exclude` names the brief `select` requirement it carries out.
-        prompt_version="2026-10-27-subject-scope-exclude-requirement-id",
+        # 29 Ekim (thread 64bb9853): a random / any order is no `order` intent (the brief owns
+        # it), and words shown a piece at a time over the video are no `caption` intent.
+        prompt_version="2026-10-29-random-order-text-sequence",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

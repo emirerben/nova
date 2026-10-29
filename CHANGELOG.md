@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.27.0] - 2026-10-29
+
+### Changed
+- fix(kria): a shuffle plus a word-by-word title reaches an approved draft and renders (#1944) <!-- release-pr: 1944 -->
+
+## [0.82.26.0] - 2026-10-29
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-10-25 (#1837) <!-- release-pr: 1837 -->
+
+## [0.82.25.0] - 2026-10-29
+
+### Changed
+- fix(export-verifier): pass soft-proxy pictures on the displayed frame's lead (KRI-1042) (#1943) <!-- release-pr: 1943 -->
+
+## [0.82.24.0] - 2026-10-29
+
+### Changed
+- fix(ios): show submitted prompts and preserve send recovery (#1926) <!-- release-pr: 1926 -->
+
+## [0.82.23.0] - 2026-10-29
+
+### Changed
+- fix(export-verifier): read text copy once per layer, prove glyphs per sample (KRI-1042) (#1942) <!-- release-pr: 1942 -->
+
 ## [0.82.22.0] - 2026-10-29
 
 ### Changed

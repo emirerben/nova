@@ -147,7 +147,8 @@ def montage_blockers(
     # KRI-1024: creator literals no phone font draws; the plan below says whether the
     # worker's typography step would refuse them.
     refused = undrawable_text_receipts(
-        [req for req in brief.live() if req.kind == "text" and req.literal]
+        # 29 Ekim: a text_sequence's words are drawn too, as the opening title's pieces.
+        [req for req in brief.live() if req.kind in {"text", "text_sequence"} and req.literal]
     )
     if not judged and not speed_asks and not refused:
         return None

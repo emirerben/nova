@@ -3582,6 +3582,29 @@ phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_
 
 The existing Fly Deploy workflow checks all managed process groups, including stopped Machines, for one converged image digest before declaring deployment successful. That post-deploy check does not establish compatibility during a rolling deploy and does not make old binaries understand v3. Observe the actual merged revision's successful convergence separately; before that, KRI-832 remains pending. No source-only receipt or local replay proves production convergence or complete rollback compatibility.
 
+## Actual-export verifier v4 text proof (KRI-1042)
+
+`phone-simple-cut-v4` changes only the text check. Picture, audio and duration rules are the same as v3; per-sample picture scores are stored but decide nothing.
+
+- **Copy proof.** One visible sample per layer must read every copy word in order, each exact (case and punctuation kept), at OCR confidence 40. One extra token of at most two characters is allowed (a letter-like background speck). An extra authored word, a wrong word or a missing word still fails.
+- **Presence proof.** Every other visible sample must show the layer's glyphs: fill-coloured ink against the source picture beneath it (`ink_share` >= 0.03 of the measurable read area, fill-like background <= 0.5) and more than half the copy's words in order.
+- **Hidden samples** fail on the whole copy, as before, and now also on those glyphs unless another layer is due over the same area.
+- **Why.** v3 needed an exact read in every visible sample. White phone titles over white shirts (Lisbon job `3daccc8c`) broke one word in two of three samples, so a correct export was rejected. The Tesseract TSV is also read without CSV quoting now: a word starting with `"` used to swallow later words, so a copy with a straight quote could never pass.
+- **Known gap.** A layer whose pixels change mid-window to a different copy that shares more than half its words passes the presence samples. The copy proof still needs the exact copy once.
+
+Rollout follows the v3 boundary above: v4 is forward-only. A request pinned to v3 accepts a v4 report; a v4 pin never accepts a v3 report, and a server older than v4 refuses v4 pins. Each text row stores `proof` or `reason`, word counts, `best_view`, `ink_share` and the read area; read them with `GET /admin/jobs/{id}/export-verification` ([admin-job-debug](admin-job-debug.md)). Guards: `tests/integration/test_actual_export_verification.py` (KRI-1042 section).
+
+## Actual-export verifier v5 picture frame profile (KRI-1042)
+
+`phone-simple-cut-v5` adds a second way for a picture sample to pass. Text, audio and duration rules are the same as v4, and every sample the v4 picture rule passes still passes.
+
+- **Exact bar (unchanged).** Mean pixel error <= 2/255, or error <= 0.1 and local SSIM >= 0.95, against the source frame displayed at the sample, or the next one (a neighbour sample). A window where every on-grid sample needed the next frame still fails.
+- **Frame profile (new).** The phone's analysis proxy is 568x320 at ~0.7 Mbps. Against it, a correct export of detailed handheld footage scores 0.89-0.95. Below the bar, the displayed frame still passes when the window shows it is the right moment: the mean displayed SSIM is >= 0.93, the mean lead of displayed over the previous and over the next source frame is >= 0.02 each, and the sample has error <= 0.1, SSIM >= 0.85 and no neighbour scoring higher. A neighbour that repeats the displayed picture (a 30 fps proxy of a 25 fps original, mean difference <= 1.5 codes) counts as lead 0.
+- **Why.** v4 rejected the correct Lisbon export (job `3daccc8c`): 9 of its 16 samples scored 0.89-0.95 against the proxy, and the displayed frame was the best match in all 16. A shift moves the best match to a neighbour, so the lead goes negative in one direction.
+- **Known gaps.** Still footage has no best frame and keeps the exact bar. A tone change (brightness about 8 codes, saturation, mild blur, a low-quality re-encode) that keeps SSIM >= 0.93 passes on soft-proxy footage, as v4 already passed it on sharp-proxy footage. A one-frame-late export on calm footage can pass through the unchanged next-frame tolerance, as in v4. Calibration and controls: [kri-1042-picture-profile](../reviews/kri-1042-picture-profile.md).
+
+Rollout follows the v3 boundary above: v5 is forward-only. A request pinned to v4 accepts a v5 report; a v5 pin never accepts a v4 report. Each picture check stores `profile_samples`, `mean_local_ssim`, `lead_previous` and `lead_next`; read them with `GET /admin/jobs/{id}/export-verification`. Guards: `tests/integration/test_actual_export_verification.py` (KRI-1042 frame profile section).
+
 ## Freeze frames (KRI-828)
 
 "Freeze the frame for one second on Atakan's bite" on a phone montage renders a real hold.
