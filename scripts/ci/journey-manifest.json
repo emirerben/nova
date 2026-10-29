@@ -998,12 +998,14 @@
     {
       "id": "kri-775-phone-preflight",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri775_merope_m2_replay.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri775_preflight_runtime_postgres.py",
+      "api_tests": "tests/kria/test_kri775_merope_m2_replay.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri775_preflight_runtime_postgres.py tests/kria/test_kri1024_flag_emoji_title.py",
       "paths": [
         "src/apps/api/app/services/phone_montage_preflight.py",
         "src/apps/api/app/tasks/generative_build.py",
         "src/apps/api/app/tasks/kria_runtime.py",
-        "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json"
+        "src/apps/api/tests/fixtures/kri775_merope_m2_turns.json",
+        "src/apps/api/tests/fixtures/kri1024_plaza_m1_flag_title.json",
+        "src/apps/api/tests/kria/test_kri1024_flag_emoji_title.py"
       ]
     },
     {
@@ -1055,7 +1057,7 @@
         "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
         "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss"
       ],
-      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py",
+      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py tests/kria/test_kri1024_flag_emoji_title.py",
       "paths": [
         "scripts/ios/phone-text-style-e2e.py",
         "src/apps/api/app/agents/creator_memory_extractor.py",
