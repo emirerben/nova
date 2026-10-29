@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.27.0] - 2026-10-29
+
+### Changed
+- fix(kria): a shuffle plus a word-by-word title reaches an approved draft and renders (#1944) <!-- release-pr: 1944 -->
+
 ## [0.82.26.0] - 2026-10-29
 
 ### Changed
