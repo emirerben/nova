@@ -717,16 +717,7 @@ async def restore_story(db, owner, identifier, story_id):
                 410,
                 {"code": "restore_window_closed", "message": "This idea can no longer be restored"},
             )
-        group = row.story_json.get("group")
-        current = {
-            str(member.source_id): member.group for member in media_collections.members(collection)
-        }
-        # An idea may only come back onto evidence that is still in its event.
-        if any(
-            value["source_id"] not in current
-            or (group is not None and current[value["source_id"]] != group)
-            for value in row.moments_json
-        ):
+        if not media_collections.footage_in_event(row, media_collections.members(collection)):
             raise HTTPException(
                 409,
                 {

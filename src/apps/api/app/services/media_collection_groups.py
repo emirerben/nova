@@ -70,7 +70,7 @@ async def delete_group(db, owner: uuid.UUID, identifier: uuid.UUID, body: GroupD
         identifier,
         from_revision=previous_revision,
         to_revision=row.revision,
-        groups=media_collections.unchanged_groups(selected, remaining) - {body.group},
+        selected=remaining,
     )
     await db.commit()
     return GroupDeleteOut(revision=row.revision, deleted_story_ids=deleted)
