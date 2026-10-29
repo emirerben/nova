@@ -2621,6 +2621,57 @@ async def test_deleting_an_event_keeps_other_events_and_bumps_the_revision(
     assert {story["collection_revision"] for story in final} == {3}
 
 
+async def test_adding_footage_to_an_event_keeps_its_ideas_usable(collection_world, monkeypatch):
+    """Failure catalogue: adding a clip to an event orphaning every idea it already had, so
+    the phone still shows them and "Use this idea" answers 409 "Story belongs to an older
+    collection"; an idea whose own footage left its event surviving the write."""
+    from app.config import settings
+    from app.kria.runtime import RuntimeFailure
+
+    monkeypatch.setattr(settings, "kria_runtime_v2_enabled", True)
+    client, _, _, owner, _ = collection_world
+    path, put_body, _, _ = await _two_events(client, owner)
+    _stub_ideas(monkeypatch, lambda input: [("Idea", "A point", "Opening", [0])])
+    ferry_idea = (
+        await client.post(f"{path}/stories", json={**EVENT_QUERY, "group": "Ferry"})
+    ).json()["stories"][0]
+
+    added_asset, added_source = await _add_video(owner)
+    grown = [
+        *put_body["members"],
+        {"asset_id": added_asset, "source_id": added_source, "group": "Ferry"},
+    ]
+    written = await client.put(path, json={**put_body, "expected_revision": 1, "members": grown})
+    assert written.status_code == 200 and written.json()["revision"] == 2, written.text
+    kept = await _saved(client, path, revision=2, group="Ferry")
+    assert [story["id"] for story in kept] == [ferry_idea["id"]]
+    assert kept[0]["collection_revision"] == 2
+    selection_body = {
+        "expected_revision": 2,
+        "expected_story_revision": 1,
+        "client_event_id": f"choose-{ferry_idea['id']}-1",
+        "thread_id": str(uuid.uuid4()),
+        "expected_thread_revision": 0,
+    }
+    with pytest.raises(RuntimeFailure, match="thread_not_found"):
+        # Past every story and collection check: only the made-up chat is refused.
+        await client.post(f"{path}/stories/{ferry_idea['id']}/select", json=selection_body)
+
+    used = {moment["source_id"] for moment in ferry_idea["moments"]}
+    without_its_footage = [member for member in grown if member["source_id"] not in used]
+    shrunk = await client.put(
+        path, json={**put_body, "expected_revision": 2, "members": without_its_footage}
+    )
+    assert shrunk.status_code == 200 and shrunk.json()["revision"] == 3, shrunk.text
+    assert await _saved(client, path, revision=3, group="Ferry") == []
+    stale = await client.post(
+        f"{path}/stories/{ferry_idea['id']}/select",
+        json={**selection_body, "expected_revision": 3},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "Story belongs to an older collection"
+
+
 async def test_event_delete_with_a_stale_revision_is_a_409_and_changes_nothing(collection_world):
     client, _, _, owner, _ = collection_world
     path, _, _, _ = await _two_events(client, owner)
@@ -2638,6 +2689,72 @@ async def test_event_delete_with_a_stale_revision_is_a_409_and_changes_nothing(c
 
 
 # --- KRI-944: photos feed ideas -----------------------------------------------------------
+
+
+def _captured(day):
+    return {
+        "upload_contract": {
+            "proxy": {"original": {"capture": {"capture_time": f"2026-05-{day:02d}T10:00:00Z"}}}
+        }
+    }
+
+
+async def test_event_title_and_notes_reach_the_model_and_key_the_idea_cache(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: events dropped on read-back; an older client's PUT (no `events`)
+    wiping them; the model never seeing the title, notes or capture dates; edited notes
+    served from the old idea cache; unchanged notes paying for a second generation; an
+    empty query rejected although the event describes the outing."""
+    client, _, _, owner, _ = collection_world
+    ferry = [await _add_video(owner, metadata=_captured(day)) for day in (2, 4)]
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    members = [{"asset_id": a, "source_id": s, "group": "Ferry"} for a, s in ferry]
+    events = [
+        {"group": "Ferry", "title": "Ferry to Bozcaada", "about": "Island day with friends"},
+        {"group": "Not yet filmed", "title": "Sunset dinner"},
+    ]
+    body = {"name": "Trip", "expected_revision": 0, "members": members, "events": events}
+    saved = await client.put(path, json=body)
+    assert saved.status_code == 200, saved.text
+    assert (await client.get(path)).json()["events"] == [
+        events[0],
+        {**events[1], "about": ""},
+    ]
+    assert (await client.post(f"{path}/index", json={"expected_revision": 1})).status_code == 200
+
+    calls = _stub_ideas(monkeypatch, lambda input: [("Ferry", "A point", "Opening", [0])])
+    ask = {"expected_revision": 1, "group": "Ferry"}
+    assert (await client.post(f"{path}/stories", json={**ask, "query": ""})).status_code == 200
+    assert (calls[0].event_title, calls[0].event_about) == (
+        "Ferry to Bozcaada",
+        "Island day with friends",
+    )
+    assert calls[0].capture_span.model_dump() == {"first": "2026-05-02", "last": "2026-05-04"}
+    whole = await client.post(f"{path}/stories", json={"expected_revision": 1, "query": ""})
+    assert whole.status_code == 422, "an empty query needs an event to describe the request"
+
+    assert (await client.post(f"{path}/stories", json={**ask, "query": ""})).status_code == 200
+    assert len(calls) == 1, "same notes hit the idea cache"
+
+    older_client = {k: v for k, v in body.items() if k != "events"}
+    renamed = await client.put(
+        path, json={**older_client, "name": "Trip 2", "expected_revision": 1}
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["events"][0]["title"] == "Ferry to Bozcaada", "omitted keeps events"
+
+    edited = [{**events[0], "about": "Island day, rainy"}, events[1]]
+    changed = await client.put(
+        path, json={**body, "name": "Trip 2", "expected_revision": 2, "events": edited}
+    )
+    assert changed.status_code == 200 and changed.json()["revision"] == 3, changed.text
+    assert (await client.post(f"{path}/index", json={"expected_revision": 3})).status_code == 200
+    ask = {"expected_revision": 3, "group": "Ferry", "query": ""}
+    assert (await client.post(f"{path}/stories", json=ask)).status_code == 200
+    assert len(calls) == 2 and calls[1].event_about == "Island day, rainy"
+    assert (await client.post(f"{path}/stories", json=ask)).status_code == 200
+    assert len(calls) == 2, "unchanged notes do not regenerate"
 
 
 async def _add_photo(

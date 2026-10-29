@@ -142,6 +142,32 @@ final class ChatDraftStagingTests: XCTestCase {
         XCTAssertEqual(draft.serverSnapshot["editor_capabilities"], variant["editor_capabilities"])
     }
 
+    func testSavedTextOnlySnapshotKeepsLockedRenderedClipsWithoutResurrectingExplicitClears() {
+        for explicitClear in [false, true] {
+            var sections: [String: JSONValue] = ["text_elements": .array([
+                .object(["id": .string("title"), "text": .string("My saved title"),
+                         "start_s": .number(0), "end_s": .number(2)])
+            ])]
+            if explicitClear { sections["timeline_slots"] = .array([]) }
+            let snapshot = DraftSnapshot(draftID: "saved", itemID: "item", variantKey: "initial",
+                draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: Self.jobID,
+                baseGenerationID: "g1", snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                    "base_generation": .string("g1"), "editor_state_version": .number(2),
+                    "sections": .object(sections)
+                ])], canUndo: true, createdAt: .now)
+            var variant = Self.variant()
+            variant["resolved_archetype"] = .string("guided_story")
+            variant["editor_capabilities"] = .object(["timeline": .bool(false), "text_elements": .bool(true)])
+            let originalSnapshot = snapshot.snapshot
+            let loaded = snapshot.editorDraft(projectID: UUID(), authoritativeVariant: variant)
+            let document = EditorDocument(snapshot: loaded.serverSnapshot)
+            XCTAssertEqual(document.clips.count, explicitClear ? 0 : 3)
+            XCTAssertEqual(document.textElements.map(\.text), ["My saved title"])
+            XCTAssertEqual(document.capabilities["timeline"]?.editable, false)
+            XCTAssertEqual(snapshot.snapshot, originalSnapshot)
+        }
+    }
+
     func testMatchingGenerationOverlaysChatLanesAsUnsavedEdits() async throws {
         let (session, _) = await loaded(Self.chatSnapshot())
         XCTAssertTrue(session.hasUnsavedChanges)

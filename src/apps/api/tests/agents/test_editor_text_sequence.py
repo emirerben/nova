@@ -16,12 +16,24 @@ from tests.services.test_kria_editor_ops import _job
 from tests.test_edit_copilot import _parse
 
 
-def test_prompt_contract_shows_string_segments_equal_windows_and_fade_patch() -> None:
+@pytest.fixture(autouse=True)
+def _legacy_equal_windows(monkeypatch):
+    """These pin the recorded ops' equal windows (the flag-off op shape).
+
+    Weighted and cumulative windows are covered by tests/kria/test_compose_unmet_with_ops.py.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_compose_unmet_with_ops_enabled", False)
+
+
+def test_prompt_contract_shows_string_segments_weighted_windows_and_fade_patch() -> None:
     prompt = Path(__file__).resolve().parents[2] / "prompts" / "edit_copilot_ops" / "text.txt"
     text = prompt.read_text()
     assert '"segments":["Morning coffee.","Afternoon walk.","Evening lights."]' in text
     assert "never objects and never per-segment start/end fields" in text
-    assert "equal contiguous non-overlapping windows" in text
+    assert "contiguous non-overlapping windows, each one in proportion" in text
+    assert '"weight":"equal"' in text and '"mode"' in text and "cumulative" in text
     assert '"entrance":"fade","exit":"fade"' in text
     assert "after_animation_of" in text and "does not control sequence windows" in text
 

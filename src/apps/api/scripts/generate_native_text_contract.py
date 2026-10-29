@@ -7,7 +7,10 @@ from pathlib import Path
 API_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(API_ROOT))
 
-from app.agents._schemas.text_animation_phases import TextAnimationPhases  # noqa: E402
+from app.agents._schemas.text_animation_phases import (  # noqa: E402
+    TEXT_ANIMATION_EDGE_SECONDS,
+    TextAnimationPhases,
+)
 from app.kria.portable_camera import CameraPulse  # noqa: E402
 
 OUTPUT = (
@@ -32,6 +35,8 @@ def generate() -> str:
 import Foundation
 
 public struct TextAnimationPhases: Codable, Equatable, Sendable {{
+    /// Entrance and exit length at speed 1, for every edge.
+    public static let edgeSeconds = {TEXT_ANIMATION_EDGE_SECONDS}
     public enum Edge: String, Codable, CaseIterable, Sendable {{ case {edge} }}
     public enum Loop: String, Codable, Sendable {{ case {loop} }}
     public var entrance: Edge

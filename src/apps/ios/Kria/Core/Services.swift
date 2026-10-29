@@ -1169,7 +1169,11 @@ enum KriaClientProtocolContract {
     /// behind them (409 `story_open_questions`) and sends the list only from this protocol; older builds
     /// see no questions and are not gated.
     /// 23: renders the six designed text animation edges.
-    static let version = 23
+    /// 24 (KRI-1007): round-trips caption `animation_phases` (a `caption_cues` row, a `caption_cue` text row and
+    /// `caption_meta`) and draws them in preview. The server advertises `editor_capabilities.caption_animation`
+    /// only to this protocol and answers 426 `client_update_required` to an older build whose Save carries
+    /// caption phases or replaces captions that hold them, since it would drop them.
+    static let version = 24
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1519,8 +1523,7 @@ struct KriaAPI: KriaAPIClient {
         // refresh. Re-read both before calling the pair a conflict.
         for attempt in 0..<3 {
             guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
-            guard variant["resolved_archetype"] == .string("guided_story"),
-                  case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) else {
+            guard variant["resolved_archetype"] == .string("guided_story") else {
                 return variant
             }
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
@@ -2615,9 +2618,22 @@ extension DraftSnapshot {
            Self.object(snapshot["editor_payload"])?["editor_state_version"] == .number(2) {
             // A committed full snapshot owns authoring state. The variant is
             // a render projection and may lag this exact durable revision.
-            var saved = editorDraft(projectID: projectID)
-            saved.serverSnapshot["editor_capabilities"] = authoritativeVariant["editor_capabilities"]
-            return saved
+            var document = snapshot
+            var payload = Self.object(document["editor_payload"]) ?? [:]
+            var sections = Self.object(payload["sections"]) ?? [:]
+            let userTimeline = Self.object(authoritativeVariant["user_timeline"])
+            let timeline = userTimeline?.isEmpty == false
+                ? userTimeline : Self.object(authoritativeVariant["ai_timeline"])
+            if payload["editor_state"] != .string("empty"),
+               authoritativeVariant["editor_state"] != .string("empty"),
+               sections["timeline_slots"] == nil,
+               let value = timeline?["slots"], case let .array(slots) = value {
+                sections["timeline_slots"] = .array(slots)
+                payload["sections"] = .object(sections)
+                document["editor_payload"] = .object(payload)
+            }
+            document["editor_capabilities"] = authoritativeVariant["editor_capabilities"]
+            return decodedEditorDraft(projectID: projectID, document: document)
         }
         var document = snapshot
         if let authoritativeVariant {
@@ -2636,7 +2652,7 @@ extension DraftSnapshot {
             let directKeys = [
                 "text_elements", "caption_cues", "caption_meta", "captions_enabled", "caption_size_px",
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled", "caption_editor_style",
-                "caption_margin_v", "caption_y_frac",
+                "caption_margin_v", "caption_y_frac", "caption_animation_phases",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment",
@@ -2651,6 +2667,11 @@ extension DraftSnapshot {
             }
             for key in directKeys where authoritativeVariant[key] != nil && !isIntentionalEmpty {
                 sections[key] = authoritativeVariant[key]
+            }
+            // A cleared all-captions animation leaves the key off the variant (KRI-1007), so an older draft copy
+            // must not bring it back.
+            if !isIntentionalEmpty, authoritativeVariant["caption_animation_phases"] == nil {
+                sections["caption_animation_phases"] = nil
             }
             if !isIntentionalEmpty, sections["music_window"] == nil, let start = authoritativeVariant["music_preview_start_s"] {
                 sections["music_window"] = .object(["start_s": start, "alignment": .string("preserve_cuts")])
@@ -2729,6 +2750,10 @@ extension DraftSnapshot {
             }
         }
 
+        return decodedEditorDraft(projectID: projectID, document: document)
+    }
+
+    private func decodedEditorDraft(projectID: UUID, document: [String: JSONValue]) -> EditorDraft {
         let editorPayload = Self.object(document["editor_payload"]) ?? [:]
         let sections = Self.object(editorPayload["sections"]) ?? [:]
         let legacy = Self.object(sections["ios_editor"]) ?? [:]

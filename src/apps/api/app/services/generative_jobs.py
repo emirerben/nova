@@ -599,7 +599,13 @@ def build_generative_job(
         # deterministic parse — see app/pipeline/caption_language.py. Omitted
         # entirely (not even `None`) when nothing was explicitly requested, so
         # every pre-feature job keeps its exact all_candidates shape.
-        caption_language_request = parse_caption_language_request(bounded_creator_request)
+        # KRI-1015: a mixed "keep each language as spoken" ask stamps nothing, and the
+        # superseded-requirements block (what the creator removed) is not read.
+        from app.kria.brief_binding import SUPERSEDED_REQUIREMENTS_HEADING  # noqa: PLC0415
+
+        caption_language_request = parse_caption_language_request(
+            bounded_creator_request.split("\n\n" + SUPERSEDED_REQUIREMENTS_HEADING, 1)[0]
+        )
         if caption_language_request is not None:
             all_candidates["caption_language_request"] = caption_language_request
             log.info(

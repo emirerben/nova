@@ -1,0 +1,491 @@
+{
+ "about": "KRI-1017, Plaza de Mayo T2 'maximo 2' (job e46baf42, detector mixed-gap-v7-filler-check). words: the job's recorded spoken transcript (assembly_plan.variants[0].overlay_transcript), timings kept, text replaced by placeholders with the original trailing punctuation (no filler tokens in the original; the planner output is identical). silence_spans: detect_silences_with_status(min_silence_s=0.1, ambient_adaptive=True) on the kit source (sha256 4679e9f3...): plain silencedetect found none, all spans are KRI-234 ambient spans (floor -30.5 dB, threshold -24.5 dB). cuts: the V2 clamp planner's output on these inputs = the 13 live cuts + 2 the live re-listen dropped (live=false). label: spectrogram harmonics + an independent faster-whisper small/medium pass on the source audio, 2026-10-28. voice: the voiced stretches in and around a voice cut, from spectrograms (harmonic bands) cross-checked with the independent pass; the soft 5.14-5.85 'Maximo' is faint.",
+ "source_sha256_prefix": "4679e9f3434f",
+ "duration_s": 48.0,
+ "words": [
+  {
+   "text": "w00,",
+   "start_s": 0.0,
+   "end_s": 0.72
+  },
+  {
+   "text": "w01",
+   "start_s": 1.06,
+   "end_s": 1.58
+  },
+  {
+   "text": "w02",
+   "start_s": 1.58,
+   "end_s": 1.94
+  },
+  {
+   "text": "w03",
+   "start_s": 1.94,
+   "end_s": 2.2
+  },
+  {
+   "text": "w04",
+   "start_s": 2.2,
+   "end_s": 2.22
+  },
+  {
+   "text": "w05.",
+   "start_s": 2.22,
+   "end_s": 2.6
+  },
+  {
+   "text": "w06,",
+   "start_s": 3.22,
+   "end_s": 3.34
+  },
+  {
+   "text": "w07",
+   "start_s": 3.56,
+   "end_s": 3.94
+  },
+  {
+   "text": "w08",
+   "start_s": 3.94,
+   "end_s": 4.1
+  },
+  {
+   "text": "w09",
+   "start_s": 4.1,
+   "end_s": 4.24
+  },
+  {
+   "text": "w10",
+   "start_s": 4.24,
+   "end_s": 4.38
+  },
+  {
+   "text": "w11,",
+   "start_s": 4.38,
+   "end_s": 4.58
+  },
+  {
+   "text": "w12?",
+   "start_s": 4.68,
+   "end_s": 4.96
+  },
+  {
+   "text": "w13.",
+   "start_s": 6.14,
+   "end_s": 6.34
+  },
+  {
+   "text": "w14.",
+   "start_s": 7.0,
+   "end_s": 7.54
+  },
+  {
+   "text": "w15",
+   "start_s": 14.46,
+   "end_s": 15.22
+  },
+  {
+   "text": "w16",
+   "start_s": 15.22,
+   "end_s": 15.98
+  },
+  {
+   "text": "w17",
+   "start_s": 15.98,
+   "end_s": 16.22
+  },
+  {
+   "text": "w18?",
+   "start_s": 16.22,
+   "end_s": 18.38
+  },
+  {
+   "text": "w19",
+   "start_s": 18.94,
+   "end_s": 19.38
+  },
+  {
+   "text": "w20",
+   "start_s": 19.38,
+   "end_s": 19.7
+  },
+  {
+   "text": "w21.",
+   "start_s": 19.7,
+   "end_s": 20.38
+  },
+  {
+   "text": "w22",
+   "start_s": 22.44,
+   "end_s": 22.44
+  },
+  {
+   "text": "w23",
+   "start_s": 22.44,
+   "end_s": 22.56
+  },
+  {
+   "text": "w24.",
+   "start_s": 22.56,
+   "end_s": 23.4
+  },
+  {
+   "text": "w25",
+   "start_s": 24.88,
+   "end_s": 25.64
+  },
+  {
+   "text": "w26",
+   "start_s": 25.64,
+   "end_s": 26.0
+  },
+  {
+   "text": "w27.",
+   "start_s": 26.0,
+   "end_s": 26.38
+  },
+  {
+   "text": "w28",
+   "start_s": 31.68,
+   "end_s": 33.08
+  },
+  {
+   "text": "w29",
+   "start_s": 33.08,
+   "end_s": 34.12
+  },
+  {
+   "text": "w30?",
+   "start_s": 34.12,
+   "end_s": 34.24
+  },
+  {
+   "text": "w31...",
+   "start_s": 35.16,
+   "end_s": 36.32
+  },
+  {
+   "text": "...w32",
+   "start_s": 36.32,
+   "end_s": 37.12
+  },
+  {
+   "text": "w33...",
+   "start_s": 37.12,
+   "end_s": 37.12
+  },
+  {
+   "text": "...w34",
+   "start_s": 39.3,
+   "end_s": 40.7
+  },
+  {
+   "text": "w35...",
+   "start_s": 40.7,
+   "end_s": 40.92
+  },
+  {
+   "text": "w36",
+   "start_s": 42.54,
+   "end_s": 42.7
+  },
+  {
+   "text": "w37...",
+   "start_s": 42.7,
+   "end_s": 43.08
+  },
+  {
+   "text": "...w38",
+   "start_s": 43.88,
+   "end_s": 45.28
+  },
+  {
+   "text": "w39",
+   "start_s": 45.28,
+   "end_s": 45.78
+  },
+  {
+   "text": "w40.",
+   "start_s": 45.78,
+   "end_s": 45.78
+  },
+  {
+   "text": "w41...",
+   "start_s": 46.2,
+   "end_s": 46.76
+  }
+ ],
+ "silence_spans": [
+  [
+   10.53,
+   10.82
+  ],
+  [
+   11.03,
+   11.27
+  ],
+  [
+   12.98,
+   13.37
+  ],
+  [
+   18.33,
+   18.72
+  ],
+  [
+   20.33,
+   20.62
+  ],
+  [
+   20.88,
+   21.02
+  ],
+  [
+   21.58,
+   21.72
+  ],
+  [
+   23.13,
+   23.47
+  ],
+  [
+   23.83,
+   24.07
+  ],
+  [
+   24.38,
+   24.57
+  ],
+  [
+   26.08,
+   26.77
+  ],
+  [
+   28.08,
+   28.52
+  ],
+  [
+   31.33,
+   31.72
+  ],
+  [
+   32.33,
+   32.52
+  ],
+  [
+   34.33,
+   35.52
+  ],
+  [
+   35.88,
+   36.47
+  ],
+  [
+   37.13,
+   37.32
+  ],
+  [
+   37.88,
+   38.87
+  ],
+  [
+   40.03,
+   40.47
+  ],
+  [
+   40.73,
+   41.52
+  ],
+  [
+   44.28,
+   44.82
+  ],
+  [
+   45.53,
+   46.12
+  ],
+  [
+   46.43,
+   47.27
+  ],
+  [
+   47.83,
+   48.0
+  ]
+ ],
+ "cuts": [
+  {
+   "start_s": 2.75,
+   "end_s": 3.07,
+   "reason": "filler_acoustic",
+   "label": "pause",
+   "heard": "noise after 'Yeah'; live whisper-1 re-listen dropped this cut",
+   "live": false,
+   "voice": []
+  },
+  {
+   "start_s": 5.11,
+   "end_s": 5.99,
+   "reason": "filler_acoustic",
+   "label": "voice",
+   "heard": "the guide's soft 'Maximo' and the onset of the creator's repeat",
+   "live": true,
+   "voice": [
+    [
+     5.14,
+     5.85
+    ],
+    [
+     5.92,
+     6.34
+    ]
+   ]
+  },
+  {
+   "start_s": 6.49,
+   "end_s": 6.85,
+   "reason": "filler_acoustic",
+   "label": "pause",
+   "heard": "noise only",
+   "live": true,
+   "voice": []
+  },
+  {
+   "start_s": 10.53,
+   "end_s": 11.27,
+   "reason": "silence",
+   "label": "pause",
+   "heard": "pause between 'binada' and 'kazanildigini'",
+   "live": true,
+   "voice": []
+  },
+  {
+   "start_s": 12.98,
+   "end_s": 13.37,
+   "reason": "silence",
+   "label": "pause",
+   "heard": "noise only",
+   "live": true,
+   "voice": []
+  },
+  {
+   "start_s": 20.505,
+   "end_s": 21.72,
+   "reason": "silence",
+   "label": "voice",
+   "heard": "the guide's first '1810'",
+   "live": true,
+   "voice": [
+    [
+     20.68,
+     21.28
+    ]
+   ]
+  },
+  {
+   "start_s": 23.83,
+   "end_s": 24.57,
+   "reason": "silence",
+   "label": "voice",
+   "heard": "'Yes.'",
+   "live": true,
+   "voice": [
+    [
+     24.16,
+     24.3
+    ]
+   ]
+  },
+  {
+   "start_s": 26.505,
+   "end_s": 26.77,
+   "reason": "silence",
+   "label": "pause",
+   "heard": "noise only",
+   "live": true,
+   "voice": []
+  },
+  {
+   "start_s": 28.08,
+   "end_s": 28.52,
+   "reason": "silence",
+   "label": "pause",
+   "heard": "noise only",
+   "live": true,
+   "voice": []
+  },
+  {
+   "start_s": 31.33,
+   "end_s": 31.555,
+   "reason": "silence",
+   "label": "pause",
+   "heard": "noise only",
+   "live": true,
+   "voice": []
+  },
+  {
+   "start_s": 34.365,
+   "end_s": 35.035,
+   "reason": "silence",
+   "label": "pause",
+   "heard": "noise only",
+   "live": true,
+   "voice": []
+  },
+  {
+   "start_s": 37.245,
+   "end_s": 38.87,
+   "reason": "silence",
+   "label": "voice",
+   "heard": "a held 'the' inside 'was the city'",
+   "live": true,
+   "voice": [
+    [
+     37.42,
+     37.77
+    ]
+   ]
+  },
+  {
+   "start_s": 41.045,
+   "end_s": 41.52,
+   "reason": "silence",
+   "label": "voice",
+   "heard": "voiced tail of 'Aires' (faint, low-frequency only)",
+   "live": true,
+   "voice": [
+    [
+     40.98,
+     41.23
+    ]
+   ]
+  },
+  {
+   "start_s": 43.23,
+   "end_s": 43.73,
+   "reason": "filler_acoustic",
+   "label": "voice",
+   "heard": "'you had'; live whisper-1 re-listen dropped this cut",
+   "live": false,
+   "voice": [
+    [
+     43.34,
+     43.69
+    ]
+   ]
+  },
+  {
+   "start_s": 47.26,
+   "end_s": 48.0,
+   "reason": "silence",
+   "label": "voice",
+   "heard": "'whole', the last word of the take",
+   "live": true,
+   "voice": [
+    [
+     47.28,
+     47.89
+    ]
+   ]
+  }
+ ]
+}

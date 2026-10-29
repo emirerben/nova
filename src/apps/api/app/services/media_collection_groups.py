@@ -32,6 +32,8 @@ async def delete_group(db, owner: uuid.UUID, identifier: uuid.UUID, body: GroupD
     previous_revision = row.revision
     row.revision += 1
     row.selection_json = {
+        # Keeps the event notes: an undo re-saves the members and expects the title back.
+        **(row.selection_json or {}),
         "request_digest": hashlib.sha256(
             json.dumps(
                 {"delete_group": body.group, "expected_revision": body.expected_revision},
@@ -68,7 +70,7 @@ async def delete_group(db, owner: uuid.UUID, identifier: uuid.UUID, body: GroupD
         identifier,
         from_revision=previous_revision,
         to_revision=row.revision,
-        groups=media_collections.unchanged_groups(selected, remaining) - {body.group},
+        selected=remaining,
     )
     await db.commit()
     return GroupDeleteOut(revision=row.revision, deleted_story_ids=deleted)

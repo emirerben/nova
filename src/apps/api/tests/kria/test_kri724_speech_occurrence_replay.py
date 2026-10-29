@@ -90,6 +90,7 @@ from app.services.length_policy_state import (
     stamp_length_policy,
 )
 from app.tasks import generative_build as gb
+from tests._silent_pcm import silent_pcm
 from tests.tasks.test_phone_subtitled_narrated_dispatch import _setup_subtitled
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -204,6 +205,7 @@ def _preflight_snapshot(storage_path: str) -> dict:
             words=_words(), language="en", low_confidence=False
         ),
         silence_detect_fn=lambda *_a, **_k: SilenceDetectionResult(spans=[], status="ok"),
+        pcm_loader=silent_pcm,
     )
     return {
         "schema_version": 1,

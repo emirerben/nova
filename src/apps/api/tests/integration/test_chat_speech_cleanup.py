@@ -61,6 +61,7 @@ from app.services.speech_cleanup_selection import DETECTOR_VERSION
 from app.tasks import generative_build
 from app.tasks import speech_cleanup_analysis as analysis_task
 from app.tasks.content_plan_build import DispatchResult, _speech_cleanup_dispatch_snapshot
+from tests._silent_pcm import silent_pcm
 
 DURATION_S = 10.0
 EXPECTED_ACOUSTIC_ISLANDS = (
@@ -316,6 +317,11 @@ def incident_preflight(tmp_path_factory: pytest.TempPathFactory) -> IncidentPref
             request,
             transcribe_fn=deterministic_whisper,
             silence_detect_fn=real_silence_detect,
+            # The fixture's tokenless "fillers" are pure 880/990 Hz tones, which the voice guard
+            # (KRI-1017) rightly reads as voiced. This test proves the #960 dispatch, snapshot
+            # and render boundaries, so the guard is stood down; it is covered on real samples
+            # in test_voice_guard_cleanup_e2e.py.
+            pcm_loader=silent_pcm,
         )
 
     with pytest.MonkeyPatch.context() as patch:

@@ -89,17 +89,25 @@ struct ChatWorkspaceView: View {
         setDrawerOpen(false)
     }
 
-    private var workspace: some View {
+    /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
+    /// onto the outer one, where they outlive the switch to a chat.
+    @ViewBuilder private var workspace: some View {
+        if model.showsCameraRoll, let cameraRoll {
+            WorkspaceCrossfade(dismiss: {}) { _ in
+                CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
+                    await model.loadProjects()
+                    return model.selectProject(thread.summary)
+                })
+            }
+        } else {
+            chatWorkspace
+        }
+    }
+
+    private var chatWorkspace: some View {
         NavigationStack {
             Group {
-                if model.showsCameraRoll, let cameraRoll {
-                    WorkspaceCrossfade(dismiss: {}) { _ in
-                        CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
-                            await model.loadProjects()
-                            model.selectProject(thread.summary)
-                        })
-                    }
-                } else if let project = model.selectedProject {
+                if let project = model.selectedProject {
                     CreationWorkspaceView(
                         project: project,
                         openProjects: { setDrawerOpen(!showsProjects) },
@@ -749,14 +757,11 @@ private struct CreationWorkspaceView: View {
         return DeviceBuildStage(phase: presentation.phase, exportProgress: presentation.exportProgress)
     }
 
-    /// The feed hosts the device build (instead of the status card) while the phone is preparing, rendering
-    /// or finished cleanly. Anything that needs the creator (stopped, needs attention, a failed sync with a
-    /// message, superseded), output checking, or automatic repair hands over to
-    /// `DeviceRenderPanel`, which owns verification and recovery progress.
+    /// Finished exports use the status card so sync retries keep playback available.
     private var feedHostsDeviceBuild: Bool {
         guard let key = deviceRenderKey, showsPlanFeed else { return false }
         guard let presentation = model.deviceRenders.presentations[key] else { return true }
-        guard deviceBuildStage != nil else { return false }
+        guard let stage = deviceBuildStage, stage != .finished else { return false }
         guard !presentation.outputVerificationPending, presentation.repairAttempt == nil else { return false }
         // A quiet network wait stays in the feed; heat, storage and unknown states need the card.
         return presentation.message == nil && !presentation.requiresServerRetry && presentation.waiting?.isQuiet != false
@@ -1341,6 +1346,13 @@ private struct CreationWorkspaceView: View {
         // the editor is already open underneath: close the sheet to land back in it.
         if showsResult || workspaceScreen == .slideWorkspace {
             editorConversationCloseID = UUID()
+            // The card names the thread's newest version. An editor still on an older job (the
+            // creator tapped "Keep editing" earlier, or the adopt never ran) is asked again; own
+            // unsaved edits raise the Switch / Keep editing prompt, never a silent switch.
+            if showsResult, currentProject.runtimeVersion == 2, editorSession.isBehindActiveJob(currentProject) {
+                let target = currentProject
+                Task { await editorSession.adoptLatestJob(target, api: model.api) }
+            }
             return
         }
         // A slide post has no video timeline: every "open editor" entry lands in the slide workspace.
@@ -1424,7 +1436,11 @@ private struct CreationWorkspaceView: View {
             hasFormat: selectedFormat != nil,
             preparationIsActive: fullThread?.preparationIsActive == true,
             preparationFailed: fullThread?.preparationFailed == true,
-            approvedRenderRetryPending: approval?.retryOfExecutionID != nil
+            approvedRenderRetryPending: approval?.retryOfExecutionID != nil,
+            // An approval the creator just gave (or one the server recorded) whose render the
+            // agent-control task has not started yet: show the render stage at once instead of
+            // falling back to the footage stage for a poll or two.
+            renderDispatchPending: thinkingSettlesOnJobStatus || fullThread?.awaitsRenderDispatch == true
         )
     }
 
@@ -1443,8 +1459,13 @@ private struct CreationWorkspaceView: View {
         SlidePostRouting.isFormatKnown(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
-    /// Editor entries (header switch, Open editor, Open current cut) exist only when this is
-    /// definitely not a slide post. A ready project of unknown format shows a loading state.
+    private var hasAccessibleVideo: Bool {
+        if currentProject.status == .ready { return true }
+        guard let key = deviceRenderKey, let presentation = model.deviceRenders.presentations[key] else { return false }
+        return presentation.localFile != nil && !presentation.outputVerificationPending
+            && [.localReady, .syncing, .synced].contains(presentation.phase)
+    }
+
     private var canOpenVideoEditor: Bool {
         SlidePostRouting.canOpenVideoEditor(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
@@ -1695,10 +1716,8 @@ private struct CreationWorkspaceView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             WorkspaceHeader(
                 project: currentProject,
-                // `currentProject.status` (not `workspaceStage`) so the switch
-                // to the existing cut stays available even while a new plan's
-                // confirmation card is showing on top of it.
-                showsEditorSwitch: currentProject.status == .ready && canOpenVideoEditor,
+                // Local playback remains usable while cloud publication is pending.
+                showsEditorSwitch: hasAccessibleVideo && canOpenVideoEditor,
                 openProjects: openProjects,
                 openEditor: openEditor,
                 openAccount: openAccount
@@ -1828,7 +1847,7 @@ private struct CreationWorkspaceView: View {
             // A new plan's confirmation card can appear over an already-ready
             // cut (see `WorkspaceStage.resolve`); confirming it is a choice,
             // not something the old cut's reachability should be sacrificed for.
-            if currentProject.status == .ready && canOpenVideoEditor {
+            if hasAccessibleVideo && canOpenVideoEditor {
                 Button("Open current cut", action: openEditor)
                     .buttonStyle(CanonicalSecondaryButtonStyle())
                     .disabled(isActing)
@@ -2828,6 +2847,11 @@ private struct CreationWorkspaceView: View {
             thinkingTurnID = decision == "approve" ? approval.turnID : nil
             thinkingSettlesOnJobStatus = decision == "approve"
             isThinking = decision == "approve"
+            // The tall approval card is about to be replaced by a short render row. Like Send,
+            // re-pin the conversation to its end so the viewport (and the "Latest" pill, which
+            // stays up while the reader was above the card's buttons) follows the new stage
+            // instead of staying stranded where the card used to be.
+            if decision == "approve" { scrollRequest += 1 }
             failure = await acceptedMutationRefreshError(
                 "Kria recorded that decision, but the conversation couldn’t refresh.",
                 refresh: { try await refreshDelta() }
@@ -2850,13 +2874,18 @@ enum WorkspaceStage {
         hasFormat: Bool,
         preparationIsActive: Bool = false,
         preparationFailed: Bool = false,
-        approvedRenderRetryPending: Bool = false
+        approvedRenderRetryPending: Bool = false,
+        renderDispatchPending: Bool = false
     ) -> WorkspaceStage {
         // A failed native job retains awaiting_device until consent re-pins it.
         // Its fresh retry approval must be visible before any new export starts.
         if approvedRenderRetryPending && awaitsNewPlanConfirmation { return .direction }
         if preparationIsActive { return .rendering }
         if preparationFailed { return .failed }
+        // Approved, render not yet queued: the server's projection is still a plain draft
+        // (or the previous cut), but the creator just pressed Create. Never show the
+        // footage or ready stage in that window; the render stage reads "Preparing".
+        if renderDispatchPending && !awaitsNewPlanConfirmation { return .rendering }
         switch status {
         case .rendering:
             // A render already in flight wins even over a freshly proposed
@@ -3131,16 +3160,16 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .montage: "Montage"
-        case .narrated: "Narrated"
-        case .talkingToCamera: "Talking"
+        case .narrated: "Voiceover"
+        case .talkingToCamera: "Talk to camera"
         case .slides: "Slider"
         }
     }
     var choiceSentence: String {
         switch self {
         case .montage: "Let’s make a montage"
-        case .narrated: "Let’s make it narrated"
-        case .talkingToCamera: "Let’s make a talking video"
+        case .narrated: "Let’s make a voiceover video"
+        case .talkingToCamera: "Let’s make a talk to camera video"
         case .slides: "Let’s make a slider"
         }
     }

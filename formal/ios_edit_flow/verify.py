@@ -51,7 +51,7 @@ OUT = REPO / ".dev/formal-ios-edit-flow"
 SPEC = HERE / "PhoneRender.tla"
 BEFORE = HERE / "PhoneRenderBefore.tla"
 TLC_URL = "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
-TLC_SHA256 = "dae639a1f51a9e13ce60c369b15f32124cf1a78017aca366b6de0ae2b5169439"
+TLC_SHA256 = "fc6878c603f0fdc18b9fe3e5bf51860cb90ab5b1154e3c371660c036d6bdd63e"
 LOCAL_TOOLS = Path("/private/tmp/nova-formal-tools")
 # Per TLC run. A run past it is a FAIL line; split a slow run's events instead of raising it.
 TLC_TIMEOUT = int(os.environ.get("TLC_TIMEOUT", "900"))

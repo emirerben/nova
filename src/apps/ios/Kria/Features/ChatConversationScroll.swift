@@ -45,7 +45,14 @@ struct ChatConversationScroll<Content: View>: View {
             geometry.contentSize.height + geometry.contentInsets.bottom - geometry.visibleRect.maxY < 80
         } action: { _, value in
             nearBottom = value
-            if userIsScrolling { followsLatest = value }
+            if userIsScrolling {
+                followsLatest = value
+            } else if value {
+                // Content shrank (a card was replaced by a shorter stage) and the scroll view
+                // clamped to its end, or a programmatic scroll landed there: the reader is at the
+                // latest message, so follow again and drop the stale "Latest" pill.
+                followsLatest = true
+            }
         }
         .onScrollPhaseChange { _, phase in
             userIsScrolling = phase == .tracking || phase == .interacting || phase == .decelerating

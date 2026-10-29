@@ -5390,7 +5390,15 @@ def _variant_orientation(variant: dict) -> str:
 
 def _orientation_unsupported_reason(variant: dict) -> str | None:
     archetype = variant.get("resolved_archetype")
-    if archetype in {"subtitled", "narrated", "talking_head"}:
+    if archetype == "subtitled" and is_phone_subtitled_editor_variant(variant):
+        # A phone-rendered Talking edit (incl. the multi-clip Talking head, which stays
+        # `subtitled`) re-canvases on Save: `_compile_subtitled_editor_commit` recompiles onto
+        # 1920x1080. It is open exactly while that Save lane is -- the same predicate
+        # `device_editor_offer(subtitled_lanes=...)` is given. The CLOUD subtitled renderer
+        # has no landscape canvas, so a cloud variant falls to the closed branch below.
+        if not phone_subtitled_editor_lanes_supported():
+            return "phone_edit_unsupported"
+    elif archetype in {"subtitled", "narrated", "talking_head"}:
         return "orientation_unsupported"
     if is_collage_montage_preset(
         variant.get("montage_preset_rendered") or variant.get("montage_preset")
@@ -6988,8 +6996,12 @@ def _clamp_phone_editor_capabilities(
 
     ``shape`` (KRI-306, `render_shape.device_editor_offer`): what Save accepts for
     orientation and bars/crop on this variant. Orientation is only ever CLOSED
-    here (never opened beyond the base map); `landscape_fit` is replaced by the
-    device truth (the cloud map always advertises it closed).
+    here (never opened beyond the base map): a phone Talking variant is opened by
+    the base map itself (`_orientation_unsupported_reason` knows a device-rendered
+    `subtitled` variant), and `device_editor_offer` agrees on the same predicates,
+    so "device offer wins" only ever matters when they would disagree.
+    `landscape_fit` is replaced by the device truth (the cloud map always
+    advertises it closed).
 
     ``source_crop`` (KRI-140): a guided-story device variant keeps the footage
     crop control once the device has verified ``sourceCrop`` -- the phone
@@ -7510,6 +7522,7 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             job.assembly_plan or {},
             subtitled_lanes=subtitled_lanes,
             voiceover_lanes=voiceover_lanes,
+            landscape_enabled=_LANDSCAPE_OUTPUT_ENABLED,
             guided_revision=(
                 variant.get("resolved_archetype") == "guided_story"
                 and bool(getattr(settings, "guided_story_editor_v2_enabled", False))
@@ -8477,8 +8490,9 @@ def dispatch_get_timeline(
 
         draft = saved_editor_draft(job, variant_id)
         sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
+        if "timeline_slots" in sections:
+            timeline["slots"] = copy.deepcopy(sections["timeline_slots"] or [])
         timeline.update(
-            slots=copy.deepcopy(sections.get("timeline_slots") or []),
             draft=draft.model_dump(mode="json"),
             base_generation=variant_render_baseline(variant),
             has_user_edits=True,
@@ -8934,6 +8948,19 @@ def _active_timeline_duration_s(slots: list[dict]) -> float:
     return round(max(0.0, total), 3)
 
 
+def _stored_variant_field(job: Job, variant: dict, field: str) -> Any:
+    """``variant[field]``, read from the job's stored row when ``variant`` is a public copy.
+
+    The status route walks the public assembly plan, which drops private fields such as the
+    phone editor plan. KRI-1032: reading that copy built the editor from the approved plan
+    instead of what the phone rendered (other label height and font in the creator's copy).
+    """
+    if field in variant:
+        return variant[field]
+    stored = _find_variant(job, str(variant.get("variant_id") or ""))
+    return stored.get(field) if stored is not None else None
+
+
 def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
     """Read the active revision or derive a non-persisted initial projection."""
 
@@ -8949,7 +8976,7 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
 
     guided_snapshot = assembly.get("guided_edit")
     # Match the worker's repaired render while leaving the approval immutable.
-    execution_plan = variant.get(PHONE_EDITOR_PLAN_FIELD) or assembly.get(
+    execution_plan = _stored_variant_field(job, variant, PHONE_EDITOR_PLAN_FIELD) or assembly.get(
         "guided_story_execution_plan"
     )
     if not isinstance(guided_snapshot, dict) or not isinstance(execution_plan, dict):
@@ -11146,8 +11173,21 @@ def _prepare_editor_commit(
             caption_meta_patch["caption_font_user_edited"] = True
         if meta.y_frac is not None:
             from app.pipeline.captions import y_frac_to_margin_v  # noqa: PLC0415
+            from app.pipeline.phone_captions import caption_y_fields  # noqa: PLC0415
 
             caption_meta_patch["caption_margin_v"] = y_frac_to_margin_v(meta.y_frac)
+            # KRI-1008: the phone compiler and the iOS editor read the style's y before the
+            # margin, so a y_frac move (a chat op sends no appearance, or the client echoes
+            # the stale one) moves both. An appearance that moved its own y in this Save is
+            # the newer placement and stays.
+            sent_y = meta.appearance.position_y_frac if meta.appearance is not None else None
+            stored_style = variant.get("caption_editor_style")
+            if sent_y is None or sent_y == (
+                stored_style.get("position_y_frac") if isinstance(stored_style, dict) else None
+            ):
+                caption_meta_patch.update(
+                    caption_y_fields({**variant, **caption_meta_patch}, meta.y_frac)
+                )
             caption_meta_patch["caption_position_user_edited"] = True
         if meta.size_px is not None:
             caption_meta_patch["caption_size_px"] = int(meta.size_px)

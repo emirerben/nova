@@ -395,6 +395,15 @@ struct FormatStage: View {
     let formats: [CreationFormat]
     let isBusy: Bool
     let select: (CreationFormat) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var leadingFormat: CreationFormat?
+    @State private var visible = true
+
+    private var autoplay: Bool {
+        visible && scenePhase == .active && !reduceMotion && !isBusy &&
+        ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] != "1" && UIAccessibility.isVideoAutoplayEnabled
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -403,50 +412,110 @@ struct FormatStage: View {
                 bodyText: "Choose a starting point. We can shape the details together.",
                 isFormatHeading: true
             )
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    ForEach(formats) { format in
-                        if format == .slides {
-                            SlidePostFormatCard(isBusy: isBusy) { select(format) }
-                        } else {
-                            Button(action: { select(format) }) {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    BundledPosterImage(name: format.imageName)
-                                        .scaledToFill()
-                                        .frame(width: FormatTileMetrics.image.width, height: FormatTileMetrics.image.height)
-                                        .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    Text(format.title)
-                                        .font(KriaFont.display(18))
-                                        .foregroundStyle(KriaColor.ink)
+            GeometryReader { viewport in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(formats) { format in
+                            Group {
+                                if format == .slides {
+                                    SlidePostFormatCard(isBusy: isBusy, active: leadingFormat == format && autoplay) { select(format) }
+                                } else {
+                                    FormatVideoCard(format: format, isBusy: isBusy, active: leadingFormat == format,
+                                                    allowed: autoplay) { select(format) }
                                 }
-                                .frame(width: 156, alignment: .leading)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(isBusy)
-                            .accessibilityIdentifier("format-\(format.serverValue)")
-                            .accessibilityHint("Choose \(format.title) as this creation format")
+                            .id(format)
                         }
                     }
+                    .scrollTargetLayout()
                 }
+                .contentMargins(.trailing, max(0, viewport.size.width - FormatTileMetrics.image.width), for: .scrollContent)
+                .scrollTargetBehavior(.viewAligned)
+                .scrollPosition(id: $leadingFormat, anchor: .leading)
+                .accessibilityIdentifier("format-carousel")
             }
-            .contentMargins(.horizontal, 0, for: .scrollContent)
-            .accessibilityIdentifier("format-carousel")
+            .frame(height: FormatTileMetrics.image.height + 32)
+            .onScrollVisibilityChange(threshold: 0.5) { visible = $0 }
+        }
+        .onAppear { if leadingFormat == nil { leadingFormat = formats.first } }
+        .onChange(of: formats) { _, values in
+            if let leadingFormat, !values.contains(leadingFormat) { self.leadingFormat = values.first }
         }
     }
 }
 
-private struct SlidePostFormatCard: View {
+private struct FormatVideoCard: View {
+    let format: CreationFormat
     let isBusy: Bool
+    let active: Bool
+    let allowed: Bool
     let select: () -> Void
     @State private var paused = false
+    @State private var playing = false
+
+    private var edit: FeaturedEdit? {
+        switch format {
+        case .montage: .bosphorus
+        case .talkingToCamera: .talking
+        default: nil
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
                 Button(action: select) {
-                    SlidePostFormatCover(paused: $paused)
+                    Group {
+                        if let edit {
+                            FeaturedEditPreview(edit: edit, active: active, allowed: allowed && !paused,
+                                                loops: true, playingChanged: { playing = $0 })
+                        } else {
+                            BundledPosterImage(name: format.imageName).scaledToFill()
+                        }
+                    }
+                    .frame(width: FormatTileMetrics.image.width, height: FormatTileMetrics.image.height)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+                .accessibilityLabel(format.title)
+                .accessibilityValue(edit == nil ? "Image preview" : playing ? "Playing preview" : "Paused preview")
+                .accessibilityIdentifier("format-\(format.serverValue)")
+                .accessibilityHint("Choose \(format.title) as this creation format")
+                if edit != nil {
+                    Button { paused.toggle() } label: {
+                        Image(systemName: paused ? "play.fill" : "pause.fill")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(.black.opacity(0.38), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(5)
+                    .accessibilityLabel(paused ? "Play format preview" : "Pause format preview")
+                    .accessibilityIdentifier("format-preview-playback-\(format.serverValue)")
+                }
+            }
+            Text(format.title).font(KriaFont.display(18)).foregroundStyle(KriaColor.ink)
+        }
+        .frame(width: FormatTileMetrics.image.width, alignment: .leading)
+    }
+}
+
+private struct SlidePostFormatCard: View {
+    let isBusy: Bool
+    let active: Bool
+    let select: () -> Void
+    @State private var paused = false
+    @State private var slideIndex = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack(alignment: .bottomTrailing) {
+                Button(action: select) {
+                    SlidePostFormatCover(index: $slideIndex, paused: $paused, active: active)
                         .frame(width: FormatTileMetrics.image.width, height: FormatTileMetrics.image.height)
                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .contentShape(Rectangle())
@@ -455,10 +524,9 @@ private struct SlidePostFormatCard: View {
                 .disabled(isBusy)
                 .accessibilityIdentifier("format-slides")
                 .accessibilityLabel("Slider")
+                .accessibilityValue("Slide \(slideIndex % SlidePostFormatCover.frames.count + 1) of \(SlidePostFormatCover.frames.count)")
                 .accessibilityHint("Choose Slider as this creation format")
-                // The moving strip has four visual frames. Keep its children
-                // out of Accessibility so this card's frame stays at 156pt and
-                // cannot overlap the narrated card beside it.
+                // The swipe strip must not expand the selection button's accessibility frame.
                 .accessibilityElement(children: .ignore)
 
                 // This is a sibling of the format-selection button. Nesting a

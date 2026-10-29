@@ -195,9 +195,13 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   isn't in this draft." `assess_readiness` takes `creator_id` to resolve the route; a caller
   without it gets no such evidence (fail closed). Pins: `tests/kria/test_kri945_*`.
 - **Automatic simpler drafts.** The runtime planner removes only typed, unavailable
-  optional text/SFX fields and recompiles the remaining strategy. At draft completion,
-  exact compiler-removed text, unavailable native/Talking clip labels and typed
-  brightness requests can be superseded automatically when they are the only blockers.
+  optional text/SFX fields and recompiles the remaining strategy. On a phone Talking edit
+  with its title lane open, one whole-video top-corner text is the opening title instead
+  of an omission (KRI-1009, `strategy_policy._talking_top_text_as_title`). At draft
+  completion, unquoted native/Talking clip labels and typed brightness requests can be
+  superseded automatically when they are the only blockers. Text the creator quoted (a
+  brief `literal`) never is: the draft is held back with the "simpler version?" question
+  naming it and the compiler's reason, and only the tap drops it (KRI-1009).
   Receipt/readiness failure alone is insufficient: a missing supported label or
   spoken trigger still needs repair/clarification. The same transaction
   appends an omission revision, rebuilds approval readiness, and pins the effective
@@ -768,6 +772,52 @@ Approval consumption and exact editor/Job commit happen atomically; broker
 publication follows the commit through the existing deterministic Job dispatcher
 or editor rerender task. Accepted editor executions persist enough dispatch
 metadata for the reconciler to publish the same generation after process death.
+
+## On-screen text shown in sequence (KRI-1038)
+
+A quoted sentence the creator wants shown a word at a time is a `text_sequence` brief requirement
+(`kria/text_sequence.py`), not `captions: word_by_word`. The Main Creator prompt teaches it;
+`refile_text_sequence` only re-files a captions reply when the creator did not name captions, no
+voiceover is recorded, and the message does not talk about words said in the footage
+(`names_footage_speech`: "when I say", "dediğim yerde").
+
+Deploy order: roll api and worker together. A thread stored with `text_sequence` fails
+`CreativeBrief` validation on an older api or worker machine (autostopped machines, or a revert),
+and this kind has no kill switch of its own.
+
+## Compose with the editor ops (KRI-1039, `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`)
+
+The copilot's ops are the base layer: an ask a person could do in the editor is composed with them,
+not refused, asked about or re-planned.
+
+- A `text_sequence` ask is one `replace_text_sequence`: windows are weighted by character count
+  (`weight: "length"`, the default; `"equal"` keeps equal windows), and `mode: "cumulative"` builds
+  the sentence up (step k shows the first k words, children carry `source_params.sequence_mode`,
+  the full sentence holds the last quarter). Both fields are written into the op when it is
+  authored, so replaying a saved draft never depends on the flag. Evidence
+  (`sequence_text_evidence.complete_sequences`) reads a cumulative chain as its last step.
+- Creation: Main Creator plans the footage; `compose_creation_text` is the one op pass on the
+  new draft, in the same render job, and it reads `text_sequence` requirements. `check_requirement`
+  judges one (`PlanFacts.sequence_texts`): met when the words are on screen in pieces, otherwise a
+  neutral receipt, so an uncomposed sequence is never a creator question.
+- Follow-ups: an edit-shaped turn on a draft that has a render goes to the copilot with no
+  `nova.creator.main` call; `replace_text_sequence` is on the fast path. A job that FAILED before
+  producing any variant has no editable lanes (prod job debug: no `variants` key), so its follow-up
+  is still a re-plan; the fix for that case is that the render no longer fails (title fit, lane A).
+  The re-plan cues are unchanged.
+- Readability floor: an op authored with `weight` gives every piece at least 0.25 s
+  (`_MIN_PIECE_S`). When the source window is too short the compiler lengthens it, up to the end of
+  the video or the next text in the same role and place; if even that cannot hold the pieces, or the
+  video length cannot be read, the op fails naming the seconds needed and left (never an unbounded
+  stretch).
+- Capability parity: `kria/editor_capability_parity.py` maps every public action of
+  `NativeEditorSession.swift` and the files extending it (`NativeEditorRetiming.swift`,
+  `NativeTextEditing.swift`) to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
+  `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when
+  an action has none.
+
+Default `false` (off until enabled). Flag off restores the earlier routing, cues, fast-path set and op shape
+(`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.
 
 ## Local proof
 

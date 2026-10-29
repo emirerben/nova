@@ -1123,6 +1123,60 @@ final class NativeEditorSessionTests: XCTestCase {
     /// editor. The server keeps no timeline slots for it, so the preview had
     /// no video track, yet the cards made the recipe valid. The source clip now
     /// plays, locked, under the cards and captions.
+    func testSavedGuidedTextDraftBuildsRealSourcePreviewUnlessCutsWereExplicitlyCleared() async throws {
+        for explicitClear in [false, true] {
+            let threadID = UUID(), jobID = UUID()
+            let project = BackgroundUploadCoordinator.projectDirectory(threadID)
+            let input = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+            try FileManager.default.copyItem(at: XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4")), to: input)
+            defer { try? FileManager.default.removeItem(at: input) }
+            let asset = try await AssetImportCoordinator(project: project).importAsset(from: input)
+            try SourceAssetStore(project: project).bind(mediaID: "source", original: asset)
+            let fingerprint = try XCTUnwrap(asset.fingerprint)
+            let source = NativeEditorSourcePool.Clip(clipIndex: 0, nativeSource: .init(mediaID: "source", sourceURL: nil,
+                original: OriginalMediaDescriptor(sha256: fingerprint.hex, byteCount: fingerprint.byteCount,
+                    durationS: 4, width: 1080, height: 1920, orientationDegrees: 0, hasAudio: true), localRequired: true))
+            var sections: [String: JSONValue] = ["text_elements": .array([
+                .object(["id": .string("saved-title"), "text": .string("My saved title"),
+                         "start_s": .number(0), "end_s": .number(1)])
+            ])]
+            if explicitClear { sections["timeline_slots"] = .array([]) }
+            let snapshot = DraftSnapshot(draftID: "saved", itemID: "item", variantKey: "initial", draftRevision: 4,
+                snapshotHash: "immutable-hash", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1",
+                snapshot: ["kind": .string("editor"), "editor_payload": .object([
+                    "editor_state_version": .number(2), "base_generation": .string("generation-1"), "sections": .object(sections)
+                ])], canUndo: true, createdAt: .now)
+            var variant = Self.variant(duration: 2, generation: "generation-1")
+            variant["resolved_archetype"] = .string("guided_story")
+            variant["editor_capabilities"] = .object(["timeline": .bool(false), "text_elements": .bool(true)])
+            let fake = EditorCommitSpy(draftSnapshot: snapshot, authoritativeVariant: variant)
+            fake.sourcePoolResult = NativeEditorSourcePool(clips: [source], baseGeneration: "generation-1")
+            let session = NativeEditorSession()
+            await session.load(api: fake, threadID: threadID)
+            XCTAssertFalse(session.canEditTimeline)
+            XCTAssertEqual(session.document.textElements.map(\.text), ["My saved title"])
+            XCTAssertEqual(fake.draftSnapshot.snapshot, snapshot.snapshot)
+            XCTAssertEqual(fake.commitCount, 0)
+            if explicitClear {
+                XCTAssertTrue(session.document.clips.isEmpty)
+                XCTAssertFalse(session.hasSourcePreview, "An intentional clear must never resurrect footage")
+            } else {
+                XCTAssertEqual(session.sourcePreviewState, .ready)
+                XCTAssertFalse(session.isShowingRenderedFallback)
+                let item = try XCTUnwrap(session.player?.currentItem)
+                let generator = AVAssetImageGenerator(asset: item.asset)
+                generator.videoComposition = item.videoComposition
+                generator.appliesPreferredTrackTransform = true
+                let (image, _) = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600))
+                XCTAssertGreaterThan(image.width, 0)
+                let attachment = XCTAttachment(image: UIImage(cgImage: image))
+                attachment.name = "Saved guided draft source preview"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+    }
+
     func testPhoneTalkingEditPreviewsItsSourceVideoAsALockedClip() async throws {
         let (session, _) = try await Self.phoneTalkingSession(lanesEditable: true)
 

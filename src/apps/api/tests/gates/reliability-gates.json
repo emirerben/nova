@@ -3573,6 +3573,57 @@
         "A draft checker for audio_intent noise_removal off phone Talking"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1009-talking-top-text-title",
+      "tickets": [
+        "KRI-1009",
+        "KRI-1008"
+      ],
+      "symptom": "Plaza T1 \"maximo 1\" (job c7430eed): 'Title \"The Cabildo \ud83c\udde6\ud83c\uddf7\" at the top, never over his face' on a phone Talking edit. The Main Creator wrote it as one top_center pinned_texts line; Talking has no corner lane, so the strategy policy dropped it, the runtime waived brief r2 as an automatic omission and drafted \"Here's the simpler version\" with \"Left out: Title at the top...\" straight to the render approval. Nothing was asked and the video had no title, though the phone Talking title lane (KRI-467) was open.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1009",
+      "paths": [
+        "src/apps/api/app/kria/strategy_policy.py",
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/pipeline/phone_subtitled_title.py",
+        "src/apps/api/app/pipeline/narrated_title.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1009_talking_top_text_title.py",
+        "tests/kria/test_runtime_automatic_simplification.py",
+        "tests/kria/test_runtime_simpler_version_loop.py",
+        "tests/kria/test_strategy_policy.py",
+        "tests/tasks/test_phone_subtitled_title_worker.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "phone_subtitled_title_enabled",
+      "evidence": {
+        "offline_replay": "Real runtime turns over scratch Postgres (submit_turn + run_kria_turn), real planner/strategy policy/receipts/approval; only the Main Creator transport is scripted with the incident's pin and brief r2. Before the fix 4 incident checks fail word for word as prod; after, the pin is the opening title, r2 stays live, nothing is 'Left out', and the worker builds the opening-title row and text-0 layer off a synthetic face. Title lane closed: the draft is held with the simpler-version card naming the title; the tap drops it as agreed.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "macOS host build of KriaMediaEngine AVFoundationLocalExporter (scripts/ios/kri-1009-talking-title.py, synthetic portrait clip): 'The Cabildo' plus a real Argentina flag drawn in the top band for the first ~2.5 s; the pre-fix twin draws no title. Not a device run.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "phone Talking title lane open: one whole-video top-corner pin becomes the opening title",
+        "title lane closed (PHONE_SUBTITLED_TITLE_ENABLED=false): quoted text asked about before the draft, tap drops it as agreed",
+        "wrong words (flag dropped by the model): never receipted met, with readiness on and off",
+        "quoted per-clip lines on a voiceover edit: asked, then the agreed version reaches the native phone recipe",
+        "footage-brightness facet beside a kept title: still automatic"
+      ],
+      "neighbours_gap": [
+        "Approval readiness on (off in prod): a title with a position fact is evidence_missing before render, so the draft is still held (xfail in the KRI-1009 test).",
+        "Phone Talking/voiceover titles over 80 characters are cut silently at render (talking_title_element / phone_narrated_plan) while the strategy accepts 280.",
+        "Bottom-corner, multi-line, time- or clip-scoped corner text on Talking stays unsupported (asked about, not drawn)."
+      ],
+      "follow_ups": [
+        "Plaza T1 iPhone re-send after deploy: the title renders at the top, off Maximo's face",
+        "Readiness: treat a phone Talking title's top position as checkable",
+        "80-character title cut on phone titles"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
