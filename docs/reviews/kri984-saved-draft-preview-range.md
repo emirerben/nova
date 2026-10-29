@@ -70,3 +70,10 @@ incident replays stay open. No new planning call, creative approval, production
 mutation, manual deployment, archive, or TestFlight upload was performed.
 
 KRI-984 remains open. Launch is not cleared by this report.
+
+
+## 29 October current-main integration
+
+The original proof file above is historical. Four source hashes changed as main advanced, so it does not bind the current integrated code. The separate integration-proof JSON records refreshed hashes at the merged source revision.
+
+The fresh native simulator replay passed 67 tests, zero failures and skips. It includes valid photo and H264 saved windows, genuine 1 ms overrun rejection and neighboring compiler cases. Result bundle is `/tmp/unattended1890-tests.xcresult`. No new physical-device, private Cunda or installed TestFlight proof is claimed. Independent read-only review found no compiler correctness issue and confirmed durable-save journey registration. Fresh exact-head CI and authorization for the automatic production deployment remain required.
