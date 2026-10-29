@@ -20,7 +20,17 @@
     "tests_passed": 10,
     "command": "cd src/apps/api && pytest tests/kria/test_kri1024_flag_emoji_title.py tests/routes/test_phone_text_sequence_followup.py",
     "scope": "Montage missing-glyph/flag behavior and current text-sequence neighbors",
-    "postgresql": "Not rerun locally; original8b66 head passed four new PG cases in CI; fresh-head CI required",
+    "postgresql": "Prior current-main head dc7af662 passed all four new PostgreSQL cases in CI job123726218471; API source unchanged by test-only repair. Fresh exact-head CI required.",
     "source_identity": "No API differences when current-main/cache commit was integrated after the tested af151743d tree."
+  },
+  "native_ci_repair": {
+    "prior_head": "dc7af6621a053642af5dfdfb02c360be12520d09",
+    "prior_run": 40953061873,
+    "failure": "Closing setup selected3.90x rather than exact4x; Reset and exactUndo passed. Unit/screens and API passed.",
+    "repair": "Capture actual near-max rate; preserve exact duration/reset/Undo and separate exact endpoint test.",
+    "proof": "docs/reviews/native-speed-setup-validation.md",
+    "positive": "6 passes plus restored-product Closing pass",
+    "negative": "Collective transaction-boundary suppression fails intended Undo assertions; hook-only suppression passes, not a necessity proof.",
+    "exact_new_head_ci": "pending; no waiver"
   }
 }
