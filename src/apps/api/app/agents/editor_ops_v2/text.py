@@ -288,6 +288,23 @@ def _coerce_replace_text_sequence(
         "target_ids": matched,
         "expected_count": 1,
     }
+    from app.kria.compose_with_ops import compose_unmet_with_ops  # noqa: PLC0415
+
+    if compose_unmet_with_ops():
+        # Resolved here, not at compile time, so a re-render of a saved draft keeps the timing
+        # it was authored with whatever the flag says later. Weighting by length is the
+        # default; `weight` is always written so the compiler knows the op was authored here.
+        mode = str(payload.get("mode") or "replace").strip().casefold()
+        if mode not in {"replace", "cumulative"}:
+            state.invalid_value()
+            return None
+        if mode == "cumulative":
+            out["mode"] = "cumulative"
+        weight = str(payload.get("weight") or "length").strip().casefold()
+        if weight not in {"equal", "length"}:
+            state.invalid_value()
+            return None
+        out["weight"] = weight
     if "patch" in payload:
         patch = coerce_text_patch(payload["patch"], state)
         if patch is None:
@@ -485,7 +502,7 @@ SPECS: list[OpSpec] = [
     OpSpec(
         name="replace_text_sequence",
         required=frozenset({"selector", "segments"}),
-        fields=frozenset({"patch"}),
+        fields=frozenset({"patch", "mode", "weight"}),
         family=_FAMILY,
         coerce=_coerce_replace_text_sequence,
     ),

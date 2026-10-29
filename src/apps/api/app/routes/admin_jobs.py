@@ -2,6 +2,7 @@
 
 GET /admin/jobs                        — paginated list of jobs (music + template + auto-music)
 GET /admin/jobs/{job_id}/debug         — full debug payload for one job
+GET /admin/jobs/{job_id}/export-verification — measured phone-export check evidence
 
 Lets admins answer "why is this video bad?" without reading logs or
 re-running a job: surfaces every agent's full input + raw LLM response +
@@ -51,6 +52,10 @@ from app.services.device_render import (
     device_status,
     mark_device_failed,
     retry_device_render,
+)
+from app.services.export_verification_admin import (
+    JobExportVerification,
+    project_export_verification,
 )
 from app.services.job_cancel import (
     JobCancelError,
@@ -998,6 +1003,24 @@ async def admin_retry_device_render(
     await db.commit()
     log.info("admin_device_render_retry", job_id=job_id, variant_id=variant_id)
     return DeviceRetryOut(identity=new_status.request.identity, phase="awaiting_device")
+
+
+@router.get(
+    "/{job_id}/export-verification",
+    response_model=JobExportVerification,
+    dependencies=[Depends(_require_admin)],
+)
+async def get_job_export_verification(
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> JobExportVerification:
+    """Measured phone-export verification evidence per variant (KRI-1042). Read-only."""
+    row = (
+        await db.execute(select(Job.status, Job.assembly_plan).where(Job.id == job_id))
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    return project_export_verification(str(job_id), row.status, row.assembly_plan)
 
 
 # ── silence-cut disable endpoint ─────────────────────────────────────────────
