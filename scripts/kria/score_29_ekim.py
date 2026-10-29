@@ -207,7 +207,10 @@ def check_order(fx: dict) -> dict:
         return plan_unified_montage(
             unified_clips(fx),
             brief_view(brief),
-            strategy={"opening_title": strat.get("opening_title"), "edit_format": "montage"},
+            strategy={
+                "opening_title": strat.get("opening_title"),
+                "edit_format": "montage",
+            },
         )
 
     first, second = compile_once(), compile_once()
@@ -269,7 +272,12 @@ def replay_interpretation(fx: dict) -> dict[str, Any]:
     cannot judge it. The recorded model output is the fixed input; what the server does with
     it is what the lane changes."""
     sys.path.insert(0, str(API))
-    from app.kria.brief import BriefUpdate, CreativeBrief, apply_updates, parse_brief_updates
+    from app.kria.brief import (
+        BriefUpdate,
+        CreativeBrief,
+        apply_updates,
+        parse_brief_updates,
+    )
     from tests.evals.runners.eval_runner import load_fixture, run_eval
 
     brief = CreativeBrief()
@@ -286,7 +294,10 @@ def replay_interpretation(fx: dict) -> dict[str, Any]:
         brief,
         [
             BriefUpdate(
-                kind="text", scope=r3["scope"], literal=r3["literal"], description=r3["description"]
+                kind="text",
+                scope=r3["scope"],
+                literal=r3["literal"],
+                description=r3["description"],
             )
         ],
         source_turn_id=message(fx, "T4")["turn_id"],
@@ -298,7 +309,9 @@ def replay_interpretation(fx: dict) -> dict[str, Any]:
             brief,
             [
                 BriefUpdate(
-                    operation="remove", target_requirement_id=i, expected_version=brief.version
+                    operation="remove",
+                    target_requirement_id=i,
+                    expected_version=brief.version,
                 )
                 for i in order_ids
             ],
@@ -387,7 +400,11 @@ def check_text_vs_speech(fx: dict) -> dict:
                     for r in ledgers[turn].live()
                 )
                 offers.append(
-                    {"turn": turn, "option": option["label"], "captions_premise_remains": premise}
+                    {
+                        "turn": turn,
+                        "option": option["label"],
+                        "captions_premise_remains": premise,
+                    }
                 )
     reachable_offers = [o for o in offers if o["captions_premise_remains"]]
 
@@ -686,6 +703,10 @@ def _copilot_plan(fx: dict):  # noqa: ANN202
     )
 
 
+MIN_READABLE_PIECE_S = 0.25
+_NEVER_RENDERED = frozenset({"processing_failed", "variants_failed", "matching_failed"})
+
+
 async def replay_followup_turn(fx: dict, turn: str, *, job_status: str) -> dict:
     """Run the real ``plan_live_turn`` for T5 or T6 with only the model calls replaced.
 
@@ -700,7 +721,10 @@ async def replay_followup_turn(fx: dict, turn: str, *, job_status: str) -> dict:
     counting = _Counting()
     copilot_plan = _copilot_plan(fx)
     brief = ledger_at(fx, turn)
-    from app.agents._schemas.creator_agent import CapabilityAvailability, ResolvedCreatorManifest
+    from app.agents._schemas.creator_agent import (
+        CapabilityAvailability,
+        ResolvedCreatorManifest,
+    )
 
     manifest = ResolvedCreatorManifest(
         item_id=str(item.id),
@@ -752,10 +776,17 @@ async def replay_followup_turn(fx: dict, turn: str, *, job_status: str) -> dict:
         patch.object(planner, "_load_thread_events", AsyncMock(return_value=[])),
         patch.object(planner, "load_latest_brief", AsyncMock(return_value=brief)),
         patch.object(
-            planner, "resolve_item_creator_context", AsyncMock(return_value=(manifest, []))
+            planner,
+            "resolve_item_creator_context",
+            AsyncMock(return_value=(manifest, [])),
         ),
         patch.object(planner, "creator_context", lambda *_a: ("creator", "item")),
-        patch.object(planner, "_load_editor_target", AsyncMock(return_value=target)),
+        patch.object(
+            planner,
+            "_load_editor_target",
+            # The real loader returns None for a job that never produced a variant.
+            AsyncMock(return_value=None if job_status in _NEVER_RENDERED else target),
+        ),
         patch.object(planner, "_plan_editor_revision", AsyncMock(side_effect=plan_revision)),
         patch.object(planner, "MainCreatorAgent", FakeMainCreator),
         patch.object(planner, "BriefExtractorAgent", FakeExtractor),
@@ -787,7 +818,13 @@ async def replay_followup_turn(fx: dict, turn: str, *, job_status: str) -> dict:
 
 
 def _split_op_result(fx: dict) -> dict:
-    """Compile the word-by-word op with the real editor-op compiler against the recorded title."""
+    """Parse then compile the word-by-word op with the real copilot parser and op compiler.
+
+    The model's JSON is the one assumed value (prod's copilot never ran on this thread); the
+    parser (selector resolution, flag-dependent timing fields) and the compiler are real code.
+    """
+    from app.agents._model_client import ModelClient
+    from app.agents.edit_copilot import EditCopilotAgent, EditCopilotInput
     from app.services.kria_editor_ops import compile_editor_ops
 
     title = copy.deepcopy(fx["title_row"])
@@ -797,42 +834,65 @@ def _split_op_result(fx: dict) -> dict:
         "render_status": "ready",
         "render_generation_id": "scorecard",
         "resolved_archetype": "montage",
-        "duration_s": max(title["end_s"], 1.0),
+        "duration_s": float(fx["strategy_t4"].get("target_duration_s") or 60),
         "text_elements": [title],
         "caption_cues": [],
         "ai_timeline": {"slots": []},
     }
     job = SimpleNamespace(assembly_plan={"variants": [variant]}, all_candidates={"clip_paths": []})
-    compiled = compile_editor_ops(
-        job,
-        variant,
-        [
+    snapshot = {
+        "editor_ops_version": 2,
+        "allowed_op_families": ["text"],
+        "text_bars": [title],
+    }
+    raw = {
+        "intent": "edit",
+        "ops": [
             {
                 "op": "replace_text_sequence",
                 "selector": {"ids": [title["id"]]},
-                "target_ids": [title["id"]],
-                "expected_count": 1,
-                "expected_source_text": title["text"],
                 "segments": words,
             }
         ],
+        "confidence": 0.9,
+        "reply": "Showing the title one word at a time.",
+        "suggestions": [],
+        "needs_clarification": False,
+    }
+    parsed = EditCopilotAgent(ModelClient()).parse(
+        json.dumps(raw),
+        EditCopilotInput(
+            utterance="split it, word by word",
+            prior_turns=[],
+            variant_snapshot=snapshot,
+        ),
     )
+    compiled = compile_editor_ops(job, variant, parsed.ops)
     rows = compiled.payload.text_elements
     windows = [(r["start_s"], r["end_s"]) for r in rows]
     ordered = all(a[1] <= b[0] + 1e-9 for a, b in zip(windows, windows[1:], strict=False))
     covers = (
         bool(windows)
         and abs(windows[0][0] - title["start_s"]) < 1e-6
-        and abs(windows[-1][1] - title["end_s"]) < 1e-6
+        and windows[-1][1] >= title["end_s"] - 1e-6
     )
+    lengths = [len(r["text"]) for r in rows]
+    shares = [(e - s) / (windows[-1][1] - windows[0][0]) for s, e in windows] if windows else []
+    longest = lengths.index(max(lengths)) if lengths else 0
+    shortest = lengths.index(min(lengths)) if lengths else 0
     return {
         "elements": len(rows),
         "words": len(words),
         "one_word_each": all(len(r["text"].split()) == 1 for r in rows),
         "ordered_windows": ordered,
         "covers_title_span": covers,
+        "weighted_by_length": bool(shares) and shares[longest] > shares[shortest],
         "min_window_s": min(e - s for s, e in windows) if windows else None,
+        "window_end_s": windows[-1][1] if windows else None,
         "text_conserved": " ".join(r["text"] for r in rows) == title["text"],
+        "op_fields": sorted(k for k in parsed.ops[0] if k in {"mode", "weight"})
+        if parsed.ops
+        else [],
     }
 
 
@@ -843,9 +903,10 @@ def _t4_job_status(_fx: dict, title_fits: bool) -> str:
 def check_followup_with_ops(fx: dict, title_fits: bool) -> tuple[dict, dict]:
     """T5 is replayed from BOTH states T4 can leave: its recorded failed render, and a ready one.
 
-    A follow-up must not depend on the previous render having succeeded, so both must reach the
-    copilot with zero Main Creator calls. Returns the result and the replay for the state the
-    system is actually in (it feeds check 5).
+    The state the system is actually in must reach the copilot with zero Main Creator calls
+    (it feeds check 5). A render that failed before producing any variant has no editable
+    lanes (prod job debug: no `variants` key), so its follow-up is a re-plan by construction;
+    that state is reported, not scored, and the fix for it is that T4 no longer fails.
     """
     built = _split_op_result(fx)
     states = {
@@ -856,12 +917,16 @@ def check_followup_with_ops(fx: dict, title_fits: bool) -> tuple[dict, dict]:
         name: asyncio.run(replay_followup_turn(fx, "T5", job_status=status))
         for name, status in states.items()
     }
+    actual = "ready_render" if title_fits else "failed_render"
     built_ok = (
         built["elements"] == built["words"]
         and built["one_word_each"]
         and built["ordered_windows"]
         and built["covers_title_span"]
         and built["text_conserved"]
+        and built["weighted_by_length"]
+        and built["min_window_s"] is not None
+        and built["min_window_s"] >= MIN_READABLE_PIECE_S
     )
     summary = {}
     why = []
@@ -877,13 +942,15 @@ def check_followup_with_ops(fx: dict, title_fits: bool) -> tuple[dict, dict]:
             "error": replay["error"],
             "creator_main_calls": creator_calls,
             "editor_ops_reach_the_plan": used_ops,
+            "scored": name == actual,
         }
+        if name != actual:
+            continue
         if creator_calls:
             why.append(
                 f"[{name}] T5 reaches nova.creator.main ({creator_calls} call) and no editor op "
-                "is ever tried: planner._plan_live_turn treats a turn after a FAILED latest job "
-                "as a fresh plan (extract_first needs a non-failed job), so the full replan is "
-                "the only path; prod's real call hit the provider deadline at 179.8 s"
+                "is ever tried: the render left no editable draft, so the turn is a fresh plan; "
+                "prod's real call hit the provider deadline at 179.8 s"
             )
         if not used_ops:
             why.append(
@@ -893,9 +960,10 @@ def check_followup_with_ops(fx: dict, title_fits: bool) -> tuple[dict, dict]:
     if not built_ok:
         why.append(f"the op does not compile to ordered one-word elements: {built}")
     passed = built_ok and all(
-        v["creator_main_calls"] == 0 and v["editor_ops_reach_the_plan"] for v in summary.values()
+        v["creator_main_calls"] == 0 and v["editor_ops_reach_the_plan"]
+        for v in summary.values()
+        if v["scored"]
     )
-    actual = "ready_render" if title_fits else "failed_render"
     return _result(
         4,
         "word-by-word follow-up becomes N one-word text elements via editor ops, 0 Main Creator",
@@ -907,8 +975,9 @@ def check_followup_with_ops(fx: dict, title_fits: bool) -> tuple[dict, dict]:
             "op_compile": built,
             "readability_note": "recorded title window is "
             f"{fx['title_row']['end_s'] - fx['title_row']['start_s']:.1f} s for "
-            f"{built['words']} words ({built['min_window_s']:.3f} s each); the op conserves "
-            "wording and spans the window, it does not make the window readable",
+            f"{built['words']} words; the compiler lengthens it to {built['window_end_s']:.1f} s "
+            f"so the shortest piece holds {built['min_window_s']:.3f} s "
+            f"(floor {MIN_READABLE_PIECE_S} s)",
             "copilot_output": "assumed: the prod copilot never ran on this thread, so the op the "
             "copilot authors is a fixture value; routing and the op compile are real code",
         },
@@ -924,7 +993,23 @@ def check_latency(fx: dict, followup_replays: dict[str, dict]) -> dict:
     runs = fx["agent_runs"]
     recorded_wall = {t["turn"]: t["wall_ms"] for t in fx["timeline"]}
     rows = []
+    # T3 and T4 are taps on choice cards that T2's refusal opened. When T2 now goes straight to
+    # the copilot (no question), those cards are never shown, so there is no turn to time.
+    t2 = followup_replays.get("T2")
+    cards_gone = bool(t2) and "nova.creator.main" not in t2["model_calls"] and bool(t2["tools"])
     for turn in ("T1", "T2", "T3", "T4", "T5", "T6"):
+        if cards_gone and turn in {"T3", "T4"}:
+            rows.append(
+                {
+                    "turn": turn,
+                    "recorded_wall_ms": recorded_wall[turn],
+                    "replayed_ms": None,
+                    "basis": "not asked: answers a choice card the fixed router never shows",
+                    "under_budget": None,
+                    "model_calls": [],
+                }
+            )
+            continue
         turn_runs = [r for r in runs if r["turn"] == turn]
         recorded_agents = sum(r["latency_ms"] for r in turn_runs)
         overhead = max(0, recorded_wall[turn] - recorded_agents)
@@ -962,23 +1047,45 @@ def check_latency(fx: dict, followup_replays: dict[str, dict]) -> dict:
                 else followup_replays[turn]["model_calls"],
             }
         )
-    slow = [r for r in rows if not r["under_budget"]]
+    slow = [r for r in rows if r["under_budget"] is False]
     passed = not slow
     why = []
     if slow:
+        parts = []
+        for row in slow:
+            main_ms = next(
+                (
+                    r["latency_ms"]
+                    for r in runs
+                    if r["turn"] == row["turn"] and r["agent"] == "nova.creator.main"
+                ),
+                None,
+            )
+            parts.append(
+                f"{row['turn']} {row['replayed_ms'] / 1000:.1f} s"
+                + (f" (nova.creator.main {main_ms / 1000:.1f} s)" if main_ms else "")
+            )
         why.append(
             "turns over the 60 s budget: "
-            + ", ".join(f"{r['turn']} {r['replayed_ms'] / 1000:.1f} s" for r in slow)
-            + ". Every one runs nova.creator.main (gemini-3.1-pro, thinking high; 31k to 63k "
-            "input tokens, 27 clips of full facts); T5 and T6 end at the provider deadline "
-            "(179.8 s and 179.7 s of model time) and T6 retries the same call unchanged"
+            + ", ".join(parts)
+            + ". nova.creator.main runs gemini-3.1-pro at thinking high on 27 clips of full facts "
+            "(31k input tokens). A creation turn needs it, so only a faster creation call "
+            "(lane C's compact clip tier, or a lower thinking tier for large clip sets) can bring "
+            "it under budget; follow-up turns no longer call it"
         )
     return _result(
         5,
         "every turn finishes inside 60 s (replayed latency)",
         passed,
         why,
-        {"turns": rows, "budget_ms": TURN_BUDGET_MS},
+        {
+            "turns": rows,
+            "budget_ms": TURN_BUDGET_MS,
+            "not_timed": [r["turn"] for r in rows if r["under_budget"] is None],
+            "timed_on_assumed_latency": [
+                r["turn"] for r in rows if r["basis"] == "assumed copilot"
+            ],
+        },
     )
 
 
@@ -1030,6 +1137,13 @@ def run_offline() -> dict:
                 followups["T6"] = asyncio.run(
                     replay_followup_turn(fx, "T6", job_status=_t4_job_status(fx, title_fits))
                 )
+        # T2 is an edit-shaped follow-up on T1's ready draft ("show each word after the other"):
+        # the question it used to open is exactly what lane E removes, so it goes through the
+        # real router too. Only the model outputs are fixtures.
+        with contextlib.suppress(Exception):
+            followups["T2"] = asyncio.run(
+                replay_followup_turn(fx, "T2", job_status="variants_ready")
+            )
         c5 = _guarded(5, "latency", lambda: check_latency(fx, followups))
     checks = [c1, c2, c3, c4, c5]
     return {

@@ -90,6 +90,7 @@ from app.kria.clip_exclusions import (
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope, apply_subject_scope
 from app.kria.clip_ties import left_out, tie_question, voiceover_ties, with_tie_categories
+from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import KriaTurnPlan
 from app.kria.draft_sound_carry import sound_asks_unchanged
 from app.kria.duplicate_send import is_duplicate_answer
@@ -4371,6 +4372,9 @@ _FAST_PATH_OPS = frozenset(
         "reorder_clips_by",
     }
 )
+# 29 Ekim: a word-by-word title is one in-place text op, so it rides the fast path too
+# (`KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`; off = the set above, unchanged).
+_COMPOSE_FAST_PATH_OPS = frozenset({"replace_text_sequence"})
 _GROUNDED_REORDERS = (None, "capture_time", "random")
 _FAST_PATH_MAX_CHARS = 280
 # A text/label/caption ask: when the copilot answers it with a question or a refusal, that
@@ -4456,7 +4460,9 @@ def _is_fast_path_plan(plan: KriaTurnPlan | None) -> bool:
             return False
         for op in ops:
             name = op.get("op") if isinstance(op, dict) else getattr(op, "op", None)
-            if str(name) not in _FAST_PATH_OPS:
+            if str(name) not in _FAST_PATH_OPS and not (
+                str(name) in _COMPOSE_FAST_PATH_OPS and compose_unmet_with_ops()
+            ):
                 return False
             # A model-authored clip order is no in-place text/label op: only the
             # server-grounded capture_time and seeded random reorders ride the fast path.
