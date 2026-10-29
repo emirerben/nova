@@ -5,12 +5,13 @@ import XCTest
 /// text still shows, with no card); "invalid" / "stale" = every range answer is refused with 422 / 409.
 @MainActor
 final class SongRangeQuestionUITests: XCTestCase {
-    private func launch(mode: String) -> XCUIApplication {
+    private func launch(mode: String, sendFailure: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_CHAT_SONG_RANGE_Q"] = mode
+        app.launchEnvironment["KRIA_CHAT_SEND_FAILURE"] = sendFailure
         app.launch()
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
         app.buttons["Open projects"].tap()
@@ -74,6 +75,31 @@ final class SongRangeQuestionUITests: XCTestCase {
         XCTAssertTrue(questionText(app).waitForExistence(timeout: 15), "the question shows as the assistant's message")
         XCTAssertTrue(element(app, "song-range-card").waitForExistence(timeout: 5))
         bringIntoView(app.buttons["song-range-card-use"], in: app)
+    }
+
+    func testUnconfirmedRangeRetryKeepsTheRejectionOnTheCard() {
+        let app = launch(mode: "invalid", sendFailure: "offline-structured")
+        askTheQuestion(app)
+        waitForTheCard(app)
+        choose(app, "song-range-card-from", "0:40")
+        choose(app, "song-range-card-to", "1:20")
+        app.buttons["song-range-card-use"].tap()
+        let retry = app.buttons["chat-retry-message"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 15))
+        retry.tap()
+        let error = element(app, "song-range-card-error")
+        XCTAssertTrue(error.waitForExistence(timeout: 10))
+        bringIntoView(error, in: app)
+        XCTAssertEqual(error.label, "That starts after your song ends.")
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.exists)
+        guard let draft = composer.value as? String else {
+            XCTFail("The composer must expose its draft after rejection")
+            return
+        }
+        XCTAssertFalse(draft.contains("I filmed"))
+        XCTAssertFalse(retry.exists)
+        attach(app, "Retry rejection stays on the song card")
     }
 
     func testPickingAPartSendsItAndTheCardCollapsesToWhatWasChosen() {

@@ -17,8 +17,10 @@ import re
 import subprocess
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from fractions import Fraction
+from itertools import chain
 from pathlib import Path
 
 import numpy as np
@@ -29,9 +31,14 @@ from app.kria.recipes import MediaTransform
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.cloud_render_evidence import normalize_text
 
-VERIFIER_VERSION = "phone-simple-cut-v3"
+VERIFIER_VERSION = "phone-simple-cut-v4"
 # Oldest first; append every future bump so a pin accepts itself or any later verifier.
-VERIFIER_ORDER = ("phone-simple-cut-v1", "phone-simple-cut-v2", VERIFIER_VERSION)
+VERIFIER_ORDER = (
+    "phone-simple-cut-v1",
+    "phone-simple-cut-v2",
+    "phone-simple-cut-v3",
+    VERIFIER_VERSION,
+)
 HISTORICAL_VERIFIER_VERSIONS = frozenset(VERIFIER_ORDER)
 POLICY_FIELD = "actual_export_policy"
 # The picture check compares an export with the original VIDEO it was cut from; a still clip has
@@ -40,6 +47,13 @@ POLICY_FIELD = "actual_export_policy"
 # `verify_actual_export` (guard: tests/pipeline/test_photo_story_gate.py).
 VERIFIES_STILL_PICTURES = False
 SAMPLE_RATE = 8000
+# Text proof (v4, KRI-1042), applied by `_text_verdict`. The stray allowance admits a
+# letter-like background speck in a read, never an authored extra word.
+TEXT_MIN_WORD_CONF = 40
+TEXT_MAX_EXTRA_TOKENS = 1
+TEXT_MAX_EXTRA_TOKEN_CHARS = 2
+TEXT_MIN_INK_SHARE = 0.03
+TEXT_MAX_FILL_LIKE_BACKGROUND_SHARE = 0.5
 # Both the phone export and its analysis proxies are local ISO media files.
 # Do not autodetect a disguised playlist/container or let a decoder fetch URLs.
 _LOCAL_MP4_INPUT = ("-protocol_whitelist", "file,pipe", "-f", "mov")
@@ -118,7 +132,7 @@ def unsupported_reasons(recipe) -> list[str]:
             or any(run.fill.alpha == 0 for run in layer.runs)
         ):
             reasons.append("text_treatment")
-        if not layer.runs:
+        if not _copy_words(layer):
             reasons.append("empty_text")
     return sorted(set(reasons))
 
@@ -459,6 +473,13 @@ def _picture_similarity(expected: np.ndarray, actual: np.ndarray, mask: np.ndarr
     return float(np.mean(scores))
 
 
+def _picture_scores(reference, actual: np.ndarray, mask: np.ndarray) -> tuple[float, float]:
+    """Mean absolute pixel error (0-1) over the mask, and local SSIM."""
+    expected = np.asarray(reference, dtype=float)
+    error = float(np.abs(expected - actual)[mask].mean() / 255)
+    return error, _picture_similarity(expected, actual, mask)
+
+
 def _watermark_bounds(width: float, height: float) -> tuple[float, float, float, float]:
     """Approved native brand tile, in top-left canvas coordinates.
 
@@ -489,8 +510,13 @@ def _bounds(layer, recipe) -> tuple[int, int, int, int]:
     )
 
 
-def _ocr(view: Image.Image) -> str:
-    """Exact recognized copy at the fixed confidence bar."""
+def _copy_words(layer) -> list[str]:
+    """The layer's copy as compared on screen (wrapping is layout, not words)."""
+    return normalize_text(" ".join(run.text for run in layer.runs)).split()
+
+
+def _ocr(view: Image.Image) -> list[tuple[str, float]]:
+    """Recognized words, in reading order, at the fixed confidence bar."""
     buffer = io.BytesIO()
     view.save(buffer, format="PNG")
     raw = _run(
@@ -502,27 +528,91 @@ def _ocr(view: Image.Image) -> str:
         # OCR algorithm, confidence bar and five-second deadline.
         env={**os.environ, "OMP_THREAD_LIMIT": "1"},
     )
-    rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t")
-    return normalize_text(" ".join(row["text"] for row in rows if float(row["conf"]) >= 40))
+    # Tesseract TSV never quotes a field. CSV quoting would read a word that
+    # starts with a straight quote as the opening of a field spanning later words.
+    rows = csv.DictReader(io.StringIO(raw.decode()), delimiter="\t", quoting=csv.QUOTE_NONE)
+    return [
+        (word, float(row["conf"]))
+        for row in rows
+        if float(row["conf"] or -1) >= TEXT_MIN_WORD_CONF
+        for word in normalize_text(row["text"] or "").split()
+    ]
 
 
-def _read_text(
-    image: Image.Image, colors: list[tuple[int, int, int]], *, wanted: str | None = None
-) -> set[str]:
-    candidates = set()
+@dataclass(frozen=True)
+class _Read:
+    """One OCR view of a text sample, compared word by word with the layer's copy."""
+
+    view: str = "none"
+    words: int = 0  # copy words read in order, each exact
+    extra: int = 0  # read words outside that in-order match
+    min_conf: float | None = None  # lowest confidence among the matched words
+    complete: bool = False  # every copy word, within the stray-token allowance
+    text: str = ""  # offline replay montage only; never stored in the report
+
+    @property
+    def rank(self) -> tuple:
+        return (self.complete, self.words, -self.extra, self.min_conf or 0)
+
+
+def _compare(view: str, tokens: list[tuple[str, float]], copy: list[str]) -> _Read:
+    """Longest in-order exact match of the copy's words among the read words."""
+    n, m = len(copy), len(tokens)
+    longest = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            longest[i][j] = (
+                longest[i + 1][j + 1] + 1
+                if copy[i] == tokens[j][0]
+                else max(longest[i + 1][j], longest[i][j + 1])
+            )
+    matched, i, j = set(), 0, 0
+    while i < n and j < m:
+        if copy[i] == tokens[j][0]:
+            matched.add(j)
+            i, j = i + 1, j + 1
+        elif longest[i + 1][j] >= longest[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    extras = [word for k, (word, _) in enumerate(tokens) if k not in matched]
+    return _Read(
+        view=view,
+        words=len(matched),
+        extra=len(extras),
+        min_conf=min((tokens[k][1] for k in matched), default=None),
+        complete=len(matched) == n
+        and len(extras) <= TEXT_MAX_EXTRA_TOKENS
+        and all(len(word) <= TEXT_MAX_EXTRA_TOKEN_CHARS for word in extras),
+        text=" ".join(word for word, _ in tokens),
+    )
+
+
+def _read_copy(views: Iterable[tuple[str, Image.Image]], copy: list[str]) -> _Read:
+    """The best read across views; stops at the first view that reads the copy."""
+    best = _Read()
+    for name, view in views:
+        read = _compare(name, _ocr(view), copy)
+        best = max(best, read, key=lambda value: value.rank)
+        if read.complete:
+            break
+    return best
+
+
+def _plain_views(image: Image.Image, colors: list[tuple[int, int, int]]):
     # Enlargement helps small type but can join background specks to large
-    # glyphs. Read native pixels too; every candidate still needs exact copy
-    # and the same confidence bar. Never synthesize the expected words.
+    # glyphs. Read native pixels too; every view keeps the same confidence bar.
+    # Never synthesize the expected words.
     for scale in (2, 1):
         scaled = image.resize((image.width * scale, image.height * scale))
+        yield f"raw_x{scale}", scaled
         pixels = np.asarray(scaled, dtype=float)
         distance = np.min([np.linalg.norm(pixels - color, axis=2) for color in colors], axis=0)
-        painted = Image.fromarray(np.where(distance < 70, 0, 255).astype(np.uint8))
-        for view in (scaled, painted):
-            candidates.add(_ocr(view))
-            if wanted in candidates:
-                return candidates
-    return candidates
+        yield f"fill_x{scale}", Image.fromarray(np.where(distance < 70, 0, 255).astype(np.uint8))
+
+
+def _read_text(image: Image.Image, colors: list[tuple[int, int, int]], copy: list[str]) -> _Read:
+    return _read_copy(_plain_views(image, colors), copy)
 
 
 _LUMA = np.array([0.2126, 0.7152, 0.0722])
@@ -589,28 +679,94 @@ def _overlay_view(
     return Image.fromarray(np.where(inside[labels], 0, 255).astype(np.uint8))
 
 
-def _read_overlay_text(
+def _overlay_views(
     image: Image.Image,
     background: Image.Image,
     colors: list[tuple[int, int, int]],
     *,
     font_px: float,
-    wanted: str | None = None,
-    views: list | None = None,
-) -> set[str]:
-    """Extra OCR candidates under the same exact-copy and confidence rules."""
-    candidates = set()
+    label: str,
+    views: list,
+):
+    """Extra OCR views under the same copy and confidence rules."""
     for smooth_candidate in (True, False):
         view = _overlay_view(
             image, background, colors, font_px=font_px, smooth_candidate=smooth_candidate
         )
-        if views is not None:
-            views.append(view)
+        views.append(view)
         for scale in (2, 1):
-            candidates.add(_ocr(view.resize((view.width * scale, view.height * scale))))
-            if wanted in candidates:
-                return candidates
-    return candidates
+            yield (
+                f"{label}_{'smooth' if smooth_candidate else 'sharp'}_x{scale}",
+                view.resize((view.width * scale, view.height * scale)),
+            )
+
+
+def _ink(
+    image: Image.Image, background: Image.Image, colors: list[tuple[int, int, int]]
+) -> tuple[float, float]:
+    """Glyph ink share of the measurable read area, and the area's fill-like share.
+
+    A pixel is ink when it is fill-coloured and moved at least half way from the
+    source picture beneath it toward the fill. Where that picture already looks
+    like a fill (white text over a white shirt) a glyph cannot be told from the
+    background, so those pixels are not measurable. The background is a smoothed
+    upscaled proxy, as in `_overlay_view`; the candidate keeps its thin strokes.
+    """
+    pixels = np.asarray(image, dtype=float)
+    out = pixels @ _LUMA
+    under = _smooth(np.asarray(background, dtype=float) @ _LUMA)
+    ink = np.zeros(out.shape, dtype=bool)
+    measurable = np.zeros(out.shape, dtype=bool)
+    for color in colors:
+        fill = float(np.asarray(color, dtype=float) @ _LUMA)
+        direction = np.where(fill >= under, 1.0, -1.0)
+        gap = (fill - under) * direction
+        near = np.linalg.norm(pixels - color, axis=2) < 70
+        ink |= near & (gap >= 16) & ((out - under) * direction > np.maximum(gap / 2, 8))
+        measurable |= gap >= 16
+    return float(ink.sum() / max(1, measurable.sum())), float(1 - measurable.mean())
+
+
+def _text_verdict(
+    read: _Read,
+    words: int,
+    ink_share: float | None,
+    fill_like: float | None,
+    *,
+    visible: bool,
+    copy_read: bool,
+    other_layer: bool,
+) -> tuple[str, str]:
+    """(status, proof when passed or reason when failed) for one text sample.
+
+    The layer's copy must be read whole in one visible sample (`copy_read`). A
+    visible sample that does not read it itself must still show the layer's
+    glyphs: measurable ink and more than half the copy's words in order. A
+    hidden sample fails on the exact copy. While another layer is due over the
+    same area, that is all: its copy may share words or add a short token
+    ("Day" then "Day 2"). Otherwise a stray token or those glyphs also fail it.
+    """
+    if fill_like is None or ink_share is None:
+        missing = "background_unavailable"
+    elif fill_like > TEXT_MAX_FILL_LIKE_BACKGROUND_SHARE:
+        missing = "background_like_fill"
+    elif ink_share < TEXT_MIN_INK_SHARE:
+        missing = "no_glyph_ink"
+    elif 2 * read.words <= words:
+        missing = "copy_words_missing"
+    else:
+        missing = None
+    if visible:
+        if read.complete:
+            return "passed", "copy"
+        if not copy_read:
+            return "failed", "copy_not_read"
+        return ("passed", "presence") if missing is None else ("failed", missing)
+    if read.complete and (read.extra == 0 or not other_layer):
+        return "failed", "copy_still_visible"
+    if missing is None and not other_layer:
+        return "failed", "glyphs_still_visible"
+    return "passed", "other_layer" if other_layer else "absent"
 
 
 def _audio_measurement(expected: np.ndarray, actual: np.ndarray) -> dict:
@@ -789,6 +945,7 @@ def verify_actual_export(
                             deadline=deadline,
                         )
                     ]
+                    previous = [None] * count
                 else:
                     # Map each candidate frame's actual PTS to the source frame
                     # displayed at that instant (plus the one after it).
@@ -797,7 +954,18 @@ def verify_actual_export(
                         _displayed(clock, shown - clip.timeline_start + clip.source_start)
                         for shown in actual_pts
                     ]
-                    wanted_times = sorted({t for bracket in brackets for t in bracket})
+                    # Evidence only: the source frame before the displayed one. It
+                    # never decides a sample (KRI-1042 measures it for a later rule).
+                    previous_times = [
+                        next((t for t in reversed(clock) if t < bracket[0] - 1e-6), None)
+                        if bracket
+                        else None
+                        for bracket in brackets
+                    ]
+                    wanted_times = sorted(
+                        {t for bracket in brackets for t in bracket}
+                        | {t for t in previous_times if t is not None}
+                    )
                     decoded = dict(
                         zip(
                             wanted_times,
@@ -812,10 +980,14 @@ def verify_actual_export(
                         )
                     )
                     references = [[decoded[t] for t in bracket] for bracket in brackets]
+                    previous = [None if t is None else decoded[t] for t in previous_times]
                 neighbour_samples = 0
                 passes = []
                 matched = []
-                for options, candidate in zip(references, actual_frames, strict=True):
+                sample_evidence = []
+                for options, prior, candidate in zip(
+                    references, previous, actual_frames, strict=True
+                ):
                     if time.monotonic() > deadline:
                         raise TimeoutError("verification_budget")
                     if not options:
@@ -823,9 +995,7 @@ def verify_actual_export(
                     actual = np.asarray(candidate, dtype=float)
                     scored = []
                     for reference in options:
-                        expected = np.asarray(reference, dtype=float)
-                        error = float(np.abs(expected - actual)[mask].mean() / 255)
-                        score = _picture_similarity(expected, actual, mask)
+                        error, score = _picture_scores(reference, actual, mask)
                         # SSIM's relative luminance term is unstable near black:
                         # an ordinary H.264 round trip can move a 10-code pixel
                         # by 1-2 codes. Permit that small absolute codec error;
@@ -833,6 +1003,19 @@ def verify_actual_export(
                         scored.append(
                             (error <= 2 / 255 or (error <= 0.1 and score >= 0.95), error, score)
                         )
+                    seen = list(zip(("displayed", "next"), (row[1:] for row in scored)))
+                    if prior is not None:
+                        seen.append(("previous", _picture_scores(prior, actual, mask)))
+                    sample_evidence.append(
+                        {
+                            name: value
+                            for frame, (error, score) in seen
+                            for name, value in (
+                                (f"ssim_{frame}", round(score, 4)),
+                                (f"error_{frame}", round(error, 3)),
+                            )
+                        }
+                    )
                     # The displayed frame first; a failing sample reports it.
                     chosen = next((i for i, row in enumerate(scored) if row[0]), 0)
                     neighbour_samples += chosen > 0
@@ -882,6 +1065,7 @@ def verify_actual_export(
                         ),
                         "max_mean_pixel_error": round(worst, 6),
                         "min_local_ssim": round(similarity, 6),
+                        "sample_evidence": sample_evidence,
                     }
                 )
                 has_audio = any(s["codec_type"] == "audio" for s in source_probe["streams"])
@@ -915,13 +1099,18 @@ def verify_actual_export(
                     checks.append({"kind": "audio", "clip_id": clip.id, "chunk": chunk, **measure})
         clips = [clip for track in recipe.tracks for clip in track.clips]
 
-        def overlay_text(shown, rect, text_frame, colors, wanted, *, present, font_px, views):
-            """Read the overlay isolated against the source frame shown beneath it."""
+        def backgrounds(shown, rect, *, bracket):
+            """Source pixels under the read area at the frame displayed at `shown`.
+
+            Yields the displayed frame, then (bracket only) the one after it.
+            Nothing for the brand tail, a missing source or an unknown clock.
+            """
             clip = next(
                 (
                     clip
                     for clip in clips
-                    if clip.timeline_start - 1e-6
+                    if shown is not None
+                    and clip.timeline_start - 1e-6
                     <= shown
                     < clip.timeline_start + clip.source_duration
                 ),
@@ -932,16 +1121,13 @@ def verify_actual_export(
                 None,
                 None,
             )
-            found = set()
             if clock is None:
-                return found  # brand tail, missing source or unknown clock
+                return
             x0, y0, x1, y1 = rect
             instants = _displayed(clock, shown - clip.timeline_start + clip.source_start)
-            # A hidden probe only gains an extra rejection chance; bound its
-            # cost to the displayed frame. Visible probes may use the bracket.
-            for instant in instants if present else instants[:1]:
+            for instant in instants if bracket else instants[:1]:
                 try:
-                    background = _frames(
+                    yield _frames(
                         source,
                         [instant],
                         size=(x1 - x0, y1 - y0),
@@ -951,23 +1137,16 @@ def verify_actual_export(
                         canvas=(recipe.canvas.width, recipe.canvas.height),
                     )[0]
                 except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError):
-                    # No decoded background, no extra evidence; the original
-                    # views alone decide, as before.
-                    return found
-                found |= _read_overlay_text(
-                    text_frame,
-                    background,
-                    colors,
-                    font_px=font_px,
-                    wanted=wanted,
-                    views=views,
-                )
-                if wanted in found:
-                    break
-            return found
+                    # No decoded background, no extra evidence.
+                    return
 
         for layer, rect in zip(recipe.text_layers, rects, strict=True):
-            wanted = normalize_text(" ".join(run.text for run in layer.runs))
+            words = _copy_words(layer)
+            colors = [
+                tuple(round(255 * value) for value in (run.fill.red, run.fill.green, run.fill.blue))
+                for run in layer.runs
+            ]
+            font_px = min(run.font_size for run in layer.runs)
             times = [
                 (layer.start + (layer.end - layer.start) * fraction, True)
                 for fraction in (0.15, 0.5, 0.85)
@@ -986,52 +1165,88 @@ def verify_actual_export(
                 region=rect,
                 with_pts=True,
             )
+            samples = []
             for (at, present), text_frame, shown in zip(times, text_frames, text_pts, strict=True):
                 if time.monotonic() > deadline:
                     raise TimeoutError("verification_budget")
-                colors = [
-                    tuple(
-                        round(channel * 255)
-                        for channel in (run.fill.red, run.fill.green, run.fill.blue)
-                    )
-                    for run in layer.runs
-                ]
-                observed_text = _read_text(text_frame, colors, wanted=wanted)
+                # A hidden probe only gains an extra rejection chance; bound its
+                # cost to the displayed frame. Visible probes may use the bracket.
+                beneath = backgrounds(shown, rect, bracket=present)
+                displayed = next(beneath, None)
+                read = _read_text(text_frame, colors, words)
                 views = []
-                partial = set(wanted.split()) & {w for c in observed_text for w in c.split()}
-                if wanted not in observed_text and shown is not None and (present or partial):
+                if not read.complete and displayed is not None and (present or read.words):
                     # Hidden probes only when a standard view already read part
                     # of the copy: bounds OCR cost on correct exports (90s
                     # deadline) while still catching text that is really there.
-                    observed_text |= overlay_text(
-                        shown,
-                        rect,
-                        text_frame,
-                        colors,
-                        wanted,
-                        present=present,
-                        font_px=min(run.font_size for run in layer.runs),
-                        views=views,
-                    )
-                matches = wanted in observed_text
+                    for label, background in zip(
+                        ("overlay", "overlay_next"), chain([displayed], beneath), strict=False
+                    ):
+                        overlay = _read_copy(
+                            _overlay_views(
+                                text_frame,
+                                background,
+                                colors,
+                                font_px=font_px,
+                                label=label,
+                                views=views,
+                            ),
+                            words,
+                        )
+                        read = max(read, overlay, key=lambda value: value.rank)
+                        if read.complete:
+                            break
+                ink_share, fill_like = (
+                    _ink(text_frame, displayed, colors) if displayed is not None else (None, None)
+                )
+                samples.append((at, present, read, ink_share, fill_like, text_frame, views))
+            copy_read = any(read.complete for _, present, read, *_ in samples if present)
+            for at, present, read, ink_share, fill_like, text_frame, views in samples:
+                status, basis = _text_verdict(
+                    read,
+                    len(words),
+                    ink_share,
+                    fill_like,
+                    visible=present,
+                    copy_read=copy_read,
+                    other_layer=any(
+                        other is not layer
+                        and other.start <= at < other.end
+                        and area[0] < rect[2]
+                        and rect[0] < area[2]
+                        and area[1] < rect[3]
+                        and rect[1] < area[3]
+                        for other, area in zip(recipe.text_layers, rects, strict=True)
+                    ),
+                )
                 if evidence is not None:
                     evidence.append(
                         {
                             "label": f"text {layer.id} @{at:.3f}s visible={present} "
-                            f"{'passed' if matches == present else 'FAILED'} "
-                            f"read={sorted(observed_text)!r}",
+                            f"{status} {basis} words={read.words}/{len(words)} "
+                            f"view={read.view} ink={ink_share} read={read.text!r}",
                             "images": [text_frame, *views],
                         }
                     )
-                checks.append(
-                    {
-                        "kind": "text",
-                        "layer_id": layer.id,
-                        "at_s": round(at, 4),
-                        "expected_visible": present,
-                        "status": "passed" if matches == present else "failed",
-                    }
-                )
+                row = {
+                    "kind": "text",
+                    "layer_id": layer.id,
+                    "at_s": round(at, 4),
+                    "expected_visible": present,
+                    "status": status,
+                    "proof" if status == "passed" else "reason": basis,
+                    "words_expected": len(words),
+                    "words_read_in_order": read.words,
+                    "extra_tokens": read.extra,
+                    "min_word_conf": None if read.min_conf is None else round(read.min_conf, 1),
+                    "best_view": read.view,
+                    "ink_share": None if ink_share is None else round(ink_share, 3),
+                    "fill_like_background_share": None
+                    if fill_like is None
+                    else round(fill_like, 3),
+                    "read_area": list(rect),
+                }
+                checks.append({key: value for key, value in row.items() if value is not None})
     except (OSError, ValueError, KeyError, subprocess.SubprocessError, TimeoutError) as exc:
         checks.append({"kind": "evidence", "status": "missing", "reason": type(exc).__name__})
     report["elapsed_s"] = round(time.monotonic() - started, 3)

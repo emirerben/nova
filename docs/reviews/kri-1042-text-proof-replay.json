@@ -1,0 +1,648 @@
+{
+  "issue": "KRI-1042",
+  "before": "phone-simple-cut-v3 (origin/main fc0c8ff84)",
+  "after": "phone-simple-cut-v4",
+  "lisbon_frames_replay": {
+    "job_id": "3daccc8c-b263-430a-a62f-5821f7b3b647",
+    "layer": "text-0, 0-3.0 s, white Inter-Bold 86 px, five words on three lines",
+    "inputs": "Verifier read area (44,964,745,1367) of the retained export at each sample and the analysis-proxy frame displayed beneath it, saved during the read-only KRI-1042 investigation. Media stays out of git.",
+    "input_sha256": {
+      "bg_0.45.png": "0581314dce0cdd2e316eac1813584a9a83a089b568fd176a6e3101b9b8c76742",
+      "bg_1.5.png": "7fb10fe8c9d2b84ef9a6a960f0301ce1938d15771461b4deb252ecbc39a11f88",
+      "bg_2.55.png": "d0bfb615a9add0129a798b9999d3fffba4335f994055ccf208280842bad40b79",
+      "out_0.45.png": "47e1a92d7dd644fcfb280c364a5e80a96c179f0c7f4664750e3f821b9f572c98",
+      "out_1.5.png": "6b417cffeaf52a9463623b812664313fafc7a9f7864992a9113c363655971c6e",
+      "out_2.55.png": "b2acdef35016c10bfa33b6143ceb082ca00a63518dab317f0ca9b70c1cbdd8d2"
+    },
+    "command": "python -I lisbon_frames_replay.py src/apps/api <retained crops> <origin/main actual_export_verification.py>",
+    "stored_v3_report": {
+      "0.45": "failed",
+      "1.5": "failed",
+      "2.55": "passed",
+      "3.15 hidden": "passed"
+    },
+    "v3_replay": {
+      "0.45": "failed",
+      "1.5": "failed",
+      "2.55": "passed"
+    },
+    "v4_replay": [
+      {
+        "at_s": 0.45,
+        "status": "passed",
+        "basis": "presence",
+        "words": "3/5",
+        "extra_tokens": 1,
+        "best_view": "overlay_smooth_x1",
+        "ink_share": 0.184,
+        "fill_like_background_share": 0.009
+      },
+      {
+        "at_s": 1.5,
+        "status": "passed",
+        "basis": "presence",
+        "words": "4/5",
+        "extra_tokens": 2,
+        "best_view": "overlay_smooth_x1",
+        "ink_share": 0.18,
+        "fill_like_background_share": 0.01
+      },
+      {
+        "at_s": 2.55,
+        "status": "passed",
+        "basis": "copy",
+        "words": "5/5",
+        "extra_tokens": 0,
+        "best_view": "overlay_smooth_x2",
+        "ink_share": 0.14,
+        "fill_like_background_share": 0.0
+      }
+    ],
+    "negative_controls_v4": {
+      "wrong_last_word": [
+        {
+          "at_s": 0.45,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "3/5",
+          "extra_tokens": 1,
+          "best_view": "overlay_smooth_x1",
+          "ink_share": 0.184,
+          "fill_like_background_share": 0.009
+        },
+        {
+          "at_s": 1.5,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "3/5",
+          "extra_tokens": 0,
+          "best_view": "fill_x1",
+          "ink_share": 0.18,
+          "fill_like_background_share": 0.01
+        },
+        {
+          "at_s": 2.55,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "4/5",
+          "extra_tokens": 1,
+          "best_view": "overlay_smooth_x1",
+          "ink_share": 0.14,
+          "fill_like_background_share": 0.0
+        }
+      ],
+      "stale_shorter_copy": [
+        {
+          "at_s": 0.45,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "3/4",
+          "extra_tokens": 1,
+          "best_view": "overlay_smooth_x1",
+          "ink_share": 0.184,
+          "fill_like_background_share": 0.009
+        },
+        {
+          "at_s": 1.5,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "4/4",
+          "extra_tokens": 2,
+          "best_view": "overlay_smooth_x1",
+          "ink_share": 0.18,
+          "fill_like_background_share": 0.01
+        },
+        {
+          "at_s": 2.55,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "4/4",
+          "extra_tokens": 1,
+          "best_view": "overlay_smooth_x2",
+          "ink_share": 0.14,
+          "fill_like_background_share": 0.0
+        }
+      ],
+      "text_never_drawn": [
+        {
+          "at_s": 0.45,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "0/5",
+          "extra_tokens": 0,
+          "best_view": "none",
+          "ink_share": 0.005,
+          "fill_like_background_share": 0.009
+        },
+        {
+          "at_s": 1.5,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "0/5",
+          "extra_tokens": 0,
+          "best_view": "none",
+          "ink_share": 0.006,
+          "fill_like_background_share": 0.01
+        },
+        {
+          "at_s": 2.55,
+          "status": "failed",
+          "basis": "copy_not_read",
+          "words": "1/5",
+          "extra_tokens": 1,
+          "best_view": "raw_x1",
+          "ink_share": 0.003,
+          "fill_like_background_share": 0.0
+        }
+      ],
+      "drawn_late": [
+        {
+          "at_s": 0.45,
+          "status": "failed",
+          "basis": "no_glyph_ink",
+          "words": "0/5",
+          "extra_tokens": 0,
+          "best_view": "none",
+          "ink_share": 0.005,
+          "fill_like_background_share": 0.009
+        },
+        {
+          "at_s": 1.5,
+          "status": "failed",
+          "basis": "no_glyph_ink",
+          "words": "0/5",
+          "extra_tokens": 0,
+          "best_view": "none",
+          "ink_share": 0.006,
+          "fill_like_background_share": 0.01
+        },
+        {
+          "at_s": 2.55,
+          "status": "passed",
+          "basis": "copy",
+          "words": "5/5",
+          "extra_tokens": 0,
+          "best_view": "overlay_smooth_x2",
+          "ink_share": 0.14,
+          "fill_like_background_share": 0.0
+        }
+      ]
+    },
+    "limits": "The export and proxies were not retained, so the full report (picture, audio, hidden-sample background) was not replayed end to end. The stored v3 report rejects the picture check (min SSIM 0.889); v4 does not change that rule."
+  },
+  "synthetic_v3_v4_comparison": {
+    "command": "pytest a throwaway module that runs origin/main's verifier and this branch's verifier on the same export bytes built by tests/integration/test_actual_export_verification.py",
+    "cases": 42,
+    "picture_audio_duration_checks_identical": true,
+    "verdict_changes": [
+      {
+        "case": "titled_shirt",
+        "v3": "rejected",
+        "v4": "checked"
+      },
+      {
+        "case": "titled_stray_mark",
+        "v3": "rejected",
+        "v4": "checked"
+      },
+      {
+        "case": "titled_quote",
+        "v3": "rejected",
+        "v4": "checked"
+      }
+    ],
+    "elapsed_s_total": {
+      "v3": 59.7,
+      "v4": 59.7
+    },
+    "rows": [
+      {
+        "case": "default",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "source",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "order",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "window",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "text",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "wrong_copy",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "missing_letter",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "extra_punctuation",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "position",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "text_time",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "failed:no_glyph_ink",
+          "failed:no_glyph_ink",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "extra_text_time",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "failed:copy_still_visible"
+        ]
+      },
+      {
+        "case": "double_audio",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "mute_audio",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "rate",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": []
+      },
+      {
+        "case": "tail_3",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "tail_4.6",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "failed:copy_still_visible"
+        ]
+      },
+      {
+        "case": "on_grid_0",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": []
+      },
+      {
+        "case": "on_grid_1",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": []
+      },
+      {
+        "case": "on_grid_-1",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": []
+      },
+      {
+        "case": "single_neighbour",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": []
+      },
+      {
+        "case": "off_grid_0",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": []
+      },
+      {
+        "case": "off_grid_1",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": []
+      },
+      {
+        "case": "off_grid_2",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": []
+      },
+      {
+        "case": "off_grid_-2",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": []
+      },
+      {
+        "case": "bright_Ancient City of Troy",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "bright_Ancient City of",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "bright_Ancient City of troy",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "bright_Ancient Town of Troy",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "bright_None",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_plain",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_shirt",
+        "v3": "rejected",
+        "v4": "checked",
+        "v4_text": [
+          "passed:presence",
+          "passed:presence",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_stray_mark",
+        "v3": "rejected",
+        "v4": "checked",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_missing",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_wrong_word",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_extra_word",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_late",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:no_glyph_ink",
+          "failed:no_glyph_ink",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_outside",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "failed:copy_not_read",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_lingers",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "failed:copy_still_visible"
+        ]
+      },
+      {
+        "case": "titled_lingers_shirt",
+        "v3": "rejected",
+        "v4": "rejected",
+        "v4_text": [
+          "passed:presence",
+          "passed:presence",
+          "passed:copy",
+          "failed:glyphs_still_visible"
+        ]
+      },
+      {
+        "case": "titled_quote",
+        "v3": "rejected",
+        "v4": "checked",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_second_Rome",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:other_layer",
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:other_layer",
+          "passed:absent"
+        ]
+      },
+      {
+        "case": "titled_second_oy 2",
+        "v3": "checked",
+        "v4": "checked",
+        "v4_text": [
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:other_layer",
+          "passed:copy",
+          "passed:copy",
+          "passed:copy",
+          "passed:other_layer",
+          "passed:absent"
+        ]
+      }
+    ]
+  }
+}

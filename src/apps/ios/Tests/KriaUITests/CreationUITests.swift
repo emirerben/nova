@@ -2350,6 +2350,267 @@ final class CreationUITests: XCTestCase {
         XCTAssertFalse(app.otherElements["plan-feed"].exists)
     }
 
+    func testSubmittedMessageAppearsWhileSendPreflightIsStillWaiting() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_SUGGESTION_CHIPS_ECHO": "1", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_PERF_DISK_STORE": "1", "KRIA_CHAT_LONG_HISTORY": "12",
+                                 "KRIA_SLIDE_POST_CAPS": "slow"]
+        app.launch()
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 40))
+        replaceSubmissionText("Keep the whole take", in: composer, app: app)
+        // Capabilities become stale after 30 seconds. Their fixture response takes six seconds.
+        Thread.sleep(forTimeInterval: 40)
+        app.buttons["chat-send-message"].tap()
+        let submitted = app.staticTexts.matching(NSPredicate(format: "label == %@", "You: Keep the whole take"))
+        XCTAssertTrue(submitted.firstMatch.waitForExistence(timeout: 2))
+        XCTAssertNotEqual(composer.value as? String, "Keep the whole take")
+        XCTAssertFalse(app.buttons["chat-send-message"].isEnabled)
+        let status = app.staticTexts["chat-submission-status"]
+        assertSubmissionStatusVisible(in: app, composer: composer)
+        let fullyVisible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            submitted.firstMatch.exists && submitted.firstMatch.frame.maxY <= status.frame.minY
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [fullyVisible], timeout: 2), .completed,
+                       "The submitted bubble clears the composer and sending status")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Submitted message during capability preflight"
+        shot.lifetime = .keepAlways
+        add(shot)
+        XCTAssertTrue(app.staticTexts["Got it. suggestion[none/none]"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["chat-retry-message"].exists)
+        XCTAssertEqual(submitted.count, 1)
+        app.terminate()
+    }
+
+    func testPendingSubmissionStatusStaysVisibleWithKeyboardOpenAndClosed() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_SUGGESTION_CHIPS_ECHO": "1",
+                                 "KRIA_CHAT_FIXTURE_MEDIA": "1", "KRIA_CHAT_SEND_DELAY": "15"]
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("Keep this pending message visible")
+        app.buttons["chat-send-message"].tap()
+        assertSubmissionStatusVisible(in: app, composer: composer)
+        attach(app, "Pending message keyboard open")
+        app.staticTexts["workspace-project-title"].tap()
+        XCTAssertTrue(eventually(timeout: 5) { !app.keyboards.firstMatch.exists })
+        assertSubmissionStatusVisible(in: app, composer: composer)
+        let bubble = app.staticTexts["You: Keep this pending message visible"]
+        XCTAssertTrue(bubble.isHittable)
+        XCTAssertLessThanOrEqual(bubble.frame.maxY, app.staticTexts["chat-submission-status"].frame.minY)
+        attach(app, "Pending message keyboard closed")
+        XCTAssertTrue(app.staticTexts["Got it. suggestion[none/none]"].waitForExistence(timeout: 25))
+        app.terminate()
+    }
+
+    func testRejectedSubmissionRestoresDraftAndRetryDoesNotDuplicatePrompt() {
+        checkSendFailure("reject")
+    }
+
+    func testUnconfirmedSubmissionRetriesOnePrompt() {
+        checkSendFailure("offline")
+    }
+
+    func testAcknowledgedMessageIsNotRestoredWhenThePostResponseIsLost() {
+        checkSendFailure("lost-response")
+    }
+
+    func testUnconfirmedSubmissionSurvivesAppRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_SUGGESTION_CHIPS_ECHO": "1", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_PERF_DISK_STORE": "1",
+                                 "KRIA_CHAT_LONG_HISTORY": "12", "KRIA_CHAT_SEND_FAILURE": "offline"]
+        app.launch()
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 30))
+        let message = "Keep this request after relaunch \(Int.random(in: 100000...999999))"
+        replaceSubmissionText(message, in: composer, app: app)
+        app.buttons["chat-send-message"].tap()
+        XCTAssertTrue(app.buttons["chat-retry-message"].waitForExistence(timeout: 15))
+        replaceSubmissionText(message, in: composer, app: app)
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["chat-retry-message"].waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "KRIA_CHAT_SEND_FAILURE")
+        app.launchArguments.removeAll { $0 == "-perf-reset" }
+        app.launch()
+        let retry = app.buttons["chat-retry-message"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 30))
+        XCTAssertEqual(composer.value as? String, message, "A deliberately retyped draft survives relaunch")
+        retry.tap()
+        XCTAssertTrue(app.staticTexts["Got it. suggestion[none/none]"].waitForExistence(timeout: 15))
+        XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
+        let submitted = app.staticTexts.matching(NSPredicate(format: "label == %@", "You: \(message)"))
+        let found = submitted.firstMatch.waitForExistence(timeout: 10)
+        if !found {
+            print("Send recovery labels: \(app.staticTexts.allElementsBoundByIndex.map(\.label))")
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Recovery text diagnostic"
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+        XCTAssertTrue(found)
+        XCTAssertEqual(submitted.count, 1)
+        XCTAssertEqual(composer.value as? String, message, "Acknowledgement preserves the new identical draft")
+        replaceSubmissionText("", in: composer, app: app)
+        app.terminate()
+    }
+
+    func testReopenedChatSharesTheLiveSendAndReceivesItsRejectedDraft() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3",
+                                 "KRIA_PERF_DISK_STORE": "1", "KRIA_CHAT_LONG_HISTORY": "12",
+                                 "KRIA_CHAT_SEND_FAILURE": "reject", "KRIA_CHAT_SEND_DELAY": "20"]
+        app.launch()
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 30))
+        let message = "Keep the arrival \(Int.random(in: 100000...999999))"
+        replaceSubmissionText(message, in: composer, app: app)
+        app.buttons["chat-send-message"].tap()
+        openSubmissionChat("Chat 2", in: app)
+        openSubmissionChat("Chat 1", in: app)
+        XCTAssertFalse(app.buttons["chat-send-message"].isEnabled, "The reopened view shares the original live request")
+        XCTAssertFalse(app.buttons["chat-retry-message"].exists)
+        let newerDraft = "Use a warmer ending"
+        replaceSubmissionText(newerDraft, in: composer, app: app)
+        let merged = message + "\n\n" + newerDraft
+        let recovered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@ AND enabled == true", merged), object: composer)
+        XCTAssertEqual(XCTWaiter.wait(for: [recovered], timeout: 30), .completed)
+        XCTAssertFalse(app.buttons["chat-retry-message"].exists)
+        XCTAssertFalse(app.staticTexts["You: \(message)"].exists, "A rejected prompt is a draft rather than a sent bubble")
+        let edited = merged + " and keep the sound"
+        replaceSubmissionText(edited, in: composer, app: app)
+        openSubmissionChat("Chat 2", in: app)
+        openSubmissionChat("Chat 1", in: app)
+        XCTAssertEqual(composer.value as? String, edited)
+        replaceSubmissionText("", in: composer, app: app)
+        app.terminate()
+    }
+
+    func testEditorChatDraftPersistsWhenReturningToTheMainChat() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3",
+                                 "KRIA_PERF_DISK_STORE": "1", "KRIA_CHAT_LONG_HISTORY": "12",
+                                 "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1"]
+        app.launch()
+        let openEditor = app.buttons["Open editor"]
+        XCTAssertTrue(openEditor.waitForExistence(timeout: 30))
+        openEditor.tap()
+        let kria = app.buttons["native-editor-conversation"]
+        XCTAssertTrue(kria.waitForExistence(timeout: 15))
+        kria.tap()
+        let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 10))
+        let fields = app.textFields.matching(NSPredicate(format: "label == %@", "Message Kria"))
+        XCTAssertTrue(fields.firstMatch.waitForExistence(timeout: 10))
+        let composer = fields.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? fields.firstMatch
+        let message = "Keep this editor draft \(Int.random(in: 100000...999999))"
+        replaceSubmissionText(message, in: composer, app: app)
+        let returnToEditor = sheet.buttons["Open editor"]
+        var attempts = 0
+        while !returnToEditor.isHittable && attempts < 4 { sheet.swipeUp(); attempts += 1 }
+        XCTAssertTrue(returnToEditor.isHittable)
+        returnToEditor.tap()
+        XCTAssertTrue(sheet.waitForNonExistence(timeout: 5))
+        app.buttons["native-editor-back"].tap()
+        let mainComposer = app.textFields["Message Kria"]
+        XCTAssertTrue(mainComposer.waitForExistence(timeout: 10))
+        XCTAssertEqual(mainComposer.value as? String, message)
+        replaceSubmissionText("", in: mainComposer, app: app)
+        app.terminate()
+    }
+
+    private func openSubmissionChat(_ title: String, in app: XCUIApplication) {
+        app.buttons["workspace-menu-toggle"].tap()
+        let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(app.buttons["drawer-new-chat"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.textFields["Message Kria"].waitForExistence(timeout: 10))
+    }
+
+    private func replaceSubmissionText(_ message: String, in composer: XCUIElement, app: XCUIApplication) {
+        composer.tap()
+        if let existing = composer.value as? String,
+           !["", "Tell Kria what you want…", "Add instructions (optional)"].contains(existing) {
+            composer.press(forDuration: 1.2)
+            let selectAll = app.menuItems["Select All"]
+            XCTAssertTrue(selectAll.waitForExistence(timeout: 5))
+            selectAll.tap()
+            if message.isEmpty { composer.typeText(XCUIKeyboardKey.delete.rawValue) }
+        }
+        if !message.isEmpty { composer.typeText(message) }
+        if !message.isEmpty { XCTAssertEqual(composer.value as? String, message) }
+    }
+
+    private func assertSubmissionStatusVisible(in app: XCUIApplication, composer: XCUIElement,
+                                               file: StaticString = #filePath, line: UInt = #line) {
+        let status = app.staticTexts["chat-submission-status"]
+        XCTAssertTrue(eventually(timeout: 3) {
+            status.exists && status.isHittable && status.frame.height >= 13
+                && status.frame.maxY + 8 <= composer.frame.minY
+                && status.frame.minY >= app.frame.minY
+        }, "Submission status stays fully above the composer", file: file, line: line)
+        let retry = app.buttons["chat-retry-message"]
+        if retry.exists {
+            XCTAssertTrue(retry.isHittable, file: file, line: line)
+            XCTAssertLessThanOrEqual(retry.frame.maxY, composer.frame.minY, file: file, line: line)
+        }
+    }
+
+    private func checkSendFailure(_ mode: String) {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_SUGGESTION_CHIPS_ECHO": "1", "KRIA_CHAT_FIXTURE_MEDIA": "1",
+                                 "KRIA_CHAT_SEND_FAILURE": mode]
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let composer = app.textFields["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("Keep my first clip")
+        app.buttons["chat-send-message"].tap()
+        if mode == "lost-response" {
+            XCTAssertTrue(app.staticTexts["Got it. suggestion[none/none]"].waitForExistence(timeout: 15))
+            XCTAssertNotEqual(composer.value as? String, "Keep my first clip")
+        } else if mode == "offline" {
+            let retry = app.buttons["chat-retry-message"]
+            XCTAssertTrue(retry.waitForExistence(timeout: 15))
+            XCTAssertGreaterThanOrEqual(retry.frame.height, 44)
+            XCTAssertNotEqual(composer.value as? String, "Keep my first clip")
+            assertSubmissionStatusVisible(in: app, composer: composer)
+            attach(app, "Unconfirmed message keyboard open")
+            app.staticTexts["workspace-project-title"].tap()
+            XCTAssertTrue(eventually(timeout: 5) { !app.keyboards.firstMatch.exists })
+            assertSubmissionStatusVisible(in: app, composer: composer)
+            attach(app, "Unconfirmed message keyboard closed")
+            composer.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            assertSubmissionStatusVisible(in: app, composer: composer)
+            retry.tap()
+        } else {
+            let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Keep my first clip"), object: composer)
+            XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
+            app.buttons["chat-send-message"].tap()
+        }
+        XCTAssertTrue(app.staticTexts["Got it. suggestion[none/none]"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["chat-retry-message"].exists)
+        let submitted = app.staticTexts.matching(NSPredicate(format: "label == %@", "You: Keep my first clip"))
+        XCTAssertTrue(submitted.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertEqual(submitted.count, 1)
+        app.terminate()
+    }
+
     private func createFreshChat(in app: XCUIApplication) {
         XCTAssertTrue(app.buttons["Open projects"].waitForExistence(timeout: 20))
         app.buttons["Open projects"].tap()
