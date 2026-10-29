@@ -3160,16 +3160,16 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .montage: "Montage"
-        case .narrated: "Narrated"
-        case .talkingToCamera: "Talking"
+        case .narrated: "Voiceover"
+        case .talkingToCamera: "Talk to camera"
         case .slides: "Slider"
         }
     }
     var choiceSentence: String {
         switch self {
         case .montage: "Let’s make a montage"
-        case .narrated: "Let’s make it narrated"
-        case .talkingToCamera: "Let’s make a talking video"
+        case .narrated: "Let’s make a voiceover video"
+        case .talkingToCamera: "Let’s make a talk to camera video"
         case .slides: "Let’s make a slider"
         }
     }

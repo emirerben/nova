@@ -5,7 +5,7 @@ import UIKit
 enum FeaturedEdit: String, CaseIterable, Identifiable {
     case bosphorus, lisbon, sunset, office, talking
 
-    static let onboarding: [FeaturedEdit] = [.bosphorus, .lisbon, .sunset, .office]
+    static let onboarding: [FeaturedEdit] = [.bosphorus, .lisbon, .sunset, .office, .talking]
     var id: String { rawValue }
     var resource: String { "featured-\(rawValue)" }
     var aspectRatio: CGFloat { self == .bosphorus || self == .talking ? 9 / 16 : 16 / 9 }

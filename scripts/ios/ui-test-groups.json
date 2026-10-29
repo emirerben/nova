@@ -189,9 +189,9 @@
       "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
       "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection",
       "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas",
-      "KriaUITests/FeaturedEditPreviewUITests/testCenteredFormatOwnsPlayback",
-      "KriaUITests/FeaturedEditPreviewUITests/testOnboardingPlaysFourEditsInOrder",
-      "KriaUITests/FeaturedEditPreviewUITests/testSliderAdvancesWhenCenteredAndPauses",
+      "KriaUITests/FeaturedEditPreviewUITests/testLeadingFormatOwnsPlayback",
+      "KriaUITests/FeaturedEditPreviewUITests/testSignupPlaysAllFiveEditsTogether",
+      "KriaUITests/FeaturedEditPreviewUITests/testSliderAdvancesWhenLeadingAndPauses",
       "KriaUITests/ProductionSignInUITests/testBuildControlsDevelopmentSignIn",
       "KriaUITests/CreationUITests/testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries"
     ],
