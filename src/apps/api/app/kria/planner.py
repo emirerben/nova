@@ -4396,21 +4396,6 @@ _REPLAN_CUES = re.compile(
     r"from scratch|best \d+|top \d+|\d+ best|use (only|just)|only (the )?(best|funniest|top)|"
     r"funniest|more clips|fewer clips|farkl\w*|yeniden|bastan|ba\u015ftan)\b"
 )
-# 29 Ekim: "different" ("make the font different") and "farkli" are style asks the text ops
-# serve; "another version", "new version", "recut", "from scratch" and the best-N cues still
-# force the planner. Used instead of the two cues above when the compose flag is on.
-_REPLAN_CUES_COMPOSE = re.compile(
-    r"\b(vibe|another version|new (edit|video|version|cut)|recut|re-?cut|re-?do|"
-    r"from scratch|best \d+|top \d+|\d+ best|use (only|just)|only (the )?(best|funniest|top)|"
-    r"funniest|more clips|fewer clips|yeniden|bastan|ba\u015ftan)\b"
-)
-_REPLAN_CUES_TR_COMPOSE = re.compile(
-    r"\b(?:yeniden|bastan|sifirdan|en iyi \d|\d+ en iyi|"
-    r"(?:sadece|yalnizca) en (?:iyi|komik)|en komik|"
-    r"daha (?:fazla|cok|az) klip|"
-    r"yeni (?:bir )?(?:video|versiyon|surum|duzenleme|kesim)|"
-    r"baska (?:bir )?(?:versiyon|surum|video|duzenleme|kesim))\w*"
-)
 # KRI-520: Turkish re-plan wording on `loose_text`, at the English cues' precision: a new
 # version, "from scratch", a best/funniest-N selection, more/fewer clips. A bare
 # "en iyi" or "tekrar" stays out (they also appear in ordinary edits).
@@ -4450,13 +4435,11 @@ def _fast_path_eligible(message: str) -> bool:
     from app.kria.brief import wants_full_replan  # noqa: PLC0415
 
     text = " ".join(message.casefold().split())
-    compose = compose_unmet_with_ops()
     return (
         0 < len(text) <= _FAST_PATH_MAX_CHARS
         and not wants_full_replan(message)
-        and (_REPLAN_CUES_COMPOSE if compose else _REPLAN_CUES).search(text) is None
-        and (_REPLAN_CUES_TR_COMPOSE if compose else _REPLAN_CUES_TR).search(loose_text(message))
-        is None
+        and _REPLAN_CUES.search(text) is None
+        and _REPLAN_CUES_TR.search(loose_text(message)) is None
     )
 
 
@@ -5403,21 +5386,6 @@ async def _plan_live_turn(
     if item.current_job_id is not None:
         latest_job = await db.get(Job, item.current_job_id)
         latest_job_failed = str(getattr(latest_job, "status", "") or "").endswith("failed")
-    if (
-        latest_job_failed
-        and compose_unmet_with_ops()
-        and brief_on
-        and not creative_copy_pending
-        and manifest.capabilities["dispatch_render"].available
-    ):
-        # 29 Ekim: a failed LATEST render does not make the draft unreachable. When the item
-        # still has something to edit in place (a failed re-render of a ready variant, an
-        # unsaved editor draft), an edit-shaped follow-up goes to the copilot like any other;
-        # only a job that never produced a variant has nothing to edit and keeps the re-plan.
-        probe = await _load_editor_target(
-            db, thread_id=thread_id, item=item, **_state_kw(editor_state)
-        )
-        latest_job_failed = probe is None
     extract_first = (
         brief_on
         and item.current_job_id is not None
