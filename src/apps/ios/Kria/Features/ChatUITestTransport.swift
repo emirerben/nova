@@ -35,6 +35,13 @@ private final class ChatUITestURLProtocol: URLProtocol, @unchecked Sendable {
             Perf.mark("fixture.full.arrived")
             PerfCounters.shared.setOnce("fixture fullDelayMS", Int(PerfFixture.delay(for: request) * 1000))
         }
+        if request.httpMethod == "POST", ["turns", "messages"].contains(request.url?.lastPathComponent ?? ""),
+           let delay = ProcessInfo.processInfo.environment["KRIA_CHAT_SEND_DELAY"].flatMap(Double.init), delay > 0 {
+            let work = DispatchWorkItem { [weak self] in self?.finishLoading() }
+            delayedResponse = work
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
+            return
+        }
         // `KRIA_SLIDE_POST_CAPS=slow`: capabilities answer after 6s (the slide editor must not wait for them).
         let slowCapabilities = request.url?.path.hasSuffix("/capabilities") == true
             && ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_CAPS"] == "slow"
@@ -101,6 +108,7 @@ final class CreationChatFixture: @unchecked Sendable {
     private var planVersions: [String: Int] = [:]
     private var generateConflicts: [String: Int] = [:]
     private var failedGenerates: Set<String> = []
+    private var sendRefused = false
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
     private var chatEditFailed = false
@@ -626,6 +634,17 @@ final class CreationChatFixture: @unchecked Sendable {
             } else if action == "remove_media" { state["media"] = []; append("action_remove_media") }
         } else if parts.last == "messages" || parts.last == "turns" {
             let turnID = body["client_event_id"] as? String ?? id
+            if let mode = ProcessInfo.processInfo.environment["KRIA_CHAT_SEND_FAILURE"], mode != "lost-response", !sendRefused {
+                sendRefused = true
+                if mode == "offline" { return nil }
+                return response(["detail": "Fixture rejected this prompt"], status: 422)
+            }
+            if events.contains(where: { $0["client_event_id"] as? String == turnID && $0["event_type"] as? String == "user_message" }) {
+                if parts.last == "turns" {
+                    return response(["turn_id": turnID, "thread_revision": revision, "status": "completed"])
+                }
+                return response(thread)
+            }
             // Like the server (`runtime.py`), a stored user message echoes the structured answer it carried
             // (`song_order` / `choice_selection`); that echo is what closes the order card.
             var userPayload: [String: Any] = [:]
@@ -1048,6 +1067,11 @@ final class CreationChatFixture: @unchecked Sendable {
         if parts.last == "delta" {
             let after = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "after_sequence" })?.value.flatMap(Int.init) ?? -1
             return response(["thread_id": id, "runtime_version": runtime, "status": "active", "after_sequence": after, "has_more": false, "thread_revision": revision, "events": events.filter { ($0["sequence"] as? Int ?? 0) > after }, "next_after_sequence": events.count - 1])
+        }
+        if request.httpMethod == "POST", ["turns", "messages"].contains(parts.last ?? ""),
+           ProcessInfo.processInfo.environment["KRIA_CHAT_SEND_FAILURE"] == "lost-response", !sendRefused {
+            sendRefused = true
+            return nil
         }
         if parts.last == "turns" {
             // Like the server (`runtime.py`), the accepted turn id is the one stamped on that turn's events
