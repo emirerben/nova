@@ -1,0 +1,13 @@
+{
+  "pr": 1928,
+  "reviewed_code_sha": "88573416964ba6c87ae4bf54518e13f60244ca76",
+  "claim": "local_fix",
+  "tests_passed_after_main_integration": 299,
+  "command": "cd src/apps/api && pytest tests/kria/test_kri1031_too_short_clips.py tests/kria/test_kri1026_plaza_exclusions.py tests/agents/test_clip_intent_planner.py tests/services/test_kri520_clip_intent_copy.py tests/evals/test_clip_intent_planner_evals.py",
+  "independent_review": "Full merge-base diff reviewed; no material P1/P2 findings",
+  "no_paid_calls": true,
+  "cache_contract": "Shared reviewed cache qualification e9b8118a2; throughput16 and selector suite passed",
+  "fresh_exact_head_CI": "required before merge",
+  "limitations": "Physical original iPhone incident acceptance and installed TestFlight output remain unverified",
+  "fix": "Compound length notice no longer claims all clips kept. Regression red before fix;31 focused tests passed before main merge. Current prompt preserves both length exclusions and random-order/text-sequence instructions under unique version2026-10-29-exclude-length-text-sequence."
+}
