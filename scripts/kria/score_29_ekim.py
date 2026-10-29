@@ -513,7 +513,19 @@ def check_title_fit(fx: dict) -> dict:
     errors: list[str] = []
     for font in all_covering:
         try:
-            placed = style_rows([copy.deepcopy(row)], policy, selected_fonts={text_role(row): font})
+            frames = [
+                {
+                    "start_s": row["start_s"],
+                    "end_s": row["end_s"],
+                    "pixels": [128] * (108 * 192),
+                }
+            ]
+            placed = style_rows(
+                [copy.deepcopy(row)],
+                policy,
+                selected_fonts={text_role(row): font},
+                background_frames=frames,
+            )
             outcomes[font] = f"placed size={placed[0]['size_px']}"
         except CreatorRenderContractError as exc:
             outcomes[font] = "CreatorRenderContractError"

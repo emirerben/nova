@@ -210,11 +210,36 @@ def apply_replace(text: str, find: str, replacement: str) -> tuple[str, int]:
             count += 1
         position = haystack.find(needle, position + len(needle))
     out.append(text[cursor:])
-    return clean_text("".join(out)), count
+    return clean_authored_text("".join(out)), count
 
 
 def clean_text(value: str) -> str:
     return " ".join(_CONTROL.sub(" ", value).split())
+
+
+def clean_authored_text(value: str) -> str:
+    """`clean_text` that keeps the author's line breaks (one blank row at most, none at the edges).
+
+    The editor's own text keeps its breaks (`wrap_lines=false`), so an agent-authored break must
+    survive too instead of becoming a space.
+    """
+    lines = [
+        " ".join(_CONTROL.sub(" ", line).split())
+        for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    ]
+    kept: list[str] = []
+    for line in lines:
+        if line or (kept and kept[-1]):
+            kept.append(line)
+    while kept and not kept[-1]:
+        kept.pop()
+    return "\n".join(kept)
+
+
+def keep_authored_breaks(row: dict[str, Any]) -> None:
+    """Explicit breaks mean the author laid the text out: no re-wrap (iOS editor contract)."""
+    if "\n" in str(row.get("text") or ""):
+        row["wrap_lines"] = False
 
 
 def contains_find(text: str, find: str) -> bool:
@@ -651,13 +676,14 @@ def op_rewrite_text(state: _DraftState, op: dict[str, Any]) -> None:
         if replace is not None:
             new, _ = apply_replace(str(row.get("text") or ""), find or "", str(replace["with"]))
         else:
-            new = clean_text(str(text))
+            new = clean_authored_text(str(text))
         if not new:
             raise KriaEditorOpError("A text can't be empty; remove it instead")
         if len(new) > MAX_TEXT_CHARS:
             raise KriaEditorOpError("That text would be too long")
         if new != row.get("text"):
             row["text"] = new
+            keep_authored_breaks(row)
             changed += 1
     state.changed.add("text")
     state.summary = f"Rewrite {_plural(changed, 'text')}"
@@ -1068,6 +1094,7 @@ def add_text_v2(state: _DraftState, op: dict[str, Any]) -> None:
                 if key in source and source[key] is not None
             }
         )
+    keep_authored_breaks(row)
     if op.get("after_animation_of"):
         row["_after_animation_of"] = op["after_animation_of"]
     if op.get("below"):
