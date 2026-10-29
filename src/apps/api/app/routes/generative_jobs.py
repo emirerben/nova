@@ -9007,6 +9007,38 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         log.warning("guided_editor_approval_projection_failed", job_id=str(job.id), exc_info=True)
         return None
     try:
+        rendered_source_durations = None
+        if _stored_variant_field(job, variant, PHONE_EDITOR_PLAN_FIELD):
+            from app.services.phone_sources import (
+                PHONE_SOURCES_FIELD,
+                PHONE_VISUALS_FIELD,
+                PhoneSourceBinding,
+                PhoneVisualBinding,
+            )
+
+            bindings = [
+                PhoneSourceBinding.model_validate(row)
+                for row in assembly.get(PHONE_SOURCES_FIELD) or []
+            ]
+            by_identity = {
+                (item.media_id, item.proxy_path, item.generation): item for item in bindings
+            }
+            visuals = {
+                (item.media_id, item.gcs_path, item.generation): item
+                for row in assembly.get(PHONE_VISUALS_FIELD) or []
+                for item in [PhoneVisualBinding.model_validate(row)]
+            }
+            rendered_source_durations = {}
+            for source in snapshot.media:
+                binding = by_identity.get((source.media_id, source.gcs_path, source.generation))
+                if binding is None:
+                    visual = visuals.get((source.media_id, source.gcs_path, source.generation))
+                    if visual is None or visual.kind != source.kind:
+                        raise ValueError("rendered editor source lacks its original receipt")
+                    if visual.kind == "video":
+                        rendered_source_durations[source.media_id] = visual.duration_s
+                else:
+                    rendered_source_durations[source.media_id] = binding.original.duration_s
         # Older approvals recorded the confirmed style only in the creator
         # identity. Recover presentation for the initial editor projection,
         # leaving the immutable approval, plan hash, and word receipts intact.
@@ -9034,6 +9066,7 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
                 snapshot=snapshot.model_dump(mode="json"),
                 execution_plan=projected_plan,
                 base_generation=variant_render_baseline(variant),
+                rendered_source_durations=rendered_source_durations,
             )
         )
     except (TypeError, ValueError):
@@ -9162,6 +9195,9 @@ def _guided_v2_slot_rows(
                 "source_duration_s": source.get("duration_s"),
                 "in_s": segment.get("source_start_s"),
                 "duration_s": segment.get("duration_s"),
+                **(
+                    {"timing_mode": "rendered"} if revision.get("timing_mode") == "rendered" else {}
+                ),
                 **({"source_crop": segment["source_crop"]} if segment.get("source_crop") else {}),
                 **(
                     {"playback_rate": segment["playback_rate"]}
@@ -9201,6 +9237,24 @@ def _guided_v2_slot_rows(
     return slots
 
 
+def _require_rendered_clock_reader(revision: dict) -> None:
+    from app.services.client_protocol import current_client_protocol, in_http_request
+
+    if (
+        revision.get("timing_mode") == "rendered"
+        and in_http_request()
+        and (current_client_protocol() or 0) < 25
+    ):
+        raise HTTPException(
+            status_code=426,
+            detail={
+                "code": "client_update_required",
+                "feature": "rendered_timeline_clock",
+                "minimum_client_protocol": 25,
+            },
+        )
+
+
 def _guided_v2_timeline_projection(
     job: Job,
     variant: dict,
@@ -9221,6 +9275,7 @@ def _guided_v2_timeline_projection(
             "clips": [],
             "edit_wide_look_presets": [],
         }
+    _require_rendered_clock_reader(revision)
     sources = list(revision.get("sources") or [])
     segment_layout, layout_by_media_id = _guided_v2_layouts(job, variant)
 
@@ -9843,6 +9898,7 @@ def _guided_v2_revision_for_write(
         raise _timeline_error(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_revision_unavailable"
         )
+    _require_rendered_clock_reader(current)
     if payload.revision_number is None:
         raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
     if payload.revision_number is not None and payload.revision_number != int(
@@ -10214,6 +10270,7 @@ def _guided_v2_revision_from_commit(
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID")
     if payload.base_generation != variant_render_baseline(variant):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+    _require_rendered_clock_reader(current)
     if payload.guided_revision_number is not None and payload.guided_revision_number != int(
         current["revision_number"]
     ):
@@ -10221,6 +10278,9 @@ def _guided_v2_revision_from_commit(
     if payload.guided_revision_number is None:
         raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
     raw = dict(payload.guided_revision or current)
+    raw.pop("timing_mode", None)
+    if current.get("timing_mode") is not None:
+        raw["timing_mode"] = current["timing_mode"]
     if raw.get("caption_meta") is not None:
         try:
             raw["caption_meta"] = EditorCommitCaptionMeta.model_validate(

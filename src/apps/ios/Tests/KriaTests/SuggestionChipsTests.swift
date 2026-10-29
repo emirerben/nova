@@ -105,7 +105,7 @@ final class SuggestionChipsTests: XCTestCase {
         XCTAssertEqual(set.chips(forState: "ready").map(\.id), ["a", "b"], "Protocol 25 is above this app")
         XCTAssertEqual(set.chips(forState: "ready", appProtocol: 8).map(\.id), ["a"])
         XCTAssertEqual(set.chips(forState: "ready", appProtocol: 25).map(\.id), ["a", "b", "c"])
-        XCTAssertEqual(KriaClientProtocolContract.version, 24, "Update this fixture when the app's protocol moves")
+        XCTAssertEqual(KriaClientProtocolContract.version, 25, "Update this fixture when the app's protocol moves")
     }
 
     func testCapabilityDefaultsOffWhenKeyIsMissing() throws {
