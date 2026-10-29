@@ -1628,7 +1628,8 @@ struct NativeEditorTemporaryVideo {
         beginTransaction()
     }
     func endDirectManipulation() {
-        endTransaction()
+        if captionGestureChange == nil { endTransaction() }
+        else { captionGestureChoicePresented = true }
         isDirectManipulating = false
         flushDeferredSourcePreviewUpdate()
     }
@@ -4395,6 +4396,14 @@ struct NativeEditorTemporaryVideo {
         mutateText(id: id) { $0.raw["font_family"] = .string(style) }
     }
     func setTextPosition(id: String, x: Double, y: Double) {
+        if offersCaptionStyleScope, let caption = document.textElements.first(where: { $0.id == id && $0.isCaption }) {
+            let current = captionPosition(id: id)
+            let position = isDirectManipulating
+                ? CGPoint(x: current.x + x - caption.anchor.x, y: current.y + y - caption.anchor.y)
+                : CGPoint(x: x, y: y)
+            setCaptionGesturePosition(id: id, position: position)
+            return
+        }
         guard canEditSection(.text) else { return }
         mutateText(id: id) {
             $0.raw["position"] = .string("custom")
@@ -4404,6 +4413,10 @@ struct NativeEditorTemporaryVideo {
     /// Apply every sample against the gesture's immutable starting element.
     /// Font size and wrapping width scale together, preserving the text layout.
     func transformText(from baseline: EditorTextElement, scale: Double, rotationDelta: Double) {
+        if baseline.isCaption, offersCaptionStyleScope {
+            setCaptionGestureSize(id: baseline.id, size: captionStyleSize(.line(baseline.id)) * scale)
+            return
+        }
         guard canEditSection(.text), scale.isFinite, scale > 0, rotationDelta.isFinite else { return }
         let size = Self.textSize(for: baseline)
         let width = baseline.raw["max_width_frac"]?.numberValue ?? 0.84
@@ -5646,6 +5659,204 @@ struct NativeEditorTemporaryVideo {
     func setCaptionStrokeWidth(_ width: Double?) { setCaptionMeta(key: "stroke_width", value: width.map(JSONValue.number)) }
     func setCaptionShadowEnabled(_ enabled: Bool) { setCaptionMeta(key: "shadow_enabled", value: .bool(enabled)) }
     func setCaptionPositionY(_ y: Double?) { setCaptionMeta(key: "y_frac", value: y.map { .number(min(max(0.30, $0), 0.90)) }) }
+
+    enum CaptionStyleScope: Equatable { case all, line(String) }
+    @Published private(set) var captionPlacementMessage: String?
+    @Published var captionGestureChoicePresented = false
+    private struct CaptionGestureChange {
+        var id: String
+        var values: [String: JSONValue]
+    }
+    private var captionGestureChange: CaptionGestureChange?
+
+    func captionPosition(id: String) -> CGPoint {
+        let appearance = document.captionMeta["appearance"]?.objectValue ?? [:]
+        let own = appearance["line_overrides"]?.objectValue?[id]?.objectValue ?? [:]
+        let row = document.textElements.first { $0.id == id }
+        let alignment = appearance["alignment"]?.stringValue ?? "center"
+        let fallbackX = alignment == "left" ? 80.0 / 1080 : alignment == "right" ? 1000.0 / 1080 : 0.5
+        let legacyCenterY = document.isCueNative && own["position_y_frac"] == nil && appearance["position_y_frac"] == nil
+            ? previewSelectionBounds(for: .init(kind: .captionCue, id: id), at: currentTime)?.centerY : nil
+        let inheritedX = appearance["position_x_frac"]?.numberValue ?? row.map { Double($0.anchor.x) } ?? fallbackX
+        let inheritedY = document.captionMeta["y_frac"]?.numberValue ?? row.map { Double($0.anchor.y) } ?? 0.82
+        let centeredY = legacyCenterY ?? inheritedY
+        let defaultY = appearance["position_y_frac"]?.numberValue ?? centeredY
+        let x = own["position_x_frac"]?.numberValue ?? inheritedX
+        let y = own["position_y_frac"]?.numberValue ?? defaultY
+        return CGPoint(x: x, y: y)
+    }
+
+    func setCaptionGesturePosition(id: String, position: CGPoint) {
+        guard position.x.isFinite, position.y.isFinite else { return }
+        let values: [String: JSONValue] = ["position_x_frac": .number(min(0.95, max(0.05, position.x))),
+                                           "position_y_frac": .number(min(0.90, max(0.10, position.y)))]
+        writeCaptionStyle(.line(id), values: values)
+        rememberCaptionGesture(id: id, values: values)
+    }
+
+    func setCaptionGestureSize(id: String, size: Double) {
+        guard size.isFinite else { return }
+        let values: [String: JSONValue] = ["size_px": .number(min(160, max(36, size.rounded())))]
+        writeCaptionStyle(.line(id), values: values)
+        rememberCaptionGesture(id: id, values: values)
+    }
+
+    private func rememberCaptionGesture(id: String, values: [String: JSONValue]) {
+        guard offersCaptionStyleScope, isDirectManipulating else { return }
+        if captionGestureChange?.id != id { captionGestureChange = CaptionGestureChange(id: id, values: [:]) }
+        captionGestureChange?.values.merge(values) { _, value in value }
+    }
+
+    func finishCaptionGesture(applyToAll: Bool) {
+        guard let change = captionGestureChange else { return }
+        captionGestureChange = nil
+        captionGestureChoicePresented = false
+        if applyToAll { writeCaptionStyle(.all, values: change.values) }
+        endTransaction()
+    }
+
+    var offersCaptionStyleScope: Bool { canEditCaptionAppearance && canEditCaptionMeta && canEdit("caption_style_scope") }
+
+    func captionStyleSize(_ scope: CaptionStyleScope) -> Double {
+        if case .line(let id) = scope,
+           let size = document.captionMeta["appearance"]?.objectValue?["line_overrides"]?.objectValue?[id]?.objectValue?["size_px"]?.numberValue { return size }
+        if case .line(let id) = scope, document.isCueNative,
+           let size = document.captionCues.first(where: { $0.id == id })?.raw["size_px"]?.numberValue { return size }
+        if let size = document.captionMeta["size_px"]?.numberValue { return size }
+        if !document.isCueNative {
+            let row = document.textElements.first { row in
+                guard row.isCaption else { return false }
+                if case .line(let id) = scope { return row.id == id }
+                return true
+            }
+            if let row { return Self.textSize(for: row) }
+        }
+        return 78
+    }
+
+    func setCaptionStyleSize(_ scope: CaptionStyleScope, size: Double) {
+        guard offersCaptionStyleScope, size.isFinite else { return }
+        let value = JSONValue.number(min(160, max(36, size.rounded())))
+        writeCaptionStyle(scope, values: ["size_px": value])
+    }
+
+    func placeCaptions(_ scope: CaptionStyleScope, at placement: NativeTextBlockPlacement) {
+        guard offersCaptionStyleScope else { return }
+        captionPlacementMessage = nil
+        let meta = document.captionMeta
+        let appearance = meta["appearance"]?.objectValue ?? [:]
+        if textMeasurer == nil, let fonts = Bundle.main.url(forResource: "fonts", withExtension: nil) {
+            textMeasurer = try? NativeEditorRenderCompiler(fontDirectory: fonts)
+        }
+        let units = document.captionUnits.filter { unit in
+            if case .line(let id) = scope { return unit.id == id }
+            return true
+        }
+        let projectedRows = NativeEditorRenderCompiler.projectSentenceCaptions(document.textElements, captionMeta: meta)
+        var measuredRows: [EditorTextElement] = []
+        for unit in units {
+            let row = projectedRows.first { $0.id == unit.id }
+            var raw: [String: JSONValue]
+            if document.isCueNative {
+                raw = unit.raw
+                raw["font_family"] = raw["font_family"] ?? meta["font"] ?? .string("TikTok Sans")
+                raw["alignment"] = appearance["alignment"] ?? .string("center")
+                raw["max_width_frac"] = appearance["max_width_frac"] ?? .number(920.0 / 1080)
+            } else if let row {
+                raw = NativeEditorRenderCompiler.applyingCaptionMeta(meta, to: row).raw
+            } else { return }
+            raw["source_params"] = nil
+            raw["position"] = .string("custom")
+            raw["size_px"] = .number(captionStyleSize(.line(unit.id)))
+            let text = document.isCueNative ? unit.text : row?.text ?? unit.text
+            measuredRows.append(EditorTextElement(id: unit.id, text: text, startS: 0, endS: 1, raw: raw))
+        }
+        guard !measuredRows.isEmpty else { return }
+        let safe = NativeTextBlockGeometry.safeRect
+        var coordinate = 0.5
+        var converged = false
+        for _ in 0..<8 {
+            var left = 0.0, right = 0.0, above = 0.0, below = 0.0
+            for var row in measuredRows {
+                let x = placement.isHorizontal ? coordinate : Double(captionPosition(id: row.id).x)
+                row.raw["x_frac"] = .number(x)
+                row.raw["y_frac"] = .number(0.5)
+                guard let block = textMeasurer?.textBlockRect(for: row, in: document) else {
+                    captionPlacementMessage = "This font could not be measured. The caption has not moved."
+                    return
+                }
+                left = max(left, x - block.minX); right = max(right, block.maxX - x)
+                above = max(above, 0.5 - block.minY); below = max(below, block.maxY - 0.5)
+            }
+            guard left + right <= safe.width, above + below <= safe.height else {
+                captionPlacementMessage = "Use a smaller caption size or a common alignment to fit inside the safe area."
+                return
+            }
+            let next: Double
+            switch placement {
+            case .left: next = safe.minX + left
+            case .center: next = 0.5 + (left - right) / 2
+            case .right: next = safe.maxX - right
+            case .top: next = safe.minY + above
+            case .middle: next = 0.5 + (above - below) / 2
+            case .bottom: next = safe.maxY - below
+            }
+            if abs(next - coordinate) < 0.0001 { converged = true; break }
+            coordinate = next
+        }
+        guard converged else {
+            captionPlacementMessage = "This caption cannot fit at that position. Try a smaller size."
+            return
+        }
+        writeCaptionStyle(scope, values: placement.isHorizontal
+            ? ["position_x_frac": .number(coordinate)] : ["position_y_frac": .number(coordinate)])
+    }
+
+    private func writeCaptionStyle(_ scope: CaptionStyleScope, values: [String: JSONValue]) {
+        guard offersCaptionStyleScope else { return }
+        let ids: Set<String>
+        switch scope {
+        case .all: ids = []
+        case .line(let id):
+            guard document.captionUnits.contains(where: { $0.id == id }) else { return }
+            ids = document.isCueNative ? [id] : captionLineRowIDs(containing: id)
+        }
+        let materializeIDs = scope != .all && document.isCueNative && document.captionCues.contains { $0.raw["id"] == nil }
+        let clearsCueSizes = scope == .all && values["size_px"] != nil && document.captionCues.contains { $0.raw["size_px"] != nil }
+        let changesCues = materializeIDs || clearsCueSizes
+        guard !changesCues || canEditCaptionLines else { return }
+        transactDocument(sections: changesCues ? [.captionMeta, .captions] : [.captionMeta]) { doc in
+            if materializeIDs {
+                for index in doc.captionCues.indices { doc.captionCues[index].raw["id"] = .string(doc.captionCues[index].id) }
+            }
+            var appearance = doc.captionMeta["appearance"]?.objectValue ?? [:]
+            if scope == .all {
+                var overrides = appearance["line_overrides"]?.objectValue ?? [:]
+                for (key, value) in values {
+                    if key == "size_px" { doc.captionMeta[key] = value }
+                    else { appearance[key] = value }
+                    for id in Array(overrides.keys) {
+                        var own = overrides[id]?.objectValue ?? [:]
+                        own.removeValue(forKey: key)
+                        overrides[id] = own.isEmpty ? nil : .object(own)
+                    }
+                }
+                if clearsCueSizes {
+                    for index in doc.captionCues.indices { doc.captionCues[index].raw.removeValue(forKey: "size_px") }
+                }
+                if appearance["line_overrides"] != nil { appearance["line_overrides"] = .object(overrides) }
+            } else {
+                var overrides = appearance["line_overrides"]?.objectValue ?? [:]
+                for id in ids {
+                    var own = overrides[id]?.objectValue ?? [:]
+                    own.merge(values) { _, value in value }
+                    overrides[id] = .object(own)
+                }
+                appearance["line_overrides"] = .object(overrides)
+            }
+            doc.captionMeta["appearance"] = .object(appearance)
+        }
+    }
 
     // MARK: - KRI-1007 caption animation
 

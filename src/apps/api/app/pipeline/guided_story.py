@@ -6071,11 +6071,25 @@ def _apply_guided_caption_meta(
                 patch[key] = appearance[key]
         if meta.get("y_frac") is not None:
             patch.update({"position": "custom", "y_frac": float(meta["y_frac"])})
+        own = (appearance.get("line_overrides") or {}).get(element.id) or {}
+        for source, target in (("position_x_frac", "x_frac"), ("position_y_frac", "y_frac")):
+            value = own.get(source, appearance.get(source))
+            if value is not None:
+                patch.update({"position": "custom", target: float(value)})
+        if appearance.get("max_width_frac") is not None:
+            patch["max_width_frac"] = appearance["max_width_frac"]
+        if patch.get("position") == "custom" and element.position != "custom":
+            from app.pipeline.text_overlay import _POSITION_Y
+
+            patch.setdefault("x_frac", 0.5)
+            patch.setdefault("y_frac", _POSITION_Y.get(element.position, 0.45))
         if meta.get("font_set") and meta.get("font"):
             patch["font_family"] = meta["font"]
         for key in ("size_px", "color", "highlight_color", "stroke_width", "shadow_enabled"):
             if meta.get(key) is not None:
                 patch[key] = meta[key]
+        if own.get("size_px") is not None:
+            patch["size_px"] = own["size_px"]
         if meta.get("style") == "word":
             patch["effect"] = "pop-in"
         elif meta.get("style") == "sentence":

@@ -254,6 +254,7 @@ struct NativeEditorView: View {
             } message: {
                 Text("Unsaved editor changes are stored only on this device until you save.")
             }
+            .modifier(NativeCaptionGestureScopeModifier(session: session))
             #if DEBUG
             .overlay(alignment: .topLeading) {
                 if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-gameday-add") {

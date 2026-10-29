@@ -1,5 +1,7 @@
 import XCTest
 import KriaMediaEngine
+import AVFoundation
+import CoreImage
 @testable import Kria
 
 /// KRI-1007: caption In / Out / Loop + speed, for one line or for all captions.
@@ -40,11 +42,11 @@ import KriaMediaEngine
 
     // MARK: Cue-native captions (narrated, subtitled)
 
-    private func cueLayers(meta: [String: JSONValue], cuePhases: [JSONValue?]) throws -> [PortableTextLayer] {
+    private func cueLayers(meta: [String: JSONValue], cuePhases: [JSONValue?], cueStyles: [[String: JSONValue]] = []) throws -> [PortableTextLayer] {
         let (source, clip) = source(duration: 4)
         let cues = cuePhases.enumerated().map { index, value in
             EditorCaptionCue(id: "cue-\(index)", startS: Double(index), endS: Double(index + 1), text: "Line \(index) words",
-                             raw: value.map { ["animation_phases": $0] } ?? [:])
+                             raw: (value.map { ["animation_phases": $0] } ?? [:]).merging(cueStyles.indices.contains(index) ? cueStyles[index] : [:]) { _, value in value })
         }
         let items = cues.map { NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: $0.id), start: $0.startS, end: $0.endS) }
         let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 4)],
@@ -158,13 +160,19 @@ import KriaMediaEngine
 
     private func loaded(capability: Bool = true, storedDefault: [String: JSONValue]? = nil,
                         storedOverride: [String: JSONValue]? = nil,
-                        storedTextMotion: [String: JSONValue]? = nil) async -> (NativeEditorSession, EditorCommitSpy) {
+                        storedTextMotion: [String: JSONValue]? = nil,
+                        storedAppearance: [String: JSONValue]? = nil,
+                        storedSize: Double? = nil,
+                        storedCueOverrides: [String: [String: JSONValue]] = [:]) async -> (NativeEditorSession, EditorCommitSpy) {
         var capabilities: [String: JSONValue] = [
             "caption_cues": .object(["editable": .bool(true)]),
             "caption_meta": .object(["editable": .bool(true)]),
             "caption_editor_style": .bool(true),
         ]
-        if capability { capabilities["caption_animation"] = .bool(true) }
+        if capability {
+            capabilities["caption_animation"] = .bool(true)
+            capabilities["caption_style_scope"] = .bool(true)
+        }
         var variant: [String: JSONValue] = [
             "render_destination": .string("device"),
             "resolved_archetype": .string("subtitled"),
@@ -177,6 +185,15 @@ import KriaMediaEngine
         ]
         if let storedDefault { variant["caption_animation_phases"] = .object(storedDefault) }
         if let storedTextMotion { variant["caption_editor_style"] = .object(["animation_phases": .object(storedTextMotion)]) }
+        if let storedAppearance { variant["caption_editor_style"] = .object(storedAppearance) }
+        if let storedSize { variant["caption_size_px"] = .number(storedSize) }
+        if let cues = variant["caption_cues"]?.arrayValue {
+            variant["caption_cues"] = .array(cues.map { value in
+                guard var row = value.objectValue, let id = row["id"]?.stringValue else { return value }
+                row.merge(storedCueOverrides[id] ?? [:]) { _, new in new }
+                return .object(row)
+            })
+        }
         let threadID = UUID()
         let fake = EditorCommitSpy(
             draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h",
@@ -196,11 +213,245 @@ import KriaMediaEngine
     func testWithoutTheCapabilityNothingIsWritten() async {
         let (session, _) = await loaded(capability: false)
         let before = session.document
+        session.setCaptionStyleSize(.line("cue-1"), size: 150)
+        session.placeCaptions(.all, at: .bottom)
         session.setCaptionPhase(.all, phase: "entrance", effect: "fade")
         session.setCaptionPhase(.line("cue-1"), phase: "loop", effect: "pulse")
         session.setCaptionAnimationSpeed(.all, speed: 2)
         XCTAssertEqual(session.document, before)
         XCTAssertFalse(session.hasUnsavedChanges)
+    }
+
+    func testCaptionSizeScopeReplacesSizeOverridesThroughUndoSaveAndReopen() async throws {
+        let (session, fake) = await loaded()
+        session.setCaptionStyleSize(.line("cue-1"), size: 150)
+        let undoBefore = session.undoHistoryCount
+        session.setCaptionStyleSize(.all, size: 90)
+        XCTAssertEqual(session.undoHistoryCount, undoBefore + 1)
+        XCTAssertEqual(session.captionStyleSize(.line("cue-1")), 90)
+        XCTAssertEqual(session.captionStyleSize(.line("cue-2")), 90)
+        session.undo()
+        XCTAssertEqual(session.captionStyleSize(.line("cue-1")), 150)
+        XCTAssertEqual(session.captionStyleSize(.line("cue-2")), 78)
+        session.redo()
+        session.placeCaptions(.line("cue-2"), at: .top)
+        XCTAssertNil(session.captionPlacementMessage)
+        let own = try XCTUnwrap(session.document.captionMeta["appearance"]?.objectValue?["line_overrides"]?.objectValue?["cue-2"]?.objectValue)
+        XCTAssertGreaterThan(try XCTUnwrap(own["position_y_frac"]?.numberValue), 0.10)
+        XCTAssertLessThan(try XCTUnwrap(own["position_y_frac"]?.numberValue), 0.3)
+        await session.save()
+        let meta = try XCTUnwrap(fake.lastRequest?.captionMeta)
+        XCTAssertEqual(meta["size_px"], .number(90))
+        XCTAssertNil(meta["appearance"]?.objectValue?["line_overrides"]?.objectValue?["cue-1"]?.objectValue?["size_px"])
+        let (reopened, _) = await loaded(storedAppearance: meta["appearance"]?.objectValue, storedSize: meta["size_px"]?.numberValue)
+        XCTAssertEqual(reopened.captionStyleSize(.line("cue-1")), 90)
+        XCTAssertEqual(reopened.captionStyleSize(.line("cue-2")), 90)
+        XCTAssertEqual(Double(reopened.captionPosition(id: "cue-2").y), try XCTUnwrap(own["position_y_frac"]?.numberValue))
+    }
+
+    func testCaptionSizeAndPositionReachTheNativeRecipeAtBoundarySizes() throws {
+        for size in [36.0, 78, 150, 160] {
+            let layers = try cueLayers(meta: [
+                "size_px": .number(78),
+                "appearance": .object([
+                    "position_y_frac": .number(0.6),
+                    "line_overrides": .object(["cue-0": .object([
+                        "size_px": .number(size), "position_y_frac": .number(0.3)
+                    ])])
+                ])
+            ], cuePhases: [nil, nil])
+            XCTAssertEqual(layers[0].runs.first?.fontSize, size)
+            XCTAssertEqual(layers[1].runs.first?.fontSize, 78)
+            XCTAssertEqual(layers[0].anchorY, 576, accuracy: 0.01)
+            XCTAssertEqual(layers[1].anchorY, 1152, accuracy: 0.01)
+        }
+    }
+
+    func testCaptionPositionLeavesPerCueFontColorAndSizeInTheNativeRecipe() throws {
+        let layers = try cueLayers(meta: ["appearance": .object(["position_y_frac": .number(0.4)])], cuePhases: [nil, nil], cueStyles: [
+            ["font_family": .string("Inter"), "text_color": .string("#FF0000"), "size_px": .number(100)],
+            ["font_family": .string("Pacifico"), "text_color": .string("#00FF00"), "size_px": .number(120)]
+        ])
+        XCTAssertEqual(layers.map { $0.runs.first?.fontSize }, [100, 120])
+        XCTAssertTrue(try XCTUnwrap(layers[0].runs.first?.fontAssetID).contains("Inter"))
+        XCTAssertTrue(try XCTUnwrap(layers[1].runs.first?.fontAssetID).contains("Pacifico"))
+        XCTAssertEqual(layers[0].runs.first?.fill.green, 0)
+        XCTAssertEqual(layers[1].runs.first?.fill.red, 0)
+        XCTAssertEqual(layers.map(\.anchorY), [768, 768])
+    }
+
+    func testDefaultCaptionFontMatchesTheSharedRegistry() throws {
+        let layers = try cueLayers(meta: [:], cuePhases: [nil])
+        XCTAssertTrue(try XCTUnwrap(layers.first?.runs.first?.fontAssetID).contains("TikTokSans-Regular"))
+    }
+
+    func testSentencePlacementMeasuresTheRenderedSentenceRatherThanEachStoredWord() async throws {
+        var rows = [row("a", "We", 0), row("b", "went", 0.5), row("c", "out.", 1)]
+        for index in rows.indices {
+            rows[index].raw["font_family"] = .string("Inter")
+            rows[index].raw["size_px"] = .number(78)
+            rows[index].raw["alignment"] = .string("left")
+        }
+        let values = rows.map { row in JSONValue.object(row.raw.merging([
+            "id": .string(row.id), "text": .string(row.text), "start_s": .number(row.startS), "end_s": .number(row.endS)
+        ]) { _, new in new }) }
+        let snapshot: [String: JSONValue] = [
+            "editor_capabilities": .object(["caption_meta": .object(["editable": .bool(true)]), "caption_editor_style": .bool(true), "caption_style_scope": .bool(true)]),
+            "editor_payload": .object(["sections": .object(["text_elements": .array(values), "caption_meta": .object(["style": .string("sentence"), "font_set": .bool(true), "font": .string("Pacifico")])])])
+        ]
+        let threadID = UUID()
+        var caps = try XCTUnwrap(snapshot["editor_capabilities"]?.objectValue)
+        caps["text_elements"] = .bool(true)
+        let fake = EditorCommitSpy(
+            draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 1, snapshotHash: "h", etag: "e", baseJobID: threadID.uuidString, baseGenerationID: "g1", snapshot: snapshot, canUndo: false, createdAt: .now),
+            authoritativeVariant: ["render_destination": .string("device"), "resolved_archetype": .string("guided_story"), "text_elements": .array(values), "caption_meta": snapshot["editor_payload"]?.objectValue?["sections"]?.objectValue?["caption_meta"] ?? .object([:]), "editor_capabilities": .object(caps)])
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: true, style: "sentence"), music: nil, revision: 0))
+        await session.load(api: fake, threadID: threadID)
+        XCTAssertTrue(session.offersCaptionStyleScope)
+        let font = try XCTUnwrap(NativeFontCatalog.shared.fontURL(for: "Pacifico"))
+        for placement in [NativeTextBlockPlacement.left, .right] {
+            session.placeCaptions(.all, at: placement)
+            XCTAssertNil(session.captionPlacementMessage)
+            let layers = try laneLayers(session.document.textElements, meta: session.document.captionMeta)
+            let layer = try XCTUnwrap(layers["a"])
+            XCTAssertEqual(layer.runs.first?.text, "We went out.")
+            let bounds = try XCTUnwrap(AuthoredTextLayout.blockBounds(of: layer, fontURL: font))
+            XCTAssertGreaterThanOrEqual(bounds.minX / 1080, NativeTextBlockGeometry.safeRect.minX - 0.002)
+            XCTAssertLessThanOrEqual(bounds.maxX / 1080, NativeTextBlockGeometry.safeRect.maxX + 0.002)
+        }
+    }
+
+    func testScopedCaptionsMatchSyntheticPreviewAndExportPixels() async throws {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<6 { root.deleteLastPathComponent() }
+        let folder = root.appendingPathComponent(".dev/caption-scope-proof", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let directory = folder.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let width = 1080, height = 1920
+        let context = CIContext()
+        let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let base = directory.appendingPathComponent("synthetic-base.png")
+        try context.writePNGRepresentation(of: CIImage(color: CIColor(red: 0.2, green: 0.2, blue: 0.2)).cropped(to: CGRect(x: 0, y: 0, width: width, height: height)), to: base, format: .RGBA8, colorSpace: space)
+        let asset = MediaAsset(id: "synthetic", relativePath: "synthetic-base.png", fingerprint: try SHA256Fingerprinter().fingerprint(file: base), duration: 2, naturalSize: MediaSize(width: 1080, height: 1920))
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "synthetic", asset: asset, url: base)
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 2, trimIn: 0, trimOut: 2, sourceDuration: 2, slotID: "slot")
+        let cues = [
+            EditorCaptionCue(id: "one", startS: 0, endS: 1, text: "Hi", raw: ["font_family": .string("Inter"), "text_color": .string("#FF0000")]),
+            EditorCaptionCue(id: "two", startS: 1, endS: 2, text: "Hi", raw: ["font_family": .string("Pacifico"), "text_color": .string("#00FF00")])
+        ]
+        let meta: [String: JSONValue] = ["style": .string("sentence"), "stroke_width": .number(0), "shadow_enabled": .bool(false), "appearance": .object([
+            "line_overrides": .object(["one": .object(["size_px": .number(150), "position_x_frac": .number(0.3), "position_y_frac": .number(0.25)]),
+                                        "two": .object(["size_px": .number(78), "position_x_frac": .number(0.7), "position_y_frac": .number(0.65)])])
+        ])]
+        let document = EditorDocument(editFormat: "subtitled", clips: [.init(id: "slot", clipIndex: 0, inS: 0, durationS: 2)], captionMeta: meta, captionCues: cues)
+        let items = cues.map { NativeEditorTimelineItem(selection: .init(kind: .captionCue, id: $0.id), start: $0.startS, end: $0.endS) }
+        let program = try compiler().compile(document: document, clips: [clip], items: items, sources: [0: source], deviceCaptions: true)
+        let output = directory.appendingPathComponent("caption-scopes.mp4")
+        _ = try await AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory.appendingPathComponent("state")), branding: .none).export(recipe: program.recipe, assetURLs: program.assetURLs, outputURL: output)
+        let preview = try await AVPlayerPreviewComposer(branding: .none).makePreview(recipe: program.recipe, assetURLs: program.assetURLs)
+        var report: [[String: Any]] = []
+        for (index, time) in [0.5, 1.5].enumerated() {
+            var pixels: [[UInt8]] = []
+            for (name, sourceAsset, composition) in [("preview", preview.playerItem.asset, preview.playerItem.videoComposition), ("export", AVURLAsset(url: output) as AVAsset, nil)] {
+                let generator = AVAssetImageGenerator(asset: sourceAsset)
+                generator.videoComposition = composition
+                generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+                let image = try await generator.image(at: CMTime(seconds: time, preferredTimescale: 600)).image
+                let ci = CIImage(cgImage: image, options: [.colorSpace: NSNull()])
+                var bytes = [UInt8](repeating: 0, count: width * height * 4)
+                context.render(ci, toBitmap: &bytes, rowBytes: width * 4, bounds: CGRect(x: 0, y: 0, width: width, height: height), format: .RGBA8, colorSpace: nil)
+                pixels.append(bytes)
+                try context.writePNGRepresentation(of: ci, to: directory.appendingPathComponent("\(name)-\(index).png"), format: .RGBA8, colorSpace: space)
+            }
+            let difference = zip(pixels[0], pixels[1]).reduce(0.0) { $0 + Double(abs(Int($1.0) - Int($1.1))) } / Double(pixels[0].count)
+            XCTAssertLessThan(difference, 6)
+            let ink = stride(from: 0, to: pixels[1].count, by: 4).filter { offset in
+                index == 0 ? pixels[1][offset] > 150 && pixels[1][offset + 1] < 100 : pixels[1][offset + 1] > 150 && pixels[1][offset] < 100
+            }
+            XCTAssertGreaterThan(ink.count, 200)
+            let x = ink.reduce(0.0) { $0 + Double(($1 / 4) % width) } / Double(max(1, ink.count)) / Double(width)
+            XCTAssertEqual(x, index == 0 ? 0.3 : 0.7, accuracy: 0.04)
+            report.append(["time": time, "mean_pixel_difference": difference, "colored_ink_pixels": ink.count, "ink_center_x": x])
+        }
+        try JSONSerialization.data(withJSONObject: report, options: .prettyPrinted).write(to: directory.appendingPathComponent("comparison.json"))
+        print("CAPTION_SCOPE_EXPORT_PROOF \(directory.path)")
+    }
+
+    func testCaptionGestureAsksOnceOnReleaseAndAllIsOneUndoStep() async {
+        let (session, _) = await loaded()
+        session.setCaptionStyleSize(.line("cue-2"), size: 120)
+        let before = session.document
+        let undoBefore = session.undoHistoryCount
+        session.beginDirectManipulation()
+        for value in [0.4, 0.45, 0.5] {
+            session.setCaptionGesturePosition(id: "cue-1", position: CGPoint(x: 0.5, y: value))
+            XCTAssertFalse(session.captionGestureChoicePresented)
+        }
+        session.setCaptionGestureSize(id: "cue-1", size: 150)
+        session.endDirectManipulation()
+        XCTAssertTrue(session.captionGestureChoicePresented)
+        session.finishCaptionGesture(applyToAll: true)
+        XCTAssertFalse(session.captionGestureChoicePresented)
+        XCTAssertEqual(session.captionStyleSize(.line("cue-1")), 150)
+        XCTAssertEqual(session.captionStyleSize(.line("cue-2")), 150)
+        XCTAssertEqual(session.undoHistoryCount, undoBefore + 1)
+        session.undo()
+        XCTAssertEqual(session.document, before)
+    }
+
+    func testPositionOnlyApplyAllRetainsSizesFontsAndColorsAndIsOneUndo() async throws {
+        let appearance: [String: JSONValue] = ["line_overrides": .object([
+            "cue-1": .object(["size_px": .number(100), "position_x_frac": .number(0.2), "position_y_frac": .number(0.3)]),
+            "cue-2": .object(["size_px": .number(120), "position_x_frac": .number(0.7), "position_y_frac": .number(0.6)])
+        ])]
+        let own: [String: [String: JSONValue]] = [
+            "cue-1": ["font_family": .string("Inter"), "text_color": .string("#FF0000")],
+            "cue-2": ["font_family": .string("Pacifico"), "text_color": .string("#00FF00")]
+        ]
+        let (session, _) = await loaded(storedAppearance: appearance, storedCueOverrides: own)
+        let before = session.document
+        let undoBefore = session.undoHistoryCount
+        session.beginDirectManipulation()
+        session.setCaptionGesturePosition(id: "cue-1", position: CGPoint(x: 0.5, y: 0.4))
+        session.endDirectManipulation()
+        session.finishCaptionGesture(applyToAll: true)
+        for id in ["cue-1", "cue-2"] {
+            XCTAssertEqual(session.captionPosition(id: id), CGPoint(x: 0.5, y: 0.4))
+            let cue = try XCTUnwrap(session.document.captionCues.first { $0.id == id })
+            XCTAssertEqual(cue.raw["font_family"], own[id]?["font_family"])
+            XCTAssertEqual(cue.raw["text_color"], own[id]?["text_color"])
+        }
+        XCTAssertEqual(session.captionStyleSize(.line("cue-1")), 100)
+        XCTAssertEqual(session.captionStyleSize(.line("cue-2")), 120)
+        XCTAssertEqual(session.undoHistoryCount, undoBefore + 1)
+        session.undo()
+        XCTAssertEqual(session.document, before)
+    }
+
+    func testSizeOnlyApplyAllClearsBothSizeRepresentationsAndKeepsPositionFontAndColor() async throws {
+        let appearance: [String: JSONValue] = ["line_overrides": .object([
+            "cue-1": .object(["size_px": .number(100), "position_x_frac": .number(0.2), "position_y_frac": .number(0.3)]),
+            "cue-2": .object(["size_px": .number(120), "position_x_frac": .number(0.7), "position_y_frac": .number(0.6)])
+        ])]
+        let own: [String: [String: JSONValue]] = [
+            "cue-1": ["size_px": .number(110), "font_family": .string("Inter"), "text_color": .string("#FF0000")],
+            "cue-2": ["size_px": .number(130), "font_family": .string("Pacifico"), "text_color": .string("#00FF00")]
+        ]
+        let (session, fake) = await loaded(storedAppearance: appearance, storedCueOverrides: own)
+        session.setCaptionStyleSize(.all, size: 150)
+        XCTAssertEqual(session.captionPosition(id: "cue-1"), CGPoint(x: 0.2, y: 0.3))
+        XCTAssertEqual(session.captionPosition(id: "cue-2"), CGPoint(x: 0.7, y: 0.6))
+        for id in ["cue-1", "cue-2"] {
+            XCTAssertEqual(session.captionStyleSize(.line(id)), 150)
+            let cue = try XCTUnwrap(session.document.captionCues.first { $0.id == id })
+            XCTAssertNil(cue.raw["size_px"])
+            XCTAssertEqual(cue.raw["font_family"], own[id]?["font_family"])
+            XCTAssertEqual(cue.raw["text_color"], own[id]?["text_color"])
+        }
+        await session.save()
+        XCTAssertEqual(fake.lastRequest?.captionMeta?["size_px"], .number(150))
+        XCTAssertTrue(try XCTUnwrap(fake.lastRequest?.captionCues).allSatisfy { $0.objectValue?["size_px"] == nil })
     }
 
     func testAllCaptionsClearsLineOverridesInOneUndoStepAndSavesBoth() async throws {

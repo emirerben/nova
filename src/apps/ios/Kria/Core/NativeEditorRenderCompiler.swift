@@ -661,7 +661,7 @@ enum NativeEditorRenderError: Error, Equatable {
             let meta = document.captionMeta
             let talkingCaptionFrame = document.editFormat == "subtitled" || deviceCaptions
             let captionFont = ["Inter": "Inter-Bold", "Fraunces": "Fraunces-Bold", "Space Grotesk": "SpaceGrotesk-Bold"]
-            let family = meta["font"]?.stringValue ?? "TikTokSans-Bold"
+            let family = meta["font"]?.stringValue ?? "TikTok Sans"
             let font = try resolveFont(captionFont[family] ?? family)
             let fontID = try registerFont(font)
             let wordStyle = meta["style"]?.stringValue == "word"
@@ -669,7 +669,7 @@ enum NativeEditorRenderError: Error, Equatable {
             let explicitHighlight = appearance["highlight_spoken_word"]?.boolValue
             let captionAlignment = AuthoredTextLayout.Alignment(rawValue: appearance["alignment"]?.stringValue ?? "center") ?? .center
             let captionX = appearance["position_x_frac"]?.numberValue ?? (captionAlignment == .left ? 80.0 / 1080 : captionAlignment == .right ? 1000.0 / 1080 : 0.5)
-            let captionStyle = AuthoredTextLayout.Style(fontAssetID: fontID, size: meta["size_px"]?.numberValue ?? 78,
+            let defaultCaptionStyle = AuthoredTextLayout.Style(fontAssetID: fontID, size: meta["size_px"]?.numberValue ?? 78,
                 widthFraction: appearance["max_width_frac"]?.numberValue ?? 920.0 / 1080, xFraction: captionX, yFraction: appearance["position_y_frac"]?.numberValue ?? meta["y_frac"]?.numberValue ?? (talkingCaptionFrame ? 0.82 : 1740.0 / 1920),
                 alignment: captionAlignment,
                 color: try ink(meta["color"], fallback: "#FFFFFF"), stroke: try ink(appearance["stroke_color"], fallback: "#000000"), strokeWidth: meta["stroke_width"]?.numberValue ?? 4,
@@ -695,6 +695,21 @@ enum NativeEditorRenderError: Error, Equatable {
                     : renderedCues[index].endS
             }
             for cue in document.captionCues where !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let own = appearance["line_overrides"]?.objectValue?[cue.id]?.objectValue ?? [:]
+                var captionStyle = defaultCaptionStyle
+                let cueFamily = cue.raw["font_family"]?.stringValue ?? family
+                let font = try resolveFont(captionFont[cueFamily] ?? cueFamily)
+                captionStyle.fontAssetID = try registerFont(font)
+                captionStyle.fontVariations = fontInstances[cueFamily] ?? [:]
+                if let size = cue.raw["size_px"]?.numberValue { captionStyle.size = size }
+                if let color = cue.raw["text_color"] { captionStyle.color = try ink(color, fallback: "#FFFFFF") }
+                if let width = cue.raw["stroke_width"]?.numberValue { captionStyle.strokeWidth = width }
+                if let enabled = cue.raw["shadow_enabled"]?.boolValue {
+                    captionStyle.shadows = enabled ? [TextBlurLayer(color: try ink(appearance["shadow_color"], fallback: "#000000", alpha: appearance["shadow_opacity"]?.numberValue ?? 0.5), sigma: 0, dx: 1, dy: 1)] : []
+                }
+                if let size = own["size_px"]?.numberValue { captionStyle.size = size }
+                if let x = own["position_x_frac"]?.numberValue { captionStyle.xFraction = x }
+                if let y = own["position_y_frac"]?.numberValue { captionStyle.yFraction = y; captionStyle.bottomAligned = false }
                 guard let item = items.first(where: { $0.kind == .captionCue && $0.id == cue.id }),
                       item.start.isFinite, item.end.isFinite else {
                     throw RecipeError.invalidTimeline
@@ -968,7 +983,7 @@ enum NativeEditorRenderError: Error, Equatable {
         KriaTextCase.apply(element.text, element.raw["text_case"]?.stringValue)
     }
 
-    private static func projectSentenceCaptions(
+    static func projectSentenceCaptions(
         _ elements: [EditorTextElement], captionMeta: [String: JSONValue]
     ) -> [EditorTextElement] {
         guard captionMeta["style"] == .string("sentence") else { return elements }
@@ -1129,21 +1144,37 @@ enum NativeEditorRenderError: Error, Equatable {
     /// backend's `_apply_guided_caption_meta`, field for field. Per-word
     /// highlight/karaoke has no generic-path equivalent and is intentionally
     /// not covered — the caption keeps its base style in that mode.
-    private static func applyingCaptionMeta(_ meta: [String: JSONValue], to element: EditorTextElement) -> EditorTextElement {
+    static func applyingCaptionMeta(_ meta: [String: JSONValue], to element: EditorTextElement) -> EditorTextElement {
         var patched = element
         let appearance = meta["appearance"]?.objectValue ?? [:]
+        let own = appearance["line_overrides"]?.objectValue?[element.id]?.objectValue ?? [:]
+        let movesX = (own["position_x_frac"] ?? appearance["position_x_frac"])?.numberValue != nil
+        let movesY = (own["position_y_frac"] ?? appearance["position_y_frac"] ?? meta["y_frac"])?.numberValue != nil
+        if movesX || movesY {
+            patched.raw["position"] = .string("custom")
+            patched.raw["x_frac"] = .number(element.anchor.x)
+            patched.raw["y_frac"] = .number(element.anchor.y)
+        }
         if case .string(let alignment)? = appearance["alignment"], ["left", "center", "right"].contains(alignment) {
             patched.raw["alignment"] = .string(alignment)
         }
         if let value = appearance["stroke_color"] { patched.raw["stroke_color"] = value }
         if let value = appearance["shadow_color"] { patched.raw["shadow_color"] = value }
         if let value = appearance["shadow_opacity"] { patched.raw["shadow_opacity"] = value }
-        if let value = meta["y_frac"] {
+        if let value = meta["y_frac"], value.numberValue != nil {
             patched.raw["position"] = .string("custom")
             patched.raw["y_frac"] = value
         }
         if meta["font_set"] == .bool(true), let font = meta["font"] { patched.raw["font_family"] = font }
         if let value = meta["size_px"] { patched.raw["size_px"] = value }
+        if let value = own["size_px"] { patched.raw["size_px"] = value }
+        for (source, target) in [("position_x_frac", "x_frac"), ("position_y_frac", "y_frac")] {
+            if let value = own[source] ?? appearance[source], value.numberValue != nil {
+                patched.raw["position"] = .string("custom")
+                patched.raw[target] = value
+            }
+        }
+        if let value = appearance["max_width_frac"] { patched.raw["max_width_frac"] = value }
         if let value = meta["color"] { patched.raw["color"] = value }
         if let value = meta["stroke_width"] { patched.raw["stroke_width"] = value }
         if let value = meta["shadow_enabled"] { patched.raw["shadow_enabled"] = value }

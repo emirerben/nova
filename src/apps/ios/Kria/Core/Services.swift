@@ -1173,7 +1173,8 @@ enum KriaClientProtocolContract {
     /// `caption_meta`) and draws them in preview. The server advertises `editor_capabilities.caption_animation`
     /// only to this protocol and answers 426 `client_update_required` to an older build whose Save carries
     /// caption phases or replaces captions that hold them, since it would drop them.
-    static let version = 24
+    /// 25 preserves per-line caption size and position choices in the shared appearance map.
+    static let version = 25
     static let header = "X-Kria-Client-Protocol"
 }
 
