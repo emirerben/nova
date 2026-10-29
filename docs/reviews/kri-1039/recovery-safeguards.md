@@ -69,3 +69,25 @@ Main advanced with deadline recovery PR #1934 (`a6e79aafb`) while validation was
 CI at `b3988aaa8` passed both full API shards (34,695 passed in total), including all21 new persisted recovery cases. Its native unit job123549940159 built and ran2,109 tests with zero failures and26 skips; the two recovery/approval suites passed. The later named-journey evidence step nevertheless failed because this PR's manifest named the two suites rather than individual test methods. That is a mapping failure, not a passing native CI result.
 
 The manifest now lists all25 concrete existing methods across both suites. The unchanged journey verifier accepts those names against the real task-local25-case simulator xcresult. Independent review confirmed no omitted, extra or duplicate methods, and confirmed that a missing-case control still fails. The selector's41 tests passed. No verifier, native requirement, test assertion or API mapping was weakened. Main's landed send-state and export-verifier changes merged cleanly before publication of this correction; their behavior is not claimed as new recovery work. The corrected exact head still requires fresh remote CI before merge.
+
+## Overnight current-main refresh
+
+The published head94b11820 completed all substantive CI checks, including all
+three iPhone legs, but conflicted with main6e37de65f. The only conflict was two
+branches appending different journeys. The refresh preserves every main journey
+unchanged and retains this recovery journey. Planner changes merged automatically;
+independent review confirmed owned-current-head admission, immutable recovery
+basis, unknown-outcome guards and explicit Save remain intact.
+
+The former disposable database was unavailable. After creating the supported
+worktree-specific nova_recovery_integration_test database, the permitted recovery
+matrix passed131 tests with zero skips. Full scripts/ci unit tests passed124.
+The matrix covers persisted failed-draft correction, render retries, phone text
+sequence follow-up, editor-target misses, failed-item choice handling and compose
+behavior. A prior combined command mistakenly included two inherited scorecard
+wrappers; its result is excluded from accepted verification and that path was not
+repeated. No original-project operations are part of the accepted matrix.
+
+This refresh still needs exact-head remote CI. The previously disclosed native
+Save HTTP late-unknown gap, original-phone acceptance and production rollout are
+not closed by this integration check.
