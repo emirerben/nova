@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.8.0] - 2026-10-29
+
+### Fixed
+- fix(kria): name the speaker, not "you", in framing and face copy (KRI-1008 Finding 3) (#1911) <!-- release-pr: 1911 -->
+
 ## [0.82.7.0] - 2026-10-29
 
 ### Fixed
