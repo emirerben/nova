@@ -374,7 +374,9 @@ enum NativeEditorInteraction {
         // Carousel timing is positional. Persisted absolute timestamps are
         // stale after clip edits and are not part of the ripple-v1 contract;
         // derive the splice from the active clip windows every time.
-        let projectTime: (TimeInterval) -> TimeInterval = renderedClock ? { $0 } : roundedMillis
+        func projectTime(_ value: TimeInterval) -> TimeInterval {
+            renderedClock ? value : roundedMillis(value)
+        }
         let carouselStart = projectTime(before.map { $0.end - incoming } ?? 0)
         let carouselEnd = projectTime(carouselStart + carouselDuration)
         let shift = max(
