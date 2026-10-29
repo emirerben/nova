@@ -13,9 +13,19 @@ import XCTest
     private func reveal(_ element: XCUIElement, app: XCUIApplication) {
         for _ in 0..<12 {
             let top = app.navigationBars.firstMatch.exists ? app.navigationBars.firstMatch.frame.maxY : app.frame.minY + 60
-            // A child picker has no Save button. Do not query the disappearing parent's
-            // frame during navigation; the target's own hit-testing handles fixed actions.
-            let bottom = app.frame.maxY - 50
+            var bottom = app.frame.maxY - 50
+            // A form row can be reported hittable behind the fixed Save inset.
+            // Only the stable parent page owns that frame: child font pickers
+            // must never query the disappearing parent's Save button.
+            if app.navigationBars["Text preferences"].exists {
+                let save = app.buttons["text-preferences-save"]
+                if save.exists {
+                    let frame = save.frame
+                    if frame.minY.isFinite, frame.height > 0 {
+                        bottom = min(bottom, frame.minY - 8)
+                    }
+                }
+            }
             if element.exists {
                 let fixedAction = ["text-preferences-save", "text-preferences-reload"].contains(element.identifier)
                 if element.isHittable && (fixedAction || (element.frame.minY >= top && element.frame.maxY <= bottom)) { break }
