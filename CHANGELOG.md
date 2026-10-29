@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.15.0] - 2026-10-29
+
+### Changed
+- feat(kria): random and any-order clip orders are first-class (KRI-1036) (#1923) <!-- release-pr: 1923 -->
+
 ## [0.82.14.0] - 2026-10-29
 
 ### Changed
