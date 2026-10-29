@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.29.0] - 2026-10-29
+
+### Fixed
+- fix(kria): "make it all vertical" crops a montage's sideways clips, keeping faces (KRI-1027) (#1932) <!-- release-pr: 1932 -->
+
 ## [0.82.28.0] - 2026-10-29
 
 ### Changed
