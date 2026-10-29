@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.12.0] - 2026-10-29
+
+### Changed
+- fix(ios): preserve guided source cuts in saved text drafts (#1918) <!-- release-pr: 1918 -->
+
 ## [0.82.11.0] - 2026-10-29
 
 ### Fixed

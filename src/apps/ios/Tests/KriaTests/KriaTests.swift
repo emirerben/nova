@@ -910,6 +910,22 @@ final class KriaTests: XCTestCase {
         XCTAssertEqual(variant["render_generation_id"], .string("generation-live"))
     }
 
+    func testLockedGuidedStoryLoadsPreviewCutsWithoutGrantingTimelineEdits() async throws {
+        URLProtocolStub.handler = { request in
+            if request.url?.path.hasSuffix("/status") == true {
+                return (200, Data(#"{"variants":[{"variant_id":"initial","render_destination":"device","resolved_archetype":"guided_story","render_generation_id":"generation-live","editor_capabilities":{"timeline":false}}]}"#.utf8))
+            }
+            XCTAssertTrue(request.url?.path.hasSuffix("/variants/initial/timeline") == true)
+            return (200, Data(#"{"base_generation":"generation-live","editable":false,"slots":[{"slot_id":"source-cut","clip_index":0,"in_s":1,"duration_s":3}]}"#.utf8))
+        }
+        let api = KriaAPI(baseURL: URL(string: "https://api.example.test")!, tokenStore: MemoryTokenStore(), session: stubSession())
+        let variant = try await api.editorVariant(jobID: PreviewFixtures.projectID, variantID: "initial")
+        XCTAssertEqual(variant["editor_capabilities"], .object(["timeline": .bool(false)]))
+        guard case let .object(timeline) = variant["user_timeline"],
+              case let .array(slots) = timeline["slots"] else { return XCTFail("Missing locked preview cuts") }
+        XCTAssertEqual(slots.count, 1)
+    }
+
     func testCloudGuidedStoryLoadsActualCutsAndRejectsStaleTimeline() async throws {
         for stale in [false, true] {
             URLProtocolStub.handler = { request in

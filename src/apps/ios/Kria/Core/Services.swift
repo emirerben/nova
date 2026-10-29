@@ -1523,8 +1523,7 @@ struct KriaAPI: KriaAPIClient {
         // refresh. Re-read both before calling the pair a conflict.
         for attempt in 0..<3 {
             guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
-            guard variant["resolved_archetype"] == .string("guided_story"),
-                  case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) else {
+            guard variant["resolved_archetype"] == .string("guided_story") else {
                 return variant
             }
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
@@ -2619,9 +2618,22 @@ extension DraftSnapshot {
            Self.object(snapshot["editor_payload"])?["editor_state_version"] == .number(2) {
             // A committed full snapshot owns authoring state. The variant is
             // a render projection and may lag this exact durable revision.
-            var saved = editorDraft(projectID: projectID)
-            saved.serverSnapshot["editor_capabilities"] = authoritativeVariant["editor_capabilities"]
-            return saved
+            var document = snapshot
+            var payload = Self.object(document["editor_payload"]) ?? [:]
+            var sections = Self.object(payload["sections"]) ?? [:]
+            let userTimeline = Self.object(authoritativeVariant["user_timeline"])
+            let timeline = userTimeline?.isEmpty == false
+                ? userTimeline : Self.object(authoritativeVariant["ai_timeline"])
+            if payload["editor_state"] != .string("empty"),
+               authoritativeVariant["editor_state"] != .string("empty"),
+               sections["timeline_slots"] == nil,
+               let value = timeline?["slots"], case let .array(slots) = value {
+                sections["timeline_slots"] = .array(slots)
+                payload["sections"] = .object(sections)
+                document["editor_payload"] = .object(payload)
+            }
+            document["editor_capabilities"] = authoritativeVariant["editor_capabilities"]
+            return decodedEditorDraft(projectID: projectID, document: document)
         }
         var document = snapshot
         if let authoritativeVariant {
@@ -2738,6 +2750,10 @@ extension DraftSnapshot {
             }
         }
 
+        return decodedEditorDraft(projectID: projectID, document: document)
+    }
+
+    private func decodedEditorDraft(projectID: UUID, document: [String: JSONValue]) -> EditorDraft {
         let editorPayload = Self.object(document["editor_payload"]) ?? [:]
         let sections = Self.object(editorPayload["sections"]) ?? [:]
         let legacy = Self.object(sections["ios_editor"]) ?? [:]
