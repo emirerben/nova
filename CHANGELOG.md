@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.21.0] - 2026-10-29
+
+### Changed
+- feat(kria): follow-up and creation requests compose editor ops instead of being refused (KRI-1039) (#1936) <!-- release-pr: 1936 -->
+
+## [0.82.20.0] - 2026-10-29
+
+### Changed
+- feat(api): add admin read of stored phone-export verification evidence (KRI-1042) (#1938) <!-- release-pr: 1938 -->
+
+## [0.82.19.0] - 2026-10-29
+
+### Changed
+- fix(camera-roll): keep an event's ideas when it is saved or gains footage (KRI-1044) (#1935) <!-- release-pr: 1935 -->
+
+## [0.82.18.0] - 2026-10-29
+
+### Changed
+- feat(kria): long titles wrap, shrink or grow taller instead of failing to fit (KRI-1035) (#1927) <!-- release-pr: 1927 -->
+
+## [0.82.17.0] - 2026-10-29
+
+### Changed
+- fix(phone-text): flag emoji in a creator's title no longer fails the phone render; undrawable text named before approval (KRI-1024) (#1919) <!-- release-pr: 1919 -->
+
 ## [0.82.16.0] - 2026-10-29
 
 ### Changed

@@ -69,6 +69,24 @@ def requested_style(strategy: dict, request: str) -> dict:
     return result
 
 
+def approval_text_policy(strategy: dict) -> dict | None:
+    """The policy `stamp_phone_text_style` gives a job approved now, for a pre-approval plan.
+
+    KRI-1024: the worker plans under it, so a plan run without it takes a typography
+    branch the worker never takes. The creator's saved direction is left out: it only
+    narrows the fonts the role-scoped pass picks after the plan.
+    """
+    from app.config import settings
+
+    if not settings.phone_text_styling_enabled:
+        return None
+    return {
+        "version": PHONE_TEXT_STYLE_VERSION,
+        "preferences": {"all_text": {}},
+        "requested": requested_style(strategy or {}, ""),
+    }
+
+
 def stamp_phone_text_style(job) -> None:
     from app.config import settings
     from app.services.creator_direction_snapshot import typed_overrides_from_container
