@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.13.0] - 2026-10-29
+
+### Changed
+- fix(ios): Use this idea opens the idea's chat instead of leaving the camera roll page on top (KRI-1041) (#1922) <!-- release-pr: 1922 -->
+
 ## [0.82.12.0] - 2026-10-29
 
 ### Changed
