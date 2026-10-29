@@ -38,3 +38,15 @@ Local artifacts are retained in .dev/sparse-draft-{before,after}.log, .dev/spars
 The targeted saved-draft read was explicitly approved by the user after automatic approval review had rejected the initial attempt. It checked transaction_read_only=on, selected only the exact draft/thread, and rolled back. The private capture and replay remain outside Git. Admin job diagnostics omit private source bindings, so this capture does not independently prove source-pool availability on the iPhone.
 
 No production database write, source replacement, saved edit, regeneration, deletion, deployment or release is part of this follow-up verification. The original incident remains open until the actual TestFlight client previews and reopens the original project correctly.
+
+
+## Hosted UI validation correction
+
+The evidence-only head's hosted screens run failed AccountPrivacyUITests.testFinishedEditLearningDismissAndResetHistory at its final reset-success assertion. The retained recording shows the reset row below the fixed Save preferences area and a saved-preferences confirmation after the tap. The test's scrolling helper considered rows above screen-bottom minus 50 points visible, ignoring the larger fixed Save area.
+
+The helper now keeps ordinary rows above the Save button and its status area on the Text preferences parent screen. Fixed Save/Reload actions retain their direct hit-testing. Child font-picker navigation keeps its existing wait and does not consult the outgoing parent's Save frame. Every original reset, consent, dismissal and font-persistence assertion is preserved. Product code is unchanged by this correction.
+
+The unchanged reset test passed locally once on iPhone 17 and once on a task-owned iPhone 17 Pro. The hosted recording is the failure evidence; these local runs did not reproduce the intermittent failure. Corrected reset, consent/approved-preference preservation, and excluded-font save/reopen journeys all passed on the task-owned iPhone 17 Pro (three tests, no failures or skips; .dev/account-reset-after-existence-guard.xcresult). No hosted jobs were blindly retried or canceled.
+
+
+While this PR was validating, main received its own correction to the same account scrolling helper. The rebase preserves main's implementation in full, including smaller form scrolls, explicit asynchronous dismissal/load waits, a reset-row occlusion control and reveal of the potentially offscreen success confirmation. This PR now has no account-test diff against main. The earlier three-test run records the superseded local helper; it is not evidence for the newly combined revision. Combined verification now passes: 39 API cases including KRI-1032 source-projection parity; 131 native contract/preview tests with one standard Keychain skip; and the three account UI journeys with no failures or skips. Artifacts: .dev/main-integration-api.log and .dev/main-integration-native.xcresult.
