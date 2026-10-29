@@ -3281,6 +3281,7 @@ async def _render_shape_projection(
     try:
         strategy: Any = None
         request_text = ""
+        brief: Any = None
         if int(getattr(thread, "runtime_version", 1)) == 2:
             # One narrow query (this runs on a polled endpoint): the newest pending
             # approval's draft body, nothing else.
@@ -3303,6 +3304,9 @@ async def _render_shape_projection(
                 raw = snapshot.get("strategy")
                 strategy = CreativeStrategy.model_validate(raw) if isinstance(raw, dict) else None
                 request_text = str(snapshot.get("intent") or "")
+                # KRI-1027: the same pinned brief the approve path reads, so the
+                # preselected bars/crop and the validated one never disagree.
+                brief = render_shape.readable_brief(snapshot.get("brief_binding"))
         elif session is not None and session.status == "awaiting_confirmation":
             active_plan = session.active_plan or {}
             raw_plan = active_plan.get("edit_plan")
@@ -3312,7 +3316,7 @@ async def _render_shape_projection(
         if strategy is None:
             return None
         offer = await render_shape.offer_for_item(
-            db, item, strategy, thread.creator_id, creator_request=request_text
+            db, item, strategy, thread.creator_id, creator_request=request_text, brief=brief
         )
         return offer.projection()
     except Exception:  # noqa: BLE001 - an optional projection never breaks a read

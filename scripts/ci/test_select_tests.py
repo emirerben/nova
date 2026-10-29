@@ -628,7 +628,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/approval_readiness.py",
-                (True, "covered", "kri-721-approval-readiness"),
+                (
+                    True,
+                    "covered",
+                    "kri-721-approval-readiness,kri-29ekim-live-approval-gate",
+                ),
             ),
             (
                 "src/apps/api/app/tasks/content_plan_build.py",
@@ -883,7 +887,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-760-whole-line-ask,kri-648-phone-text",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-760-whole-line-ask,kri-648-phone-text,kri-29ekim-post-approval-text-sequence",
                 ),
             ),
             (

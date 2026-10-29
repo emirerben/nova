@@ -2239,11 +2239,14 @@ async def _validated_render_shape(
     strategy_payload: dict[str, Any] | None,
     creator_id: uuid.UUID,
     creator_request: str = "",
+    brief_binding: object | None = None,
 ) -> dict[str, str]:
     """The ``creator_render_shape`` payload for an approve request, or a 422.
 
     Only a strategy approval has a shape to choose (an editor-kind approval is a
     Save against an existing variant -- the device editor owns that choice).
+    ``brief_binding`` (the draft's pinned brief) preselects what the creator asked
+    for in chat, exactly as the thread's ``render_shape`` showed it (KRI-1027).
     """
     from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
     from app.services import render_shape  # noqa: PLC0415
@@ -2262,6 +2265,7 @@ async def _validated_render_shape(
         CreativeStrategy.model_validate(strategy_payload),
         creator_id,
         creator_request=creator_request,
+        brief=render_shape.readable_brief(brief_binding),
     )
     try:
         chosen = render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
@@ -2904,6 +2908,7 @@ async def decide_approval(
             strategy_payload=document_peek.strategy if is_strategy_approval else None,
             creator_id=creator_id,
             creator_request=document_peek.intent if is_strategy_approval else "",
+            brief_binding=document_peek.brief_binding if is_strategy_approval else None,
         )
 
     strategy_media: _StrategyApprovalMedia | None = None
