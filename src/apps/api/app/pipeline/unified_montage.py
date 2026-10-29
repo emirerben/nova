@@ -115,6 +115,8 @@ from app.services.clip_order_sequence import (
     unconfirmed_order_groups,
 )
 from app.services.length_policy import natural_length_owner
+from app.services.order_mode import order_mode, seeded_permutation
+from app.services.order_mode import random_order_seed as order_seed_of
 from app.services.spoken_quotes import is_outro_hallucination
 from app.services.spoken_roles import (
     SpokenClip,
@@ -220,6 +222,9 @@ class BriefView:
     # KRI-585: an order requirement says "the order I added them", so what the clips
     # say never moves one (filming-time keys set ``order_by_capture`` instead).
     order_basis_stated: bool = False
+    # 29 Ekim: "in random order" carries the seed stored on the requirement, so every
+    # re-plan and re-render draws the same permutation; "any order" needs no field.
+    random_order_seed: int | None = None
     # KRI-219: the per-clip text is the hour each clip was filmed, not its place.
     per_clip_text_is_time: bool = False
     # "hh_mm" or "hour" (just the hour, no minutes) for those filming-time labels.
@@ -259,6 +264,7 @@ def brief_view(brief: Any) -> BriefView:
     wants_order = False
     order_capture = False
     basis_stated = False
+    random_seed: int | None = None
     wants_time = False
     hour_only = False
     clip_literals: dict[str, str] = {}
@@ -322,6 +328,8 @@ def brief_view(brief: Any) -> BriefView:
             # A "narrative" or a first/last-clip key is not a basis: it is what the
             # creator's own sequence rows (and the clips' words, KRI-585) decide.
             basis_stated = basis_stated or key.casefold() == ATTACHMENT_ORDER_KEY
+            if order_mode(req) == "random":
+                random_seed = order_seed_of(req)
         elif req.kind == "timing" and not times_one_moment(req):
             # KRI-777: "freeze the frame for one second on the bite" is not a one-second video.
             raw = (req.facts or {}).get("duration_s")
@@ -334,6 +342,7 @@ def brief_view(brief: Any) -> BriefView:
         wants_order=wants_order,
         order_by_capture=order_capture,
         order_basis_stated=basis_stated,
+        random_order_seed=None if order_capture else random_seed,
         per_clip_text_is_time=wants_time,
         time_format="hour" if hour_only else "hh_mm",
         title_literal=title_literal,
@@ -493,6 +502,10 @@ class UnifiedMontagePlan:
     # KRI-282: the creator's answer to a chronological-vs-grouped conflict that this
     # plan followed ("group_first" | "chronological"); None when none was asked.
     ordering_choice: str | None = None
+    # 29 Ekim: the seed a "random order" plan used and the clips it shuffled, so the receipt
+    # can prove the result is a permutation of exactly the selected clips.
+    random_order_seed: int | None = None
+    random_order_source_ids: list[str] = field(default_factory=list)
     # Zone the filming hours were printed in, "" when the labels are not hours.
     label_timezone: str = ""
     label_timezone_basis: str = ""
@@ -572,6 +585,16 @@ class UnifiedMontagePlan:
         )
         outcomes = {"intent_outcomes": list(self.intent_outcomes)} if self.intent_outcomes else {}
         choice = {"ordering_choice": self.ordering_choice} if self.ordering_choice else {}
+        shuffled = (
+            {
+                "random_order": {
+                    "seed": self.random_order_seed,
+                    "source_ids": list(self.random_order_source_ids),
+                }
+            }
+            if self.random_order_seed is not None
+            else {}
+        )
         zone = (
             {
                 "label_timezone": self.label_timezone,
@@ -660,6 +683,7 @@ class UnifiedMontagePlan:
             **scope,
             **outcomes,
             **choice,
+            **shuffled,
             **zone,
             **named,
             **freeze,
@@ -1071,8 +1095,11 @@ def _order(
     if not view.order_by_capture:
         if creator_order:
             # A creator-reordered timeline is what a revision keeps; only an
-            # explicit capture-time ask in the brief overrides it.
+            # explicit capture-time ask in the brief overrides it. That includes a still-open
+            # "random order" ask: the hand reorder is the later word, and the receipt says so.
             return _creator_ordered(clips, creator_order), "creator_order", []
+        if view.random_order_seed is not None:
+            return seeded_permutation(clips, view.random_order_seed), "random", []
         return list(clips), "attachment", []
     times = {clip.media_id: clip.capture_time for clip in clips if clip.capture_time is not None}
     result = order_by_capture_time(attachment_ids, times)
@@ -1462,7 +1489,7 @@ def _seat_among_moments(slots: list[_Slot], seats: MomentSeats) -> list[_Slot]:
 
 def _ordering_choice(strategy: Mapping[str, Any], enabled: bool) -> str | None:
     choice = strategy.get("ordering_choice") if enabled else None
-    return choice if choice in ("group_first", "chronological") else None
+    return choice if choice in ("group_first", "chronological", "random") else None
 
 
 def _scatter(clips: Sequence[UnifiedClip], visuals: Sequence[UnifiedClip]) -> list[UnifiedClip]:
@@ -2525,6 +2552,8 @@ def plan_unified_montage(
             moment_record=moment_record,
         ),
         ordering_choice=choice,
+        random_order_seed=view.random_order_seed if basis == "random" else None,
+        random_order_source_ids=[clip.media_id for clip in clips] if basis == "random" else [],
         dropped_label_clip_ids=dropped,
         short_label_clip_ids=short,
         ordering_basis=basis,

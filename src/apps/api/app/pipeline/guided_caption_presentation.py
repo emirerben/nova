@@ -145,7 +145,10 @@ def project_guided_caption_overlays(
                     output.append(row)
             offset += len(words)
         if phases is not None:
-            _stamp_line_phases(output[first_output:], phases)
+            # Display Word draws one word per row, and each word is a line of its own.
+            rows = output[first_output:]
+            for line in ([row] for row in rows) if word_style else [rows]:
+                _stamp_line_phases(line, phases)
     for row in output:
         row.pop("caption_line_end", None)
     return output

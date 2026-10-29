@@ -691,7 +691,7 @@ actor NativeEditorSourceResolver {
         #endif
         let key = "\(generation):\(clip.clipIndex):\(source.mediaID)"
         if !source.localRequired, let previous = cachedDownload(key: key, id: source.mediaID, clipIndex: clip.clipIndex) {
-            return try await decoderCompatible(previous)
+            return try await displaySized(decoderCompatible(previous), original: nil)
         }
         var asset: MediaAsset
         let url: URL
@@ -750,7 +750,28 @@ actor NativeEditorSourceResolver {
         let resolved = ResolvedEditorSource(clipIndex: clip.clipIndex, mediaID: source.mediaID, asset: asset, url: url)
         if source.localRequired { cached[key] = resolved }
         else { rememberDownload(resolved, key: key) }
-        return try await decoderCompatible(resolved)
+        return try await displaySized(decoderCompatible(resolved), original: source.original)
+    }
+
+    /// The clip's displayed (oriented) picture size, which the black-bars letterbox needs: a source without one
+    /// is cover-filled instead, and the copy saved from the editor is cropped (KRI-1010). A device original states
+    /// it in its approved descriptor, the same input the server's `display_dims` scales by; a download (cached
+    /// before this existed or not) is probed like `resolveMedia`. Stills keep no size, and a failed probe leaves
+    /// none, as before.
+    private func displaySized(_ source: ResolvedEditorSource, original: OriginalMediaDescriptor?) async -> ResolvedEditorSource {
+        guard source.asset.naturalSize == nil, !NativeDownloadedMedia.isStillImage(source.url) else { return source }
+        var asset = source.asset
+        if let width = original?.width, let height = original?.height, width > 0, height > 0 {
+            let degrees = ((original?.orientationDegrees ?? 0) % 360 + 360) % 360
+            let turned = degrees == 90 || degrees == 270
+            asset.naturalSize = MediaSize(width: Double(turned ? height : width), height: Double(turned ? width : height))
+        } else if let track = try? await AVURLAsset(url: source.url).loadTracks(withMediaType: .video).first,
+                  let size = try? await track.load(.naturalSize), let transform = try? await track.load(.preferredTransform) {
+            let rectangle = CGRect(origin: .zero, size: size).applying(transform)
+            asset.naturalSize = MediaSize(width: abs(rectangle.width), height: abs(rectangle.height))
+        }
+        return ResolvedEditorSource(preserveAlpha: source.preserveAlpha, clipIndex: source.clipIndex, mediaID: source.mediaID,
+                                    asset: asset, url: source.url)
     }
 }
 

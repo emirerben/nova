@@ -326,9 +326,7 @@ def test_a_beat_that_was_heard_but_had_no_room_is_not_called_unheard() -> None:
     # KRI-547: the medal pop-in was heard but had no room on screen. That used to read
     # "met" (the other word's pop-in judged as a whole) -- a Done for a photo that never
     # showed. Like a never-heard word, the dropped pop-in now owns the verdict and says why.
-    no_room = (
-        "There was no room on screen for the medal without covering your face or the captions."
-    )
+    no_room = "There was no room on screen for the medal without covering a face or the captions."
     receipt = check_requirement(R4, facts)
     assert receipt.status == "not_possible"
     assert receipt.reason == no_room

@@ -2,6 +2,8 @@
 import Foundation
 
 public struct TextAnimationPhases: Codable, Equatable, Sendable {
+    /// Entrance and exit length at speed 1, for every edge.
+    public static let edgeSeconds = 0.4
     public enum Edge: String, Codable, CaseIterable, Sendable { case none, fade, pop, slide, typewriter, silkReveal, elasticCondensed, focusPull, wordRelay, ribbonWipe, echoStack }
     public enum Loop: String, Codable, Sendable { case none, pulse, bounce, float }
     public var entrance: Edge

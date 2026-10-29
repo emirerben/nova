@@ -1325,7 +1325,10 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 ClipCaptureStore.shared.remove(record.id)
                 remove(record.id, deleteLocalFile: false)
             case .keepForManualRetry:
-                continue
+                // No task is running for it and the automatic retry is spent: hand it to the creator (Retry /
+                // Remove). Left as is, it counts as in progress forever and keeps Send disabled.
+                reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename,
+                              message: "This upload was interrupted. Tap Retry to try again.", cause: .uploadFailed)
             }
         }
     }
@@ -1459,7 +1462,14 @@ struct PreparingUpload: Codable, Sendable, Equatable {
                 retryCount: record.retryCount + 1, role: record.role, itemID: record.itemID, visualReservationID: visualReservationID, uploadContract: record.uploadContract, editorSourceTarget: record.editorSourceTarget,
                 durationS: record.durationS
             )
-        } catch { lastError = error.localizedDescription }
+        } catch {
+            lastError = error.localizedDescription
+            // The record stays for Retry, but with nothing running it is not in progress: Send must not wait for it.
+            if records.contains(where: { $0.id == record.id }) {
+                reportFailure(id: record.id, projectID: record.projectID, role: record.role, filename: record.filename,
+                              message: CreationUploadError.message(for: error, role: record.role), cause: .uploadFailed)
+            }
+        }
     }
 
     private func attach(_ record: UploadRecoveryRecord) async {
