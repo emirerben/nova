@@ -194,6 +194,15 @@ import XCTest
         let reset = app.buttons["text-learning-reset"]
         reveal(reset, app: app)
         let saveBarButton = app.buttons["text-preferences-save"]
+        // Reproduce the CI edge: the row is partly behind the fixed bottom action.
+        // Its XCUI hittability alone must not make reveal return at that position.
+        let shift = saveBarButton.frame.minY + 12 - reset.frame.maxY
+        if shift > 0 && shift < app.frame.height * 0.35 {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4 + shift / app.frame.height))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        reveal(reset, app: app)
         XCTAssertLessThanOrEqual(reset.frame.maxY, saveBarButton.frame.minY - 8,
                                  "Reset must be above the fixed Save bar before tapping")
         reset.tap()
