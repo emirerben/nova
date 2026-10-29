@@ -186,6 +186,7 @@ from app.services.creator_sessions import (
     load_intent_clips_for_item,
     resolve_item_creator_context,
 )
+from app.services.kept_sound_lines import kept_line_records
 from app.services.kria_editor_ops import (
     EDITOR_STATE_STALE_REPLY,
     MAX_EDITOR_OPS,
@@ -319,7 +320,9 @@ def _enrich_best_parts_snapshot(
     the lines the creator wants heard whole (KRI-803, word timings included), else the timed
     sentences alone place them; the brief's moment ask (KRI-596, "the best six
     moments, each very short") lets a long take give several windows; a clip the creator's
-    sound or order ask describes by what is said in it starts on that sentence (KRI-681).
+    sound or order ask describes by what is said in it starts on that sentence (KRI-681), and
+    one a sound ask keeps audible for that line plays the whole sentence (KRI-1028,
+    ``kept_sound_lines.kept_line_records``).
     ``camera_sound`` (``narration_notes.keeps_camera_sound``, KRI-585): every clip's own
     sound plays, so a welcome the clips' words move forward keeps its line and a pinned
     closing clip that only introduces someone plays its stretch without words.
@@ -377,6 +380,16 @@ def _enrich_best_parts_snapshot(
             _described_clip_texts(brief), media_snapshot, skip_ids=held, named=named
         ).items()
     }
+    named_ids = {row.get("media_id") for row in named if row.get("status") == "found"}
+    kept = kept_line_records(brief, media_snapshot, skip_ids=held)
+    for row in kept:
+        window = (row["window_start_s"], row["window_end_s"])
+        if row["media_id"] in named_ids and row["media_id"] in described:
+            # A whole line the creator named in the same clip (KRI-760) plays too.
+            other = described[row["media_id"]]
+            window = (min(window[0], other[0]), max(window[1], other[1]))
+            row.update(window_start_s=window[0], window_end_s=window[1])
+        described[row["media_id"]] = window
 
     # KRI-824: a photo the creator gave its own seconds gets exactly that window. KRI-825:
     # so does every photo when the creator gave the photos a length as a group, and the
@@ -449,6 +462,7 @@ def _enrich_best_parts_snapshot(
             quiet_moments=dict([quiet]) if quiet else None,
             spoken_order=seats.record() if seats is not None else None,
             named_lines=named,
+            kept_lines=kept,
             still_holds=still_holds,
             attached_visual_ids=attached_visual_ids,
             pinned_moments=(
