@@ -96,7 +96,8 @@ jobs:
         if: matrix.lane == 'native'
         id: xcode-cache
         run: |
-          echo "toolchain=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageVersion:?Hosted runner image version is required for SDK caches}" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$({ xcode-select -p; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Restore Xcode build data
         if: matrix.lane == 'native'
         id: build-cache
@@ -109,9 +110,9 @@ jobs:
             src/apps/ios/.derived-data/ModuleCache.noindex
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
+          key: ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
+            ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
       - name: Report Xcode cache reuse
         if: matrix.lane == 'native'
         env:

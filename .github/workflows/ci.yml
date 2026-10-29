@@ -1155,7 +1155,8 @@ jobs:
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         id: xcode-cache
         run: |
-          echo "toolchain=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageVersion:?Hosted runner image version is required for SDK caches}" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$({ xcode-select -p; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Restore Xcode build data
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         id: build-cache
@@ -1168,9 +1169,9 @@ jobs:
             src/apps/ios/.derived-data/ModuleCache.noindex
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
+          key: ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
+            ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
       - name: Build iPhone app and run selected unit tests
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         env:
@@ -1201,6 +1202,24 @@ jobs:
           KRIA_IOS_TEST_MODE: ui
           KRIA_IOS_UI_GROUPS: ${{ needs.changes.outputs.ios_ui_groups == 'full' && 'smoke' || needs.changes.outputs.ios_ui_groups }}
         run: bash scripts/ios/verify.sh
+      - name: Verify native speed reset, inspector Undo and pinch warning
+        if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-689-clip-speed')
+        working-directory: src/apps/ios
+        run: |
+          xcodebuild -project Kria.xcodeproj -scheme Kria -skipPackagePluginValidation \
+            -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
+            -destination "platform=iOS Simulator,id=$(cat ../../../test-results/ios/simulator-id.txt)" \
+            -parallel-testing-enabled NO \
+            -only-testing:KriaUITests/NativeSpeedUITests \
+            -only-testing:KriaUITests/NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations \
+            -resultBundlePath ../../../test-results/kri-559/native-editor-gestures.xcresult test-without-building
+          xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/native-editor-gestures.xcresult \
+            > ../../../test-results/kri-559/native-editor-gesture-tests.json
+          python3 ../../../scripts/ci/journey-gate.py verify-tests \
+            --test-results ../../../test-results/kri-559/native-editor-gesture-tests.json \
+            --xctest NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector \
+            --xctest NativeSpeedUITests/testClosingSpeedInspectorCommitsResetForSingleUndo \
+            --xctest NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations
       - name: Verify server suggestion chips stay visible and send the chosen action
         if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-756-suggestion-chips')
         working-directory: src/apps/ios

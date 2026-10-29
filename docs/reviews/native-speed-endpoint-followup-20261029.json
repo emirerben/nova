@@ -1,0 +1,46 @@
+{
+  "base_source_revision": "2c72adaf032a8ee9cce7baf98ba7bbff1619e227",
+  "change": "Use normalized endpoint1 and exact4.00x/00:01.5 setup for Reset-close-singleUndo regression; retain exactReset and captured Undo comparisons. No app changes.",
+  "source_sha256": {
+    "src/apps/ios/Tests/KriaUITests/NativeSpeedUITests.swift": "8feef80c66c660e93e5d68cc4b7e1f772e8c0c1d91d1eadf6467e41e496885dc"
+  },
+  "hosted_failure": {
+    "workflow_run": 40893936300,
+    "job": 123530256816,
+    "artifact": 12913549235,
+    "recording": "kXCTAttachmentScreenRecording_0_64FF8856-986B-4229-B705-C96FC345E8F2.mp4",
+    "frame_seconds": 24,
+    "observed_rate": "1.85x",
+    "observed_duration": "00:03.2",
+    "failed_assertion": "2...4 contains preReset rate after normalized0.8 adjustment",
+    "later_Reset_Undo_comparisons": "passed",
+    "full_text_gesture": "passed",
+    "limitation": "Recording establishes observed setup outside asserted range, not the underlying SDK adjustment cause."
+  },
+  "validation": {
+    "bundle": "/tmp/unattended1892-speed-endpoint.xcresult",
+    "log": "/tmp/unattended1892-speed-endpoint.log",
+    "unique_tests": 2,
+    "executions": 6,
+    "failures": 0,
+    "skips": 0,
+    "iterations_per_test": 3,
+    "status": "passed"
+  },
+  "unchanged_limitations": [
+    "Original rare corner gesture miss root cause remains unproved.",
+    "Prior screens job failed at app.launch background assertion acquisition; bundle has no crash attachment and does not prove infrastructure cause.",
+    "Fresh exact-head hosted CI and release authorization remain required."
+  ],
+  "independent_review": {
+    "status": "passed",
+    "reviewer": "read-only debugger agent",
+    "verified": [
+      "exact diff and unchanged Reset/close/Undo contract",
+      "source SHA256",
+      "actual raw bundle six successes and no issues",
+      "log six executions zero failures",
+      "hosted screenshot1.85x/00:03.2"
+    ]
+  }
+}

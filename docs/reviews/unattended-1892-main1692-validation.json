@@ -1,0 +1,1036 @@
+{
+  "pr": 1892,
+  "integrated_main": "1692d1751cb78d0695f16b4170362e9e4ae4f615",
+  "validated_source_revision": "7560a5bd27037ab3dcbe6f9aa14643a5f4344e87",
+  "recorded_at_utc": "2026-10-29T16:29:54.274171+00:00",
+  "source_sha256": {
+    ".github/workflows/ci.yml": "93238a29e4be049e343587d3f8a5110d071153c049e12bc9d3d6f3c792de283e",
+    "scripts/ci/journey-manifest.json": "3b256258539f46a49235f8dc77ef68e7e5f9fcf879c8aede73c0db71d8877110",
+    "scripts/ci/select-tests.py": "ee92026e9eec4fab77dd9ea1e7da678cbd9c12f92d16d8e3a49d19702ccbea27",
+    "scripts/ios/ui-test-durations.json": "ed4b36a54281898640a69d8502b6f7cb549b39bdb74defb0b6083d0dd20efb6b",
+    "scripts/ios/ui-test-groups.json": "e68904acf2be5968a6f050a50afce5660de93415b033114048b150c4833b0715",
+    "src/apps/ios/Kria/Features/NativeEditorView.swift": "3274a90e6aeac8d1cd8c32f6cd306caa74a4b2f992b435993b7f0e7c79940941",
+    "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift": "d746cb88d19085a9e4a7ae2a68c6dca87414058461ea3e89a189d7dd7f605c42",
+    "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "9127141237f91a8bae0380182c19722c8a20beb2906dac560b96858e7a5b93f8",
+    "src/apps/ios/Tests/KriaUITests/NativeSpeedUITests.swift": "e8003529fe8b182405791f96806fb0d45076ff6b514bf78bd5351b3656583612"
+  },
+  "deployment_authorization": "pending; no merge or release performed",
+  "validation": [
+    {
+      "tests": 249,
+      "status": "passed",
+      "result_bundle": "/tmp/unattended1892-main1692.xcresult",
+      "log": "/tmp/unattended1892-main1692.log",
+      "tests_detail": [
+        {
+          "name": "NativeEditorSessionTests/testActiveTrimBaselineRebasesAuthoritativeTextDuringSave()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipBalancesItsBackgroundAssertionOnEveryExit()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipExplainsAnInterruptedUpload()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipExplainsAnUnreadablePhotoWithoutTouchingTheTimeline()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipReportsAddingWhileTheFileIsStillBeingFetched()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipReportsWhyItCannotProceedInsteadOfSilentlyDroppingThePick()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipResultDecodesGuidedVariantSourceIndices()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipsExpirationHandlerEndsTheBackgroundAssertionExactlyOnce()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipSurfacesUploadFailureWithoutMutatingTimeline()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipUnavailableMessageExplainsDeviceRenderedEditsOnly()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipUnavailableReasonAgreesWithCanAddTimelineMedia()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipUploadsReservesAndAppendsTimelineSlot()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAddClipUsesGuidedVariantSourceIndexWhenProvided()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAdmittedFootageUsesShorterOriginalWithEOFMarginAndDeduplicatesReadyCallback()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAdmittedTimelinePhotoAppendsThreeSecondPlacementAndUndoRedo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAuditionLengthIsWhatIsLeftOfTheSong()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAuthoritativeTextRequiresExplicitArrayAndHonorsEmptyArray()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAuthoritativeVariantRebasesStaleRuntimeDraft()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testAuthoritativeVariantReplacesAdvancedCapabilitiesAndRequiredMotionHash()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testBackgroundPreviewStopsAtTheCreatorEndAndFollowsTheStart()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testBufferingDuringPlayHandoffCannotLeaveScrubImageOverMovingVideo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCancelAndEmptyDonePreserveExistingTextAndHistory()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCanceledOrStalePlacementNeverAppends()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCancelWhileFreshPoolLoadsNeverPlacesClip()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCanonicalDocumentTracksTextEditAndDirtySection()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCanonicalTextIdentityPreservesTimedStoryLayersAcrossDraftBridge()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCapabilityReasonIsExposedAndDisablesTypedMutation()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCaptionAppearanceOpenForTextLaneCaptionsRegardlessOfRenderDestination()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCaptionClearedMidEditKeepsTheLiveCompositionOnTheCanvas()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCaptionCueMetadataAndMusicMutationsUseSeparateDirtySections()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCaptionMetadataUsesCaptionMetaCommitSection()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCaptionMetaOpensWithoutCaptionEditorStyle()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testClipAddedAfterEmptySaveAdvertisesSupportAtSavedGeneration()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testClipAddedDuringEmptySaveRemainsRenderableAndUndoUsesSavedEmptyBaseline()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testClipCapIsFiftyAndAddClipStaysAllowedPastTwenty()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testClosedClipCropCapabilityIsHonoredOnCloudVariants()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCloudVariantKeepsCropSpeedAndLookEditable()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testConcurrentPlaybackFailureReportsPreserveEveryEventAndDraftCall()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testCropIsOfferedOnlyWhenTheServerExplicitlyListsClipCrop()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeclinedEditOffersChatInsteadOfARetryThatLoops()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeleteSaveConsumesAcceptedIntentAndPreservesLaterDeletionAndUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeletingLastClipIsExplicitEmptyAndUndoRestoresIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeletingUnsavedAdditionDoesNotSendServerDeletionIntent()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceLocalExportPreferredOverRemoteOutputURL()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceNarratedVariantOpensCaptionEditingAndSavesBothSections()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceNarrationRequestUsesPublishedGenerationAndExactTarget()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceOnlyModeMakesLegacyCloudEditorPlaybackOnly()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDevicePublishedGenerationAndIdentityFenceReadyPreview()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceRecipeSongPlaysInPreviewMutesCameraAndConnectsSoundsRow()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceRecipeWithoutNarrationDoesNotInventAnAudioSource()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceRetryBannerClearsWhenTheRenderHealsElsewhere()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceSpeedResetRequiresAnAdvertisedCapability()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceSubtitledVariantWithExplicitCaptionCapabilitiesBothFalseClosesCaptionEditing()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceSubtitledVariantWithExplicitCaptionCapabilitiesOpensCaptionEditing()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceTimelineDurationUsesShorterOriginalAndKeepsEOFMargin()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceVariantRefusesSpeedResetButClearsSavedCropAndLook()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceVariantTakesClipSpeedOnceTheServerOpensIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDeviceVariantWithNoExplicitCaptionKeysFromOldServerClosesCaptionEditing()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDisplayedSourcePreviewExportsAPlayableVideo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDownloadRejectsStaleFinishedRenderWhileCurrentPreviewPrepares()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDownloadUsesVisibleSourcePreviewInsteadOfOlderDeviceFile()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDraftLoadFailsWhenAuthoritativeVariantCannotBeFetched()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDraftLoadFailureIsNotReportedAsSaveFailure()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testDurableAcknowledgementInvalidatesPreviousPollDuringReplacementFetch()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testEditableVoiceoverTitleDeletionRidesASave()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testEditableVoiceoverTitleIsOnTheTimelineAndRidesASave()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testEditDuringEmptySaveKeepsNewGenerationAndUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testEmptySaveRejectsPreviouslyPendingRenderCompletion()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testEndEditIsOneUndoStepAndASavedEndSurvivesALongerVideo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testEndHandleClampsClearsAtTheNaturalEndAndCommitsOnlyWhatChanged()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testEveryEdgeDragStaysWithinTheServerBound()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testExplicitCaptionCuesOnlyKeepsCaptionMetaLocked()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testExtendingTheVideoExtendsThePreviewSongWithoutASave()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFailedFinishedRenderRefreshesItsLinkOnceReportsAndRecovers()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFailedPreviewPollKeepsAcknowledgedSectionsRetryable()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFailedSaveOfEmptyTimelineRetainsIntentAndUndoRestoresRenderableDocument()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFetchFailureLeavesSaveDurableAndPollReconcilesLater()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFinishedRenderRetriesAreBoundedAndNeverClaimADeadPlayer()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFinishedRenderThatFailsTwiceStillRecoversWithoutAMessage()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFinishedVideoFallbackOffersRetryOnlyWhenARebuildCanHelp()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFirstSourcePreviewIncludesBrandOutroWithoutChangingEditableClips()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFixtureSessionStartsLoaded()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFixtureSourceFailureDoesNotPlayStaleEditablePreview()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFixtureSourceFailureRetainsAndPlaysInitialFinishedRender()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFootageEditsPersistSpeedAsSourceSpanPreservingTimelineChange()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testFootageSpeedPreservesImplicitSourceSpanAcrossResetAndUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testGalleryJobPromotesIntoEditorAndRebasesServerSnappedDuration()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testGenerationChangeWhilePoolLoadsCannotPlaceOldSource()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testGestureSamplesInsideOneTransactionCoalesceIntoOneRebuild()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testGuidedStoryCaptionEditRoutesThroughTextElementsNotCaptionCues()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testGuidedStoryCaptionTaggedTextElementsEnableCaptionEditing()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testGuidedStoryCaptionTextEditReachesTheDisplayedSourcePreview()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testGuidedStoryWithoutCaptionTaggedTextElementsLeavesCaptionsClosed()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testHiddenStaleFallbackCannotBeExportedAfterSourcePreviewFailure()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testHydratedProjectRetainsFinishedOutputWhenSourcePreviewFails()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testHydrationDoesNotSynthesizeAnUnmuteOverrideForAnUntouchedSlot()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testIsPlayingBrandedSourcePreviewFalseBeforeAPreviewIsReady()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLeadingDragToMinimumNeverEncodesBelowTheServerMinimum()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLeadingTrimAdvancesSourceWithoutLeavingTimelineGap()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLeadingTrimCanExtendAndReverseWithinOneGesture()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLeadingTrimUsesOneGestureBaselineAndOneUndoStep()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLeavingEditorKeepsReadyImportPendingWithoutAppendingToHiddenDocument()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLegacyCloudVariantWithBaseVideoPathAndNoExplicitCaptionKeysStillOpensCaptionEditing()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLegacyConversationRefreshDoesNotUseRuntimeTwoDraftOrEraseLocalEdits()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLegacyRefreshAfterManualSaveAndConflictRebasePreservesNewLocalEdit()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLegacyRefreshWithMissingOrUnknownSelectionIsANoOpWithoutLoadedTargetFallback()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLegacyVisualRemovalRefreshKeepsSelectedRenderingVariant()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLipsyncAnchorShiftOnlyFollowsTheSameSourceBeyondAFrame()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLipSyncSongLocksStartButKeepsVolumeAndRemove()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLipsyncTrimDropsOutsideCutsInOneUndoStepAndTheSongFollowsTheSinger()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLipsyncTrimNeedsTheTrimCapabilityAndFallsBackToTheFirstCutWithoutTakes()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLipsyncTrimStraddlesKeepsTheSingerOnTheSongAndRefusesTooShort()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLiveItemFailureFallsBackToTheFinishedRenderAndKeepsThePlayTap()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLivePreviewFailureIsReportedWithoutPrivateDetail()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLongTextEditDoesNotChangeTransportDuration()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLyricShiftEndsWhenTheServersRowsAreAdopted()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testLyricShiftSurvivesAFailedReadBack()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testMismatchedGenerationPollDoesNotAdoptServerText()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testMissingImportStopsWaiterAndRetainsPlacementForRecovery()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testMissingOriginalsSettleIntoOriginalsUnavailableAndRelinkRebuildsThePreview()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testMotionRuntimeMismatchIsAlwaysReadOnly()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testMoveClipKeepsLengthAndCutsByPositionAndUndoesInOneStep()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testMovingTheSongStartShiftsLyricCaptionsInThePreviewWithoutTouchingTheDocument()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testMusicSourceSurvivesUUIDCaseRoundTripWithoutPublicCatalog()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testNarratedOriginalAudioReopensAtTheSavedLevelAndSavesOnlyThatLevel()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testNarratedVariantProjectsPersistedVisualCutIntoTimeline()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testNarrationCheckStaysOnPreviewGenerationWhileSaveRenderPends()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testNeedsReloadIsTrueBeforeAnyLoadAndFalseAfterMatchingRevision()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testNoNarrationDeviceRecipeIsMemoizedUntilItsGenerationRefreshes()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testOrdinaryComposedPauseResumeDoesNotSeekOrRenderAnotherStill()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testOriginalAudioControlsStayClosedWithoutCapabilities()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testOriginalAudioLevelAndClipAudioDrivePreviewDirtyStateAndCommit()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testOtherLaneEditDuringSaveAdoptsServerTextAndStaysDirtyOnlyForThatLane()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPauseCancelsARememberedPlayTap()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPauseDuringScrubHandoffRetainsTargetWithoutRestartingPlayback()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPendingDeviceRecipeRequiresExactSavedGenerationAndTarget()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPendingTextOnlyCommitsOnDoneAtPlayheadAsOneUndoStep()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPersistedCommitWithFailedEnqueueCanRetryRender()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPersistentSaveConflictRetriesOnceAndKeepsLocalDocumentSelectionAndUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhaseEditsPreserveLegacyEntranceAndUndoTogether()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneGalleryJobUsesCreationThreadForLocalOriginals()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneNarratedSelectedSourceAudioHydratesFinalBedGainOnly()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneSaveReconcilesAppOwnedRendererWithCreationProjectIdentity()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhonesOwnCopyHealsADeadFinishedRenderAndClearsTheMessage()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneTalkingEditPreviewsItsFootageCutawayOverTheSpeaker()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneTalkingEditPreviewsItsSourceVideoAsALockedClip()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneTalkingEditWithAnUnknownCutawayClipKeepsTheFinishedMP4()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneTalkingEditWithClosedLanesAndACardKeepsTheFinishedMP4()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneTalkingEditWithClosedLanesKeepsTheFinishedMP4()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneTalkingPreviewSurvivesCardMediaThatCannotLoad()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneTalkingTitleIsAnEditableTextRowThatReachesTheSave()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneVoiceoverEditAddsAPhotoAndAVideoLiveInThePreview()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhoneVoiceoverEditWithoutMediaRolloutKeepsImportClosed()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPhotoClipRejectsPlaybackSpeedWithoutAffectingCrop()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPlayTapDuringPreparationPlaysOnceThePreviewSettles()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPreviewConflictLoadsNewestVersionOncePerGenerationThenRetryReloads()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPreviewPollIgnoresMismatchedGenerationAndAcceptsMatchingReadyGeneration()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testProductionSessionStartsFailClosedUntilCapabilitiesLoad()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testProjectSessionUsesFreshPlaybackHandoffBeforeHydration()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testPromptRefreshServerFailureStaysOutOfTheSaveBannerAndClearsOnTheNextGoodRead()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testQueuedFinishedRecoveryCannotReplacePreviewFailureAfterSave()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testRapidScrubbingCoalescesDecoderSeeksAndKeepsLatestClock()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testReadOnlyTitleShowsInThePreviewButNeverReachesASave()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testReadyCreationProjectHydratesListProjectionAndLoadsItsExistingPlanItem()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testReadyImportRechecksCapacityAfterOtherPlacementsFillTimeline()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testReadyIndexAbsentFromFreshPoolPreservesDocumentAndPlacement()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testRecoveredCompositionTakesTheCanvasBackFromTheFinishedRenderFallback()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testRefreshFailuresNeverReplaceASaveOrRenderRecoveryState()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testRejectedSongEditStaysPending()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testRemovingTheSongHidesTheLyricCaptionsAndUndoBringsThemBack()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testRenderedRebaseRefreshesGenerationSourcesButLocalEditsDoNot()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testRenderRetryResendsAnAcknowledgedVolume()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testReopenedPhoneVoiceoverEditPreviewsItsSavedPhoto()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testReorderingPreservesSourcePoolIndexes()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testResumeEditorImportsRearmsAnOrphanedPreparingImportAndPlacesIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testReturningTrimGestureToBaselineLeavesNoUndoEntry()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSameFractionalSpeedAfterReopenDoesNotCreateASecondEdit()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSaveCallsExplicitEditorCommitOnlyAfterEdit()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSaveConflictLoadsLatestKeepsLocalSectionsAndResendsAutomatically()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSavedGuidedTextDraftBuildsRealSourcePreviewUnlessCutsWereExplicitlyCleared()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSaveDoesNotResumeOldResponseAfterTargetSwitchDuringVariantFetch()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSavedOriginalLevelIsRestoredOnReopen()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSavedRemovalIsNotResentByRetryOrConflictRebase()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSaveKeepsInFlightRevertDirtyAgainstAcknowledgedServerValue()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSaveKeepsNewerSameSectionEditDirtyWhileCommitIsInFlight()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSaveReconcilesServerTextWhilePreservingConcurrentTextUndoAndRedo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSaveRequestFailurePreservesLocalEdits()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSaveUsesExpectedRenderedDurationUntilPreviewRefreshes()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testScrubRecordsSeekLatencyIntoPreviewInstrumentation()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSecondEmptySaveAdvertisesSupportWithoutDeletionIntents()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSerializationKeepsUnknownServerKeysAndUsesProductionSections()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testServerProjectedPhoneNarratedAndVoiceoverTimelinesHydrateClips()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSilentDeviceEditPreviewsWhilePublicationIsPending()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSongControlsStayClosedWithoutCapabilities()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSongVolumeChangeIsAppliedLiveWithoutRebuildingThePreview()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSongWindowFollowsTheVideoAndPendingStartKeepsTheSameBound()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSourceWindowNoOpWritesNothingAndOverlongSlotCanShrink()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSourceWindowSlideAndDelete()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSourceWindowWriteIsOneUndoStepAndRefusesOutOfBounds()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSpeedRejectsAWindowWhoseExactOutputWouldBeShorterThanMinimum()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSpeedStaysClosedWhenACarouselChangesTheOutputClock()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testSpeedStaysClosedWhenAnUnprojectedTimedLaneIsPresent()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testStalledFinalScrubSampleRetriesWithoutAnotherFingerEvent()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testStalledPausedSeekRecoversNewestTargetAndIgnoresLateCompletion()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testStartBoundLeavesOneSecondOfSongNotTheVideoLength()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testStartDragRebuildsThePreviewOnceOnReleaseAndIsOneUndoStep()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTalkingSegmentDeleteDropsItsCaptionAndMovesLaterCaptionsWithTheirClips()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTalkingSegmentMovesAndItsCaptionMovesWithIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTalkingSegmentRangeWritesTheWindowAndClipsItsCaption()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTalkingSegmentSlideAndTimingWriteTheWindowAndFlagUntranscribedSpeech()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTalkingSourceClipHasOneUndoableTrimGesture()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTextDragCrossingCarouselUsesOutputDeltaAndKeepsBaseDuration()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTextScalingContinuesBeyondCanvasAndFormerSizeLimit()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTextTransformUsesGestureBaselineAndSingleUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTheLyricShiftIsOneUndoStepWithTheSongEdit()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTimedLanesMutateWithOneGestureAndHonorWireKeys()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTimelineSaveAdoptsAuthoritativeServerTextWithoutMakingEditorDirty()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTimelineScrubDurationEqualsPlaybackDurationWithNoRebuildPending()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrailingDragAtDoubleSpeedStopsAtTheFootageEnd()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrailingDragToMinimumNeverEncodesBelowTheServerMinimum()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrailingDragWithUnknownSourceLengthCannotGrow()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrailingTrimExtendsThroughRippleAndStopsAtSourceEnd()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTransientLivePreviewFailureRebuildsQuietlyOnceThenFallsBack()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrimClampsToMinimumAndUndoRedo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrimmedNarratedClipPreviewsLikeThePhoneRendersIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrimmingAHeadNeverMovesABackgroundSong()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrimmingALipsyncTakeShiftsTheLyricCaptions()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrimmingAnExplicitSpeedWindowUpdatesItsSourceEndAnchor()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTrimmingTheOpeningCutsHeadMovesALipsyncSongWithIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTurningAClipOnWhileOriginalAudioIsOffSolosThatClip()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testTypedTextMutationsKeepWireKeysAndOneGestureUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUnavailableSongOnARemovalCountsAsAlreadyRemoved()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUnboundAdmittedOriginalPreservesEditsAndPendingPlacement()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUncachedProjectOutputURLDoesNotDisplayBeforeHydration()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUncaughtUpRenderStaysHiddenWhilePreviewPreparesUntilConfirmedCurrent()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUndoHistoryIsBoundedForLongEditingSessions()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUndoingTrimRestoresRenderedDurationBoundary()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUnplayableFinishedRenderSurfacesAMessageInsteadOfADeadPlayButton()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUnresolvableDeviceSongFailsLivePreviewSoItFallsBackToTheFinishedRender()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUploadDoesNotPollMissingImportBeforeAdmissionAcknowledgement()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testUserSongEditsDriveDirtyStateCommitUndoAndPreview()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testVariantWithoutCaptionsEnabledFieldLoadsAsCaptionsOn()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testVisibleGeneratedLanesDeleteWithoutEditCapabilitiesAndUndoRedoTheirIntents()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testVolumeSetBackToTheOriginalAfterSaveIsSent()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorSessionTests/testWithoutTheTrimCapabilityTheOldControlsStayAndTheEndCannotBeEdited()",
+          "status": "Success"
+        },
+        {
+          "name": "GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorInspectorUITests/testSourcePreviewTextCreationAndAnimations()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeSpeedUITests/testClosingSpeedInspectorCommitsResetForSingleUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector()",
+          "status": "Success"
+        }
+      ]
+    },
+    {
+      "tests": 164,
+      "subtests": 448,
+      "status": "passed",
+      "scope": "CI policy and iOS tooling",
+      "log": "/tmp/unattended-main1692-policies.log"
+    }
+  ],
+  "limitations": [
+    "Original intermittent corner miss root cause remains unproved.",
+    "Hosted prior-head screen job failed acquiring background assertion at app.launch before product assertions.",
+    "Installed TestFlight, original Cunda timing and Photos acceptance remain outstanding."
+  ]
+}
