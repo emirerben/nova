@@ -300,6 +300,31 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   the KRI-689 groups in `tests/tasks/test_unified_montage_dispatch.py` and
   `tests/pipeline/test_phone_guided_speed.py`; failure modes:
   `docs/reviews/kri-689-chat-speed-failure-modes.md`; contract: `plans/playback-speed.md`.
+- **Curved text (KRI-1029).** "Curved title X on the palms" / "kavisli başlık" becomes the
+  brief fact `text_shape` (`curved` / `straight`), stamped by `brief.apply_updates` from the
+  requirement's own description (`kria/text_shape_ask.py`: folded tokens, the shape word must
+  touch a text noun, so "label on the curved bridge" is not one; never the literal) and kept
+  across rewrites (`STICKY_FACTS`), so "make the title just X" no longer drops it. A phone
+  Montage bends the matching title / label (`CURVED_TEXT_BEND`, `ClipLabel.bend` /
+  `EditProposalSnapshot.title_bend` -> `TextElement.bend` -> `PortableTextLayer.bend`) only when
+  `phone_rollout.text_bend_planned_for` holds (kill switch, `textBend` verified, the drafting /
+  approving build >= `text_bend_min_client_protocol`); otherwise it stays straight and the
+  record's `text_shapes` row says why. The draft (pre-approval check) and the review say "Done
+  (curved)" or "it stays straight" (`brief_checks.check_text_shape`), never the model's promise;
+  the creation-text composer's "nothing to compose" gate judges the words only
+  (`text_shape_ask.words_only`: it can't curve text, so a straight title never calls it).
+  No prompt change: a model-written `text_shape` is honoured first. Guard:
+  `tests/kria/test_kri1029_1030_plaza_title_replay.py`.
+- **One title per opening clip (KRI-1030).** A confirmed `opening_title` with the same words as
+  the first cut's own creator label (a re-draft's title beside the brief's "title on the palm
+  trees") is not drawn again: `plan_unified_montage` keeps the label, at the creator's spot, and
+  records `title_shown_as_label` (receipts read that label as the title). The label covers
+  the opening from 0 s, so the contract's `opening` role and `phone_plan_repair._shows` accept
+  it. Not folded when the title has a typed hold or an entrance animation. Done where the
+  snapshot is built: `guided_story` recompiles stored plans for equality
+  (`validate_execution_plan`), so old approvals stay byte-identical. Likewise a global brief
+  literal that is one of the creator's own labels ('label "Casa Rosada" on the pink building')
+  is never also the opening title (`_title`'s `creator_label_texts`).
 - **Freeze frame (KRI-777).** No edit can hold a frame (no strategy field; neither the
   phone recipe nor the cloud renderer freezes a creator-chosen frame). Café M2 filed
   "freeze the frame for one second on Atakan's bite" as `timing/global {"duration_s": 1,
