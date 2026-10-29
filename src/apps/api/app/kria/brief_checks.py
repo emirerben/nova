@@ -37,6 +37,8 @@ from app.kria.brief_route import (
     wants_filming_time_text,
     wants_hour_only_text,
 )
+from app.kria.clip_sound_toggle_ask import SoundTarget, SoundToggleAsk, requirement_sound_toggle
+from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.freeze_ask import (
     asks_freeze_frame,
@@ -47,9 +49,10 @@ from app.kria.freeze_ask import (
 from app.kria.narrated_clip_sound_ask import AFTER_VOICE, ClipSoundAsk, requirement_clip_sound
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.reply_language import current_reply_language, say
+from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
 from app.kria.speed_ask import asks_clip_speed
-from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS
+from app.kria.spoken_text_ask import SPOKEN_TEXT_CUE_KEYS, _fact_speaker
 from app.kria.style_asks import (
     MOMENT_SHORT_MAX_S,
     MomentAsk,
@@ -65,11 +68,13 @@ from app.pipeline.caption_language import (
     LANGUAGE_NAMES,
     LANGUAGE_WORDS,
     can_deliver_caption_language,
+    caption_language_decision,
     caption_language_verdict,
 )
 from app.pipeline.caption_spelling import extract_spelling_asks, is_mishearing
 from app.pipeline.explicit_speech_cut import speech_cut_tokens
 from app.pipeline.sequence_text_evidence import complete_sequences, sequence_lineage
+from app.pipeline.song_captions import mentions_lipsync
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.text_style_intent import (
     LABEL_ANCHORS,
@@ -77,7 +82,12 @@ from app.schemas.text_style_intent import (
     normalize_title_animation,
 )
 from app.services.clip_facts import CAPTURE_ORDER_KEYS
-from app.services.clip_order_sequence import row_relations, sequence_rows
+from app.services.clip_order_sequence import (
+    row_relations,
+    sequence_rows,
+    unconfirmed_order_groups,
+    unconfirmed_order_reason,
+)
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import (
     creator_duration_satisfied,
@@ -85,6 +95,7 @@ from app.services.length_policy import (
     length_owner,
     natural_length_owner,
 )
+from app.services.order_mode import order_mode, seeded_permutation
 from app.services.phone_noise_reduction import engine_noise_reduction_available
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
@@ -139,6 +150,24 @@ class BeatFact:
     # None is an approved request, not execution evidence. Only the compiled
     # sequence receipt can prove that the original video actually follows.
     sequence_realized: bool | None = None
+
+
+@dataclass(frozen=True)
+class TimedCardFact:
+    """One exact-timed small card: as approval keeps it (a draft, ``status`` "planned") or as
+    the phone render placed it (``phone_timed_card_receipt``: "placed" / "unplaced")."""
+
+    card_id: str
+    label: str | None = None
+    # Seconds into the output where the card shows; None for a clip-anchored draft card.
+    at_s: float | None = None
+    end_s: float | None = None
+    hold_s: float | None = None
+    clip_id: str | None = None
+    status: str = "planned"
+    # The worker's stable reason when unplaced (`past_end`, `face_collision`, ...).
+    reason: str | None = None
+    timeline_end_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -315,6 +344,10 @@ class PlanFacts:
     ordering_fallback_clip_ids: tuple[str, ...] = ()
     # KRI-282: the creator's answer to a chronological-vs-grouped conflict, if any.
     ordering_choice: str | None = None
+    # 29 Ekim: a "random order" plan records the seed it used and the clips it shuffled, so a
+    # receipt can prove the result is a permutation of exactly the selected clips.
+    random_order_seed: int | None = None
+    random_order_source_ids: tuple[str, ...] = ()
     # KRI-458: how each described group ("start with the football, end at the pub")
     # landed in a unified montage: one status per sequence intent. Empty = none asked.
     sequence_statuses: tuple[str, ...] = ()
@@ -322,6 +355,7 @@ class PlanFacts:
     # as the creator's own words and the spot ("the video that is blue (first)"). Read off
     # the finished order like `sequence_statuses`; empty = every stated group landed.
     sequence_unmet: tuple[str, ...] = ()
+    sequence_unconfirmed: tuple[str, ...] = ()
     # ... and the stated groups none of whose clips are in the edit (deselected, or no match):
     # absent, not misplaced. A group made only of clips an earlier group already seated, or of
     # Visuals-pool items, is neither (the planner outcome's ``code`` says which).
@@ -340,6 +374,16 @@ class PlanFacts:
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
     sequence_spots_met: tuple[str, ...] | None = None
     texts: tuple[str, ...] = ()
+    # 29 Ekim: the whole text of every complete fragment sequence on screen (a title shown a
+    # piece at a time), so a `text_sequence` ask is judged by how the words are SHOWN, not by
+    # the sentence appearing somewhere. Empty = none, or this facts source never has it.
+    sequence_texts: tuple[str, ...] = ()
+    # KRI-945: pinned contract texts the render puts on screen whatever the plan holds
+    # (`phone_plan_repair.contract_text_drawn`). Empty = no such writer, or not known.
+    contract_drawn_texts: tuple[str, ...] = ()
+    # KRI-945: the research done before approval (`PreparedResearch` as JSON), pinned to the
+    # approval with it. None = none was done (or this facts source never has it).
+    research: Mapping[str, Any] | None = None
     # Where the title came from: "creator" (their words), "brief" (written from the
     # brief's facts), "default" (nothing to title with), None = unknown.
     title_source: str | None = None
@@ -455,6 +499,10 @@ class PlanFacts:
     capped_beat_hits: tuple[tuple[str, int, int], ...] = ()
     # The strategy's audio strategy ("voiceover", "original_audio", ...); None = unknown.
     audio_strategy: str | None = None
+    # KRI-983: how a `user_song` strategy plays the creator's song ("lipsync" / "background"),
+    # and whether their song is attached to the draft's pinned media. None = unknown.
+    song_sync: str | None = None
+    user_song_attached: bool | None = None
     # The strategy's render program ("native", "guided"); None = unknown. KRI-889: a
     # guided story's voiceover is not cut around named lines.
     render_program: str | None = None
@@ -467,6 +515,12 @@ class PlanFacts:
     # recompiles (`set_mix original_level`), app build unknown; None = no control (cloud
     # render, unknown). Never guessed: a receipt names only the control recorded here.
     original_audio_control: str | None = None
+    # KRI-994: the clips each live `select` ask's creator-settled exclusions left out
+    # (`select_asks.exclusion_facts`). Empty = none linked, so no exclusion is judged.
+    exclusions: tuple[ExclusionFact, ...] = ()
+    # KRI-994: the media ids of every non-video cut in the finished timeline; () = none (all
+    # cuts are videos). None = no finished timeline here, so "clips only" is not judged.
+    timeline_non_video_ids: tuple[str, ...] | None = None
     closing_requested: bool = False
     closing_visual_id: str | None = None
     closing_badge_requested: bool = False
@@ -482,12 +536,24 @@ class PlanFacts:
     # The language the rendered captions are in, and the language that was spoken.
     caption_language: str | None = None
     spoken_language: str | None = None
+    # KRI-1015: the spoken language a phone Talking render translated its captions out of
+    # (`variant["caption_translated_from"]`, written only when it did). None = not translated.
+    caption_translated_from: str | None = None
+    # KRI-1015: another live requirement asked for this caption language, so the translation is
+    # no miss on a captions ask that names none (the language row says where it came from).
+    caption_translation_asked: bool = False
     # KRI-547: how a phone Talking render framed a sideways speaker clip for a
     # "vertical / keep my face in frame" ask (`variant["speaker_framing"]`): "face_fill",
     # "letterbox" or "centre_fill", and why. None = no framing receipt (no such ask, a
     # draft, or a render that does not record one): nothing about framing is claimed.
     speaker_framing: str | None = None
     speaker_framing_reason: str | None = None
+    # The share (0..1) of the take the speaker's face was found in: `faces.presence` (receipt
+    # v2), else `faces.used / faces.decoded` (v1). None = the receipt did not say.
+    speaker_framing_face_share: float | None = None
+    # Seconds of the kept take with no speaker face in view, out of shot or turned away
+    # (`faces.absent_s`, receipt v2). None = not recorded.
+    speaker_framing_absent_s: float | None = None
     # KRI-628: whether a phone Talking render started at the line the creator quoted
     # (`variant["opening_cut"]`): "applied" or "not_applied", and why not. None = no
     # receipt (no such ask, a draft, or an older render): nothing is claimed.
@@ -571,10 +637,16 @@ class PlanFacts:
     # ({requirement_id, media_id, hold_s, rendered_s}); a finished timeline's own still
     # lengths replace ``rendered_s``. None = no montage record to read (nothing is claimed).
     asset_holds: tuple[Mapping[str, Any], ...] | None = None
-    # KRI-689: True when the plan was laid out by the phone unified montage, which plays every
-    # clip at its natural speed (the phone recipe has no retime for story footage). A
+    # KRI-689: True when the plan was laid out by a phone unified montage that could not retime
+    # a clip (a record written before speed asks were planned: no ``clip_speeds`` key). A
     # clip-speed ask is then a known miss; any other plan claims nothing about speed.
     speed_unsupported: bool = False
+    # KRI-689: the plan record's clip-speed rows (``clip_speeds``), keyed by requirement id:
+    # {status ("applied" / "locked" / "not_grounded" / "photo" / "ramp" / "replaced" /
+    # "dropped"), rate, rate_requested, rate_stated, cut_ids, cut_positions, media_ids,
+    # grounding, reason, footage_limited, replaced_by}. None = no record to read (nothing is
+    # claimed); a finished video's timeline confirms each applied row (``_rendered_speeds``).
+    clip_speeds: Mapping[str, Mapping[str, Any]] | None = None
     # KRI-840: the plan shows the creator's Visuals full screen at evenly spaced slots across the
     # talk (`overlay_display` "fullscreen*", or a render's overlay receipt of that layout), not
     # at a spoken word. A word-timed full-screen ask that only this covers is a "partial".
@@ -599,6 +671,17 @@ class PlanFacts:
     # KRI-842: a finished phone montage Voiceover (`resolved_archetype == "voiceover"`), which
     # cannot play one clip's sound under or after the voice.
     voiceover_edit: bool = False
+    # KRI-942: a draft the phone montage writer will render (`defers_to_unified_montage`), the
+    # writer that turns clips' own sound on and off where the creator says; and the on/off
+    # asks judged against the recipe a finished phone render pinned (`variant[
+    # "clip_sound_toggles"]`, re-judged by the render-ready review). None = nothing claimed.
+    phone_montage: bool = False
+    clip_sound_toggles: Mapping[str, Any] | None = None
+    # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): whether the edit can draw one
+    # at all (None = not checked), and the cards as approval keeps them (a draft, repaired
+    # against the manifest) or as the phone render placed them (`phone_timed_card_receipt`).
+    timed_cards_available: bool | None = None
+    timed_cards: tuple[TimedCardFact, ...] | None = None
 
     @property
     def reaction_beat_count(self) -> int | None:
@@ -675,6 +758,94 @@ def _beat_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) 
     }
 
 
+def _timed_card_facts(strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest) -> dict:
+    """Exact-timed small cards as approval will keep them: the same repair
+    `compile_strategy_to_plan` runs (unavailable capability -> none; unresolved visual or
+    clip -> dropped), so the draft receipt never promises a card the render cannot draw."""
+    from app.agents._schemas.creator_agent import CreativeStrategy  # noqa: PLC0415
+    from app.services.creator_capabilities import (  # noqa: PLC0415
+        CAPABILITY_TIMED_CARDS,
+        repair_creator_timed_cards,
+    )
+
+    capability = manifest.capabilities.get(CAPABILITY_TIMED_CARDS)
+    available = bool(capability is not None and capability.available)
+    try:
+        parsed = CreativeStrategy.model_validate(dict(strategy))
+    except ValueError:
+        return {"timed_cards_available": available}
+    if not parsed.timed_cards:
+        return {"timed_cards_available": available, "timed_cards": ()}
+    repaired, _notices = repair_creator_timed_cards(manifest, parsed)
+    kept = {card.card_id: card for card in repaired.timed_cards or []}
+    facts: list[TimedCardFact] = []
+    for card in parsed.timed_cards:
+        survivor = kept.get(card.card_id)
+        if survivor is None:
+            facts.append(
+                TimedCardFact(
+                    card_id=card.card_id,
+                    label=card.label,
+                    at_s=card.at_s,
+                    hold_s=card.hold_s,
+                    clip_id=card.clip_id,
+                    status="unplaced",
+                    reason="lane_disabled" if not available else "visual_not_found",
+                )
+            )
+            continue
+        facts.append(
+            TimedCardFact(
+                card_id=survivor.card_id,
+                label=survivor.label,
+                at_s=survivor.at_s,
+                hold_s=survivor.hold_s,
+                clip_id=survivor.clip_id,
+                status="planned",
+            )
+        )
+    return {"timed_cards_available": available, "timed_cards": tuple(facts)}
+
+
+def _timed_card_receipt_facts(receipt: object) -> dict[str, Any]:
+    """Cards off a rendered phone variant's ``phone_timed_card_receipt`` (``{}`` when none)."""
+    if not isinstance(receipt, Mapping) or receipt.get("matcher") not in ("timed", "disabled"):
+        return {}
+    end = _finite_number(receipt.get("timeline_end_s"))
+    facts: list[TimedCardFact] = []
+    for entry in receipt.get("placed") if isinstance(receipt.get("placed"), list) else []:
+        if not isinstance(entry, Mapping) or not entry.get("card_id"):
+            continue
+        facts.append(
+            TimedCardFact(
+                card_id=str(entry["card_id"]),
+                label=str(entry.get("label") or "") or None,
+                at_s=_finite_number(entry.get("at_s")),
+                end_s=_finite_number(entry.get("end_s")),
+                hold_s=_finite_number(entry.get("hold_s")),
+                status="placed",
+                timeline_end_s=end,
+            )
+        )
+    for entry in receipt.get("unplaced") if isinstance(receipt.get("unplaced"), list) else []:
+        if not isinstance(entry, Mapping) or not entry.get("card_id"):
+            continue
+        facts.append(
+            TimedCardFact(
+                card_id=str(entry["card_id"]),
+                label=str(entry.get("label") or "") or None,
+                at_s=_finite_number(entry.get("at_s")),
+                status="unplaced",
+                reason=str(entry.get("reason") or "") or None,
+                timeline_end_s=_finite_number(entry.get("timeline_end_s")) or end,
+            )
+        )
+    return {
+        "timed_cards_available": receipt.get("matcher") != "disabled",
+        "timed_cards": tuple(facts),
+    }
+
+
 def _draft_fullscreen_sequence(
     strategy: Mapping[str, Any], manifest: ResolvedCreatorManifest
 ) -> bool:
@@ -741,23 +912,39 @@ def plan_facts_from_strategy(
     (the caller's cohort check); None keeps the cleanup receipt from promising it.
     """
     strategy = strategy or {}
-    per_clip: dict[str, str] = {}
-    inferred: dict[str, str] = {}
+    per_clip_parts: dict[str, list[str]] = {}
+    inferred_parts: dict[str, list[str]] = {}
+    label_texts: list[str] = []
     for intent in strategy.get("resolved_clip_intents") or []:
-        if not isinstance(intent, Mapping) or intent.get("op") != "label":
+        if not isinstance(intent, Mapping) or intent.get("status", "resolved") != "resolved":
+            continue
+        if intent.get("op") not in {"label", "caption"}:
             continue
         for assignment in intent.get("assignments") or []:
             if not isinstance(assignment, Mapping):
                 continue
             media_id = str(assignment.get("media_id") or "")
-            value = assignment.get("value")
+            value = (
+                intent.get("caption_text")
+                if intent.get("op") == "caption"
+                else assignment.get("value")
+            )
+            grounding = (
+                intent.get("caption_grounding")
+                if intent.get("op") == "caption"
+                else assignment.get("grounding")
+            )
             if not media_id or not value:
                 continue
-            per_clip[media_id] = str(value)
+            per_clip_parts.setdefault(media_id, []).append(str(value))
+            if intent.get("op") == "label":
+                label_texts.append(str(value))
             # Only the creator's own words are "read"; everything the server
             # matched from footage or the record is reported as inferred.
-            if assignment.get("grounding") not in {"creator_text", "placeholder"}:
-                inferred[media_id] = str(value)
+            if grounding not in {"creator_text", "placeholder"}:
+                inferred_parts.setdefault(media_id, []).append(str(value))
+    per_clip = {media: "\n".join(dict.fromkeys(parts)) for media, parts in per_clip_parts.items()}
+    inferred = {media: "\n".join(dict.fromkeys(parts)) for media, parts in inferred_parts.items()}
     labels = tuple(str(x) for x in (strategy.get("shot_labels") or []) if str(x).strip())
     title = strategy.get("opening_title")
     texts = [
@@ -766,7 +953,7 @@ def plan_facts_from_strategy(
             title,
             strategy.get("closing_title"),
             *labels,
-            *per_clip.values(),
+            *label_texts,
             *_pinned_text_values(strategy.get("pinned_texts")),
         )
         if value
@@ -783,6 +970,7 @@ def plan_facts_from_strategy(
     extra: dict[str, Any] = {}
     if manifest is not None:
         extra = _beat_facts(strategy, manifest)
+        extra.update(_timed_card_facts(strategy, manifest))
         extra["fullscreen_sequence"] = _draft_fullscreen_sequence(strategy, manifest)
         extra["video_clip_count"] = _video_clip_count(strategy, manifest)
         extra["take_duration_s"] = _selected_video_seconds(strategy, manifest)
@@ -812,12 +1000,21 @@ def plan_facts_from_strategy(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
         ),
         sequence_conflicts=_strategy_sequence_conflicts(strategy),
+        sequence_unconfirmed=tuple(
+            sorted(
+                name
+                for _position, name, _members in unconfirmed_order_groups(
+                    strategy.get("resolved_clip_intents")
+                )
+            )
+        ),
         texts=tuple(texts),
         edit_format=str(edit_format) if edit_format else None,
         speech_cleanup_enabled=speech_cleanup_enabled,
         speech_cleanup_offered=speech_cleanup_offered,
         caption_style=str(caption_style) if caption_style else None,
         audio_strategy=str(audio_strategy) if audio_strategy else None,
+        song_sync=str(strategy["song_sync"]) if strategy.get("song_sync") else None,
         speech_occurrence_answers=tuple(
             dict(a)
             for a in strategy.get("choice_answers") or []
@@ -930,6 +1127,18 @@ def _strategy_sequence_conflicts(strategy: Mapping[str, Any]) -> tuple[str, ...]
     )
 
 
+def _random_order_record(record: Mapping[str, Any]) -> tuple[int | None, tuple[str, ...]]:
+    raw = record.get("random_order")
+    if not isinstance(raw, Mapping):
+        return None, ()
+    seed = raw.get("seed")
+    ids = raw.get("source_ids")
+    return (
+        seed if isinstance(seed, int) and not isinstance(seed, bool) else None,
+        tuple(str(i) for i in ids) if isinstance(ids, list) else (),
+    )
+
+
 def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFacts:
     """Read verifiable facts off a unified montage plan record (KRI-190).
 
@@ -977,6 +1186,8 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             str(c) for c in record.get("ordering_fallback_clip_ids") or []
         ),
         ordering_choice=str(record["ordering_choice"]) if record.get("ordering_choice") else None,
+        random_order_seed=_random_order_record(record)[0],
+        random_order_source_ids=_random_order_record(record)[1],
         sequence_statuses=tuple(
             str(row.get("status"))
             for row in record.get("intent_outcomes") or []
@@ -988,6 +1199,7 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             if isinstance(row, Mapping) and row.get("op") == "order" and row.get("status") == "met"
         ),
         sequence_unmet=_sequence_problems(record, ("misplaced", None, "contained")),
+        sequence_unconfirmed=_sequence_problems(record, ("member_order_unknown",)),
         sequence_absent=_sequence_problems(record, ("absent", "unresolved")),
         sequence_conflicts=_sequence_problems(record, ("conflict",)),
         sequence_unlocated=tuple(
@@ -1022,7 +1234,10 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         cut_clip_ids=_window_media_ids(record.get("best_parts")),
         source_durations_s=_source_durations(record.get("clip_durations_s")),
         song_bed=bool(record.get("user_song")),
-        speed_unsupported=True,
+        # A record without the key was written by a planner that could not retime (KRI-689's
+        # original "Couldn't"); a speed-aware planner always writes a row per speed ask.
+        speed_unsupported="clip_speeds" not in record,
+        clip_speeds=_speed_facts(record.get("clip_speeds")),
         freeze_frames=_freeze_facts(record.get("freeze_frames"), record.get("freeze_frame")),
         asset_holds=tuple(
             row for row in record.get("asset_holds") or [] if isinstance(row, Mapping)
@@ -1065,6 +1280,57 @@ def _rendered_freezes(
         key: (value if value.get("status") != "held" or held else {**value, "status": "dropped"})
         for key, value in planned.items()
     }
+
+
+def _speed_facts(rows: object) -> dict[str, Mapping[str, Any]] | None:
+    """KRI-689: the plan record's clip-speed rows keyed by requirement id; None without the
+    key (a record from before speed asks were planned)."""
+    if not isinstance(rows, list):
+        return None
+    return {
+        str(row["requirement_id"]): dict(row)
+        for row in rows
+        if isinstance(row, Mapping) and isinstance(row.get("requirement_id"), str)
+    }
+
+
+def _rendered_speeds(
+    planned: Mapping[str, Mapping[str, Any]] | None, variant: Mapping[str, Any]
+) -> dict[str, Mapping[str, Any]] | None:
+    """An applied rate counts on a finished video only when its timeline still carries it.
+
+    The variant's ``story_timeline`` rows are the plan's moments (``moment_id`` = cut id,
+    ``playback_rate``). A row for an applied cut without the rate marks the ask "dropped";
+    a timeline without ``moment_id`` (older variants) cannot contradict the plan.
+    """
+    if planned is None:
+        return None
+    rows = variant.get("story_timeline")
+    if not isinstance(rows, list):
+        return dict(planned)
+    by_moment = {
+        str(row["moment_id"]): row
+        for row in rows
+        if isinstance(row, Mapping) and isinstance(row.get("moment_id"), str)
+    }
+    if not by_moment:
+        return dict(planned)
+    out: dict[str, Mapping[str, Any]] = {}
+    for key, value in planned.items():
+        if value.get("status") != "applied":
+            out[key] = value
+            continue
+        rate = _finite_number(value.get("rate"))
+        kept = True
+        for cut_id in value.get("cut_ids") or []:
+            row = by_moment.get(str(cut_id))
+            if row is None:
+                continue
+            played = _finite_number(row.get("playback_rate"))
+            if played is None or rate is None or abs(played - rate) > 0.01:
+                kept = False
+        out[key] = value if kept else {**value, "status": "dropped"}
+    return out
 
 
 def _named_line_facts(raw: object) -> tuple[NamedLineFact, ...] | None:
@@ -1503,7 +1769,10 @@ def plan_facts_from_editor_payload(
     # KRI-560: a phrase the compiler split into one-word-at-a-time fragments (a word-by-word
     # hook) is on screen as the whole phrase, but no single row says it. Only a complete,
     # contiguous, same-source run counts; a missing or removed word leaves the phrase unseen.
-    strings.extend(composed["text"] for composed in complete_sequences(sequence_fragments))
+    composed_sequences = tuple(
+        composed["text"] for composed in complete_sequences(sequence_fragments)
+    )
+    strings.extend(composed_sequences)
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue
@@ -1519,7 +1788,13 @@ def plan_facts_from_editor_payload(
         str(change).startswith("Order clips by filming time") for change in changes or ()
     )
     return PlanFacts(
-        ordering_basis="capture_time" if ordered_by_capture else None,
+        ordering_basis=(
+            "capture_time"
+            if ordered_by_capture
+            else "random"
+            if any(str(change).startswith("Shuffle clips") for change in changes or ())
+            else None
+        ),
         duration_s=_editor_payload_duration(payload),
         editor_text_edited=bool(
             isinstance(payload, Mapping)
@@ -1527,6 +1802,7 @@ def plan_facts_from_editor_payload(
             and payload.get("text_elements")
         ),
         texts=tuple(strings),
+        sequence_texts=composed_sequences,
         editor=True,
         has_clip_structure=bool(per_clip),
         per_clip_text=per_clip,
@@ -1722,6 +1998,27 @@ def _ending_clip_receipt_fact(receipt: object) -> EndingClipFact | None:
     )
 
 
+def _with_narrated_text_rows(variant: Mapping[str, Any]) -> Mapping[str, Any]:
+    """``variant`` with its phone Voiceover text rows as ordinary text lanes (KRI-963).
+
+    A phone Narrated render keeps the title it drew (and text placed at a spoken word, or
+    added in the editor) in ``narrated_title_text_elements``, the one store an editor Save
+    rewrites, never in ``text_elements``. A row the creator removed is not on screen.
+    """
+    rows = variant.get("narrated_title_text_elements")
+    if not isinstance(rows, list) or not rows:
+        return variant
+    current = variant.get("text_elements")
+    lanes = list(current) if isinstance(current, list) else []
+    shown = {row.get("id") for row in lanes if isinstance(row, Mapping)}
+    extra = [
+        row
+        for row in rows
+        if isinstance(row, Mapping) and not row.get("removed") and row.get("id") not in shown
+    ]
+    return {**variant, "text_elements": lanes + extra} if extra else variant
+
+
 def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFacts:
     """Facts off a rendered phone variant (KRI-537).
 
@@ -1733,7 +2030,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     """
     if not isinstance(variant, Mapping):
         return PlanFacts()
-    base = plan_facts_from_editor_payload(variant)
+    base = plan_facts_from_editor_payload(_with_narrated_text_rows(variant))
     changes = _phone_receipt_facts(
         variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
     )
@@ -1766,11 +2063,15 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_spoken_text_facts(variant))
     changes.update(_protected_text_facts(variant))
     changes.update(_beat_room_facts(variant.get("phone_beat_receipt")))
+    changes.update(_timed_card_receipt_facts(variant.get("phone_timed_card_receipt")))
     changes.update(_overlay_sequence_facts(variant.get("phone_overlay_receipt")))
     changes.update(_rendered_caption_facts(variant))
     receipt = variant.get("clip_sound")
     if isinstance(receipt, Mapping):
         changes["clip_sound"] = receipt  # KRI-842
+    toggles = variant.get("clip_sound_toggles")
+    if isinstance(toggles, Mapping):
+        changes["clip_sound_toggles"] = toggles  # KRI-942: the worker's own judgement
     if variant.get("resolved_archetype") == "voiceover":
         changes["voiceover_edit"] = True  # KRI-842
     changes.update(_unclear_word_facts(variant))
@@ -1959,6 +2260,9 @@ def _rendered_caption_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
     language = variant.get("caption_language")
     if isinstance(language, str) and language.strip():
         facts["caption_language"] = language.strip()
+    translated = variant.get("caption_translated_from")
+    if isinstance(translated, str) and translated.strip():
+        facts["caption_translated_from"] = translated.strip().casefold()
     return facts
 
 
@@ -1984,6 +2288,7 @@ _MONTAGE_ORDER_FIELDS = (
     "ordering_choice",
     "sequence_statuses",
     "sequence_unmet",
+    "sequence_unconfirmed",
     "sequence_absent",
     "sequence_conflicts",
     "sequence_unlocated",
@@ -2022,6 +2327,24 @@ def _rendered_clip_cuts(
         )
     cuts.sort(key=lambda cut: (cut[0], cut[1]))
     return [(media_id, start, end) for _at, _index, media_id, start, end in cuts]
+
+
+def _rendered_non_video_ids(variant: Mapping[str, Any]) -> tuple[str, ...] | None:
+    """The media ids of the finished timeline's non-video cuts (KRI-994); None = unknown.
+
+    Every lane counts: a photo shown as a card is still a photo in the video. A timeline
+    with no rows, or a row that does not say what it is, says nothing.
+    """
+    rows = variant.get("story_timeline")
+    if not isinstance(rows, list) or not rows:
+        return None
+    photos: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping) or not isinstance(row.get("kind"), str):
+            return None
+        if row["kind"] != "video":
+            photos.append(str(row.get("media_id") or row["kind"]))
+    return tuple(dict.fromkeys(photos))
 
 
 def _rendered_holds(
@@ -2137,6 +2460,8 @@ def plan_facts_from_rendered_montage(
         asset_holds=_rendered_holds(plan.asset_holds, variant),
         song_bed=plan.song_bed,
         speed_unsupported=plan.speed_unsupported,
+        clip_speeds=_rendered_speeds(plan.clip_speeds, variant),
+        timeline_non_video_ids=_rendered_non_video_ids(variant),
         freeze_frames=_rendered_freezes(plan.freeze_frames, variant),
         source_audio_kept=kept if isinstance(kept, bool) else None,
         source_clip_ids=tuple(prints),
@@ -2579,12 +2904,55 @@ def _listed_order_miss(facts: PlanFacts) -> str:
     return " ".join(said)
 
 
+_RANDOM_ORDER_NOT_APPLIED = "I couldn't confirm the clips are in a random order."
+_RANDOM_ORDER_OVERRIDDEN = "You moved the clips yourself, so your own order is kept."
+
+
+def _check_random_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A random order is met when the plan's order IS the stored seed's permutation.
+
+    A unified montage records the seed and the clips it shuffled, so the check recomputes
+    ``seeded_permutation(source, seed)`` and compares it with the order the plan used (an
+    explicit start/end sequence outranks it, so there only "a permutation, nothing lost or
+    repeated" can be promised). The editor op only says "Shuffle clips", which can prove the
+    permutation but not the seed. A creator's own later hand reorder displaces the ask.
+    """
+    required = facts.strict_order and _order_is_required(req)
+    if not facts.ordering_basis:
+        if required and facts.rendered_output:
+            return _receipt(req, "not_possible", _ORDER_NOT_RECORDED)
+        return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
+    if facts.ordering_basis == "creator_order":
+        return _receipt(
+            req, "met", say(en=_RANDOM_ORDER_OVERRIDDEN, tr=_REASON_TR[_RANDOM_ORDER_OVERRIDDEN])
+        )
+    unmet = "not_possible" if required else "partial"
+    reason = say(en=_RANDOM_ORDER_NOT_APPLIED, tr=_REASON_TR[_RANDOM_ORDER_NOT_APPLIED])
+    if facts.ordering_basis != "random":
+        return _receipt(req, unmet, reason)
+    source = facts.random_order_source_ids
+    if source:
+        wanted = set(source)
+        used = [c for c in facts.clip_ids if c in wanted]
+        if sorted(used) != sorted(source):
+            return _receipt(req, unmet, reason)
+        if (
+            facts.random_order_seed is not None
+            and not facts.sequence_statuses
+            and used != seeded_permutation(source, facts.random_order_seed)
+        ):
+            return _receipt(req, unmet, reason)
+    return _receipt(req, "met", None)
+
+
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A required order is met, partly met (an honest fallback), or FAILED. Neutral
     (unchecked) is only for an optional preference, and for a draft that has not been
     laid out yet (its order is judged when it renders)."""
     if facts.narrated_steps is not None:
         return _check_narrated_order(req, facts)
+    if facts.sequence_unconfirmed:
+        return _receipt(req, "partial", unconfirmed_order_reason())
     if facts.sequence_conflicts and not (facts.sequence_unmet or facts.sequence_absent):
         # KRI-764: one clip asked to be first AND last. The earlier ask stands and the edit
         # still renders, so say so (before approval too) instead of refusing the render.
@@ -2602,6 +2970,11 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
                 ),
             ),
         )
+    mode = order_mode(req)
+    if mode == "any":
+        return _receipt(req, "met", None)  # any order is the order they asked for
+    if mode == "random":
+        return _check_random_order(req, facts)
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     required = facts.strict_order and _order_is_required(req)
     unmet = "not_possible" if required else "partial"
@@ -3605,6 +3978,8 @@ def _wants_no_captions(req: BriefRequirement) -> bool:
 
 
 def _wants_word_captions(req: BriefRequirement) -> bool:
+    if req.kind == "text_sequence":
+        return False  # 29 Ekim: the creator's words shown in pieces are text, never captions
     stated = _caption_fact(req)
     if stated is not None:
         return stated == "word_by_word"
@@ -3767,6 +4142,32 @@ _CANT_CHECK_MIX = "I can't check the sound mix on this draft yet."
 # KRI-689: the phone montage plays every clip at its natural speed. Said before approval
 # (`clip_speed_notice`) and again, as the reason, on the finished video's receipt.
 _NO_CLIP_SPEED = "I can't change clip speed on your iPhone yet, so the clips play at normal speed"
+# KRI-689 (chat speed at creation): the cases no plan can retime, each a limit of the edit, and
+# the two the creator must settle (which clip, how fast) -- those are not format limits.
+_NO_CLIP_SPEED_SONG = (
+    "I can't change clip speed on this edit because the clips follow your song, "
+    "so they play at normal speed"
+)
+_NO_SPEED_ON_FREEZE = (
+    "I can't change the speed of a clip that holds a freeze frame, so it plays at normal speed"
+)
+_NO_SPEED_RAMP = "I can't ramp speed inside a clip yet, so it plays at normal speed"
+_NO_PHOTO_SPEED = "A photo has no speed to change, so it stays as it is"
+_SPEED_DROPPED = "The finished video plays this clip at normal speed"
+_SPEED_NOT_GROUNDED = (
+    "I couldn't tell which clip you meant for the speed change, so the clips play at "
+    "normal speed. Tell me which clip"
+)
+_SPEED_NO_FOOTAGE = (
+    "I can't speed these clips up: the video already shows each one whole, so there's no "
+    "footage left to speed through"
+)
+# KRI-983: a lip-sync ask the draft does not carry out.
+_SONG_NOT_ATTACHED = "Add your song first and I'll use it."
+_SONG_NOT_USED = "This draft doesn't use your song."
+_SONG_IN_BACKGROUND = (
+    "This draft plays your song in the background; your clips aren't matched to its words."
+)
 # Start of the reason on a "mute the footage sound" ask the voiceover mix cannot fully meet
 # (the footage sound is a quiet bed under the voice, never off): a limit of the format.
 _BED_STILL_PLAYS = "The footage sound still plays"
@@ -3777,9 +4178,9 @@ _CLEANUP_IF_OFFERED = (
     "If Clean up speech is offered when you approve, choose it to cut the long pauses"
 )
 _CLEANUP_UNAVAILABLE = "Speech cleanup isn't available for this project yet, so the pauses stay"
-# KRI-846: said as a plain limit, never as editor work: no editor action cuts a spoken line
-# out (talking-source slots can't be trimmed or split, the server refuses any change to their
-# windows with 409 TIMELINE_STALE, and a Narrated editor trims pictures, not the voice).
+# KRI-846: said as a plain limit, never as editor work: no editor action cuts one exact spoken
+# line out (a talking-source window can be trimmed or moved since KRI-852, but there is no
+# split and no per-line cut, and a Narrated editor trims pictures, not the voice).
 # KRI-551: a consented retake cleanup may have removed the line, and a generic cleanup record
 # (even one with a retake) cannot prove it, so it says "may still be", never "stays". One
 # static string for every speech format: `_loc` translates exact keys only and the
@@ -3793,7 +4194,8 @@ _NAMED_CUT_STILL_IN = "Still in your video"
 _NAMED_CUT_AT_RENDER = (
     "I'll cut the line you named out of your take if I find it said once, and tell you after"
 )
-_CAPTIONS_WORD_BY_WORD = "words light up as you say them"
+# Neutral: the speaker may be someone the creator filmed (KRI-1008).
+_CAPTIONS_WORD_BY_WORD = "words light up as they're spoken"
 # KRI-541: what speech cleanup did on a finished render.
 _CLEANUP_DONE = "Speech cleanup cut the long pauses"
 _CLEANUP_NOTHING_TO_CUT = "Speech cleanup found no long pauses to cut"
@@ -3805,6 +4207,10 @@ _LIGHT_UNAVAILABLE = (
 # KRI-777: no edit can hold a frame (see `kria.freeze_ask`). Said on the draft, before the
 # approval card, and again on the finished video's receipt.
 _NO_FREEZE_FRAME = "I can't freeze a frame in this edit yet, so that moment plays normally"
+# KRI-994: the clip the creator asked to skip, or a photo in a "video clips only" edit, is
+# in the finished video after all (a pin or the plan's own placement kept it).
+_SKIPPED_CLIP_PLAYS = "The clip you asked to skip is still in the video"
+_PHOTO_IN_CLIPS_ONLY = "The video still has a photo in it"
 # KRI-828: the freeze is planned, but no analysed moment of the clips matches the creator's
 # words for it (or two do), so no frame is guessed.
 _FREEZE_NOT_GROUNDED = (
@@ -3964,6 +4370,8 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_EDITOR_CLIP_TEXT: "Editör düzenlemesinde klip başına yazıyı doğrulayamıyorum.",
     _CANT_CHECK_TARGET_CLIP_TEXT: "Bu taslakta o klibin yazısını doğrulayamıyorum.",
     _CANT_CONFIRM_ORDER: "Bu taslağın kullandığı sırayı doğrulayamıyorum.",
+    _RANDOM_ORDER_NOT_APPLIED: "Kliplerin rastgele sırada olduğunu doğrulayamadım.",
+    _RANDOM_ORDER_OVERRIDDEN: "Klipleri kendin taşıdığın için senin sıran korundu.",
     _CANT_CHECK_ORDER_RULE: "Bu sıralamayı otomatik olarak doğrulayamıyorum.",
     _ORDER_NOT_APPLIED: (
         "Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı."
@@ -4006,6 +4414,33 @@ _REASON_TR: dict[str, str] = {
     _NO_CLIP_SPEED: (
         "iPhone'unda klip hızını henüz değiştiremiyorum, o yüzden klipler normal hızda oynuyor"
     ),
+    _NO_CLIP_SPEED_SONG: (
+        "Bu düzenlemede klip hızını değiştiremiyorum çünkü klipler şarkını takip ediyor, "
+        "o yüzden normal hızda oynuyorlar"
+    ),
+    _SONG_NOT_ATTACHED: "Önce şarkını ekle, ben de onu kullanayım.",
+    _SONG_NOT_USED: "Bu taslak şarkını kullanmıyor.",
+    _SONG_IN_BACKGROUND: (
+        "Bu taslak şarkını arka planda çalıyor; klipler sözlerine göre yerleştirilmedi."
+    ),
+    _NO_SPEED_ON_FREEZE: (
+        "Donmuş kare tutan bir klibin hızını değiştiremiyorum, o yüzden normal hızda oynuyor"
+    ),
+    _NO_SPEED_RAMP: (
+        "Bir klibin içinde hızı henüz kademeli değiştiremiyorum, o yüzden normal hızda oynuyor"
+    ),
+    _NO_PHOTO_SPEED: "Bir fotoğrafın değişecek hızı yok, o yüzden olduğu gibi kalıyor",
+    _SPEED_DROPPED: "Bitmiş video bu klibi normal hızda oynatıyor",
+    _SPEED_NOT_GROUNDED: (
+        "Hız değişikliği için hangi klibi kastettiğini anlayamadım, o yüzden klipler normal "
+        "hızda oynuyor. Hangi klip olduğunu yaz"
+    ),
+    _SPEED_NO_FOOTAGE: (
+        "Bu klipleri hızlandıramıyorum: video her birini zaten baştan sona gösteriyor, "
+        "hızlanacak görüntü kalmadı"
+    ),
+    _SKIPPED_CLIP_PLAYS: "Çıkarmanı istediğin klip hâlâ videoda",
+    _PHOTO_IN_CLIPS_ONLY: "Videoda hâlâ bir fotoğraf var",
     _NO_FREEZE_FRAME: (
         "Bu düzenlemede henüz bir kareyi donduramıyorum, o yüzden o an normal akıyor"
     ),
@@ -4072,7 +4507,7 @@ _REASON_TR: dict[str, str] = {
         "belirli bir cümleyi henüz tam olarak kesemiyorum ve çıkarıldığını doğrulayamıyorum, "
         "o yüzden videoda kalmış olabilir"
     ),
-    _CAPTIONS_WORD_BY_WORD: "kelimeler sen söylerken yanıyor",
+    _CAPTIONS_WORD_BY_WORD: "kelimeler söylendikçe yanıyor",
     _CLEANUP_DONE: "Konuşma temizliği uzun duraklamaları kesti",
     _CLEANUP_NOTHING_TO_CUT: "Konuşma temizliği kesilecek uzun bir duraklama bulmadı",
     _CLEANUP_NOT_RUN: ("Konuşma temizliği bu videoda çalışmadı, o yüzden uzun duraklamalar kaldı"),
@@ -4195,6 +4630,12 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _NAMED_CUT_AT_RENDER,
     _BED_STILL_PLAYS,
     _NO_CLIP_SPEED,
+    _NO_CLIP_SPEED_SONG,
+    _NO_SPEED_ON_FREEZE,
+    _NO_SPEED_RAMP,
+    _NO_PHOTO_SPEED,
+    _SPEED_DROPPED,
+    _SPEED_NO_FOOTAGE,
     _NO_FREEZE_FRAME,
     _FREEZE_NOT_GROUNDED,
     _MOMENTS_NOT_LOCATED,
@@ -4319,8 +4760,21 @@ def _unheard_for(facts: PlanFacts, names: Sequence[str]) -> list[str]:
     return [t for t in facts.unheard_beat_triggers if any(_trigger_heard(n, t) for n in names)]
 
 
-def _never_heard_problem(triggers: Iterable[str]) -> str:
+def _asks_about_other_speaker(req: BriefRequirement) -> bool:
+    """True when the ask names someone other than the creator as the one who says the words:
+    a ``speaker`` fact that is not the creator or anyone ("Maximo"), or a cue worded "when he
+    mentions ..." (KRI-1019)."""
+    return _fact_speaker(req) is not None or _cue_trigger_match(req)[1] is not None
+
+
+def _never_heard_problem(triggers: Iterable[str], *, other_speaker: bool = False) -> str:
     names = _names(triggers)
+    if other_speaker:
+        # The words were meant for someone else's mouth: "your voice" would blame the creator.
+        return say(
+            en=f"I never heard {names} in the take",
+            tr=f"Videoda {names} sözünü duymadım",
+        )
     return say(
         en=f"I never heard {names} in your voice",
         tr=f"Sesinde {names} sözünü duymadım",
@@ -4384,10 +4838,11 @@ def _beat_room_problem(req: BriefRequirement, facts: PlanFacts, names: Sequence[
             say(
                 en=(
                     f"There was no room on screen for {_names(no_room)} without covering "
-                    "your face or the captions"
+                    "a face or the captions"
                 ),
                 tr=(
-                    f"{_names(no_room)} için yüzünü ya da altyazıları kapatmadan ekranda yer yoktu"
+                    f"{_names(no_room)} için bir yüzü ya da altyazıları kapatmadan "
+                    "ekranda yer yoktu"
                 ),
             )
         )
@@ -4501,6 +4956,151 @@ def _sequence_problem(req: BriefRequirement, facts: PlanFacts) -> str | None:
     )
 
 
+def _timed_card_ask(req: BriefRequirement) -> Mapping[str, Any] | None:
+    """The model's recorded ``timed_card`` fact (KRI-667: never a new word regex here):
+    ``{"visual": ..., "at_s": ..., "clip": ..., "hold_s": ...}``, else None."""
+    fact = req.facts.get("timed_card")
+    return fact if isinstance(fact, Mapping) else None
+
+
+def _cards_for_ask(ask: Mapping[str, Any], cards: Sequence[TimedCardFact]) -> list[TimedCardFact]:
+    """The cards this ask is about: the one nearest its second (within 0.6 s), else the ones
+    whose label shares a word with the visual it named, else every card (one ask, one lane)."""
+    at_s = _finite_number(ask.get("at_s"))
+    if at_s is not None:
+        near = [c for c in cards if c.at_s is not None and abs(c.at_s - at_s) <= 0.6]
+        if near:
+            return near
+    visual = _fold(str(ask.get("visual") or ""))
+    words = {w for w in visual.split() if len(w) > 2}
+    if words:
+        named = [c for c in cards if c.label and words & set(_fold(c.label).split())]
+        if named:
+            return named
+    return list(cards)
+
+
+def _timed_card_name(card: TimedCardFact) -> str:
+    return card.label or say(en="the photo", tr="fotoğraf")
+
+
+def _timed_card_met(card: TimedCardFact) -> str:
+    name = _timed_card_name(card)
+    hold = card.hold_s if card.hold_s is not None else 0.0
+    if card.at_s is None:
+        return say(
+            en=f"Small card of {name} during the clip you named for {hold:.1f} s",
+            tr=f"{name} söylediğin klipte {hold:.1f} sn küçük kart olarak",
+        )
+    return say(
+        en=f"Small card of {name} at {card.at_s:.1f} s for {hold:.1f} s",
+        tr=f"{name} {card.at_s:.1f} sn'de {hold:.1f} sn küçük kart olarak",
+    )
+
+
+def _timed_card_problem(card: TimedCardFact) -> str:
+    name = _timed_card_name(card)
+    at = f"{card.at_s:.1f} s" if card.at_s is not None else None
+    reason = card.reason or ""
+    if reason == "past_end":
+        end = card.timeline_end_s
+        return say(
+            en=(
+                f"{at} is past the end of the video"
+                + (f" ({end:.1f} s)" if end is not None else "")
+                + f", so the small card of {name} isn't shown"
+            ),
+            tr=(
+                f"{at} videonun sonundan sonra"
+                + (f" ({end:.1f} sn)" if end is not None else "")
+                + f", o yüzden {name} küçük kartı gösterilmiyor"
+            ),
+        )
+    if reason == "face_collision":
+        return say(
+            en=f"I couldn't place the small card of {name} without covering a face",
+            tr=f"{name} küçük kartını bir yüzü kapatmadan yerleştiremedim",
+        )
+    if reason == "overlaps_card":
+        return say(
+            en=f"The small card of {name} would overlap another card, so it isn't shown",
+            tr=f"{name} küçük kartı başka bir kartla çakışıyor, o yüzden gösterilmiyor",
+        )
+    if reason == "video_not_supported":
+        return say(
+            en=f"Videos can't show as small cards in this edit yet, so {name} is left out",
+            tr=f"Bu düzenlemede videolar henüz küçük kart olarak çıkamıyor, {name} koymadım",
+        )
+    if reason in ("lane_disabled", "unavailable"):
+        return _timed_cards_unavailable()
+    if reason in ("visual_not_found", "visual_not_bound"):
+        return say(
+            en=f"I couldn't find {name} in your Visuals for the small card",
+            tr=f"Küçük kart için {name} görsellerinde bulamadım",
+        )
+    if reason == "clip_not_in_edit":
+        return say(
+            en=f"The clip the small card of {name} should follow isn't in this edit",
+            tr=f"{name} küçük kartının takip edeceği klip bu düzenlemede yok",
+        )
+    return say(
+        en=f"The small card of {name} couldn't be drawn on this render",
+        tr=f"{name} küçük kartı bu videoya çizilemedi",
+    )
+
+
+def _timed_cards_unavailable() -> str:
+    # A function, not a constant: `say` reads the chat's language at call time.
+    return say(
+        en="Small cards at an exact time aren't available for this edit yet",
+        tr="Tam zamanlı küçük kartlar bu düzenleme için henüz yok",
+    )
+
+
+def _cant_check_timed_card() -> str:
+    return say(
+        en="I can't check the small card on this draft yet.",
+        tr="Bu taslakta küçük kartı henüz kontrol edemiyorum.",
+    )
+
+
+def _check_timed_cards(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """An exact-timed small card ask, judged against the repaired draft or the render's own
+    `phone_timed_card_receipt` -- "met" names the second and hold the card really has."""
+    ask = _timed_card_ask(req) or {}
+    if facts.timed_cards_available is False:
+        return _receipt(req, "not_possible", _timed_cards_unavailable() + ".")
+    if facts.timed_cards is None:
+        return _receipt(req, "partial", _cant_check_timed_card())
+    cards = _cards_for_ask(ask, facts.timed_cards)
+    if not cards:
+        return _receipt(
+            req,
+            "not_possible",
+            say(
+                en="This draft doesn't place a small card at that moment.",
+                tr="Bu taslak o anda küçük bir kart koymuyor.",
+            ),
+        )
+    shown = [c for c in cards if c.status in ("planned", "placed")]
+    missing = [c for c in cards if c.status == "unplaced"]
+    if shown and not missing:
+        reason = _names_join([_timed_card_met(c) for c in shown]) + "."
+        verification = "checked" if any(c.status == "placed" for c in shown) else None
+        return _receipt(req, "met", reason, verification=verification)
+    problems = [_timed_card_problem(c) for c in missing]
+    if shown:
+        problems.insert(0, _names_join([_timed_card_met(c) for c in shown]))
+        return _receipt(req, "partial", "; ".join(problems) + ".")
+    return _receipt(req, "not_possible", "; ".join(problems) + ".")
+
+
+def _names_join(items: Sequence[str]) -> str:
+    if len(items) <= 1:
+        return items[0] if items else ""
+    return ", ".join(items[:-1]) + say(en=" and ", tr=" ve ") + items[-1]
+
+
 def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """Word-triggered pop-ins and the closing shot, from the repaired strategy."""
     wants_beats = _wants_beats(req)
@@ -4534,7 +5134,9 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
             unheard = list(facts.unheard_beat_triggers) if not names else _unheard_for(facts, names)
             room = _beat_room_problem(req, facts, names)
             if unheard:
-                problems.append(_never_heard_problem(unheard))
+                problems.append(
+                    _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
+                )
             elif room:
                 problems.append(room)
             else:
@@ -4586,7 +5188,9 @@ def _check_reaction_beats(req: BriefRequirement, facts: PlanFacts) -> Requiremen
                 and not any(_trigger_heard(n, u) for u in unheard)
             ]
             if unheard:
-                problems.append(_never_heard_problem(unheard))
+                problems.append(
+                    _never_heard_problem(unheard, other_speaker=_asks_about_other_speaker(req))
+                )
             # Named words: only the ones that didn't land; unnamed: the ask's own words.
             room = None if named and not missing else _beat_room_problem(req, facts, missing)
             if room:
@@ -4727,8 +5331,23 @@ def _speech_cue(req_text: str, pattern: re.Pattern[str]) -> bool:
     return bool(pattern.search(req_text) or pattern.search(loose_text(req_text)))
 
 
+def _records_caption_ask(req: BriefRequirement) -> bool:
+    """The model recorded this requirement as a captions ask (``captions``,
+    ``caption_language`` or ``spellings``) and recorded no spoken triggers."""
+    return (
+        _caption_fact(req) is not None
+        or _caption_language_fact(req) is not None
+        or bool(_spellings_fact(req))
+    ) and not _fact_triggers(req)
+
+
 def _wants_speech(req: BriefRequirement) -> bool:
-    return req.kind in _BEAT_KINDS and _speech_cue(_req_text(req), _SPEECH_EXCERPT_RE)
+    # KRI-961: the recorded captions facts decide (KRI-667). "English captions on my voice"
+    # names the voice the captions are on; read as a speech-excerpt ask it lost its captions
+    # check and the spellings the render applies (`brief_caption_spellings`).
+    if req.kind not in _BEAT_KINDS or _records_caption_ask(req):
+        return False
+    return _speech_cue(_req_text(req), _SPEECH_EXCERPT_RE)
 
 
 def _check_speech_excerpts(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
@@ -4958,16 +5577,20 @@ def _check_rendered_cleanup(req: BriefRequirement, facts: PlanFacts) -> Requirem
 
 
 def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | None] | None:
-    """Pauses, filler sounds and retakes a variant's cut record removed, and the time saved.
+    """Pauses, filler sounds and retakes a variant's cut record removed, and their length.
 
     Read off ``silence_cut.removed`` (one ``reason`` per span). ``None`` when the variant
-    carries no cut record, so the note states no number it was not given.
+    carries no cut record, so the note states no number it was not given. The seconds are
+    summed over those cleanup rows only: the record also holds the quoted-line trim
+    (``opening_cut`` / ``end_cut``), which ``time_saved_s`` counts too (KRI-978: "1 filler
+    sound (41.4 s)" for a 0.32 s cut).
     """
     record = variant.get("silence_cut")
     rows = record.get("removed") if isinstance(record, Mapping) else None
     if not isinstance(rows, list) or not rows:
         return None
     pauses = fillers = retakes = 0
+    seconds = 0.0
     for row in rows:
         reason = row.get("reason") if isinstance(row, Mapping) else None
         if reason == "silence":
@@ -4976,15 +5599,18 @@ def _cleanup_counts(variant: Mapping[str, Any]) -> tuple[int, int, int, float | 
             fillers += 1
         elif reason == "retake":
             retakes += 1
+        else:
+            continue
+        start, end = row.get("start_s"), row.get("end_s")
+        if seconds is not None and all(
+            isinstance(value, int | float) and not isinstance(value, bool) for value in (start, end)
+        ):
+            seconds += max(0.0, float(end) - float(start))
+        else:
+            seconds = None
     if not (pauses or fillers or retakes):
         return None
-    saved = record.get("time_saved_s")
-    seconds = (
-        float(saved)
-        if isinstance(saved, int | float) and not isinstance(saved, bool) and saved > 0
-        else None
-    )
-    return pauses, fillers, retakes, seconds
+    return pauses, fillers, retakes, seconds if seconds else None
 
 
 def speech_cleanup_review_note(
@@ -5031,12 +5657,12 @@ def speech_cleanup_review_note(
         sentences = [
             say(
                 en=(
-                    f"Speech cleanup cut {joined_en}"
+                    f"Speech cleanup cut what it heard as {joined_en}"
                     + (f" ({seconds:.1f} s)" if seconds is not None else "")
                     + "."
                 ),
                 tr=(
-                    f"Konuşma temizliği şunları kesti: {', '.join(parts_tr)}"
+                    f"Konuşma temizliği duyduğu şu sesleri kesti: {', '.join(parts_tr)}"
                     + (f" ({seconds:.1f} sn)".replace(".", ",") if seconds is not None else "")
                     + "."
                 ),
@@ -5045,9 +5671,12 @@ def speech_cleanup_review_note(
     if not retakes and not retake_cut_possible and _loc(_NAMED_CUTS_STAY) not in text:
         sentences.append(
             say(
-                en="It only cuts pauses and filler sounds, so a sentence you restarted stays in.",
+                # KRI-970: what it looks for, never a promise of what it cut. Its filler
+                # cuts trust the transcript's timing, which can sit over a real word.
+                en="It looks only for pauses and filler sounds, so a sentence you restarted "
+                "stays in.",
                 tr=(
-                    "Yalnızca duraklamaları ve dolgu seslerini keser; baştan başladığın bir "
+                    "Yalnızca duraklamaları ve dolgu seslerini arar; baştan başladığın bir "
                     "cümle videoda kalır."
                 ),
             )
@@ -5106,11 +5735,28 @@ def _check_captions(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
                 ),
             )
         return _receipt(req, "met", None)
+    # KRI-1015: a captions ask that names no language is held to the spoken one. Translated
+    # captions are said so (not "can't check"); two languages kept as spoken are never "met".
+    translated = _translated_from(facts, str(facts.caption_language or "").casefold().split("-")[0])
+    if translated and not facts.caption_translation_asked:
+        rendered_name = _language_name(str(facts.caption_language).casefold().split("-")[0])
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    f"I translated the {_language_name(translated)} speech into "
+                    f"{rendered_name} captions."
+                ),
+                tr=(f"{_language_name(translated)} konuşmayı {rendered_name} altyazıya çevirdim."),
+            ),
+        )
     if (
         facts.caption_style is None
         or (facts.editor and not rendered)
         or fmt not in _SPEECH_FORMATS
         or _CAPTION_DETAIL_RE.search(text)
+        or _keeps_spoken_languages(req)
     ):
         return _receipt(req, "partial", _CANT_CHECK_CAPTIONS)
     style = facts.caption_style
@@ -5308,6 +5954,231 @@ def _draft_clip_sound(
     return _clip_sound_missed(
         req, "line_ambiguous" if grounded.status == "ambiguous" else "line_not_found", quote
     )
+
+
+# KRI-942: clip sound turned on / off by clip, by seconds or around a spoken line (see
+# `kria.clip_sound_toggle_ask`). Judged on the recipe the phone renders, never the plan's claim.
+def _sound_toggle_needs_phone_montage() -> str:
+    return say(
+        en="Turning clip sound on or off by clip or by seconds works on a montage made on your "
+        "iPhone, not in this edit",
+        tr="Klip sesini klip ya da saniye bazında açıp kapatmak yalnızca iPhone'unda yapılan "
+        "montajda çalışıyor, bu düzenlemede değil",
+    )
+
+
+def _toggle_where(target: SoundTarget) -> tuple[str, str]:
+    """Where a part of an on/off ask applies, in plain words (EN, TR)."""
+    en: list[str] = []
+    tr: list[str] = []
+    if target.clip_position == "last":
+        en.append("the last clip")
+        tr.append("son klip")
+    elif target.clip_position == "first":
+        en.append("the first clip")
+        tr.append("ilk klip")
+    elif target.media_ref is not None:
+        en.append("that clip")
+        tr.append("o klip")
+    if target.has_window:
+        start = f"{target.from_s or 0:g}"
+        if target.to_s is not None:
+            en.append(f"{start}-{target.to_s:g} s")
+            tr.append(f"{start}-{target.to_s:g}. saniyeler")
+        else:
+            en.append(f"from {start} s")
+            tr.append(f"{start}. saniyeden itibaren")
+    if target.lines:
+        en.append(f'where "{target.lines[0]}" is said')
+        tr.append(f'"{target.lines[0]}" denen yer')
+    if not en:
+        return "the whole video", "tüm video"
+    return ", ".join(en), ", ".join(tr)
+
+
+def _toggle_summary(ask: SoundToggleAsk) -> str:
+    """ "Clip sound off except the last clip, where "Super excited!" is said", in the reply's
+    language."""
+    off = ask.state == "off"
+    head_en = "Clip sound off" if off else "Clip sound on"
+    head_tr = "Klip sesi kapalı" if off else "Klip sesi açık"
+    where_en, where_tr = _toggle_where(ask.target)
+    en = head_en if ask.target.whole_video else f"{head_en}: {where_en}"
+    tr = head_tr if ask.target.whole_video else f"{head_tr}: {where_tr}"
+    if ask.exceptions:
+        parts = [_toggle_where(part) for part in ask.exceptions]
+        en += " except " + "; ".join(p[0] for p in parts)
+        tr += ", şunlar hariç: " + "; ".join(p[1] for p in parts)
+    return say(en=en, tr=tr)
+
+
+def _toggle_seconds(windows: object) -> str:
+    rows = [w for w in windows or [] if isinstance(w, (list, tuple)) and len(w) == 2]
+    return ", ".join(f"{float(a):.1f}-{float(b):.1f} s" for a, b in rows)
+
+
+def _toggle_missed(ask: SoundToggleAsk, row: Mapping[str, Any]) -> str:
+    """Why the finished video doesn't (fully) play the sound as asked, plainly."""
+    code = row.get("reason_code")
+    line = row.get("line") or next((p.lines[0] for p in ask.exceptions if p.lines), None)
+    line = line or (ask.target.lines[0] if ask.target.lines else None)
+    if code == "line_not_found" and line:
+        return say(
+            en=f'I couldn\'t find "{line}" in that clip, so it plays like the rest',
+            tr=f'"{line}" sözünü o klipte bulamadım, o yüzden diğerleri gibi çalıyor',
+        )
+    if code == "line_ambiguous" and line:
+        return say(
+            en=f'"{line}" is said in more than one clip; tell me which clip you mean',
+            tr=f'"{line}" birden fazla klipte söyleniyor; hangi klibi kastettiğini söyle',
+        )
+    if code == "line_unknown":
+        return say(
+            en="I can't hear the speech in that clip yet",
+            tr="O klipteki konuşmayı henüz duyamıyorum",
+        )
+    if code == "line_not_in_edit" and line:
+        return say(
+            en=f'The part where "{line}" is said isn\'t in the edit',
+            tr=f'"{line}" denen kısım düzenlemede yok',
+        )
+    if code == "line_partly_in_edit" and line:
+        return say(
+            en=f'Only part of "{line}" is in the edit',
+            tr=f'"{line}" sözünün sadece bir kısmı düzenlemede',
+        )
+    reasons = {
+        "partial_unsupported": (
+            "I can't turn off just part of a clip on your iPhone yet, so a clip that is only "
+            "partly in that stretch keeps its sound",
+            "iPhone'unda bir klibin sadece bir kısmının sesini henüz kapatamıyorum, o yüzden o "
+            "aralıkta kısmen kalan klip sesini koruyor",
+        ),
+        "not_in_edit": (
+            "That clip isn't in this edit",
+            "O klip bu düzenlemede yok",
+        ),
+        "clip_mismatch": (
+            "That clip isn't in that spot in this edit",
+            "O klip bu düzenlemede o sırada değil",
+        ),
+        "window_past_end": (
+            "Those seconds are past the end of the video",
+            "O saniyeler videonun bitişinden sonra",
+        ),
+        "no_sound": (
+            "That clip has no sound of its own",
+            "O klibin kendi sesi yok",
+        ),
+        "contract_conflict": (
+            "That would change which clips keep their sound in the edit you approved; approve "
+            "the change and I'll rebuild it",
+            "Bu, onayladığın düzenlemede hangi kliplerin sesini koruduğunu değiştirirdi; "
+            "değişikliği onaylarsan yeniden hazırlarım",
+        ),
+        "render_refused": (
+            "Your iPhone couldn't build that, so those clips keep their sound",
+            "iPhone'un bunu hazırlayamadı, o yüzden o klipler seslerini koruyor",
+        ),
+        "overridden": (
+            "A later request changed this",
+            "Sonraki bir istek bunu değiştirdi",
+        ),
+    }
+    en, tr = reasons.get(
+        str(code),
+        (
+            "The finished video doesn't play the clip sound that way",
+            "Bitmiş video klip sesini bu şekilde çalmıyor",
+        ),
+    )
+    return say(en=en, tr=tr)
+
+
+def _check_sound_toggle(
+    req: BriefRequirement, ask: SoundToggleAsk, facts: PlanFacts
+) -> RequirementReceipt:
+    """Clip sound turned on / off where the creator said (KRI-942).
+
+    A finished phone render is judged from its on/off record: the asks re-judged against the
+    recipe the phone renders (`phone_clip_sound_toggle.rendered_toggle_receipt`, or the
+    worker's own record). A draft the phone montage writer will render says what it will do,
+    and "Couldn't" before approval for a clip that isn't there or a line no clip says. A
+    voiceover or Talking edit says plainly that this works on a montage. Elsewhere (a plan
+    record mid-render, an editor turn) nothing is claimed.
+    """
+    record = facts.clip_sound_toggles if isinstance(facts.clip_sound_toggles, Mapping) else None
+    row = next(
+        (
+            r
+            for r in (record or {}).get("rows") or []
+            if isinstance(r, Mapping) and r.get("requirement_id") == req.id
+        ),
+        None,
+    )
+    if row is not None:
+        status = str(row.get("status"))
+        if status == "met":
+            seconds = _toggle_seconds(
+                row.get("on_windows") if ask.state == "off" else row.get("off_windows")
+            )
+            summary = _toggle_summary(ask)
+            if ask.exceptions and seconds:
+                summary = say(en=f"{summary} ({seconds})", tr=f"{summary} ({seconds})")
+            return _receipt(req, "met", summary)
+        return _receipt(
+            req, "partial" if status == "partial" else "not_possible", _toggle_missed(ask, row)
+        )
+    if facts.voiceover_edit or facts.phone_narrated or facts.phone_talking:
+        return _receipt(req, "not_possible", _sound_toggle_needs_phone_montage())
+    if facts.editor or facts.rendered_output or facts.rendered_variant:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if facts.phone_montage:
+        return _draft_sound_toggle(req, ask, facts)
+    if facts.audio_strategy == "voiceover" or facts.edit_format in _SPEECH_FORMATS:
+        return _receipt(req, "not_possible", _sound_toggle_needs_phone_montage())
+    return _receipt(req, "partial", _NO_CHECKER)
+
+
+def _draft_sound_toggle(
+    req: BriefRequirement, ask: SoundToggleAsk, facts: PlanFacts
+) -> RequirementReceipt:
+    """What a phone montage draft will do with an on/off ask, before approval."""
+    from app.pipeline.clip_sound_toggle import _media_match  # noqa: PLC0415
+    from app.pipeline.phone_clip_sound import ground_trigger_line, video_media_ids  # noqa: PLC0415
+    from app.services.phone_rollout import phone_clip_sound_windows_supported  # noqa: PLC0415
+
+    snapshot = facts.media_snapshot
+    videos = video_media_ids(snapshot) or list(facts.clip_ids)
+    for part in (ask.target, *ask.exceptions):
+        media = _media_match(part.media_ref, videos) if part.media_ref is not None else None
+        if part.media_ref is not None and media is None:
+            return _receipt(
+                req, "not_possible", _toggle_missed(ask, {"reason_code": "not_in_edit"})
+            )
+        if not part.lines:
+            continue
+        pool = (
+            [media]
+            if media is not None
+            else (
+                [facts.last_clip_id]
+                if part.clip_position == "last" and facts.last_clip_id
+                else videos
+            )
+        )
+        found = [m for m in pool if ground_trigger_line(part.lines, m, snapshot).status == "found"]
+        if not found:
+            statuses = {ground_trigger_line(part.lines, m, snapshot).status for m in pool}
+            code = "line_unknown" if statuses <= {"unknown"} else "line_not_found"
+            row = {"reason_code": code, "line": part.lines[0]}
+            return _receipt(req, "not_possible", _toggle_missed(ask, row))
+    silences_part = (ask.state == "off" and (ask.target.has_window or ask.target.lines)) or (
+        ask.state == "on" and any(p.has_window or p.lines for p in ask.exceptions)
+    )
+    if silences_part and not phone_clip_sound_windows_supported():
+        return _receipt(req, "partial", _toggle_missed(ask, {"reason_code": "partial_unsupported"}))
+    return _receipt(req, "met", _toggle_summary(ask))
 
 
 def _bed_fix(facts: PlanFacts) -> tuple[str, str]:
@@ -5738,8 +6609,12 @@ def describe_text_look(req: BriefRequirement, facts: PlanFacts) -> str | None:
 # KRI-547: "I filmed it sideways but want a vertical video, keep my face in frame".
 # The phone Talking worker reads the same words off the approved brief
 # (`app.kria.speaker_framing_ask`) and records how it framed the speaker on the
-# variant (`phone_speaker_framing`); these judge the ask from that receipt.
+# variant (`phone_speaker_framing`); these judge the ask from that receipt. The copy names
+# "the speaker", never "you", because the creator may be filming someone else (KRI-1008).
 _FRAMING_RECEIPT_MODES = frozenset({"face_fill", "letterbox", "centre_fill"})
+# Below this a face out of view is a blink, not footage without it; KRI-1020 face_fill keeps
+# the picture centred while the speaker is away or turned (`faces.absent_s` counts both).
+_FRAMING_ABSENT_NOTE_S = 1.0
 
 
 def _wants_speaker_framing(req: BriefRequirement) -> bool:
@@ -5753,23 +6628,59 @@ def _wants_speaker_framing(req: BriefRequirement) -> bool:
 
 
 def _speaker_framing_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
-    """``speaker_framing`` / ``speaker_framing_reason`` off a variant's framing receipt."""
+    """``speaker_framing`` / ``_reason`` / ``_face_share`` / ``_absent_s`` off a variant's
+    framing receipt, reading both the v1 (frame counts) and v2 (presence, absent seconds) forms."""
     receipt = variant.get("speaker_framing")
     if not isinstance(receipt, Mapping) or receipt.get("mode") not in _FRAMING_RECEIPT_MODES:
         return {}
     reason = receipt.get("reason")
+    faces = receipt.get("faces")
+    faces = faces if isinstance(faces, Mapping) else {}
+    presence = faces.get("presence")
+    used = faces.get("used")
+    decoded = faces.get("decoded")
+    absent = faces.get("absent_s")
+    share: float | None = None
+    if (
+        isinstance(presence, (int, float))
+        and not isinstance(presence, bool)
+        and math.isfinite(presence)
+        and 0 <= presence <= 1
+    ):
+        share = float(presence)
+    elif (
+        isinstance(used, int)
+        and not isinstance(used, bool)
+        and isinstance(decoded, int)
+        and not isinstance(decoded, bool)
+        and decoded > 0
+        and 0 <= used <= decoded
+    ):
+        share = used / decoded
+    absent_s: float | None = None
+    if (
+        isinstance(absent, (int, float))
+        and not isinstance(absent, bool)
+        and math.isfinite(absent)
+        and absent >= 0
+    ):
+        absent_s = float(absent)
     return {
         "speaker_framing": str(receipt["mode"]),
         "speaker_framing_reason": str(reason) if isinstance(reason, str) and reason else None,
+        "speaker_framing_face_share": share,
+        "speaker_framing_absent_s": absent_s,
     }
 
 
-def _framing_fallback_reason(reason: str | None, *, cropped: bool) -> str:
+def _framing_fallback_reason(
+    reason: str | None, *, cropped: bool, face_share: float | None = None
+) -> str:
     """Why the face crop was not used, and what the creator sees instead."""
     shown = (
         say(
-            en="so the video is cropped to the middle and your face can leave the frame",
-            tr="o yüzden video ortadan kırpıldı ve yüzün kadrajdan çıkabilir",
+            en="so the video is cropped to the middle and the speaker's face can leave the frame",
+            tr="o yüzden video ortadan kırpıldı ve konuşan kişinin yüzü kadrajdan çıkabilir",
         )
         if cropped
         else say(
@@ -5779,13 +6690,13 @@ def _framing_fallback_reason(reason: str | None, *, cropped: bool) -> str:
     )
     if reason == "face_moves_too_much":
         why = say(
-            en="Your face moves too far for one vertical crop to hold it",
-            tr="Yüzün tek bir dikey kadraja sığmayacak kadar hareket ediyor",
+            en="The speaker's face moves too far for one vertical crop to hold it",
+            tr="Konuşan kişinin yüzü tek bir dikey kadraja sığmayacak kadar hareket ediyor",
         )
     elif reason == "face_under_captions":
         why = say(
-            en="A vertical crop would put the captions over your face",
-            tr="Dikey kırpma altyazıları yüzünün üstüne getirirdi",
+            en="A vertical crop would put the captions over the speaker's face",
+            tr="Dikey kırpma altyazıları konuşan kişinin yüzünün üstüne getirirdi",
         )
     elif reason == "creator_chose_bars":
         return say(
@@ -5796,17 +6707,48 @@ def _framing_fallback_reason(reason: str | None, *, cropped: bool) -> str:
         return say(
             en=(
                 "You chose crop in the editor, so the video is cropped to the middle "
-                "and your face can leave the frame"
+                "and the speaker's face can leave the frame"
             ),
             tr=(
-                "Editörde kırpmayı seçtin, o yüzden video ortadan kırpıldı ve yüzün "
-                "kadrajdan çıkabilir"
+                "Editörde kırpmayı seçtin, o yüzden video ortadan kırpıldı ve konuşan "
+                "kişinin yüzü kadrajdan çıkabilir"
             ),
+        )
+    elif reason == "face_unconfirmed":
+        why = say(
+            en="I couldn't check where the speaker's face is in the clip",
+            tr="Klipte konuşan kişinin yüzünün nerede olduğunu kontrol edemedim",
+        )
+    elif reason == "faces_too_far_apart":
+        why = say(
+            en="Two people on camera are too far apart for one vertical crop to hold both",
+            tr="Kameradaki iki kişi tek bir dikey kadraja sığmayacak kadar birbirinden uzak",
+        )
+    elif reason == "no_face" and face_share is not None and face_share > 0:
+        why = say(
+            en=(
+                "I could only find the speaker's face in part of the clip, not enough "
+                "to fit one vertical crop around it"
+            ),
+            tr=(
+                "Konuşan kişinin yüzünü klibin yalnızca bir kısmında bulabildim, tek bir "
+                "dikey kadrajı ona göre ayarlamaya yetmedi"
+            ),
+        )
+    elif reason == "no_face" and face_share == 0:
+        why = say(
+            en="I couldn't find the speaker's face anywhere in the clip",
+            tr="Klipte konuşan kişinin yüzünü hiç bulamadım",
+        )
+    elif reason == "no_face":
+        why = say(
+            en="I couldn't find the speaker's face reliably in the clip",
+            tr="Klipte konuşan kişinin yüzünü güvenle bulamadım",
         )
     else:
         why = say(
-            en="I couldn't find your face reliably in the clip",
-            tr="Klipte yüzünü güvenle bulamadım",
+            en="I couldn't keep the speaker's face in one vertical crop",
+            tr="Konuşan kişinin yüzünü tek bir dikey kadrajda tutamadım",
         )
     return f"{why}, {shown}"
 
@@ -5816,8 +6758,11 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     if mode is None:
         reason = (
             say(
-                en="This video didn't record how it framed you, so I can't check it.",
-                tr="Bu video seni nasıl kadrajladığını kaydetmedi, o yüzden kontrol edemiyorum.",
+                en="This video didn't record how it framed the speaker, so I can't check it.",
+                tr=(
+                    "Bu video konuşan kişiyi nasıl kadrajladığını kaydetmedi, "
+                    "o yüzden kontrol edemiyorum."
+                ),
             )
             if facts.rendered_variant
             else say(
@@ -5827,12 +6772,51 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
         )
         return _receipt(req, "partial", reason, verification="unchecked")
     if mode == "face_fill":
+        absent = facts.speaker_framing_absent_s
+        if absent is not None and absent >= _FRAMING_ABSENT_NOTE_S:
+            return _receipt(
+                req,
+                "partial",
+                say(
+                    en=(
+                        "The video fills the vertical frame and follows the speaker's face, "
+                        f"but their face isn't in view for about {absent:.0f} s of the clip"
+                    ),
+                    tr=(
+                        "Video dikey ekranı dolduruyor ve konuşan kişinin yüzünü takip ediyor, "
+                        f"ama klibin yaklaşık {absent:.0f} sn'sinde konuşan kişinin yüzü görünmüyor"
+                    ),
+                ),
+            )
         return _receipt(
             req,
             "met",
             say(
-                en="The video fills the vertical frame and your face stays in it throughout",
-                tr="Video dikey ekranı dolduruyor ve yüzün baştan sona kadrajda kalıyor",
+                en=(
+                    "The video fills the vertical frame and the speaker's face stays in it "
+                    "throughout"
+                ),
+                tr=(
+                    "Video dikey ekranı dolduruyor ve konuşan kişinin yüzü baştan sona "
+                    "kadrajda kalıyor"
+                ),
+            ),
+        )
+    if facts.speaker_framing_reason == "landscape_canvas":
+        # The creator picked a landscape video, so the vertical/face framing they also asked
+        # for had nothing to do; say so rather than "met" or a face-search failure.
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=(
+                    "You chose a landscape video, so there was no vertical framing to do "
+                    "and your clip shows in the full wide frame"
+                ),
+                tr=(
+                    "Yatay video seçtin, o yüzden yapılacak bir dikey kadraj yoktu "
+                    "ve klibin geniş kadrajda tam görünüyor"
+                ),
             ),
         )
     if facts.speaker_framing_reason == "not_landscape":
@@ -5847,7 +6831,11 @@ def _check_speaker_framing(req: BriefRequirement, facts: PlanFacts) -> Requireme
     return _receipt(
         req,
         "partial",
-        _framing_fallback_reason(facts.speaker_framing_reason, cropped=mode == "centre_fill"),
+        _framing_fallback_reason(
+            facts.speaker_framing_reason,
+            cropped=mode == "centre_fill",
+            face_share=facts.speaker_framing_face_share,
+        ),
     )
 
 
@@ -6013,8 +7001,8 @@ def _with_spoken_text_face(
         req,
         "partial",
         say(
-            en=f"{text} lands on your face; I couldn't find a spot clear of it",
-            tr=f"{text} yüzünün üstüne denk geliyor; yüzünü açıkta bırakan bir yer bulamadım",
+            en=f"{text} lands on a face; I couldn't find a spot clear of it",
+            tr=f"{text} bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
         ),
     )
 
@@ -6173,8 +7161,8 @@ def _with_title_face(
         req,
         "partial",
         say(
-            en="The title lands on your face; I couldn't find a spot clear of it",
-            tr="Başlık yüzünün üstüne denk geliyor; yüzünü açıkta bırakan bir yer bulamadım",
+            en="The title lands on a face; I couldn't find a spot clear of it",
+            tr="Başlık bir yüzün üstüne denk geliyor; yüzü açıkta bırakan bir yer bulamadım",
         ),
     )
 
@@ -6699,6 +7687,8 @@ def _requested_caption_language(req: BriefRequirement) -> str | None:
     stated = _caption_language_fact(req)
     if stated is not None:
         return stated
+    if _keeps_spoken_languages(req):
+        return None
     wording = loose_text(_req_text(req))
     for pattern in _CAPTION_LANGUAGE_PATTERNS:
         found = pattern.search(wording)
@@ -6710,6 +7700,20 @@ def _requested_caption_language(req: BriefRequirement) -> str | None:
 def _language_name(code: str) -> str:
     english, turkish = LANGUAGE_NAMES.get(code, (code.upper(), code.upper()))
     return say(en=english, tr=turkish)
+
+
+def _keeps_spoken_languages(req: BriefRequirement) -> bool:
+    """KRI-1015: the requirement's own words keep every language as spoken ("English captions
+    for the English parts, Turkish captions for the Turkish parts"): it asks for no one language,
+    so the first language name in it is no ask (`caption_language_decision`)."""
+    return caption_language_decision(_req_text(req)).keep_spoken
+
+
+def _translated_from(facts: PlanFacts, rendered: str) -> str:
+    """KRI-1015: the spoken language (a code) the rendered captions were translated out of,
+    or "" when the render did not translate them or the stamp is no news."""
+    source = str(facts.caption_translated_from or "").casefold().split("-")[0]
+    return source if rendered and source != rendered else ""
 
 
 def _read_caption_language(
@@ -6777,16 +7781,40 @@ def _check_caption_language(
             ),
         )
     else:
-        reason = say(
-            en=f"The captions are in {_language_name(rendered)}.",
-            tr=f"Altyazılar {_language_name(rendered)}.",
-        )
+        reason = _captions_in(rendered, _translated_from(facts, rendered))
     return _receipt(req, "met", reason + note)
+
+
+def _captions_in(rendered: str, translated_from: str = "") -> str:
+    """Which language the captions are in and, KRI-1015, where the words came from when the
+    render translated them (``translated_from`` is the spoken language, "" = it did not)."""
+    if translated_from:
+        return say(
+            en=(
+                f"The captions are in {_language_name(rendered)}, translated from the "
+                f"{_language_name(translated_from)} speech."
+            ),
+            tr=(
+                f"Altyazılar {_language_name(rendered)}, {_language_name(translated_from)} "
+                "konuşmadan çevrildi."
+            ),
+        )
+    return say(
+        en=f"The captions are in {_language_name(rendered)}.",
+        tr=f"Altyazılar {_language_name(rendered)}.",
+    )
 
 
 def asks_caption_language(req: BriefRequirement) -> bool:
     """True for a captions ask that names a language (judged on the rendered captions)."""
     return _wants_captions(req) and _requested_caption_language(req) is not None
+
+
+def asks_caption_spelling(req: BriefRequirement) -> bool:
+    """KRI-961: True for a captions ask that lists words to spell. Only the caption lines
+    can settle it, so a record without them (the Voiceover alignment record) leaves it to
+    the finished captions instead of answering for its language alone."""
+    return _wants_captions(req) and not _wants_no_captions(req) and bool(_spelled_names(req))
 
 
 # ------------------------------------------------------------- caption words (KRI-549)
@@ -6853,6 +7881,8 @@ def _asked_caption_language(req: BriefRequirement) -> str | None:
     found = _requested_caption_language(req)
     if found is not None:
         return found
+    if _keeps_spoken_languages(req):
+        return None
     wording = loose_text(_req_text(req))
     for pattern in _LOOSE_CAPTION_LANGUAGE_PATTERNS:
         match = pattern.search(wording)
@@ -7142,9 +8172,10 @@ def _caption_spelling(name: str, captions: str, *, turkish: bool) -> tuple[bool,
                 and _GLUED_SUFFIX_RE.fullmatch(squashed[len(want) :])
             ):
                 other = shown
-            elif other is None and size == name_words and is_mishearing(shown, name):
+            elif other is None and abs(size - name_words) <= 1 and is_mishearing(shown, name):
                 # KRI-793: the same name heard another way ("Meropa" for Merope, "Ole de
-                # la Casa" for Oblea de la Casa): the rule the render's respelling uses.
+                # la Casa" for Oblea de la Casa), KRI-961 with a word more or fewer
+                # ("Olloda bife" for ojo de bife): the rule the render's respelling uses.
                 other = shown
     return exact, other
 
@@ -7200,12 +8231,7 @@ def _check_caption_words(req: BriefRequirement, facts: PlanFacts) -> Requirement
                 )
             )
         else:
-            done.append(
-                say(
-                    en=f"The captions are in {_language_name(rendered)}.",
-                    tr=f"Altyazılar {_language_name(rendered)}.",
-                )
-            )
+            done.append(_captions_in(rendered, _translated_from(facts, rendered)))
     if _wants_word_captions(req) and facts.caption_style not in {"karaoke", "kinetic"}:
         misses.append(
             say(
@@ -7622,7 +8648,9 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
             else _fold(facts.title) == wanted
         )
     else:
-        found = any(_contains_text(t, wanted) for t in facts.texts)
+        found = any(_contains_text(t, wanted) for t in facts.texts) or _drawn_by_contract(
+            req, facts
+        )
     # Chapter lists are satisfied by their separate labels, not a joined title.
     if found or chapter_list(req.literal, facts.texts) is not None:
         # Copy presence cannot certify independently requested visual/temporal behavior.
@@ -7684,6 +8712,60 @@ def _check_literal_text(req: BriefRequirement, facts: PlanFacts) -> RequirementR
         "partial",
         say(en="That exact text isn't in this draft.", tr="Bu tam yazı bu taslakta yok."),
     )
+
+
+def _drawn_by_contract(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """KRI-945: whole-video words the render's contract repair puts over the opening.
+
+    Only a plain ask: one with a fact of its own (a position, a clip, a moment, a length;
+    anything but the research ask it came from) or a spoken-word cue is not what the repair
+    draws, so it keeps its own verdict.
+    """
+    if not facts.contract_drawn_texts:
+        return False
+    from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
+
+    wanted = _fold(req.literal or "")
+    return (
+        req.scope == "global"
+        and bool(wanted)
+        and not _is_spoken_text_cue(req)
+        and set(req.facts) <= {RESEARCH_FACT}
+        and any(_fold(text) == wanted for text in facts.contract_drawn_texts)
+    )
+
+
+def _check_research(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """KRI-945: a researched-facts ask, judged by the research done before approval.
+
+    Met only when the sourced explanations researched for exactly this ask are pinned; a
+    research limit is the precise ``not_possible`` the creator rules on. ``None`` when
+    nothing was researched for it (no evidence either way).
+    """
+    if facts.research is None:
+        return None
+    from app.kria import research_preview  # noqa: PLC0415
+    from app.schemas.research import PreparedResearch  # noqa: PLC0415
+
+    found = research_preview.research_requirement(CreativeBrief(requirements=[req]))
+    if found is None:
+        return None
+    try:
+        prepared = PreparedResearch.model_validate(facts.research)
+    except ValueError:
+        return None
+    request = found[1]
+    if (prepared.requirement_id, prepared.topic, prepared.request_quote) != (
+        req.id,
+        request.topic,
+        request.request_quote,
+    ):
+        return None
+    if prepared.status == "failed":
+        return research_preview.blocker_receipt(prepared, req)
+    if not prepared.texts:
+        return None
+    return _receipt(req, "met", None, verification="checked", stage="applied")
 
 
 # Fact keys that name the spoken words a text line waits for (one list with the phone
@@ -7913,6 +8995,11 @@ def judged_at_render(req: BriefRequirement) -> bool:
         # are read off the finished text lane and timeline, which a plan record never has.
         or bool(text_look_facts(req))
         or clip_length_ask(req) is not None
+        # KRI-689: a planned rate counts only when the finished timeline still plays it
+        # (`_rendered_speeds`), and the review re-words it in the chat's language.
+        or asks_clip_speed(req)
+        # KRI-942: clip sound on/off is read off the recipe the phone renders.
+        or requirement_sound_toggle(req) is not None
     )
 
 
@@ -8211,6 +9298,42 @@ def _wants_source_sound_kept(req: BriefRequirement) -> bool:
     )
 
 
+def wants_lipsync(req: BriefRequirement) -> bool:
+    """KRI-983: "lipsync to the uploaded song", read by `song_captions.mentions_lipsync`.
+
+    Asks another audio reader already owns (a typed `audio_intent`, the footage's own sound, a
+    voice bed, beats, speech, captions) keep their checker."""
+    if (
+        req.kind not in _BEAT_KINDS
+        or "audio_intent" in req.facts
+        or _wants_captions(req)
+        or _wants_source_sound_kept(req)
+        or _wants_beats(req)
+        or _wants_closing(req)
+        or _wants_speech(req)
+        or _wants_bed_under_voice(req)
+        or _wants_bed_muted(req)
+        or _wants_cleanup(req)
+        or wants_engine_noise_reduction(req)
+        or requirement_clip_sound(req) is not None
+        or requirement_sound_toggle(req) is not None
+    ):
+        return False
+    return mentions_lipsync(" ".join(x for x in (req.description, req.literal) if x))
+
+
+def _check_lipsync(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if facts.user_song_attached is None:
+        return _receipt(req, "partial", _NO_CHECKER)
+    if not facts.user_song_attached:
+        return _receipt(req, "not_possible", _loc(_SONG_NOT_ATTACHED))
+    if facts.audio_strategy != "user_song":
+        return _receipt(req, "not_possible", _loc(_SONG_NOT_USED))
+    if facts.song_sync != "lipsync":
+        return _receipt(req, "not_possible", _loc(_SONG_IN_BACKGROUND))
+    return _receipt(req, "met", None)
+
+
 # KRI-700: brightening or darkening the footage itself. No draft can carry it: a strategy has
 # no exposure field, and the phone plans only take the warm `golden_hour` look, which adds
 # contrast and so makes near-black night clips darker, not brighter. The model that read the
@@ -8350,6 +9473,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True  # KRI-842
     if asks_if_unclear(req):
         return True  # KRI-849: the unclear-word line (``_with_unclear_word``)
+    if _timed_card_ask(req) is not None:
+        return True  # an exact-timed small card, judged against the draft or the render
     if asks_clip_speed(req):
         # KRI-689: judged wherever the plan knows it cannot retime (the phone montage); a plan
         # that does not say gets the neutral `_NO_CHECKER`, which `is_judged` treats as unjudged.
@@ -8359,6 +9484,8 @@ def _has_checker(req: BriefRequirement) -> bool:
     if judged_at_render(req):
         # Neutral (`_NO_CHECKER`) anywhere but a finished phone montage (KRI-546).
         return True
+    if req.kind == "text_sequence" and compose_unmet_with_ops():
+        return True  # 29 Ekim: judged against the fragment sequences on screen
     if req.kind == "text":
         return bool(
             req.scope in ("per_clip", "title") or req.scope.startswith("clip:") or req.literal
@@ -8380,6 +9507,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         return True
     if _wants_source_sound_kept(req):
         return True
+    if wants_lipsync(req):
+        return True  # KRI-983
     if req.kind in _BEAT_KINDS:
         return (
             _wants_beats(req)
@@ -8417,6 +9546,100 @@ def _freeze_where(freeze: Mapping[str, Any], at: str) -> tuple[str, str]:
         )
     # A record from before KRI-900 (the moment's middle, never pinned down).
     return f"on that moment ({at}s into the clip)", f"o anda (klibin {at}. saniyesi)"
+
+
+def _clip_list(positions: Sequence[int], *, every: bool) -> tuple[str, str]:
+    """("Clips 1, 2 and 3", "1., 2. ve 3. klipler") for the receipt's subject."""
+    numbers = [str(int(position)) for position in positions]
+    if every or not numbers:
+        return "Every video clip", "Her video klibi"
+    if len(numbers) == 1:
+        return f"Clip {numbers[0]}", f"{numbers[0]}. klip"
+    en = ", ".join(numbers[:-1]) + f" and {numbers[-1]}"
+    tr = ", ".join(f"{number}." for number in numbers[:-1]) + f" ve {numbers[-1]}."
+    return f"Clips {en}", f"{tr} klipler"
+
+
+def _check_clip_speed(req: BriefRequirement, row: Mapping[str, Any]) -> RequirementReceipt:
+    """KRI-689: what the phone montage plan did with "speed the river shots up 2x".
+
+    "met" only for an applied row (read off the plan record and, on a finished video, its
+    timeline); the reason names the clips and the rate. A rate held at the native bound, or
+    lowered because the footage ran out, is "partial" with both numbers: never "met" for a
+    different speed. The locked cases are plain limits; a clip nobody could name is the
+    creator's call.
+    """
+    status = str(row.get("status") or "")
+    rate = _finite_number(row.get("rate"))
+    if status in {"applied", "replaced"} and rate is not None:
+        positions = [
+            int(position)
+            for position in row.get("cut_positions") or []
+            if isinstance(position, (int, float)) and not isinstance(position, bool)
+        ]
+        subject, subject_tr = _clip_list(positions, every=row.get("grounding") == "all_clips")
+        speed = f"{rate:g}x"
+        plural = len(positions) != 1 and row.get("grounding") != "all_clips"
+        plays = "play" if plural else "plays"
+        if status == "replaced":
+            return _receipt(
+                req,
+                "met",
+                say(
+                    en=f"{subject} {plays} at {speed}, as you asked later",
+                    tr=f"{subject_tr} sonra istediğin gibi {speed} hızda oynuyor",
+                ),
+                verification="checked",
+            )
+        requested = _finite_number(row.get("rate_requested"))
+        if requested is not None and abs(requested - rate) > 0.001:
+            if row.get("footage_limited"):
+                reason = say(
+                    en=(
+                        f"{subject} {plays} at {speed}, not the {requested:g}x you asked for: "
+                        "the clip ran out of footage"
+                    ),
+                    tr=(
+                        f"{subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: "
+                        "klibin görüntüsü yetmedi"
+                    ),
+                )
+            else:
+                faster = requested > rate
+                reason = say(
+                    en=(
+                        f"{subject} {plays} at {speed}, not the {requested:g}x you asked for: "
+                        f"a clip plays {'at most' if faster else 'at least'} {speed}"
+                    ),
+                    tr=(
+                        f"{subject_tr} {speed} hızda oynuyor, istediğin {requested:g}x değil: "
+                        f"bir klip en {'fazla' if faster else 'az'} {speed} hızda oynayabiliyor"
+                    ),
+                )
+            return _receipt(req, "partial", reason, verification="checked")
+        reason = say(en=f"{subject} {plays} at {speed}", tr=f"{subject_tr} {speed} hızda oynuyor")
+        if not row.get("rate_stated"):
+            reason = say(
+                en=f"{reason}; you didn't say how fast, so I used {speed}",
+                tr=f"{reason}; ne kadar hızlı söylemediğin için {speed} kullandım",
+            )
+        return _receipt(req, "met", reason, verification="checked")
+    if status == "locked":
+        reason = str(row.get("reason") or "")
+        if reason == "user_song":
+            return _receipt(req, "not_possible", _NO_CLIP_SPEED_SONG)
+        if reason == "frozen":
+            return _receipt(req, "not_possible", _NO_SPEED_ON_FREEZE)
+        return _receipt(req, "not_possible", _NO_CLIP_SPEED)
+    if status == "ramp":
+        return _receipt(req, "not_possible", _NO_SPEED_RAMP)
+    if status == "photo":
+        return _receipt(req, "not_possible", _NO_PHOTO_SPEED)
+    if status == "dropped":
+        return _receipt(req, "not_possible", _SPEED_DROPPED)
+    if status == "no_footage":
+        return _receipt(req, "not_possible", _SPEED_NO_FOOTAGE)
+    return _receipt(req, "not_possible", _SPEED_NOT_GROUNDED)
 
 
 def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> RequirementReceipt:
@@ -8525,6 +9748,38 @@ def _check_freeze(req: BriefRequirement, freeze: Mapping[str, Any]) -> Requireme
     if status in {"not_grounded", "needs_frame"}:
         return _receipt(req, "not_possible", _FREEZE_NOT_GROUNDED)
     return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
+
+
+def _check_select_typed(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """A `select` ask the finished timeline proves or disproves (KRI-994); None = not judged.
+
+    ``stage="checked"`` marks the receipt as judged (see ``is_judged``): there is no
+    word-based checker behind a plain `select`, only the typed link and the timeline.
+    """
+    if only_video_ask(req):
+        if facts.timeline_non_video_ids is None:
+            return None
+        if facts.timeline_non_video_ids:
+            return _receipt(
+                req,
+                "partial",
+                say(en=_PHOTO_IN_CLIPS_ONLY, tr=_REASON_TR[_PHOTO_IN_CLIPS_ONLY]),
+                verification="checked",
+                stage="checked",
+            )
+        return _receipt(req, "met", None, verification="checked", stage="checked")
+    fact = next((f for f in facts.exclusions if f.requirement_id == req.id), None)
+    if fact is None or not fact.complete or not fact.media_ids or not facts.clip_ids:
+        return None
+    if any(media_id in facts.clip_ids for media_id in fact.media_ids):
+        return _receipt(
+            req,
+            "partial",
+            say(en=_SKIPPED_CLIP_PLAYS, tr=_REASON_TR[_SKIPPED_CLIP_PLAYS]),
+            verification="checked",
+            stage="checked",
+        )
+    return _receipt(req, "met", None, verification="checked", stage="checked")
 
 
 def _check_requirement_with_protection(
@@ -8640,7 +9895,23 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
     return receipt
 
 
+def _check_text_sequence(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """The creator's words are shown a piece at a time (29 Ekim).
+
+    Met only when a complete fragment sequence on screen reads as exactly those words. The
+    sentence sitting in one title is NOT the ask. A draft that has not composed the sequence
+    yet says nothing (neutral, never a question): the editor ops compose it, the creator is
+    not asked to settle for a static title.
+    """
+    wanted = _fold(req.literal or "")
+    if wanted and any(_fold(text) == wanted for text in facts.sequence_texts):
+        return _receipt(req, "met", None)
+    return _receipt(req, "partial", _NO_CHECKER)
+
+
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if req.kind == "text_sequence" and compose_unmet_with_ops():
+        return _check_text_sequence(req, facts)
     if wants_engine_noise_reduction(req):
         # This owns only the explicit engine-noise request.  Bed/mix controls keep their
         # existing checker and cannot be satisfied by a noise filter.
@@ -8655,6 +9926,10 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if clip_sound is not None:
         # KRI-842: a recorded fact owns the ask, whatever words it is worded in.
         return _check_narrated_clip_sound(req, clip_sound, facts)
+    sound_toggle = requirement_sound_toggle(req)
+    if sound_toggle is not None:
+        # KRI-942: "clip sound off except that last line": the recorded on/off facts own it.
+        return _check_sound_toggle(req, sound_toggle, facts)
     if _wants_opening_cut(req) and facts.edit_format in {"subtitled", "talking_head"}:
         # "Cut the intro, start the video at '...'": a quoted start line owns the sentence
         # (and any pauses it names); every other speech edit keeps its usual path.
@@ -8693,10 +9968,21 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # rule), and its seconds are never judged as the video's length. An editor turn keeps
         # its own receipts (the before/after diff names what its ops changed).
         return _receipt(req, "not_possible", _NO_FREEZE_FRAME)
+    if (
+        asks_clip_speed(req)
+        and facts.clip_speeds is not None
+        and req.id in facts.clip_speeds
+        and (facts.rendered_variant or facts.rendered_montage or not facts.editor)
+    ):
+        # KRI-689: the phone montage plan carried this speed ask (or says why it could not).
+        return _check_clip_speed(req, facts.clip_speeds[req.id])
     if facts.speed_unsupported and asks_clip_speed(req):
-        # KRI-689: the creator is told before approving (`clip_speed_notice`); the finished
-        # video's receipt then says "Couldn't", never "have a look" at a speed that is not there.
-        return _receipt(req, "not_possible", _NO_CLIP_SPEED)
+        # KRI-689: a plan that could not retime (a record from before speed asks were planned,
+        # or a song montage's). The finished video's receipt says "Couldn't", never "have a
+        # look" at a speed that is not there.
+        return _receipt(
+            req, "not_possible", _NO_CLIP_SPEED_SONG if facts.song_bed else _NO_CLIP_SPEED
+        )
     if wants_light_change(req) and (facts.rendered_variant or not facts.editor):
         # KRI-700: a draft or a finished render never brightens the footage. An editor turn
         # keeps its own receipts (the before/after diff names what its ops changed).
@@ -8713,9 +9999,21 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
                 if seated.status != "met":
                     return seated
             return _check_closing_speech(req, facts)
+    if req.kind == "select":
+        typed = _check_select_typed(req, facts)
+        if typed is not None:
+            return typed
+    if _timed_card_ask(req) is not None and (facts.timed_cards is not None or not facts.editor):
+        # An exact-timed small card: the recorded fact owns the ask (a draft read against its
+        # manifest, or a finished phone render's own `phone_timed_card_receipt`); an editor
+        # turn with no such receipt keeps its before/after diff.
+        return _check_timed_cards(req, facts)
     if _wants_whole_line(req):
         return _check_whole_line(req, facts)
     if req.kind == "text":
+        researched = None if req.literal else _check_research(req, facts)
+        if researched is not None:
+            return researched
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _with_text_look(req, facts, _check_per_clip_text(req, facts))
         if req.literal:
@@ -8743,6 +10041,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         and not (facts.rendered_variant and _wants_captions(req))
     ):
         return _check_style(req, facts)
+    elif wants_lipsync(req):
+        return _check_lipsync(req, facts)
     elif req.kind in _BEAT_KINDS and _wants_speech(req) and facts.speech_sections is not None:
         return _check_speech_excerpts(req, facts)
     elif req.kind in _BEAT_KINDS and (_wants_beats(req) or _closing_photo_ask(req, facts)):
@@ -8965,6 +10265,21 @@ def freeze_plannable(
     )
 
 
+def clip_speed_plannable(strategy: Mapping[str, Any] | None) -> bool:
+    """KRI-689: will the phone montage plan carry a clip-speed ask for this draft?
+
+    Only where the renderer retimes (``variableSpeed`` verified, `clip_speed_planned_for`)
+    and the cuts do not follow a creator's song (a song montage sits on the song's beats and
+    lyric captions, so every speed ask is locked there). Everywhere else the plan records the
+    ask as locked and the draft keeps the honest heads-up (`clip_speed_notice`).
+    """
+    from app.services.phone_rollout import clip_speed_planned_for  # noqa: PLC0415
+
+    return clip_speed_planned_for() and str((strategy or {}).get("audio_strategy") or "") != (
+        "user_song"
+    )
+
+
 def clip_speed_notice(
     requirements: Iterable[BriefRequirement],
     *,
@@ -8972,17 +10287,23 @@ def clip_speed_notice(
     strategy: Mapping[str, Any] | None,
     item_edit_format: object,
     clip_paths: Iterable[object] = (),
+    judged_ids: Iterable[str] = (),
 ) -> str | None:
     """The plain heads-up, before approval, that this draft cannot change clip speed (KRI-689).
 
-    "Speed the river shots up 2x" on a phone montage: the unified planner plays every clip at
-    its natural speed, so the draft would otherwise be approved with the ask silently dropped
-    and only the finished video's review would admit it. Returned only for a draft that
-    will render through that planner (the same gate `requirements_to_check_at_draft` uses); a
-    cloud render, a voiceover lane and the other phone formats get ``None``.
+    "Speed the river shots up 2x" on a phone montage whose plan cannot retime (no verified
+    ``variableSpeed``, or the clips follow the creator's song): without this line the draft
+    would be approved with the ask silently dropped and only the finished video's review would
+    admit it. Returned only for a draft that will render through the unified planner (the
+    same gate `requirements_to_check_at_draft` uses); a cloud render, a voiceover lane and the
+    other phone formats get ``None``. Where the plan CAN carry the speed (`clip_speed_plannable`)
+    the plan's own receipts speak (the pre-approval plan, then the render), so this is
+    ``None``; likewise when every live speed ask is already in ``judged_ids`` (the receipts
+    the pre-approval plan returned).
     """
     strategy = strategy or {}
-    if not any(req.live and asks_clip_speed(req) for req in requirements):
+    asked = [req.id for req in requirements if req.live and asks_clip_speed(req)]
+    if not asked:
         return None
     if not defers_to_unified_montage(
         creator_id=creator_id,
@@ -8991,6 +10312,13 @@ def clip_speed_notice(
         clip_paths=list(clip_paths or ()),
     ):
         return None
+    judged = {str(rid) for rid in judged_ids}
+    if all(rid in judged for rid in asked):
+        return None
+    if clip_speed_plannable(strategy):
+        return None
+    if str(strategy.get("audio_strategy") or "") == "user_song":
+        return _loc(_NO_CLIP_SPEED_SONG) + "."
     return _loc(_NO_CLIP_SPEED) + "."
 
 
@@ -9014,6 +10342,14 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     ):
         # KRI-705: a phone Talking edit's plain "can't" is an answer, though no checker owns it.
         return True
+    if (
+        req is not None
+        and req.kind == "select"
+        and receipt.verification == "checked"
+        and receipt.stage == "checked"
+    ):
+        # KRI-994: a `select` ask the typed link / finished timeline settled.
+        return receipt.reason not in _NEUTRAL_REASONS
     if req is not None and receipt.verification == "checked" and receipt.stage == "applied":
         # KRI-558: a change proven by the before/after edit diff, not by a value check.
         return receipt.reason not in _NEUTRAL_REASONS
@@ -9102,6 +10438,11 @@ def _talking_honest_receipt(
     return _receipt(req, "not_possible", _TALKING_NO_SUCH_EDIT)
 
 
+def _live_ask_for_caption_language(req: BriefRequirement, code: str) -> bool:
+    """KRI-1015: ``req`` is a live captions ask for the language ``code``."""
+    return req.live and asks_caption_language(req) and _requested_caption_language(req) == code
+
+
 def build_receipts(
     requirements: Iterable[BriefRequirement],
     facts: PlanFacts,
@@ -9122,6 +10463,15 @@ def build_receipts(
     """
     if (include_unchecked if strict_order is None else strict_order) and not facts.strict_order:
         facts = dataclasses.replace(facts, strict_order=True)
+    requirements = list(requirements)
+    rendered_language = str(facts.caption_language or "").casefold().split("-")[0]
+    if (
+        rendered_language
+        and facts.caption_translated_from
+        and any(_live_ask_for_caption_language(req, rendered_language) for req in requirements)
+    ):
+        # KRI-1015: another requirement asked for this caption language.
+        facts = dataclasses.replace(facts, caption_translation_asked=True)
     checked = (
         (req, _talking_honest_receipt(req, check_requirement(req, facts), facts))
         for req in requirements
@@ -9179,6 +10529,9 @@ _OUTCOME_REASON_TR = {
     "its clips are already in an earlier group": "klipleri zaten önceki bir grupta",
     "its clips are already placed at another spot": "klipleri zaten başka bir yerde",
     "the clips did not end up there": "klipler oraya gelmedi",
+    "the order inside this saved group wasn't recorded": (
+        "kaydedilmiş bu grubun iç sırası belirtilmemiş"
+    ),
     # KRI-723 (``unified_montage.MOMENT_*``).
     "I couldn't find this moment in your clip, so I can't confirm it's the one playing": (
         "Bu anı klipte bulamadım, o yüzden oynayanın o an olduğunu doğrulayamıyorum"
@@ -9388,6 +10741,7 @@ __all__ = [
     "NARRATED_ALIGNMENT_FIELD",
     "NarratedStepFact",
     "asks_caption_language",
+    "asks_caption_spelling",
     "brief_caption_spellings",
     "keeps_model_summary",
     "wants_light_change",
@@ -9399,6 +10753,7 @@ __all__ = [
     "build_receipts",
     "check_requirement",
     "clip_speed_notice",
+    "clip_speed_plannable",
     "is_format_limit",
     "is_judged",
     "is_no_title_reason",
@@ -9417,4 +10772,5 @@ __all__ = [
     "render_block_recovery",
     "reply_from_receipts",
     "speech_cleanup_review_note",
+    "wants_lipsync",
 ]

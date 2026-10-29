@@ -76,7 +76,7 @@ from tests.kria.test_runtime_postgres_integration import _seed_runtime_project, 
 
 _REAL_AUTOMATIC_OMISSION_IDS = kria_runtime._automatic_omission_ids
 _SUMMARY = "a summary of the match day event"
-_ASK = "Should I try a different approach, or make this simpler version?"
+_ASK = "Should I make it without these, or do you want to change your request?"
 
 
 @pytest.fixture(autouse=True)
@@ -585,21 +585,21 @@ async def _exercise_phone_approval_journey(monkeypatch, *, automatic: bool = Fal
             ).scalar_one()
             full_brief = CreativeBrief(version=original.version, requirements=original.requirements)
     if automatic:
+        # KRI-1009: the real rule never drops the creator's quoted lines unasked. The held
+        # draft names them; the tap below agrees to leave them out.
         reply = first_replies[0]
-        assert reply[0] == "awaiting_approval"
-        assert reply[1] == "draft_applied"
-        assert 'Left out: "1 · leave before 11"' in reply[2]
-        assert 'Left out: "2 · you\'re all amigos"' in reply[2]
-        assert "Should I" not in reply[2]
-    else:
-        [reply] = await _run_turns(
-            monkeypatch,
-            user_id,
-            thread_id,
-            [
-                ("Make this simpler version", _planned(plan)),
-            ],
-        )
+        assert reply[:2] == ("completed", "assistant_response"), reply
+        assert '"1 · leave before 11"' in reply[2]
+        assert '"2 · you\'re all amigos"' in reply[2]
+        assert "Left out" not in reply[2]
+    [reply] = await _run_turns(
+        monkeypatch,
+        user_id,
+        thread_id,
+        [
+            ("Make this simpler version", _planned(plan)),
+        ],
+    )
     assert reply[0] == "awaiting_approval"
     approval_id = await _decide(user_id, thread_id, "approve")
     claim = await asyncio.to_thread(_claim_approval_dispatch, approval_id)

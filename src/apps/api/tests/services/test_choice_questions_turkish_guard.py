@@ -51,6 +51,10 @@ from tests.kria.test_kri844_take_line_ask import CAP as _TAKE_CAP
 from tests.kria.test_kri844_take_line_ask import SNAP as _TAKE_SNAP
 from tests.kria.test_kri844_take_line_ask import STRATEGY as _TAKE_STRATEGY
 from tests.kria.test_kri844_take_line_ask import brief as _take_brief
+from tests.kria.test_kri966_take_window_length import CREATOR_ID as _WINDOW_CREATOR
+from tests.kria.test_kri966_take_window_length import SNAPSHOT as _WINDOW_SNAP
+from tests.kria.test_kri966_take_window_length import brief as _window_brief
+from tests.kria.test_kri966_take_window_length import strategy as _window_strategy
 
 # Words only English uses. Quoted spans are the creator's own words and are skipped.
 _ENGLISH = frozenset(
@@ -117,10 +121,11 @@ def _cases() -> dict[str, tuple[str, list]]:
 
     cases: dict[str, tuple[str, list]] = {}
 
-    def add(name: str, kind: str, *args: object, **kwargs: object) -> None:
+    def add(name: str, kind: str, *args: object, **kwargs: object) -> list:
         found = [c for c in collect_conflicts(*args, **kwargs) if c.kind == kind]  # type: ignore[arg-type]
         assert found, f"fixture {name} no longer produces a {kind} question"
         cases[name] = (kind, found)
+        return found
 
     add(
         "order_basis",
@@ -278,6 +283,44 @@ def _cases() -> dict[str, tuple[str, list]]:
             pilot.enter_context(patch.object(settings, name, value))
         for kind in (CONFLICT_TAKE_LINE_START, CONFLICT_TAKE_LINE_END):
             add(kind, kind, _TAKE_STRATEGY, _take_brief(), _TAKE_SNAP, _TAKE_CAP)
+        # KRI-966: the length card for the part a one-take Talking edit's own lines keep (both
+        # lines, and one line only), against a length the part is shorter / longer than.
+        for name, r1_facts in (
+            ("length_take_window", {}),
+            ("length_take_window_start_only", {"end_line": None}),
+            ("length_take_window_longer", {"duration_s": 3}),
+        ):
+            add(
+                name,
+                CONFLICT_LENGTH_VS_NATURAL,
+                _window_strategy(),
+                _window_brief(2, **r1_facts),
+                _WINDOW_SNAP,
+                ChoiceCapability(creator_id=_WINDOW_CREATOR),
+            )
+    # KRI-990: the clips the server can name get a leave-out exit (label, description,
+    # disclosure); a photo-only selection has its own reason and no exit.
+    leave_out = add(
+        "coverage_leave_out",
+        CONFLICT_SOURCE_COVERAGE,
+        {"selected_media_ids": ["a", "gone"]},
+        _brief(),
+        {
+            "length_plan": {
+                "conflicts": [{"code": "no_usable_sources"}],
+                "sources": [{"media_id": "a", "duration_s": 6}],
+                "missing_source_ids": ["gone"],
+            }
+        },
+    )
+    assert any(o.key == cq.OPT_LEAVE_OUT_SOURCES for o in leave_out[0].options)
+    add(
+        "coverage_no_video_sources",
+        CONFLICT_SOURCE_COVERAGE,
+        {"selected_media_ids": ["asset-1"]},
+        _brief(),
+        _coverage("no_video_sources"),
+    )
     for code, strategy in (
         ("single_hero_order_conflict", {}),
         ("insufficient_media", {}),
@@ -399,9 +442,17 @@ def test_turkish_chat_gets_no_english_sentence_from_any_choice() -> None:
         # Built under Turkish: the builders pick their copy when they run.
         for name, (_kind, found) in _cases().items():
             for choice in found:
-                for text in _creator_text(choice):
+                texts = _creator_text(choice)
+                if choice.kind in cq._WAITING_KINDS:
+                    # KRI-990: the same question again, with the "still waiting" lead.
+                    texts += _creator_text(cq._waiting_reask(choice))
+                for text in texts:
                     if _english_words(text):
                         leaks.append((name, _english_words(text), text))
+        # The leave-out exit's disclosure, on the answered question.
+        note = cq._disclosure(CONFLICT_SOURCE_COVERAGE, cq.OPT_LEAVE_OUT_SOURCES)
+        if _english_words(note):
+            leaks.append(("leave_out_disclosure", _english_words(note), note))
     assert not leaks, leaks
 
 

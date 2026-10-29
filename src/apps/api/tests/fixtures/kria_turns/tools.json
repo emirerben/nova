@@ -1236,6 +1236,17 @@
               "default": null,
               "title": "Alignment"
             },
+            "animation_phases": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAnimationPhases"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "highlight_spoken_word": {
               "anyOf": [
                 {
@@ -1403,6 +1414,17 @@
         },
         "EditorCommitCaptionMeta": {
           "properties": {
+            "animation_phases": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TextAnimationPhases"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "appearance": {
               "anyOf": [
                 {
@@ -3123,6 +3145,68 @@
           "title": "ProtectedRegionIn",
           "type": "object"
         },
+        "RequestOutcomeContext": {
+          "additionalProperties": false,
+          "properties": {
+            "client_build": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9]{1,10}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Client Build"
+            },
+            "client_version": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "pattern": "^[0-9]+(?:\\.[0-9]+){0,3}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Client Version"
+            },
+            "parent_turn_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Parent Turn Id"
+            },
+            "relation": {
+              "enum": [
+                "original",
+                "continuation",
+                "retry",
+                "revision",
+                "recovery",
+                "unclassified"
+              ],
+              "title": "Relation",
+              "type": "string"
+            }
+          },
+          "required": [
+            "relation"
+          ],
+          "title": "RequestOutcomeContext",
+          "type": "object"
+        },
         "SolidBackground": {
           "properties": {
             "color": {
@@ -3339,6 +3423,67 @@
             "time_s"
           ],
           "title": "SyncAnchor",
+          "type": "object"
+        },
+        "TextAnimationPhases": {
+          "additionalProperties": false,
+          "properties": {
+            "entrance": {
+              "default": "none",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slide",
+                "typewriter",
+                "silkReveal",
+                "elasticCondensed",
+                "focusPull",
+                "wordRelay",
+                "ribbonWipe",
+                "echoStack"
+              ],
+              "title": "Entrance",
+              "type": "string"
+            },
+            "exit": {
+              "default": "none",
+              "enum": [
+                "none",
+                "fade",
+                "pop",
+                "slide",
+                "typewriter",
+                "silkReveal",
+                "elasticCondensed",
+                "focusPull",
+                "wordRelay",
+                "ribbonWipe",
+                "echoStack"
+              ],
+              "title": "Exit",
+              "type": "string"
+            },
+            "loop": {
+              "default": "none",
+              "enum": [
+                "none",
+                "pulse",
+                "bounce",
+                "float"
+              ],
+              "title": "Loop",
+              "type": "string"
+            },
+            "speed": {
+              "default": 1,
+              "maximum": 3,
+              "minimum": 0.25,
+              "title": "Speed",
+              "type": "number"
+            }
+          },
+          "title": "TextAnimationPhases",
           "type": "object"
         },
         "TextCardBlock": {
@@ -3723,6 +3868,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/MomentOrderAnswerIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "outcome_context": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RequestOutcomeContext"
             },
             {
               "type": "null"
@@ -4551,7 +4707,7 @@
               },
               "target_duration_s": {
                 "default": 24,
-                "maximum": 120,
+                "maximum": 240,
                 "minimum": 3,
                 "title": "Target Duration S",
                 "type": "number"

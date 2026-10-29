@@ -108,7 +108,7 @@ from app.routes.plan_items import (
     _OVERLAY_ALLOWED_CONTENT_TYPES,
     _pool_asset_counts_toward_capacity,
 )
-from app.schemas.edit_proposal import EditProposal, parse_edit_proposal
+from app.schemas.edit_proposal import SNAPSHOT_FALLBACK_TITLE, EditProposal, parse_edit_proposal
 from app.schemas.slide_post import parse_slide_post, sticker_asset_ids
 from app.services.creation_thread_titles import (
     matches_conversation_revision,
@@ -362,7 +362,12 @@ class CreationMediaCapabilitiesOut(BaseModel):
 class CreationCapabilitiesOut(BaseModel):
     media_library: bool = False
     media_collections: bool = False
-    media_collection_cache_only: bool = True
+    media_collection_cache_only: bool = False
+    # The feedback route accepts the `wrong_facts` reason. A build that does not see this
+    # (an older server) must not offer the chip: the old route 422s the whole judgment.
+    wrong_fact_feedback: bool = False
+    # POST /me/editorial-taste/feedback/{id}/example exists; older servers 404 it.
+    idea_example_feedback: bool = False
     formats: list[CreationFormatCapabilityOut]
     media: CreationMediaCapabilitiesOut
     runtime_versions: list[Literal[1, 2]] = Field(default_factory=lambda: [1])
@@ -430,6 +435,7 @@ class CreationCapabilitiesOut(BaseModel):
     # (KRIA_SUGGESTION_CHIPS_ENABLED or the cohort list). Clients gate on this bool; a 404 or
     # empty chips list means "render nothing". No NEXT_PUBLIC twin.
     suggestion_chips: bool = False
+    request_outcome_context: bool = False
     # KRI-815: a reply may carry `voiceover_script` (a footage-grounded script with a
     # record/import continuation) when KRIA_VOICEOVER_SCRIPT_ENABLED. False/absent = the app
     # shows the reply's text only; the script is in that text too, so nothing is lost.
@@ -3213,7 +3219,8 @@ def _resolve_default_title_fill(
         )
         if snapshot is not None:
             candidate = (snapshot.title or "").strip()
-            if candidate and candidate != _PLACEHOLDER_PROPOSAL_TITLE:
+            placeholders = (_PLACEHOLDER_PROPOSAL_TITLE, SNAPSHOT_FALLBACK_TITLE)
+            if candidate and candidate not in placeholders:
                 return candidate[:_MAX_TITLE_LENGTH]
     return None
 
@@ -3842,6 +3849,11 @@ async def capabilities(
             and settings.media_collection_proposals_for(user.id)
         ),
         "media_collection_cache_only": settings.media_collection_cache_only,
+        "wrong_fact_feedback": bool(
+            settings.creator_editorial_taste_for(user.id)
+            and settings.creator_editorial_taste_feedback_signals_enabled
+        ),
+        "idea_example_feedback": bool(settings.creator_editorial_taste_for(user.id)),
         "phone_rendering": DeviceRenderCapabilities(
             enabled=phone_enabled,
             recipe_versions=[2] if phone_enabled else [],
@@ -3938,6 +3950,7 @@ async def capabilities(
         "live_plan_review_enabled": bool(settings.live_plan_review_enabled),
         "live_plan_review_version": CONTRACT_VERSION if settings.live_plan_review_enabled else 1,
         "suggestion_chips": bool(settings.suggestion_chips_for(user.id)),
+        "request_outcome_context": True,
         "voiceover_script_cards": bool(settings.kria_voiceover_script_enabled),
     }
 

@@ -1,6 +1,6 @@
 .PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
         ios-generate ios-build ios-test ios-verify \
-        kria-replay verify-kria verify-protected-text verify-phone-render \
+        kria-replay verify-kria verify-kria-turns verify-protected-text verify-phone-render \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays verify-motion-performance \
         carousel-capture carousel-verify verify-editor-timeline \
@@ -30,6 +30,10 @@ kria-replay:
 
 verify-kria:
 	KRIA_VERIFY_PYTHON="$(abspath $(API_PYTHON))" bash scripts/verify-kria.sh
+
+# TLA+ model of Kria chat turns + Postgres replays (formal/kria_turns). Needs Java 11+.
+verify-kria-turns:
+	python3 formal/kria_turns/verify.py
 
 # TLA+ model of the iPhone render lifecycle ("couldn't prepare", "needs attention",
 # "couldn't refresh"). Exit 0 pass, 1 fail, 3 pass with drift to review.

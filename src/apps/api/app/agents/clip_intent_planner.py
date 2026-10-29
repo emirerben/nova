@@ -51,9 +51,15 @@ _EXCLUDE_BULLET = (
     '  "leave out the laundry", "don\'t use the blurry ones", "without the drone shot"\n'
     '  and "quad klibini kullanma" are one `exclude` intent per named subject,\n'
     '  `attribute` naming the clips as the creator described them ("quad bike clip").\n'
-    "  Leave `creator_text`, `caption_attribute` and `position` null."
+    "  Leave `creator_text`, `caption_attribute` and `position` null. When the generated\n"
+    "  Creative Brief lists the ask this exclusion carries out as a `select` requirement\n"
+    '  (`[r3] [select/global] ...`), set `requirement_id` to that id ("r3"); otherwise null.\n'
+    "  Never invent an id and never use one from another kind of requirement."
 )
 _EXCLUDE_OP = "|exclude"
+# KRI-994: lets an `exclude` name the Creative Brief ask it carries out, so the finished
+# video's receipt can settle that ask. "" with exclusions off (byte-identical prompt).
+_REQUIREMENT_FIELD = ',"requirement_id":"r1|null"'
 _EXCLUSION_RULES_ON = (
     "Leaving clips OUT is `exclude`, never `include`: include FORCES those clips into\n"
     "the edit, the opposite of skipping them. Never ask about an exclusion: when no\n"
@@ -69,6 +75,17 @@ _EXCLUSION_RULES_ON = (
     'Using a clip\'s sound ("the voice from the talk to camera video") is an audio\n'
     "choice, never `include` or `exclude`."
 )
+# KRI-993: the `exclusive` marker on an `include`. Rides the KRI-667 kill switch: with
+# CLIP_INTENT_EXCLUDE_ENABLED off the prompt never teaches it and the parser drops it.
+_EXCLUSIVE_RULES = (
+    'An edit limited to a subject ("only about the steak", "just the sunset shots",\n'
+    '"nothing but the dog", "sadece biftek") is ONE `include` intent for that subject with\n'
+    "`exclusive` true: the edit is limited to the clips it matches. Use it only when the\n"
+    'creator limits the WHOLE edit to a subject, never for "make sure the gym is in", a\n'
+    'style or mood ("only fast cuts"), or a plain description of what was filmed.\n'
+    "`exclusive` is false on every other intent."
+)
+_EXCLUSIVE_FIELD = ',"exclusive":false'
 _EXCLUSION_RULES_OFF = (
     'Leaving clips OUT is not one of these operations. "Skip the quad bike clip",\n'
     '"leave out the laundry", "don\'t use the blurry ones" and "without the drone\n'
@@ -162,6 +179,9 @@ _POSITION_LAST = re.compile(
 # gidelim\" dediğimiz iskele klibi``). Both sides of the provenance check are
 # normalised the same way, so a creator who literally typed ``\"`` still matches.
 _JSON_ESCAPES = re.compile(r'\\(["\\])')  # kri667: strips JSON escapes, reads no meaning
+# KRI-950: emoji presentation selectors ("☕" vs "☕️"). Invisible, and models add or drop them
+# when copying, so provenance ignores them; the printed text keeps the creator's own form.
+_VARIATION_SELECTORS = re.compile("[\ufe0e\ufe0f]")  # kri667: invisible marks, reads no meaning
 
 
 def _norm(value: str) -> str:
@@ -175,6 +195,7 @@ def _norm(value: str) -> str:
     """
     value = unicodedata.normalize("NFKC", _sanitize_text(value)).translate(_QUOTE_TABLE)
     value = _JSON_ESCAPES.sub(r"\1", value)
+    value = _VARIATION_SELECTORS.sub("", value)
     return " ".join(value.split())
 
 
@@ -344,6 +365,44 @@ def _sentence_naming(attribute: str, sources: tuple[str, ...]) -> str | None:
     return None
 
 
+def _quote_with_text(quote: str, text: str, sources: tuple[str, ...]) -> str | None:
+    """The creator span joining a quote to the quoted text it stopped short of (KRI-950).
+
+    Flash quotes "show the ribeye photo full screen" and leaves out ``with the text "Ojo de
+    bife 🥩"`` that ends the same sentence. Only for text the creator put in quotation marks,
+    in the same sentence, with no other quoted text between the two: "Label the butcher
+    "Asado" and the cook "Parrilla"" never hands the butcher the cook's words. ``quote`` and
+    ``text`` are ``_norm``-ed.
+    """
+    marked = f'"{text}"'
+    for source in sources:
+        for sentence in _SENTENCE_SPLIT.split(source):
+            at_quote, at_text = sentence.find(quote), sentence.find(marked)
+            if at_quote < 0 or at_text < 0:
+                continue
+            start, end = min(at_quote, at_text), max(at_quote + len(quote), at_text + len(marked))
+            first, second = sorted([(at_quote, len(quote)), (at_text, len(marked))])
+            if '"' in sentence[first[0] + first[1] : second[0]] or end - start > 600:
+                continue
+            return sentence[start:end]
+    return None
+
+
+def _creator_form(text: str, input: ClipIntentPlannerInput) -> str:  # noqa: A002
+    """``text`` as the creator typed it, when it differs only by emoji presentation selectors."""
+    sources = (input.creator_request, input.latest_user_message or "")
+    if not any(_VARIATION_SELECTORS.search(value) for value in (text, *sources)):
+        return text
+    bare = _VARIATION_SELECTORS.sub("", text)
+    # The creator's exact spelling of a text the fence already verified.
+    marks = "[\ufe0e\ufe0f]?"
+    pattern = re.compile("".join(re.escape(c) + marks for c in bare))  # kri667: spelling only
+    for source in sources:
+        if match := pattern.search(source):
+            return match.group(0)
+    return text
+
+
 def _unstitched_quote(quote: str, creator_text: str | None, sources: tuple[str, ...]) -> str | None:
     """The creator span inside a quote the model stitched from exact creator spans.
 
@@ -382,9 +441,11 @@ def _repair_position(data: dict[str, Any]) -> None:
     "at the start" is ``first`` and "at the very end" is ``last``. A request to
     keep the listed order ("in this chapter order", "sequential", a list of the
     chapters) places nothing first or last: ``None``, the shape the model already
-    returns for it, which the story structure carries. Two placements packed into
-    one intent ("day first and night last") stay invalid: guessing one side would
-    silently drop the other, so the creator is asked.
+    returns for it. The order itself is the sequence of the order intents (one per
+    named subject, KRI-941), never ``position``: the sequence rule
+    (``clip_order_sequence``) reads only those intents, not ``story_structure``. Two
+    placements packed into one intent ("day first and night last") stay invalid:
+    guessing one side would silently drop the other, so the creator is asked.
     """
     position = data.get("position")
     if data.get("op") != "order" or position in (None, "first", "last"):
@@ -998,7 +1059,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # 2026-10-13.1 prompt byte-for-byte).
         # KRI-552: "cut my long pauses" / "cut the part where I restart" are speech cleanup,
         # never a caption (or any other) intent.
-        prompt_version="2026-10-21.1",
+        # KRI-945: an intro, explanation or facts for the whole video is never a caption.
+        # KRI-941: "in this order: A, B, C" is one `order` intent per named subject, position
+        # null, in the stated order (the prompt said that and, further down, the opposite).
+        #
+        # KRI-993: "only about X" is one `include` with `exclusive` true (same kill switch).
+        # KRI-994: an `exclude` names the brief `select` requirement it carries out.
+        prompt_version="2026-10-27-subject-scope-exclude-requirement-id",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -1074,6 +1141,9 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 _EXCLUSION_RULES_ON if input.clip_exclusions else _EXCLUSION_RULES_OFF
             ),
             exclude_op=_EXCLUDE_OP if input.clip_exclusions else "",
+            exclusive_rules=f"\n\n{_EXCLUSIVE_RULES}" if input.clip_exclusions else "",
+            exclusive_field=_EXCLUSIVE_FIELD if input.clip_exclusions else "",
+            requirement_field=_REQUIREMENT_FIELD if input.clip_exclusions else "",
         )
         # KRI-520: the reply-language instruction goes last. "" for English/unknown:
         # byte-identical prompt.
@@ -1209,7 +1279,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         data = {
             k: v
             for k, v in raw_intent.items()
-            if not (k in {"label_source", "placeholder"} and v is None)
+            if not (k in {"label_source", "placeholder", "exclusive"} and v is None)
         }
         # The id is a handle the model invents; a missing one is minted here and an
         # over-long one is shortened by ClipIntent (KRI-422), never a rejection.
@@ -1265,11 +1335,16 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             data["caption_attribute"] = None  # exact copy wins over an authored topic
         if data.get("op") != "order":
             data["position"] = None
+        if data.get("op") != "include" or not input.clip_exclusions:
+            data.pop("exclusive", None)  # KRI-993: a scope means nothing on any other op
         if data.get("op") != "label":
             # Narration-label fields mean nothing on any other op: "Elif's sentence
             # with her own voice, at the end" came back as a transcript order (KRI-531).
             data.pop("label_source", None)
             data.pop("transcript_kind", None)
+        if data.get("op") != "exclude" or not input.clip_exclusions:
+            # KRI-994: only an exclusion links back to a brief requirement.
+            data.pop("requirement_id", None)
         _repair_position(data)
         _repair_order_by(data)
         attribute = data.get("attribute")
@@ -1339,11 +1414,17 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             )
         if intent.creator_text is not None:
             text = _norm(intent.creator_text)
+            if text not in quote and (repaired := _quote_with_text(quote, text, sources)):
+                intent = intent.model_copy(update={"source_quote": repaired})
+                quote = repaired
             if text not in quote or not any(text in source for source in sources):
                 raise _IntentRejected(
                     "creator_text_not_source_backed",
                     "creator_text must be exact creator words inside source_quote",
                 )
+            creator_form = _creator_form(intent.creator_text, input)
+            if creator_form != intent.creator_text:
+                intent = intent.model_copy(update={"creator_text": creator_form})
         if intent.order_by is not None and not input.clip_facts:
             # The flag-off prompt never teaches `order_by`, so a stray one behaves as if the
             # field did not exist: dropped without retrying the model for nothing.

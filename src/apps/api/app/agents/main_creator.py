@@ -37,6 +37,7 @@ from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
 from app.kria.take_trim import refile_take_trim
+from app.kria.text_sequence import last_quoted_literal, refile_text_sequences
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import (
     MAX_OPENING_TITLE_DURATION_S,
@@ -49,7 +50,11 @@ from app.schemas.edit_proposal import (
     resolve_video_reuse_policy,
     turkish_media_scope,
 )
-from app.services.creator_capabilities import CAPABILITY_REACTION_BEATS, ending_clip_candidates
+from app.services.creator_capabilities import (
+    CAPABILITY_REACTION_BEATS,
+    CAPABILITY_TIMED_CARDS,
+    ending_clip_candidates,
+)
 from app.services.length_policy import creator_duration_s
 
 log = structlog.get_logger()
@@ -140,7 +145,24 @@ log = structlog.get_logger()
 # v92 (KRI-881): main's v91 plus a research / sources ask as a typed `text` requirement with
 # `facts.research` ({topic, request_quote}); the server researches it before approval.
 # v93 combines main v92 research-before-approval with runtime creative skills.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-25-v94"
+# v95 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`
+# (0.25-4; "slow motion" = 0.5, "speed up" = 2) on a `style` requirement, never for pacing /
+# text / music or a speed ramp; the phone montage plans the rate onto the named clips.
+# v96: exact-timed small cards (`timed_cards`, flag PHONE_TIMED_CARDS_ENABLED) on phone
+# Montage / Voiceover edits, and the shared brief records a `timed_card` fact for the ask.
+# v97 (KRI-945): the described-text exception covers text on particular clips only; an
+# intro, explanation or facts for the whole video is never a clip intent.
+# v98 (KRI-942): the shared brief records clip sound on / off (`clip_sound` "on"/"off" with
+# `sound_clip`, `sound_from_s`/`sound_to_s`, `sound_line`, `sound_except`) for montages.
+# v99 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
+# creator's own last voiceover words ("after my last words \"before we eat\"").
+# v100 (KRI-994): a select ask records the media kind it restricts to / includes
+# (`only_media_kind` "video", `include_media_kind` "photo"), so the server can judge "clips
+# only" on the finished timeline and withdraw an earlier photo ask a later clips-only ask replaces.
+# v102 (29 Ekim lane D, KRI-1038): words shown a piece at a time are a `text_sequence`
+# requirement, not `captions: word_by_word`; "say" plus a quote with no voiceover is on-screen
+# text. (v101 is lane B's order-key edit; they merge in that order.)
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-29-v102"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -172,9 +194,10 @@ _CLIP_FACTS_NOTE = (
 # Position matters: appended after the rule the model kept asking the creator
 # for exact words (6/6 live runs); stated at the rule it proposes (6/6).
 _DESCRIBED_TEXT_EXCEPTION = (
-    " EXCEPTION -- described text: when the creator asks for on-screen text they DESCRIBE"
-    ' rather than dictate ("the name of the dish on each food clip", "a caption about the'
-    ' weather on the park clips"), the missing words are not yours to write and NOT a reason'
+    " EXCEPTION -- described text on clips: when the creator asks for on-screen text ON"
+    ' PARTICULAR CLIPS that they DESCRIBE rather than dictate ("the name of the dish on each'
+    ' food clip", "a caption about the weather on the park clips"), the missing words are not'
+    " yours to write and NOT a reason"
     " to ask: emit a `clip_intents` entry (see OPEN-VOCABULARY CLIP INTENTS; `op` is exactly"
     " one of label, group, order, include, caption -- a per-clip tag is `label`, one phrase"
     " over a group of clips is `caption`) and propose the strategy; the server reads the"
@@ -187,7 +210,10 @@ _DESCRIBED_TEXT_EXCEPTION = (
     ' null}, {"intent_id": "weather", "op": "caption", "attribute": "the park clips",'
     ' "creator_text": null, "caption_attribute": "the weather"}]; "the name of the dish on'
     ' each food clip" => {"op": "label", "attribute": "the dish shown in the clip",'
-    ' "creator_text": null}.'
+    ' "creator_text": null}. Text for the WHOLE video is never a `clip_intents` entry, even'
+    " when described: an introduction, an explanation or facts about the place or topic"
+    ' ("some facts about Lisbon to show why people should go, an introductory explanation")'
+    " follows Researched explanations, and a hook is the opening title."
 )
 
 # KRI-118 item 1: guidance for the chat-picked "shape" layered on top of
@@ -318,6 +344,27 @@ itself is not an `ending_clip`. Say in `summary`, in plain words, that the video
 the talk with its own sound.
 """.strip("\n")
 
+# Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
+# edit. Appended to the `$reaction_beats_section` slot ONLY when the manifest advertises
+# `timed_cards`; "" otherwise, so every other prompt stays byte-identical.
+_TIMED_CARDS_PROMPT_SECTION = """
+SMALL CARDS AT AN EXACT TIME (iPhone Montage and Voiceover)
+When the creator wants a Visuals photo (or video) shown as a SMALL picture-in-picture card at a
+stated moment of the finished video -- "show the menu photo as a small card at 3 seconds for 2
+seconds", "put the receipt in the corner during the second clip", "menü fotoğrafı 3. saniyede 2
+saniye küçük kart olarak gelsin" -- set `timed_cards`: up to 12 objects, each {"card_id":
+"short-slug", "visual_id": "the matching media_context IMAGE (or VIDEO) entry's exact media_id",
+"label": "the creator's own words for it, e.g. 'menu photo'", "at_s": seconds into the finished
+video, or null, "clip_id": "the media_id of one of the project's own clips the card should show
+during, or null", "offset_s": seconds after that clip starts (default 0), "hold_s": seconds on
+screen (default 2.0, 0.5 to 8)}. Exactly one of `at_s` / `clip_id` per card. Find `visual_id`
+exactly as for reaction beats: match what the creator named against `media_context` and copy
+THAT entry's `media_id` verbatim; never invent or shorten an id. A photo timed to a SPOKEN word
+("when I say X") is a reaction beat (where available), never a timed card; a photo that should
+fill the whole screen or play as its own moment is a selected media / clip intent, never a timed
+card. Say in `summary`, in plain words, where and for how long each small card shows.
+""".strip("\n")
+
 # KRI-519: the same beats on a phone Voiceover edit, grounded against the recorded
 # voiceover's words. Shares the Talking section's field contract verbatim (sliced, so
 # the two can never drift and the Talking prompt stays byte-identical); only the
@@ -407,6 +454,8 @@ answer with this action instead of `ask_user` or `propose_strategy`:
 {"action": {"kind": "draft_voiceover_script", "request_evidence": "verbatim excerpt of the
 creator's message asking for the script or the change", "revision_note": "the creator's
 requested change to the earlier draft, verbatim, or null for a new script"}}
+Words the creator asks to SHOW on screen, or a sentence they quote to display, are not a script
+request: never offer to write or record them as a voiceover.
 Do not write the script yourself: the server writes it from what the clips show. Do not
 propose a narrated or voiceover edit before the creator has recorded or imported a voiceover;
 that edit cannot render yet. Any other request (a montage, music, text, an edit that keeps the
@@ -462,8 +511,8 @@ ADDITION to `action`, return a top-level `brief_updates` list (at most 16 object
 JSON object as `action`) holding ONLY the requirements the CURRENT USER MESSAGE newly states or
 changes -- never re-list a requirement that is already in the contract and unchanged. For a new
 requirement use `operation`: "add" and include `kind`, `scope`, `literal`, `description`, and
-`facts`. An add object is: {"operation":"add", "kind": "text|order|select|timing|audio|style",
-"scope":
+`facts`. An add object is: {"operation":"add", "kind":
+"text|order|select|timing|audio|style|text_sequence", "scope":
 "title|per_clip|clip:<media_id>|global", "literal": "the creator's exact words to print, or
 null", "description": "what is wanted in the creator's own framing, or null", "facts": {}}.
 `literal` is ONLY text the creator wrote out; described text ("the landmark on each clip") goes
@@ -487,9 +536,9 @@ style or timing requirement as well. Never shorten a compound request to the one
 strategy happens to expose. Descriptions may retain behavior requiring composition of operations.
 Do not duplicate an opening hook as a per-clip caption unless the creator requests both.
 
-Captions and subtitles are the speech lane (Turkish: "altyazı"); titles, labels, callouts
-and decorative words are separate authored text. Record speech subtitles as a `style`
-requirement with `facts.captions` and, when requested, `facts.caption_language`, never as
+Captions and subtitles are the speech lane (Turkish: "altyazı") and only that; titles,
+labels, callouts and decorative words are separate authored text. Record speech subtitles as a
+`style` requirement with `facts.captions` and, when requested, `facts.caption_language`, never as
 literal text to print. Keep its description about subtitles; record source-audio and
 visual-cue instructions as separate requirements. "English subtitles; title X; no text
 except the title" and
@@ -502,6 +551,23 @@ follow-up requests to remove extra text: preserve existing subtitle language and
 Only an explicit request to remove captions/subtitles, or all writing INCLUDING
 subtitles, turns off that speech-caption requirement. A named smaller heading under a
 title remains authored text. Keep explicit wording, scope and later corrections intact.
+
+Words shown on screen a piece at a time are NOT captions. When the creator quotes words, or
+says show / display / title / write, and asks for them one word (or phrase) at a time ("show
+each word one by one and say “…”", "yazıyı kelime kelime göster", "split it into pieces, word
+by word"), record ONE `text_sequence` requirement: {"kind": "text_sequence", "scope": "title",
+"literal": "<the quoted words, exactly as written>", "description": "<their ask>", "facts":
+{"unit": "word", "mode": "agent_choice"}}. Keep the whole quoted sentence in `literal`, never
+shortened or translated, and never record it as a `style` captions requirement. `unit` is
+"phrase" when they ask for phrases or chunks. `mode` is "replace" when each piece takes the last
+one's place, "cumulative" when the words stay and build up, otherwise "agent_choice": the editor
+chooses and says which in its reply. A follow-up that points back at the words ("show each word
+after the other in the text") keeps the earlier quoted words as `literal`. "One word at a
+time" or "word by word" is a captions ask ONLY when it is about speech that exists in the
+footage or a recorded voiceover, or the creator names captions, subtitles, karaoke or "altyazı".
+"Say “…”" with a quoted line and no recorded voiceover means on-screen text, not speech. A
+voiceover is only what the creator asks for with record, read aloud or voiceover; never offer
+to record one for words the creator asked to see.
 
 When a real requirement is present, ALWAYS record the structured facts that belong to it, even
 when the same words also sit in a title or sentence: a distance, activity, start point, or end
@@ -518,6 +584,13 @@ everyone", "end_line": "see you tomorrow"}} with the quoted words exactly as the
 them (just `start_line` or just `end_line` when only one line is named), never an `order`
 requirement and never `triggers`. Record it even when no length is stated; a stated length
 stays its own `timing` requirement.
+A request for no particular sequence is an `order` requirement too, with the key the server
+checks: "show everything in random order", "shuffle them", "rastgele sırayla" =>
+{"kind": "order", "scope": "global", "facts": {"key": "random"}}; "any order is fine", "sıra
+fark etmez" => {"key": "any_order"}. Never put the creator's negation in that key: "keep my order,
+not random" is the attachment order, not `random`. Showing every attached clip ("show all
+content", "tüm içeriği göster") is a `select` requirement {"kind": "select", "scope": "global",
+"facts": {"all": true}}, not a request to re-plan.
 A clip the creator wants FIRST or LAST ("start with the video that is blue", "end on the
 sunset") goes in that SAME order requirement as `first_clip` / `last_clip`: the creator's own
 words for the clip ({"key": "capture_time", "first_clip": "the video that is blue"}); the
@@ -565,10 +638,11 @@ Quoted speech
 bounds use the timing requirement's "start_line"/"end_line", never a cut line; ordered clips
 or places still use the order requirement's "start"/"end". Captions =>
 {"captions": "on"}, {"captions": "off"} or {"captions":
-"word_by_word"} (karaoke, one word at a time), plus {"caption_language": "en"} (a two-letter
-code) when they name the captions' language ("Türkçe altyazı" => "tr"), plus {"spellings":
-["Oblea de la Casa", "Merope"]} when they list words or names to spell a certain way in the
-captions, each exactly as the creator wrote it (never corrected or translated), plus
+"word_by_word"} (karaoke: the words of speech that exists light up as they are said), plus
+{"caption_language": "en"} (a two-letter code) when they name the captions' language
+("Türkçe altyazı" => "tr"), plus {"spellings": ["Oblea de la Casa", "Merope"]} when they list
+words or names to spell a certain way in the captions, each exactly as the creator wrote it
+(never corrected or translated), plus
 {"ask_if_unclear": "the third sauce he names"} (the creator's own words for WHICH word) when they
 say they could not make out a word and want to be asked instead of having it guessed ("I didn't
 catch the third sauce he names: if you can't tell what he says, ask me"), on the captions
@@ -583,7 +657,21 @@ light yet, so never say in `summary` that it is brightened or darkened; keep tex
 in the frame ("no text on her face or on the plate", "yüzüme ve tabağa yazı gelmesin") => a
 `style` requirement with {"keep_text_off": [{"kind": "face"}, {"kind": "object", "label":
 "plate"}]}, each object in the creator's own words, never translated (the app asks the creator to
-mark the object on a frame; never describe where it is yourself).
+mark the object on a frame; never describe where it is yourself); a photo or video shown as a
+SMALL card at an exact moment ("show the menu photo as a small card at 3 seconds for 2 seconds",
+"put the receipt in the corner during the second clip", "menü fotoğrafı 3. saniyede 2 saniye
+küçük kart olarak gelsin") => a `style` requirement with {"timed_card": {"visual": "<the
+creator's own words for the photo or video>", "at_s": 3.0 or null, "clip": "<the clip they named,
+in their words, or null>", "hold_s": 2.0 or null}}; a photo at a SPOKEN word is a pop-in, not a
+timed_card. Play footage faster or
+slower ("speed the river shots up 2x", "slow motion on the pour", "klipleri 2 kat hızlandır",
+"time-lapse") => a `style` requirement with {"playback_rate": 2}: source seconds per output
+second, 2 = twice as fast, 0.5 = half speed, between 0.25 and 4; "slow motion" / "ağır çekim"
+with no number = 0.5, "speed up" / "time-lapse" with no number = 2. Scope it `clip:<media_id>`
+when the creator names one attached clip, else "global" with the creator's words for the footage
+kept in `description` ("the river shots"); the server picks the clips from those words. Never
+`playback_rate` for pacing, cuts, text, music or a speed ramp (a change of speed inside one
+clip): those keep their words in `description` only.
 Keep the source/camera/ambient audio unchanged (including noun phrases such as "original camera
 audio" or "kameranın özgün sesi") => an `audio` requirement with
 {"audio_intent": "source_unchanged"}. This fact describes ONLY unprocessed source sound.
@@ -610,11 +698,33 @@ scoped `clip:<media_id>` of THAT clip with {"clip_sound": "under_voice"} (only t
 play their own sound under the voice; the rest stay silent under it); a clip that plays on with
 its own sound once the voice has ended, such as the last clip so a spoken line is heard =>
 {"clip_sound": "after_voice", "triggers": ["bye bye"]}, the line exactly as written, no
-`triggers` when none is named. Keep the creator's words in `description`; use these English keys
-and values whatever the language: "Seslendirme net duyulsun ama ısırık klibinin kendi sesi
-hafifçe altta kalsın" => scope clip:<the bite clip's media_id>, {"clip_sound": "under_voice"};
-"After my voiceover ends, let the last clip play so Caro's "bye bye" is heard" => scope
-clip:<the last clip's media_id>, {"clip_sound": "after_voice", "triggers": ["bye bye"]}.
+`triggers` when none is named. `triggers` holds only a line said IN THAT CLIP: the creator's own
+voiceover words that mark where the voice ends ("after my last words ...", "son sözümden sonra")
+are never a trigger and are not recorded. Keep the creator's words in `description`; use these
+English keys and values whatever the language: "Seslendirme net duyulsun ama ısırık klibinin
+kendi sesi hafifçe altta kalsın" => scope clip:<the bite clip's media_id>,
+{"clip_sound": "under_voice"}; "After my voiceover ends, let the last clip play so Caro's "bye
+bye" is heard" => scope clip:<the last clip's media_id>, {"clip_sound": "after_voice",
+"triggers": ["bye bye"]}; "After my last words "before we eat", play Atakan's "Super excited!"
+with its own sound" => scope clip:<Atakan's clip's media_id>, {"clip_sound": "after_voice",
+"triggers": ["Super excited!"]} ("before we eat" is the creator's voiceover, not the clip).
+On a montage or any other edit that keeps the clips' own sound, turning that sound OFF or ON
+for the whole video, a clip, a stretch of seconds or a spoken line => an `audio` requirement with
+{"clip_sound": "off"} or {"clip_sound": "on"} plus where, only what the creator said: scope
+`clip:<media_id>` for one attached clip they name (every time it plays); {"sound_clip": "last"}
+or "first" for the last / first clip of the edit; {"sound_from_s": 5, "sound_to_s": 8} for seconds
+of the video, or of that clip when one is named ("the first 2 seconds of the grill clip" => scope
+clip:<the grill clip's media_id>, {"sound_from_s": 0, "sound_to_s": 2}); {"sound_line": "Super
+excited!"} for only where that line is said, exactly as written, never translated. Parts that get
+the opposite go in "sound_except", a list of objects with the same keys ("sound_media" names a
+clip there): "Clip sound off except that last line" (the last clip's line is "Super excited!") =>
+{"clip_sound": "off", "sound_except": [{"sound_clip": "last", "sound_line": "Super excited!"}]};
+"sadece kasap klibinin sesi kalsın" => {"clip_sound": "off", "sound_except": [{"sound_media":
+"<the butcher clip's media_id>"}]}; "mute the last clip" / "son klibin sesini kapat" =>
+{"clip_sound": "off", "sound_clip": "last"}; "5. saniyeden 8. saniyeye kadar ses olmasın" =>
+{"clip_sound": "off", "sound_from_s": 5, "sound_to_s": 8}. Lowering or raising the volume is not
+on/off and records no `clip_sound`. A later message that moves where the sound is on or off
+changes THIS requirement (`operation`: "change"); a message about anything else leaves it as it is.
 Merely narrating that footage was captured "from A to B", at sunset and then at night, or during
 two activities is not such an ask. Compatible requirements with the same kind and scope coexist.
 ALWAYS add a `timing` requirement ({"kind": "timing", "scope": "global", "facts": {"duration_s":
@@ -665,6 +775,15 @@ picks one of the alternatives you offered in your previous question, their origi
 changed to that alternative: record the superseded requirements with `change` or `remove`
 (exact `target_requirement_id` and `expected_version` from the contract) and plan the chosen
 alternative using the original request's exact words.
+A `select` requirement about WHICH KIND of media the edit may use records one typed fact,
+whatever language the creator wrote in. "Video clips only", "no photos", "sadece videolar" =>
+{"kind": "select", "scope": "global", "facts": {"only_media_kind": "video"}}. A request to
+INCLUDE a photo ("use my steak photo too", "fotoğrafı da kullan") => {"kind": "select",
+"scope": "global", "facts": {"include_media_kind": "photo"}}. Add neither key to any other
+select ask (which clips to use or skip, "only about the steak"), and add `only_media_kind` only
+when the creator asks for video clips ONLY: "also use the steak photo, the rest can stay video"
+is `include_media_kind` alone. When the creator withdraws an earlier ask ("forget the steak
+photo"), `remove` that requirement as described above.
 Also return a top-level boolean `delegates_all_choices`. Set it to true ONLY when the CURRENT
 USER MESSAGE states no requirement at all and hands every creative choice to you ("Make
 something great from my Troya trip", "Suggest an edit", "you decide", "Troya gezimden harika bir
@@ -850,6 +969,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if ending_clip_candidates(input.capability_manifest)
                     else ""
                 )
+                # Exact-timed small cards: same slot, "" unless the manifest advertises them.
+                + (
+                    "\n" + _TIMED_CARDS_PROMPT_SECTION
+                    if _timed_cards_available(input.capability_manifest)
+                    else ""
+                )
             ),
             # KRI-188: "" (flag off) adds no bytes; same line-suffix trick.
             brief_section=("\n" + _BRIEF_PROMPT_SECTION if input.brief_enabled else ""),
@@ -889,6 +1014,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             data = json.loads(raw_text)
             if not isinstance(data, dict):
                 raise ValueError("response is not an object")
+            data = _hoist_misplaced_declarations(data)
             data = _hoist_misplaced_brief_updates(data)
             data = _repair_creative_decision(data)
             raw_action = _repair_action_envelope(data.get("action"))
@@ -1070,7 +1196,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         strategy = strategy.model_copy(update={"editorial_plan": None})
                 action = action.model_copy(update={"strategy": strategy})
             brief_updates = (
-                _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input)
+                _refile_text_sequences(
+                    _refile_take_trims(parse_brief_updates(data.get("brief_updates")), input),
+                    input,
+                )
                 if input.brief_enabled
                 else []
             )
@@ -1259,6 +1388,15 @@ def _reaction_beats_available(manifest: ResolvedCreatorManifest) -> bool:
     """
 
     capability = manifest.capabilities.get(CAPABILITY_REACTION_BEATS)
+    return bool(capability is not None and capability.available)
+
+
+def _timed_cards_available(manifest: ResolvedCreatorManifest) -> bool:
+    """Whether the SMALL CARDS AT AN EXACT TIME guidance is shown: a read of the manifest's
+    own `timed_cards` capability (`creator_capabilities.resolve_creator_manifest` owns the
+    flag / format / device gate; `repair_creator_timed_cards` never trusts the model alone)."""
+
+    capability = manifest.capabilities.get(CAPABILITY_TIMED_CARDS)
     return bool(capability is not None and capability.available)
 
 
@@ -1663,6 +1801,69 @@ def _refile_take_trims(
     if moved:
         log.info("main_creator_take_trim_refiled", count=moved)
     return refiled
+
+
+def _refile_text_sequences(
+    updates: list[BriefUpdate], agent_input: MainCreatorInput
+) -> list[BriefUpdate]:
+    """29 Ekim: words the creator wants SHOWN one at a time are a `text_sequence`, not captions.
+
+    The prompt teaches the shape; this keeps a reply that still files the ask as
+    `captions: word_by_word` from reaching the brief (see `kria.text_sequence`).
+    """
+    if not updates:
+        return updates
+    earlier = [
+        str(row.get("content") or "")
+        for row in agent_input.conversation
+        if isinstance(row, dict) and row.get("role") == "user"
+    ]
+    refiled = refile_text_sequences(
+        updates,
+        creator_message=agent_input.user_message,
+        known_literal=last_quoted_literal(earlier),
+        has_voiceover=agent_input.capability_manifest.has_voiceover,
+    )
+    moved = sum(new is not old for new, old in zip(refiled, updates, strict=True))
+    if moved:
+        log.info("main_creator_text_sequence_refiled", count=moved)
+    return refiled
+
+
+_TOP_LEVEL_DECLARATIONS = ("delegates_all_choices", "starts_fresh")
+
+
+def _hoist_misplaced_declarations(data: dict) -> dict:
+    """Move the two typed brief declarations the model wrote inside `action` to the top level.
+
+    KRI-992 (prod 2026-10-27, 7 of 32 planner calls): the prompt asks for top-level booleans
+    `delegates_all_choices` / `starts_fresh`, but the model sometimes writes them inside the
+    `propose_strategy` object. The strict adapter rejects them as ``extra_forbidden`` and the
+    runtime spends a second full planner call. Both describe the creator's message, not the
+    action, so where they sit carries no meaning.
+
+    Only these two keys, only real booleans, from the action itself (not `strategy`). A key
+    already present at the top level wins, even when false, and the nested copy is dropped.
+    A nested non-boolean is left in place, so it still fails closed through the retry. Every
+    other unknown key still reaches the strict adapter.
+    """
+
+    action = data.get("action")
+    if not isinstance(action, dict):
+        return data
+    lifted: dict[str, bool] = {}
+    dropped: list[str] = []
+    for key in _TOP_LEVEL_DECLARATIONS:
+        if not isinstance(action.get(key), bool):
+            continue
+        dropped.append(key)
+        if key not in data:
+            lifted[key] = action[key]
+    if not dropped:
+        return data
+    log.info("main_creator_declarations_hoisted", keys=dropped, lifted=sorted(lifted))
+    repaired_action = {key: value for key, value in action.items() if key not in dropped}
+    return {**data, **lifted, "action": repaired_action}
 
 
 def _hoist_misplaced_brief_updates(data: dict) -> dict:

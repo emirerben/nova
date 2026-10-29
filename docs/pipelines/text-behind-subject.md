@@ -7,6 +7,19 @@ rollback commands ("Flag + rollback" / "Flag semantics + rollback" below).
 See also: `docs/pipelines/generative.md` for the variant/reburn machinery this
 feature plugs into, `agents/VIDEO_CONTEXT.md` for FFmpeg subprocess patterns.
 
+**Phone lane (device renders).** A separate, Vision-based implementation of the
+same alpha-multiply idea lives in `KriaMediaEngine` (`NativeSubjectMatte.swift`:
+`VNGeneratePersonSegmentationRequest` on the composited canvas frame, 15 Hz
+ticks with hold, the v3 treatment ported as `SubjectMaskTreatment`, a streaming
+stability latch, `SubjectOcclusion.apply` in `RecipeVideoCompositor.paintText`).
+The server stamps `behind_subject` on a phone text layer only when
+`TEXT_BEHIND_SUBJECT_PHONE_ENABLED` is on, `behindSubject` is verified and the
+build declares protocol >= 21 (`portable_text_layout._stamp_behind_subject`);
+otherwise the layer is plain text. Failure modes and their tests:
+`docs/reviews/text-behind-subject-phone-failure-modes.md`; capability row:
+`docs/reviews/kri-29/capability-matrix.md`. Nothing below this paragraph
+applies to the phone lane.
+
 ## What it is
 
 The CapCut/IG "text behind object" effect: a hero-intro overlay renders as if

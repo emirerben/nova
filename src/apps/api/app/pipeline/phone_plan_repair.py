@@ -186,6 +186,25 @@ def repair_plan_for_phone(plan, exc: Exception) -> tuple[Any, list[str]]:  # noq
 # ``verify_phone_recipe`` stays the authority at pin time: this only removes the refusal
 # for a plan that can be made to show the words.
 
+# The contract text roles ``repair_plan_for_contract`` always puts on screen. A ``clip``
+# text lands only when its clip is in the compiled plan, so only the plan can say.
+PLACED_WITHOUT_PLAN = frozenset({"opening", "closing", "any"})
+# The phone routes whose writer compiles through ``compile_phone_guided_repaired`` with the
+# job's pinned contract (``generative_build._run_phone_guided_job``).
+CONTRACT_REPAIR_ROUTES = frozenset(
+    {"guided_story", "unified_montage", "user_song_montage", "lipsync_montage"}
+)
+
+
+def contract_text_drawn(requirement, *, route: str | None) -> bool:  # noqa: ANN001
+    """Whether the render shows this pinned contract text whatever its plan holds (KRI-945).
+
+    The draft check before approval (``approval_readiness``) asks this; the repair below is
+    what makes it true, so a writer that cannot draw contract text is never promised it.
+    """
+    return route in CONTRACT_REPAIR_ROUTES and requirement.role in PLACED_WITHOUT_PLAN
+
+
 _TITLE_ID = "guided-title"
 _TITLE_HOLD_S = 2.2
 _TITLE_Y = 0.16
@@ -297,6 +316,66 @@ def _new_text(plan, template, **updates: Any):  # noqa: ANN001
     )
 
 
+def _place_added_contract_text(plan, element):  # noqa: ANN001
+    """Reserve measured ink space without changing confirmed copy, style or time."""
+    from app.pipeline.canvas import canvas_for_orientation  # noqa: PLC0415
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
+    from app.pipeline.phone_text_style import animation_box  # noqa: PLC0415
+    from app.pipeline.text_overlay_skia import measure_text_overlay_box  # noqa: PLC0415
+    from app.services.creator_render_contract import CreatorRenderContractError  # noqa: PLC0415
+
+    canvas = canvas_for_orientation(getattr(plan, "output_orientation", None))
+
+    def ink(text):  # noqa: ANN001
+        overlays = build_overlays_from_text_elements(
+            [text],
+            video_duration_s=float(text.end_s),
+            independent_box_alignment=True,
+            canvas=canvas,
+        )
+        boxes = [
+            measure_text_overlay_box(overlay, render_canvas=canvas, resolved_size=True)
+            for overlay in overlays
+        ]
+        bounds = (
+            min(box["left"] for box in boxes),
+            min(box["top"] for box in boxes),
+            max(box["right"] for box in boxes),
+            max(box["bottom"] for box in boxes),
+        )
+        return animation_box(text.model_dump(mode="json"), bounds, canvas)
+
+    element = element.model_copy(update={"position": "custom"})
+    box = ink(element)
+    obstacles = []
+    for other in _visible(plan):
+        if other.start_s >= element.end_s or other.end_s <= element.start_s:
+            continue
+        obstacle = ink(other)
+        if obstacle[0] < box[2] and box[0] < obstacle[2]:
+            obstacles.append(obstacle)
+    origin = float(element.y_frac if element.y_frac is not None else _TITLE_Y)
+    gap = 24 / canvas.height
+    candidates = [origin]
+    candidates += sorted(origin + other[3] + gap - box[1] for other in obstacles)
+    candidates += sorted((origin + other[1] - gap - box[3] for other in obstacles), reverse=True)
+    candidates += [origin + 0.05 - box[1], origin + 0.90 - box[3]]
+    for y in candidates:
+        top, bottom = box[1] + y - origin, box[3] + y - origin
+        if box[0] < 0 or box[2] > 1 or top < 0.05 or bottom > 0.90:
+            continue
+        if any(top < other[3] and other[1] < bottom for other in obstacles):
+            continue
+        return element.model_copy(update={"position": "custom", "y_frac": round(y, 6)})
+    raise CreatorRenderContractError(
+        "Your confirmed text cannot fit clearly alongside the other text at this size.",
+        decline_reason="needs_choice",
+        field_path="text_elements",
+        alternative="Choose a smaller text size or a separate time window.",
+        missing_text=element.text,
+    )
+
+
 def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tuple[Any, list[str]]:  # noqa: ANN001
     """Put every confirmed exact text the plan lost back on screen; ``(plan, notes)``.
 
@@ -351,7 +430,7 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             texts = [e for i, e in enumerate(texts) if i not in title]
             texts.insert(title[0], replacement)
             notes.append(f"Used your title {_quoted(literal)} exactly as you wrote it")
-        elif requirement.role == "clip":
+        elif requirement.role not in PLACED_WITHOUT_PLAN:
             windows = _clip_windows(current, requirement)
             if not windows:
                 continue  # no such clip in the plan: the pin-time check stays the authority
@@ -389,17 +468,16 @@ def repair_plan_for_contract(plan, contract, *, frame_s: float = 1 / 30) -> tupl
             closing = requirement.role == "closing"
             start = total - hold if closing else 0.0
             template = texts[title[0]] if title else None
-            texts.append(
-                _new_text(
-                    current,
-                    template,
-                    id=f"contract-text-{added}",
-                    text=literal,
-                    start_s=max(0.0, start),
-                    end_s=min(total, start + hold) if not closing else total,
-                    y_frac=min(0.7, _TITLE_Y + _STACK_STEP_Y * (added if title else added - 1)),
-                )
+            element = _new_text(
+                current,
+                template,
+                id=f"contract-text-{added}",
+                text=literal,
+                start_s=max(0.0, start),
+                end_s=min(total, start + hold) if not closing else total,
+                y_frac=min(0.7, _TITLE_Y + _STACK_STEP_Y * (added if title else added - 1)),
             )
+            texts.append(_place_added_contract_text(current, element))
             notes.append(f"Added your text {_quoted(literal)} on screen")
         current = current.model_copy(update={"text_elements": texts})
     if not notes:

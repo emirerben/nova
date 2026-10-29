@@ -300,11 +300,12 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
     ]
     if recipe.visual_fills:
         raise ValueError("Visual blocks await native parity and device qualification")
-    if recipe.audio.mute_windows:
+    if recipe.audio.mute_windows and not phone_clip_sound_windows_supported():
         # KRI-118 L1 item 6: mute windows are a distinct feature from visual
         # blocks (silent overlay tracks) -- this used to reuse the "Visual
         # blocks..." message meant for that other rejection, which read as
         # nonsensical/misleading for a recipe with no visual fills at all.
+        # KRI-942: the creator's part-of-a-clip "sound off" is the one sender, behind its flag.
         raise ValueError("Muted sections aren't supported on iPhone yet")
     if placements and not (
         (getattr(settings, "phone_editor_media_enabled", False) or allow_editor_media)
@@ -358,6 +359,15 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
         raise PhoneCapabilityUnavailable(
             "Bent text awaits native parity and device qualification",
             capability="textBend",
+        )
+    # Text behind people: same explicit gate (`compile_text_overlay` strips the flag before
+    # it gets here unless verified; this catches a caller that stamped it afterwards).
+    if any(layer.behind_subject for layer in recipe.text_layers) and "behindSubject" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Text behind people awaits native parity and device qualification",
+            capability="behindSubject",
         )
     if _has_unqualified_font_instance(recipe):
         font_files, font_effects = unqualified_font_causes(recipe)
@@ -507,6 +517,17 @@ def freeze_frame_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def clip_speed_planned_for() -> bool:
+    """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
+
+    True iff ``variableSpeed`` is in ``phone_render_verified_features`` (device parity: the
+    same gate the editor's clip speed control reads, `_phone_clip_speed_reason`). Off, the
+    plan writes no rate and the receipt keeps KRI-689's honest "can't change clip speed on
+    your iPhone yet", so an approved recipe never asks the phone for a capability it lacks.
+    """
+    return "variableSpeed" in set(settings.phone_render_verified_features)
+
+
 def stamped_client_protocol(value: object) -> int | None:
     """A stored app-protocol stamp read back, or ``None`` when absent or malformed."""
     if isinstance(value, bool) or not isinstance(value, int):
@@ -575,6 +596,45 @@ def text_bend_client_supported(*, require_client: bool | None = None) -> bool:
     return protocol is not None and protocol >= settings.text_bend_min_client_protocol
 
 
+def caption_animation_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build author and round-trip caption ``animation_phases``?
+
+    At least ``caption_animation_min_client_protocol`` keeps a caption row's phases and the
+    all-captions default on Save; an older build would drop them. ``require_client`` as in
+    `text_bend_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.caption_animation_min_client_protocol
+
+
+def caption_animation_renderable() -> bool:
+    """Do caption phases reach the compiled caption layers (KRI-1007)?
+
+    A layer with ``animation_phases`` requires ``authoredText``; without it verified, or
+    with the kill switch off, captions compile exactly as they did before phases existed.
+    """
+    return bool(
+        settings.caption_animation_enabled
+        and "authoredText" in set(settings.phone_render_verified_features)
+    )
+
+
+def caption_animation_supported(*, require_client: bool | None = None) -> bool:
+    """May a creator author caption animation now (``editor_capabilities.caption_animation``)?"""
+    return caption_animation_renderable() and caption_animation_client_supported(
+        require_client=require_client
+    )
+
+
 def text_bend_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "may a creator author Bend right now" (KRI-646).
 
@@ -587,6 +647,44 @@ def text_bend_supported(*, require_client: bool | None = None) -> bool:
         settings.text_bend_enabled
         and "textBend" in set(settings.phone_render_verified_features)
         and text_bend_client_supported(require_client=require_client)
+    )
+
+
+def text_behind_subject_phone_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a text layer's ``behind_subject``?
+
+    At least ``text_behind_subject_phone_min_client_protocol`` (21) knows the key; an older
+    build refuses the whole recipe (`rejectUnknownAssetFields`). ``require_client`` ``None``
+    applies the gate only inside an HTTP request (workers have no app build to qualify);
+    pass ``True``/``False`` to force it. Mirrors `text_bend_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return (
+        protocol is not None and protocol >= settings.text_behind_subject_phone_min_client_protocol
+    )
+
+
+def text_behind_subject_phone_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a phone recipe carry ``behind_subject`` right now".
+
+    True iff the kill switch (``text_behind_subject_phone_enabled``, default off) is on,
+    ``behindSubject`` is in ``phone_render_verified_features`` (the device-parity gate) and
+    the app-build gate holds (`text_behind_subject_phone_client_supported`). When False,
+    `compile_text_overlay` strips the flag and the layer renders as plain text.
+    """
+    return bool(
+        settings.text_behind_subject_phone_enabled
+        and "behindSubject" in set(settings.phone_render_verified_features)
+        and text_behind_subject_phone_client_supported(require_client=require_client)
     )
 
 
@@ -938,6 +1036,63 @@ def phone_voiceover_reaction_beats_supported(*, require_client: bool | None = No
         settings.phone_voiceover_reaction_beats_enabled
         and phone_subtitled_reaction_beats_supported()
         and phone_voiceover_editor_lanes_supported(require_client=require_client)
+    )
+
+
+# Device features an exact-timed small card needs: the same ones the Talking overlay lane
+# compiles against (`subtitled-overlays` is the track the card lands on).
+PHONE_TIMED_CARD_FEATURES: tuple[str, ...] = PHONE_SUBTITLED_OVERLAY_FEATURES
+
+
+def phone_timed_cards_supported() -> bool:
+    """Single source of truth for "can a phone-rendered Montage (guided / unified
+    montage, montage-family voiceover) or narrated Voiceover edit draw a Visuals photo
+    as a small picture-in-picture card at an exact second right now".
+
+    Consulted by `app.services.creator_capabilities.resolve_creator_manifest` (whether
+    `timed_cards` is advertised), by `repair_creator_timed_cards` (whether a strategy's
+    cards survive approval), by the three phone writers in `app.tasks.generative_build`
+    (whether the worker grounds and compiles them) and by `phone_editor` (whether a Save
+    keeps them), so none advertises a lane another would refuse.
+
+    True iff ALL of:
+      - `phone_timed_cards_enabled` (this feature's own flag, default off).
+      - `media_overlays_enabled` (the generic overlay lane kill switch).
+      - every feature in `PHONE_TIMED_CARD_FEATURES` is in
+        `phone_render_verified_features` (device-parity gate).
+
+    Says nothing about the edit format or a recorded voiceover -- callers combine it with
+    their own shape check. A VIDEO card additionally needs
+    `phone_timed_video_cards_supported()`.
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        getattr(settings, "phone_timed_cards_enabled", False)
+        and settings.media_overlays_enabled
+        and all(feature in verified for feature in PHONE_TIMED_CARD_FEATURES)
+    )
+
+
+def phone_clip_sound_windows_supported() -> bool:
+    """Can a phone montage silence PART of a clip's own sound right now (KRI-942)?
+
+    True iff `phone_clip_sound_windows_enabled` AND `visualBlocks` is verified (the
+    capability recipe `mute_windows` require, `EditRecipeV2._references`). Read by the guided
+    phone writer (whether it sends the windows) and by `validate_phone_pilot_recipe` (whether
+    a recipe carrying them may pin). Whole-clip on/off never needs it.
+    """
+    return bool(
+        getattr(settings, "phone_clip_sound_windows_enabled", False)
+        and "visualBlocks" in settings.phone_render_verified_features
+    )
+
+
+def phone_timed_video_cards_supported() -> bool:
+    """`phone_timed_cards_supported()` AND the device plays Visuals videos
+    (`visualVideos` verified): a timed card may then bind a video, played muted
+    from its start (the same muted-card shape KRI-183 draws)."""
+    return phone_timed_cards_supported() and (
+        "visualVideos" in set(settings.phone_render_verified_features)
     )
 
 

@@ -3,6 +3,53 @@ import UIKit
 
 @MainActor
 final class NativeEditorInspectorUITests: XCTestCase {
+    func testTimelineSelectionShowsIncomingClipAndTextAtSubframeStart() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-selection-boundary", "-ui-testing-editor-color-cuts"]
+        app.launch()
+        let preview = app.descendants(matching: .any)["native-editor-preview"].firstMatch
+        XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 30))
+        func pixels() -> [UInt8] {
+            let screenshot = app.screenshot().image.cgImage!
+            let scale = Double(screenshot.width) / app.frame.width
+            let rect = preview.frame
+            let crop = screenshot.cropping(to: CGRect(x: (rect.minX + rect.width * 0.2) * scale,
+                y: (rect.minY + rect.height * 0.3) * scale,
+                width: rect.width * 0.6 * scale, height: rect.height * 0.2 * scale))!
+            var bytes = [UInt8](repeating: 0, count: crop.width * crop.height * 4)
+            let context = CGContext(data: &bytes, width: crop.width, height: crop.height,
+                bitsPerComponent: 8, bytesPerRow: crop.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
+            return bytes
+        }
+        func assertPicture(blue: Bool, text: Bool, name: String) {
+            let predicate = NSPredicate { _, _ in
+                let bytes = pixels()
+                let backgrounds = stride(from: 0, to: bytes.count, by: 4).filter {
+                    blue ? bytes[$0 + 2] > 200 && bytes[$0] < 50 : bytes[$0] > 200 && bytes[$0 + 2] < 50
+                }.count
+                let whites = stride(from: 0, to: bytes.count, by: 4).filter {
+                    bytes[$0] > 220 && bytes[$0 + 1] > 220 && bytes[$0 + 2] > 220
+                }.count
+                return backgrounds > bytes.count / 8 && (text ? whites > 20 : whites == 0)
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 10), .completed, name)
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = name
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+        assertPicture(blue: false, text: false, name: "Initial preceding clip")
+        app.descendants(matching: .any)["native-editor-clip-2"].firstMatch.tap()
+        assertPicture(blue: true, text: true, name: "Selected incoming clip")
+        app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.tap()
+        assertPicture(blue: false, text: false, name: "Return to preceding clip")
+        app.buttons["native-editor-timeline-text-00000000-0000-4000-8000-000000000100"].tap()
+        assertPicture(blue: true, text: true, name: "Selected incoming text")
+        XCTAssertEqual(app.buttons["native-editor-play-pause"].label, "Play preview")
+    }
+
     func testConnectedPanelsKeepRailAndPreviewStableAndCollapseActiveTool() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
@@ -145,6 +192,16 @@ final class NativeEditorInspectorUITests: XCTestCase {
         app.buttons["Bold"].tap()
         app.buttons["Animation"].tap()
         let scroll = app.scrollViews["native-editor-text-inspector-scroll"]
+        for name in ["Silk Reveal", "Elastic Condensed", "Focus Pull", "Word Relay", "Ribbon Wipe", "Echo Stack"] {
+            let effect = app.buttons["In animation " + name]
+            for _ in 0..<4 {
+                if effect.isHittable { break }
+                scroll.swipeUp()
+            }
+            XCTAssertTrue(effect.isHittable, name)
+            effect.tap()
+            XCTAssertTrue(effect.isSelected, name)
+        }
         let toggle = app.buttons["native-editor-text-animation-preview-toggle"]
         for _ in 0..<3 {
             if toggle.isHittable { break }
@@ -1710,6 +1767,11 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
         for value in cases {
             tapTimelineElement(value.timelineID, in: app)
+            if value.timelineID.contains("sound_effect") {
+                XCTAssertTrue(app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch.waitForExistence(timeout: 3),
+                              "the first tap on a sound selects it for trimming")
+                tapTimelineElement(value.timelineID, in: app)
+            }
             let inspectorElement = app.descendants(matching: .any)[value.inspectorID].firstMatch
             for _ in 0..<4 {
                 if inspectorElement.exists { break }
@@ -1772,6 +1834,38 @@ final class NativeEditorInspectorUITests: XCTestCase {
 
         app.buttons["native-editor-remove-sfx"].tap()
         XCTAssertTrue(home.waitForExistence(timeout: 3), "removing the sound returns to the list")
+    }
+
+    func testSoundEffectFirstTapSelectsForTrimAndTrailingHandleResizesBar() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-all-lanes"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 8))
+
+        let bar = app.descendants(matching: .any)["native-editor-timeline-sound_effect-sfx-1"].firstMatch
+        tapTimelineElement("native-editor-timeline-sound_effect-sfx-1", in: app)
+
+        let trailing = app.descendants(matching: .any)["native-editor-trim-trailing"].firstMatch
+        XCTAssertTrue(trailing.waitForExistence(timeout: 3), "a selected sound shows its trim handles")
+        XCTAssertTrue(trailing.isHittable)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-trim-leading"].firstMatch.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-sfx-volume"].firstMatch.exists, "the Sounds sheet stays closed on the first tap")
+        XCTAssertFalse(app.buttons["native-editor-sounds-done"].exists)
+
+        let widthBefore = bar.frame.width
+        let before = timingSeconds(bar.value as? String ?? "")
+        let grip = trailing.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        grip.press(forDuration: 0.1, thenDragTo: grip.withOffset(CGVector(dx: 60, dy: 0)))
+
+        XCTAssertGreaterThan(bar.frame.width, widthBefore, "dragging the trailing handle resizes the bar")
+        let after = timingSeconds(bar.value as? String ?? "")
+        XCTAssertEqual(after?.start ?? -1, before?.start ?? -2, accuracy: 0.01)
+        XCTAssertGreaterThan(after?.end ?? 0, (before?.end ?? 0) + 0.05)
+        attachShot("sfx-trailing-trim-resized-bar", app)
+
+        tapTimelineElement("native-editor-timeline-sound_effect-sfx-1", in: app)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-sfx-volume"].firstMatch.waitForExistence(timeout: 3),
+                      "a second tap on the selected sound opens Sounds")
     }
 
     private func attachShot(_ name: String, _ app: XCUIApplication) {

@@ -53,6 +53,7 @@ from app.kria.reply_language import (
     thread_reply_language,
 )
 from app.models import (
+    CREATOR_AGENT_RUNNING_TURN_STATUSES,
     ContentPlan,
     CreationThread,
     CreationThreadEvent,
@@ -173,7 +174,7 @@ def request_digest(body: SubmitTurnBody) -> str:
     # different request) but is excluded when absent so pre-existing digests hold.
     excluded = (
         # KRI-756: which chip a message came from is telemetry, never part of the request.
-        {"editor_state", "suggestion"}
+        {"editor_state", "suggestion", "outcome_context"}
         | ({"clip_selection"} if body.clip_selection is None else set())
         | ({"choice_selection"} if body.choice_selection is None else set())
         | ({"song_order"} if body.song_order is None else set())  # KRI-374: additive digest
@@ -517,8 +518,9 @@ async def _free_text_choice_selection(
     recommended option, flagged ``delegated``). Anything else returns ``None`` and goes to
     the Creator agent like any message. The question is open only while it is the live
     last assistant turn (``latest_open_choice_question``), so a later text question's
-    answer is never read as this one's; the planner gate re-asks at most once
-    (``MAX_ASKS_PER_QUESTION``), never in a loop.
+    answer is never read as this one's; a timing question comes back
+    as a fresh card after every non-answer (KRI-990, so there is always one to tap); other
+    kinds are asked at most twice (``MAX_ASKS_PER_QUESTION``).
 
     Returns ``(selection, delegated, reanswer)``. ``reanswer`` (KRI-794): the message
     named another option of an already-answered, closed gate question
@@ -891,9 +893,7 @@ async def submit_turn(
                 select(CreatorAgentTurn)
                 .where(
                     CreatorAgentTurn.thread_id == thread.id,
-                    CreatorAgentTurn.status.in_(
-                        {"pending", "planning", "executing", "awaiting_approval", "observing"}
-                    ),
+                    CreatorAgentTurn.status.in_(CREATOR_AGENT_RUNNING_TURN_STATUSES),
                 )
                 .order_by(CreatorAgentTurn.created_at, CreatorAgentTurn.id)
             )
@@ -1015,6 +1015,11 @@ async def submit_turn(
     if inert_response is not None:
         turn_value, message = inert_response
         turn_id = uuid.uuid4()
+        from app.services.request_following_lineage import request_outcome_payload  # noqa: PLC0415
+
+        outcome_payload = await request_outcome_payload(
+            db, thread_id=thread.id, turn_id=turn_id, context=body.outcome_context
+        )
         # KRI-552: marks both events as a copy of `duplicate.turn_id`'s message. The worker's
         # revision fence and the planner's reads skip them, so a copy never disturbs the turn
         # it repeats.
@@ -1031,6 +1036,7 @@ async def submit_turn(
                 "turn_id": str(turn_id),
                 "turn_status": "completed",
                 "inert": True,
+                **outcome_payload,
                 **copy_of,
             },
             client_event_id=body.client_event_id,
@@ -1107,6 +1113,11 @@ async def submit_turn(
         queued_replaces_turn_id = active.id
 
     turn_id = uuid.uuid4()
+    from app.services.request_following_lineage import request_outcome_payload  # noqa: PLC0415
+
+    outcome_payload = await request_outcome_payload(
+        db, thread_id=thread.id, turn_id=turn_id, context=body.outcome_context
+    )
     event = await _append_event(
         db,
         thread,
@@ -1118,6 +1129,7 @@ async def submit_turn(
             "runtime_version": 2,
             "turn_id": str(turn_id),
             "turn_status": turn_status,
+            **outcome_payload,
             # Flag off: dropped silently, nothing stored (byte-identical to old clients).
             **({"camera_roll_story": _camera_roll_story} if _camera_roll_story else {}),
             **(
@@ -1394,19 +1406,20 @@ async def cancel_turn(
         payload={"turn_id": str(turn.id), "approval_ids": approval_ids},
     )
     await db.commit()
+    # Read before the promotion: its rollback (nothing queued) expires every loaded row,
+    # and an async session cannot lazy-load them afterwards (MissingGreenlet -> 500).
+    cancelled = TurnCancelled(
+        turn_id=str(turn.id),
+        thread_revision=int(thread.revision),
+        status=turn.status,
+        approval_ids=approval_ids,
+    )
+    thread_id = thread.id
     # Promotion is deliberately a second transaction. Locking queued Turn B
     # while this transaction holds Thread would deadlock with cancellation of
     # B, whose valid order is Turn B -> Thread.
-    successor_id = await _promote_queued_successor(db, thread_id=thread.id)
-    return (
-        TurnCancelled(
-            turn_id=str(turn.id),
-            thread_revision=int(thread.revision),
-            status=turn.status,
-            approval_ids=approval_ids,
-        ),
-        successor_id,
-    )
+    successor_id = await _promote_queued_successor(db, thread_id=thread_id)
+    return cancelled, successor_id
 
 
 async def cancel_render(
@@ -1579,6 +1592,21 @@ async def _promote_queued_successor(db: AsyncSession, *, thread_id: uuid.UUID) -
     # Turn -> Thread is the global order. Holding Thread here serializes the
     # promotion with submit_turn, which locks Thread before checking slots.
     await db.execute(select(CreationThread).where(CreationThread.id == thread_id).with_for_update())
+    # A turn the creator sent after this finished may already run (a delayed promotion,
+    # or the reconciler's): then the follow-up stays queued behind it (formal/kria_turns).
+    running = (
+        await db.execute(
+            select(CreatorAgentTurn.id)
+            .where(
+                CreatorAgentTurn.thread_id == thread_id,
+                CreatorAgentTurn.status.in_(CREATOR_AGENT_RUNNING_TURN_STATUSES),
+            )
+            .limit(1)
+        )
+    ).first()
+    if running is not None:
+        await db.rollback()
+        return None
     successor.status = "pending"
     await db.commit()
     return str(successor.id)
@@ -2717,7 +2745,14 @@ async def decide_approval(
         expected_readiness = (
             (execution.result or {}).get("approval_readiness_digest") if execution else None
         )
-        if expected_readiness is not None or saved_readiness is not None:
+        from app.services.clip_order_sequence import unconfirmed_order_groups  # noqa: PLC0415
+
+        recheck_legacy_order = (
+            settings.approval_readiness_for(creator_id)
+            and copy_document is not None
+            and bool(unconfirmed_order_groups(copy_document.strategy.get("resolved_clip_intents")))
+        )
+        if expected_readiness is not None or saved_readiness is not None or recheck_legacy_order:
             from app.kria.approval_readiness import (  # noqa: PLC0415
                 NOT_READY,
                 assess_readiness,
@@ -2765,6 +2800,9 @@ async def decide_approval(
                                 saved=saved_readiness,
                             ),
                             prepared_collection_story=copy_document.prepared_collection_story,
+                            # KRI-945: the route and the research the draft was judged on.
+                            creator_id=creator_id,
+                            prepared_research=copy_document.brief_binding.prepared_research,
                         )
                     ready = (
                         digest(media_identity(snapshot_media(copy_item)))
@@ -3097,6 +3135,39 @@ async def read_creative_brief(
         str(session.target_generation_id) if session and session.target_generation_id else None
     )
     live = {req.id: req for req in brief.live()}
+    from app.services.clip_order_sequence import (  # noqa: PLC0415
+        unconfirmed_order_groups,
+        unconfirmed_order_reason,
+    )
+
+    draft_ids: set[uuid.UUID] = set()
+    for event in events:
+        try:
+            draft_ids.add(uuid.UUID(str((event.payload or {}).get("draft_id"))))
+        except ValueError:
+            continue
+    drafts = (
+        (
+            await db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.id.in_(draft_ids),
+                    CreatorEditDraft.thread_id == thread.id,
+                    CreatorEditDraft.creator_id == creator_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+        if draft_ids
+        else []
+    )
+    unconfirmed_drafts = {
+        str(row.id)
+        for row in drafts
+        if unconfirmed_order_groups(
+            ((row.snapshot_json or {}).get("strategy") or {}).get("resolved_clip_intents")
+        )
+    }
     newest: dict[str, RequirementReceipt] = {}
     for event in events:
         for raw in (event.payload or {}).get("requirement_receipts") or []:
@@ -3117,6 +3188,20 @@ async def read_creative_brief(
             # Older events can hold a "can't verify" receipt that judged nothing;
             # it is never a requirement's outcome, so the requirement stays open.
             rid = receipt.requirement_id
+            if (
+                receipt.status == "met"
+                and getattr(live.get(rid), "kind", None) == "order"
+                and str((event.payload or {}).get("draft_id")) in unconfirmed_drafts
+            ):
+                with reply_language_for(thread_reply_language(thread)):
+                    receipt = receipt.model_copy(
+                        update={
+                            "status": "partial",
+                            "verification": "checked",
+                            "stage": "applied",
+                            "reason": unconfirmed_order_reason(),
+                        }
+                    )
             if rid not in newest and (
                 is_judged(live.get(rid), receipt) or receipt.verification == "unchecked"
             ):
@@ -3132,7 +3217,9 @@ async def read_creative_brief(
         requirements=[
             CreativeBriefRequirementOut(
                 id=req.id,
-                kind=req.kind,
+                # The public enum predates `text_sequence`; clients (and the iOS generated
+                # contract) see the creator's words as the `text` they are.
+                kind="text" if req.kind == "text_sequence" else req.kind,
                 scope=req.scope,
                 literal=req.literal,
                 description=req.description,

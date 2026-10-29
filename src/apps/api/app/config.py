@@ -248,6 +248,35 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set PHONE_VOICEOVER_REACTION_BEATS_ENABLED=false
     # --app nova-video` + `fly machine restart <id>` (api + worker + light).
     phone_voiceover_reaction_beats_enabled: bool = True
+    # Exact-timed small cards: "show the menu photo as a small card at 3 seconds for 2
+    # seconds" / "put the receipt in the corner during the second clip" on a
+    # phone-rendered Montage (guided / unified montage, montage-family voiceover) or
+    # narrated Voiceover edit. `phone_rollout.phone_timed_cards_supported()` is the
+    # single source of truth: this flag AND `media_overlays_enabled` AND every feature in
+    # `phone_rollout.PHONE_TIMED_CARD_FEATURES` (`stillImages`, `visualBlocks`,
+    # `alphaOverlay`, `audioMix`) verified. When it holds the manifest advertises
+    # `timed_cards` on those phone edits, the creator agent may author
+    # `strategy.timed_cards` (`TimedCard`: visual + `at_s` or `clip_id`/`offset_s` +
+    # `hold_s`), the workers ground them (`app.pipeline.phone_timed_cards`) into the
+    # existing `subtitled-overlays` lane (`_compile_overlay_track`) and persist a
+    # creator-safe `phone_timed_card_receipt` + `phone_timed_cards` rows on the variant.
+    # A video card additionally needs `visualVideos` verified. False (default):
+    # byte-identical to before -- the manifest carries no `timed_cards` key (hashes
+    # unchanged), `media_overlays` keeps its `unsupported_on_phone` refusal on these
+    # edits, a strategy's `timed_cards` are stripped with a plain notice, and the
+    # compilers emit no lane. Apply: `fly secrets set PHONE_TIMED_CARDS_ENABLED=true
+    # --app nova-video` + `fly machine restart <id>` (api + worker); rollback with
+    # `=false` the same way.
+    phone_timed_cards_enabled: bool = False
+    # KRI-942: lets a phone montage turn off PART of a clip's own sound ("no sound from 5 to
+    # 8 seconds", "keep only that line"). The worker then sends recipe `mute_windows`, which
+    # the engine ramps at each edge; `phone_rollout.phone_clip_sound_windows_supported()`
+    # also needs `visualBlocks` verified (the capability mute windows require). Whole-clip
+    # on/off (`source_audio_muted`, clip volume 0) never needs this flag. False (default):
+    # a part-of-a-clip "off" is not built and a part-of-a-clip "on" keeps that whole clip
+    # audible; the receipt says so. Apply: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=
+    # true --app nova-video` + restart api + worker; rollback with `=false` the same way.
+    phone_clip_sound_windows_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.
@@ -591,15 +620,21 @@ class Settings(BaseSettings):
     media_library_enabled: bool = False
     media_collection_proposals_enabled: bool = False
     media_collection_proposal_user_ids: list[UUID] = Field(default_factory=list)
-    media_collection_cache_only: bool = True
-    # Explicit, per-account calibrated examples; no automatic public rollout.
+    media_collection_cache_only: bool = False
+    # Per-account allowlist; ["*"] admits everyone (the ENABLED kill switch still applies).
+    # Admission alone personalizes nothing: a creator must confirm a profile first.
     creator_editorial_taste_enabled: bool = False
     creator_editorial_taste_user_ids: list[str] = []
+    # Independent kill switch for what ACTS on idea feedback: similarity ranking of saved
+    # judgments, the repeat-of-refused-idea filter, and wrong-facts research exclusion.
+    # False keeps profile/rules/examples and the two newest judgments (pre-feedback-loop).
+    creator_editorial_taste_feedback_signals_enabled: bool = True
 
     def creator_editorial_taste_for(self, user_id: object) -> bool:
-        return self.creator_editorial_taste_enabled and str(user_id) in {
-            value.strip() for value in self.creator_editorial_taste_user_ids
-        }
+        if not self.creator_editorial_taste_enabled:
+            return False
+        allowed = {value.strip() for value in self.creator_editorial_taste_user_ids}
+        return "*" in allowed or str(user_id) in allowed
 
     def media_collection_proposals_for(self, user_id: object) -> bool:
         return self.media_collection_proposals_enabled and str(user_id) in {
@@ -697,6 +732,14 @@ class Settings(BaseSettings):
     # answer as authoritative. Default TRUE; kill switch = false + restart (the field
     # is then dropped, questions are text-only, byte-identical to before).
     kria_clip_selection_questions_enabled: bool = True
+    # KRI-962 kill switch: in a Voiceover edit, a named shot two or more free footage clips
+    # match equally well (Don Julio N1: the window sign and Atakan at the plaque, both 0.9)
+    # is asked with the clip picker before the draft, the tied clips pre-ticked
+    # (`app.kria.clip_ties`). Needs the picker flag above. False: byte-identical to before --
+    # nothing is asked and the narrated alignment places the tied clips as it did. Apply:
+    # `fly secrets set KRIA_VOICEOVER_TIE_QUESTIONS_ENABLED=false --app nova-video` +
+    # `fly machine restart <id>` (api).
+    kria_voiceover_tie_questions_enabled: bool = True
     # KRI-374: creator-uploaded song on phone montages (background music bed, or
     # lip-sync takes placed by song time). Default TRUE (no users yet); kill switch
     # = false + restart (api + worker): capabilities hide `media.song`, the policy
@@ -724,6 +767,33 @@ class Settings(BaseSettings):
     # `fly secrets set TEXT_BEND_ENABLED=false` (api + worker) + restart.
     text_bend_enabled: bool = True
     text_bend_min_client_protocol: int = 9
+    # KRI-1007: caption entrance/exit/loop/speed (`animation_phases` on a caption row, or
+    # the all-captions default `caption_meta.animation_phases`). Drawn on device from the
+    # recipe's existing `animationPhases`. Default TRUE; the editor capability
+    # `caption_animation` needs `authoredText` in PHONE_RENDER_VERIFIED_FEATURES and an app
+    # build declaring `X-Kria-Client-Protocol` >= `caption_animation_min_client_protocol`;
+    # an older build's Save that carries (or would drop) caption phases gets 426. False:
+    # the capability is hidden and captions compile as before (stored phases are kept).
+    # Apply: `fly secrets set CAPTION_ANIMATION_ENABLED=false` (api + worker) + restart.
+    caption_animation_enabled: bool = True
+    caption_animation_min_client_protocol: int = 24
+    # Text behind people ON THE PHONE (the device twin of `text_behind_subject_enabled`
+    # below, which is the cloud Skia lane). When True, `compile_text_overlay` stamps
+    # `behind_subject` on a phone recipe text layer whose text element asks for it, and
+    # `KriaMediaEngine` occludes that layer with a per-frame Vision person mask
+    # (`NativeSubjectMatte`). Also needs `behindSubject` in PHONE_RENDER_VERIFIED_FEATURES
+    # (fly secret, set after a physical-device preview + export check) and, inside an app
+    # request, a build declaring `X-Kria-Client-Protocol` >= the min protocol (21: the first
+    # build that decodes the key). When any of the three is missing the compile STRIPS the
+    # flag and the layer renders as plain text (trace `text_behind_subject_phone_fallback`,
+    # the cloud's "falls back to plain text" wording) -- the recipe is byte-identical to
+    # today's. A pinned recipe that already carries the flag answers 426
+    # `client_update_required` (`text_behind_subject`) to an older build, which cannot
+    # decode the key (mirrors `text_bend`). Default FALSE (dark ship). Apply:
+    # `fly secrets set TEXT_BEHIND_SUBJECT_PHONE_ENABLED=true --app nova-video` +
+    # `fly machine restart <id>` (api + worker); rollback = `...=false` + restart.
+    text_behind_subject_phone_enabled: bool = False
+    text_behind_subject_phone_min_client_protocol: int = 21
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
@@ -774,13 +844,18 @@ class Settings(BaseSettings):
     # captions are planned and no ask is made, byte-identical to before. Recompiles of
     # already-approved plans do not read it. Only effective while USER_SONG_MONTAGE_ENABLED holds.
     song_captions_enabled: bool = True
+    # A creator-song montage nobody asked captions for still pins its lyrics, hidden, so
+    # the editor's Show captions toggle can reveal them. Kill switch:
+    # `fly secrets set SONG_CAPTIONS_AVAILABLE_BY_DEFAULT=false` + restart (api + worker):
+    # new montages without a captions ask carry no lyric track, as before.
+    song_captions_available_by_default: bool = True
     # KRI-443: live plan block feed. After Create on a v2 thread, the render emits
     # `plan_block` events into CreationThreadEvent (read via GET /delta), and
     # POST /creation-threads/{id}/turns/{turn}/cancel-render is enabled. Default
     # FALSE (dark). Off = no events, no job metadata, capability false, byte-identical.
     # Kill switch = false + restart (api + worker). Contract: docs/pipelines/live-plan-blocks.md.
     live_plan_review_enabled: bool = False
-    # Longest song accepted (seconds); the montage itself is capped at 120 s.
+    # Longest song accepted (seconds); a song-owned montage is capped at 120 s.
     user_song_max_duration_s: float = Field(default=600.0, gt=0)
     # How long a planner turn waits for song analysis / take alignment before it
     # answers "still checking your clips".
@@ -871,6 +946,20 @@ class Settings(BaseSettings):
     # `fly secrets set MOMENT_ORDER_MIN_CLIENT_PROTOCOL=999` (api + worker) + restart turns
     # off the question AND every v2 pin.
     moment_order_min_client_protocol: int = 20
+    # Camera-roll idea `open_questions`: an app build declaring `X-Kria-Client-Protocol` >=
+    # this renders the questions and is held by the 409 `story_open_questions` gate on
+    # select. Lower builds never see the list and are never gated (they could neither answer
+    # nor explain the 409). 22 = the first iOS build with the question UI. Kill switch:
+    # `OPEN_QUESTIONS_MIN_CLIENT_PROTOCOL=999` (api) + restart.
+    open_questions_min_client_protocol: int = 22
+    # Camera-roll idea extras: `content_plan.form` and `content_plan.open_questions` on stored
+    # stories. Default TRUE. False: new ideas are stored in the legacy shape (no form, no
+    # questions) and `select` never gates on questions. Rollback of the deploy that introduced
+    # them: set this false FIRST (api + worker, restart) so no new rows carry keys the previous
+    # image's `extra="forbid"` plan rejects, then strip the keys from existing rows
+    # (docs/pipelines/media-library.md). Apply:
+    # `fly secrets set CAMERA_ROLL_STORY_EXTRAS_ENABLED=false`.
+    camera_roll_story_extras_enabled: bool = True
     # KRI-815: with footage and no voiceover, Kria chat writes a footage-grounded voiceover
     # script (`voiceover_script` on the reply) instead of a narrated draft that can only fail at
     # approval. Independent of TRANSCRIPT_HELPER_ENABLED. Kill switch: false + restart (api +
@@ -1054,7 +1143,9 @@ class Settings(BaseSettings):
     # When the plan item carries no Gemini clip transcript (Kria v2 never saves
     # one), the preflight worker asks Gemini to transcribe the narration's first
     # 30 s so whisper's detected language is still cross-checked before the cut
-    # plan is built. Best-effort; False skips the call (item transcript only).
+    # plan is built (a mixed-language take also gets the rest of the take heard,
+    # see `speech_cleanup_mixed_relisten_enabled`). Best-effort; False skips the
+    # call (item transcript only).
     speech_cleanup_gemini_reference_enabled: bool = True
     # KRI-843: a take whose Gemini reference speaks two or more languages (Don Julio T1:
     # an English question, a Spanish answer, Turkish chatter) has no single right whisper
@@ -1064,6 +1155,18 @@ class Settings(BaseSettings):
     # cross-check alone (re-run the whole take in one language), byte-identical.
     # Apply: fly secret + worker restart.
     speech_cleanup_mixed_language_enabled: bool = True
+    # KRI-1016: whisper-1 decodes a whole file in ONE language, so on a mixed take (Plaza T2:
+    # English and Turkish, 48 s) the language it picks is written for every stretch, and a
+    # stretch in the other language comes back as a translation or as no words at all. With the
+    # mixed-language lane on, a mixed take gets two more things: Gemini also hears the take past
+    # its first 30 s (one more call, only when the 30 s sample already names two or more
+    # languages), so the reference covers the whole take; and every stretch of 1 s or more that
+    # the transcript left wordless but the reference heard is cut out and transcribed ALONE, in
+    # each of the take's languages (whisper-1 on those stretches only, at most 6 short calls, a
+    # few cents), then kept only where the reference confirms the words. A single-language take
+    # makes no extra call. false = byte-identical to KRI-843 (30 s reference, no re-listen).
+    # Apply: fly secret + worker restart.
+    speech_cleanup_mixed_relisten_enabled: bool = True
 
     # yt-dlp cookies for admin URL imports. Use YTDLP_COOKIES_B64 in hosted
     # environments (secret-safe, decoded into a short-lived 0600 temp file) or
@@ -1451,6 +1554,27 @@ class Settings(BaseSettings):
         "+ machine restart. Once on, never roll the image back past this change: "
         "older builds reject the provenance field on proposals already written, and "
         "turning the flag off does not repair those rows.",
+    )
+
+    speech_cleanup_filler_check_enabled: bool = Field(
+        default=True,
+        description="Speech-cleanup filler check (KRI-970 follow-up). whisper-1 can stamp a whole "
+        "stretch of words late (Merope café: 0.3-0.5 s), so a filler cut lands on the next words "
+        "and the real filler stays. On: the preflight analysis re-times English takes that have "
+        "lexicon fillers with a forced aligner (facebook/wav2vec2-base-960h, baked into the image "
+        "at speech_cleanup_aligner_model_dir) before planning, then re-listens around every filler "
+        "cut with the cleanup transcriber (two short whisper-1 calls per cut, at most "
+        "RELISTEN_MAX_CUTS) and drops a cut that takes a real word with it. Missing model or a "
+        "transcription error keeps today's cut. Part of the source policy fingerprint, so a flip "
+        "re-analyzes. Kill switch: `fly secrets set SPEECH_CLEANUP_FILLER_CHECK_ENABLED=false "
+        "--app nova-video` + api and worker restart (the fingerprint is computed in the API).",
+    )
+
+    speech_cleanup_aligner_model_dir: str = Field(
+        default="/opt/models/wav2vec2-base-960h",
+        description="Directory holding the pinned forced-aligner model (config.json, vocab.json, "
+        "model.safetensors). The production Dockerfile downloads it there; without it the filler "
+        "check keeps whisper's stamps and only re-listens.",
     )
 
     speech_cleanup_mixed_gap_mode: Literal["off", "shadow", "apply"] = Field(
@@ -2021,6 +2145,12 @@ class Settings(BaseSettings):
     # NEXT_PUBLIC_SLIDE_POSTS_ENABLED twin. Rollback:
     #   fly secrets set SLIDE_POSTS_ENABLED=false --app nova-video (api + worker)
     slide_posts_enabled: bool = True
+    # Camera-roll idea forms (`content_plan.form`). Off: parse neither requires, validates
+    # nor stores a form (legacy-shaped ideas; wording edits drop a stored form), so new rows
+    # stay readable by an older API image. Flip BEFORE rolling the API image back; see
+    # agents/DECISIONS.md "Idea forms". Apply: fly secrets set STORY_IDEA_FORMS_ENABLED=false
+    # (api + worker) + restart.
+    story_idea_forms_enabled: bool = True
     # KRI-298/299: rich per-slide text (styled `SlideEdits.texts`, rendered as Pillow PNG
     # overlays). Off: the renderer keeps the legacy drawtext path using the mirrored
     # `text` (texts[0]); saved `texts` are preserved. Dual-flag with the iOS capability
@@ -2235,6 +2365,12 @@ class Settings(BaseSettings):
     # the thread's original request. Kill switch: false restores the legacy
     # "<Op>. Everything else is unchanged." reply and stateless copilot turn.
     copilot_honest_replies_enabled: bool = True
+    # 29 Ekim lane E (KRI-1039): an ask the editor ops can express is composed with them
+    # instead of refused, asked about or re-planned: a word-by-word title is one
+    # `replace_text_sequence` (weighted windows, `cumulative` mode), an edit-shaped follow-up
+    # after a failed render goes to the copilot, and a missing text sequence is composed rather
+    # than asked about. false = the previous routing, replies and ops, byte-identical.
+    kria_compose_unmet_with_ops_enabled: bool = False
     # KRI-219 latency: serve short in-place text/label/order edits with the fast copilot
     # BEFORE the pro-model requirement extraction (which then runs off the critical
     # path). false = the previous extract-first order for every post-render turn.

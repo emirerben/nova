@@ -83,6 +83,7 @@ from app.schemas.clip_understanding import ClipUnderstanding
 from app.services.clip_facts import order_by_capture_time
 from app.services.clip_selection import (
     MAX_QUESTION_CLIPS,
+    answered_rows,
     build_clip_question,
     category_label,
     clip_question_text,
@@ -638,11 +639,19 @@ def _membership_question(attribute: str) -> str:
 
 
 def _caption_question(intent: ClipIntent) -> str:
-    """The creator-facing question when a caption never grounds."""
+    """The creator-facing question when a caption never grounds.
+
+    The attribute is the model's free-form phrase ("an introductory explanation", "pub
+    clips"), so it is quoted rather than slotted behind a fixed article."""
     return say(
-        en=f"What should the caption on the {intent.attribute} say?",
-        tr=f'"{intent.attribute}" kliplerindeki yazı ne olsun?',
+        en=f'What should the caption for "{intent.attribute}" say?',
+        tr=f'"{intent.attribute}" için yazı ne olsun?',
     )
+
+
+def _is_caption_authoring_failure(work: _IntentWork) -> bool:
+    """Membership settled (clips were kept) and the caption text itself is what is unsettled."""
+    return work.intent.op == "caption" and bool(work.kept) and bool(work.intent_question)
 
 
 def _caption_authoring_question(intent: ClipIntent) -> str:
@@ -844,7 +853,14 @@ def _live_photo_ids(
     unflagged does not show the moment. One they flagged, or one we know nothing about (an
     empty record), still might. A take's record cannot list every moment of a long take, so
     a video is never ruled out this way.
+
+    KRI-949: that holds only when the resolver read the intent as something in the take.
+    When it put NOTHING forward (Don Julio walk-in M2: "the ribeye photo", matched to the
+    photo in rounds 1 and 3, nothing in rounds 4 and 6), its silence about a photo rules
+    nothing out, so every photo stays a real answer.
     """
+    if not work.considered_media_ids:
+        return {c.media_id for c in clips if c.kind == "image"}
     return {
         c.media_id
         for c in clips
@@ -930,7 +946,9 @@ def _build_clip_question(
     creator_words: Mapping[str, str] | None = None,
     records_by_id: Mapping[str, ClipUnderstanding] | None = None,
 ) -> dict[str, Any] | None:
-    """One picker category per TAPPABLE unresolved intent, or None when none can be tapped.
+    """One picker row per TAPPABLE unresolved attribute, or None when none can be tapped.
+
+    Intents about the same attribute that offer the same clips share one row (KRI-951).
 
     Intents the creator cannot answer by tapping (per-clip authored labels/captions) are
     skipped here and stay in the text part of the question (KRI-282: one such intent used
@@ -950,6 +968,12 @@ def _build_clip_question(
     categories: list[dict[str, Any]] = []
     for work in creator_work:
         confirmed = {a.media_id for a in work.kept}
+        # KRI-991: the clips the resolver put forward below the bar, or a check could not
+        # settle, are the picker's pre-ticks. A clip a check confidently ruled out is not.
+        # Suggestions only: nothing is applied without the creator's tap.
+        near_misses = (work.failed_media_ids | work.considered_media_ids) - (
+            work.vision_no_media_ids - work.failed_media_ids
+        )
         live = _live_photo_ids(work, clips, records_by_id) if narrow_photos else set()
         candidates = [
             c.media_id
@@ -968,13 +992,16 @@ def _build_clip_question(
                 "creator_text": work.intent.creator_text,
                 "candidate_media_ids": candidates[:MAX_QUESTION_CLIPS],
                 "suggested_media_ids": sorted(
-                    (m for m in work.failed_media_ids if m in order and m not in confirmed),
+                    (m for m in near_misses if m in order and m not in confirmed),
                     key=order.__getitem__,
                 ),
             }
         )
     question = build_clip_question(categories, media_kinds={c.media_id: c.kind for c in clips})
-    if question is None or len(question["categories"]) != len(creator_work):
+    # KRI-951: a row may carry other intents about the same attribute; count those too.
+    if question is None or sum(len(answered_rows(c)) for c in question["categories"]) != len(
+        creator_work
+    ):
         return None
     return question
 
@@ -1132,6 +1159,7 @@ def _build_resolver_input(
             creator_text=i.creator_text,
             caption_attribute=i.caption_attribute,
             position=i.position,
+            ordered_members=i.ordered_members,
         )
         for i in intents
     ]
@@ -1144,6 +1172,30 @@ def _build_resolver_input(
         reply_language=current_reply_language(),
     )
     return resolver_input, alias_to_media, aliases
+
+
+def _error_type(exc: BaseException) -> str:
+    """KRI-952: a failure's class chain and HTTP status, never its message.
+
+    ``str(exc)`` can quote the creator's request or the vision question built from it, and
+    media ids are file names (KRI-536 keeps class names only for the same reason).
+    ``TerminalError<-ClientError:400`` names the runtime's wrapper and the provider error
+    it hides; the status is the innermost HTTP-like ``code`` / ``status_code``.
+    """
+    names: list[str] = []
+    status: int | None = None
+    link: BaseException | None = exc
+    for _ in range(4):
+        if link is None:
+            break
+        if not names or names[-1] != type(link).__name__:
+            names.append(type(link).__name__)
+        for attr in ("code", "status_code"):
+            value = getattr(link, attr, None)
+            if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+                status = value
+        link = link.__cause__ or (None if link.__suppress_context__ else link.__context__)
+    return "<-".join(names) + (f":{status}" if status is not None else "")
 
 
 def _failure_status_and_code(exc: BaseException) -> tuple[ResolutionStatus, str]:
@@ -1272,6 +1324,7 @@ async def resolve_clip_intents_for_turn(
                         intent_id=i.intent_id,
                         op=i.op,
                         attribute=i.attribute,
+                        requirement_id=i.requirement_id,
                         status="resolved",
                         assignments=[],
                     )
@@ -1291,6 +1344,9 @@ async def resolve_clip_intents_for_turn(
                     creator_text=i.creator_text,
                     placeholder=i.placeholder,
                     position=i.position,
+                    ordered_members=i.ordered_members,
+                    exclusive=i.exclusive,
+                    requirement_id=i.requirement_id,
                     status="needs_creator",
                     assignments=[],
                     question=_generic_question(),
@@ -1656,6 +1712,8 @@ async def resolve_clip_intents_for_turn(
     # intents about the same chapter worded differently each pay for a check).
     # Required work only; soft re-queries are opportunistic. Redacted counts.
     vision_stats = {"cached": 0, "over_cap": 0, "deadline_cut": 0}
+    # KRI-952: why each required vision check failed (``_error_type``), for the diagnostics.
+    vision_errors: list[str] = []
     questions_by_clip: dict[str, set[str]] = {}
 
     def record_failure(candidates, error_code, works=None):
@@ -1845,6 +1903,18 @@ async def resolve_clip_intents_for_turn(
                     output = task.result()
                 except Exception as exc:  # noqa: BLE001 — classify per candidate
                     _status, error_code = _failure_status_and_code(exc)
+                    # KRI-952: Don Julio M2 round 7 failed 3 ms after the upload and said
+                    # only "vision_provider_error". Name the exception, never its message.
+                    error_type = _error_type(exc)
+                    log.warning(
+                        "clip_intent_vision_failed",
+                        error_type=error_type,
+                        error_code=error_code,
+                        op=candidate.op,
+                        soft=soft,
+                    )
+                    if not soft:
+                        vision_errors.append(error_type)
                     record_failure(dependents_for_candidate, error_code, works)
                     if error_code == "vision_provider_error":
                         _defer(candidate)
@@ -1899,6 +1969,30 @@ async def resolve_clip_intents_for_turn(
             creator_request=creator_request,
         )
 
+    take = (
+        _only_video(clips)
+        if settings.kria_clip_selection_questions_enabled and len(clips) == 1
+        else None
+    )
+    if take is not None:
+        for work in work_by_id.values():
+            if (
+                not work.kept
+                and not work.considered_media_ids
+                and work.intent.op != "exclude"
+                and picker_eligible(work.intent)
+            ):
+                vision_candidates.append(
+                    _VisionCandidate(
+                        media_id=take.media_id,
+                        intent_id=work.intent.intent_id,
+                        op=work.intent.op,
+                        attribute=work.intent.attribute,
+                        question=_fallback_question(work.intent),
+                        fallback_value=None,
+                        creator_text=work.intent.creator_text,
+                    )
+                )
     await run_candidates(vision_candidates, apply_membership)
 
     if soft_candidates:
@@ -2100,6 +2194,9 @@ async def resolve_clip_intents_for_turn(
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
+                    ordered_members=intent.ordered_members,
+                    exclusive=intent.exclusive,
+                    requirement_id=intent.requirement_id,
                     status="needs_creator",
                     assignments=work.kept,
                     question=None,  # set on the turn-level question below
@@ -2117,6 +2214,9 @@ async def resolve_clip_intents_for_turn(
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
                     position=intent.position,
+                    ordered_members=intent.ordered_members,
+                    exclusive=intent.exclusive,
+                    requirement_id=intent.requirement_id,
                     status="resolved",
                     assignments=work.kept,
                     caption_text=work.caption_text,
@@ -2138,6 +2238,8 @@ async def resolve_clip_intents_for_turn(
         "vision_multi_question_clips": sum(1 for q in questions_by_clip.values() if len(q) > 1),
         "named_guesses_settled": named_guesses_settled,
         "single_take_settled": single_take_settled,
+        # Omitted when nothing failed, so every other turn's diagnostics are unchanged.
+        **({"vision_error_types": vision_errors[:8]} if vision_errors else {}),
     }
     clip_order = {clip.media_id: index for index, clip in enumerate(clips)}
     exclusion_suspects = {
@@ -2212,6 +2314,8 @@ async def resolve_clip_intents_for_turn(
                 for c in clip_question["categories"]
             )
             turn_question = clip_question_text(clip_question["categories"], only_video=in_the_video)
+            if in_the_video:
+                clip_question = None
             leftover = [w for w in creator_work if not picker_eligible(w.intent)]
             if leftover:
                 # Mixed case: picker for the tappable intents, text for the rest.
@@ -2223,8 +2327,14 @@ async def resolve_clip_intents_for_turn(
         (i if i.status == "resolved" else i.model_copy(update={"question": turn_question}))
         for i in resolved_intents
     ]
+    if status != "needs_creator":
+        diagnostics_stage = "vision"
+    elif creator_work and all(_is_caption_authoring_failure(w) for w in creator_work):
+        diagnostics_stage = "caption_authoring"
+    else:
+        diagnostics_stage = "membership"
     final_diagnostics = {
-        "stage": "vision" if status != "needs_creator" else "membership",
+        "stage": diagnostics_stage,
         "reason": error_code or status,
         "resolver_ms": resolver_ms,
         **shard_stats.as_dict(),

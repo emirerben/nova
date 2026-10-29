@@ -353,6 +353,20 @@ struct EditorTimedEffect: Codable, Equatable, Sendable {
     init(id: String, startS: Double, endS: Double, pointS: Double? = nil, kind: String? = nil, raw: [String: JSONValue] = [:]) {
         self.id = id; self.startS = startS; self.endS = endS; self.pointS = pointS; self.kind = kind; self.raw = raw
     }
+
+    /// A sound effect's block spans the audio it keeps: `trim_end_s ?? duration_s`
+    /// minus `trim_start_s`, from its `at_s`. Playback and export read the same fields.
+    static func soundEffectDisplayEnd(pointS: Double, raw: [String: JSONValue]) -> Double {
+        let trimStart = raw["trim_start_s"]?.numberValue ?? 0
+        let trimEnd = raw["trim_end_s"]?.numberValue ?? raw["duration_s"]?.numberValue ?? 0.1
+        return pointS + max(0.1, trimEnd - trimStart)
+    }
+
+    mutating func syncSoundEffectDisplay() {
+        guard let pointS else { return }
+        startS = pointS
+        endS = Self.soundEffectDisplayEnd(pointS: pointS, raw: raw)
+    }
 }
 
 struct EditorVisualBlock: Codable, Equatable, Sendable {
@@ -436,6 +450,8 @@ struct EditorDocument: Equatable, Sendable {
     var opaqueRecords: [EditorSection: [EditorOpaqueRecord]]
     /// KRI-282 read-only speech-excerpt lane (see `EditorClipAudio`).
     var clipAudio: [EditorClipAudio] = []
+    /// Source anchors retain temporarily trimmed lane content across Save/reopen.
+    var speechTimingBasis: [String: JSONValue] = [:]
     /// Rows of `clip_audio` that did not parse. The renderer refuses these
     /// rather than silently rendering without the excerpt.
     var unreadableClipAudio = 0
@@ -470,7 +486,7 @@ struct EditorDocument: Equatable, Sendable {
     /// with them. The editor can delete cues (KRI-240), and deleting the last one
     /// must not turn the API's mirror text elements into captions of their own,
     /// which would list and burn every pre-edit caption again.
-    private var isCueNative: Bool {
+    var isCueNative: Bool {
         !captionCues.isEmpty || !(loadedState?.captionCues.isEmpty ?? true)
     }
 
@@ -538,6 +554,7 @@ struct EditorDocument: Equatable, Sendable {
         document.clips = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter { !$0.removed }
         document.tombstones = decodeSlots(array(sections["timeline_slots"] ?? object(snapshot["user_timeline"])?["slots"]) ?? []) .filter(\.removed)
         document.textElements = decodeText(array(sections["text_elements"] ?? snapshot["text_elements"]) ?? [])
+        document.speechTimingBasis = object(sections["speech_timing_basis"] ?? snapshot["speech_timing_basis"]) ?? [:]
         document.captionCues = decodeCaptions(array(sections["caption_cues"] ?? snapshot["caption_cues"]) ?? [])
         document.soundEffects = decodeEffects(array(sections["sound_effects"] ?? snapshot["sound_effects"]) ?? [])
         document.mediaOverlays = decodeEffects(array(sections["media_overlays"] ?? snapshot["media_overlays"]) ?? [])
@@ -568,6 +585,7 @@ struct EditorDocument: Equatable, Sendable {
         if isNew { root = ["schema_version": .number(Double(schemaVersion)), "kind": .string(kind), "edit_format": .string(editFormat)] }
         var payload = Self.object(root["editor_payload"]) ?? [:]
         var sections = canonical ? (Self.object(payload["sections"]) ?? rawSections) : rawSections
+        if !speechTimingBasis.isEmpty { sections["speech_timing_basis"] = .object(speechTimingBasis) }
         writeSection(&sections, .timeline, values: clips + tombstones, original: Self.array(rawSections[EditorSection.timeline.wireKey]), encode: encodeSlot, id: { Self.string($0["slot_id"]) }, nonEmpty: !(clips + tombstones).isEmpty)
         writeSection(&sections, .text, values: textElements, original: Self.array(rawSections[EditorSection.text.wireKey]), encode: encodeText, id: { Self.string($0["id"]) }, nonEmpty: !textElements.isEmpty)
         writeSection(&sections, .captions, values: captionCues, original: Self.array(rawSections[EditorSection.captions.wireKey]), encode: encodeCaption, id: { Self.number($0["start_s"]) != nil && Self.number($0["end_s"]) != nil ? "caption" : nil }, nonEmpty: !captionCues.isEmpty)
@@ -809,6 +827,8 @@ private extension EditorDocument {
             ("stroke_width", ["caption_stroke_width"]),
             ("shadow_enabled", ["caption_shadow_enabled"]),
             ("appearance", ["caption_editor_style"]),
+            // KRI-1007: a cue-native variant stores the all-captions animation beside its caption fields.
+            ("animation_phases", ["caption_animation_phases"]),
         ]
         for (canonicalKey, keys) in aliases {
             if let value = value(for: canonicalKey, aliases: keys) { result[canonicalKey] = value }
@@ -907,16 +927,7 @@ private extension EditorDocument {
             guard let o = object(value), let id = string(o["id"]) else { return nil }
             let pointS = number(o["at_s"])
             if let pointS {
-                // SFX placements are anchored at `at_s`; trim metadata describes
-                // the source slice, not a second timeline window. Give the
-                // timeline a visible (but conservative) display span while
-                // retaining the canonical point and trim fields for encoding.
-                let trimStart = number(o["trim_start_s"]) ?? 0
-                let trimEnd = number(o["trim_end_s"])
-                let duration = number(o["duration_s"])
-                let sourceSpan = (trimEnd ?? duration ?? 0.1) - trimStart
-                let displayEnd = pointS + max(0.1, sourceSpan)
-                return EditorTimedEffect(id: id, startS: pointS, endS: displayEnd, pointS: pointS, kind: string(o["kind"] ?? o["type"]), raw: o)
+                return EditorTimedEffect(id: id, startS: pointS, endS: EditorTimedEffect.soundEffectDisplayEnd(pointS: pointS, raw: o), pointS: pointS, kind: string(o["kind"] ?? o["type"]), raw: o)
             }
             guard let start = number(o["start_s"] ?? o["start"] ?? o["at_s"]),
                   let end = number(o["end_s"] ?? o["end"] ?? o["at_s"]) else { return nil }

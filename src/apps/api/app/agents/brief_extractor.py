@@ -46,7 +46,17 @@ from app.pipeline.prompt_loader import load_prompt
 # v21 (KRI-849): shared brief records `ask_if_unclear` and the creator's `unclear_answer`.
 # v34 (KRI-881): main's v33 plus the shared brief section typing a research ask
 # (`facts.research`).
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-24-v34"
+# v35 (KRI-689): the shared brief section records a clip-speed ask as `facts.playback_rate`.
+# v36: the shared brief section records a `timed_card` fact (a photo as a small card at an
+# exact second / clip) for phone Montage and Voiceover edits.
+# v37 (KRI-942): the shared brief section records clip sound on / off (`clip_sound` "on"/"off").
+# v38 (KRI-957): an after-voice clip ask's `triggers` is the line said in that clip, never the
+# creator's own last voiceover words.
+# v39 (KRI-994): the shared brief section records `only_media_kind` / `include_media_kind` on a
+# select ask.
+# v41 (29 Ekim lane D, KRI-1038): the shared brief section records words shown a piece at a
+# time as a `text_sequence` requirement, not `captions: word_by_word`. (v40 is lane B's.)
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-29-v41"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")

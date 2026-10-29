@@ -372,8 +372,9 @@ as `state.requested_duration_bound`, so an exact job's stored keys are unchanged
 
 `length_planning.py` freezes exact best-parts windows once at server planning, with
 source identities, capacity, deterministic ranking/fallback receipts, and generation.
-Phone and cloud compilers read that envelope. The silent cap is 120 seconds and
-included-source floor is 0.1 seconds; unused capacity is fairly redistributed.
+Phone and cloud compilers read that envelope. The silent cap is 120 seconds for
+footage-owned edits and 240 seconds when a voiceover or a talk-to-camera take owns the
+length (`best_parts.edit_cap_s`, KRI-955); the included-source floor is 0.1 seconds; unused capacity is fairly redistributed.
 Infeasible targets and coverage use the durable scoped choice gate before approval.
 An authored assembly override keeps its own approved timing.
 

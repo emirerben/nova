@@ -687,6 +687,32 @@ import UIKit
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.record.localFilePath))
     }
 
+    /// An upload killed by a crash that already used its automatic retry has no task and no live work. It must
+    /// stop counting as in progress (and offer Retry), or the Send button stays gray with nothing to wait for.
+    func testARelaunchedUploadOutOfAutomaticRetriesIsHandedToTheCreatorNotLeftPending() async throws {
+        let fixture = try makeCoordinator(retryCount: 1)
+        defer { fixture.cleanup() }
+
+        await fixture.coordinator.restorePendingTasks()
+
+        XCTAssertEqual(fixture.coordinator.records.count, 1, "kept so Retry still works")
+        XCTAssertTrue(BackgroundUploadCoordinator.inProgressRecords(fixture.coordinator.records).isEmpty, "nothing is uploading, so Send must not wait")
+        XCTAssertEqual(fixture.coordinator.failures.map(\.id), [fixture.record.id], "and the creator sees it with Retry")
+    }
+
+    /// The automatic retry itself failing (offline, server busy) leaves the same dead record behind.
+    func testAnAutomaticRetryThatFailsHandsTheUploadToTheCreator() async throws {
+        let fixture = try makeCoordinator()
+        defer { fixture.cleanup() }
+        UploadRetryProtocol.handler = { $0.finish(500, Data()) }
+
+        await fixture.coordinator.restorePendingTasks()
+
+        XCTAssertEqual(fixture.coordinator.records.count, 1)
+        XCTAssertTrue(BackgroundUploadCoordinator.inProgressRecords(fixture.coordinator.records).isEmpty)
+        XCTAssertEqual(fixture.coordinator.failures.map(\.id), [fixture.record.id])
+    }
+
     private struct Fixture {
         let coordinator: BackgroundUploadCoordinator
         let record: UploadRecoveryRecord
@@ -696,11 +722,11 @@ import UIKit
             try? FileManager.default.removeItem(atPath: record.localFilePath)
         }
     }
-    private func makeCoordinator() throws -> Fixture {
+    private func makeCoordinator(retryCount: Int = 0) throws -> Fixture {
         let key = "kria.test.retry.\(UUID().uuidString)"
         let file = FileManager.default.temporaryDirectory.appending(path: "retry-\(UUID().uuidString).mp4")
         try Data([1, 2, 3]).write(to: file)
-        let record = UploadRecoveryRecord(id: UUID(), projectID: UUID(), localFilePath: file.path, filename: "clip.mp4", source: .files, purpose: .cloudRenderSource, taskIdentifier: 999, retryCount: 0)
+        let record = UploadRecoveryRecord(id: UUID(), projectID: UUID(), localFilePath: file.path, filename: "clip.mp4", source: .files, purpose: .cloudRenderSource, taskIdentifier: 999, retryCount: retryCount)
         UserDefaults.standard.set(try JSONEncoder().encode([record]), forKey: key)
         let configuration = UploadRetryProtocol.configuration()
         let api = KriaAPI(baseURL: URL(string: "https://uploads.test")!, tokenStore: NativeEditorMemoryTokenStore(), session: URLSession(configuration: configuration))
@@ -1117,9 +1143,14 @@ extension BackgroundUploadRetryTests {
         let h = harness(answerImmediately: false)   // hold the reservation: the clip never gets an upload record
         let file = try h.select("asset-1", contents: video)
 
-        let appeared = await waitUntil { h.coordinator.previewVersion > 0 }
+        let staged = await waitUntil { !h.coordinator.inFlight.isEmpty }
+        XCTAssertTrue(staged)
+        let previewID = try XCTUnwrap(h.coordinator.inFlight.first?.key)
+        // Await the real decode rather than racing a five-second timer on a loaded simulator.
+        // The reservation remains held, so this still proves visibility before upload.
+        await h.coordinator.finishEarlyPreviewForTesting(recordID: previewID)
 
-        XCTAssertTrue(appeared, "a thumbnail is written as soon as the clip is chosen")
+        XCTAssertGreaterThan(h.coordinator.previewVersion, 0, "a thumbnail is written as soon as the clip is chosen")
         XCTAssertTrue(h.coordinator.records.isEmpty, "…while it is still being prepared, not yet an upload")
         let inFlight = try XCTUnwrap(h.coordinator.inFlight.first)
         XCTAssertEqual(inFlight.value.filename, file.lastPathComponent, "and it can be listed by name")

@@ -1,0 +1,47 @@
+---
+title: "Kria chat: sending messages, bug 2"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#e8f0fe,stroke:#74787f,color:#1b2631
+  classDef group0Fixed fill:#e8f0fe,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0Path fill:#e8f0fe,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#e6f4ea,stroke:#737a75,color:#1b2631
+  classDef group1Path fill:#e6f4ea,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group2 fill:#fde7e9,stroke:#7f7475,color:#1b2631
+  classDef group2Fixed fill:#fde7e9,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "Kria is working" as legendGroup0
+    state "Your turn" as legendGroup1
+    state "Stuck" as legendGroup2
+    state "Fixed in codex/kri-chat-turn-tla" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendGroup2 group2
+  class legendFixed plainFixed
+  state "2 messages" as g0 {
+    state "1 stopped, 2 about to<br/>start" as s0
+    state "1 stopped, 2 stuck waiting" as s1
+    state "1 stopped, 2 waiting for<br/>the sweep (up to a minute)" as s2
+    state "1 thinking, 2 waiting" as s3
+  }
+  state "Empty chat: nothing sent" as s4
+  state "One message: 1 thinking" as s5
+  [*] --> s4
+  s4 --> s5 : 1. you send message 1
+  s5 --> s3 : 2. you send message 2
+  s3 --> s0 : 3. you remove message 1
+  s0 --> s1 : 4. the server restarts
+  s0 --> s2 : with the fix, the server<br/>restarts
+  class s0 group0Path
+  class s1 group2Fixed
+  class s2 group0Fixed
+  class s3 group0Path
+  class s4 group1Path
+  class s5 group0Path

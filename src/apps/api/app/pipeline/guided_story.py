@@ -61,6 +61,7 @@ from app.schemas.edit_proposal import (
     FAST_MONTAGE_TITLE_HOLD_S,
     GUIDED_STORY_MIN_MOMENT_S,
     GUIDED_TITLE_HOLD_S,
+    SNAPSHOT_FALLBACK_TITLE,
     EditProposalSnapshot,
     MixedMediaTimingProfile,
     MontageCadenceConstraint,
@@ -230,6 +231,13 @@ class GuidedStoryMoment(BaseModel):
     # The creator silenced this moment's own (camera) sound in the editor. Omitted when
     # unset so every stored plan keeps its exact dump. Honoured by the phone compiler.
     source_audio_muted: bool | None = Field(default=None, exclude_if=lambda value: not value)
+    # KRI-942: parts of this moment's own sound the creator turned off in chat ("no sound from
+    # 5 to 8 seconds"), as (start, end) in the clip's SOURCE seconds, so a later trim keeps the
+    # same footage silent. The phone compiler turns them into recipe mute windows. Omitted when
+    # empty so every stored plan keeps its exact dump.
+    source_audio_mute_spans: list[tuple[float, float]] | None = Field(
+        default=None, max_length=8, exclude_if=lambda value: not value
+    )
     # KRI-828: the creator's freeze: the frame at ``source_end_s`` holds for these seconds
     # after the moment plays (``duration_s`` = source span / rate + hold). The clip's own
     # sound is silent under the hold. Omitted when unset so every stored plan keeps its dump.
@@ -656,9 +664,11 @@ def _quantize_quick_mixed_timeline(
                 # Proposal source/output windows allow 1ms numeric tolerance.
                 # The near-minimum source still contains the 45th frame.
                 frames = int(math.ceil(bounds.minimum_s * fps - 1e-6))
+            # KRI-689: a retimed moment's source span covers ``rate`` times its output.
+            rate = float(moment.get("playback_rate") or 1.0)
             source_span_s = max(
                 0.0,
-                float(moment["source_end_s"]) - float(moment["source_start_s"]),
+                (float(moment["source_end_s"]) - float(moment["source_start_s"])) / rate,
             )
             source_max_frames = int(math.floor((source_span_s + 0.001) * fps + 1e-6))
             maximum_frames = min(
@@ -725,7 +735,9 @@ def _quantize_quick_mixed_timeline(
         elif moment["kind"] == "video" and frames > floor_video_frames[index]:
             moment["source_end_s"] = original_video_end_s[index]
         else:
-            moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s, 6)
+            # KRI-689: a retimed video moment consumes ``rate`` source seconds per output second.
+            rate = float(moment.get("playback_rate") or 1.0) if moment["kind"] == "video" else 1.0
+            moment["source_end_s"] = round(float(moment["source_start_s"]) + duration_s * rate, 6)
 
     windows_by_id = {window["beat_id"]: window for window in beat_windows}
     moments_by_beat: dict[str, list[dict[str, Any]]] = {}
@@ -944,15 +956,12 @@ def _song_reference(track: dict[str, Any] | None, *, duration_s: float) -> dict[
     if track.get("end_s") is not None:
         try:
             selected_end = float(track["end_s"])
-        except (TypeError, ValueError) as exc:
-            raise GuidedStoryError(
-                "guided_story_music_section_invalid", "The approved music section is unreadable."
-            ) from exc
+        except (TypeError, ValueError):
+            return None
+        # A posting suggestion cannot change the approved cut or extend its
+        # selected song section to make itself fit.
         if not math.isfinite(selected_end) or end_s > selected_end + 0.001:
-            raise GuidedStoryError(
-                "guided_story_music_section_exceeded",
-                "This edit needs a length choice before it can extend the selected music section.",
-            )
+            return None
     if end_s > catalog_duration + 0.001:
         return None
     return GuidedStorySongReference(
@@ -1625,7 +1634,15 @@ def _base_text_elements(
     )
     # A labeled edit shows only confirmed creator copy: no generated title
     # unless the creator supplied one.
-    show_title = bool(snapshot.opening_title) or not (snapshot.shot_labels or snapshot.pinned_texts)
+    # The schema's placeholder title is never on-screen text, whatever the edit's shape.
+    drawn_title = (
+        None
+        if not snapshot.opening_title and snapshot.title == SNAPSHOT_FALLBACK_TITLE
+        else snapshot.title
+    )
+    show_title = drawn_title is not None and (
+        bool(snapshot.opening_title) or not (snapshot.shot_labels or snapshot.pinned_texts)
+    )
 
     def title_y(default_y: float, text: str, size_px: int, max_width_frac: float) -> float:
         """The opening title steps down while a top pin shares its window (KRI-526)."""
@@ -1909,7 +1926,7 @@ def _base_text_elements(
         return [
             *(
                 []
-                if snapshot.pinned_texts and not snapshot.opening_title
+                if drawn_title is None or (not snapshot.opening_title and snapshot.pinned_texts)
                 else [
                     TextElement(
                         id="guided-title",
@@ -1941,25 +1958,29 @@ def _base_text_elements(
             *_caption_lane_elements(snapshot, pin_windows),
         ]
     if compiler_version < 3:
-        elements = [
-            TextElement(
-                id="guided-title",
-                text=snapshot.title,
-                start_s=0.0,
-                end_s=title_end,
-                role="generative_intro",
-                position="top",
-                font_family=snapshot.font_family or "Inter-Bold",
-                size_px=78 if snapshot.direction == "fast_montage" else 84,
-                color=snapshot.text_color or "#FFFFFF",
-                highlight_color="#6FE7F7",
-                stroke_width=5,
-                shadow_enabled=True,
-                effect=policy["text_effect"],
-                alignment="center",
-                max_width_frac=0.86,
-            ).model_dump(mode="json", exclude_none=True)
-        ]
+        elements = (
+            [
+                TextElement(
+                    id="guided-title",
+                    text=snapshot.title,
+                    start_s=0.0,
+                    end_s=title_end,
+                    role="generative_intro",
+                    position="top",
+                    font_family=snapshot.font_family or "Inter-Bold",
+                    size_px=78 if snapshot.direction == "fast_montage" else 84,
+                    color=snapshot.text_color or "#FFFFFF",
+                    highlight_color="#6FE7F7",
+                    stroke_width=5,
+                    shadow_enabled=True,
+                    effect=policy["text_effect"],
+                    alignment="center",
+                    max_width_frac=0.86,
+                ).model_dump(mode="json", exclude_none=True)
+            ]
+            if drawn_title is not None
+            else []
+        )
         for beat, window in zip(snapshot.story_beats, beat_windows, strict=True):
             thought = beat.thought.strip()
             if not thought:
@@ -2058,7 +2079,10 @@ def _narration_caption_meta(snapshot: EditProposalSnapshot) -> dict[str, Any] | 
     if narration is None:
         # KRI-569: a song montage's lyric captions use the same caption controls.
         track = snapshot.song_captions
-        return {"style": track.caption_style, "y_frac": 0.7} if track is not None else None
+        if track is None:
+            return None
+        meta = {"style": track.caption_style, "y_frac": 0.7}
+        return {**meta, "enabled": False} if track.hidden else meta
     if narration.caption_style is None:
         return None
     return {"style": narration.caption_style, "y_frac": 0.7}
@@ -2659,12 +2683,17 @@ def _compile_base_execution_plan_version(
                     )
                 resolved_source_start_s = resolved_source_end_s - moving_s
             elif ref.kind == "video":
-                resolved_source_end_s = float(cut.source_start_s) + resolved_duration_s
-                if resolved_source_end_s > float(cut.source_end_s) + 0.001:
+                # KRI-689: a retimed cut consumes ``rate`` source seconds per output second.
+                # Millisecond rounding of the output scales with the rate, so the tolerance
+                # does too; the window is clamped to the cut's own edge, never past it.
+                rate = float(cut.playback_rate) if cut.playback_rate is not None else 1.0
+                resolved_source_end_s = float(cut.source_start_s) + resolved_duration_s * rate
+                if resolved_source_end_s > float(cut.source_end_s) + 0.001 * max(1.0, rate):
                     raise GuidedStoryError(
                         "guided_story_duration_impossible",
                         "Beat alignment cannot lengthen an approved video source window.",
                     )
+                resolved_source_end_s = min(resolved_source_end_s, float(cut.source_end_s))
             moments.append(
                 {
                     "moment_id": cut.cut_id,
@@ -2685,6 +2714,11 @@ def _compile_base_execution_plan_version(
                     **(
                         {"freeze_hold_s": round(hold_s, 3)}
                         if ref.kind == "video" and hold_s
+                        else {}
+                    ),
+                    **(
+                        {"playback_rate": float(cut.playback_rate)}
+                        if ref.kind == "video" and cut.playback_rate is not None
                         else {}
                     ),
                     "output_start_s": start_s,

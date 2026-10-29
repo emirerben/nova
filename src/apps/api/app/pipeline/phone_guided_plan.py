@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Literal
 
+from app.kria.portable_visual import AudioMuteWindow
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -47,7 +48,11 @@ from app.services.phone_sources import (
 )
 
 if TYPE_CHECKING:
-    from app.pipeline.phone_subtitled_lanes import ResolvedSoundEffect, SubtitledSoundEffect
+    from app.pipeline.phone_subtitled_lanes import (
+        ResolvedSoundEffect,
+        SubtitledOverlayCard,
+        SubtitledSoundEffect,
+    )
 
 
 class UnsupportedPhonePlan(ValueError):
@@ -174,6 +179,7 @@ def compile_phone_guided_plan(
     song: PhoneSongBed | None = None,
     sound_effects: tuple[ResolvedSoundEffect, ...] = (),
     landscape_fit: Literal["fill", "fit"] = "fill",
+    timed_cards: tuple[SubtitledOverlayCard, ...] = (),
 ) -> EditRecipeV2:
     """``visuals`` pins approved Visuals-pool photos and videos (KRI-121). Callers
     bind each kind only while its feature (``stillImages`` / ``visualVideos``)
@@ -208,6 +214,15 @@ def compile_phone_guided_plan(
     closed. Compiles to the same ``TimelineTrack(id="sfx", kind="audio")`` Talking
     plays and adds ``soundEffects`` + ``audioMix``. Mirrors the cloud mix
     (``_compose_guided_sfx``): trim + placement + gain, no speech duck.
+
+    ``timed_cards`` (flag ``PHONE_TIMED_CARDS_ENABLED``, default ``()`` = byte-identical
+    output): exact-timed small cards already grounded onto THIS plan's output clock by
+    `app.pipeline.phone_timed_cards.ground_timed_cards` (the worker compiles once without
+    them to learn where each clip really starts, grounds, then compiles again with them).
+    Each card's Visual must be pinned in ``visuals``. Compiles to the same silent
+    ``subtitled-overlays`` track Talking draws (`phone_subtitled_plan._compile_overlay_track`:
+    caption-band clamp, ``visualBlocks`` + ``alphaOverlay`` + ``audioMix``, ``visualVideos``
+    for a video card), clamped to the compiled duration.
 
     ``landscape_fit`` (KRI-285, ``"fill"`` default = unchanged output): ``"fit"``
     letterboxes a landscape (display-wide) video moment inside a PORTRAIT canvas
@@ -406,11 +421,12 @@ def compile_phone_guided_plan(
         source_duration = moment.source_end_s - moment.source_start_s
         # KRI-828: the creator's freeze holds the moment's last source frame after it plays.
         freeze_hold = float(moment.freeze_hold_s or 0.0)
-        if freeze_hold and (still or rate != 1 or moment.media_id in lipsync_takes):
+        if freeze_hold and (still or rate != 1):
             # The engine holds a moving clip's last frame at 1x. A transition on either side
             # needs nothing extra: the incoming overlap rides the motion like any clip's, and
             # an outgoing one dissolves out of the held frame (the slot's own duration owns
-            # both). A hold at another speed or under a lip-synced song is a different program.
+            # both). A hold at another speed is a different program. A lip-sync take may hold
+            # over song nobody filmed: the next take's own sync check below still applies.
             raise UnsupportedPhonePlan("a freeze frame needs a moving clip at normal speed")
         moving_duration = moment.duration_s - freeze_hold
         incoming = None
@@ -994,6 +1010,11 @@ def compile_phone_guided_plan(
         required_capabilities |= set(USER_SONG_REQUIRED_CAPABILITIES)
         if creator_hears_camera:
             required_capabilities |= {"audioMix"}
+    mute_windows = _source_mute_windows(plan.story_timeline, clips)
+    if mute_windows and audio.original_volume > 0:
+        # KRI-942: part of a clip's own sound turned off in chat. The recipe validator adds
+        # the capability the engine's mute windows need (`visualBlocks`).
+        audio = audio.model_copy(update={"mute_windows": mute_windows})
     if sound_effects:
         # Imported lazily: phone_subtitled_plan imports UnsupportedPhonePlan from here.
         from app.pipeline.phone_subtitled_plan import _compile_sfx_track  # noqa: PLC0415
@@ -1009,6 +1030,20 @@ def compile_phone_guided_plan(
         if sfx_track.clips:
             tracks.append(sfx_track)
             required_capabilities |= {"soundEffects", "audioMix"}
+    if timed_cards:
+        from app.pipeline.phone_subtitled_plan import _compile_overlay_track  # noqa: PLC0415
+
+        overlay_track, has_video_card = _compile_overlay_track(
+            list(timed_cards),
+            visuals=visuals,
+            speaker_end=compiled_duration,
+            assets=assets,
+            manifest=manifest,
+        )
+        if overlay_track.clips:
+            tracks.append(overlay_track)
+            required_capabilities |= {"visualBlocks", "alphaOverlay", "audioMix"}
+            required_capabilities |= {"visualVideos"} if has_video_card else {"stillImages"}
     return EditRecipeV2(
         canvas=Canvas(width=canvas.width, height=canvas.height),
         assets=list(assets.values()),
@@ -1018,6 +1053,31 @@ def compile_phone_guided_plan(
         audio=audio,
         required_capabilities=required_capabilities,
     )
+
+
+def _source_mute_windows(moments, clips: list[TimelineClip]) -> list[AudioMuteWindow]:  # noqa: ANN001
+    """Each moment's ``source_audio_mute_spans`` on the compiled clock (KRI-942).
+
+    A span is in the clip's source seconds; it lands where the COMPILED clip (after the
+    device refit) plays those seconds, clamped to the clip's own sound. A sliver shorter
+    than a frame is dropped.
+    """
+    by_id = {clip.id: clip for clip in clips}
+    windows: list[AudioMuteWindow] = []
+    for moment in moments:
+        clip = by_id.get(moment.moment_id)
+        if clip is None or not moment.source_audio_mute_spans:
+            continue
+        start = clip.timeline_start
+        end = start + clip.source_duration / clip.rate
+        for source_start, source_end in moment.source_audio_mute_spans:
+            lo = max(start, start + (source_start - clip.source_start) / clip.rate)
+            hi = min(end, start + (source_end - clip.source_start) / clip.rate)
+            if hi - lo >= _FRAME_S:
+                windows.append(
+                    AudioMuteWindow(start=round(lo, 6), end=round(hi, 6), clip_ids=[clip.id])
+                )
+    return windows[:100]
 
 
 def _sfx_key(request: SubtitledSoundEffect) -> tuple:

@@ -41,6 +41,10 @@ struct IdeaFeedbackWrite: Encodable, Sendable {
     let note: String
     let rewrite: String
 }
+struct IdeaExampleWrite: Encodable, Sendable {
+    let client_event_id: String
+    let confirmed = true
+}
 struct IdeaFeedbackReceipt: Decodable, Sendable { let id: UUID; let recorded: Bool }
 
 extension KriaAPIClient {
@@ -48,6 +52,7 @@ extension KriaAPIClient {
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile { throw APIError.unsupported }
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile { throw APIError.unsupported }
     func recordIdeaFeedback(_ body: IdeaFeedbackWrite) async throws -> IdeaFeedbackReceipt { throw APIError.unsupported }
+    func confirmIdeaExample(feedbackID: UUID, eventID: String) async throws { throw APIError.unsupported }
 }
 extension KriaAPI {
     func editorialTaste() async throws -> EditorialTasteProfile {
@@ -62,5 +67,8 @@ extension KriaAPI {
     }
     func recordIdeaFeedback(_ body: IdeaFeedbackWrite) async throws -> IdeaFeedbackReceipt {
         try await request(path: "me/editorial-taste/feedback", method: "POST", bodyData: JSONEncoder().encode(body), decode: IdeaFeedbackReceipt.self)
+    }
+    func confirmIdeaExample(feedbackID: UUID, eventID: String) async throws {
+        _ = try await request(path: "me/editorial-taste/feedback/\(feedbackID.uuidString.lowercased())/example", method: "POST", bodyData: JSONEncoder().encode(IdeaExampleWrite(client_event_id: eventID)), decode: EditorialTasteProfile.self)
     }
 }

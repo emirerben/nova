@@ -43,14 +43,19 @@ from sqlalchemy import func, select
 from app.agents._schemas.text_element import _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.kria.asset_holds import Authority, resolve_clip_scope, stamp_authority
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
+from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import detect_chat_language
+from app.kria.select_asks import withdrawn_photo_asks
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
+from app.services.creative_copy_decisions import APPROVED_COPY_FACT
 from app.services.kria_editor_ops_diff import font_family_key
+from app.services.order_mode import order_mode, stamp_order_facts
 
-RequirementKind = Literal["text", "order", "select", "timing", "audio", "style"]
+# `text_sequence` (29 Ekim): the creator's own words shown on screen in pieces, never captions.
+RequirementKind = Literal["text", "order", "select", "timing", "audio", "style", "text_sequence"]
 RequirementStatus = Literal["open", "met", "partial", "not_possible", "superseded"]
 Route = Literal["replan", "editor_ops"]
 
@@ -531,6 +536,7 @@ def merge_requirements(
 # changes the words ("the hook should say ...") restates the requirement without them; the
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
 # KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
+# KRI-945: and the server's mark on a title literal it copied from an approved wording.
 STICKY_FACTS = frozenset(
     {
         "first_clip",
@@ -540,15 +546,23 @@ STICKY_FACTS = frozenset(
         "placeholder",
         "ending_clip",
         "keep_audio",
+        APPROVED_COPY_FACT,
     }
 )
 
 
 def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[str, Any]:
-    if update.kind != target.kind or update.scope != target.scope:
-        return update.facts
-    kept = {k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts}
-    return {**kept, **update.facts} if kept else update.facts
+    facts = update.facts
+    if update.kind == target.kind and update.scope == target.scope:
+        kept = {
+            k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts
+        }
+        facts = {**kept, **update.facts} if kept else update.facts
+    mark = facts.get(APPROVED_COPY_FACT)
+    if mark is not None and not (isinstance(mark, Mapping) and mark.get("text") == update.literal):
+        # KRI-945: the mark belongs to the words it copied; other words are someone else's.
+        facts = {k: v for k, v in facts.items() if k != APPROVED_COPY_FACT}
+    return facts
 
 
 def apply_updates(
@@ -597,7 +611,14 @@ def apply_updates(
                     "scope": update.scope,
                     "literal": update.literal,
                     "description": update.description,
-                    "facts": _carry_sticky_facts(target, update),
+                    "facts": stamp_order_facts(
+                        update.kind,
+                        update.description,
+                        update.literal,
+                        _carry_sticky_facts(target, update),
+                        req_id=target.id,
+                        turn_id=source_turn_id,
+                    ),
                     "source_turn_id": source_turn_id,
                     "status": "open",
                 }
@@ -612,19 +633,35 @@ def apply_updates(
             scope=update.scope,
             literal=update.literal,
             description=update.description,
-            facts=update.facts,
+            facts=stamp_order_facts(
+                update.kind,
+                update.description,
+                update.literal,
+                update.facts,
+                req_id=f"r{counter}",
+                turn_id=source_turn_id,
+            ),
             source_turn_id=source_turn_id,
         )
         incoming.append(
             added.model_copy(update={"authority": stamp_authority(added, creator_text)})
         )
         counter += 1
+    # KRI-994: a later typed "video clips only" ask withdraws an earlier typed photo ask.
+    withdrawn = withdrawn_photo_asks(
+        prior.live(),
+        [*incoming, *changed.values()],
+        source_turn_id=source_turn_id,
+        same_batch_ids=[*changed, *removed],
+    )
     requirements = []
     for req in prior.requirements:
         if req.id in removed and req.live:
             requirements.append(req.model_copy(update={"status": "superseded"}))
         elif req.id in changed and req.live:
             requirements.append(changed[req.id])
+        elif req.id in withdrawn and req.live:
+            requirements.append(req.model_copy(update={"status": "superseded"}))
         else:
             requirements.append(req)
     requirements.extend(incoming)
@@ -928,6 +965,24 @@ def _asks_remove(message: str) -> bool:
     return not _reads_english(message) and bool(_TR_REMOVE_MESSAGE.search(_fold_for_redo(message)))
 
 
+def is_select_all_requirement(req: BriefRequirement | BriefUpdate) -> bool:
+    """ "Show all content": the extractor marked the whole set (``facts.all`` / ``scope: all``).
+
+    A whole-set statement picks nothing, so it is never a reason to re-plan. The meaning is
+    read from the structured fact the extractor records, never from the creator's words
+    (KRI-667); a requirement that names a clip, a position or any other fact stays a real
+    selection.
+    """
+    if req.kind != "select" or req.scope != "global":
+        return False
+    facts = req.facts or {}
+    marked = facts.get("all") is True or str(facts.get("scope") or "").casefold() in {
+        "all",
+        "everything",
+    }
+    return marked and all(k in {"all", "scope"} for k in facts)
+
+
 def _structural_reqs_editable(
     reqs: list[BriefRequirement | BriefUpdate], message: str | None
 ) -> bool:
@@ -935,12 +990,14 @@ def _structural_reqs_editable(
     text = message or ""
     for req in reqs:
         if req.kind == "order":
-            if not req.facts.get("key") or _asks_move(text):
+            # A shuffle is one seeded `reorder_clips_by`; "any order" changes nothing.
+            if not req.facts.get("key") or _asks_move(text) or order_mode(req) is not None:
                 continue
             return False
         if req.kind == "select":
             if (
-                req.scope.startswith("clip:")
+                is_select_all_requirement(req)
+                or req.scope.startswith("clip:")
                 or _POSITIONAL_FACT_KEYS & set(req.facts)
                 or _asks_remove(text)
             ):
@@ -1026,12 +1083,22 @@ def route_requirements(
         # (`unified_montage._ground_freezes`); the editor copilot has no freeze operation.
         return "replan"
     for req in reqs:
+        if (
+            compose_unmet_with_ops()
+            and req.kind == "text_sequence"
+            and current_plan.can_edit_text is False
+        ):
+            # 29 Ekim: words shown a piece at a time are text ops; a render with no text lane
+            # at all is the only one the planner has to rebuild.
+            return "replan"
         if req.kind in {"text", "style"} and current_plan.can_edit_text is False:
             # Captions are editable text on a separate lane. Title-specific
             # requests still require the actual title/text capability.
             if req.scope == "title" or not current_plan.can_edit_captions:
                 return "replan"
         if req.kind in {"order", "select"}:
+            if is_select_all_requirement(req):
+                continue
             if is_capture_order_requirement(req) and current_plan.can_order_by_capture_time:
                 continue
             if not current_plan.can_edit_timeline or not _structural_reqs_editable([req], message):

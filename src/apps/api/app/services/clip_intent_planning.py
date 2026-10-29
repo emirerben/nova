@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -18,14 +20,18 @@ from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.agents.clip_intent_planner import (
     ClipIntentPlannerAgent,
     ClipIntentPlannerInput,
+    ClipIntentPlannerOutput,
     ConfirmedTitleCopy,
+    PlannedClipIntent,
     salvage_question,
 )
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
 from app.kria.reply_language import current_reply_language, say
+from app.kria.research_preview import RESEARCH_FACT
 from app.schemas.clip_intents import (
     CLIP_DESCRIPTION_ATTRIBUTE,
+    CREATOR_EVIDENCE,
     CREATOR_SELECTED_EVIDENCE,
     FILE_NAME_EVIDENCE,
     MAX_CLIP_INTENTS,
@@ -57,6 +63,7 @@ from app.services.creator_label_reply import (
     label_text_reply,
 )
 from app.services.spoken_quotes import regound_quoted_intents
+from app.text_fold import loose_words
 
 if TYPE_CHECKING:
     from app.kria.brief import CreativeBrief
@@ -73,6 +80,64 @@ class PlannedIntentResolution:
     # KRI-680: "leave these clips out" asks the planner could not tie to clips
     # (`exclusion_dropped`); the turn's reply says so instead of dropping them silently.
     dropped_exclusions: int = 0
+    # KRI-950: the planner's checked list (`_checked_inventory`), set when planning passed and
+    # the resolver ran, so a turn that ends on a clip picker can keep it for the tap.
+    inventory: dict[str, Any] | None = None
+
+
+# KRI-950: the record a picker turn keeps (`KriaTurnPlan.clip_intent_inventory`). A planner
+# prompt change makes every kept record stale.
+_INVENTORY_VERSION = 1
+_PLANNER_PROMPT_VERSION = ClipIntentPlannerAgent.spec.prompt_version
+
+
+def _inventory_key(planner_input: ClipIntentPlannerInput, request: str) -> str:
+    """What the checked list was read from. The brief and candidate hints are left out: they are
+    recall aids only, and the Main Creator rewords them on every turn."""
+    basis = {
+        "prompt_version": _PLANNER_PROMPT_VERSION,
+        "request": request,
+        "available_clip_count": planner_input.available_clip_count,
+        "clip_facts": planner_input.clip_facts,
+        "reply_language": planner_input.reply_language,
+        "clip_exclusions": planner_input.clip_exclusions,
+    }
+    return hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()
+
+
+def _checked_inventory(
+    output: ClipIntentPlannerOutput, planner_input: ClipIntentPlannerInput
+) -> dict[str, Any]:
+    return {
+        "version": _INVENTORY_VERSION,
+        "key": _inventory_key(planner_input, planner_input.creator_request),
+        "output": output.model_dump(mode="json"),
+    }
+
+
+def _reused_inventory(
+    saved: Any, planner_input: ClipIntentPlannerInput
+) -> ClipIntentPlannerOutput | None:
+    """The asking turn's checked list, when the picker answer is this turn's only new line.
+
+    The caller passes ``saved`` only for a turn whose sole input is that picker's tap or skip,
+    whose stand-in sentence (``model_text``) ends ``creator_request``. Any other words, another
+    planner prompt or a broken record re-plans, exactly as before KRI-950."""
+    if not isinstance(saved, Mapping) or saved.get("version") != _INVENTORY_VERSION:
+        return None
+    latest = (planner_input.latest_user_message or "").strip()
+    request = planner_input.creator_request
+    if not latest or not request.endswith("\n" + latest):
+        return None
+    if saved.get("key") != _inventory_key(planner_input, request[: -len(latest) - 1]):
+        return None
+    try:
+        output = ClipIntentPlannerOutput.model_validate(saved.get("output"))
+    except ValidationError:
+        return None
+    if output.salvage_question or output.question:
+        return None
+    return output
 
 
 # How often a turn re-reads clip analysis while background understanding lands.
@@ -211,6 +276,63 @@ def without_spoken_text_captions(
             intent.op == "caption"
             and intent.creator_text is not None
             and fold_text(intent.creator_text) in cues
+        )
+    ]
+
+
+def whole_video_text_asks(brief: CreativeBrief | None) -> list[str]:
+    """The creator's words for each live whole-video text another lane writes (KRI-945).
+
+    A researched global text (``facts.research``) is written and sourced by the research
+    lane, a title by the title lane; the words are the research request quote, the literal
+    and the description. A global text with only a literal or a description is left out:
+    prod briefs scope chapter captions ("Bölüm başlıkları") and spoken-word texts global,
+    and those are placed on clips.
+    """
+    if brief is None:
+        return []
+    asks: list[str] = []
+    for requirement in brief.live():
+        research = requirement.facts.get(RESEARCH_FACT)
+        if requirement.kind != "text" or not (
+            requirement.scope == "title"
+            or (requirement.scope == "global" and isinstance(research, Mapping))
+        ):
+            continue
+        quote = research.get("request_quote") if isinstance(research, Mapping) else None
+        words = [quote, requirement.literal, requirement.description]
+        asks.append(" ".join(w for w in words if isinstance(w, str)))
+    return asks
+
+
+# Share of a caption quote's words that must come from a whole-video ask for the caption to
+# be that ask. A separate clip caption in the same message shares only glue words.
+_WHOLE_VIDEO_QUOTE_SHARE = 0.75
+
+
+def _quotes_ask(quote: str, ask: str) -> bool:
+    said = set(loose_words(quote))
+    shared = said & set(loose_words(ask))
+    return len(shared) >= 2 and len(shared) >= _WHOLE_VIDEO_QUOTE_SHARE * len(said)
+
+
+def without_whole_video_captions(
+    intents: list[PlannedClipIntent], asks: Sequence[str]
+) -> list[PlannedClipIntent]:
+    """Leave out the `caption` intents the resolver would author for a whole-video text.
+
+    "Some facts about Cunda, an introductory explanation" became a footage caption, footage
+    never grounds researched facts, and every turn asked what the caption should say. Only
+    a caption with no creator words whose quote is that ask goes: the creator's own words,
+    and a caption on clips asked for separately, are never touched.
+    """
+    return [
+        intent
+        for intent in intents
+        if not (
+            intent.op == "caption"
+            and intent.creator_text is None
+            and any(_quotes_ask(intent.source_quote, ask) for ask in asks)
         )
     ]
 
@@ -752,6 +874,92 @@ def _selected_assignments(
     return assignments
 
 
+# KRI-991: the evidence on a match the asking turn found and the answering turn kept. Not the
+# creator's word (``CREATOR_EVIDENCE``): a tap still outranks it.
+ASKING_TURN_EVIDENCE = "asking turn"
+_CARRIED_OPS = frozenset({"order", "include", "group"})
+
+
+def _inventory_with_matches(
+    inventory: dict[str, Any] | None, resolution: IntentResolution
+) -> dict[str, Any] | None:
+    """The checked list plus the confident order/include/group matches this turn found.
+
+    A picker turn keeps it (``KriaTurnPlan.clip_intent_inventory``); the tap's turn re-resolves
+    and ``carried_matches`` gives an intent that comes back unmatched the earlier match. The
+    creator's own taps are not kept: they come back from the thread's answers every turn.
+    """
+    if inventory is None:
+        return None
+    matches = [
+        {
+            "intent_id": intent.intent_id,
+            "op": intent.op,
+            "attribute": intent.attribute,
+            "position": intent.position,
+            "assignments": [
+                {"media_id": a.media_id, "confidence": a.confidence, "evidence": a.evidence}
+                for a in intent.assignments
+            ],
+        }
+        for intent in resolution.intents
+        if intent.op in _CARRIED_OPS
+        and intent.status == "resolved"
+        and intent.assignments
+        and not any(a.evidence in CREATOR_EVIDENCE for a in intent.assignments)
+    ]
+    return {**inventory, "matches": matches} if matches else inventory
+
+
+def carried_matches(
+    saved: Any, intents: Sequence[ClipIntent], clips: Sequence[IntentClip]
+) -> list[ResolvedClipIntent]:
+    """The asking turn's matches for the intents this turn would otherwise re-resolve.
+
+    ``saved`` is the asking turn's inventory, passed only when the planner list was reused (the
+    tap was the turn's only new input, so no new words could have changed an ask). Applied only
+    to the same intent (id, op, attribute and position all unchanged) and only to clips still
+    attached. The creator's own taps never come here (they settle their intents first).
+    Reads no words.
+    """
+    rows = saved.get("matches") if isinstance(saved, Mapping) else None
+    if not isinstance(rows, list):
+        return []
+    attached = {clip.media_id for clip in clips}
+    out: list[ResolvedClipIntent] = []
+    for intent in intents:
+        row = next(
+            (r for r in rows if isinstance(r, Mapping) and r.get("intent_id") == intent.intent_id),
+            None,
+        )
+        if (
+            row is None
+            or intent.op not in _CARRIED_OPS
+            or (row.get("op"), row.get("attribute"), row.get("position"))
+            != (intent.op, intent.attribute, intent.position)
+        ):
+            continue
+        try:
+            assignments = [
+                ClipAssignment(
+                    media_id=a["media_id"],
+                    confidence=a["confidence"],
+                    evidence=ASKING_TURN_EVIDENCE,
+                )
+                for a in row.get("assignments") or []
+                if a.get("media_id") in attached
+            ]
+        except (KeyError, TypeError, ValidationError):
+            continue
+        if assignments:
+            out.append(
+                ResolvedClipIntent(
+                    **intent.model_dump(), status="resolved", assignments=assignments
+                )
+            )
+    return out
+
+
 async def plan_and_resolve_clip_intents(
     *,
     creator_request: str,
@@ -774,6 +982,8 @@ async def plan_and_resolve_clip_intents(
     brief_labels: Sequence[BriefLabel] = (),
     kept_labels: Sequence[KeptLabel] = (),
     shot_captions: bool = True,
+    whole_video_texts: Sequence[str] = (),
+    checked_inventory: Any = None,
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
     what it shows, so the inventory always carries one description label for it.
@@ -787,7 +997,15 @@ async def plan_and_resolve_clip_intents(
     names them again).
 
     ``shot_captions`` (KRI-804, ``shot_captions_safe``): whether a creator text a label can't
-    print may become the shot's caption, which prints it as written."""
+    print may become the shot's caption, which prints it as written.
+
+    ``whole_video_texts`` (KRI-945, ``whole_video_text_asks``): the brief's researched texts and
+    titles. A caption the resolver would author for one is never a clip question.
+
+    ``checked_inventory`` (KRI-950): the ``inventory`` of the turn that asked the clip picker
+    this turn only answers. Reused instead of a new planner call when it was read from the same
+    words (``_reused_inventory``): a re-plan is a fresh model answer, and one row it gets wrong
+    asked the creator to restate an instruction they never touched."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -809,22 +1027,24 @@ async def plan_and_resolve_clip_intents(
     clip_facts_on = settings.clip_facts_for(getattr(run_context, "creator_id", None))
     # Candidates improve recall but are never the authority: even an empty
     # creative strategy must pass through the complete request inventory.
+    planner_input = ClipIntentPlannerInput(
+        creator_request=creator_request,
+        latest_user_message=latest_user_message,
+        generated_brief=generated_brief,
+        candidate_intents=candidate_intents,
+        confirmed_titles=list(confirmed_titles or ()),
+        available_clip_count=len(clips),
+        **({"clip_facts": True} if clip_facts_on else {}),
+        reply_language=current_reply_language(),
+        # KRI-667: the `exclude` op; omitted when off (byte-identical input).
+        **({"clip_exclusions": True} if settings.clip_intent_exclude_enabled else {}),
+    )
+    reused = _reused_inventory(checked_inventory, planner_input)
+    if checked_inventory is not None:
+        log.info("clip_intent_planner.inventory_reuse", reused=reused is not None)
     try:
-        output = await asyncio.to_thread(
-            ClipIntentPlannerAgent(default_client()).run,
-            ClipIntentPlannerInput(
-                creator_request=creator_request,
-                latest_user_message=latest_user_message,
-                generated_brief=generated_brief,
-                candidate_intents=candidate_intents,
-                confirmed_titles=list(confirmed_titles or ()),
-                available_clip_count=len(clips),
-                **({"clip_facts": True} if clip_facts_on else {}),
-                reply_language=current_reply_language(),
-                # KRI-667: the `exclude` op; omitted when off (byte-identical input).
-                **({"clip_exclusions": True} if settings.clip_intent_exclude_enabled else {}),
-            ),
-            ctx=run_context,
+        output = reused or await asyncio.to_thread(
+            ClipIntentPlannerAgent(default_client()).run, planner_input, ctx=run_context
         )
     except TerminalSchemaError as exc:
         # Invalid model output is a content-recovery problem, not a failed
@@ -873,13 +1093,17 @@ async def plan_and_resolve_clip_intents(
                 },
             ),
         )
-    if output.silent_drops:
-        # KRI-456: style asks / title lines the planner minted as caption intents and the
-        # parser dropped without asking. Closed-vocabulary counts only, never text.
+    planned_intents = without_whole_video_captions(output.intents, whole_video_texts)
+    silent_drops = dict(output.silent_drops)
+    if len(planned_intents) < len(output.intents):
+        silent_drops["whole_video_caption_dropped"] = len(output.intents) - len(planned_intents)
+    if silent_drops:
+        # KRI-456 / KRI-945: style asks, title lines and whole-video texts the planner minted
+        # as caption intents, dropped without asking. Closed-vocabulary counts only, never text.
         log.info(
             "clip_intent_planner.silent_drops",
-            silent_drops=output.silent_drops,
-            kept=len(output.intents),
+            silent_drops=silent_drops,
+            kept=len(planned_intents),
         )
     if output.salvage_question:
         # Some instructions were valid but others could not be verified (or the
@@ -916,9 +1140,10 @@ async def plan_and_resolve_clip_intents(
             ),
         )
     dropped_exclusions = output.silent_drops.get("exclusion_dropped", 0)
+    inventory = _checked_inventory(output, planner_input)
     intents = [
         ClipIntent.model_validate(intent.model_dump(exclude={"source_quote"}))
-        for intent in output.intents
+        for intent in planned_intents
     ]
     if not clip_facts_on:
         # Defense in depth: the flag-off prompt never teaches `order_by`, so a
@@ -1000,9 +1225,10 @@ async def plan_and_resolve_clip_intents(
                 intents,
                 IntentResolution(intents=_as_listed(resolved_orders, intents)),
                 dropped_exclusions=dropped_exclusions,
+                inventory=inventory,
             )
         return PlannedIntentResolution(
-            intents, IntentResolution(), dropped_exclusions=dropped_exclusions
+            intents, IntentResolution(), dropped_exclusions=dropped_exclusions, inventory=inventory
         )
     if require_clip_understanding:
         # KRI-282 L2: a clip whose background analysis has not landed has an empty
@@ -1043,25 +1269,44 @@ async def plan_and_resolve_clip_intents(
                     },
                 ),
             )
-    resolution = await resolve_clip_intents_for_turn(
-        intents=visual_intents,
-        creator_request=creator_request,
-        clips=clips,
-        run_context=run_context,
-        background=background,
-        checkpoint=checkpoint,
-        max_vision_requeries=max_vision_requeries,
-        vision_deadline_s=vision_deadline_s,
-        # KRI-516: chapter captions under a filming-time order are stretches of the day.
-        # Omitted otherwise, so every other call is unchanged.
-        **({"filming_order": True} if order_by_intents else {}),
-        # KRI-692: a Turkish chat's picker row never shows a model-written English label.
-        **(
-            {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
-            if current_reply_language() == "tr"
-            else {}
-        ),
+
+    async def _resolve(pending: list[ClipIntent]) -> IntentResolution:
+        return await resolve_clip_intents_for_turn(
+            intents=pending,
+            creator_request=creator_request,
+            clips=clips,
+            run_context=run_context,
+            background=background,
+            checkpoint=checkpoint,
+            max_vision_requeries=max_vision_requeries,
+            vision_deadline_s=vision_deadline_s,
+            # KRI-516: chapter captions under a filming-time order are stretches of the day.
+            # Omitted otherwise, so every other call is unchanged.
+            **({"filming_order": True} if order_by_intents else {}),
+            # KRI-692: a Turkish chat's picker row never shows a model-written English label.
+            **(
+                {"creator_words": {i.intent_id: i.source_quote for i in output.intents}}
+                if current_reply_language() == "tr"
+                else {}
+            ),
+        )
+
+    # KRI-991: the resolver is not deterministic and re-reads the whole list every turn, so a
+    # match the asking turn already found stands and only the rest is resolved (once, or not at
+    # all when nothing remains).
+    carried = carried_matches(
+        checked_inventory if reused is not None else None, visual_intents, clips
     )
+    if carried:
+        carried_ids = {c.intent_id for c in carried}
+        visual_intents = [i for i in visual_intents if i.intent_id not in carried_ids]
+        resolved_orders = [*resolved_orders, *carried]
+        log.info(
+            "clip_intent_matches_carried",
+            carried=len(carried),
+            skipped_resolver=not visual_intents,
+        )
+    resolution = await _resolve(visual_intents) if visual_intents else IntentResolution()
     if order_by_intents:
         kept, dropped = keep_chapters_in_filming_order(resolution.intents, clips, creator_request)
         if dropped:
@@ -1076,4 +1321,9 @@ async def plan_and_resolve_clip_intents(
         resolution = replace(
             resolution, intents=_as_listed([*resolution.intents, *resolved_orders], intents)
         )
-    return PlannedIntentResolution(intents, resolution, dropped_exclusions=dropped_exclusions)
+    return PlannedIntentResolution(
+        intents,
+        resolution,
+        dropped_exclusions=dropped_exclusions,
+        inventory=_inventory_with_matches(inventory, resolution),
+    )

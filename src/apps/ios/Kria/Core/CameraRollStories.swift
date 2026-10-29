@@ -13,9 +13,17 @@ struct CameraRollMoment: Codable, Identifiable, Sendable {
     var evidenceScope: String? = nil
     enum CodingKeys: String, CodingKey { case id, generation, kind, text, uncertain; case assetID = "asset_id", sourceID = "source_id", start = "start_s", end = "end_s", evidenceScope = "evidence_scope" }
 }
+struct CameraRollOpenQuestion: Codable, Identifiable, Sendable {
+    let id: String
+    let question: String
+    var answer: String? = nil
+    var dismissed: Bool
+    var isResolved: Bool { answer != nil || dismissed }
+}
 struct CameraRollContentPlan: Codable, Sendable {
     let version: Int
     let format: String
+    var form: String? = nil
     let audience: String
     let angle: String
     let whyItWorks: String
@@ -23,7 +31,31 @@ struct CameraRollContentPlan: Codable, Sendable {
     var closingText: String?
     var caption: String
     let beatReasons: [String]
-    enum CodingKeys: String, CodingKey { case version, format, audience, angle, caption; case whyItWorks = "why_it_works", openingText = "opening_text", closingText = "closing_text", beatReasons = "beat_reasons" }
+    var openQuestions: [CameraRollOpenQuestion]? = nil
+    enum CodingKeys: String, CodingKey { case version, format, form, audience, angle, caption; case whyItWorks = "why_it_works", openingText = "opening_text", closingText = "closing_text", beatReasons = "beat_reasons", openQuestions = "open_questions" }
+    var unresolvedQuestions: [CameraRollOpenQuestion] { (openQuestions ?? []).filter { !$0.isResolved } }
+    /// A nil answer skips the question; the server keeps the question text itself.
+    func resolving(_ id: String, answer: String?) -> CameraRollContentPlan {
+        var revised = self
+        revised.openQuestions = openQuestions?.map { value in
+            guard value.id == id else { return value }
+            var changed = value
+            changed.answer = answer?.trimmingCharacters(in: .whitespacesAndNewlines)
+            changed.dismissed = answer == nil
+            return changed
+        }
+        return revised
+    }
+    var formLabel: String? {
+        switch form ?? "" {
+        case "guide": "Guide"
+        case "factual_story": "Fact story"
+        case "atmosphere": "Atmosphere"
+        case "review": "Review"
+        case "performance": "Performance"
+        default: nil
+        }
+    }
 }
 struct CameraRollStory: Codable, Identifiable, Sendable {
     let id: UUID
@@ -38,7 +70,9 @@ struct CameraRollStory: Codable, Identifiable, Sendable {
     let audioPolicy: String
     var contentPlan: CameraRollContentPlan? = nil
     var research: CameraRollStoryResearch? = nil
-    enum CodingKeys: String, CodingKey { case id, revision, title, hook, payoff, rationale, moments, rejected, research; case duration = "duration_s", audioPolicy = "audio_policy", contentPlan = "content_plan" }
+    /// The event this idea was generated for; nil on ideas from before per-event generation.
+    var group: String? = nil
+    enum CodingKeys: String, CodingKey { case id, revision, title, hook, payoff, rationale, moments, rejected, research, group; case duration = "duration_s", audioPolicy = "audio_policy", contentPlan = "content_plan" }
 }
 struct CameraRollStoryResearch: Codable, Sendable {
     let topic: String
@@ -64,11 +98,17 @@ struct CameraRollStoryResearch: Codable, Sendable {
 struct CameraRollStories: Codable, Sendable {
     let stories: [CameraRollStory]
     let coverage: Coverage?
+    /// A public place the server noticed; a prefill the creator must confirm before anything is searched.
+    var suggestedResearchTopic: String? = nil
+    enum CodingKeys: String, CodingKey { case stories, coverage; case suggestedResearchTopic = "suggested_research_topic" }
     struct Coverage: Codable, Sendable {
         let moments: [CameraRollMoment]
         let incompleteSpeech: [UUID]
         let unindexed: [UUID]
-        enum CodingKeys: String, CodingKey { case moments; case incompleteSpeech = "incomplete_speech_asset_ids", unindexed = "unindexed_asset_ids" }
+        /// Sources whose candidates were cut by the per-search cap, and whether the cap was hit at all.
+        var truncated: [UUID]? = nil
+        var candidateLimitReached: Bool? = nil
+        enum CodingKeys: String, CodingKey { case moments; case incompleteSpeech = "incomplete_speech_asset_ids", unindexed = "unindexed_asset_ids", truncated = "truncated_asset_ids", candidateLimitReached = "candidate_limit_reached" }
     }
 }
 struct CameraRollIndexPass: Decodable, Sendable {
@@ -77,7 +117,10 @@ struct CameraRollIndexPass: Decodable, Sendable {
     let unavailable: [UUID]
     let untimed: [UUID]
     var unusableTiming: [UUID]? = nil
-    enum CodingKeys: String, CodingKey { case nextOffset = "next_offset", missing = "missing_analysis_asset_ids", unavailable = "unavailable_asset_ids", untimed = "untimed_asset_ids", unusableTiming = "unusable_timing_asset_ids" }
+    var truncated: [UUID]? = nil
+    /// Photos and short sources used as whole-source context rather than timed moments.
+    var contextAssetIDs: [UUID]? = nil
+    enum CodingKeys: String, CodingKey { case nextOffset = "next_offset", missing = "missing_analysis_asset_ids", unavailable = "unavailable_asset_ids", untimed = "untimed_asset_ids", unusableTiming = "unusable_timing_asset_ids", truncated = "truncated_asset_ids", contextAssetIDs = "context_asset_ids" }
 }
 struct CameraRollInspection: Decodable, Sendable { let answer: String; let confidence: Double; let evidence: String }
 

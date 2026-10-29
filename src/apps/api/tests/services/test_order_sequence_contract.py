@@ -104,6 +104,7 @@ def _intent(position: str | None, name: str, *indices: int, status: str = "resol
         "status": status,
         "intent_id": f"order_{name.replace(' ', '_')}",
         "attribute": name,
+        "ordered_members": False,
         "assignments": [
             {"media_id": _id(i) if isinstance(i, int) else i, "confidence": 0.9} for i in indices
         ],
@@ -556,3 +557,98 @@ def test_an_answered_attachment_order_gets_the_same_start_clip_seating() -> None
     _brief_, contract = _world(strategy)
     assert contract.order_basis == "attachment_order"
     assert list(contract.order_ids) == _ids([TEAL, *[i for i in range(11) if i != TEAL]])
+
+
+# -- KRI-941: a listed order ("in this order: A, B, C") ---------------------------------
+# Prod 2026-10-25 (job b3820ddc): "start on the sign, end on my friend, in between, in this
+# order: the door, the butcher, the grill, the flowers on the ceiling, the plaques". The
+# planner wrote the five middle subjects as ONE row, the plan played them in attachment
+# order and the receipt still read "met". Written as one row per subject (the planner prompt
+# now asks for that) the plan, the contract and the receipt must all agree on the listed
+# order, and a plan that misses it must say so.
+
+SIGN, FRIEND = 0, 10
+# Attachment (and filming) order of these five differs from the order the creator listed.
+LISTED = [8, 5, 2, 9, 4]
+LISTED_NAMES = ("the door", "the butcher", "the grill", "the flowers on the ceiling", "the plaques")
+LISTED_SPEC = (
+    "chronological order, starting with the sign, ending with my friend, in this order: "
+    + ", ".join(LISTED_NAMES)
+)
+
+
+def _listed_rows() -> list[dict]:
+    return [
+        _intent("first", "the sign", SIGN),
+        _intent("last", "my friend", FRIEND),
+        *(_intent(None, name, index) for name, index in zip(LISTED_NAMES, LISTED, strict=True)),
+    ]
+
+
+def _listed_world():
+    strategy = _strategy(*_listed_rows())
+    brief, contract = _world(strategy, _brief(LISTED_SPEC))
+    return strategy, brief, contract
+
+
+def test_five_listed_rows_land_in_the_listed_order_from_any_attachment_order() -> None:
+    strategy, brief, contract = _listed_world()
+    plan = _plan(strategy, brief)
+    rest = [i for i in FILMING if i not in (SIGN, FRIEND, *LISTED)]
+    assert plan.clip_ids == _ids([SIGN, *LISTED, *rest, FRIEND])
+    assert tuple(plan.clip_ids) == contract.order_ids
+    assert _verify(contract, _recipe(plan))
+    assert [o["code"] for o in plan.record()["intent_outcomes"]] == ["landed"] * 7
+    assert (_receipt(brief, plan).status, _receipt(brief, plan).reason) == ("met", None)
+
+
+def test_five_listed_rows_out_of_place_are_misplaced_when_the_seating_rule_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative control: the plan keeps filming order, so the listed rows are out of place
+    and the receipt says which, instead of the "met" prod showed for the same shape."""
+    strategy, brief, contract = _listed_world()
+    monkeypatch.setattr(unified_montage, "_apply_sequence", lambda ordered, rows: list(ordered))
+    plan = _plan(strategy, brief)
+    assert plan.clip_ids == _ids(FILMING)
+    with pytest.raises(CreatorRenderContractError, match="confirmed clip order"):
+        _verify(contract, _recipe(plan))
+    outcomes = {o["name"]: o["code"] for o in plan.record()["intent_outcomes"]}
+    # Filming order puts the butcher, the flowers and the plaques before a row listed ahead
+    # of them (or before the sign): those are misplaced, the door and the grill are not.
+    assert outcomes["first: the sign"] == "misplaced"
+    assert outcomes["last: my friend"] == "landed"
+    assert outcomes["then: the door"] == "landed"
+    assert outcomes["then: the butcher"] == "misplaced"
+    assert outcomes["then: the grill"] == "landed"
+    assert outcomes["then: the flowers on the ceiling"] == "misplaced"
+    assert outcomes["then: the plaques"] == "misplaced"
+    receipt = _receipt(brief, plan)
+    assert receipt.status == "not_possible"
+    assert "aren't where you asked" in receipt.reason
+    assert "the butcher" in receipt.reason and "the sign" in receipt.reason
+    assert "the door" not in receipt.reason
+
+
+def test_a_listed_row_seated_before_the_first_clip_is_refused_by_the_receipt() -> None:
+    """The plaques play ahead of the sign: only that row and the start row are out of place."""
+    strategy, brief, _contract = _listed_world()
+    rest = [i for i in FILMING if i not in (SIGN, FRIEND, *LISTED)]
+    ahead = [LISTED[-1], SIGN, *LISTED[:-1], *rest, FRIEND]
+    by_id = {c.media_id: c for c in _clips()}
+    rows = unified_montage._sequence_intents(strategy, True)
+    outcomes = unified_montage._sequence_outcomes(rows, [by_id[_id(i)] for i in ahead])
+    assert {o["name"]: o["code"] for o in outcomes} == {
+        "first: the sign": "misplaced",
+        "last: my friend": "landed",
+        "then: the door": "landed",
+        "then: the butcher": "landed",
+        "then: the grill": "landed",
+        "then: the flowers on the ceiling": "landed",
+        "then: the plaques": "misplaced",
+    }
+    record = {**_plan(strategy, brief).record(), "intent_outcomes": outcomes}
+    (receipt,) = build_receipts(
+        brief.live(), plan_facts_from_unified_montage(record), strict_order=True
+    )
+    assert receipt.status == "not_possible" and "aren't where you asked" in receipt.reason

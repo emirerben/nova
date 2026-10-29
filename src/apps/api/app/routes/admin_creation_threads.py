@@ -238,6 +238,25 @@ def _scrub(value: Any) -> Any:
     return value
 
 
+def _scrub_plan(plan: Any) -> Any:
+    """A turn plan for the admin view. KRI-950: the clip-intent planner is a sensitive agent,
+    so its checked list shows only each row's id and op, never quotes or creator text."""
+    scrubbed = _scrub(plan)
+    inventory = scrubbed.get("clip_intent_inventory") if isinstance(scrubbed, dict) else None
+    if isinstance(inventory, dict):
+        output = inventory.get("output") if isinstance(inventory.get("output"), dict) else {}
+        rows = output.get("intents") if isinstance(output.get("intents"), list) else []
+        scrubbed["clip_intent_inventory"] = {
+            "version": inventory.get("version"),
+            "intents": [
+                {"intent_id": row.get("intent_id"), "op": row.get("op")}
+                for row in rows
+                if isinstance(row, dict)
+            ],
+        }
+    return scrubbed
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -523,7 +542,7 @@ async def creation_thread_turns(
                 created_at=_iso(turn.created_at),
                 completed_at=_iso(turn.completed_at),
                 cancel_requested_at=_iso(turn.cancel_requested_at),
-                plan=_scrub(turn.plan_json),
+                plan=_scrub_plan(turn.plan_json),
                 error=_scrub(turn.error),
                 brief_version=brief_by_turn.get(turn.id),
                 executions=[_execution_out(ex) for ex in executions],

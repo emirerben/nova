@@ -1,0 +1,1087 @@
+{
+ "_about": "KRI-942 incident replay: Don Julio walk-in M1 (thread 33BA8AFB, job b3820ddc, 2026-10-25). The approved execution plan of render 2 and the clip records, media ids renamed to the kit upload names (m1_01..m1_08), storage paths and user ids removed. Brief as recorded (r7 with no facts).",
+ "creator_request": "Full creator request (chronological):\nMontage of our walk into Don Julio in Palermo. Start on the DON JULIO window sign from the street and end on my friend in the black T-shirt saying \"Super excited!\" — keep that line whole with its sound. In between, in this order: the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques. The two butcher clips are the same scene: use only the one where she cuts the ribeye. Put the text \"The butcher's counter 🔪\" on the butcher shot and \"MICHELIN 2024 · 2025\" on the plaques shot. Title: \"Parrilla Don Julio 🇦🇷\". Clip sound off except that last line. Suggest a tango song I could add when I post, but don't put music in the video. 18 seconds.",
+ "brief": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 18
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "18 seconds"
+   },
+   {
+    "id": "r2",
+    "kind": "order",
+    "facts": {
+     "last_clip": "my friend in the black T-shirt saying \"Super excited!\"",
+     "first_clip": "the DON JULIO window sign from the street"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques"
+   },
+   {
+    "id": "r3",
+    "kind": "timing",
+    "facts": {
+     "end_line": "Super excited!"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "keep that line whole with its sound"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Parrilla Don Julio 🇦🇷",
+    "description": "Title"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "The butcher's counter 🔪",
+    "description": "the butcher shot"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "MICHELIN 2024 · 2025",
+    "description": "the plaques shot"
+   },
+   {
+    "id": "r7",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Clip sound off except that last line."
+   },
+   {
+    "id": "r8",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Suggest a tango song I could add when I post, but don't put music in the video."
+   }
+  ]
+ },
+ "execution_plan": {
+  "goal": "",
+  "pace": "fast",
+  "music": null,
+  "direction": "fast_montage",
+  "typography": {
+   "font": "Fraunces",
+   "style_id": "guided_story_v2"
+  },
+  "beat_windows": [
+   {
+    "end_s": 2.682,
+    "beat_id": "unified-cut-1",
+    "start_s": 0.0,
+    "approved_duration_s": 2.682,
+    "resolved_duration_s": 2.682
+   },
+   {
+    "end_s": 6.014,
+    "beat_id": "unified-cut-2",
+    "start_s": 2.682,
+    "approved_duration_s": 3.332,
+    "resolved_duration_s": 3.332
+   },
+   {
+    "end_s": 8.846,
+    "beat_id": "unified-cut-3",
+    "start_s": 6.014,
+    "approved_duration_s": 2.832,
+    "resolved_duration_s": 2.832
+   },
+   {
+    "end_s": 11.808,
+    "beat_id": "unified-cut-4",
+    "start_s": 8.846,
+    "approved_duration_s": 2.962,
+    "resolved_duration_s": 2.962
+   },
+   {
+    "end_s": 14.84,
+    "beat_id": "unified-cut-5",
+    "start_s": 11.808,
+    "approved_duration_s": 3.032,
+    "resolved_duration_s": 3.032
+   },
+   {
+    "end_s": 16.972,
+    "beat_id": "unified-cut-6",
+    "start_s": 14.84,
+    "approved_duration_s": 2.132,
+    "resolved_duration_s": 2.132
+   },
+   {
+    "end_s": 18.002,
+    "beat_id": "unified-cut-7",
+    "start_s": 16.972,
+    "approved_duration_s": 1.03,
+    "resolved_duration_s": 1.03
+   }
+  ],
+  "media_digest": "e60a4e1eabdabb130f6c80847025f8c8fd7f54ffde67f674964d0e7569467bf6",
+  "montage_audio": null,
+  "text_elements": [
+   {
+    "z": null,
+    "id": "guided-title",
+    "role": "generative_intro",
+    "text": "Parrilla Don Julio 🇦🇷",
+    "color": "#FFF8F0",
+    "end_s": 2.2,
+    "effect": "static",
+    "motion": null,
+    "x_frac": 0.5,
+    "y_frac": 0.16,
+    "removed": false,
+    "size_px": 76.0,
+    "start_s": 0.0,
+    "position": "custom",
+    "reveal_s": null,
+    "alignment": "center",
+    "text_case": null,
+    "glow_color": null,
+    "size_class": null,
+    "fade_out_ms": null,
+    "font_family": "Fraunces",
+    "line_spacing": null,
+    "rotation_deg": null,
+    "shadow_color": null,
+    "shadow_style": "standard",
+    "stroke_color": null,
+    "stroke_width": 0.0,
+    "word_timings": null,
+    "editor_preset": null,
+    "glow_strength": null,
+    "source_params": null,
+    "behind_subject": false,
+    "letter_spacing": null,
+    "max_width_frac": 0.84,
+    "shadow_enabled": true,
+    "shadow_opacity": null,
+    "highlight_color": "#D9FF70",
+    "visual_block_id": null,
+    "animation_phases": null,
+    "background_color": null,
+    "theme_transition": null
+   },
+   {
+    "z": null,
+    "id": "clip-label-unified-cut-2",
+    "role": "generative_intro",
+    "text": "MICHELIN 2024 · 2025",
+    "color": "#FFF8F0",
+    "end_s": 6.014,
+    "effect": "static",
+    "motion": null,
+    "x_frac": 0.5,
+    "y_frac": 0.78,
+    "removed": false,
+    "size_px": 58.0,
+    "start_s": 2.682,
+    "position": "custom",
+    "reveal_s": null,
+    "alignment": "center",
+    "text_case": null,
+    "glow_color": null,
+    "size_class": null,
+    "fade_out_ms": null,
+    "font_family": "Fraunces",
+    "line_spacing": null,
+    "rotation_deg": null,
+    "shadow_color": null,
+    "shadow_style": "standard",
+    "stroke_color": null,
+    "stroke_width": 0.0,
+    "word_timings": null,
+    "editor_preset": null,
+    "glow_strength": null,
+    "source_params": null,
+    "behind_subject": false,
+    "letter_spacing": null,
+    "max_width_frac": 0.82,
+    "shadow_enabled": true,
+    "shadow_opacity": null,
+    "highlight_color": "#D9FF70",
+    "visual_block_id": null,
+    "animation_phases": null,
+    "background_color": null,
+    "theme_transition": null
+   },
+   {
+    "z": null,
+    "id": "clip-label-unified-cut-5",
+    "role": "generative_intro",
+    "text": "The butcher's counter 🔪",
+    "color": "#FFF8F0",
+    "end_s": 14.84,
+    "effect": "static",
+    "motion": null,
+    "x_frac": 0.5,
+    "y_frac": 0.78,
+    "removed": false,
+    "size_px": 58.0,
+    "start_s": 11.808,
+    "position": "custom",
+    "reveal_s": null,
+    "alignment": "center",
+    "text_case": null,
+    "glow_color": null,
+    "size_class": null,
+    "fade_out_ms": null,
+    "font_family": "Fraunces",
+    "line_spacing": null,
+    "rotation_deg": null,
+    "shadow_color": null,
+    "shadow_style": "standard",
+    "stroke_color": null,
+    "stroke_width": 0.0,
+    "word_timings": null,
+    "editor_preset": null,
+    "glow_strength": null,
+    "source_params": null,
+    "behind_subject": false,
+    "letter_spacing": null,
+    "max_width_frac": 0.82,
+    "shadow_enabled": true,
+    "shadow_opacity": null,
+    "highlight_color": "#D9FF70",
+    "visual_block_id": null,
+    "animation_phases": null,
+    "background_color": null,
+    "theme_transition": null
+   }
+  ],
+  "song_reference": {
+   "end_s": 151.192,
+   "title": "Santana - Maria Maria (Official Video) ft. The Product G&B",
+   "artist": "Santana",
+   "start_s": 133.19,
+   "delivery": "external_platform",
+   "track_id": "dc58f92f-7233-4b46-b18b-7a0e81eddbe0",
+   "schema_version": 1
+  },
+  "story_timeline": [
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "hook",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-1",
+    "gcs_path": "users/u/analysis-proxy-m1_02.mp4",
+    "media_id": "m1_02",
+    "required": true,
+    "moment_id": "unified-cut-1",
+    "beat_align": false,
+    "duration_s": 2.682,
+    "generation": "1",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 2.682,
+    "source_end_s": 3.066,
+    "playback_rate": null,
+    "output_start_s": 0.0,
+    "source_start_s": 0.384,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "build",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-2",
+    "gcs_path": "users/u/analysis-proxy-m1_01.mp4",
+    "media_id": "m1_01",
+    "required": true,
+    "moment_id": "unified-cut-2",
+    "beat_align": false,
+    "duration_s": 3.332,
+    "generation": "1",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 6.014,
+    "source_end_s": 7.0,
+    "playback_rate": null,
+    "output_start_s": 2.682,
+    "source_start_s": 3.668,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "build",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-3",
+    "gcs_path": "users/u/analysis-proxy-m1_06.mp4",
+    "media_id": "m1_06",
+    "required": true,
+    "moment_id": "unified-cut-3",
+    "beat_align": false,
+    "duration_s": 2.832,
+    "generation": "1",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 8.846,
+    "source_end_s": 4.0,
+    "playback_rate": null,
+    "output_start_s": 6.014,
+    "source_start_s": 1.168,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "build",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-4",
+    "gcs_path": "users/u/analysis-proxy-m1_08.mp4",
+    "media_id": "m1_08",
+    "required": true,
+    "moment_id": "unified-cut-4",
+    "beat_align": false,
+    "duration_s": 2.962,
+    "generation": "1",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 11.808,
+    "source_end_s": 2.962,
+    "playback_rate": null,
+    "output_start_s": 8.846,
+    "source_start_s": 0.0,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "build",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-5",
+    "gcs_path": "users/u/analysis-proxy-m1_05.mp4",
+    "media_id": "m1_05",
+    "required": true,
+    "moment_id": "unified-cut-5",
+    "beat_align": false,
+    "duration_s": 3.032,
+    "generation": "1",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 14.84,
+    "source_end_s": 10.0,
+    "playback_rate": null,
+    "output_start_s": 11.808,
+    "source_start_s": 6.968,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "build",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-6",
+    "gcs_path": "users/u/analysis-proxy-m1_07.mp4",
+    "media_id": "m1_07",
+    "required": true,
+    "moment_id": "unified-cut-6",
+    "beat_align": false,
+    "duration_s": 2.132,
+    "generation": "1",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 16.972,
+    "source_end_s": 8.416,
+    "playback_rate": null,
+    "output_start_s": 14.84,
+    "source_start_s": 6.284,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   },
+   {
+    "kind": "video",
+    "lane": "clip",
+    "topic": "payoff",
+    "layout": "fullscreen",
+    "beat_id": "unified-cut-7",
+    "gcs_path": "users/u/analysis-proxy-m1_04.mp4",
+    "media_id": "m1_04",
+    "required": true,
+    "moment_id": "unified-cut-7",
+    "beat_align": false,
+    "duration_s": 1.03,
+    "generation": "1",
+    "beat_time_s": null,
+    "look_preset": "none",
+    "source_crop": null,
+    "image_motion": null,
+    "output_end_s": 18.002,
+    "source_end_s": 6.74,
+    "playback_rate": null,
+    "output_start_s": 16.972,
+    "source_start_s": 5.71,
+    "look_adjustments": null,
+    "transition_after": null,
+    "transition_duration_s": null
+   }
+  ],
+  "compiler_version": 7,
+  "proposal_version": 1,
+  "editor_tombstones": [],
+  "transition_policy": {
+   "type": "none",
+   "duration_s": 0.0
+  },
+  "editor_audio_level": 1.0,
+  "editor_lane_hashes": {},
+  "editor_source_pool": [],
+  "mixed_media_timing": null,
+  "output_orientation": "portrait",
+  "selected_media_ids": [
+   "m1_02",
+   "m1_01",
+   "m1_06",
+   "m1_08",
+   "m1_05",
+   "m1_07",
+   "m1_04"
+  ],
+  "approved_duration_s": 18.002000000000002,
+  "editor_caption_meta": null,
+  "licensed_sfx_intent": null,
+  "resolved_duration_s": 18.002,
+  "context_label_intent": null,
+  "editor_motion_scenes": [],
+  "editor_music_removed": false,
+  "editor_revision_hash": null,
+  "editor_sound_effects": [],
+  "editor_visual_blocks": [],
+  "editor_custom_effects": [],
+  "editor_media_overlays": [],
+  "montage_text_bindings": [],
+  "editor_base_generation": null,
+  "editor_revision_number": null,
+  "editor_renderer_version": null,
+  "narration_label_receipt": null,
+  "editor_approved_text_ids": [],
+  "output_orientation_reason": "The creator selected this output format.",
+  "context_label_text_elements": [],
+  "editor_effect_schema_version": null,
+  "narration_label_text_elements": [],
+  "song_reference_track_duration_s": 260.976
+ },
+ "clips": [
+  {
+   "media_id": "m1_01",
+   "kind": "video",
+   "duration_s": 7.0,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "analysis": {
+    "transcript": "gracias",
+    "description": "camera slowly pans down showing restaurant ceiling and wall camera focuses on the Michelin plaques and clover award",
+    "understanding": {
+     "speech": {
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "gracias"
+     },
+     "summary": "The clip shows the interior of a restaurant with a brick wall, decorative dried flowers on the ceiling, and two Michelin guide plaques for 2024 and 2025. Two men are seated at a table in the foreground, out of focus.",
+     "audio_type": "ambient"
+    }
+   }
+  },
+  {
+   "media_id": "m1_02",
+   "kind": "video",
+   "duration_s": 4.0,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "analysis": {
+    "transcript": "like you know what I mean like Then you model it.",
+    "description": "restaurant exterior visible",
+    "understanding": {
+     "speech": {
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "like you know what I mean like Then you model it."
+     },
+     "summary": "A person in a yellow shirt walks past the exterior of a restaurant named \"Don Julio Parrilla\" while another person in a pink shirt walks toward the entrance. People are visible inside the restaurant through the window.",
+     "audio_type": "ambient"
+    }
+   }
+  },
+  {
+   "media_id": "m1_03",
+   "kind": "video",
+   "duration_s": 8.0,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "analysis": {
+    "transcript": "",
+    "description": "chef seasons large meat cut chef moves seasoned meat",
+    "understanding": {
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "summary": "A female chef seasons raw cuts of meat on a cutting board, while a male chef works at a large industrial grill oven in the background.",
+     "audio_type": "ambient"
+    }
+   }
+  },
+  {
+   "media_id": "m1_04",
+   "kind": "video",
+   "duration_s": 8.5,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "analysis": {
+    "transcript": "Parrilla Don Julio. What do you think? Are you excited for the meat? Super excited. Nice.",
+    "description": "man points at restaurant sign man makes peace sign and smiles man laughs and turns to enter",
+    "understanding": {
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "Farille Don Julio, what do you think?",
+        "end_s": 4.24,
+        "start_s": 2.22
+       },
+       {
+        "text": "Are you excited for the meet?",
+        "end_s": 5.32,
+        "start_s": 4.44
+       },
+       {
+        "text": "Super excited.",
+        "end_s": 6.44,
+        "start_s": 5.86
+       },
+       {
+        "text": "Nice.",
+        "end_s": 7.08,
+        "start_s": 6.8
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "Parrilla Don Julio. What do you think? Are you excited for the meat? Super excited. Nice."
+     },
+     "summary": "A man stands outside a restaurant called Parrilla Don Julio, expresses excitement for the meal, and makes a peace sign. He then walks into the restaurant.",
+     "audio_type": "dialogue"
+    }
+   }
+  },
+  {
+   "media_id": "m1_05",
+   "kind": "video",
+   "duration_s": 10.0,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "analysis": {
+    "transcript": "Sí, dando comanda, marcha, marcha. Chorizo, provo, entrada, el principal. Ojo, ple, a tiempo el sebo. Sí.",
+    "description": "chef cuts raw meat chef seasons raw meat chef places meat on grill",
+    "understanding": {
+     "speech": {
+      "language": "pt",
+      "segments": [
+       {
+        "text": "A dona manda a marcha, a parte de todo o povo entrar, a gente vai...",
+        "end_s": 5.92,
+        "start_s": 0.82
+       },
+       {
+        "text": "O problema aqui vai ser o cheiro.",
+        "end_s": 7.92,
+        "start_s": 5.92
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Sí, dando comanda, marcha, marcha. Chorizo, provo, entrada, el principal. Ojo, ple, a tiempo el sebo. Sí."
+     },
+     "summary": "A female chef is seasoning large cuts of raw meat with salt on a cutting board before placing one piece onto a grill. Another chef is visible in the background working at the grill.",
+     "audio_type": "mixed"
+    }
+   }
+  },
+  {
+   "media_id": "m1_06",
+   "kind": "video",
+   "duration_s": 4.0,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "analysis": {
+    "transcript": "I don't know what they're doing. Are you gonna watch her? I don't know what they're doing. Are you gonna watch her?",
+    "description": "waiter standing by restaurant entrance chefs working in open kitchen restaurant interior with patrons and chefs",
+    "understanding": {
+     "speech": {
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "I don't know what they're doing. Are you gonna watch her? I don't know what they're doing. Are you gonna watch her?"
+     },
+     "summary": "The camera pans from outside a restaurant to inside, showing chefs working in an open kitchen and patrons seated at tables. A waiter stands by the entrance.",
+     "audio_type": "dialogue"
+    }
+   }
+  },
+  {
+   "media_id": "m1_07",
+   "kind": "video",
+   "duration_s": 12.0,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "analysis": {
+    "transcript": "Sí, sí. Está, está bien. Muy bien. Acá se ve. Acá se ve. Ya, ya. Muy bien. Y acá. Acá con este. Acá con la punta de soya.",
+    "description": "camera panning past windows overhead chandelier and mezzanine view pan to main dining area with patrons",
+    "understanding": {
+     "speech": {
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Sí, sí. Está, está bien. Muy bien. Acá se ve. Acá se ve. Ya, ya. Muy bien. Y acá. Acá con este. Acá con la punta de soya."
+     },
+     "summary": "The video shows the interior of a restaurant with chefs working at a grill, patrons dining, and elaborate floral and lighting decorations. The camera pans from the ground floor up to a mezzanine level.",
+     "audio_type": "dialogue"
+    }
+   }
+  },
+  {
+   "media_id": "m1_08",
+   "kind": "video",
+   "duration_s": 8.0,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "analysis": {
+    "transcript": "Hay más. Okay. Gracias. Como.",
+    "description": "chef pulls tray from grill chef inspects food on tray chef handles food with tongs chef returns food to grill",
+    "understanding": {
+     "speech": {
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Hay más. Okay. Gracias. Como."
+     },
+     "summary": "A chef in a white uniform and black apron uses tongs to manage food on a large grill or oven in a professional kitchen setting.",
+     "audio_type": "dialogue"
+    }
+   }
+  }
+ ],
+ "turn_strategies": {
+  "a3e6811b": {
+   "pacing": "balanced",
+   "direction": "guided_story",
+   "rationale": "I've sequenced your exact 7 chosen moments chronologically, ensuring we use the clip where the chef cuts the ribeye. I routed this to the guided specialist to guarantee the custom text labels hit exactly the right shots, and to accurately silence all audio except your friend's final line.",
+   "edit_format": "montage",
+   "media_scope": "selected",
+   "clip_intents": [
+    {
+     "op": "order",
+     "position": "first",
+     "attribute": "the DON JULIO window sign from the street",
+     "intent_id": "order_start_window_sign"
+    },
+    {
+     "op": "order",
+     "position": "last",
+     "attribute": "my friend in the black T-shirt saying \"Super excited!\"",
+     "intent_id": "order_end_friend_excited"
+    },
+    {
+     "op": "order",
+     "attribute": "the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques",
+     "intent_id": "sequence_middle_clips"
+    },
+    {
+     "op": "include",
+     "attribute": "the one where she cuts the ribeye",
+     "intent_id": "include_butcher_ribeye"
+    },
+    {
+     "op": "caption",
+     "attribute": "the butcher shot",
+     "intent_id": "caption_butcher_counter",
+     "creator_text": "The butcher's counter 🔪"
+    },
+    {
+     "op": "caption",
+     "attribute": "the plaques shot",
+     "intent_id": "caption_plaques_michelin",
+     "creator_text": "MICHELIN 2024 · 2025"
+    }
+   ],
+   "caption_style": "none",
+   "montage_audio": {
+    "source_media_ids": [
+     "m1_04"
+    ],
+    "preview_source_beds": false,
+    "preserve_source_audio": true
+   },
+   "opening_title": "Parrilla Don Julio 🇦🇷",
+   "audio_strategy": "original_audio",
+   "render_program": "guided",
+   "story_structure": [
+    "Open on the street sign with the title",
+    "Walk in through the door into the open kitchen",
+    "Show the chef cutting the ribeye with its label",
+    "Pan up to the ceiling flowers and the Michelin plaques with its label",
+    "End on the friend giving the peace sign and saying Super excited"
+   ],
+   "target_duration_s": 18,
+   "selected_media_ids": [
+    "m1_02",
+    "m1_06",
+    "m1_05",
+    "m1_08",
+    "m1_07",
+    "m1_01",
+    "m1_04"
+   ],
+   "video_reuse_policy": "once",
+   "optional_treatments": [],
+   "resolved_clip_intents": [
+    {
+     "op": "order",
+     "status": "resolved",
+     "position": "first",
+     "attribute": "the DON JULIO window sign from the street",
+     "intent_id": "order_start_window_sign",
+     "assignments": [
+      {
+       "evidence": "Don Julio Parrilla sign, city street sidewalk outside a restaurant",
+       "media_id": "m1_02",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "op": "order",
+     "status": "resolved",
+     "position": "last",
+     "attribute": "my friend in the black T-shirt saying \"Super excited!\"",
+     "intent_id": "order_end_friend_excited",
+     "assignments": [
+      {
+       "evidence": "a young man in a black t-shirt, speech transcript: 'Super excited.'",
+       "media_id": "m1_04",
+       "confidence": 0.95
+      }
+     ]
+    },
+    {
+     "op": "order",
+     "status": "resolved",
+     "attribute": "the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques",
+     "intent_id": "sequence_middle_clips",
+     "assignments": [
+      {
+       "evidence": "waiter stands by the entrance",
+       "media_id": "m1_06",
+       "confidence": 0.85
+      },
+      {
+       "evidence": "female chef is seasoning large cuts of raw meat, chef cuts a piece of meat",
+       "media_id": "m1_05",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "chef uses tongs to manage food on a large grill or oven",
+       "media_id": "m1_08",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "elaborate floral and lighting decorations, bundles of dried flowers",
+       "media_id": "m1_07",
+       "confidence": 0.85
+      },
+      {
+       "evidence": "two Michelin guide plaques for 2024 and 2025",
+       "media_id": "m1_01",
+       "confidence": 0.95
+      }
+     ]
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "the one where she cuts the ribeye",
+     "intent_id": "include_butcher_ribeye",
+     "assignments": [
+      {
+       "evidence": "female chef is seasoning large cuts of raw meat, chef cuts a piece of meat",
+       "media_id": "m1_05",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "op": "caption",
+     "status": "resolved",
+     "attribute": "the butcher shot",
+     "intent_id": "caption_butcher_counter",
+     "assignments": [
+      {
+       "evidence": "female chef is seasoning large cuts of raw meat with salt on a cutting board",
+       "media_id": "m1_05",
+       "confidence": 0.9
+      }
+     ],
+     "caption_text": "The butcher's counter 🔪",
+     "creator_text": "The butcher's counter 🔪",
+     "caption_grounding": "creator_text"
+    },
+    {
+     "op": "caption",
+     "status": "resolved",
+     "attribute": "the plaques shot",
+     "intent_id": "caption_plaques_michelin",
+     "assignments": [
+      {
+       "evidence": "two Michelin guide plaques for 2024 and 2025",
+       "media_id": "m1_01",
+       "confidence": 0.95
+      }
+     ],
+     "caption_text": "MICHELIN 2024 · 2025",
+     "creator_text": "MICHELIN 2024 · 2025",
+     "caption_grounding": "creator_text"
+    }
+   ]
+  },
+  "055a33ea": {
+   "pacing": "balanced",
+   "direction": "guided_story",
+   "rationale": "I am putting the requested title onto the video. The strategy targets an exact 18-second guided sequence with no added music, using clip intents to cleanly apply your custom text over the butcher and plaque shots. The voice_mode is set to excerpts to ensure only your friend's 'Super excited!' dialogue punches through the otherwise muted video.",
+   "voice_mode": "excerpts",
+   "edit_format": "montage",
+   "media_scope": "selected",
+   "clip_intents": [
+    {
+     "op": "order",
+     "position": "first",
+     "attribute": "the DON JULIO window sign from the street",
+     "intent_id": "order_start_don_julio_sign"
+    },
+    {
+     "op": "order",
+     "position": "last",
+     "attribute": "my friend in the black T-shirt saying \"Super excited!\"",
+     "intent_id": "order_end_friend_excited"
+    },
+    {
+     "op": "order",
+     "attribute": "the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques",
+     "intent_id": "order_sequence_between"
+    },
+    {
+     "op": "include",
+     "attribute": "the one where she cuts the ribeye",
+     "intent_id": "include_butcher_ribeye"
+    },
+    {
+     "op": "caption",
+     "attribute": "the butcher shot",
+     "intent_id": "caption_butcher_shot",
+     "creator_text": "The butcher's counter 🔪"
+    },
+    {
+     "op": "caption",
+     "attribute": "the plaques shot",
+     "intent_id": "caption_plaques_shot",
+     "creator_text": "MICHELIN 2024 · 2025"
+    }
+   ],
+   "caption_style": "auto",
+   "montage_audio": {
+    "source_media_ids": [],
+    "preview_source_beds": false,
+    "preserve_source_audio": true
+   },
+   "opening_title": "Parrilla Don Julio 🇦🇷",
+   "audio_strategy": "original_audio",
+   "render_program": "guided",
+   "story_structure": [
+    "Start on the street sign and the door.",
+    "Cut to the butcher cutting the ribeye and then the grill.",
+    "Show the ceiling flowers and the Michelin plaques.",
+    "End on the friend's 'Super excited!' quote."
+   ],
+   "target_duration_s": 18,
+   "selected_media_ids": [
+    "m1_02",
+    "m1_06",
+    "m1_05",
+    "m1_08",
+    "m1_07",
+    "m1_01",
+    "m1_04"
+   ],
+   "video_reuse_policy": "once",
+   "optional_treatments": [],
+   "resolved_clip_intents": [
+    {
+     "op": "order",
+     "status": "resolved",
+     "position": "first",
+     "attribute": "the DON JULIO window sign from the street",
+     "intent_id": "order_start_don_julio_sign",
+     "assignments": [
+      {
+       "evidence": "Don Julio Parrilla sign",
+       "media_id": "m1_02",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "op": "order",
+     "status": "resolved",
+     "position": "last",
+     "attribute": "my friend in the black T-shirt saying \"Super excited!\"",
+     "intent_id": "order_end_friend_excited",
+     "assignments": [
+      {
+       "evidence": "man stands outside a restaurant called Parrilla Don Julio, expresses excitement for the meal, and makes a peace sign. ... transcript: Super excited.",
+       "media_id": "m1_04",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "op": "order",
+     "status": "resolved",
+     "attribute": "the door, the butcher, the grill, the flowers on the ceiling, the Michelin plaques",
+     "intent_id": "order_sequence_between",
+     "assignments": [
+      {
+       "evidence": "waiter stands by the entrance",
+       "media_id": "m1_06",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "chef cuts a piece of meat",
+       "media_id": "m1_05",
+       "confidence": 0.9
+      },
+      {
+       "evidence": "chef grilling food ... large silver grill",
+       "media_id": "m1_08",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "elaborate floral and lighting decorations ... bundles of dried flowers",
+       "media_id": "m1_07",
+       "confidence": 0.8
+      },
+      {
+       "evidence": "two Michelin guide plaques for 2024 and 2025",
+       "media_id": "m1_01",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "op": "include",
+     "status": "resolved",
+     "attribute": "the one where she cuts the ribeye",
+     "intent_id": "include_butcher_ribeye",
+     "assignments": [
+      {
+       "evidence": "female chef is seasoning large cuts of raw meat with salt ... chef cuts a piece of meat",
+       "media_id": "m1_05",
+       "confidence": 0.9
+      }
+     ]
+    },
+    {
+     "op": "caption",
+     "status": "resolved",
+     "attribute": "the butcher shot",
+     "intent_id": "caption_butcher_shot",
+     "assignments": [
+      {
+       "evidence": "chef preparing meat ... chef cuts a piece of meat",
+       "media_id": "m1_05",
+       "confidence": 0.9
+      }
+     ],
+     "caption_text": "The butcher's counter 🔪",
+     "creator_text": "The butcher's counter 🔪",
+     "caption_grounding": "creator_text"
+    },
+    {
+     "op": "caption",
+     "status": "resolved",
+     "attribute": "the plaques shot",
+     "intent_id": "caption_plaques_shot",
+     "assignments": [
+      {
+       "evidence": "two Michelin guide plaques for 2024 and 2025",
+       "media_id": "m1_01",
+       "confidence": 0.9
+      }
+     ],
+     "caption_text": "MICHELIN 2024 · 2025",
+     "creator_text": "MICHELIN 2024 · 2025",
+     "caption_grounding": "creator_text"
+    }
+   ]
+  }
+ }
+}

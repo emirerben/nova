@@ -1,0 +1,6 @@
+{
+  "rule": "An edit the creator never titled prints no title. The internal placeholder is never on-screen text.",
+  "placeholder": "Montage",
+  "title_lanes": ["clip labels", "fast cuts", "story beats"],
+  "compiler_versions": [1, 2, 3, 4, 5, 6, 7, 8]
+}

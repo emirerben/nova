@@ -18,6 +18,21 @@ import KriaMediaEngine
         return nil
     }
 
+    /// Whether `adoptOriginal` would find bytes, without hashing or copying anything: a post authorized for this
+    /// owner still holds a binding with this fingerprint and its file is on disk. Lets a grid show "Original on
+    /// this iPhone" for hundreds of tiles without reading a single video.
+    nonisolated static func hasMigratableOriginal(asset: SavedMediaAsset, owner: String) -> Bool {
+        guard let fingerprint = asset.fingerprint else { return false }
+        if MediaLibraryOriginals(owner: owner).localURL(assetID: asset.id, fingerprint: fingerprint) != nil { return true }
+        for threadID in Set(asset.usage.compactMap(\.creationThreadID)) {
+            let store = SourceAssetStore(project: BackgroundUploadCoordinator.projectDirectory(threadID))
+            for binding in (try? store.bindings()) ?? [] where binding.original.fingerprint == fingerprint {
+                if store.localFileIfPresent(mediaID: binding.mediaID) != nil { return true }
+            }
+        }
+        return false
+    }
+
     /// `pinned` binds an exact source (camera-roll stories); otherwise the role picks one.
     static func attach(asset: SavedMediaAsset, source pinned: SavedMediaSource? = nil, threadID: UUID, itemID: String?, role: CreationMediaRole, destination: ProjectUploadDestination = .phone, mediaID: String, owner: String, api: any KriaAPIClient) async throws -> CreationThread {
         if role == .visual {
@@ -43,6 +58,14 @@ import KriaMediaEngine
             }
             return try await api.project(threadID: threadID)
         }
+        let source = try await prepare(asset: asset, source: pinned, threadID: threadID, role: role, destination: destination, mediaID: mediaID, owner: owner, api: api)
+        return try await attachPrepared(asset: asset, source: source, threadID: threadID, mediaID: mediaID, role: role, api: api)
+    }
+
+    /// The phone half of a clip attach: picks the source and, for a video, puts its original beside the chat.
+    /// Touches only this iPhone, so several can run at once.
+    static func prepare(asset: SavedMediaAsset, source pinned: SavedMediaSource? = nil, threadID: UUID, role: CreationMediaRole,
+                        destination: ProjectUploadDestination = .phone, mediaID: String, owner: String, api: any KriaAPIClient) async throws -> SavedMediaSource {
         guard let source = pinned ?? asset.bindableSource(for: role, destination: destination) else { throw SavedMediaError.originalRequired }
         if asset.kind == "video" {
             guard let fingerprint = asset.fingerprint else { throw SavedMediaError.originalRequired }
@@ -68,6 +91,13 @@ import KriaMediaEngine
             catch is SourceAssetError { throw SavedMediaError.originalRequired }
             if let local { await CreationMediaPreview.save(localURL: local, mediaID: mediaID) }
         }
+        return source
+    }
+
+    /// The server half: binds a prepared source to the chat at its latest revision. Attaches to one chat run one
+    /// at a time, since each moves the chat's revision.
+    static func attachPrepared(asset: SavedMediaAsset, source: SavedMediaSource, threadID: UUID, mediaID: String, role: CreationMediaRole,
+                               api: any KriaAPIClient) async throws -> CreationThread {
         // Stable media/event ID survives conflicts and lost-response retries.
         for attempt in 0..<3 {
             let latest = try await api.project(threadID: threadID)

@@ -57,6 +57,11 @@ def sequence_role(row: Mapping[str, Any]) -> str:
     return "any"
 
 
+def _is_cumulative(row: Mapping[str, Any]) -> bool:
+    params = row.get("source_params")
+    return isinstance(params, Mapping) and params.get("sequence_mode") == "cumulative"
+
+
 def complete_sequences(
     rows: Iterable[Mapping[str, Any]], *, tolerance_s: float = 0.1
 ) -> list[dict[str, Any]]:
@@ -95,11 +100,22 @@ def complete_sequences(
         media_ids = {row.get("media_id") for row in chronological}
         if len(media_ids) > 1:
             continue
+        # A cumulative build-up shows the first k words at step k, so the sequence is the
+        # chain's last step, and each step must extend the one before it.
+        cumulative = all(_is_cumulative(row) for row in chronological)
         previous_end: float | None = None
+        previous_text = ""
         for row in chronological:
             text = normalize_text(row.get("text", ""))
             if not text:
                 break
+            if (
+                cumulative
+                and previous_text
+                and not (text.startswith(previous_text + " ") or text == previous_text)
+            ):
+                break
+            previous_text = text
             start = float(row.get("start", row.get("start_s", 0)))
             end = float(row.get("end", row.get("end_s", 0)))
             if (
@@ -116,7 +132,9 @@ def complete_sequences(
             end_key = "end" if "end" in first else "end_s"
             composed_rows.append(
                 {
-                    "text": " ".join(normalize_text(row["text"]) for row in chronological),
+                    "text": normalize_text(chronological[-1]["text"])
+                    if cumulative
+                    else " ".join(normalize_text(row["text"]) for row in chronological),
                     start_key: float(first[start_key]),
                     end_key: float(chronological[-1][end_key]),
                     "role": first.get("role") or sequence_role(first),

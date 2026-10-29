@@ -43,7 +43,7 @@ from typing import Literal, Protocol
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import MAX_MAIN_CREATOR_SELECTED_MEDIA
 from app.kria.brief_route import loose_text
-from app.schemas.clip_intents import ResolvedClipIntent
+from app.schemas.clip_intents import MEMBERSHIP_MIN_CONFIDENCE, ResolvedClipIntent
 
 Group = Literal["long", "short", "longest", "shortest", "all"]
 # "only" keeps just this group, "also" adds it back, "skip" leaves it out; "reset" (group
@@ -403,7 +403,11 @@ def excluded_clips(
     excluded = {a.media_id for i in intents if i.op == "exclude" for a in i.assignments}
     if not excluded:
         return set()
-    named = {a.media_id for i in intents if i.op != "exclude" for a in i.assignments}
+    # KRI-993: a subject scope ("only about the steak") never protects a clip the creator
+    # excluded: a skip beats a scope match.
+    named = {
+        a.media_id for i in intents if i.op != "exclude" and not i.exclusive for a in i.assignments
+    }
     return excluded - named - placed_media(strategy)
 
 
@@ -449,7 +453,108 @@ def apply_clip_exclusions(
     return strategy.model_copy(update=update)
 
 
+@dataclass(frozen=True)
+class SubjectScope:
+    """What a subject scope did to the pick (KRI-993), for the log line and the tests."""
+
+    strategy: CreativeStrategy
+    kept: tuple[str, ...] = ()
+    dropped: tuple[str, ...] = ()
+    added: tuple[str, ...] = ()
+
+
+def scoped_clips(resolved_intents: Iterable[ResolvedClipIntent] | None) -> set[str]:
+    """Media ids the resolved ``exclusive`` includes confidently match (KRI-993).
+
+    Only a RESOLVED intent counts (an unmatched or asked one scopes nothing: the creator is
+    asked which clips show it), and only an assignment at the resolver's membership bar, so
+    a below-bar guess never keeps or adds a clip.
+    """
+
+    return {
+        a.media_id
+        for i in resolved_intents or []
+        if i.status == "resolved" and i.op == "include" and i.exclusive
+        for a in i.assignments
+        if a.confidence >= MEMBERSHIP_MIN_CONFIDENCE
+    }
+
+
+def apply_subject_scope(
+    manifest: ResolvedCreatorManifest,
+    strategy: CreativeStrategy,
+    *,
+    resolved_intents: Iterable[ResolvedClipIntent] | None,
+) -> SubjectScope:
+    """The pick limited to the clips "only about X" matched (KRI-993), or unchanged.
+
+    Prod thread 4C536AFE: "10-second montage, only about the steak ..." hooked on the
+    provoleta boards because an `include` only guarantees its clips are in the edit. Now an
+    `exclusive` include limits the VIDEO pick to the clips it matched, plus:
+
+    - kept: any clip another resolved ask names (an order pin, a group, a label ...) or the
+      strategy itself places (``placed_media``), and every non-video item (photos are not
+      takes of the subject; whether they stay is the creator's own ask);
+    - added: a matched video clip the model left out, unless the creator excluded it;
+    - never: a clip the creator excluded (a skip beats a scope match).
+
+    Unchanged when nothing matched confidently (the creator is asked, nothing is dropped),
+    when a guided voiceover contract needs its all-media scope, when the result would hold
+    no own video, when nothing would change, or when a native edit's explicit list would
+    pass ``MAX_MAIN_CREATOR_SELECTED_MEDIA``.
+    """
+
+    unchanged = SubjectScope(strategy)
+    if strategy.execution_contract is not None:
+        return unchanged
+    intents = [i for i in resolved_intents or [] if i.status == "resolved"]
+    own = [m.media_id for m in _own_videos(manifest.media)]
+    matched = scoped_clips(intents) & set(own)
+    if not matched:
+        return unchanged
+    skipped = excluded_clips(intents, strategy)
+    named = {
+        a.media_id for i in intents if i.op != "exclude" and not i.exclusive for a in i.assignments
+    }
+    protected = named | placed_media(strategy)
+    takes_everything = strategy.media_scope == "all" or not strategy.selected_media_ids
+    base = (
+        [media.media_id for media in manifest.media]
+        if takes_everything
+        else list(dict.fromkeys(strategy.selected_media_ids))
+    )
+    own_set = set(own)
+    kept = [
+        media_id
+        for media_id in base
+        if media_id not in skipped
+        and (media_id not in own_set or media_id in matched or media_id in protected)
+    ]
+    added = [m for m in own if m in matched and m not in base and m not in skipped]
+    result = [*kept, *added]
+    if not own_set.intersection(result):
+        return unchanged
+    if not takes_everything and result == base:
+        return unchanged
+    if takes_everything and set(result) == set(base):
+        return unchanged
+    if strategy.render_program == "native" and len(result) > MAX_MAIN_CREATOR_SELECTED_MEDIA:
+        return unchanged
+    update: dict[str, object] = {"media_scope": "selected", "selected_media_ids": result}
+    if strategy.hero_media_id and strategy.hero_media_id not in result:
+        update["hero_media_id"] = None
+    return SubjectScope(
+        strategy.model_copy(update=update),
+        kept=tuple(kept),
+        dropped=tuple(m for m in base if m not in result),
+        added=tuple(added),
+    )
+
+
 __all__ = [
+    "SubjectScope",
+    "apply_subject_scope",
+    "scoped_clips",
     "LengthAsk",
     "apply_clip_exclusions",
     "apply_clip_scope",

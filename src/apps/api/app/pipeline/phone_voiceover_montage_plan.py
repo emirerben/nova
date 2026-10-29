@@ -26,6 +26,8 @@ A landscape output canvas always crops (cloud parity).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -52,7 +54,10 @@ from app.pipeline.phone_recipe_shared import (
     fit_transform,
     refit_source_window,
 )
-from app.services.phone_sources import PhoneSourceBinding
+from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
+
+if TYPE_CHECKING:
+    from app.pipeline.phone_subtitled_lanes import SubtitledOverlayCard
 
 # Mirrors `app.tasks.template_orchestrate._VOICEOVER_MUSIC_BED_MAX_GAIN`: a
 # matched-track bed under a recorded voiceover can never overpower the
@@ -136,8 +141,16 @@ def compile_phone_voiceover_montage_plan(
     target_lufs: float | None = None,
     resolved_text_elements: list[dict] | None = None,
     source_audio_media_ids: tuple[str, ...] | list[str] | None = None,
+    visuals: tuple[PhoneVisualBinding, ...] = (),
+    timed_cards: tuple[SubtitledOverlayCard, ...] = (),
 ) -> EditRecipeV2:
     """See the module docstring for the general contract.
+
+    `timed_cards` / `visuals` (flag ``PHONE_TIMED_CARDS_ENABLED``, default ``()`` =
+    byte-identical output): exact-timed small cards grounded onto this montage's output clock
+    (`app.pipeline.phone_timed_cards.ground_timed_cards`) and the pinned Visuals they bind,
+    compiled onto the same silent ``subtitled-overlays`` track Talking and Voiceover draw
+    (`phone_subtitled_plan._compile_overlay_track`), clamped to the montage's end.
 
     `target_lufs` (KRI-139): the cloud's final `loudnorm` target
     (`settings.output_target_lufs`, passed in so this module stays
@@ -532,6 +545,21 @@ def compile_phone_voiceover_montage_plan(
         }
     )
 
+    if timed_cards:
+        from app.pipeline.phone_subtitled_plan import _compile_overlay_track  # noqa: PLC0415
+
+        overlay_track, has_video_card = _compile_overlay_track(
+            list(timed_cards),
+            visuals=visuals,
+            speaker_end=total_duration_s,
+            assets=assets,
+            manifest=manifest,
+        )
+    else:
+        overlay_track, has_video_card = None, False
+    if overlay_track is not None and overlay_track.clips:
+        tracks.append(overlay_track)
+
     required_capabilities = (
         {"basicComposition", "local1080Export"}
         | (
@@ -548,6 +576,12 @@ def compile_phone_voiceover_montage_plan(
         | ({"audioMix", "musicBed"} if decision.music_track_id else set())
         | {"narrationAudio", "audioMix"}
         | ({"variableSpeed"} if any(clip.rate != 1 for clip in clips) else set())
+        | (
+            {"visualBlocks", "alphaOverlay", "audioMix"}
+            | ({"visualVideos"} if has_video_card else {"stillImages"})
+            if overlay_track is not None and overlay_track.clips
+            else set()
+        )
     )
 
     return EditRecipeV2(

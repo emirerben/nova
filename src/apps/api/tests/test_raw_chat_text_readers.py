@@ -105,6 +105,15 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
         "receipt wording for the approved brief requirements",
         None,
     ),
+    "kria/select_asks.py": (
+        "plan_time",
+        "KRI-994 exclusion_facts links a resolved exclude to the brief `select` ask it carries "
+        "out, by the planner's typed requirement_id or by verbatim string identity of the "
+        "intent's attribute inside exactly one ask's text. It feeds receipt wording only; it "
+        "never decides route, duration, voice, order or required text, and an unlinked or "
+        "ambiguous exclusion claims nothing.",
+        None,
+    ),
     "kria/approval_readiness.py": (
         "plan_time",
         "readiness_reply quotes already-identified blocked requirements for the creator; "
@@ -166,12 +175,16 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     ),
     "tasks/kria_runtime.py": (
         "carry",
-        "approval claims / dispatch carry the request",
+        "approval claims / dispatch carry the request; KRI-968's simpler-version offer and "
+        "left-out lines quote a requirement's own wording unchanged into the reply, and the "
+        "offer's ids (not the words) decide what the simpler version drops",
         frozenset(
             {
                 "_ApprovalDispatchClaim",
                 "_claim_approval_dispatch",
                 "_complete_draft_turn",
+                "_left_out_line",
+                "_simpler_version_offer",
                 "execute_kria_approval",
             }
         ),

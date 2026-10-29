@@ -27,6 +27,91 @@ final class CreationUITests: XCTestCase {
         }
     }
 
+    /// The editor's Kria sheet shows the same chat, so its ready card offers "Open editor" while the
+    /// editor is already open underneath. Tapping it must close the sheet and leave the creator in the
+    /// editor, not do nothing.
+    func testOpenEditorInsideTheEditorsKriaSheetReturnsToTheEditor() {
+        // The perf fixture's seeded chats end on a finished render the editor can really open.
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let chatOpenEditor = app.buttons["Open editor"]
+        XCTAssertTrue(chatOpenEditor.waitForExistence(timeout: 30))
+        chatOpenEditor.tap()
+
+        let kria = app.buttons["native-editor-conversation"]
+        XCTAssertTrue(kria.waitForExistence(timeout: 15), "the editor opened from the chat's ready card")
+        kria.tap()
+        let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        let sheetOpenEditor = sheet.buttons["Open editor"]
+        XCTAssertTrue(sheetOpenEditor.waitForExistence(timeout: 10), "the sheet's ready card offers Open editor")
+        XCTAssertTrue(sheetOpenEditor.isHittable)
+        sheetOpenEditor.tap()
+
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: sheet)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "Open editor closes the Kria sheet")
+        XCTAssertTrue(kria.waitForExistence(timeout: 3))
+        XCTAssertTrue(kria.isHittable, "the creator is back in the editor")
+        app.terminate()
+    }
+
+    /// KRI-986, real-device condition: the creator's chat composer is focused (keyboard up) inside the
+    /// editor's Kria sheet when they tap "Open editor". The tap must still close the sheet.
+    func testOpenEditorInsideTheEditorsKriaSheetWithKeyboardOpenReturnsToTheEditor() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat", "-perf-reset"]
+        app.launchEnvironment = [
+            "KRIA_CHAT_CREATION_FLOW": "v2", "KRIA_CHAT_SEED_THREADS": "3", "KRIA_CHAT_LONG_HISTORY": "12",
+            "KRIA_EDITOR_FIXTURE": "1", "UI_TEST_REDUCE_MOTION": "1",
+        ]
+        app.launch()
+        let chatOpenEditor = app.buttons["Open editor"]
+        XCTAssertTrue(chatOpenEditor.waitForExistence(timeout: 30))
+        chatOpenEditor.tap()
+
+        let kria = app.buttons["native-editor-conversation"]
+        XCTAssertTrue(kria.waitForExistence(timeout: 15), "the editor opened from the chat's ready card")
+        kria.tap()
+        let sheet = app.descendants(matching: .any)["native-editor-project-conversation"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+        let sheetOpenEditor = sheet.buttons["Open editor"]
+        XCTAssertTrue(sheetOpenEditor.waitForExistence(timeout: 10), "the sheet's ready card offers Open editor")
+
+        // Focus the composer so the keyboard is up, as on a real device.
+        // The chat underneath the editor has its own (covered, unhittable) composer; take the live one.
+        let fields = app.textFields.matching(NSPredicate(format: "label == %@", "Message Kria"))
+        _ = fields.firstMatch.waitForExistence(timeout: 5)
+        let composer = fields.allElementsBoundByIndex.first(where: { $0.isHittable }) ?? fields.firstMatch
+        XCTAssertTrue(composer.exists, "the sheet shows the chat composer")
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "tapping the composer opens the keyboard")
+
+        // The keyboard shrinks the visible conversation; bring the button above it if it slid underneath.
+        var swipes = 0
+        while !sheetOpenEditor.isHittable && swipes < 4 {
+            sheet.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(sheetOpenEditor.isHittable, "Open editor is reachable with the keyboard open")
+        let beforeTap = XCTAttachment(screenshot: app.screenshot())
+        beforeTap.name = "Kria sheet with keyboard open, before tapping Open editor (swipes: \(swipes))"
+        beforeTap.lifetime = .keepAlways
+        add(beforeTap)
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "the keyboard is still open when Open editor is tapped")
+        sheetOpenEditor.tap()
+
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: sheet)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed, "Open editor closes the Kria sheet with the keyboard open")
+        XCTAssertTrue(kria.waitForExistence(timeout: 3))
+        XCTAssertTrue(kria.isHittable, "the creator is back in the editor")
+        app.terminate()
+    }
+
     func testChatBubblesPreserveShapeAndWrappingAtAccessibilityTextSize() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat-bubbles"]
@@ -84,6 +169,31 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 3), .completed)
     }
 
+    /// Dragging a text-selection handle sideways moves the handle. The projects drawer's own drag used to claim it.
+    func testDraggingASelectionHandleInTheComposerDoesNotOpenTheDrawer() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
+        app.launch()
+        createFreshChat(in: app)
+        let composer = app.textFields["Message Kria"].exists ? app.textFields["Message Kria"] : app.textViews["Message Kria"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("alpha beta gamma delta epsilon zeta")
+        composer.press(forDuration: 1.2)
+        let selectAll = app.menuItems["Select All"]
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5), "Long press offers Select All")
+        selectAll.tap()
+        let before = XCTAttachment(screenshot: app.screenshot()); before.name = "Selected all"; before.lifetime = .keepAlways; add(before)
+        let box = composer.frame
+        // The start handle's knob sits above the first character of the selection.
+        let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.minX + 2, dy: box.minY - 6))
+        let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: box.minX + 150, dy: box.minY - 6))
+        start.press(forDuration: 0.3, thenDragTo: end)
+        let after = XCTAttachment(screenshot: app.screenshot()); after.name = "After handle drag"; after.lifetime = .keepAlways; add(after)
+        XCTAssertFalse(app.buttons["drawer-new-chat"].waitForExistence(timeout: 1.5), "Dragging a selection handle must not open the drawer")
+    }
+
     func testLaunchEntersChatFirstWorkspace() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -98,11 +208,12 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Attach footage"].exists)
         XCTAssertFalse(app.buttons["Attach footage"].isEnabled)
         XCTAssertTrue(app.staticTexts["Montage"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Narrated"].exists)
+        XCTAssertTrue(app.staticTexts["Voiceover"].exists)
 
         let toggle = app.buttons["workspace-menu-toggle"]
         let carousel = app.scrollViews["format-carousel"]
         XCTAssertTrue(carousel.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["format-montage"].frame.minX, prompt.frame.minX, accuracy: 2)
         carousel.swipeLeft()
         carousel.swipeRight()
         XCTAssertEqual(toggle.label, "Open projects", "Format-card swipes must not open the drawer")
@@ -120,8 +231,11 @@ final class CreationUITests: XCTestCase {
         toggle.tap()
         XCTAssertTrue(eventually { toggle.label == "Open projects" }, "Toggle still reads \(toggle.label)")
         XCTAssertTrue(eventually { abs(toggle.frame.minX - closedMenuX) <= 2 }, "Toggle stayed at x=\(toggle.frame.minX)")
-        let swipeStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.55))
-        let swipeEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.55))
+        let swipeY = carousel.frame.minY - 20
+        XCTAssertGreaterThan(swipeY, toggle.frame.maxY)
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let swipeStart = origin.withOffset(CGVector(dx: viewport.width * 0.15, dy: swipeY))
+        let swipeEnd = origin.withOffset(CGVector(dx: viewport.width * 0.85, dy: swipeY))
         swipeStart.press(forDuration: 0.05, thenDragTo: swipeEnd)
         XCTAssertTrue(app.staticTexts["Recent chats"].waitForExistence(timeout: 3))
         XCTAssertEqual(toggle.label, "Close projects")
@@ -704,6 +818,78 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(response.isHittable)
     }
 
+    /// "Clean up speech and create" replaces the tall approval card with the render stage while the server has
+    /// not queued the render yet (its decision writes only `approval_approved`). Failure modes pinned: the
+    /// footage stage ("Add your footage") comes back for a poll or two; the viewport stays where the card's
+    /// buttons were with the "Latest" pill up, so nothing of the conversation is on screen; the plan feed then
+    /// lands below the fold.
+    func testCleanUpSpeechApprovalShowsTheRenderStageAndKeepsTheConversationInView() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
+        app.launchEnvironment["KRIA_CHAT_SPEECH_CLEANUP"] = "choice"
+        app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        let send = app.buttons["Send clips"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        send.tap()
+        // DirectionStage's own identifier is inherited by everything inside it, so the button is found by its words.
+        let clean = app.buttons["Clean up speech and create"]
+        XCTAssertTrue(clean.waitForExistence(timeout: 15), "the approval card offers the cleanup choice")
+
+        // Read the card the way a creator does: scroll up past its buttons, then bring "Clean up" back into
+        // view. "Keep original" and "Change direction" stay below it, so the reader is still above the
+        // follow threshold and the "Latest" pill is up when the button is tapped.
+        let history = app.scrollViews.firstMatch
+        history.swipeDown()
+        let pill = app.buttons["chat-jump-to-latest"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 3))
+        let composer = app.buttons["chat-send-message"]
+        func cleanIsClear() -> Bool { clean.isHittable && clean.frame.maxY <= composer.frame.minY - 4 }
+        // A swipe flings; drag by exactly what is needed so the buttons below "Clean up" stay off screen.
+        for _ in 0..<8 where !cleanIsClear() {
+            let needed = min(320, max(40, clean.frame.maxY - composer.frame.minY + 12))
+            let from = history.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+            let to = from.withOffset(CGVector(dx: 0, dy: -needed))
+            from.press(forDuration: 0.1, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.3)
+        }
+        XCTAssertTrue(cleanIsClear(), "Clean up must be on screen above the composer")
+        XCTAssertTrue(pill.exists, "precondition: the reader is above the card's buttons")
+        clean.tap()
+
+        // The server still reports a plain draft for a poll or two after Create (its decision writes only
+        // `approval_approved`): the footage stage must not come back in that window, and the render stage
+        // must replace the card at once, in view, until the plan feed takes over.
+        let footage = app.staticTexts["Add your footage"]
+        let shaping = app.staticTexts["I’m shaping your video"]
+        let feed = app.otherElements["plan-feed"]
+        let settle = Date().addingTimeInterval(1.5)
+        while Date() < settle {
+            XCTAssertFalse(footage.exists, "the footage stage must not return after Create")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(eventually(timeout: 5) { shaping.exists || feed.exists }, "approving shows the render stage")
+        let deadline = Date().addingTimeInterval(4)
+        while Date() < deadline, !feed.exists {
+            XCTAssertFalse(footage.exists, "the footage stage must not flash while the render is queued")
+            XCTAssertTrue(shaping.exists, "the render stage stays until the plan feed takes over")
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(eventually(timeout: 3) { !pill.exists }, "the conversation sits at its end, so no Latest pill")
+        XCTAssertTrue(eventually(timeout: 3) { (shaping.exists && shaping.isHittable) || feed.exists },
+                      "the render stage is in view, not below the fold")
+        attach(app, "render-stage-after-cleanup-approval")
+
+        // The queued render's live plan then lands in view, and the reader still follows the end.
+        XCTAssertTrue(feed.waitForExistence(timeout: 30), "the plan feed follows the render stage")
+        XCTAssertTrue(eventually(timeout: 5) { app.staticTexts["plan-feed.header"].isHittable }, "the plan feed is in view")
+        XCTAssertFalse(pill.exists)
+        attach(app, "plan-feed-after-cleanup-approval")
+    }
+
     func testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
@@ -793,6 +979,11 @@ final class CreationUITests: XCTestCase {
         app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[n])"]
     }
 
+    /// The circle on a tile: picks or unpicks the clip without opening it.
+    private func tickButton(_ app: XCUIApplication, _ n: Int) -> XCUIElement {
+        app.buttons["clip-select-group:dodgeball-\(Self.realShapeIDs[n])"]
+    }
+
     private func centre(_ element: XCUIElement) -> XCUICoordinate {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
     }
@@ -802,8 +993,8 @@ final class CreationUITests: XCTestCase {
     }
 
     /// KRI-282 follow-up: press-and-slide selects (or deselects, by the first tile) every tile it crosses, while
-    /// tap and press-and-hold-to-preview keep working.
-    func testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsTapAndHold() {
+    /// the tile's circle still picks one clip and a tap still opens the clip.
+    func testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsCircleAndTapToWatch() {
         let app = openRealShapePicker()
         XCTAssertTrue(tileButton(app, 2).waitForExistence(timeout: 5))
         XCTAssertEqual(selectedCount(app), "0 of 48 selected")
@@ -819,11 +1010,11 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(selectedCount(app), "1 of 48 selected", (0...3).map { "\($0):\(tileButton(app, $0).value as? String ?? "?")" }.joined(separator: " "))
         XCTAssertEqual(tileButton(app, 0).value as? String, "Selected")
         XCTAssertEqual(tileButton(app, 2).value as? String, "Not selected")
-        // A slide never leaves the sheet in a half state: tap still toggles a single tile.
-        tileButton(app, 4).tap()
+        // A slide never leaves the sheet in a half state: the circle still toggles a single tile.
+        tickButton(app, 4).tap()
         XCTAssertEqual(selectedCount(app), "2 of 48 selected")
-        // Hold without moving still opens the preview pager and does not select.
-        tileButton(app, 5).press(forDuration: 0.8)
+        // A tap opens the clip and does not select it.
+        tileButton(app, 5).tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-preview-title"].waitForExistence(timeout: 5))
         app.buttons["clip-preview-close"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-count"].waitForExistence(timeout: 5))
@@ -894,10 +1085,10 @@ final class CreationUITests: XCTestCase {
         let first = app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[0])"]
         XCTAssertTrue(first.waitForExistence(timeout: 5))
         XCTAssertEqual(first.value as? String, "Not selected")
-        first.tap()
+        tickButton(app, 0).tap()
         XCTAssertEqual(first.value as? String, "Selected")
         shoot(app, "2a-sheet-open")
-        app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[1])"].tap()
+        tickButton(app, 1).tap()
         XCTAssertEqual(app.descendants(matching: .any)["clip-count"].label, "2 of 48 selected")
         shoot(app, "2-sheet-selected")
         // A tile with a cached poster has no placeholder.
@@ -917,8 +1108,8 @@ final class CreationUITests: XCTestCase {
         app.buttons["clip-clear"].tap()
         XCTAssertEqual(app.descendants(matching: .any)["clip-count"].label, "0 of 48 selected")
         XCTAssertFalse(app.buttons["clip-done"].isEnabled, "needs a decision")
-        // Press-and-hold opens the pager at that clip; swipe sideways moves through the same list.
-        app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[2])"].press(forDuration: 0.8)
+        // A tap opens the pager at that clip; swipe sideways moves through the same list.
+        app.buttons["clip-thumb-group:dodgeball-\(Self.realShapeIDs[2])"].tap()
         let title = app.descendants(matching: .any)["clip-preview-title"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertEqual(title.label, "Clip 3 of 48")
@@ -926,14 +1117,13 @@ final class CreationUITests: XCTestCase {
         app.descendants(matching: .any)["clip-preview-pager"].swipeLeft()
         XCTAssertTrue(eventually { title.label == "Clip 4 of 48" })
         shoot(app, "3b-preview-next")
+        XCTAssertEqual(app.buttons["clip-preview-toggle"].value as? String, "Not selected", "the button follows the clip shown")
+        // "Use this clip" picks the clip being shown and goes back to the grid.
         app.buttons["clip-preview-toggle"].tap()
-        XCTAssertEqual(app.buttons["clip-preview-toggle"].value as? String, "Selected")
-        app.descendants(matching: .any)["clip-preview-pager"].swipeRight()
-        XCTAssertTrue(eventually { title.label == "Clip 3 of 48" })
-        XCTAssertEqual(app.buttons["clip-preview-toggle"].value as? String, "Not selected", "the toggle follows the clip shown")
-        app.buttons["clip-preview-close"].tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["clip-count"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any)["clip-count"].label, "1 of 48 selected", "selecting from the preview counts")
+        XCTAssertEqual(tileButton(app, 3).value as? String, "Selected", "the clip that was shown is the one picked")
         let done = app.buttons["clip-done"]
         XCTAssertTrue(done.isEnabled)
         done.tap()
@@ -956,14 +1146,15 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(suggested.label.hasPrefix("Clip 2"))
         XCTAssertEqual(suggested.value as? String, "Selected", "suggested clips start ticked")
         let first = app.buttons["clip-thumb-dodgeball-fixture-clip"]
-        first.tap()
+        let firstCircle = app.buttons["clip-select-dodgeball-fixture-clip"]
+        firstCircle.tap()
         XCTAssertEqual(first.value as? String, "Selected")
-        first.tap()
+        firstCircle.tap()
         XCTAssertEqual(first.value as? String, "Not selected", "tapping twice unselects")
-        first.tap()
+        firstCircle.tap()
         // Second group via the segmented control.
         app.segmentedControls["clip-category-picker"].buttons.element(boundBy: 1).tap()
-        let football = app.buttons["clip-thumb-football-fixture-clip-4"]
+        let football = app.buttons["clip-select-football-fixture-clip-4"]
         XCTAssertTrue(football.waitForExistence(timeout: 3))
         football.tap()
         XCTAssertTrue(app.buttons["clip-done"].isEnabled)
@@ -976,6 +1167,88 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["clip-card-answered"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any)["clip-card-answered"].label, "Dodgeball: 2 clips · Football: 1 clip")
         XCTAssertFalse(app.buttons["clip-choose"].exists)
+    }
+
+    /// Two questions in one picker: while another question is still unanswered the main button says Next and
+    /// moves there without sending; the last answer sends both on one turn. Done never sends half an answer.
+    func testTwoQuestionPickerNextShowsTheSecondQuestionAndDoneSendsBoth() {
+        let app = launchClipQuestionFixture(capability: "1")
+        XCTAssertTrue(app.buttons["clip-choose"].waitForExistence(timeout: 15))
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:"))
+        let sentBefore = sent.count
+        app.buttons["clip-choose"].tap()
+        let main = app.buttons["clip-done"]
+        XCTAssertTrue(main.waitForExistence(timeout: 5))
+        // The suggestion already answers the first question, so the button moves on instead of sending.
+        XCTAssertEqual(main.label, "Next")
+        XCTAssertTrue(main.isEnabled)
+        let title = app.staticTexts["clip-sheet-title"]
+        XCTAssertEqual(title.label, "Which clips are Dodgeball?")
+        attachScreenshot(app, "two-questions-next")
+        main.tap()
+        XCTAssertTrue(eventually { title.label == "Which clips are Football?" }, title.label)
+        XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].exists, "Next keeps the picker open")
+        XCTAssertEqual(sent.count, sentBefore, "Next sends nothing")
+        XCTAssertFalse(main.isEnabled, "the second question still needs an answer")
+        // Going back to the first question by its tab still offers Next, never a half-answer Done.
+        app.segmentedControls["clip-category-picker"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(eventually { title.label == "Which clips are Dodgeball?" }, title.label)
+        XCTAssertEqual(main.label, "Next")
+        main.tap()
+        XCTAssertTrue(eventually { title.label == "Which clips are Football?" }, title.label)
+        app.buttons["clip-select-football-fixture-clip-4"].tap()
+        XCTAssertEqual(main.label, "Done")
+        attachScreenshot(app, "two-questions-done")
+        main.tap()
+        XCTAssertTrue(app.staticTexts["You: Dodgeball: clip 2. Football: clip 4"].waitForExistence(timeout: 10))
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "answers[dodgeball=fixture-clip-2;football=fixture-clip-4]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "one turn carried both answers")
+        XCTAssertEqual(sent.count, sentBefore + 1, "one message for both questions")
+    }
+
+    /// A tap opens the clip full screen and playing, without picking it; "Use this clip" picks the clip being shown
+    /// and goes back to the grid; the circle on a tile picks without opening anything.
+    func testTappingAClipOpensItPlayingAndUseThisClipPicksIt() {
+        let app = launchClipQuestionFixture(capability: "1")
+        XCTAssertTrue(app.buttons["clip-choose"].waitForExistence(timeout: 15))
+        app.buttons["clip-choose"].tap()
+        let count = app.descendants(matching: .any)["clip-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        XCTAssertEqual(count.label, "1 of 3 selected")
+        let first = app.buttons["clip-thumb-dodgeball-fixture-clip"]
+        first.tap()
+        let title = app.descendants(matching: .any)["clip-preview-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5), "a tap opens the clip")
+        XCTAssertTrue(title.label.hasPrefix("Clip 1 of"), title.label)
+        // fixture-clip has a local original: its video is on screen (the mute control only shows on a video).
+        XCTAssertTrue(app.buttons["clip-preview-mute"].waitForExistence(timeout: 10), "the clip plays")
+        attachScreenshot(app, "tap-to-watch-playing")
+        let use = app.buttons["clip-preview-toggle"]
+        XCTAssertEqual(use.label, "Use this clip")
+        XCTAssertEqual(use.value as? String, "Not selected", "opening a clip does not pick it")
+        use.tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5), "Use this clip goes back to the grid")
+        XCTAssertEqual(count.label, "2 of 3 selected")
+        XCTAssertEqual(first.value as? String, "Selected")
+        // The circle picks and unpicks without opening the clip.
+        let thirdCircle = app.buttons["clip-select-dodgeball-fixture-clip-3"]
+        thirdCircle.tap()
+        XCTAssertEqual(count.label, "3 of 3 selected")
+        XCTAssertFalse(title.exists, "the circle never opens the clip")
+        thirdCircle.tap()
+        XCTAssertEqual(count.label, "2 of 3 selected")
+        // A picked clip opens as picked; the button then removes it and stays on the clip.
+        app.buttons["clip-thumb-dodgeball-fixture-clip-2"].tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertEqual(use.value as? String, "Selected")
+        // fixture-clip-2 is not on this device: its poster and a note, never a blank page.
+        XCTAssertTrue(app.staticTexts["clip-preview-not-on-device"].waitForExistence(timeout: 5))
+        use.tap()
+        XCTAssertEqual(use.value as? String, "Not selected")
+        XCTAssertTrue(title.exists, "removing a clip keeps it open")
+        app.buttons["clip-preview-close"].tap()
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(count.label, "1 of 3 selected")
     }
 
     // MARK: reply UX: answer chips + one receipt
@@ -1136,7 +1409,7 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(sent.count, sentBefore, "the title answer waits for the clips")
         choose.tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
-        let redCap = app.buttons["clip-thumb-red_cap-fixture-clip-2"]
+        let redCap = app.buttons["clip-select-red_cap-fixture-clip-2"]
         XCTAssertTrue(redCap.waitForExistence(timeout: 3))
         redCap.tap()
         app.buttons["clip-done"].tap()
@@ -1156,7 +1429,7 @@ final class CreationUITests: XCTestCase {
         let sentBefore = sent.count
         choose.tap()
         XCTAssertTrue(app.descendants(matching: .any)["clip-sheet"].waitForExistence(timeout: 5))
-        app.buttons["clip-thumb-red_cap-fixture-clip-2"].tap()
+        app.buttons["clip-select-red_cap-fixture-clip-2"].tap()
         app.buttons["clip-done"].tap()
         XCTAssertTrue(app.staticTexts["clip-batch-note"].waitForExistence(timeout: 5))
         XCTAssertEqual(sent.count, sentBefore, "the clips wait for the title answer")
@@ -1428,22 +1701,38 @@ final class CreationUITests: XCTestCase {
     /// label) and the row goes; the finished video offers the server's chips instead of the two fixed ones. The
     /// capability-OFF half is `testReadySuggestionChipsApplyFromTapsNearCapsuleEdges` above, which launches without
     /// `KRIA_SUGGESTION_CHIPS` and still pins the fixed chips.
+    func testPendingServerSuggestionChipsShowOnlyTheDefaultEdit() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment = ["KRIA_CHAT_CREATION_FLOW": "v1", "KRIA_CHAT_FIXTURE_MEDIA": "1",
+                                 "KRIA_SUGGESTION_CHIPS": "1", "KRIA_SUGGESTION_CHIPS_PENDING": "hold"]
+        app.launch()
+        createFreshChat(in: app)
+        app.buttons["format-montage"].tap()
+        XCTAssertTrue(app.buttons["Let Kria cut the first version"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Add captions"].exists)
+        XCTAssertFalse(app.buttons["Add sound effects"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
+        app.terminate()
+    }
+
     func testServerSuggestionChipsSendOnTapAndReplaceFixedChips() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_CHAT_FIXTURE_MEDIA"] = "1"
         app.launchEnvironment["KRIA_SUGGESTION_CHIPS"] = "1"
+        app.launchEnvironment["KRIA_SUGGESTION_CHIPS_PENDING"] = "0"
         app.launch()
         createFreshChat(in: app)
         app.buttons["format-montage"].tap()
 
-        // Pending: chip #1 alone, no generic fixed strings.
+        // Pending rendering is checked separately with a held server response. Polling may
+        // finish before XCUITest observes it; this journey starts with the delivered set.
         let defaultEdit = app.buttons["Let Kria cut the first version"]
         XCTAssertTrue(defaultEdit.waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["Add captions"].exists, "Only chip #1 shows while the server is still working")
         XCTAssertFalse(app.buttons["Use suggestion: Try a stronger opening"].exists)
-        // The set lands: four chips in rank order, chip #1 first and unchanged; `why` rides in the accessibility label.
         let hook = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Add a hook to the opening")).firstMatch
         XCTAssertTrue(hook.waitForExistence(timeout: 15))
         XCTAssertEqual(hook.label, "Add a hook to the opening, the first shot is a quiet one")
@@ -1589,6 +1878,7 @@ final class CreationUITests: XCTestCase {
     private func launchLivePlanFeed(
         reduceMotion: Bool, reduceTransparency: Bool = false, cancel: String? = nil, capability: Bool = true,
         device: Bool = false, followup: Bool = false, contractV2: Bool = false, review: Bool = false,
+        syncFailure: Bool = false,
         thoughts: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
@@ -1606,6 +1896,7 @@ final class CreationUITests: XCTestCase {
             app.launchEnvironment["KRIA_CHAT_DEVICE_RENDER"] = "ready"
             app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_DEVICE"] = "1"
         }
+        if syncFailure { app.launchEnvironment["KRIA_CHAT_DEVICE_SYNC_FAILURE"] = "1" }
         if reduceMotion { app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1" }
         if reduceTransparency { app.launchEnvironment["UI_TEST_REDUCE_TRANSPARENCY"] = "1" }
         if let cancel { app.launchEnvironment["KRIA_CHAT_PLAN_BLOCKS_CANCEL"] = cancel }
@@ -1808,14 +2099,14 @@ final class CreationUITests: XCTestCase {
         let feed = app.otherElements["plan-feed"]
         XCTAssertTrue(feed.waitForExistence(timeout: 30))
         XCTAssertFalse(app.descendants(matching: .any)["device-render-status"].firstMatch.exists, "the feed hosts the device build")
-        let title = app.staticTexts["plan-feed.title"]
         attach(app, "plan-feed-device-start")
 
         // Work order the device follows. A section may only show decided once every earlier one has.
         let order = ["clips", "music", "title", "captions", "look", "sfx"]
         var sawPartial = false
         let finished = eventually(timeout: 90) {
-            XCTAssertTrue(feed.exists, "the feed never leaves during the device build")
+            if app.buttons["device-render-play"].exists { return true }
+            XCTAssertTrue(feed.exists, "the feed stays visible until an export exists")
             // One query = one consistent snapshot; per-row reads race the advancing build.
             let snapshot = (feed.value as? String ?? "").split(separator: ",").reduce(into: [String: String]()) { result, pair in
                 let parts = pair.split(separator: "=")
@@ -1827,12 +2118,37 @@ final class CreationUITests: XCTestCase {
                 XCTAssertFalse(decided[firstOpen...].contains(true), "sections advance in order: \(decided)")
                 if firstOpen > 0 { sawPartial = true }
             }
-            return title.label == "Plan ready · 7 of 7 decided"
+            return false
         }
-        XCTAssertTrue(finished, "all sections are decided once the device build completes")
+        XCTAssertTrue(finished, "the completed build hands over to playback")
         XCTAssertTrue(sawPartial, "sections decided progressively, not all at once")
-        XCTAssertTrue(planBlockValue(app, "overlays").contains("Not used"))
+        XCTAssertTrue(app.buttons["device-render-play"].waitForExistence(timeout: 10))
+        XCTAssertFalse(feed.exists)
         attach(app, "plan-feed-device-done")
+    }
+
+    func testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries() {
+        let app = launchLivePlanFeed(reduceMotion: true, device: true, syncFailure: true)
+        let play = app.buttons["device-render-play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 60), app.debugDescription)
+        for _ in 0..<4 {
+            XCTAssertTrue(play.exists, "A sync retry must not replace a finished video with the plan feed")
+            XCTAssertFalse(app.staticTexts["Your plan is ready"].exists)
+            RunLoop.current.run(until: Date().addingTimeInterval(1))
+        }
+        let editor = app.buttons["workspace-mode-editor"]
+        XCTAssertTrue(editor.exists, "The finished local edit stays accessible")
+        attach(app, "local-video-sync-retry")
+        editor.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-preview"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-load-failed"].firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["Video preview"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-clip-1"].firstMatch.exists)
+        let playback = app.buttons["native-editor-play-pause"]
+        playback.tap()
+        XCTAssertTrue(eventually(timeout: 10) { playback.label == "Pause preview" }, app.debugDescription)
+        XCTAssertFalse(app.buttons["native-editor-retry-source-preview"].exists)
+        attach(app, "local-video-editor-open")
     }
 
     func testLivePlanFeedStopCancelsTheDeviceRender() {

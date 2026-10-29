@@ -22,7 +22,8 @@ Ways this could fail, each pinned below:
 - an `exclude` is forced onto the take (it would remove the creator's only footage),
 - a technical failure (vision still pending) is turned into an answer,
 - a moment the take's record rules out (the resolver put nothing forward) is forced onto the
-  take instead of asked, or is asked as "which of your clips" with the photo offered,
+  take instead of asked, or, in a video-only project, is asked as "which of your clips"
+  (KRI-949: with a photo in the project, the photo is offered),
 - a creator caption is forced without its on-screen text (resolved caption, no caption_text),
 - the forced evidence reads as the creator's own word (``CREATOR_EVIDENCE``),
 - an intent the resolver already matched is changed.
@@ -313,35 +314,42 @@ async def test_a_pending_check_is_not_turned_into_an_answer(monkeypatch) -> None
     assert result.diagnostics["single_take_settled"] == 0
 
 
+def _video_only_thumbs_up() -> tuple[list[ClipIntent], dict[str, Any]]:
+    """M2 without the Cotopaxi photo, the resolver putting nothing forward for the thumbs-up.
+
+    KRI-949: with a photo in the project that silence rules nothing out, so the photo is
+    offered too (tests/services/test_kri949_named_photo.py); the plain question below is
+    for a video-only project.
+    """
+    resolver = _set_intent(_m2_resolver(), {"intent_id": "order_5"})
+    resolver["intents"] = [e for e in resolver["intents"] if "cotopaxi" not in e["intent_id"]]
+    return [i for i in _m2_intents() if "cotopaxi" not in i.intent_id], resolver
+
+
 async def test_a_moment_the_takes_record_rules_out_asks_plainly(monkeypatch) -> None:
     # The resolver read the take's record and put nothing forward for the moment: that is
-    # the "not in this video" case. It still asks, says so plainly, offers only the video
-    # (the photo's record does not show it either), and never says "which of your clips".
-    _patch(monkeypatch, _set_intent(_m2_resolver(), {"intent_id": "order_5"}))
+    # the "not in this video" case. It still asks, says so plainly, offers only the video,
+    # and never says "which of your clips".
+    intents, resolver = _video_only_thumbs_up()
+    _patch(monkeypatch, resolver)
 
-    result = await _resolve(_m2_intents(), [_take(), _photo()])
+    result = await _resolve(intents, [_take()])
 
     assert result.status == "needs_creator"
-    (category,) = result.clip_question["categories"]
-    assert category["intent_id"] == "order_5"
-    assert category["candidate_media_ids"] == [TAKE]
-    assert "candidate_media" not in result.clip_question
-    assert result.question == (
-        'I couldn\'t find "his thumbs-up" in your video. '
-        "Tap the video if it's in there, or tell me it isn't."
-    )
+    assert result.clip_question is None
+    assert 'About when does "his thumbs-up" appear' in result.question
     assert result.diagnostics["single_take_settled"] == 0
 
 
 async def test_the_plain_question_follows_the_chat_language(monkeypatch) -> None:
-    _patch(monkeypatch, _set_intent(_m2_resolver(), {"intent_id": "order_5"}))
+    intents, resolver = _video_only_thumbs_up()
+    _patch(monkeypatch, resolver)
 
     with reply_language_for("tr"):
-        result = await _resolve(_m2_intents(), [_take(), _photo()])
+        result = await _resolve(intents, [_take()])
 
-    assert result.question == (
-        'Videonda "his thumbs-up" olan yeri bulamadım. Varsa videoya dokun, yoksa olmadığını söyle.'
-    )
+    assert result.clip_question is None
+    assert '"his thumbs-up" yaklaşık ne zaman görünüyor' in result.question
 
 
 async def test_a_creator_caption_on_the_only_take_keeps_its_text(monkeypatch) -> None:

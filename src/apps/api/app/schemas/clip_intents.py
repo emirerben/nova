@@ -264,6 +264,8 @@ class ClipIntent(BaseModel):
             raise ValueError("transcript_kind requires label_source=transcript")
         if self.order_by is not None and (self.op != "order" or self.position is not None):
             raise ValueError("order_by requires op=order and no position")
+        if self.ordered_members is not None and (self.op != "order" or self.order_by is not None):
+            raise ValueError("ordered_members requires a described order")
         if self.placeholder and (
             self.op != "label"
             or self.label_source != "clip"
@@ -271,6 +273,10 @@ class ClipIntent(BaseModel):
             or self.caption_attribute is not None
         ):
             raise ValueError("placeholder requires a clip label with no creator_text")
+        if self.exclusive and (
+            self.op != "include" or self.creator_text is not None or self.placeholder
+        ):
+            raise ValueError("exclusive requires op=include with no creator_text")
         if self.op == "exclude" and (
             self.creator_text is not None
             or self.caption_attribute is not None
@@ -297,6 +303,21 @@ class ClipIntent(BaseModel):
     position: ClipOrderPosition | None = None
     # Only for op="order", and never together with `position`.
     order_by: ClipOrderBy | None = Field(default=None, exclude_if=lambda value: value is None)
+    ordered_members: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-993: only for op="include". "Only about the steak": the edit is limited to the
+    # clips this intent resolves to (plus what the creator pinned or the strategy places),
+    # not just guaranteed to contain them. Omitted from dumps when false, so every intent
+    # persisted before this field loads and re-dumps byte-identically.
+    exclusive: bool = Field(default=False, exclude_if=lambda value: not value)
+
+    # KRI-994: for op="exclude" only, the Creative Brief `select` requirement ("r3") this
+    # exclusion carries out, as the planner model declared it. Unverified here: the receipt
+    # reader (`app.kria.select_asks.exclusion_facts`) keeps it only when it names a live
+    # `select` requirement. Omitted from dumps when unset, so every intent persisted before
+    # this field loads and re-dumps byte-identically.
+    requirement_id: str | None = Field(
+        default=None, max_length=24, exclude_if=lambda value: value is None
+    )
 
     @field_validator("intent_id", mode="before")
     @classmethod
@@ -318,6 +339,11 @@ class ClipIntent(BaseModel):
     @classmethod
     def _caption_attribute(cls, v: object) -> str | None:
         return _clean(v, 160) or None
+
+    @field_validator("requirement_id", mode="before")
+    @classmethod
+    def _requirement_id(cls, v: object) -> str | None:
+        return _clean(v, 24) or None
 
 
 class ClipAssignment(BaseModel):

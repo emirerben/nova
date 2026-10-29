@@ -74,6 +74,8 @@ from app.services.phone_rollout import (
     phone_subtitled_video_overlays_supported,
     phone_talking_head_supported,
     phone_talking_multi_clip_supported,
+    phone_timed_cards_supported,
+    phone_timed_video_cards_supported,
     phone_user_song_supported,
     phone_voiceover_reaction_beats_supported,
 )
@@ -99,9 +101,28 @@ CAPABILITY_MEDIA_OVERLAY_VIDEO_CARDS = "media_overlays:video_cards"
 # edit. Omitted (not `_unavailable`) when off so flag-off manifests stay
 # byte-identical.
 CAPABILITY_MEDIA_OVERLAY_FULLSCREEN = "media_overlays:fullscreen"
+# Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): a Visuals photo (or video, where
+# `phone_timed_video_cards_supported()`) as a picture-in-picture card at a stated second or
+# clip of a phone Montage (guided / unified / voiceover montage) or narrated Voiceover edit.
+# Present in `capabilities` ONLY while the flag is on, so a flag-off manifest's dict and its
+# `context_hash` / `manifest_hash` stay byte-identical. Never the generic `media_overlays`
+# key: that still gates the cloud `overlays` treatment the phone compiler rejects.
+CAPABILITY_TIMED_CARDS = "timed_cards"
+TIMED_CARDS_UNAVAILABLE_NOTICE = (
+    "Small cards at an exact time aren't available for this edit yet; left them out."
+)
 TALKING_CLIP_INTENTS_DROPPED_NOTICE = (
     "Talking edits caption what you say, so I didn't add separate labels or captions "
     "to individual clips."
+)
+# Fixed wording on purpose (KRI-667): the time and the photo's name live in the receipt
+# (`brief_checks._check_timed_cards`), so the notice needs no variable parts and the Turkish
+# twin is an exact `_KNOWN_TR` lookup rather than a regex.
+TIMED_CARD_VISUAL_NOT_FOUND_NOTICE = (
+    "Couldn't find the photo or video you named for a small card; left it out."
+)
+TIMED_VIDEO_CARD_UNAVAILABLE_NOTICE = (
+    "Videos can't show as small cards in this edit yet; left that card out."
 )
 
 
@@ -822,6 +843,40 @@ def resolve_creator_manifest(
             "phone_talking_only",
             "reaction beats are only available on an iPhone talking-to-camera edit",
         )
+    if getattr(settings, "phone_timed_cards_enabled", False):
+        phone_on = (
+            phone_source_media_ids is not None
+            and capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO) is not None
+            and capabilities[CAPABILITY_PHONE_SOURCE_AUDIO].available
+        )
+        # The three phone writers that compile the lane: a guided-format montage (with or
+        # without a recorded voiceover) and a narrated edit WITH its voiceover recorded. A
+        # narrated item without one is self-narration (Talking's beats own that edit), and
+        # Talking itself never advertises it.
+        timed_format_ok = normalized_format in GUIDED_EDIT_FORMATS or (
+            normalized_format in NARRATED_EDIT_FORMATS
+            and has_voiceover
+            and capabilities.get(
+                f"phone_format:{normalized_format}", _unavailable("x", "x")
+            ).available
+        )
+        if phone_source_media_ids is None:
+            capabilities[CAPABILITY_TIMED_CARDS] = _unavailable(
+                "phone_only", "small cards at an exact time render on the iPhone only"
+            )
+        elif not (phone_on and timed_format_ok):
+            capabilities[CAPABILITY_TIMED_CARDS] = _unavailable(
+                "phone_timed_cards_format",
+                "small cards at an exact time are only available on an iPhone montage or "
+                "voiceover edit",
+            )
+        elif not phone_timed_cards_supported():
+            capabilities[CAPABILITY_TIMED_CARDS] = _unavailable(
+                "unsupported_on_phone",
+                "small cards at an exact time cannot render on this iPhone deployment yet",
+            )
+        else:
+            capabilities[CAPABILITY_TIMED_CARDS] = _available()
     if has_voiceover and not runs_guided_voiceover:
         # KRI-598: runtime v2 downgraded every guided_voiceover_v1 strategy to the native
         # edit, losing what the contract carried (prod thread f77a5c16 lost a photo beat).
@@ -1250,6 +1305,15 @@ def _phone_audio_mix_verified() -> bool:
     return "audioMix" in settings.phone_render_verified_features
 
 
+def phone_talking_title_lane_open(manifest: ResolvedCreatorManifest) -> bool:
+    """KRI-467: a phone Talking edit draws its opening title through its text lane
+    (`phone_subtitled_title`). A cloud Talking edit has no title lane, and
+    `PHONE_SUBTITLED_TITLE_ENABLED=false` closes it."""
+
+    phone = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
+    return bool(phone is not None and phone.available and phone_subtitled_title_supported())
+
+
 def ending_clip_problem(
     manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
 ) -> str | None:
@@ -1279,6 +1343,64 @@ def ending_clip_candidates(manifest: ResolvedCreatorManifest) -> list[CreatorMed
     if len(own) >= 2 and phone_talking_multi_clip_supported():
         found = [*found, *own]
     return found
+
+
+def _repair_creator_timed_cards(
+    manifest: ResolvedCreatorManifest, strategy: CreativeStrategy
+) -> tuple[CreativeStrategy, list[str]]:
+    """Repair (never reject) `timed_cards` against the live manifest, the same shape
+    `_repair_creator_reaction_beats` uses.
+
+    (a) the `timed_cards` capability is absent/unavailable -> drop them all with one plain
+    notice (`TIMED_CARDS_UNAVAILABLE_NOTICE`). (b) every `visual_id` resolves (id or label)
+    to an owned Visuals IMAGE -- or a Visuals VIDEO where the device draws video cards
+    (`phone_timed_video_cards_supported()`) -- and is canonicalised to the manifest id; an
+    unresolved one is dropped, named by the creator's own words and time. (c) a `clip_id`
+    anchor resolves (id or label) to one of the project's own clips, canonicalised; an
+    unresolved one is dropped with a notice. The worker grounds the survivors.
+    """
+
+    cards = strategy.timed_cards
+    if not cards:
+        return strategy, []
+    capability = manifest.capabilities.get(CAPABILITY_TIMED_CARDS)
+    if capability is None or not capability.available:
+        return strategy.model_copy(update={"timed_cards": None}), [TIMED_CARDS_UNAVAILABLE_NOTICE]
+    videos_allowed = phone_timed_video_cards_supported()
+    own_clips = [
+        media
+        for media in manifest.media
+        if media.kind == "video" and not media.media_id.startswith("asset-")
+    ]
+    notices: list[str] = []
+    kept = []
+    for card in cards:
+        image = resolve_creator_image_media_ref(manifest, card.visual_id)
+        video = (
+            resolve_creator_visual_video_media_ref(manifest, card.visual_id)
+            if image is None
+            else None
+        )
+        if image is None and video is None:
+            notices.append(TIMED_CARD_VISUAL_NOT_FOUND_NOTICE)
+            continue
+        if image is None and not videos_allowed:
+            notices.append(TIMED_VIDEO_CARD_UNAVAILABLE_NOTICE)
+            continue
+        resolved = image if image is not None else video
+        updates: dict[str, object] = {"visual_id": resolved.media_id}
+        if card.label is None and resolved.label:
+            updates["label"] = resolved.label
+        if card.clip_id is not None:
+            clip = _match_owned_media_ref(own_clips, card.clip_id)
+            if clip is None:
+                notices.append(
+                    "Couldn't find the clip the small card should follow; left that card out."
+                )
+                continue
+            updates["clip_id"] = clip.media_id
+        kept.append(card.model_copy(update=updates))
+    return strategy.model_copy(update={"timed_cards": kept or None}), notices
 
 
 def _repair_creator_ending_clip(
@@ -1389,6 +1511,10 @@ def compile_strategy_to_plan(
     # the dispatched strategy is the repaired one.
     strategy, ending_notices = _repair_creator_ending_clip(manifest, strategy)
     shape_notices = [*shape_notices, *ending_notices]
+    # Exact-timed small cards: the same entry, so the dispatched strategy is the repaired one
+    # and the receipts judge exactly what the worker will ground.
+    strategy, timed_notices = _repair_creator_timed_cards(manifest, strategy)
+    shape_notices = [*shape_notices, *timed_notices]
     # KRI-374: validate/repair the uploaded-song fields. A no-op for every
     # strategy that is not `audio_strategy="user_song"`.
     try:
@@ -1476,15 +1602,12 @@ def compile_strategy_to_plan(
                 }
             )
     phone_capability = manifest.capabilities.get(CAPABILITY_PHONE_SOURCE_AUDIO)
-    # KRI-467: a phone Talking edit draws the title through its text lane
-    # (`phone_subtitled_title`); `PHONE_SUBTITLED_TITLE_ENABLED=false` restores
-    # the refusal below.
+    # KRI-467: a phone Talking edit draws the title through its text lane;
+    # `PHONE_SUBTITLED_TITLE_ENABLED=false` restores the refusal below.
     phone_talking_title = bool(
         strategy.opening_title
         and strategy.edit_format == "subtitled"
-        and phone_capability is not None
-        and phone_capability.available
-        and phone_subtitled_title_supported()
+        and phone_talking_title_lane_open(manifest)
     )
     if strategy.opening_title and strategy.edit_format == "subtitled" and not phone_talking_title:
         # Caption-owned cloud subtitled edits still do not render a hero intro.
@@ -1781,9 +1904,14 @@ build_creator_manifest = resolve_creator_manifest
 repair_creator_reaction_beats = _repair_creator_reaction_beats
 # ... and the ending clip (KRI-841), judged by the same checks.
 repair_creator_ending_clip = _repair_creator_ending_clip
+# ... and the exact-timed small cards, judged by the same checks.
+repair_creator_timed_cards = _repair_creator_timed_cards
 
 
 __all__ = [
+    "CAPABILITY_TIMED_CARDS",
+    "TIMED_CARDS_UNAVAILABLE_NOTICE",
+    "repair_creator_timed_cards",
     "CAPABILITY_USER_SONG",
     "CAPABILITY_DISPATCH_RENDER",
     "CAPABILITY_CAPTION_STYLE",
@@ -1805,6 +1933,7 @@ __all__ = [
     "ending_clip_candidates",
     "ending_clip_problem",
     "normalize_creator_strategy_media",
+    "phone_talking_title_lane_open",
     "repair_creator_ending_clip",
     "repair_creator_reaction_beats",
     "resolve_creator_image_media_ref",

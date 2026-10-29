@@ -1837,3 +1837,411 @@ def test_speakers_and_cutaways_read_back_for_an_editor_save():
     assert recompiled.model_dump_json() == recipe.model_dump_json()
     single = compile_phone_subtitled_plan((first,), caption_cues=_CUES)
     assert additional_speakers_from_recipe(single, (first,)) == ()
+
+
+# --- output_orientation="landscape": a 1920x1080 Talking edit ----------------
+
+_LANDSCAPE = (1920, 1080)
+
+_LONG_CUES = [
+    {
+        "text": "So here is the thing nobody tells you about starting a sourdough "
+        "starter in a cold kitchen in the middle of winter",
+        "start_s": 0.0,
+        "end_s": 4.0,
+    },
+    {"text": "welcome back", "start_s": 4.0, "end_s": 5.0},
+]
+
+
+def _landscape(bindings, **kwargs):
+    return compile_phone_subtitled_plan(bindings, output_orientation="landscape", **kwargs)
+
+
+def _text_ink_boxes(recipe, *, title_font_family: str | None = None):
+    """(layer, ink box) for every text run, measured the way the device draws it."""
+    from app.pipeline import text_overlay_skia as cloud
+    from app.pipeline.phone_captions import CAPTION_FONT_FAMILY, caption_ink_box
+    from app.pipeline.phone_subtitled_plan import TEXT_LAYER_PREFIX
+
+    boxes = []
+    for layer in recipe.text_layers:
+        family = (
+            title_font_family
+            if layer.id.startswith(TEXT_LAYER_PREFIX) and title_font_family
+            else CAPTION_FONT_FAMILY
+        )
+        typeface = cloud._resolve_typeface_for_overlay({"font_family": family}).typeface
+        for run in layer.runs:
+            ink = caption_ink_box(run, typeface)
+            assert ink is not None
+            boxes.append((layer, ink))
+    return boxes
+
+
+def _assert_inside(box, width, height, what):
+    left, top, right, bottom = box
+    assert 0 <= left and 0 <= top, f"{what} leaves the frame: {box}"
+    assert right <= width and bottom <= height, f"{what} leaves the frame: {box}"
+
+
+def test_landscape_recipe_is_a_1920x1080_canvas():
+    recipe = _landscape((_binding(width=1920, height=1080),), caption_cues=_CUES)
+    assert (recipe.canvas.width, recipe.canvas.height) == _LANDSCAPE
+    assert all(c.transform.scale == 1 for c in _speaker_clips(recipe))
+
+
+@pytest.mark.parametrize("face_fill", [None, 200.0], ids=["fit-only", "fit-and-face-fill"])
+@pytest.mark.parametrize(
+    "dims",
+    [
+        {"width": 1440, "height": 1080},
+        {"width": 1080, "height": 1920},
+        {"width": 1920, "height": 1080},
+    ],
+    ids=["4x3", "9x16", "16x9"],
+)
+def test_landscape_forces_fill_even_for_a_fit_request(dims, face_fill):
+    # 4:3 and 9:16 sources would be pillarboxed / letterboxed by "fit"; a
+    # landscape canvas never has bars.
+    recipe = _landscape(
+        (_binding(**dims),),
+        caption_cues=_CUES,
+        landscape_fit="fit",
+        speaker_position_x=face_fill,
+    )
+    for clip in _speaker_clips(recipe):
+        assert clip.transform.scale == 1
+        assert clip.transform.position_x == 0 and clip.transform.position_y == 0
+    assert landscape_fit_from_recipe(recipe) == "fill"
+
+
+@pytest.mark.parametrize("dims", [(1920, 1080), (3840, 1646)], ids=["16x9", "21x9"])
+def test_landscape_ignores_the_face_fill_shift(dims):
+    width, height = dims
+    shifted = _landscape(
+        (_binding(width=width, height=height),), caption_cues=_CUES, speaker_position_x=240.0
+    )
+    plain = _landscape((_binding(width=width, height=height),), caption_cues=_CUES)
+    assert shifted.model_dump_json() == plain.model_dump_json()
+    assert all(c.transform.position_x == 0 for c in _speaker_clips(shifted))
+
+
+def test_landscape_additional_speakers_are_never_letterboxed():
+    first = _binding("take1", width=1920, height=1080, duration_s=10.0)
+    second = _binding("take2", width=1080, height=1920, duration_s=6.0)
+    recipe = _landscape(
+        (first,), caption_cues=_CUES, additional_speakers=(second,), landscape_fit="fit"
+    )
+    assert [c.source_asset_id for c in _speaker_clips(recipe)] == ["take1", "take2"]
+    assert all(c.transform.scale == 1 for c in _speaker_clips(recipe))
+
+
+@pytest.mark.parametrize("style", ["sentence", "word"])
+@pytest.mark.parametrize("cues", [_CUES, _LONG_CUES], ids=["short", "long"])
+def test_landscape_captions_sit_inside_the_wide_frame_and_below_mid_screen(style, cues):
+    recipe = _landscape(
+        (_binding(width=1920, height=1080, duration_s=12.0),),
+        caption_cues=cues,
+        caption_style=style,
+    )
+    boxes = _text_ink_boxes(recipe)
+    assert boxes
+    for layer, box in boxes:
+        _assert_inside(box, *_LANDSCAPE, layer.id)
+        # Captions compile against the 1080-tall frame (fraction 0.8 of the
+        # height), never the 1920-tall one -- that would put them at y=1536.
+        assert box[1] > 0.5 * _LANDSCAPE[1]
+        assert layer.anchor_y <= _LANDSCAPE[1]
+        assert layer.anchor_x == pytest.approx(_LANDSCAPE[0] / 2)
+
+
+def test_landscape_left_and_right_aligned_captions_stay_inside_the_frame():
+    from app.pipeline.phone_captions import PhoneCaptionLook
+
+    for anchor in ("left", "right"):
+        recipe = _landscape(
+            (_binding(width=1920, height=1080, duration_s=12.0),),
+            caption_cues=_LONG_CUES,
+            caption_look=PhoneCaptionLook(
+                text_anchor=anchor, position_x_frac=80 / 1080 if anchor == "left" else 1 - 80 / 1080
+            ),
+        )
+        for layer, box in _text_ink_boxes(recipe):
+            _assert_inside(box, *_LANDSCAPE, f"{anchor} {layer.id}")
+
+
+def test_landscape_title_and_closing_text_lane_stay_inside_the_frame(monkeypatch):
+    from app.kria.recipes import Canvas
+    from app.pipeline.phone_subtitled_plan import TEXT_LAYER_PREFIX
+    from app.pipeline.phone_subtitled_title import talking_title_element
+
+    canvas = Canvas(width=1920, height=1080)
+    title = talking_title_element(
+        "3 sourdough mistakes you are making right now",
+        duration_s=2.0,
+        first_word_end_s=None,
+        timeline_duration_s=12.0,
+        canvas=canvas,
+    )
+    assert title is not None
+    closing = {
+        **title,
+        "id": "closing",
+        "text": "Follow for more",
+        "start_s": 9.0,
+        "end_s": 12.0,
+        "y_frac": 0.5,
+    }
+    recipe = _landscape(
+        (_binding(width=1920, height=1080, duration_s=12.0),),
+        caption_cues=_CUES,
+        text_elements=[title, closing],
+    )
+    texts = [layer for layer in recipe.text_layers if layer.id.startswith(TEXT_LAYER_PREFIX)]
+    assert len(texts) == 2
+    for layer, box in _text_ink_boxes(recipe, title_font_family=title["font_family"]):
+        _assert_inside(box, *_LANDSCAPE, layer.id)
+    # Laid out against the wide frame: centred on 1920/2, y as a fraction of 1080.
+    first, second = texts
+    assert first.anchor_x == pytest.approx(_LANDSCAPE[0] / 2)
+    assert first.anchor_y == pytest.approx(title["y_frac"] * _LANDSCAPE[1])
+    assert second.anchor_y == pytest.approx(0.5 * _LANDSCAPE[1])
+
+
+def test_landscape_text_lane_defaults_pass_pilot_validation(monkeypatch):
+    from app.kria.recipes import Canvas
+    from app.pipeline.phone_subtitled_title import talking_title_element
+
+    title = talking_title_element(
+        "Sourdough",
+        duration_s=2.0,
+        first_word_end_s=None,
+        timeline_duration_s=12.0,
+        canvas=Canvas(width=1920, height=1080),
+    )
+    recipe = _landscape(
+        (_binding(width=1920, height=1080, duration_s=12.0),),
+        caption_cues=_CUES,
+        text_elements=[title],
+    )
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def _pip_box(clip, aspect_h_over_w):
+    placement = clip.visual_placement
+    width = placement.width_fraction * _LANDSCAPE[0]
+    height = width * aspect_h_over_w
+    center_x = placement.x_fraction * _LANDSCAPE[0]
+    center_y = placement.y_fraction * _LANDSCAPE[1]
+    return (
+        center_x - width / 2,
+        center_y - height / 2,
+        center_x + width / 2,
+        center_y + height / 2,
+    )
+
+
+@pytest.mark.parametrize("scale", [0.1, 0.35, 0.6, 1.0])
+@pytest.mark.parametrize("x_frac", [0.0, 0.5, 1.0])
+@pytest.mark.parametrize("y_frac", [0.0, 0.4, 1.0])
+def test_landscape_photo_cards_stay_inside_the_frame(scale, x_frac, y_frac):
+    recipe = _landscape(
+        (_binding(width=1920, height=1080, duration_s=10.0),),
+        caption_cues=[],
+        visuals=(_photo_visual(),),
+        lanes=PhoneSubtitledLanes(
+            overlays=[_overlay_card(scale=scale, x_frac=x_frac, y_frac=y_frac)]
+        ),
+    )
+    [clip] = next(t for t in recipe.tracks if t.id == "subtitled-overlays").clips
+    left, top, right, bottom = _pip_box(clip, 4 / 3)
+    tolerance = 1e-6
+    assert left >= -tolerance and top >= -tolerance
+    assert right <= _LANDSCAPE[0] + tolerance and bottom <= _LANDSCAPE[1] + tolerance
+
+
+@pytest.mark.parametrize("orientation_degrees", [0, 90])
+def test_landscape_video_cards_use_the_probed_displayed_aspect(orientation_degrees):
+    # 1920x1080 file flagged 90 degrees displays as 1080x1920 (aspect 16/9).
+    visual = _pool_video_visual(orientation_degrees=orientation_degrees)
+    aspect = 1920 / 1080 if orientation_degrees == 90 else 1080 / 1920
+    recipe = _landscape(
+        (_binding(width=1920, height=1080, duration_s=10.0),),
+        caption_cues=[],
+        visuals=(visual,),
+        lanes=PhoneSubtitledLanes(
+            overlays=[
+                _overlay_card(
+                    media_id=VIDEO_ID,
+                    gcs_path=VIDEO_PATH,
+                    generation="88",
+                    kind="video",
+                    scale=0.5,
+                    y_frac=0.55,
+                )
+            ]
+        ),
+    )
+    [clip] = next(t for t in recipe.tracks if t.id == "subtitled-overlays").clips
+    left, top, right, bottom = _pip_box(clip, aspect)
+    assert left >= -1e-6 and top >= -1e-6
+    assert right <= _LANDSCAPE[0] + 1e-6 and bottom <= _LANDSCAPE[1] + 1e-6
+    if orientation_degrees == 0:
+        # A wide video that already fits is not moved or resized.
+        assert clip.visual_placement.width_fraction == pytest.approx(0.5)
+        assert clip.visual_placement.y_fraction == pytest.approx(0.55)
+    else:
+        # A tall one is shrunk to the frame height rather than clipped.
+        assert clip.visual_placement.width_fraction < 0.5
+        assert bottom - top == pytest.approx(_LANDSCAPE[1])
+
+
+def test_landscape_card_that_already_fits_is_not_touched():
+    recipe = _landscape(
+        (_binding(width=1920, height=1080, duration_s=10.0),),
+        caption_cues=[],
+        visuals=(_photo_visual(),),
+        lanes=PhoneSubtitledLanes(overlays=[_overlay_card(scale=0.2, y_frac=0.5)]),
+    )
+    [clip] = next(t for t in recipe.tracks if t.id == "subtitled-overlays").clips
+    placement = clip.visual_placement
+    assert placement.width_fraction == pytest.approx(0.2)
+    assert placement.x_fraction == pytest.approx(0.5)
+    assert placement.y_fraction == pytest.approx(0.5)
+
+
+def test_landscape_cutaways_fullscreen_cards_ending_and_sfx_compile(monkeypatch):
+    speaker = _binding("speaker", width=1920, height=1080, duration_s=10.0)
+    cutaway = _cutaway("broll", 1.0, 2.5)  # portrait b-roll: cover-cropped by the engine
+    fullscreen = _overlay_card(id="full", display_mode="fullscreen", start_s=4.0, end_s=6.0)
+    ending = SubtitledEndingClip(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    recipe = _landscape(
+        (speaker,),
+        caption_cues=_CUES,
+        visuals=(_photo_visual(), _pool_video_visual(duration_s=6.0)),
+        cutaways=(cutaway,),
+        lanes=PhoneSubtitledLanes(
+            overlays=[fullscreen, _overlay_card(id="pip", start_s=7.0, end_s=9.0)],
+            sound_effects=[_resolved_sfx()],
+            ending_clip=ending,
+        ),
+    )
+    assert (recipe.canvas.width, recipe.canvas.height) == _LANDSCAPE
+    ids = {t.id for t in recipe.tracks}
+    assert {
+        "subtitled",
+        CUTAWAY_TRACK_ID,
+        "subtitled-fullscreen",
+        "subtitled-overlays",
+        "sfx",
+    } <= ids
+    # Cover-fill placements carry no width, so the engine fills the wide frame.
+    for track_id in (CUTAWAY_TRACK_ID, "subtitled-fullscreen"):
+        [clip] = next(t for t in recipe.tracks if t.id == track_id).clips
+        assert clip.visual_placement.width_fraction is None
+    main = next(t for t in recipe.tracks if t.id == "subtitled")
+    assert [c.id for c in main.clips] == ["clip-0", "clip-ending"]
+    assert all(c.transform.scale == 1 for c in main.clips)
+    assert recipe.duration == pytest.approx(16.0)
+    monkeypatch.setattr(settings, "phone_editor_media_enabled", True)
+    monkeypatch.setattr(
+        settings, "phone_render_verified_features", list(recipe.required_capabilities)
+    )
+    validate_phone_pilot_recipe(recipe)
+    assert EditRecipeV2.model_validate_json(recipe.model_dump_json()) == recipe
+
+
+def test_landscape_changes_only_the_canvas_for_required_capabilities():
+    bindings = (_binding(width=1920, height=1080, duration_s=10.0),)
+    kwargs = {
+        "caption_cues": _CUES,
+        "visuals": (_photo_visual(),),
+        "lanes": PhoneSubtitledLanes(overlays=[_overlay_card()]),
+    }
+    portrait = compile_phone_subtitled_plan(bindings, **kwargs)
+    landscape = _landscape(bindings, **kwargs)
+    assert landscape.required_capabilities == portrait.required_capabilities
+    assert "local1080Export" in landscape.required_capabilities
+
+
+def test_unknown_output_orientation_is_rejected():
+    with pytest.raises(ValueError, match="output_orientation"):
+        compile_phone_subtitled_plan((_binding(),), caption_cues=_CUES, output_orientation="square")
+
+
+def test_portrait_output_is_byte_identical_with_or_without_the_orientation_kwarg():
+    from app.kria.recipes import Canvas
+    from app.pipeline.phone_subtitled_title import talking_title_element
+
+    title = talking_title_element(
+        "3 sourdough mistakes",
+        duration_s=2.0,
+        first_word_end_s=None,
+        timeline_duration_s=10.0,
+        canvas=Canvas(width=1080, height=1920),
+    )
+    speaker = _binding("speaker", width=1920, height=1080, duration_s=10.0)
+    ending = SubtitledEndingClip(media_id=VIDEO_ID, gcs_path=VIDEO_PATH, generation="88")
+    kwargs = {
+        "caption_cues": _CUES,
+        "visuals": (_photo_visual(), _pool_video_visual(duration_s=6.0)),
+        "cutaways": (_cutaway("broll", 1.0, 2.5),),
+        "lanes": PhoneSubtitledLanes(
+            overlays=[_overlay_card(scale=0.9, y_frac=0.0)],
+            sound_effects=[_resolved_sfx()],
+            ending_clip=ending,
+        ),
+        "text_elements": [title],
+        "landscape_fit": "fit",
+        "speaker_position_x": 120.0,
+    }
+    base = compile_phone_subtitled_plan((speaker,), **kwargs)
+    explicit = compile_phone_subtitled_plan((speaker,), output_orientation="portrait", **kwargs)
+    assert explicit.model_dump() == base.model_dump()
+    assert explicit.model_dump_json() == base.model_dump_json()
+    assert (base.canvas.width, base.canvas.height) == (1080, 1920)
+    # The portrait card is placed exactly as the lane asked, no landscape clamp.
+    [clip] = next(t for t in base.tracks if t.id == "subtitled-overlays").clips
+    assert clip.visual_placement.width_fraction == pytest.approx(0.9)
+    assert clip.visual_placement.y_fraction == pytest.approx(0.0)
+
+
+def test_landscape_top_anchored_legacy_intro_is_measured_on_the_wide_canvas():
+    from app.kria.recipes import Canvas
+    from app.pipeline.phone_subtitled_title import talking_title_element
+    from app.pipeline.portable_text_layout import compile_text_overlay
+    from app.tasks.generative_build import _text_element_burn_dicts
+
+    canvas = Canvas(width=1920, height=1080)
+    title = talking_title_element(
+        "3 sourdough mistakes you keep making every single winter morning",
+        duration_s=2.0,
+        first_word_end_s=None,
+        timeline_duration_s=12.0,
+        canvas=canvas,
+    )
+    row = {
+        **title,
+        "alignment": "left",
+        "source_params": {"source": "opening_title", "top_anchored_burn": True},
+    }
+    variant = {"resolved_archetype": "subtitled", "text_elements": [row], "duration_s": 12.0}
+    [wide] = _text_element_burn_dicts({**variant, "orientation": "landscape"})
+    [tall] = _text_element_burn_dicts(variant)
+    # The legacy top y is restored from a block measured on the canvas it is drawn on.
+    assert wide["position_y_frac"] != pytest.approx(tall["position_y_frac"])
+    expected = compile_text_overlay(wide, layer_id="text-0", canvas=canvas)[0]
+
+    recipe = _landscape(
+        (_binding(width=1920, height=1080, duration_s=12.0),),
+        caption_cues=[],
+        text_elements=[row],
+    )
+    [layer] = recipe.text_layers
+    assert layer.anchor_y == pytest.approx(expected.anchor_y)
+    assert layer.anchor_x == pytest.approx(expected.anchor_x)

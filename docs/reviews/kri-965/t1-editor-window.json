@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "issue": "KRI-965",
+  "about": "Reviewed observations of the Don Julio walk-in T1 run (2026-10-26, thread F0F3D5FB, job ac91bb4f-fea6-4f9e-a429-67e8b8507f85, prod a2426885d): what the phone rendered vs what the creator watched and saved from the iPhone editor. Measured locally with ffprobe/ffmpeg on the run's two files and read from the job record (admin jobs/<id>/debug). No media, URLs or transcripts.",
+  "request": "Start at my question \"Parrilla Don Julio, what do you think?\" and end right after \"Nice!\" (kit T1_atakan_tail_take_talking/PROMPT.txt); speech cleanup off (off_v1).",
+  "take": {
+    "proxy_duration_s": 26.933,
+    "original_duration_s": 26.934
+  },
+  "job_record": {
+    "opening_cut": {"status": "applied", "quote": "what do you think?", "start_s": 16.05},
+    "end_cut": {"status": "applied", "quote": "Nice!", "end_s": 20.27},
+    "silence_cut_present": false,
+    "caption_cues_s": [[0.15, 0.69], [0.89, 1.77], [2.31, 2.89], [3.49, 3.97]],
+    "text_elements_s": {"Before the meat": [0.0, 1.27], "SUPER EXCITED": [2.31, 4.22]}
+  },
+  "phone_render": {
+    "file": "T1_result.mp4 (device render uploaded to GCS)",
+    "duration_s": 5.82,
+    "audio_duration_s": 4.22,
+    "observed": "opens on Atakan at the plaque saying the start line; captions on the words"
+  },
+  "creator_copy": {
+    "file": "T1_phone_output_whatsapp.mp4 (saved/shared from the iPhone editor)",
+    "duration_s": 28.533,
+    "audio_duration_s": 26.916,
+    "observed": "whole take from 0 s plus the 1.6 s outro; title, captions and SUPER EXCITED over the dining room at 0-4.2 s; at 16.3 s he speaks with no caption"
+  },
+  "expected_after_fix": {
+    "editor_kept_source_spans": "equal to the device recipe's keep segments (one span from just before the start line to just after the end line)",
+    "editor_plays_the_whole_take": false,
+    "no_sliver_after_the_end_line": "the original is ~1 ms longer than the proxy; the editor must not keep [proxy end, original end] as a second clip",
+    "reported_as_speech_cleanup": false
+  },
+  "local_take_window_check": {
+    "command": "python -m app.cli.verify_take_window --take <T1 take JSON: prod segments + kit whisper.cpp -l en words> --cleanup off --video T1_01_footage.mp4",
+    "verdict": "PASS",
+    "keep_segments_s": [[16.03, 20.35]],
+    "window_mp4_duration_s": 4.333,
+    "first_words": ["What", "do", "you", "think?"],
+    "last_words": ["Super", "excited.", "Nice."],
+    "editor_spans_before_fix_s": [[0.0, 26.934]],
+    "editor_spans_after_fix_s": [[16.03, 20.35]]
+  }
+}

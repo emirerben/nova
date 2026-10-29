@@ -62,6 +62,7 @@ struct RecipeTextLayer: @unchecked Sendable {
     var selectionBounds: ResolvedTextSelectionBounds? = nil
     var portable: PortableTextLayer? = nil
     var portableAnchor: CGPoint = .zero
+    var designed: NativeDesignedTextPainter? = nil
     var handwriting: NativeHandwritingPainter? = nil
     var discreteReveal: NativeDiscreteRevealPainter? = nil
     var smoothReveal: NativeSmoothRevealPainter? = nil
@@ -138,11 +139,15 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     let motionScenes: NativeMotionPainter?
     /// KRI-589 freehand drawings: painted last, above footage, motion, text and above-text media.
     let drawings: NativeDrawingStore?
+    /// Text behind people: one per composition (shared across the compositor instances the player,
+    /// exporter and image generator each create), present only when a text layer is flagged.
+    let subjectMatte: NativeSubjectMatte?
     let canvas: CGRect
     let transparentBackground: Bool
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false) {
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil) {
         self.transparentBackground = transparentBackground
         self.drawings = drawings
+        self.subjectMatte = subjectMatte
         self.cameraPulses = cameraPulses
         self.motionScenes = motionScenes
         self.timeRange = timeRange
@@ -156,6 +161,15 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
         guard let textStore else { return text.filter { time >= $0.start && time < $0.end } }
         return text.filter { $0.portable == nil && time >= $0.start && time < $0.end }
             + (try textStore.activeLayers(at: time))
+    }
+    /// The person mask for `scene` (the composited frame below the text), or nil when no active text layer
+    /// is flagged or the matte declines (nobody in frame, frame swallowed, unstable, segmenter error).
+    func subjectOcclusion(scene: CIImage, activeText: [RecipeTextLayer], time: Double) -> CIImage? {
+        guard let subjectMatte, activeText.contains(where: { $0.portable?.behindSubject == true }) else { return nil }
+        // Keyed by the primary clip(s) under this frame: a hard cut resets the temporal state (F6).
+        let key = layers.filter { $0.isPrimary && $0.trackID != nil && time >= $0.start && time < $0.end }
+            .map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
+        return subjectMatte.mask(for: scene, at: time, canvas: canvas, cutKey: key)
     }
 }
 
@@ -194,7 +208,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 do {
                     activeText = try instruction.activeText(at: time)
                 } catch { request.finish(with: error); return }
-                do { frame = try Self.paintText(activeText, over: frame, canvas: instruction.canvas, time: time) }
+                let occlusion = instruction.subjectOcclusion(scene: frame, activeText: activeText, time: time)
+                do { frame = try Self.paintText(activeText, over: frame, canvas: instruction.canvas, time: time, occlusion: occlusion) }
                 catch { request.finish(with: error); return }
                 for layer in instruction.layers where time >= layer.start && time < layer.end && layer.overlayAboveText {
                     do { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
@@ -269,7 +284,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         return frame
     }
 
-    static func paintText(_ texts: [RecipeTextLayer], over initial: CIImage, canvas: CGRect, time: Double) throws -> CIImage {
+    /// `occlusion`: the canvas-space person mask (1 = subject) for this frame; a layer with
+    /// `behindSubject` keeps its alpha only where the mask is 0 (`SubjectOcclusion.apply`). nil paints plain.
+    static func paintText(_ texts: [RecipeTextLayer], over initial: CIImage, canvas: CGRect, time: Double, occlusion: CIImage? = nil) throws -> CIImage {
         var frame = initial
         for text in texts {
             if let layer = text.portable {
@@ -279,7 +296,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                         frame = image.composited(over: frame).cropped(to: canvas)
                         continue
                     }
-                    let state = try layer.animationPhases?.sample(time: time - text.start, duration: text.end - text.start) ?? TextTransformTiming.sample(effect: PortableTextEffect(rawValue: layer.effect.rawValue)!,
+                    let word = text.singleWord?.window(localTime: time - text.start)
+                    let state = try layer.animationPhases?.sample(time: time - text.start - (word?.start ?? 0),
+                        duration: word.map { $0.end - $0.start } ?? text.end - text.start) ?? TextTransformTiming.sample(effect: PortableTextEffect(rawValue: layer.effect.rawValue)!,
                         text: layer.smoothReveal?.text ?? layer.discreteReveal?.text ?? layer.handwriting?.text ?? layer.runs.map(\.text).joined(separator: "\n"), localTime: time - text.start,
                         duration: text.end - text.start, motion: layer.motion, fade: layer.fade)
                     // The bitmap already contains rotation. Cloud translation occurs in
@@ -298,6 +317,7 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                     if let painter = text.dissolve { image = try painter.image(source: text.image, localTime: time - text.start, duration: text.end - text.start) }
                     if let painter = text.staggered { image = try painter.image(localTime: time - text.start, settled: text.image) }
                     if let painter = text.smoothReveal { image = try painter.image(localTime: time - text.start, settled: text.image) }
+                    if let painter = text.designed { image = try painter.image(localTime: time - text.start, settled: image) }
                     if state.blurPx > 0.01 { image = image.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: state.blurPx]) }
                     if let bounds = layer.revealBounds, state.revealProgress < 1 {
                         guard state.revealProgress > 0 else { continue }
@@ -313,7 +333,11 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                             kCIInputMaskImageKey: mask
                         ]).cropped(to: image.extent)
                     }
-                    frame = opacity(image.transformed(by: transform), state.alpha).composited(over: frame)
+                    var placed = image.transformed(by: transform)
+                    // Text behind people: the multiply happens AFTER placement, in canvas space, where the
+                    // mask lives (F1). No mask this frame = plain text, never a missing layer (F3, F13).
+                    if layer.behindSubject == true, let occlusion { placed = SubjectOcclusion.apply(to: placed, mask: occlusion) }
+                    frame = opacity(placed, state.alpha).composited(over: frame)
                 } catch { throw error }
                 continue
             }

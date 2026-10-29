@@ -2,25 +2,30 @@
 
 import uuid
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import CurrentUser, NativeClient
+from app.auth import CurrentUser, KriaClientProtocol, NativeClient
 from app.config import settings
 from app.database import get_db
 from app.schemas.media_collections import (
     CollectionIndexBody,
     CollectionIndexOut,
+    CollectionItemsOut,
     CollectionOut,
     CollectionStoriesOut,
     CollectionStoryOut,
     CollectionWrite,
+    GroupDeleteBody,
+    GroupDeleteOut,
     MomentInspectionBody,
     MomentInspectionOut,
     MomentSearchOut,
     SavedCollectionStoriesOut,
     SemanticSearchBody,
     StoryCorrectionBody,
+    StoryDeletedOut,
     StoryGenerationBody,
     StoryReviewBody,
     StorySelectionBody,
@@ -35,6 +40,25 @@ def require_collections(native_client: NativeClient, user: CurrentUser):
     if not native_client:
         raise HTTPException(403, "Collections are available in the iOS app")
 
+
+def _asks_open_questions(client_protocol: int | None) -> bool:
+    return (
+        settings.camera_roll_story_extras_enabled
+        and client_protocol is not None
+        and client_protocol >= settings.open_questions_min_client_protocol
+    )
+
+
+def _for_client(value, client_protocol: int | None):
+    """Builds that predate the question UI never see the list (they could not answer it)."""
+    if not _asks_open_questions(client_protocol):
+        for story in getattr(value, "stories", [value]):
+            if story.content_plan is not None:
+                story.content_plan.open_questions = []
+    return value
+
+
+log = structlog.get_logger()
 
 router = APIRouter(
     prefix="/me/media-collections",
@@ -58,6 +82,29 @@ async def read(identifier: uuid.UUID, user: CurrentUser, db: AsyncSession = Depe
     row = await collections.owned_collection(db, user.id, identifier)
     available = await collections.eligible_sources(db, user.id, collections.members(row))
     return collections.collection_out(row, available)
+
+
+@router.delete("/{identifier}/groups", response_model=GroupDeleteOut)
+async def delete_group(
+    identifier: uuid.UUID,
+    body: GroupDeleteBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove one event's members and soft-delete its ideas; other events are untouched."""
+    from app.services.media_collection_groups import delete_group as delete
+
+    return await delete(db, user.id, identifier, body)
+
+
+@router.get("/{identifier}/items", response_model=CollectionItemsOut)
+async def items(identifier: uuid.UUID, user: CurrentUser, db: AsyncSession = Depends(get_db)):
+    """Per-member progress (queued -> analyzing -> ready, or an honest failure) for polling."""
+    from app.services.media_collection_items import collection_items
+
+    return await collection_items(
+        db, user.id, await collections.owned_collection(db, user.id, identifier)
+    )
 
 
 @router.post("/{identifier}/index", response_model=CollectionIndexOut)
@@ -146,11 +193,16 @@ async def saved_stories(
     user: CurrentUser,
     expected_revision: int = Query(ge=1),
     story_ids: list[uuid.UUID] | None = Query(default=None, max_length=20),
+    group: str | None = Query(default=None, min_length=1, max_length=80),
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import read_saved_stories
 
-    return await read_saved_stories(db, user.id, identifier, expected_revision, story_ids)
+    return _for_client(
+        await read_saved_stories(db, user.id, identifier, expected_revision, story_ids, group),
+        client_protocol,
+    )
 
 
 @router.post("/{identifier}/stories", response_model=CollectionStoriesOut)
@@ -158,11 +210,37 @@ async def stories(
     identifier: uuid.UUID,
     body: StoryGenerationBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import generate_stories
 
-    return await generate_stories(db, user.id, identifier, body)
+    return _for_client(await generate_stories(db, user.id, identifier, body), client_protocol)
+
+
+@router.delete("/{identifier}/stories/{story_id}", response_model=StoryDeletedOut)
+async def delete_story(
+    identifier: uuid.UUID,
+    story_id: uuid.UUID,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.media_collection_stories import delete_story as delete
+
+    return await delete(db, user.id, identifier, story_id)
+
+
+@router.post("/{identifier}/stories/{story_id}/restore", response_model=CollectionStoryOut)
+async def restore_story(
+    identifier: uuid.UUID,
+    story_id: uuid.UUID,
+    user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.media_collection_stories import restore_story as restore
+
+    return _for_client(await restore(db, user.id, identifier, story_id), client_protocol)
 
 
 @router.patch("/{identifier}/stories/{story_id}", response_model=CollectionStoryOut)
@@ -171,11 +249,12 @@ async def correct_story(
     story_id: uuid.UUID,
     body: StoryCorrectionBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import correct_story as correct
 
-    return await correct(db, user.id, identifier, story_id, body)
+    return _for_client(await correct(db, user.id, identifier, story_id, body), client_protocol)
 
 
 @router.post("/{identifier}/stories/{story_id}/reject", response_model=CollectionStoryOut)
@@ -184,11 +263,12 @@ async def reject_story(
     story_id: uuid.UUID,
     body: StoryReviewBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import reject_story as reject
 
-    return await reject(db, user.id, identifier, story_id, body)
+    return _for_client(await reject(db, user.id, identifier, story_id, body), client_protocol)
 
 
 @router.post("/{identifier}/stories/{story_id}/expose", response_model=CollectionStoryOut)
@@ -197,11 +277,12 @@ async def expose_story(
     story_id: uuid.UUID,
     body: StoryReviewBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import expose_story as expose
 
-    return await expose(db, user.id, identifier, story_id, body)
+    return _for_client(await expose(db, user.id, identifier, story_id, body), client_protocol)
 
 
 @router.post("/{identifier}/stories/{story_id}/select")
@@ -210,12 +291,30 @@ async def select_story(
     story_id: uuid.UUID,
     body: StorySelectionBody,
     user: CurrentUser,
+    client_protocol: KriaClientProtocol = None,
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.media_collection_stories import select_story as select
     from app.tasks.kria_runtime import run_kria_turn
 
-    accepted, publish = await select(db, user.id, identifier, story_id, body)
+    try:
+        accepted, publish = await select(
+            db,
+            user.id,
+            identifier,
+            story_id,
+            body,
+            gate_open_questions=_asks_open_questions(client_protocol),
+        )
+    except HTTPException as error:
+        if error.status_code == 409:
+            log.warning(
+                "story_select_conflict",
+                collection_id=str(identifier),
+                story_id=str(story_id),
+                detail=error.detail,
+            )
+        raise
     if publish:
         try:
             run_kria_turn.delay(accepted.turn_id)

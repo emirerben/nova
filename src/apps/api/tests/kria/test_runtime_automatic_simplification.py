@@ -249,8 +249,8 @@ async def _real_unsupported_title_plan(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_real_policy_omitted_title_binds_db_brief_and_keeps_captions(monkeypatch):
-    """A policy-stripped title is waived only when its exact text is in the brief."""
+async def test_real_policy_omitted_title_is_asked_about_and_stays_in_the_brief(monkeypatch):
+    """KRI-1009: a policy-stripped title the creator quoted is never waived unasked."""
     planned = await _real_unsupported_title_plan(monkeypatch)
     assert planned.plan.mode == "act"
     assert planned.plan.intents[0].arguments["strategy"].get("opening_title") is None
@@ -309,20 +309,19 @@ async def test_real_policy_omitted_title_binds_db_brief_and_keeps_captions(monke
         thread_id,
         [('Use title "Start" with captions.', planned)],
     )
-    assert reply[0] == "awaiting_approval", reply
-    assert 'Left out: "Start" (The selected renderer cannot draw this requested text.)' in reply[2]
-    assert "Should I" not in reply[2]
+    assert reply[:2] == ("completed", "assistant_response"), reply
+    assert '"Start": This kind of edit can\'t show this text yet.' in reply[2]
+    assert 'The simpler version leaves out: "Start".' in reply[2]
+    assert "Left out" not in reply[2]
     with sync_session() as db:
         brief = load_latest_brief_sync(db, thread_id)
-        assert [requirement.text() for requirement in brief.live()] == ["captions"]
-        draft = db.execute(
-            select(CreatorEditDraft).where(
-                CreatorEditDraft.thread_id == thread_id, CreatorEditDraft.is_head.is_(True)
-            )
-        ).scalar_one()
-        readiness = draft.snapshot_json["brief_coverage"]["approval_readiness"]
-        assert readiness["ready"] is True
-        assert [row["requirement_id"] for row in readiness["requirements"]] == ["r2"]
+        assert [requirement.text() for requirement in brief.live()] == ['"Start"', "captions"]
+        assert (
+            db.execute(
+                select(CreatorAgentApproval).where(CreatorAgentApproval.thread_id == thread_id)
+            ).scalar_one_or_none()
+            is None
+        )
 
 
 @pytest.mark.asyncio
@@ -392,8 +391,9 @@ async def test_first_turn_auto_omits_unsupported_text_and_pins_supported_title(m
 
 
 @pytest.mark.asyncio
-async def test_first_turn_automatic_omission_reaches_native_phone_recipe(monkeypatch):
-    """The no-follow-up recovery path uses the same approval and native recipe guards."""
+async def test_quoted_text_omission_asks_then_reaches_native_phone_recipe(monkeypatch):
+    """The real omission rule asks about quoted text first (KRI-1009); the agreed simpler
+    version then uses the same approval and native recipe guards."""
     await _exercise_phone_approval_journey(monkeypatch, automatic=True)
 
 

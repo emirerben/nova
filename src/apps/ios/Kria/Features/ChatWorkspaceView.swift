@@ -11,9 +11,10 @@ struct ChatWorkspaceView: View {
     @State private var drawerMounted = false
     @State private var showsGallery = false
     @State private var showsAccount = false
-    @State private var showsCollections = false
     @State private var collectionsEnabled = false
-    @State private var collectionCacheOnlyRequired = true
+    @State private var collectionCacheOnlyRequired = false
+    /// Kept for the life of the workspace so uploads and analysis carry on while the creator is in a chat.
+    @State private var cameraRoll: CameraRollSurfaceModel?
     @State private var projectActions = ProjectActionsPresenter()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -29,7 +30,7 @@ struct ChatWorkspaceView: View {
                 close: { setDrawerOpen(false) },
                 openGallery: { setDrawerOpen(false); Perf.begin("gallery.open"); showsGallery = true },
                 openAccount: { setDrawerOpen(false); showsAccount = true },
-                openCollections: collectionsEnabled ? { setDrawerOpen(false); showsCollections = true } : nil
+                openCollections: collectionsEnabled ? { openCameraRoll() } : nil
             ),
             content: workspace
         )
@@ -45,7 +46,7 @@ struct ChatWorkspaceView: View {
         .task {
             let collectionCapabilities = try? await model.api.creationCapabilities()
             collectionsEnabled = collectionCapabilities?.mediaCollections == true
-            collectionCacheOnlyRequired = collectionCapabilities?.mediaCollectionCacheOnly ?? true
+            collectionCacheOnlyRequired = collectionCapabilities?.mediaCollectionCacheOnly ?? false
             Perf.mark("workspace.task")
             await model.openWorkspace(preferredProjectID: UUID(uuidString: lastProjectID))
             Perf.mark("workspace.opened")
@@ -75,17 +76,35 @@ struct ChatWorkspaceView: View {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showsCollections) { CameraRollCollectionView(api: model.api, cacheOnlyRequired: collectionCacheOnlyRequired, onSelected: { thread in
-            await model.loadProjects()
-            model.selectProject(thread.summary)
-            showsCollections = false
-        }) }
         .sheet(isPresented: $showsAccount) {
             NavigationStack { AccountView() }
         }
     }
 
-    private var workspace: some View {
+    private func openCameraRoll() {
+        if cameraRoll == nil {
+            cameraRoll = CameraRollSurfaceModel.make(api: model.api, cacheOnlyRequired: collectionCacheOnlyRequired)
+        }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { model.openCameraRoll() }
+        setDrawerOpen(false)
+    }
+
+    /// The camera roll sits outside the chat's NavigationStack. It has its own, and a nested stack pushes its pages
+    /// onto the outer one, where they outlive the switch to a chat.
+    @ViewBuilder private var workspace: some View {
+        if model.showsCameraRoll, let cameraRoll {
+            WorkspaceCrossfade(dismiss: {}) { _ in
+                CameraRollSurfaceView(model: cameraRoll, openProjects: { setDrawerOpen(!showsProjects) }, onSelected: { thread in
+                    await model.loadProjects()
+                    return model.selectProject(thread.summary)
+                })
+            }
+        } else {
+            chatWorkspace
+        }
+    }
+
+    private var chatWorkspace: some View {
         NavigationStack {
             Group {
                 if let project = model.selectedProject {
@@ -192,6 +211,41 @@ private final class DrawerGestureTracking {
     }
 
     func reset() { previous = nil; latest = nil }
+
+    /// Whether a touch began on something that keeps its own sideways drag: a horizontal scroller (a `ScrollView` or
+    /// a paging `TabView`) or the handles of an active text selection. Asking UIKit means a new row or field works
+    /// without remembering to opt out.
+    @MainActor static func startsOnOwnDrag(at point: CGPoint) -> Bool {
+        let windows = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows }.flatMap { $0 }
+        guard let window = windows.first(where: { $0.isKeyWindow }) else { return false }
+        if selectionHandlesContain(point, in: window) { return true }
+        guard var view = window.hitTest(point, with: nil) else { return false }
+        while true {
+            if let scroll = view as? UIScrollView, scroll.isScrollEnabled,
+               scroll.contentSize.width + scroll.adjustedContentInset.left + scroll.adjustedContentInset.right > scroll.bounds.width + 0.5 {
+                return true
+            }
+            guard let parent = view.superview else { return false }
+            view = parent
+        }
+    }
+
+    /// A selection's handles hang outside the text view, so a touch within a handle's reach of the field counts.
+    @MainActor private static func selectionHandlesContain(_ point: CGPoint, in window: UIWindow) -> Bool {
+        guard let input = selectingTextInput(in: window) else { return false }
+        return input.convert(input.bounds, to: window).insetBy(dx: -44, dy: -44).contains(point)
+    }
+
+    @MainActor private static func selectingTextInput(in view: UIView) -> (UIView & UITextInput)? {
+        if view.isFirstResponder, let input = view as? (UIView & UITextInput),
+           let range = input.selectedTextRange, !range.isEmpty {
+            return input
+        }
+        for subview in view.subviews {
+            if let found = selectingTextInput(in: subview) { return found }
+        }
+        return nil
+    }
 }
 
 /// Owns the per-frame drag state. `drawer` and `content` arrive as stored values (built
@@ -279,7 +333,8 @@ private struct ProjectsDrawerContainer<Drawer: View, Content: View>: View {
             .onChanged { value in
                 // Choose an axis once, without a 20-point dead zone at touch-down.
                 if horizontalDrawerDrag == nil {
-                    let startsInScroller = !isOpen && tracking.exclusions.contains { $0.contains(value.startLocation) }
+                    let startsInScroller = !isOpen && (tracking.exclusions.contains { $0.contains(value.startLocation) }
+                        || DrawerGestureTracking.startsOnOwnDrag(at: value.startLocation))
                     horizontalDrawerDrag = !startsInScroller && abs(value.translation.width) > abs(value.translation.height)
                     drawerDragStartTime = value.time
                     tracking.reset()
@@ -532,6 +587,9 @@ private struct CreationWorkspaceView: View {
     @State private var reviewPresentation: ReviewPlanPresentation?
     @StateObject private var editorSession: NativeEditorSession
     @State private var conversationAcceptedID: UUID?
+    /// Bumped when "Open editor" is tapped in the editor's own Kria sheet: the editor is already
+    /// underneath, so the sheet closes instead.
+    @State private var editorConversationCloseID: UUID?
     /// KRI-756: the server's latest suggestion chips for this chat. Only read through `suggestionChips(for:)`.
     @State private var suggestionSet: SuggestionSet?
     /// The `suggestionScopeKey` that `suggestionSet` was fetched under; a set from another scope is never drawn.
@@ -699,14 +757,11 @@ private struct CreationWorkspaceView: View {
         return DeviceBuildStage(phase: presentation.phase, exportProgress: presentation.exportProgress)
     }
 
-    /// The feed hosts the device build (instead of the status card) while the phone is preparing, rendering
-    /// or finished cleanly. Anything that needs the creator (stopped, needs attention, a failed sync with a
-    /// message, superseded), output checking, or automatic repair hands over to
-    /// `DeviceRenderPanel`, which owns verification and recovery progress.
+    /// Finished exports use the status card so sync retries keep playback available.
     private var feedHostsDeviceBuild: Bool {
         guard let key = deviceRenderKey, showsPlanFeed else { return false }
         guard let presentation = model.deviceRenders.presentations[key] else { return true }
-        guard deviceBuildStage != nil else { return false }
+        guard let stage = deviceBuildStage, stage != .finished else { return false }
         guard !presentation.outputVerificationPending, presentation.repairAttempt == nil else { return false }
         // A quiet network wait stays in the feed; heat, storage and unknown states need the card.
         return presentation.message == nil && !presentation.requiresServerRetry && presentation.waiting?.isQuiet != false
@@ -1281,17 +1336,25 @@ private struct CreationWorkspaceView: View {
                 }
             }
         }
-        .background {
-            GeometryReader { geometry in
-                Color.clear.preference(key: DrawerGestureExclusionPreference.self, value: [geometry.frame(in: .global)])
-            }
-        }
     }
 
     /// Presents the editor with no slide-up animation; `WorkspaceCrossfade` fades it in.
     private func openEditor() {
         // Format still unknown (thread not loaded): no editor entry at all.
         guard isFormatKnown else { return }
+        // The editor's Kria sheet shows this same chat, so its ready card offers "Open editor" while
+        // the editor is already open underneath: close the sheet to land back in it.
+        if showsResult || workspaceScreen == .slideWorkspace {
+            editorConversationCloseID = UUID()
+            // The card names the thread's newest version. An editor still on an older job (the
+            // creator tapped "Keep editing" earlier, or the adopt never ran) is asked again; own
+            // unsaved edits raise the Switch / Keep editing prompt, never a silent switch.
+            if showsResult, currentProject.runtimeVersion == 2, editorSession.isBehindActiveJob(currentProject) {
+                let target = currentProject
+                Task { await editorSession.adoptLatestJob(target, api: model.api) }
+            }
+            return
+        }
         // A slide post has no video timeline: every "open editor" entry lands in the slide workspace.
         if SlidePostRouting.editorDestination(isSlidePost: isSlidePostProject) == .slideWorkspace {
             isChoosingFormat = false
@@ -1373,7 +1436,11 @@ private struct CreationWorkspaceView: View {
             hasFormat: selectedFormat != nil,
             preparationIsActive: fullThread?.preparationIsActive == true,
             preparationFailed: fullThread?.preparationFailed == true,
-            approvedRenderRetryPending: approval?.retryOfExecutionID != nil
+            approvedRenderRetryPending: approval?.retryOfExecutionID != nil,
+            // An approval the creator just gave (or one the server recorded) whose render the
+            // agent-control task has not started yet: show the render stage at once instead of
+            // falling back to the footage stage for a poll or two.
+            renderDispatchPending: thinkingSettlesOnJobStatus || fullThread?.awaitsRenderDispatch == true
         )
     }
 
@@ -1392,8 +1459,13 @@ private struct CreationWorkspaceView: View {
         SlidePostRouting.isFormatKnown(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
 
-    /// Editor entries (header switch, Open editor, Open current cut) exist only when this is
-    /// definitely not a slide post. A ready project of unknown format shows a loading state.
+    private var hasAccessibleVideo: Bool {
+        if currentProject.status == .ready { return true }
+        guard let key = deviceRenderKey, let presentation = model.deviceRenders.presentations[key] else { return false }
+        return presentation.localFile != nil && !presentation.outputVerificationPending
+            && [.localReady, .syncing, .synced].contains(presentation.phase)
+    }
+
     private var canOpenVideoEditor: Bool {
         SlidePostRouting.canOpenVideoEditor(selectedFormat: selectedFormat, project: currentProject, thread: fullThread)
     }
@@ -1445,6 +1517,7 @@ private struct CreationWorkspaceView: View {
                     capabilitiesLoaded: capabilitiesAreAuthoritative,
                     conversation: { AnyView(editorConversation) },
                     conversationAcceptedID: conversationAcceptedID,
+                    conversationCloseID: editorConversationCloseID,
                     // Back returns to the chats drawer (where the user came from), never the format chooser.
                     onBack: openProjects,
                     onAddMedia: openAttachments
@@ -1619,6 +1692,7 @@ private struct CreationWorkspaceView: View {
                     project: currentProject,
                     sharedSession: editorSession,
                     conversationAcceptedID: conversationAcceptedID,
+                    conversationCloseID: editorConversationCloseID,
                     conversation: { AnyView(editorConversation) },
                     onBack: close
                 )
@@ -1642,10 +1716,8 @@ private struct CreationWorkspaceView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             WorkspaceHeader(
                 project: currentProject,
-                // `currentProject.status` (not `workspaceStage`) so the switch
-                // to the existing cut stays available even while a new plan's
-                // confirmation card is showing on top of it.
-                showsEditorSwitch: currentProject.status == .ready && canOpenVideoEditor,
+                // Local playback remains usable while cloud publication is pending.
+                showsEditorSwitch: hasAccessibleVideo && canOpenVideoEditor,
                 openProjects: openProjects,
                 openEditor: openEditor,
                 openAccount: openAccount
@@ -1775,7 +1847,7 @@ private struct CreationWorkspaceView: View {
             // A new plan's confirmation card can appear over an already-ready
             // cut (see `WorkspaceStage.resolve`); confirming it is a choice,
             // not something the old cut's reachability should be sacrificed for.
-            if currentProject.status == .ready && canOpenVideoEditor {
+            if hasAccessibleVideo && canOpenVideoEditor {
                 Button("Open current cut", action: openEditor)
                     .buttonStyle(CanonicalSecondaryButtonStyle())
                     .disabled(isActing)
@@ -2134,12 +2206,21 @@ private struct CreationWorkspaceView: View {
         }
         let accepted: TurnAccepted
         do {
-            accepted = try await model.api.submitTurn(
-                threadID: project.id, message: message,
-                expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID,
-                editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
+            var request = SubmitTurnRequest(
+                message: message, clientEventID: submission.clientEventID,
+                expectedThreadRevision: submission.expectedRevision, editorState: editorState,
+                clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection,
                 songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: momentOrder
             )
+            if capabilities?.requestOutcomeContext == true {
+                request.outcomeContext = .forSubmission(
+                    events: events,
+                    continuation: clipSelection != nil || songOrder != nil || choiceSelection != nil
+                        || songRange != nil || protectedRegion != nil || momentOrder != nil,
+                    choice: choiceSelection
+                )
+            }
+            accepted = try await model.api.submitTurn(threadID: project.id, request: request)
         } catch let error as APIError where error == .conflict {
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
@@ -2766,6 +2847,11 @@ private struct CreationWorkspaceView: View {
             thinkingTurnID = decision == "approve" ? approval.turnID : nil
             thinkingSettlesOnJobStatus = decision == "approve"
             isThinking = decision == "approve"
+            // The tall approval card is about to be replaced by a short render row. Like Send,
+            // re-pin the conversation to its end so the viewport (and the "Latest" pill, which
+            // stays up while the reader was above the card's buttons) follows the new stage
+            // instead of staying stranded where the card used to be.
+            if decision == "approve" { scrollRequest += 1 }
             failure = await acceptedMutationRefreshError(
                 "Kria recorded that decision, but the conversation couldn’t refresh.",
                 refresh: { try await refreshDelta() }
@@ -2788,13 +2874,18 @@ enum WorkspaceStage {
         hasFormat: Bool,
         preparationIsActive: Bool = false,
         preparationFailed: Bool = false,
-        approvedRenderRetryPending: Bool = false
+        approvedRenderRetryPending: Bool = false,
+        renderDispatchPending: Bool = false
     ) -> WorkspaceStage {
         // A failed native job retains awaiting_device until consent re-pins it.
         // Its fresh retry approval must be visible before any new export starts.
         if approvedRenderRetryPending && awaitsNewPlanConfirmation { return .direction }
         if preparationIsActive { return .rendering }
         if preparationFailed { return .failed }
+        // Approved, render not yet queued: the server's projection is still a plain draft
+        // (or the previous cut), but the creator just pressed Create. Never show the
+        // footage or ready stage in that window; the render stage reads "Preparing".
+        if renderDispatchPending && !awaitsNewPlanConfirmation { return .rendering }
         switch status {
         case .rendering:
             // A render already in flight wins even over a freshly proposed
@@ -3069,16 +3160,16 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .montage: "Montage"
-        case .narrated: "Narrated"
-        case .talkingToCamera: "Talking"
+        case .narrated: "Voiceover"
+        case .talkingToCamera: "Talk to camera"
         case .slides: "Slider"
         }
     }
     var choiceSentence: String {
         switch self {
         case .montage: "Let’s make a montage"
-        case .narrated: "Let’s make it narrated"
-        case .talkingToCamera: "Let’s make a talking video"
+        case .narrated: "Let’s make a voiceover video"
+        case .talkingToCamera: "Let’s make a talk to camera video"
         case .slides: "Let’s make a slider"
         }
     }

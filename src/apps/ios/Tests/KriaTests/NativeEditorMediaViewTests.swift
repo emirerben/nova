@@ -242,7 +242,7 @@ final class NativeEditorMediaViewTests: XCTestCase {
         XCTAssertFalse(session.hasUnsavedChanges)
     }
 
-    func testSoundEffectEdgeTrimKeepsPlacementAndChangesSourceTrim() {
+    func testSoundEffectLeadingEdgeDragMovesPlacementAndKeepsRemainingAudioInTime() {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
 
         session.beginTimedEdgeTrim(kind: .soundEffect, id: "sfx-1", edge: .leading)
@@ -250,9 +250,64 @@ final class NativeEditorMediaViewTests: XCTestCase {
         session.endTimedEdgeTrim()
 
         let effect = try! XCTUnwrap(session.document.soundEffects.first { $0.id == "sfx-1" })
+        XCTAssertEqual(effect.raw["trim_start_s"]?.numberValue ?? -1, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(effect.pointS ?? -1, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(effect.startS, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(effect.endS, 0.8, accuracy: 0.0001, "the remaining audio still ends where it did")
+    }
+
+    func testSoundEffectTrailingEdgeDragResizesBlockToKeptLength() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
+
+        session.beginTimedEdgeTrim(kind: .soundEffect, id: "sfx-1", edge: .trailing)
+        session.updateTimedEdgeTrim(by: 0.4)
+        session.endTimedEdgeTrim()
+
+        let effect = try! XCTUnwrap(session.document.soundEffects.first { $0.id == "sfx-1" })
+        XCTAssertEqual(effect.raw["trim_end_s"]?.numberValue ?? -1, 0.7, accuracy: 0.0001)
+        XCTAssertEqual(effect.pointS ?? -1, 0.5, accuracy: 0.0001)
         XCTAssertEqual(effect.startS, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(effect.endS, 1.2, accuracy: 0.0001)
+    }
+
+    func testSoundEffectTrailingEdgeDragStopsAtSourceDuration() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
+
+        session.beginTimedEdgeTrim(kind: .soundEffect, id: "sfx-1", edge: .trailing)
+        session.updateTimedEdgeTrim(by: 5)
+        session.endTimedEdgeTrim()
+
+        let effect = try! XCTUnwrap(session.document.soundEffects.first { $0.id == "sfx-1" })
+        XCTAssertEqual(effect.raw["trim_end_s"]?.numberValue ?? -1, 1, accuracy: 0.0001)
+        XCTAssertEqual(effect.endS, 1.5, accuracy: 0.0001)
+    }
+
+    func testSoundEffectLeadingEdgeDragIsLimitedByTimelineStart() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
+        session.setSoundEffectTiming(id: "sfx-1", atS: 0.1)
+        session.setSoundEffectTrim(id: "sfx-1", trimStartS: 0.4, trimEndS: 0.9)
+
+        session.beginTimedEdgeTrim(kind: .soundEffect, id: "sfx-1", edge: .leading)
+        session.updateTimedEdgeTrim(by: -0.4)
+        session.endTimedEdgeTrim()
+
+        let effect = try! XCTUnwrap(session.document.soundEffects.first { $0.id == "sfx-1" })
+        XCTAssertEqual(effect.pointS ?? -1, 0, accuracy: 0.0001)
+        XCTAssertEqual(effect.raw["trim_start_s"]?.numberValue ?? -1, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(effect.endS, 0.6, accuracy: 0.0001)
+    }
+
+    func testSoundEffectLeadingEdgeDragIsLimitedByMinimumKeptLength() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
+
+        session.beginTimedEdgeTrim(kind: .soundEffect, id: "sfx-1", edge: .leading)
+        session.updateTimedEdgeTrim(by: 5)
+        session.endTimedEdgeTrim()
+
+        let effect = try! XCTUnwrap(session.document.soundEffects.first { $0.id == "sfx-1" })
+        XCTAssertEqual(effect.raw["trim_start_s"]?.numberValue ?? -1, 0.2, accuracy: 0.0001)
+        XCTAssertEqual(effect.pointS ?? -1, 0.7, accuracy: 0.0001)
         XCTAssertEqual(effect.endS, 0.8, accuracy: 0.0001)
-        XCTAssertEqual(effect.raw["trim_start_s"]?.numberValue, 0.1)
     }
 }
 #endif

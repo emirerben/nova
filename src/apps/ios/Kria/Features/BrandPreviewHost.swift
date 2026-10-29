@@ -52,7 +52,7 @@ struct BrandPreviewHost: View {
                                 localFile: Bundle.main.url(forResource: "montage", withExtension: "mp4"), message: "Syncing didn’t finish. Your video is saved on this iPhone."), retry: {}, stop: {})
                             case "ready": ReadyStage(project: PreviewFixtures.projects[1], openEditor: {}, suggest: { _ in })
                             case "recovery": FailedStage(retry: {})
-                            default: FormatStage(formats: [.montage, .narrated, .talkingToCamera], isBusy: false, select: { _ in })
+                            default: FormatStage(formats: [.montage, .narrated, .talkingToCamera, .slides], isBusy: false, select: { _ in })
                             }
                         }.padding(20).frame(maxWidth: 620, alignment: .leading).frame(maxWidth: .infinity)
                     }

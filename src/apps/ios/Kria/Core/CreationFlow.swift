@@ -33,6 +33,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var voiceDictation: Bool? = nil
     /// KRI-756: the server offers footage-aware suggestion chips to this account. Missing = off (the old fixed chips stay).
     var suggestionChips: Bool? = nil
+    var requestOutcomeContext: Bool? = nil
     /// Server sends `clip_question` payloads and accepts `clip_selection` on a turn (KRI-282). Nil/false = text question only.
     var clipSelectionQuestions: Bool? = nil
     /// Server sends `song_order_question` payloads and accepts `song_order` on a turn (KRI-374). Nil/false = no order card.
@@ -55,6 +56,12 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     /// Server sends `choice_question` payloads (tappable options for a conflict in the instructions) and accepts
     /// `choice_selection` on a turn (KRI-282). Nil/false = the plain text question only.
     var choiceQuestions: Bool? = nil
+    /// The feedback route accepts the `wrong_facts` reason (an idea's researched facts were wrong). Nil/false (older
+    /// server) = no such choice: the older route rejects the whole judgment for an unknown reason.
+    var wrongFactFeedback: Bool? = nil
+    /// The server can turn a saved would-post idea or rewrite into a taste example on one confirming tap.
+    /// Nil/false (older server) = no prompt: the route would 404.
+    var ideaExampleFeedback: Bool? = nil
     /// KRI-815: a reply may carry `voiceover_script` (a script written from the attached clips, with Record/Import).
     /// Nil/false = the reply text only, which also holds the script.
     var voiceoverScriptCards: Bool? = nil
@@ -94,6 +101,8 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var songUploadEnabled: Bool { songLimit != nil }
     var choiceQuestionsEnabled: Bool { choiceQuestions == true }
     var voiceoverScriptCardsEnabled: Bool { voiceoverScriptCards == true }
+    var wrongFactFeedbackEnabled: Bool { wrongFactFeedback == true }
+    var ideaExampleFeedbackEnabled: Bool { ideaExampleFeedback == true }
     /// The chat composer needs BOTH flags: the server only reports chat-edit as on with rich text, and
     /// a stale cached capability must not enable it when rich text is off.
     var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
@@ -116,6 +125,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case textBend = "text_bend"
         case voiceDictation = "voice_dictation"
         case suggestionChips = "suggestion_chips"
+        case requestOutcomeContext = "request_outcome_context"
         case clipSelectionQuestions = "clip_selection_questions"
         case songOrderQuestions = "song_order_questions"
         case songOrderPlacements = "song_order_placements"
@@ -125,6 +135,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case momentOrderQuestions = "moment_order_questions"
         case choiceQuestions = "choice_questions"
         case voiceoverScriptCards = "voiceover_script_cards"
+        case wrongFactFeedback = "wrong_fact_feedback", ideaExampleFeedback = "idea_example_feedback"
         case creationMode = "creation_mode", minimumClientProtocol = "minimum_client_protocol"
         case livePlanReviewEnabled = "live_plan_review_enabled", livePlanReviewVersion = "live_plan_review_version"
     }
@@ -156,6 +167,7 @@ extension CreationCapabilities {
         textBend = try container.decodeIfPresent(Bool.self, forKey: .textBend)
         voiceDictation = try container.decodeIfPresent(Bool.self, forKey: .voiceDictation)
         suggestionChips = try container.decodeIfPresent(Bool.self, forKey: .suggestionChips)
+        requestOutcomeContext = try container.decodeIfPresent(Bool.self, forKey: .requestOutcomeContext)
         clipSelectionQuestions = try container.decodeIfPresent(Bool.self, forKey: .clipSelectionQuestions)
         songOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .songOrderQuestions)
         songOrderPlacements = try container.decodeIfPresent(Bool.self, forKey: .songOrderPlacements)
@@ -165,6 +177,8 @@ extension CreationCapabilities {
         momentOrderQuestions = try container.decodeIfPresent(Bool.self, forKey: .momentOrderQuestions)
         choiceQuestions = try container.decodeIfPresent(Bool.self, forKey: .choiceQuestions)
         voiceoverScriptCards = try container.decodeIfPresent(Bool.self, forKey: .voiceoverScriptCards)
+        wrongFactFeedback = try container.decodeIfPresent(Bool.self, forKey: .wrongFactFeedback)
+        ideaExampleFeedback = try container.decodeIfPresent(Bool.self, forKey: .ideaExampleFeedback)
         creationMode = try container.decodeIfPresent(CreationMode.self, forKey: .creationMode)
         minimumClientProtocol = try container.decodeIfPresent(Int.self, forKey: .minimumClientProtocol)
         livePlanReviewEnabled = try container.decodeIfPresent(Bool.self, forKey: .livePlanReviewEnabled)
@@ -511,6 +525,29 @@ extension CreationThread {
         let terminalTypes: Set<String> = ["approval_approved", "approval_denied", "approval_cancelled", "approval_expired"]
         guard let lastRequest = events.last(where: { $0.eventType == "approval_requested" }) else { return false }
         return !events.contains(where: { $0.sequence > lastRequest.sequence && terminalTypes.contains($0.eventType) })
+    }
+
+    /// Runtime v2: the creator approved the latest draft and the server has not yet
+    /// started the render for it. The approval decision writes only
+    /// `approval_approved` (`render_dispatched: false`); the job, `render_queued`
+    /// and the first `plan_block` land from the agent-control task moments later.
+    /// In between, the projection still reads as a plain draft, which would send the
+    /// workspace back to the footage stage right after "Create" (the blank-looking
+    /// screen after "Clean up speech and create"). Terminal and render events after
+    /// the approval end the window, as does an active job.
+    var awaitsRenderDispatch: Bool {
+        guard runtimeVersion == 2, activeJobID == nil, job == nil else { return false }
+        guard let lastRequest = events.last(where: { $0.eventType == "approval_requested" }),
+              let approved = events.last(where: { $0.sequence > lastRequest.sequence && $0.eventType == "approval_approved" })
+        else { return false }
+        let settlingTypes: Set<String> = [
+            "approval_requested", "approval_denied", "approval_cancelled", "approval_expired",
+            "render_queued", "render_started", "rendering", "plan_block", "generation_started",
+            "generation_ready", "generation_failed", "render_failed",
+            "assistant_render_failed", "agent_assistant_render_failed", "assistant_error", "agent_assistant_error",
+            "draft_applied", "user_message",
+        ]
+        return !events.contains { $0.sequence > approved.sequence && settlingTypes.contains($0.eventType) }
     }
 
     /// True while a newly proposed plan hasn't been confirmed or declined yet,

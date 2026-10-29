@@ -115,11 +115,12 @@ protocol SlidePostProposalClient: Sendable {
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
 }
 
-protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
+protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItemsClient, Sendable {
     func editorialTaste() async throws -> EditorialTasteProfile
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
     func recordIdeaFeedback(_ body: IdeaFeedbackWrite) async throws -> IdeaFeedbackReceipt
+    func confirmIdeaExample(feedbackID: UUID, eventID: String) async throws
     func updateCameraRollContentPlan(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, plan: CameraRollContentPlan) async throws -> CameraRollStory
     func changeCameraRollStory(collectionID: UUID, story: CameraRollStory, collectionRevision: Int, order: [UUID]?, audioPolicy: String?, eventID: String) async throws -> CameraRollStory
     func indexCameraRollCollection(id: UUID, revision: Int, offset: Int) async throws -> CameraRollIndexPass
@@ -135,6 +136,13 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func createCameraRollStoryThread(id: UUID, revision: Int) async throws -> CreationThread
     func inspectCameraRollMoment(collectionID: UUID, revision: Int, momentID: UUID, question: String, cacheOnly: Bool) async throws -> CameraRollInspection
     func importCollectionMedia(file: URL, kind: String) async throws -> SavedMediaAsset
+    func importCollectionMedia(file: URL, kind: String, progress: (@Sendable (Double) -> Void)?) async throws -> SavedMediaAsset
+    func generateCameraRollStories(id: UUID, request: CameraRollStoryRequest) async throws -> CameraRollStories
+    func savedCameraRollStories(id: UUID, revision: Int, group: String) async throws -> [CameraRollStory]
+    func deleteCameraRollStory(collectionID: UUID, storyID: UUID) async throws -> CameraRollStoryDeletion
+    func restoreCameraRollStory(collectionID: UUID, storyID: UUID) async throws
+    func deleteCameraRollGroup(collectionID: UUID, group: String, expectedRevision: Int) async throws -> CameraRollGroupDeletion
+    func replaceCameraRollMembers(collectionID: UUID, name: String, members: [CameraRollCollectionMember], expectedRevision: Int) async throws -> SavedCameraRollCollection
     func cameraRollCollection(id: UUID) async throws -> SavedCameraRollCollection
     func saveCameraRollCollection(_ collection: CameraRollCollection, revision: Int) async throws -> SavedCameraRollCollection
     func repairSavedMedia(asset: SavedMediaAsset, file: URL) async throws -> SavedMediaAsset
@@ -206,6 +214,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, Sendable {
     func requestAccountDeletion() async throws -> AccountDeletionRequest
     func confirmAccountDeletion(_ confirmation: AccountDeletionConfirmation) async throws
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int) async throws -> TurnAccepted
+    func submitTurn(threadID: UUID, request: SubmitTurnRequest) async throws -> TurnAccepted
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted
     /// `editorState` is the editor's unsaved state (server capability `editor_state_turns`); nil = omitted.
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?) async throws -> TurnAccepted
@@ -412,6 +421,9 @@ extension KriaAPIClient {
     func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func deleteProject(_ project: ProjectSummary) async throws { throw APIError.unsupported }
 
+    func submitTurn(threadID: UUID, request: SubmitTurnRequest) async throws -> TurnAccepted {
+        try await submitTurn(threadID: threadID, message: request.message, expectedRevision: request.expectedThreadRevision, clientEventID: request.clientEventID, editorState: request.editorState, clipSelection: request.clipSelection, songOrder: request.songOrder, choiceSelection: request.choiceSelection, songRange: request.songRange, suggestion: request.suggestion, protectedRegion: request.protectedRegion, momentOrder: request.momentOrder)
+    }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String) async throws -> TurnAccepted {
         _ = clientEventID
         return try await submitTurn(threadID: threadID, message: message, expectedRevision: expectedRevision)
@@ -1148,7 +1160,20 @@ enum KriaClientProtocolContract {
     /// 20 (KRI-723): shows the "show me your moments" card (`moment_order_question`) and answers it with
     /// `moment_order` on the next turn. The server asks for the moments before approval only from this protocol;
     /// older builds keep today's windows with an honest "couldn't find it" receipt.
-    static let version = 20
+    /// 21: decodes a recipe text layer's `behind_subject` and the `behindSubject` capability, and draws text
+    /// behind people (a per-frame Vision person mask occludes the layer; `KriaMediaEngine.NativeSubjectMatte`).
+    /// The server stamps the key only for this protocol (and only with `TEXT_BEHIND_SUBJECT_PHONE_ENABLED` +
+    /// `behindSubject` verified); an older build asked for it gets plain text, and 426 `client_update_required`
+    /// for a pinned recipe that already carries the key, since it cannot decode it.
+    /// 22: renders and answers a camera-roll idea's `open_questions`. The server holds "Use this idea"
+    /// behind them (409 `story_open_questions`) and sends the list only from this protocol; older builds
+    /// see no questions and are not gated.
+    /// 23: renders the six designed text animation edges.
+    /// 24 (KRI-1007): round-trips caption `animation_phases` (a `caption_cues` row, a `caption_cue` text row and
+    /// `caption_meta`) and draws them in preview. The server advertises `editor_capabilities.caption_animation`
+    /// only to this protocol and answers 426 `client_update_required` to an older build whose Save carries
+    /// caption phases or replaces captions that hold them, since it would drop them.
+    static let version = 24
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1470,6 +1495,9 @@ struct KriaAPI: KriaAPIClient {
     }
     func submitTurn(threadID: UUID, message: String, expectedRevision: Int, clientEventID: String, editorState: EditorStateRequest?, clipSelection: ClipSelectionSubmission?, songOrder: SongOrderSubmission?, choiceSelection: ChoiceSelectionSubmission?, songRange: SongRangeAnswer?, suggestion: SuggestionTap?, protectedRegion: ProtectedRegionAnswer?, momentOrder: MomentOrderAnswer?) async throws -> TurnAccepted {
         let body = SubmitTurnRequest(message: message, clientEventID: clientEventID, expectedThreadRevision: expectedRevision, editorState: editorState, clipSelection: clipSelection, songOrder: songOrder, choiceSelection: choiceSelection, songRange: songRange, suggestion: suggestion, protectedRegion: protectedRegion, momentOrder: momentOrder)
+        return try await submitTurn(threadID: threadID, request: body)
+    }
+    func submitTurn(threadID: UUID, request body: SubmitTurnRequest) async throws -> TurnAccepted {
         return try await request(path: "creation-threads/\(threadID.uuidString)/turns", method: "POST", bodyData: try JSONEncoder().encode(body), decode: TurnAccepted.self)
     }
     func applyCreationAction(threadID: UUID, action: String, payload: [String: JSONValue], expectedRevision: Int) async throws -> CreationThread {
@@ -1495,8 +1523,7 @@ struct KriaAPI: KriaAPIClient {
         // refresh. Re-read both before calling the pair a conflict.
         for attempt in 0..<3 {
             guard var variant = try await editorVariants(jobID: jobID).first(where: { $0["variant_id"]?.stringValue == variantID }) else { throw APIError.invalidResponse }
-            guard variant["resolved_archetype"] == .string("guided_story"),
-                  case let .object(capabilities) = variant["editor_capabilities"], capabilities["timeline"] == .bool(true) else {
+            guard variant["resolved_archetype"] == .string("guided_story") else {
                 return variant
             }
             let timeline = try await request(path: "generative-jobs/\(jobID.uuidString)/variants/\(variantID)/timeline", method: "GET", bodyData: nil, decode: [String: JSONValue].self)
@@ -1905,7 +1932,7 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .unsupportedPhoneEdit:
-            "This text style or layout can’t be saved on this iPhone yet. Your edits are still here; adjust the style or size and try again."
+            "This edit couldn’t be prepared for this iPhone. Your edits are still here. Undo the last change and try saving again."
         case .phoneRenderingUnavailable:
             "Rendering is temporarily unavailable. Your edits are still here."
         case .guidedStorySourceStale:
@@ -2059,7 +2086,7 @@ private struct EditorSaveValidationIssue: Decodable {
     let loc: [JSONValue]?
 }
 
-private struct EmptyProjectResponse: Decodable {}
+struct EmptyProjectResponse: Decodable {}
 private struct LibraryResponse: Decodable {
     let jobs: [LibraryJob]
     let nextCursor: String?
@@ -2182,9 +2209,10 @@ private enum ServerDateCoding {
         throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(), debugDescription: "Expected ISO-8601 date")
     }
 }
-struct SubmitTurnRequest: Encodable {
+struct SubmitTurnRequest: Encodable, Sendable {
     let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil; var protectedRegion: ProtectedRegionAnswer? = nil; var momentOrder: MomentOrderAnswer? = nil
-    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order" }
+    var outcomeContext: RequestOutcomeContext? = nil
+    enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order"; case outcomeContext = "outcome_context" }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
@@ -2197,6 +2225,7 @@ struct SubmitTurnRequest: Encodable {
         try c.encodeIfPresent(suggestion, forKey: .suggestion)
         try c.encodeIfPresent(protectedRegion, forKey: .protectedRegion)
         try c.encodeIfPresent(momentOrder, forKey: .momentOrder)
+        try c.encodeIfPresent(outcomeContext, forKey: .outcomeContext)
     }
 }
 
@@ -2589,9 +2618,22 @@ extension DraftSnapshot {
            Self.object(snapshot["editor_payload"])?["editor_state_version"] == .number(2) {
             // A committed full snapshot owns authoring state. The variant is
             // a render projection and may lag this exact durable revision.
-            var saved = editorDraft(projectID: projectID)
-            saved.serverSnapshot["editor_capabilities"] = authoritativeVariant["editor_capabilities"]
-            return saved
+            var document = snapshot
+            var payload = Self.object(document["editor_payload"]) ?? [:]
+            var sections = Self.object(payload["sections"]) ?? [:]
+            let userTimeline = Self.object(authoritativeVariant["user_timeline"])
+            let timeline = userTimeline?.isEmpty == false
+                ? userTimeline : Self.object(authoritativeVariant["ai_timeline"])
+            if payload["editor_state"] != .string("empty"),
+               authoritativeVariant["editor_state"] != .string("empty"),
+               sections["timeline_slots"] == nil,
+               let value = timeline?["slots"], case let .array(slots) = value {
+                sections["timeline_slots"] = .array(slots)
+                payload["sections"] = .object(sections)
+                document["editor_payload"] = .object(payload)
+            }
+            document["editor_capabilities"] = authoritativeVariant["editor_capabilities"]
+            return decodedEditorDraft(projectID: projectID, document: document)
         }
         var document = snapshot
         if let authoritativeVariant {
@@ -2610,7 +2652,7 @@ extension DraftSnapshot {
             let directKeys = [
                 "text_elements", "caption_cues", "caption_meta", "captions_enabled", "caption_size_px",
                 "caption_highlight_color", "caption_stroke_width", "caption_shadow_enabled", "caption_editor_style",
-                "caption_margin_v", "caption_y_frac",
+                "caption_margin_v", "caption_y_frac", "caption_animation_phases",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
                 "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment",
@@ -2625,6 +2667,11 @@ extension DraftSnapshot {
             }
             for key in directKeys where authoritativeVariant[key] != nil && !isIntentionalEmpty {
                 sections[key] = authoritativeVariant[key]
+            }
+            // A cleared all-captions animation leaves the key off the variant (KRI-1007), so an older draft copy
+            // must not bring it back.
+            if !isIntentionalEmpty, authoritativeVariant["caption_animation_phases"] == nil {
+                sections["caption_animation_phases"] = nil
             }
             if !isIntentionalEmpty, sections["music_window"] == nil, let start = authoritativeVariant["music_preview_start_s"] {
                 sections["music_window"] = .object(["start_s": start, "alignment": .string("preserve_cuts")])
@@ -2703,6 +2750,10 @@ extension DraftSnapshot {
             }
         }
 
+        return decodedEditorDraft(projectID: projectID, document: document)
+    }
+
+    private func decodedEditorDraft(projectID: UUID, document: [String: JSONValue]) -> EditorDraft {
         let editorPayload = Self.object(document["editor_payload"]) ?? [:]
         let sections = Self.object(editorPayload["sections"]) ?? [:]
         let legacy = Self.object(sections["ios_editor"]) ?? [:]
@@ -2953,21 +3004,3 @@ struct UploadCoordinator: Sendable {
     }
 }
 
-protocol PhotoLibrarySaving: Sendable {
-    func saveVideo(at url: URL) async throws
-}
-
-struct PhotoLibrarySaver: PhotoLibrarySaving {
-    func saveVideo(at url: URL) async throws {
-        let authorization = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard authorization == .authorized || authorization == .limited else { throw PhotoLibraryError.notAuthorized }
-        try await PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
-        }
-    }
-}
-
-enum PhotoLibraryError: Error, LocalizedError {
-    case notAuthorized
-    var errorDescription: String? { "Kria needs Photos access to save this video." }
-}

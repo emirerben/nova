@@ -191,6 +191,30 @@ final class NativeCaptionVisualUITests: XCTestCase {
         XCTAssertTrue(summary.isHittable, "the summary sits at the top of the library")
     }
 
+    func testCaptionSwitchesAndDisplayAtLargestTextSize() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
+        app.launchEnvironment["UI_TEST_DYNAMIC_TYPE_SIZE"] = "accessibility5"
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-captions"].waitForExistence(timeout: 20))
+        func capture(_ name: String) {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = name; attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        app.buttons["native-editor-tool-captions"].tap()
+        let visible = app.switches["native-editor-caption-visible"]
+        XCTAssertTrue(visible.waitForExistence(timeout: 5))
+        XCTAssertTrue(visible.isHittable)
+        XCTAssertTrue(app.switches["native-editor-caption-highlight"].isHittable)
+        capture("ax5-captions-edit")
+        app.buttons["native-editor-captions-tab-Style"].tap()
+        XCTAssertTrue(app.buttons["native-editor-caption-display-word"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["native-editor-caption-display-sentence"].isHittable)
+        XCTAssertTrue(app.buttons["native-editor-caption-display-word"].isHittable)
+        capture("ax5-captions-style")
+    }
+
     func testCaptionAndVisualPaperScreens() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
@@ -203,12 +227,35 @@ final class NativeCaptionVisualUITests: XCTestCase {
         }
         app.buttons["native-editor-tool-captions"].tap()
         XCTAssertTrue(app.buttons["native-editor-captions-tab-Style"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["native-editor-captions-tab-Settings"].exists)
+        let visible = app.switches["native-editor-caption-visible"]
+        let highlight = app.switches["native-editor-caption-highlight"]
+        XCTAssertTrue(visible.waitForExistence(timeout: 5))
+        XCTAssertTrue(highlight.exists)
         capture("11-captions-edit")
+        if highlight.value as? String == "0" { highlight.tap() }
+        XCTAssertEqual(highlight.value as? String, "1")
+        XCTAssertTrue(app.descendants(matching: .any)["native-editor-caption-highlight-color"].waitForExistence(timeout: 3),
+                      "highlight color shows while highlighting is on")
+        capture("11b-captions-edit-highlight-on")
+        highlight.tap()
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-caption-highlight-color"].exists)
+        visible.tap()
+        XCTAssertEqual(visible.value as? String, "0")
+        XCTAssertFalse(highlight.isEnabled)
+        capture("11c-captions-edit-hidden")
+        visible.tap()
         app.buttons["native-editor-captions-tab-Style"].tap()
+        let sentence = app.buttons["native-editor-caption-display-sentence"]
+        let word = app.buttons["native-editor-caption-display-word"]
+        XCTAssertTrue(word.waitForExistence(timeout: 3))
+        word.tap()
+        XCTAssertTrue(word.isSelected)
+        XCTAssertFalse(sentence.isSelected)
+        capture("12b-captions-style-word")
+        sentence.tap()
+        XCTAssertTrue(sentence.isSelected)
         capture("12-captions-style")
-        app.buttons["native-editor-captions-tab-Settings"].tap()
-        XCTAssertFalse(app.staticTexts["Language"].exists)
-        capture("13-captions-settings")
         app.buttons["native-editor-captions-done"].tap()
         app.buttons["native-editor-tool-visuals"].tap()
         capture("14-visuals-media")

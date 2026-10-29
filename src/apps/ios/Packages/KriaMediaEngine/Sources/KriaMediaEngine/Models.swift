@@ -200,6 +200,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if !drawingLayers.isEmpty { result.insert(.freehandDrawing) }
         if textLayers.contains(where: { ($0.bend ?? 0) != 0 }) { result.insert(.textBend) }
         if textLayers.contains(where: { $0.karaoke?.singleWord == true }) { result.insert(.singleWordText) }
+        if textLayers.contains(where: { $0.behindSubject == true }) { result.insert(.behindSubject) }
         for asset in assetManifest?.assets ?? [] {
             if case .visual(_, _, let mediaKind) = asset.source { result.insert(mediaKind == .video ? .visualVideos : .stillImages) }
         }
@@ -489,7 +490,8 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          animatedText, authoredText, crossfade, clipTransitions, goldenHourLook, audioMix,
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
-         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame
+         soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
+         behindSubject
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

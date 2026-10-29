@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import unicodedata
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,8 @@ from app.kria.brief_checks import (
     plan_facts_from_unified_montage,
 )
 from app.pipeline.guided_story import (
+    GuidedStoryError,
+    _compile_execution_plan_version,
     compile_execution_plan,
     validate_execution_plan,
     validate_guided_snapshot,
@@ -31,6 +35,7 @@ from app.pipeline.unified_montage import (
 from app.schemas.edit_proposal import EditProposalSnapshot
 
 T0 = datetime(2026, 9, 20, 7, 0, tzinfo=UTC)
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 
 def clip(
@@ -874,3 +879,34 @@ def test_no_creator_choice_keeps_the_inferred_orientation_untouched():
 def test_a_vertical_choice_overrides_a_landscape_vote():
     plan = plan_unified_montage([clip(0), clip(1)], output_orientation="portrait")
     assert plan.snapshot.output_orientation == "portrait"
+
+
+def _untitled_snapshots():
+    """Every text projection that used to print a title, fed a montage the creator never titled."""
+    bare = plan_unified_montage([clip(0), clip(1)]).guided_edit()
+    yield "clip labels", bare
+    proposal = bare["approved_proposal"]
+    yield "fast cuts", {**bare, "approved_proposal": {**proposal, "clip_labels": None}}
+    yield (
+        "story beats",
+        {**bare, "approved_proposal": {**proposal, "clip_labels": None, "fast_cuts": None}},
+    )
+
+
+def test_an_untitled_montage_never_prints_the_internal_montage_label():
+    expected = json.loads((FIXTURES / "kri998_untitled_montage_title.json").read_text())
+    leaks, compiled_lanes = [], set()
+    for lane, snapshot in _untitled_snapshots():
+        for compiler_version in expected["compiler_versions"]:
+            try:
+                compiled = _compile_execution_plan_version(
+                    snapshot, track=None, compiler_version=compiler_version
+                )
+            except GuidedStoryError:
+                continue
+            compiled_lanes.add(lane)
+            printed = [element["text"] for element in compiled["text_elements"]]
+            if expected["placeholder"] in printed:
+                leaks.append((lane, compiler_version))
+    assert compiled_lanes == set(expected["title_lanes"])
+    assert leaks == []

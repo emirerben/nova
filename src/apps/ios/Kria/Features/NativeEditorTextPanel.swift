@@ -52,14 +52,12 @@ enum TextEditBar {
 
 struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     typealias Tab = NativeTextPanelTab
-    enum Phase: String, CaseIterable { case entrance = "In", exit = "Out", loop = "Loop" }
     let id: String
     @ObservedObject var session: Session
     let onDone: () -> Void
     let embeddedAnimation: Bool
     let configuration: NativeTextPanelConfiguration
     @State private var tab: Tab = .style
-    @State private var phase: Phase = .entrance
     @State private var typing = false
     /// Lines the wrapped words take in the box (KRI-508); the bar grows to fit up to the cap.
     @State private var contentLines = 1
@@ -71,8 +69,6 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     @Environment(\.nativeEditorConnectedPanel) private var isConnectedPanel
     @Environment(\.nativeEditorPanelLifecycle) private var panelLifecycle
     @Environment(\.nativeEditorPanelContentWidth) private var panelContentWidth
-    @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var editorHeight: CGFloat = 100
 
     init(id: String, session: Session, initialTab: Tab = .style, embeddedAnimation: Bool = false,
@@ -287,6 +283,7 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
             colorControl
             propertyRow("Outline", key: "stroke_width", range: 0...20, unit: "px", colorKey: "stroke_color")
             propertyRow("Shadow", key: "shadow_opacity", range: 0...1, unit: "%", colorKey: "shadow_color")
+            placementControl
             positionControl("Horizontal position", key: "x_frac")
             positionControl("Vertical position", key: "y_frac")
             rotationControl
@@ -488,6 +485,61 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         }
     }
 
+    /// Flush buttons that put the whole text block against the Reels / TikTok safe area, one axis per tap.
+    @ViewBuilder private var placementControl: some View {
+        if session.supportsTextPlacement {
+            let selected: Set<NativeTextBlockPlacement> = session.textBlockPlacements(id: id)
+            let groups: [[NativeTextBlockPlacement]] = [[.left, .center, .right], [.top, .middle, .bottom]]
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Position")
+                if usesAccessibilityLayout {
+                    VStack(spacing: 8) { ForEach(groups, id: \.first) { placementButtons($0, selected: selected, expanded: true) } }
+                } else {
+                    HStack(spacing: 10) { ForEach(groups, id: \.first) { placementButtons($0, selected: selected, expanded: false) } }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func placementButtons(_ group: [NativeTextBlockPlacement], selected: Set<NativeTextBlockPlacement>, expanded: Bool) -> some View {
+        HStack(spacing: 0) {
+            ForEach(group, id: \.self) { placement in
+                Button { session.placeTextBlock(id: id, placement) } label: {
+                    Image(systemName: Self.placementSymbol(placement))
+                        .frame(minWidth: 44, maxWidth: expanded ? .infinity : nil, minHeight: 44)
+                        .background(selected.contains(placement) ? KriaColor.selectionSoft : KriaColor.softZinc)
+                }
+                .accessibilityLabel(Self.placementLabel(placement))
+                .accessibilityIdentifier("native-editor-text-placement-" + placement.rawValue)
+                .accessibilityAddTraits(selected.contains(placement) ? .isSelected : [])
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    private static func placementSymbol(_ placement: NativeTextBlockPlacement) -> String {
+        switch placement {
+        case .left: "align.horizontal.left"
+        case .center: "align.horizontal.center"
+        case .right: "align.horizontal.right"
+        case .top: "align.vertical.top"
+        case .middle: "align.vertical.center"
+        case .bottom: "align.vertical.bottom"
+        }
+    }
+
+    private static func placementLabel(_ placement: NativeTextBlockPlacement) -> String {
+        switch placement {
+        case .left: "Place text at the left edge"
+        case .center: "Center text horizontally"
+        case .right: "Place text at the right edge"
+        case .top: "Place text at the top"
+        case .middle: "Center text vertically"
+        case .bottom: "Place text at the bottom"
+        }
+    }
+
     /// Where the surface draws the text: a named preset ignores stored fracs.
     private var anchor: CGPoint { session.textAnchor(id: id) ?? CGPoint(x: 0.5, y: 0.5) }
 
@@ -509,68 +561,12 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     }
 
     private var animationControls: some View {
-        VStack(spacing: 14) {
-            NativeEditorPanelTabs(tabs: Phase.allCases, selection: $phase, accessibilityPrefix: "native-editor-text-animation-phase")
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: usesAccessibilityLayout ? 118 : 92), spacing: 8)], spacing: 10) {
-                animationEffects
-            }
-            Button {
-                previewClock.toggleManually()
-            } label: {
-                Label(previewClock.isPlaying ? "Pause previews" : "Play previews", systemImage: previewClock.isPlaying ? "pause.fill" : "play.fill")
-                    .font(KriaFont.body(13).weight(.semibold))
-                    .frame(minHeight: 44)
-            }
-            .accessibilityIdentifier("native-editor-text-animation-preview-toggle")
-            if usesAccessibilityLayout {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Speed")
-                    animationSpeedControl
-                }
-            } else {
-                HStack {
-                    Text("Speed").frame(width: 68, alignment: .leading)
-                    animationSpeedControl
-                }
-            }
-            Text("Changes motion speed. Text timing stays the same.")
-                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .onAppear { startPreviewIfAllowed() }
-        .onDisappear { previewClock.pauseForLifecycle() }
-        .onChange(of: scenePhase) { _, next in
-            if next == .active { startPreviewIfAllowed() } else { previewClock.pauseForLifecycle() }
-        }
-        .onChange(of: reduceMotion) { _, enabled in
-            if enabled { previewClock.pauseForLifecycle() } else { startPreviewIfAllowed() }
-        }
-    }
-
-    private var animationEffects: some View {
-        ForEach(phase == .loop ? ["None", "Pulse", "Bounce", "Float"] : ["None", "Fade", "Pop", "Slide", "Typewriter"], id: \.self) { effect in
-            Button { session.setTextPhase(id: id, phase: phaseKey, effect: effect.lowercased()) } label: {
-                VStack(spacing: 6) {
-                    NativeTextAnimationPreview(phase: phaseKey, effect: effect.lowercased(), speed: phases["speed"]?.numberValue ?? 1, clock: previewClock)
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                        .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 9))
-                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(selectedPhase == effect.lowercased() ? KriaColor.sky : .clear, lineWidth: 2))
-                    Text(effect).font(KriaFont.body(11)).lineLimit(1).minimumScaleFactor(0.8)
-                }
-            }
-            .accessibilityLabel("\(phase.rawValue) animation \(effect)")
-            .accessibilityAddTraits(selectedPhase == effect.lowercased() ? .isSelected : [])
-        }
-    }
-
-    private var animationSpeedControl: some View {
-        HStack {
-            NativeEditorSlider(session: session, value: Binding(
-                get: { phases["speed"]?.numberValue ?? 1 },
-                set: { session.setTextAnimationSpeed(id: id, speed: $0) }
-            ), in: 0.25...3, step: 0.25) { Text("Animation speed") }
-            Text("\((phases["speed"]?.numberValue ?? 1).formatted())×").frame(minWidth: 42)
-        }
+        NativeAnimationPhasePicker(
+            session: session, clock: previewClock, phases: phases, identifierPrefix: "native-editor-text-animation",
+            speedNote: "Changes motion speed. Text timing stays the same.", usesAccessibilityLayout: usesAccessibilityLayout,
+            onEffect: { session.setTextPhase(id: id, phase: $0, effect: $1) },
+            onSpeed: { session.setTextAnimationSpeed(id: id, speed: $0) }
+        )
     }
 
     private var sizeLabel: String { currentSize.formatted(.number.grouping(.never).precision(.fractionLength(0...1))) }
@@ -580,18 +576,6 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
         typing = false
         stopPreview()
         session.endTransaction()
-    }
-
-    private var previewAutoplayAllowed: Bool {
-        NativeTextAnimationPreviewAutoplay.allows(
-            reduceMotion: reduceMotion,
-            environment: ProcessInfo.processInfo.environment
-        )
-    }
-
-    private func startPreviewIfAllowed() {
-        guard previewAutoplayAllowed else { return }
-        previewClock.startAutoplay()
     }
 
     private func stopPreview() {
@@ -608,11 +592,9 @@ struct NativeEditorTextPanel<Session: NativeTextEditing>: View {
     }
     private var currentSize: Double { item.map(NativeEditorSession.textSize) ?? 72 }
 
-    private var phaseKey: String { phase == .entrance ? "entrance" : phase == .exit ? "exit" : "loop" }
     private var phases: [String: JSONValue] {
         item.map(NativeEditorSession.textPhases) ?? [:]
     }
-    private var selectedPhase: String { phases[phaseKey]?.stringValue ?? "none" }
     private func string(_ key: String, _ fallback: String) -> String { item?.raw[key]?.stringValue ?? fallback }
     private func colorBinding(_ key: String, fallback: String) -> Binding<Color> {
         Binding(get: { nativeEditorColor(string(key, fallback)) }, set: {

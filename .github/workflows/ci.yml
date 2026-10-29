@@ -1058,6 +1058,19 @@ jobs:
             tests/routes/test_creator_agent.py tests/tasks/test_marathon_render_ready_review.py \
             tests/kria/test_brief_rendered_speech_facts.py tests/kria/test_runtime_talking_first_draft.py -q \
             | tee ../../../test-results/kri-559/consented-retakes-api-tests.log
+      # Without this, a diff selecting only kri-689 seals an empty bundle.
+      - name: Verify clip-speed asks, review and phone speed safety
+        if: contains(needs.changes.outputs.journey_ids, 'kri-689-clip-speed')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          tests="$(python3 -c 'import json; m = json.load(open("../../../scripts/ci/journey-manifest.json")); print(next(j for j in m["journeys"] if j["id"] == "kri-689-clip-speed")["api_tests"])')"
+          python3 -m pytest $tests -q \
+            | tee ../../../test-results/kri-559/clip-speed-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
         run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
@@ -1242,6 +1255,8 @@ jobs:
             -parallel-testing-enabled NO -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 180 -maximum-test-execution-time-allowance 600 \
             -only-testing:KriaTests/DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport \
+            -only-testing:KriaUITests/AccountPrivacyUITests/testExcludedFontSurvivesPickerReturnSaveAndReopen \
+            -only-testing:KriaUITests/AccountPrivacyUITests/testTextPreferenceDraftSurvivesRoleSwitch \
             -only-testing:KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen \
             -only-testing:KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload \
             -only-testing:KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference \
@@ -1253,6 +1268,8 @@ jobs:
           python3 ../../../scripts/ci/journey-gate.py verify-tests \
             --test-results ../../../test-results/kri-559/kri-648/native-test-results.json \
             --xctest DeviceMontageRenderE2ETests/testGenerationPinnedTextStylesPreviewAndExport \
+            --xctest AccountPrivacyUITests/testExcludedFontSurvivesPickerReturnSaveAndReopen \
+            --xctest AccountPrivacyUITests/testTextPreferenceDraftSurvivesRoleSwitch \
             --xctest AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen \
             --xctest AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload \
             --xctest AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference \
@@ -1341,7 +1358,7 @@ jobs:
         run: |
           python3 scripts/ci/journey-gate.py record-native --fixture test-results/kri-559/fixture --head "$KRIA_JOURNEY_HEAD_SHA" --xcresult test-results/kri-559/native.xcresult --test-results test-results/kri-559/native-test-results.json --render test-results/kri-559/fixture/frames/creation_words_retimed.mp4 --app-build test-results/kri-559/app-build.txt --output test-results/kri-559/journey-evidence.json
           python3 scripts/ci/journey-gate.py validate --evidence test-results/kri-559/journey-evidence.json --head "$KRIA_JOURNEY_HEAD_SHA"
-      - name: Verify camera-roll partial consent and independent idea screens
+      - name: Verify camera-roll item states, undo and independent idea screens
         if: matrix.leg == 'creation' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-729-camera-roll-recommendations')
         working-directory: src/apps/ios
         run: |
@@ -1349,14 +1366,18 @@ jobs:
             -derivedDataPath .derived-data CODE_SIGNING_ALLOWED=NO \
             -destination "platform=iOS Simulator,id=$(cat ../../../test-results/ios/simulator-id.txt)" \
             -parallel-testing-enabled NO \
-            -only-testing:KriaUITests/CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice \
+            -only-testing:KriaUITests/CameraRollCollectionUITests/testEveryItemStateIsVisible \
+            -only-testing:KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas \
+            -only-testing:KriaUITests/CameraRollCollectionUITests/testDeletingAnIdeaCanBeUndone \
             -only-testing:KriaUITests/CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected \
             -resultBundlePath ../../../test-results/kri-559/camera-roll-ui.xcresult test-without-building
           xcrun xcresulttool get test-results tests --path ../../../test-results/kri-559/camera-roll-ui.xcresult \
             > ../../../test-results/kri-559/camera-roll-ui-tests.json
           python3 ../../../scripts/ci/journey-gate.py verify-tests \
             --test-results ../../../test-results/kri-559/camera-roll-ui-tests.json \
-            --xctest CameraRollCollectionUITests/testPartiallyIndexedCollectionWaitsForExplicitPartialChoice \
+            --xctest CameraRollCollectionUITests/testEveryItemStateIsVisible \
+            --xctest CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas \
+            --xctest CameraRollCollectionUITests/testDeletingAnIdeaCanBeUndone \
             --xctest CameraRollStoriesUITests/testThreeIdeasRemainIndependentWhenOneIsRejected
       - name: Verify saved originals can finish adding to Visuals
         if: matrix.leg == 'screens' && needs.changes.outputs.journey_needs_native == 'true' && contains(needs.changes.outputs.journey_ids, 'kri-384-ios-library')

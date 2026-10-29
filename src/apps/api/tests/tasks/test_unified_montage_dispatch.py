@@ -72,7 +72,7 @@ def _brief() -> CreativeBrief:
     )
 
 
-def _fixture(*, capture: bool = True):
+def _fixture(*, capture: bool = True, analysis: dict[str, dict] | None = None):
     bindings = []
     assignments = []
     for i in range(CLIPS):
@@ -102,6 +102,7 @@ def _fixture(*, capture: bool = True):
                 "media_id": media_id,
                 "storage_generation": "7",
                 "duration_s": duration,
+                **({"analysis": analysis[media_id]} if analysis and media_id in analysis else {}),
                 **(
                     {
                         "capture": {
@@ -130,8 +131,13 @@ def _fixture(*, capture: bool = True):
 
 @pytest.fixture
 def harness(monkeypatch):
-    def build(*, brief: CreativeBrief | None = None, capture: bool = True):
-        bindings, assignments = _fixture(capture=capture)
+    def build(
+        *,
+        brief: CreativeBrief | None = None,
+        capture: bool = True,
+        analysis: dict[str, dict] | None = None,
+    ):
+        bindings, assignments = _fixture(capture=capture, analysis=analysis)
         user_id = uuid.uuid4()
         snapshot = {
             PHONE_SOURCES_FIELD: [b.model_dump(mode="json") for b in bindings],
@@ -284,6 +290,38 @@ def test_receipts_say_what_was_met_and_what_was_partial(harness):
     assert receipts["r3"]["status"] == "met"
     # "Fast but readable" has no number to check: nothing judged it, so no receipt.
     assert "r2" not in receipts
+
+
+def test_contract_repaired_intro_does_not_get_a_missing_text_recovery(harness, monkeypatch):
+    from app.services.creator_render_contract import CONTRACT_FIELD, build_render_contract
+
+    brief = CreativeBrief(
+        version=1,
+        requirements=[
+            BriefRequirement(id="hook", kind="text", scope="title", literal="Visit this island"),
+            BriefRequirement(
+                id="intro",
+                kind="text",
+                scope="global",
+                literal="A quiet island with a long history.",
+            ),
+        ],
+    )
+    job, *_ = harness(brief=brief)
+    contract = build_render_contract(
+        generation_id="generation", strategy=job.all_candidates["creator_strategy"], brief=brief
+    )
+    job.assembly_plan[CONTRACT_FIELD] = contract.model_dump(mode="json")
+    # The render repair owns the missing literal even when copy composition omits it.
+    monkeypatch.setattr(
+        "app.services.creation_text_composition.compose_creation_text",
+        lambda snapshot, **kwargs: snapshot,
+    )
+    gb._run_generative_job(str(job.id))
+    record = job.assembly_plan["unified_montage"]
+    receipt = next(r for r in record["requirement_receipts"] if r["requirement_id"] == "intro")
+    assert receipt["status"] == "met"
+    assert not record.get("repair_notes")
 
 
 def test_without_capture_times_the_order_stays_attachment_and_says_so(harness):
@@ -1265,7 +1303,9 @@ def test_initial_creation_composes_full_request_before_pinning_phone_plan(harnes
     ] == title.split()
 
 
-# --- KRI-689: a clip-speed ask the phone montage cannot honour is a "Couldn't", never a block ---
+# --- KRI-689: a clip-speed ask. Without a verified `variableSpeed` renderer (this harness's
+# default) it is an honest "Couldn't", never a block; with one, the rate rides the plan into the
+# phone recipe (the second group of tests below). ---
 
 
 def _speed_brief(description: str = "Speed the river shots up 2x") -> CreativeBrief:
@@ -1280,6 +1320,15 @@ def _speed_brief(description: str = "Speed the river shots up 2x") -> CreativeBr
                 facts={"key": "capture_time"},
             ),
             BriefRequirement(id="r5", kind="style", scope="global", description=description),
+            # A stated length keeps the cuts short (~1.4 s of 3.5-5 s clips), so a faster rate
+            # has footage to speed through; without it every cut shows its clip whole.
+            BriefRequirement(
+                id="r2",
+                kind="timing",
+                scope="global",
+                description="20 seconds",
+                facts={"duration_s": 20},
+            ),
         ],
     )
 
@@ -1333,6 +1382,126 @@ def test_a_pacing_ask_is_not_recorded_as_a_dropped_speed_ask(harness):
         for row in job.assembly_plan["unified_montage"]["requirement_receipts"]
     }
     assert "r5" not in receipts or receipts["r5"]["status"] != "not_possible"
+
+
+# With `variableSpeed` verified (production has it), the chat ask is planned: the rate lands on
+# the right cuts, rides `guided_story_execution_plan` into the device recipe, and the receipt
+# says which clips play at which rate (docs/reviews/kri-689-chat-speed-failure-modes.md).
+
+_RIVER = {"best_moments": [{"start_s": 0.4, "end_s": 2.4, "energy": 0.9,
+                            "description": "a ferry crossing the river at night"}]}  # fmt: skip
+
+
+def _speed_on(monkeypatch) -> None:
+    monkeypatch.setattr(
+        gb.settings,
+        "phone_render_verified_features",
+        [*gb.settings.phone_render_verified_features, "variableSpeed"],
+    )
+
+
+def _dispatched(job, monkeypatch):
+    # After `harness(...)`, which pins the verified-feature list without `variableSpeed`.
+    _speed_on(monkeypatch)
+    gb._run_generative_job(str(job.id))
+    assert job.status == "awaiting_device"
+    plan = GuidedStoryExecutionPlan.model_validate(job.assembly_plan["guided_story_execution_plan"])
+    recipe = device_status(job, "guided_story").request.recipe
+    receipts = {
+        row["requirement_id"]: row
+        for row in job.assembly_plan["unified_montage"]["requirement_receipts"]
+    }
+    return plan, recipe, receipts
+
+
+def test_a_whole_edit_speed_ask_plays_every_clip_faster_on_the_phone(harness, monkeypatch):
+    _speed_on(monkeypatch)
+    baseline, *_ = harness(brief=_speed_brief("Fast pacing"))
+    gb._run_generative_job(str(baseline.id))
+    base_plan = GuidedStoryExecutionPlan.model_validate(
+        baseline.assembly_plan["guided_story_execution_plan"]
+    )
+    job, *_ = harness(brief=_speed_brief("Speed up all the clips 2x"))
+
+    plan, recipe, receipts = _dispatched(job, monkeypatch)
+
+    assert {m.media_id: m.playback_rate for m in plan.story_timeline} == {
+        m.media_id: 2.0 for m in plan.story_timeline
+    }
+    # C1: the timeline the labels and the total length hang on is unchanged.
+    assert [(m.output_start_s, m.output_end_s) for m in plan.story_timeline] == [
+        (m.output_start_s, m.output_end_s) for m in base_plan.story_timeline
+    ]
+    assert plan.resolved_duration_s == base_plan.resolved_duration_s
+    clips = {clip.id: clip for clip in recipe.tracks[0].clips}
+    for moment in plan.story_timeline:
+        assert clips[moment.moment_id].rate == 2.0
+        assert clips[moment.moment_id].source_duration == pytest.approx(
+            moment.source_end_s - moment.source_start_s, abs=1e-6
+        )
+    assert "variableSpeed" in recipe.required_capabilities
+    assert receipts["r5"]["status"] == "met"
+    assert receipts["r5"]["verification"] == "checked"
+    assert receipts["r5"]["reason"] == "Every video clip plays at 2x"
+    assert receipts["r4"]["status"] == "met"
+    (row,) = job.assembly_plan["unified_montage"]["clip_speeds"]
+    assert row["status"] == "applied" and row["grounding"] == "all_clips"
+
+
+def test_a_named_clip_is_the_only_one_that_changes_speed(harness, monkeypatch):
+    _speed_on(monkeypatch)
+    job, *_ = harness(
+        brief=_speed_brief("Speed the river shots up 2x"), analysis={"clip-3": _RIVER}
+    )
+
+    plan, recipe, receipts = _dispatched(job, monkeypatch)
+
+    rates = {moment.media_id: moment.playback_rate for moment in plan.story_timeline}
+    assert rates.pop("clip-3") == 2.0
+    # B1 negative control: no other clip picks up the rate.
+    assert set(rates.values()) == {None}
+    clips = {clip.id: clip for clip in recipe.tracks[0].clips}
+    river = next(m for m in plan.story_timeline if m.media_id == "clip-3")
+    assert clips[river.moment_id].rate == 2.0
+    assert all(clips[m.moment_id].rate == 1 for m in plan.story_timeline if m.media_id != "clip-3")
+    position = [m.media_id for m in plan.story_timeline].index("clip-3") + 1
+    assert receipts["r5"]["status"] == "met"
+    assert receipts["r5"]["reason"] == f"Clip {position} plays at 2x"
+    assert "request_recovery" not in job.assembly_plan
+
+
+def test_words_that_name_no_clip_are_the_creators_call_and_still_render(harness, monkeypatch):
+    from app.kria.brief_binding import BriefBinding
+
+    _speed_on(monkeypatch)
+    brief = _speed_brief("Speed the river shots up 2x")
+    job, *_ = harness(brief=brief)  # no clip analysis names a river
+    job.assembly_plan["creator_brief_binding"] = BriefBinding.create(
+        uuid.uuid4(), brief
+    ).model_dump(mode="json")
+
+    plan, recipe, receipts = _dispatched(job, monkeypatch)
+
+    assert all(moment.playback_rate is None for moment in plan.story_timeline)
+    assert "variableSpeed" not in recipe.required_capabilities
+    assert receipts["r5"]["status"] == "not_possible"
+    assert receipts["r5"]["reason"].startswith("I couldn't tell which clip you meant")
+    # KRI-129: the creator approved, so it renders and says what it could not do.
+    assert "request_recovery" not in job.assembly_plan
+    assert job.status == "awaiting_device"
+
+
+def test_a_turkish_whole_edit_ask_gets_a_turkish_receipt(harness, monkeypatch):
+    _speed_on(monkeypatch)
+    job, *_ = harness(brief=_speed_brief("Klipleri 2 kat hızlandır"))
+    job.assembly_plan["creator_reply_language"] = "tr"
+
+    plan, _recipe, receipts = _dispatched(job, monkeypatch)
+
+    assert {m.media_id: m.playback_rate for m in plan.story_timeline} == {
+        m.media_id: 2.0 for m in plan.story_timeline
+    }
+    assert receipts["r5"]["reason"] == "Her video klibi 2x hızda oynuyor"
 
 
 # --- KRI-765: a missed ask's note is written in the chat's language ---

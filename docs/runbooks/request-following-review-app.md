@@ -206,6 +206,21 @@ counts, evidence dates, stale/unavailable/invalid reviews, and partial/missed ca
 ranked by affected sessions. The bounded scan says when more than 1,000 current captures
 exist. No population success percentage is inferred from selected review cases.
 
+The `delivery` projection keeps ready jobs, device export attempts, acknowledged
+exports and verified exports separate from human-reviewed fulfillment. It includes
+recent captured sessions that fail before a Job exists. A device export is verified
+only when its current published attempt has a matching successful output report;
+historical publication without that report is an acknowledgement, not verification.
+Delayed or repeated completion callbacks cannot add another published attempt.
+
+Only a complete current review with every requirement met increments
+`fulfilled_reviewed_sessions`. Partial or missed reviews increment
+`unfulfilled_reviewed_sessions`. Missing, stale, unclear and creator-changed reviews
+remain in `unknown_fulfillment_sessions`. First-attempt fulfillment and Photos-save
+acknowledgements are `null`: the retained records do not establish those facts.
+This remains a selected-session report. Original-request retry lineage, accepted
+revisions, costs and client/server version cohorts remain KRI-728 work.
+
 Only controlled category/verdict vocabulary, numeric counts, timestamps and opaque
 case UUIDs leave the private API. The client rebuilds this allowlisted schema before
 writing CI artifacts: creator identities, exact request text, free-form notes, signed

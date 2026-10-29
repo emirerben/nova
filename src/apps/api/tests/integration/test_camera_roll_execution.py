@@ -171,6 +171,10 @@ _RECOVERABLE_CASES = {"held", "empty-caption", "whitespace-caption", "lost-telem
             ("reused-recovery-key", _ACCEPTED_CAPTION),
             ("flags-off", _ACCEPTED_CAPTION),
         )
+    ]
+    + [
+        pytest.param(f"open-questions:{how}", False, False, _ACCEPTED_CAPTION, True, None, id=how)
+        for how in ("question-answered", "question-skipped", "question-old-build")
     ],
 )
 async def test_selection_prepares_common_draft_then_explicit_approval_freezes_execution(
@@ -186,6 +190,16 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
 ):
     client, assets, sources, owner, _app = collection_world
     source_context = with_content_plan == "whole-source-context"
+    question_mode = (
+        with_content_plan.split(":", 1)[1]
+        if isinstance(with_content_plan, str) and with_content_plan.startswith("open-questions:")
+        else None
+    )
+    closing_text = (
+        "Worth the trip to Hamburg?"
+        if question_mode == "question-answered"
+        else ("Worth the trip?")
+    )
     retained_condition = (
         with_content_plan.split(":", 1)[1]
         if isinstance(with_content_plan, str) and with_content_plan.startswith("retained:")
@@ -465,6 +479,20 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
                             "closing_text": "Worth the trip?",
                             "caption": caption,
                             "beat_reasons": ["Establish the journey" for _ in moments],
+                            **(
+                                {
+                                    "open_questions": [
+                                        {
+                                            "id": "q1",
+                                            "question": "Which port is this crossing to?",
+                                            "answer": None,
+                                            "dismissed": False,
+                                        }
+                                    ]
+                                }
+                                if question_mode
+                                else {}
+                            ),
                         }
                     }
                     if with_content_plan
@@ -633,6 +661,102 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         "thread_id": str(thread_id),
         "expected_thread_revision": initial_revision,
     }
+    # A build without the question card (no protocol header) has no way to answer, so the
+    # server must not gate it: it builds the idea's neutral copy straight away.
+    if question_mode and question_mode != "question-old-build":
+        select_path = f"{path}/stories/{story_id}/select"
+        # A build that predates the question UI is never shown the list.
+        old = await client.get(
+            f"{path}/stories",
+            params={"expected_revision": 1, "story_ids": str(story_id)},
+            headers={"X-Kria-Client-Protocol": "21"},
+        )
+        assert "open_questions" not in old.json()["stories"][0]["content_plan"]
+        client.headers["X-Kria-Client-Protocol"] = "22"
+        card_build = {"X-Kria-Client-Protocol": "22"}
+
+        async def assert_nothing_built():
+            async with AsyncSessionLocal() as db:
+                assert (
+                    await db.scalar(
+                        select(CreatorAgentTurn.id).where(CreatorAgentTurn.thread_id == thread_id)
+                    )
+                    is None
+                )
+                assert (await db.get(PlanItem, item_id)).current_job_id is None
+
+        def wording(plan, **changes):
+            return {k: v for k, v in plan.items() if k != "open_questions"} | changes
+
+        def edit(revision, event, plan):
+            return client.patch(
+                f"{path}/stories/{story_id}",
+                json=dict(
+                    expected_revision=1,
+                    expected_story_revision=revision,
+                    client_event_id=event,
+                    content_plan=plan,
+                ),
+            )
+
+        blocked = await client.post(select_path, json=selection_body, headers=card_build)
+        assert blocked.status_code == 409, blocked.text
+        assert blocked.json()["detail"]["code"] == "story_open_questions"
+        await assert_nothing_built()
+
+        saved = await client.get(
+            f"{path}/stories", params={"expected_revision": 1, "story_ids": str(story_id)}
+        )
+        plan = saved.json()["stories"][0]["content_plan"]
+        assert [q["id"] for q in plan["open_questions"]] == ["q1"]
+
+        # A build that predates the field echoes no questions; that must not clear them.
+        echoed = await edit(1, "old-build-echo", wording(plan))
+        assert echoed.status_code == 200, echoed.text
+        assert echoed.json()["content_plan"]["open_questions"][0]["answer"] is None
+        selection_body["expected_story_revision"] = 2
+        assert (
+            await client.post(select_path, json=selection_body, headers=card_build)
+        ).status_code == 409
+        await assert_nothing_built()
+
+        forged = await edit(
+            2, "forged-question", {**plan, "open_questions": [{"id": "q9", "question": "Invented"}]}
+        )
+        assert forged.status_code == 422, forged.text
+        both = await edit(
+            2,
+            "answered-and-skipped",
+            {
+                **plan,
+                "open_questions": [{"id": "q1", "question": "x", "answer": "y", "dismissed": True}],
+            },
+        )
+        assert both.status_code == 422, both.text
+
+        resolution = (
+            {"answer": "Hamburg", "dismissed": False}
+            if question_mode == "question-answered"
+            else {"answer": None, "dismissed": True}
+        )
+        revised = wording(plan)
+        if question_mode == "question-answered":
+            revised["closing_text"] = closing_text
+        resolved = await edit(
+            2,
+            "resolve-question",
+            {**revised, "open_questions": [{**plan["open_questions"][0], **resolution}]},
+        )
+        assert resolved.status_code == 200, resolved.text
+        body = resolved.json()
+        assert body["revision"] == 3
+        assert body["content_plan"]["closing_text"] == closing_text
+        assert {k: body["content_plan"]["open_questions"][0][k] for k in resolution} == resolution
+        assert body["content_plan"]["open_questions"][0]["question"] == (
+            "Which port is this crossing to?"
+        )
+        assert body["research"]["review_current"] is (question_mode == "question-skipped")
+        selection_body["expected_story_revision"] = 3
     selected = await client.post(
         f"{path}/stories/{story_id}/select",
         json=selection_body,
@@ -948,6 +1072,11 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         else:
             assert draft.snapshot_json.get("brief_binding") is None
         prepared_research = frozen.get("research")
+        if question_mode:
+            # Creator-typed answers stay on the story row; the prepared copy, digest and
+            # diagnostics never carry them.
+            assert "open_questions" not in frozen["content_plan"]
+            assert "Which port is this crossing to?" not in json.dumps(frozen)
         if with_content_plan:
             assert frozen["research"]["evidence"]["facts"][0]["sources"][0]["url"] == (
                 "https://si.edu/recorded-fixture"
@@ -962,7 +1091,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             )["text_elements"]
         ]
         if with_content_plan:
-            assert rendered_text == ["Where does this crossing lead?", "Worth the trip?"]
+            assert rendered_text == ["Where does this crossing lead?", closing_text]
             assert "A journey" not in rendered_text
         else:
             assert rendered_text == []
@@ -1209,7 +1338,7 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
             (value["source_start_s"], value["source_end_s"]) for value in frozen["story_timeline"]
         ] == expected_windows
         assert [row["text"] for row in frozen["text_elements"]] == (
-            ["Where does this crossing lead?", "Worth the trip?"] if with_content_plan else []
+            ["Where does this crossing lead?", closing_text] if with_content_plan else []
         )
         assert job.assembly_plan["prepared_collection_story"]["story_id"] == str(story_id)
         if source_context:
@@ -1345,10 +1474,10 @@ async def test_selection_prepares_common_draft_then_explicit_approval_freezes_ex
         assert sections["post_caption"]["payload"]["text"] == caption
 
 
-async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry(
+async def test_ready_long_source_without_timed_evidence_gets_a_sampled_window(
     collection_world,  # noqa: F811
 ):
-    """Completed facts without intervals are not evidence of a queued analysis."""
+    """Completed facts without intervals are neither queued analysis nor unusable footage."""
     client, assets, sources, _owner, _app = collection_world
     async with AsyncSessionLocal() as db:
         rows = (
@@ -1374,19 +1503,18 @@ async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry
     assert (await client.put(path, json=selection(assets, sources))).status_code == 200
     indexed = await client.post(f"{path}/index", json={"expected_revision": 1})
     assert indexed.status_code == 200, indexed.text
-    assert assets[0] in indexed.json()["unusable_timing_asset_ids"]
+    # The fixture clip is 180 s: too long to be "the whole clip", so a fixed window stands in.
+    assert assets[0] in indexed.json()["sampled_asset_ids"]
+    assert assets[0] not in indexed.json()["unusable_timing_asset_ids"]
     assert indexed.json()["missing_analysis_asset_ids"] == []
-    found = await client.get(f"{path}/moments", params={"query": "ferry", "expected_revision": 1})
+    found = await client.get(f"{path}/moments", params={"query": "sampled", "expected_revision": 1})
     assert found.status_code == 200, found.text
-    assert assets[0] in found.json()["unindexed_asset_ids"]
+    assert assets[0] not in found.json()["unindexed_asset_ids"]
+    window = next(value for value in found.json()["moments"] if value["asset_id"] == assets[0])
+    assert window["end_s"] - window["start_s"] == 10
+    assert window["uncertain"] is True and window["evidence"]["sampled_window"] is True
+    assert window["evidence"]["semantic_localization"] == "none"
     async with AsyncSessionLocal() as db:
-        assert (
-            await db.scalars(
-                select(MediaSourceMoment).where(
-                    MediaSourceMoment.source_id == uuid.UUID(sources[0])
-                )
-            )
-        ).all() == []
         rows = (
             await db.scalars(
                 select(MediaAssetAnalysis).where(
@@ -1395,8 +1523,8 @@ async def test_ready_source_without_timed_evidence_stays_unindexed_without_retry
             )
         ).all()
         assert len(rows) == 2 and all(row.status == "ready" for row in rows)
-    # collection_world rejects every download/provider analysis attempt. No
-    # highlights are fabricated and the original READY facts stay unchanged.
+    # collection_world rejects every download/provider analysis attempt: the window is
+    # derived from the cached facts and the original READY facts stay unchanged.
 
 
 @pytest.mark.parametrize(
@@ -1500,7 +1628,16 @@ async def test_completed_untimed_source_gets_truthful_bounded_context_only(
         f"{path}/moments", params={"query": "synthetic", "expected_revision": 1}
     )
     assert found.status_code == 200, found.text
-    if condition == "complete":
+    if condition == "too-long":
+        # Longer than the whole-clip limit with nothing detected: a sampled window, not a gap.
+        assert indexed.json()["sampled_asset_ids"] == [assets[0]]
+        assert indexed.json()["unusable_timing_asset_ids"] == []
+        assert indexed.json()["context_asset_ids"] == []
+        assert found.json()["unindexed_asset_ids"] == []
+        window = found.json()["moments"][0]
+        assert window["evidence_scope"] == "timed_moment"
+        assert window["end_s"] - window["start_s"] == 10
+    elif condition == "complete":
         assert indexed.json()["missing_analysis_asset_ids"] == []
         assert indexed.json()["context_asset_ids"] == [assets[0]]
         assert indexed.json()["unusable_timing_asset_ids"] == []

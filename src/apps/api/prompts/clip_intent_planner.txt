@@ -68,7 +68,7 @@ Return every distinct requested operation as one of:
   later resolver may author from footage -- never for the target chapter.$exclude_bullet
 No other op exists.
 
-$exclusion_rules
+$exclusion_rules$exclusive_rules
 
 Showing a clip when the creator's voiceover gets to it ("show the balloons
 while I talk about the balloons", "when I say Deniz, show Deniz at the laptop",
@@ -87,6 +87,13 @@ Keep separate operations even when they refer to the same clips, such as a city
 group, city labels, and activity labels. Do not use any category allowlist.
 Pure style, timing, transitions, titles, music, or duration requests produce an
 empty intents list.
+
+For a sequence listing several different subjects inside one order intent, set
+`ordered_members` true. This means its resolved members must play in the listed
+order. Prefer one order intent per subject. For a group such as "the volleyball
+clips" with no requested internal sequence, explicitly set `ordered_members`
+false. Omission means the internal ordering was not recorded; it does not confirm
+that the creator accepts any order within a multi-clip group.
 
 Asking to cut or remove parts of the creator's own recorded speech is speech
 cleanup, which another step handles: "cut my long pauses", "remove the ums",
@@ -122,6 +129,13 @@ to the clip that shows it: boiling the pasta, grating the pecorino. Use the
 eating shot at the very end. Big readable captions. Title: "Cacio e pepe in 10
 minutes".` yields one order intent per step plus the eating shot as `last`, and
 nothing for "Big readable captions" or the title.
+Text for the whole video is not a caption intent either: an introduction, an
+explanation, or facts about the place or topic ("include some facts about
+Lisbon to show why people should go, an introductory explanation", "add a short
+intro about the town") names no clips. It produces no intent, never becomes a
+caption on one of the clips, and is never a reason to ask. Only text the
+creator puts on named or described clips ("a caption about the history on the
+castle clips") is a caption intent.
 
 A description of the whole video's subject, place, or occasion ("a fun montage
 of our Barcelona weekend", "my Rome trip video") is context, not an operation:
@@ -201,9 +215,16 @@ Every intent must contain:
 - intent_id: stable short identifier you create; every intent_id must be unique
 - op, attribute, and optional position/caption_attribute per the JSON schema
 - `position` is exactly "first", "last", or null, and only on order. "Day shots
-  first and night shots last" is TWO order intents. A request to keep the order
-  the creator listed ("in this chapter order", "in this order") is one order
-  intent with position null; never write the order itself into position.
+  first and night shots last" is TWO order intents. A list the creator gives in
+  an order ("in this order: river, kitchen, attic") is one order intent PER
+  NAMED SUBJECT, position null, written in the stated order: the server keeps
+  one intent's clips together and only orders one intent after another. "Start
+  on the gate, end on the toast, in between in this order: river, kitchen,
+  attic" is the gate as `first`, the toast as `last`, and three more order
+  intents (river, kitchen, attic) with position null. One group kept in its own
+  order, with no subjects named ("in this chapter order", "keep the order I
+  listed"), stays one order intent with position null. Never write the order
+  itself into position.
 - label_source ("clip" unless the creator explicitly asks for a spoken
   narration label); transcript_kind is required only for label_source
   "transcript" and must be participant, score, or topic
@@ -219,4 +240,4 @@ question. Do not ask because a factual answer is unknown; the resolver handles
 that. Never return a subset.
 
 Return only JSON:
-{"intents":[{"intent_id":"...","op":"label|group|order|include|caption$exclude_op","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field,"source_quote":"exact creator quote"}],"question":null}
+{"intents":[{"intent_id":"...","op":"label|group|order|include|caption$exclude_op","attribute":"...","label_source":"clip|transcript","transcript_kind":"participant|score|topic|null","creator_text":null,"caption_attribute":null,"position":null,"placeholder":false$order_by_field$exclusive_field$requirement_field,"source_quote":"exact creator quote"}],"question":null}

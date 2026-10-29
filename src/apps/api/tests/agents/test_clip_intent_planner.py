@@ -1908,9 +1908,15 @@ def test_kri667_prompt_teaches_exclude_only_with_the_flag() -> None:
     assert "Never ask about an exclusion" in flat
     # Everything outside the three slots is shared, byte for byte.
     assert off.split("No other op exists.")[0] == on.split("- exclude:")[0]
-    assert off.split("Showing a clip when")[1] == on.split("Showing a clip when")[1].replace(
-        "caption|exclude", "caption"
+    # (KRI-993: the `exclusive` JSON field rides the same switch.)
+    assert off.split("Showing a clip when")[1] == (
+        on.split("Showing a clip when")[1]
+        .replace("caption|exclude", "caption")
+        .replace(',"exclusive":false', "")
+        .replace(',"requirement_id":"r1|null"', "")
     )
+    # KRI-994: the requirement link is taught only with exclusions on.
+    assert '"requirement_id":"r1|null"' in on and "requirement_id" not in off
     assert "clip_exclusions" not in _cappadocia_input().model_dump()
 
 
@@ -2504,3 +2510,21 @@ def test_kri552_the_prompt_sends_speech_cleanup_to_the_step_that_owns_it() -> No
     assert "never a caption, label, group, order, or include" in prompt
     assert "uzun duraklamaları kes" in prompt
     assert "Cut my long pauses and the part where I restart the kilometer thirty sentence" in prompt
+
+
+# sha256 of the kill-switch-OFF rendering of `_input()` on origin/main c4f0aa826 (before
+# KRI-993), rendered from that commit's template with the same variables.
+_OFF_PROMPT_SHA256 = "e0f6d521fbf27a58b2e429655f3f6a19d49cbf5b72881e4e5d06648b2cee39f5"
+
+
+def test_kri993_kill_switch_off_prompt_is_byte_identical_to_before() -> None:
+    import hashlib
+
+    off = _agent().render_prompt(_input())
+    assert hashlib.sha256(off.encode()).hexdigest() == _OFF_PROMPT_SHA256
+
+
+def test_kri993_on_prompt_keeps_a_blank_line_around_the_scope_paragraph() -> None:
+    on = _agent().render_prompt(ClipIntentPlannerInput(creator_request="x", clip_exclusions=True))
+    assert "\n\nAn edit limited to a subject" in on
+    assert "`exclusive` is false on every other intent.\n\nShowing a clip when" in on

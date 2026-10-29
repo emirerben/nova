@@ -57,11 +57,25 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # hashes re-pinned after reviewing both edits.
 # v92 merges main's v91 (KRI-724/840/841/842/847/849 brief facts) with KRI-881: brief-on
 # hashes re-pinned (brief-off equal KRI-881's v81, main left those prompts unchanged).
+# v95 (KRI-689): brief-on hashes re-pinned for the `playback_rate` fact; brief-off unchanged.
+# v96 (exact-timed small cards) adds the `timed_card` fact to the brief section: brief-on
+# hashes re-pinned; brief-off unchanged (the SMALL CARDS section renders only on a manifest
+# that advertises `timed_cards`, which these renders never do).
+# v97 (KRI-945) narrows the described-text exception to text on clips: clip-intents-on hashes
+# re-pinned; clip-intents-off unchanged (the exception renders only with clip intents).
+# v98 (KRI-942) adds clip sound on / off (`clip_sound` "on"/"off") to the brief section: brief-on
+# hashes re-pinned; brief-off unchanged.
+# v99 (KRI-957) teaches that an after-voice `triggers` line is said in the clip, never the
+# creator's own last voiceover words: brief-on hashes re-pinned; brief-off unchanged.
+# v100 (KRI-994) teaches the select media-kind facts (`only_media_kind`, `include_media_kind`):
+# brief-on hashes re-pinned; brief-off unchanged.
+# v102 (29 Ekim lane D, KRI-1038): text_sequence in the brief section (brief-on) and the
+# "words to SHOW are on-screen text" rule in main_creator.txt (all four hashes re-pinned).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "b80d32863ac80c351ffb45d3044a2457de8644527e0348c1a837eeac81e073ff",
-    (True, False): "cc7c6427ab34d031e6428fc804484ff65079c972be7c38a1e3a144d2b720ee23",
-    (False, True): "6cb97ffc9d133889113b38bc8159eb7547e2841ed63e0a8582e127ebe9618d92",
-    (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
+    (True, True): "008828cfaf19b31834e77ab37617955cea4ce70799561bad6359ad208c2d0815",
+    (True, False): "7750407c6061324b3a6c034144f94e1f2340dfe337f24957b8b4f88bd29ace8f",
+    (False, True): "0b1c2d5048285420395a3cef52d5b7fe6f7e57255dcbac735c6a37822afc827d",
+    (False, False): "48f744f1f02dfc89d44310431a53150ca269664efc22d552f161ede6c02f0760",
 }
 
 
@@ -142,7 +156,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-25-v94"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-29-v102"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

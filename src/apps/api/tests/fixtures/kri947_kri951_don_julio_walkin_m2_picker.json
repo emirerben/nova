@@ -1,0 +1,172 @@
+{
+ "_source": "Prod thread 545F53A9-2DE3-48F8-90C7-C8366E742B89 (Don Julio walk-in M2, 2026-10-26, prod 5a96e1d58). Every clip picker question and every creator answer of the thread, copied unchanged from GET /admin/creation-threads/{id}/events (assistant `clip_question`, user `clip_selection`); `sent_text` is that turn's `plan.response` from GET /admin/creation-threads/{id}/turns. The project has ONE video (`video`) and one Visuals photo that no question offered (KRI-949). Round 1 (seq 6) asked the queue under `include`, the creator tapped the video (seq 7); round 3 (seq 10) re-asked it under `order` (KRI-947) and listed the butcher twice (KRI-951); round 4 (seq 12) listed the ribeye photo twice (KRI-951); round 6 (seq 16) re-asked the photo under `order` after the round-4 skip (KRI-947).",
+ "video": "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4",
+ "events": [
+  {
+   "sequence": 6,
+   "role": "assistant",
+   "clip_question": {
+    "version": 1,
+    "allow_none": true,
+    "categories": [
+     {
+      "op": "include",
+      "key": "include:the-queue-under-the-striped-awning",
+      "label": "the queue under the striped awning",
+      "intent_id": "clip_moment_queue_include",
+      "candidate_media_ids": [
+       "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
+      ],
+      "suggested_media_ids": []
+     }
+    ],
+    "question_id": "0b78cdf4-17d8-4b4a-972d-e68fff3e1bff"
+   },
+   "sent_text": "I couldn't find \"the queue under the striped awning\" in your video. Tap the video if it's in there, or tell me it isn't."
+  },
+  {
+   "sequence": 7,
+   "role": "user",
+   "clip_selection": {
+    "answers": [
+     {
+      "key": "include:the-queue-under-the-striped-awning",
+      "media_ids": [
+       "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
+      ]
+     }
+    ],
+    "skipped": false,
+    "none_keys": [],
+    "question_id": "0b78cdf4-17d8-4b4a-972d-e68fff3e1bff"
+   }
+  },
+  {
+   "sequence": 10,
+   "role": "assistant",
+   "clip_question": {
+    "version": 1,
+    "allow_none": true,
+    "categories": [
+     {
+      "op": "include",
+      "key": "include:the-butcher-holding-a-cut-of-beef",
+      "label": "the butcher holding a cut of beef",
+      "intent_id": "include_butcher",
+      "candidate_media_ids": [
+       "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
+      ],
+      "suggested_media_ids": []
+     },
+     {
+      "op": "order",
+      "key": "order:the-queue-under-the-striped-awning",
+      "label": "the queue under the striped awning",
+      "intent_id": "order_queue",
+      "candidate_media_ids": [
+       "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
+      ],
+      "suggested_media_ids": []
+     },
+     {
+      "op": "order",
+      "key": "order:the-butcher-holding-a-cut-of-beef",
+      "label": "the butcher holding a cut of beef",
+      "intent_id": "order_butcher",
+      "candidate_media_ids": [
+       "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
+      ],
+      "suggested_media_ids": []
+     }
+    ],
+    "question_id": "172b1e86-b207-4bc4-9e46-e26bd1af4345"
+   },
+   "sent_text": "I couldn't find \"the butcher holding a cut of beef\", \"the queue under the striped awning\", \"the butcher holding a cut of beef\" in your video. Tap the video for each one that's in it, or mark the ones that aren't."
+  },
+  {
+   "sequence": 11,
+   "role": "user",
+   "clip_selection": {
+    "answers": [],
+    "skipped": true,
+    "none_keys": [],
+    "question_id": "172b1e86-b207-4bc4-9e46-e26bd1af4345"
+   }
+  },
+  {
+   "sequence": 12,
+   "role": "assistant",
+   "clip_question": {
+    "version": 1,
+    "allow_none": true,
+    "categories": [
+     {
+      "op": "include",
+      "key": "include:the-ribeye-photo",
+      "label": "the ribeye photo",
+      "intent_id": "include_ribeye_photo",
+      "candidate_media_ids": [
+       "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
+      ],
+      "suggested_media_ids": []
+     },
+     {
+      "op": "caption",
+      "key": "caption:the-ribeye-photo",
+      "label": "the ribeye photo",
+      "intent_id": "caption_ribeye_photo",
+      "creator_text": "Ojo de bife 🥩",
+      "candidate_media_ids": [
+       "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
+      ],
+      "suggested_media_ids": []
+     }
+    ],
+    "question_id": "1df9ec28-647f-4cc4-864a-40c69966848a"
+   },
+   "sent_text": "I couldn't find \"the ribeye photo\", \"the ribeye photo\" in your video. Tap the video for each one that's in it, or mark the ones that aren't."
+  },
+  {
+   "sequence": 13,
+   "role": "user",
+   "clip_selection": {
+    "answers": [],
+    "skipped": true,
+    "none_keys": [],
+    "question_id": "1df9ec28-647f-4cc4-864a-40c69966848a"
+   }
+  },
+  {
+   "sequence": 16,
+   "role": "assistant",
+   "clip_question": {
+    "version": 1,
+    "allow_none": true,
+    "categories": [
+     {
+      "op": "order",
+      "key": "order:the-ribeye-photo",
+      "label": "the ribeye photo",
+      "intent_id": "clip_order_4",
+      "candidate_media_ids": [
+       "analysis-proxy-ios-155481DC-92B9-431A-BD9B-6D69972E2894.mp4"
+      ],
+      "suggested_media_ids": []
+     }
+    ],
+    "question_id": "e07218d2-7376-497a-8823-6b46ab5472a9"
+   },
+   "sent_text": "I couldn't find \"the ribeye photo\" in your video. Tap the video if it's in there, or tell me it isn't."
+  },
+  {
+   "sequence": 17,
+   "role": "user",
+   "clip_selection": {
+    "answers": [],
+    "skipped": true,
+    "none_keys": [],
+    "question_id": "e07218d2-7376-497a-8823-6b46ab5472a9"
+   }
+  }
+ ]
+}

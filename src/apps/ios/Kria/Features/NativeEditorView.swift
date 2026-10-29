@@ -7,6 +7,8 @@ struct NativeEditorView: View {
     let onBack: () -> Void
     private let conversation: (() -> AnyView)?
     private let conversationAcceptedID: UUID?
+    /// Changes when the conversation asks to close its sheet (its "Open editor" while this editor is open).
+    private let conversationCloseID: UUID?
     @EnvironmentObject private var model: AppModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -39,6 +41,7 @@ struct NativeEditorView: View {
     private struct DrawMode: Equatable { var appendingTo: String? }
     @State private var showsEmptyAddClip = false
     @State private var selectedTextForActions: String?
+    @State private var selectedSoundEffectForActions: String?
     /// KRI-185: a block opened from the Text tab's list edits its words first and
     /// returns to that list; one opened from the timeline keeps the old behaviour.
     @State private var textEditOrigin: TextEditOrigin = .timeline
@@ -76,6 +79,7 @@ struct NativeEditorView: View {
         libraryJobID: UUID? = nil,
         sharedSession: NativeEditorSession? = nil,
         conversationAcceptedID: UUID? = nil,
+        conversationCloseID: UUID? = nil,
         conversation: (() -> AnyView)? = nil,
         onBack: @escaping () -> Void
     ) {
@@ -84,6 +88,7 @@ struct NativeEditorView: View {
         self.onBack = onBack
         self.conversation = conversation
         self.conversationAcceptedID = conversationAcceptedID
+        self.conversationCloseID = conversationCloseID
         _session = StateObject(
             wrappedValue: sharedSession ?? initialDraft.map {
                 NativeEditorSession(
@@ -209,6 +214,8 @@ struct NativeEditorView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
+            // The sheet's "Open editor" lands back here.
+            .onChange(of: conversationCloseID) { _, _ in showsConversation = false }
             // Sending from the conversation sheet must not dismiss it (only the
             // creator closes it); `conversationAcceptedID` is intentionally unused here.
             // A re-plan can finish as a NEW job while this editor is open: show it.
@@ -860,8 +867,10 @@ struct NativeEditorView: View {
         guard let selection = session.selection else {
             if case .text = panel { changePanel(to: nil) }
             selectedTextForActions = nil
+            selectedSoundEffectForActions = nil
             return
         }
+        if selection.kind != .soundEffect { selectedSoundEffectForActions = nil }
         if [.mediaOverlay, .visualBlock, .motionScene, .cameraEffect].contains(selection.kind) {
             changePanel(to: .visuals)
             return
@@ -872,6 +881,11 @@ struct NativeEditorView: View {
             return
         }
         if selection.kind == .soundEffect {
+            guard panel == .sounds || selectedSoundEffectForActions == selection.id else {
+                changePanel(to: nil)
+                selectedSoundEffectForActions = selection.id
+                return
+            }
             panelDrafts.soundsTab = .effects
             panelDrafts.sfxScreen = .home
             changePanel(to: .sounds)
@@ -935,7 +949,7 @@ struct NativeEditorView: View {
             ? SourceAssetError.missingOriginal("fixture-source")
             : arguments.contains("-ui-testing-editor-source-failure-permanent") ? NativeEditorRenderError.missingVideoTrack
             : arguments.contains("-ui-testing-editor-source-failure") ? APIError.invalidResponse : nil
-        if forcedFailure != nil || arguments.contains("-ui-testing-editor-source-text") || arguments.contains("-ui-testing-editor-captured-creation") {
+        if forcedFailure != nil || arguments.contains("-ui-testing-editor-source-text") || arguments.contains("-ui-testing-editor-live-preview") || arguments.contains("-ui-testing-editor-selection-boundary") || arguments.contains("-ui-testing-editor-captured-creation") {
             let delayed = ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source")
             if delayed, session.loadState == .loaded { return }
             let url = forcedFailure != nil

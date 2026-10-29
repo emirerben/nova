@@ -174,6 +174,33 @@ keep segment is widened, never absorbed). So triage a report accordingly:
   starts ≥0.3 s into it, and the span runs to within 0.2 s of the next word. If a report
   says a sentence's LAST syllable was clipped, check `token_adjustments` for that kind
   first; it is the only edge trim rule 0 performs.
+- "cleanup cut part of a word" where the cut is a `filler_lexical` span → whisper stamped
+  a filler nobody said over the start of the word and squeezed the word next to it.
+  `mixed-gap-v6-squeeze` (KRI-970) refuses a lexicon filler next to a word of 2+ vowel
+  groups stamped faster than 12 syllables/s, within 0.15 s of it
+  (`_squeezed_neighbour`; `SQUEEZE_*` in `app/pipeline/silence_cut.py`). The refused
+  token counts as a word for every rule. It errs toward keeping a real "uh" (about 1 in
+  10 lexicon fillers in Oct 2026 prod transcripts). Do not loosen it to cut more fillers
+  without listening to the refused cases.
+- "the red cut says 'uh' but the 'uh' is still there and a word is gone" → whisper-1
+  stamped the stretch late. `SPEECH_CLEANUP_FILLER_CHECK_ENABLED` (default on) re-times
+  filler cuts with the pinned forced aligner (`app/pipeline/speech_cleanup_alignment.py`,
+  model in `/opt/models/wav2vec2-base-960h`) and re-listens around each filler cut, dropping
+  a cut that takes a word. `diagnostics.filler_check` on the analysis says why re-timing was
+  skipped (`no_fillers`, `not_english`, `squeezed_filler`, `aligner_unavailable`,
+  `low_alignment_score`, `filler_without_room`) and which cuts the re-listen dropped. Kill
+  switch: `fly secrets set SPEECH_CLEANUP_FILLER_CHECK_ENABLED=false --app nova-video` +
+  api and worker restart (it is part of the source policy fingerprint, so analyses redo).
+- "cleanup cut whole words / a quiet second speaker" on a take with no real pause (two
+  people talking, one far from the mic; a wrong-language or partial transcript) → the
+  ambient silence floor sat above the quiet voice and the transcript had no token there.
+  `mixed-gap-v8-voice-guard` (KRI-1017, `app/pipeline/speech_voice_guard.py`) gives back any
+  silence or filler cut that holds a sustained voiced run, whatever the transcript says: a
+  pause keeps its longer voice-free edge, a filler cut is dropped whole. Transcribed fillers,
+  retakes and creator-chosen spans are exempt. `diagnostics.voice_guard` lists what it
+  `dropped` and `trimmed` (`start_s`, `end_s`, `reason`, `voiced_s`, `kept_cut_*`). It has no
+  flag: it can only keep audio. If it keeps pauses on noisy takes, check for periodic background (music,
+  crowd talk) before touching `MIN_PERIODICITY`; never tune it on loudness alone.
 - "the cuts sound jumpy / the background drops out at every cut" on noisy footage →
   the render, not the detector. Cloud cuts crossfade up to 25 ms of removed audio
   from each side and cut audio on the video frame grid (`_CUT_CROSSFADE_HANDLE_S`,
@@ -284,6 +311,34 @@ Cost: at most 3 extra whisper-1 passes (about $0.006 per audio minute each), on 
 Apply: fly secret + worker restart. Kill switch: `SPEECH_CLEANUP_MIXED_LANGUAGE_ENABLED=false`
 restores the EN/TR cross-check alone, byte for byte (only the preflight worker reads it).
 Already-settled analyses are not redone.
+
+#### Whole-take reference and re-listened stretches (KRI-1016)
+
+Plaza T2 (48 s, a guide's English with the creator translating into Turkish) showed two gaps in
+the merge above. whisper-1 auto-picked Turkish; the reference was the 30 s Gemini sample, so
+31.7-48 s stayed a Turkish translation of English speech (the end line and the photo cue were
+never heard). And whisper-1, decoding the whole take in Turkish, wrote NO words for the
+creator's real Turkish (6.4-13.4 s, 26.3-31.7 s; the recorded whisper-1 `language=tr` caption
+pass of the same clip is empty there too), so those stretches were wordless: the captions had
+nothing to show and the cleanup read them as pauses. With `SPEECH_CLEANUP_MIXED_RELISTEN_ENABLED` on (default), a mixed take also gets:
+
+1. a whole-take reference: when the 30 s sample already names two or more languages, the worker
+   asks Gemini for the rest of the window too and joins the two transcripts
+   (`reference_covers_s` is then None). A single-language take still makes one 30 s call;
+2. re-listened stretches: after the merge, every wordless stretch of 1 s or more where the
+   reference heard at least two words (fillers and numbers do not count) that no transcript word
+   matches is cut out and transcribed ALONE in each of the take's languages (at most 3 stretches,
+   6 calls). Heard alone, whisper writes a stretch in its own language. The words are clipped
+   inside the stretch and kept only where the reference confirms them, like any other pass.
+
+Evidence: `diagnostics.language_crosscheck` gains `reference_covers_s` and, when a stretch was
+found, `relistened` (`start_s`, `end_s`, `tried`, `heard`, `failed`); re-listened stretches
+appear in `segments`. Cost: one more Gemini call on mixed takes longer than 30 s, plus whisper-1
+on the re-listened stretches only (cents at most). Not covered: a take whose first 30 s are in
+one language and that switches later (the sample is not mixed, so the rest is never heard), and
+a stretch holding only numbers ("1810" is not a speech token). Kill switch:
+`SPEECH_CLEANUP_MIXED_RELISTEN_ENABLED=false` restores KRI-843 byte for byte. Apply: fly secret
++ worker restart.
 
 ## Local verification
 

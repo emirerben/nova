@@ -1,7 +1,10 @@
 # Native captions and visuals (KRI-43)
 
 The native editor uses Paper screens 11–19 for caption and visual inspectors.
-Captions have Edit captions, Style, and Settings tabs. Language, regeneration,
+Captions have Edit captions, Style, and (where the server sends
+`editor_capabilities.caption_animation`) Animation tabs; Show captions and Highlight
+spoken word sit at the top of Edit captions. Style > Text motion folded into Animation
+(All captions shows its stored entrance and replaces it on the first change). Language, regeneration,
 Sounds, and the separate Overlays/Styles tools are outside this change. AI actions
 are tracked separately in PR #1019. Since KRI-240, tapping a line in Edit captions
 opens it in an edit bar with the keyboard up; see "Caption line editing (KRI-240)"
@@ -44,6 +47,10 @@ silently upgraded. Camera effects change the footage, not a floating visual.
   opacity, and explicit spoken-word highlighting. It persists as
   `caption_editor_style` on the variant and returns through the public editor
   snapshot. Sentence/word display and highlighting are independent once authored.
+- `caption_meta.animation_phases` (all captions) and a line's own `animation_phases`
+  (KRI-1007) sit beside `appearance`, never inside it (`EditorCaptionAppearance` forbids
+  extra keys). Shapes, precedence and the protocol 24 gate: phone-rendering.md
+  "Caption animation".
 - Media overlays and media blocks accept optional `editor_style` version 1:
   rotation, fit mode, zoom, and an animation object. The animation has version,
   entrance, exit, loop, and speed. Absent fields retain the legacy rendering path.

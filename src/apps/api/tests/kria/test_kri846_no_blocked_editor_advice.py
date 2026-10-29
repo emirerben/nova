@@ -33,9 +33,9 @@ Failure modes, written before the fix:
    lead, so the honest Partly still never asks "simpler version?").
 9. The iOS approval card (`SpeechCleanupOffer.swift`) has hard-coded English that no server fix
    reaches; it must stop pointing at the editor too.
-10. The copy outlives the refusal that justified it. The guard at the bottom pins the server's
-    window pin and fails on purpose when talking-source windows become editable (KRI-724), so
-    the copy is reconsidered then.
+10. The copy outlives the refusal that justified it. KRI-852 made talking-source windows
+    editable, so the guard at the bottom now asserts those edits save and that only a swap to a
+    different source is refused; the copy is about one exact spoken line (KRI-724), not a window.
 11. The copy says a named line "stays" in the video: after KRI-551 a consented retake cut may
     have removed it, and a generic cleanup record cannot prove which span it was. The named-line
     copy says "may still be", never "stays". Only the review-note footer says "stays in", and
@@ -344,15 +344,16 @@ def _save(job, rows, change):
         pytest.param({"duration_s": 3.5}, id="trim-the-end"),
         pytest.param({"in_s": 3.5, "duration_s": 3.5}, id="trim-the-start"),
         pytest.param({"in_s": 3.0, "duration_s": 4.5}, id="grow"),
-        pytest.param({"clip_index": 1}, id="other-clip"),
     ],
 )
-def test_the_server_still_pins_every_talking_source_window(change):
-    """WHY the copy says "can't": a trimmed talking-source segment is refused (409).
+def test_a_talking_source_window_edit_now_saves(change):
+    """WHY the copy still says "can't": the copy is about one exact spoken LINE, not a window.
 
-    When talking-source windows become editable (KRI-724 phrase cuts) this fails ON PURPOSE:
-    reconsider `_NAMED_CUTS_STAY`, the review-note footer and `SpeechCleanupOffer.swift`
-    before relaxing it. The baseline is the kept speech between the cleanup cuts.
+    KRI-852 made the talking-source window editable (trim, grow and slide save; captions follow
+    their source occurrence), so the server no longer answers 409 TIMELINE_STALE. The copy
+    (`_NAMED_CUTS_STAY`, the review-note footer, `SpeechCleanupOffer.swift`) stays true: it
+    says Kria can't cut one exact line out or confirm it's gone (KRI-724), and sends the
+    creator nowhere. If this ever fails again, reconsider that copy before relaxing the test.
     """
     job, rows = _talking_job_and_rows()
     assert [row["slot_id"] for row in rows] == [
@@ -360,8 +361,17 @@ def test_the_server_still_pins_every_talking_source_window(change):
         "native-phone-talking-source-1",
         "native-phone-talking-source-2",
     ]
-    with pytest.raises(HTTPException) as caught:
+    try:
         _save(job, rows, change)
+    except HTTPException as error:
+        assert error.detail != {"code": "TIMELINE_STALE"}, error.detail
+
+
+def test_a_talking_source_swap_to_another_clip_is_still_refused():
+    """A window edit saves; pointing a kept segment at a different source never does."""
+    job, rows = _talking_job_and_rows()
+    with pytest.raises(HTTPException) as caught:
+        _save(job, rows, {"clip_index": 1})
     assert caught.value.status_code == 409
     assert caught.value.detail == {"code": "TIMELINE_STALE"}
 

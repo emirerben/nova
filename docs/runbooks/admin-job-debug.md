@@ -130,6 +130,43 @@ python scripts/admin.py --prod GET creation-threads/<thread_id>/events
 python scripts/admin.py --prod GET "creation-threads/<thread_id>/turns?limit=10"
 ```
 
+## Phone export verification evidence (read-only)
+
+`GET /admin/jobs/{job_id}/export-verification` returns the measured evidence the server
+stored when it checked a phone-rendered export (KRI-1042). The `/debug` view strips the
+private `_device_render_v1` record, so use this route to see why an export was refused.
+
+Each entry in `variants` has the device record's `phase`, `reason_code`, pinned
+`identity`, `actual_export_policy` (pinned `verifier_version`), `contract_decline`
+(reason, field path, stage), and:
+
+- `attempts`: the uploads of the current pinned request. `index` orders them by when
+  verification queued; an upload that never queued comes last. Each has
+  `verification_task` state and `actual_export_verification`: overall `status`
+  (`checked` / `rejected` / `partial` / `unsupported`), `verifier_version`, and `checks`.
+  A `picture` check carries `min_local_ssim`, `max_mean_pixel_error`, `samples`,
+  `neighbour_samples` and `picture_clock`. An `audio` check carries `correlation`, `gain`
+  and `lag_samples`, or `rms` for a silent reference. An `evidence` row with status
+  `missing` names the exception that stopped measurement in `reason`.
+- `thresholds` on every report: the pass rules for its `verifier_version`. The verifier
+  does not store them. They come from `THRESHOLDS_BY_VERIFIER` in
+  `app/services/export_verification_admin.py`, which must change with any verifier
+  threshold change. An unknown verifier version returns `null`.
+- `repair_history`: one row per automatic source-normalisation repair, with the rejected
+  attempt's `report`, the `cause` (requirement ids, recipe field paths) and the repaired
+  attempt's `result`. An automatic repair keeps this history across its re-pin. A creator
+  or admin retry (`retry_device_render`) pins a fresh record, so it drops both `attempts`
+  and `repair_history`: evidence from before the last manual retry is gone.
+
+The response is an allowlist of numbers, enum or id tokens, storage object paths and
+timestamps. Signed URLs, decline messages, failure detail text and the recipe never
+leave the record. A stored value that does not fit its field returns as `null`.
+Guard: `tests/integration/test_admin_export_verification.py` (real Postgres).
+
+```bash
+python scripts/admin.py --prod GET jobs/<job_id>/export-verification
+```
+
 ## Eval harness opt-out
 
 The eval RunContext sets `extra={"skip_agent_run_persist": True}` so replay-mode evals

@@ -623,7 +623,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-721-approval-readiness",
+                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-988-pool-photo-attached,kri-721-approval-readiness,kri-966-take-window-length",
                 ),
             ),
             (
@@ -668,7 +668,19 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/schemas/guided_edit_revision.py",
-                (True, "covered", "kri-561-song-order,kri-689-clip-speed"),
+                (
+                    True,
+                    "covered",
+                    "kri-561-song-order,kri-1032-montage-copy-parity,kri-689-clip-speed",
+                ),
+            ),
+            (
+                "src/apps/api/tests/routes/test_kri1032_editor_matches_render.py",
+                (True, "covered", "kri-1032-montage-copy-parity"),
+            ),
+            (
+                "src/apps/ios/Tests/Fixtures/KRI1032PlazaM1Editor.json",
+                (True, "covered", "kri-1032-montage-copy-parity"),
             ),
             (
                 "src/apps/api/app/kria/speaker_framing_ask.py",
@@ -780,11 +792,19 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
-                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
+                (
+                    True,
+                    "covered",
+                    "kri-845-clip-detail-evidence,kri-625-moment-quality",
+                ),
             ),
             (
                 "src/apps/api/prompts/analyze_clip.txt",
-                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
+                (
+                    True,
+                    "covered",
+                    "kri-845-clip-detail-evidence,kri-625-moment-quality",
+                ),
             ),
             (
                 "src/apps/api/prompts/edit_copilot.txt",
@@ -844,7 +864,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/services/length_planning.py",
-                (True, "covered", "kri-681-named-line-windows"),
+                (
+                    True,
+                    "covered",
+                    "kri-681-named-line-windows,kri-988-pool-photo-attached",
+                ),
             ),
             (
                 "src/apps/api/tests/fixtures/kri681_tigre_night_m1_clips.json",

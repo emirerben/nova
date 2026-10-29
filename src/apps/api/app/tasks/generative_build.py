@@ -2819,6 +2819,7 @@ def _run_generative_job_impl(
                         phone_snapshot,
                         ownership_epoch=ownership_epoch,
                         landscape_fit=_creator_landscape_fit(candidates),
+                        creator_strategy=candidates.get("creator_strategy"),
                     )
                 elif declared_format not in phone_render_supported_formats():
                     if contract is not None and candidates.get(PLAN_AUTHORITY_FIELD) is not None:
@@ -2938,6 +2939,7 @@ def _run_generative_job_impl(
                                     unified_snapshot,
                                     ownership_epoch=ownership_epoch,
                                     landscape_fit=_creator_landscape_fit(candidates),
+                                    creator_strategy=candidates.get("creator_strategy"),
                                 )
                 elif declared_format == "subtitled" or (
                     declared_format in NARRATED_EDIT_FORMATS and not has_voiceover_candidate
@@ -4703,6 +4705,155 @@ def _phone_repair_notes(
     return merged
 
 
+def _phone_timed_card_lane(
+    job_id: str,
+    *,
+    strategy: object,
+    bindings: tuple,
+    clip_windows: dict[str, tuple[float, float]],
+    timeline_end: float,
+) -> tuple[tuple, tuple, dict] | None:
+    """Ground the confirmed strategy's exact-timed small cards (``timed_cards``) for one
+    phone writer -> ``(cards, visuals, receipt)`` or ``None`` when the strategy has none.
+
+    Flag `PHONE_TIMED_CARDS_ENABLED` (`phone_rollout.phone_timed_cards_supported()`, the
+    gate the manifest advertised on): off, every card lands on the receipt as
+    ``lane_disabled`` and nothing is bound or compiled (a job queued before the flag
+    flipped, or a redelivery). The cards' Visuals are bound from the job's ready pool
+    (`bind_phone_visual_assets`, the same receipt path the beats use); the grounding itself
+    is pure (`app.pipeline.phone_timed_cards.ground_timed_cards`). A card never fails the
+    job: a bind failure or a grounding miss is a receipt row, and the caller compiles the
+    survivors onto the existing ``subtitled-overlays`` lane.
+    """
+    from app.pipeline.phone_timed_cards import ground_timed_cards  # noqa: PLC0415
+    from app.services.phone_overlay_grounding import _load_ready_pool_assets  # noqa: PLC0415
+    from app.services.phone_reaction_grounding import (  # noqa: PLC0415
+        _index_pool_assets,
+        _visual_id_candidates,
+    )
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        phone_timed_cards_supported,
+        phone_timed_video_cards_supported,
+    )
+    from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
+
+    raw = strategy.get("timed_cards") if isinstance(strategy, dict) else None
+    rows = [row for row in raw if isinstance(row, dict)] if isinstance(raw, list) else []
+    if not rows:
+        return None
+    if not phone_timed_cards_supported():
+        return (
+            (),
+            (),
+            {
+                "version": 1,
+                "matcher": "disabled",
+                "timeline_end_s": float(timeline_end),
+                "placed": [],
+                "unplaced": [
+                    {
+                        "card_id": str(row.get("card_id") or f"card-{index}"),
+                        "visual_id": row.get("visual_id"),
+                        "label": row.get("label"),
+                        "at_s": row.get("at_s"),
+                        "reason": "lane_disabled",
+                    }
+                    for index, row in enumerate(rows)
+                ],
+            },
+        )
+    videos_allowed = phone_timed_video_cards_supported()
+    visuals: tuple = ()
+    try:
+        assets_by_id = _index_pool_assets(_load_ready_pool_assets(_sync_session, job_id=job_id))
+        pins: dict[str, tuple[str, str, str]] = {}
+        for row in rows:
+            visual_id = row.get("visual_id")
+            if not isinstance(visual_id, str):
+                continue
+            asset = next(
+                (
+                    assets_by_id[candidate.casefold()]
+                    for candidate in _visual_id_candidates(visual_id)
+                    if candidate.casefold() in assets_by_id
+                ),
+                None,
+            )
+            if asset is None or not asset.get("gcs_generation") or not asset.get("gcs_path"):
+                continue
+            kind = "video" if asset.get("kind") == "video" else "image"
+            if kind == "video" and not videos_allowed:
+                continue
+            pins[str(asset["id"])] = (kind, asset["gcs_path"], str(asset["gcs_generation"]))
+        if pins:
+            visuals = bind_phone_visual_assets(_sync_session, job_id=job_id, pins=pins)
+    except OperationalError:
+        raise  # transient DB -> Celery autoretry, never a lane drop
+    except Exception as exc:  # noqa: BLE001 - a card never fails the job
+        log.warning("phone_timed_cards.bind_failed", job_id=job_id, error=str(exc)[:200])
+        visuals = ()
+    grounded = ground_timed_cards(
+        rows,
+        clip_windows=clip_windows,
+        timeline_end=timeline_end,
+        visuals=visuals,
+        videos_allowed=videos_allowed,
+    )
+    referenced = {card.media_id for card in grounded.cards}
+    return (
+        grounded.cards,
+        tuple(visual for visual in visuals if visual.media_id in referenced),
+        grounded.receipt,
+    )
+
+
+def _demote_timed_card_receipt(receipt: dict, *, card_ids: frozenset[str], reason: str) -> dict:
+    """Move timed cards (``timed-<card_id>`` lane ids) that were grounded but dropped by a
+    later compile out of ``placed`` into ``unplaced`` with ``reason``."""
+    if not card_ids:
+        return receipt
+    demoted = copy.deepcopy(receipt)
+    kept, moved = [], []
+    for entry in demoted.get("placed") or []:
+        if f"timed-{entry.get('card_id')}" in card_ids:
+            moved.append(
+                {
+                    key: entry.get(key)
+                    for key in ("card_id", "media_id", "visual_id", "label", "at_s")
+                }
+                | {"reason": reason}
+            )
+        else:
+            kept.append(entry)
+    demoted["placed"] = kept
+    demoted["unplaced"] = [*(demoted.get("unplaced") or []), *moved]
+    return demoted
+
+
+def _phone_clip_windows(recipe, *, video_track_id: str, bindings: tuple) -> dict:  # noqa: ANN001
+    from app.pipeline.phone_timed_cards import clip_windows_from_recipe  # noqa: PLC0415
+
+    return clip_windows_from_recipe(recipe, video_track_id=video_track_id, bindings=bindings)
+
+
+def _narrated_step_windows(steps) -> dict[str, tuple[float, float]]:  # noqa: ANN001
+    """A narrated edit's clip windows ARE the voice clock: each step's own span, keyed by
+    media id (first appearance)."""
+    windows: dict[str, tuple[float, float]] = {}
+    for step in steps:
+        media_id = getattr(step, "media_id", None)
+        if media_id is None or media_id in windows:
+            continue
+        windows[str(media_id)] = (float(step.start_s), float(step.end_s))
+    return windows
+
+
+def _merge_visual_bindings(primary: tuple, extra: tuple) -> tuple:
+    """``primary`` plus every ``extra`` visual it does not already pin (by media id)."""
+    seen = {visual.media_id for visual in primary}
+    return tuple(primary) + tuple(v for v in extra if v.media_id not in seen)
+
+
 @phone_text_generation
 def _run_phone_guided_job(
     job_id: str,
@@ -4710,8 +4861,14 @@ def _run_phone_guided_job(
     *,
     ownership_epoch: int | None,
     landscape_fit: str = "fill",
+    creator_strategy: dict | None = None,
 ) -> None:
-    """Use cloud decisions only; never enter a media renderer for proxy sources."""
+    """Use cloud decisions only; never enter a media renderer for proxy sources.
+
+    ``creator_strategy`` (the confirmed strategy, from ``all_candidates``) carries the
+    exact-timed small cards (`timed_cards`, flag `PHONE_TIMED_CARDS_ENABLED`): grounded
+    against the compiled story clock and compiled onto the ``subtitled-overlays`` lane.
+    """
     from app.kria.device_render import make_device_request  # noqa: PLC0415
     from app.pipeline.guided_story import (  # noqa: PLC0415
         GuidedStoryExecutionPlan,
@@ -4872,9 +5029,114 @@ def _run_phone_guided_job(
         landscape_fit="fit" if landscape_fit == "fit" else "fill",
     )
     recipe, repair_notes = compiled.recipe, list(compiled.notes)
-    validate_phone_pilot_recipe(recipe)
+    # Exact-timed small cards: the first compile fixes where every clip really starts on
+    # the output clock (transitions, refits); the cards are grounded against that and the
+    # plan is compiled once more with the lane. The grounding never fails the job.
+    timed_cards: tuple = ()
+    timed_receipt: dict | None = None
+    timed_lane = _phone_timed_card_lane(
+        job_id,
+        strategy=creator_strategy,
+        bindings=bindings,
+        clip_windows=_phone_clip_windows(recipe, video_track_id="story", bindings=bindings),
+        timeline_end=recipe.duration,
+    )
+    if timed_lane is not None:
+        timed_cards, card_visuals, timed_receipt = timed_lane
+        if timed_cards:
+            visuals = _merge_visual_bindings(visuals, card_visuals)
+            try:
+                compiled = compile_phone_guided_repaired(
+                    plan,
+                    bindings,
+                    contract=contract,
+                    visuals=visuals,
+                    narration=narration_bed,
+                    song=song_bed,
+                    sound_effects=sound_effects,
+                    landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                    timed_cards=timed_cards,
+                    allow_editor_media=True,
+                )
+                recipe, repair_notes = compiled.recipe, list(compiled.notes)
+            except (UnsupportedPhonePlan, ValueError) as exc:
+                # The lane never costs the creator their video: render without it, say so.
+                log.warning("phone_timed_cards.compile_dropped", job_id=job_id, error=str(exc))
+                timed_receipt = _demote_timed_card_receipt(
+                    timed_receipt,
+                    card_ids=frozenset(card.id for card in timed_cards),
+                    reason="compile_dropped",
+                )
+                timed_cards = ()
+    # KRI-942: the creator's "clip sound off / on" asks, built on the compiled clock like the
+    # cards above. A candidate the compile, the pilot check or the contract's camera-audio
+    # promise refuses steps down to the next; the last one is the plan as it was.
+    from app.services.phone_clip_sound_toggle import (  # noqa: PLC0415
+        conflict_reasons,
+        plan_toggle_lane,
+        sound_contract_conflict,
+        toggle_record,
+    )
+    from app.services.phone_rollout import phone_clip_sound_windows_supported  # noqa: PLC0415
+
+    toggle_receipt: dict | None = None
+    toggle_changed = False
+    toggle_lane = plan_toggle_lane(
+        snapshot,
+        raw_plan=raw_plan,
+        plan=plan,
+        recipe=recipe,
+        bindings=bindings,
+        strategy=creator_strategy,
+        windows_supported=phone_clip_sound_windows_supported(),
+    )
+    if toggle_lane is not None:
+        conflicted: dict[str, str] = {}
+        for candidate in toggle_lane.candidates:
+            if candidate is toggle_lane.candidates[-1]:
+                toggle_receipt = toggle_record(
+                    toggle_lane, candidate, recipe, bindings, extra_reasons=conflicted
+                )
+                break
+            try:
+                candidate_plan = GuidedStoryExecutionPlan.model_validate(candidate.raw_plan)
+                candidate_compiled = compile_phone_guided_repaired(
+                    candidate_plan,
+                    bindings,
+                    contract=contract,
+                    visuals=visuals,
+                    narration=narration_bed,
+                    song=song_bed,
+                    sound_effects=sound_effects,
+                    landscape_fit="fit" if landscape_fit == "fit" else "fill",
+                    **(
+                        {"timed_cards": timed_cards, "allow_editor_media": True}
+                        if timed_cards
+                        else {}
+                    ),
+                )
+                validate_phone_pilot_recipe(
+                    candidate_compiled.recipe, allow_editor_media=bool(timed_cards)
+                )
+            except (UnsupportedPhonePlan, ValueError) as exc:
+                log.warning(
+                    "phone_clip_sound.candidate_refused", job_id=job_id, error=str(exc)[:200]
+                )
+                continue
+            if sound_contract_conflict(contract, candidate_compiled.recipe, bindings):
+                conflicted = conflict_reasons(toggle_lane)
+                continue
+            raw_plan, plan, compiled = candidate.raw_plan, candidate_plan, candidate_compiled
+            recipe, repair_notes = compiled.recipe, list(compiled.notes)
+            toggle_changed = True
+            toggle_receipt = toggle_record(toggle_lane, candidate, recipe, bindings)
+            break
+    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     repair_notes = _phone_repair_notes(snapshot, contract, recipe.duration, repair_notes)
-    repaired_plan_payload = copy.deepcopy(raw_plan) if current_phone_text_policy() else None
+    # The editor's Save recompiles from this private plan, so it must hold the moments' sound.
+    repaired_plan_payload = (
+        copy.deepcopy(raw_plan) if current_phone_text_policy() or toggle_changed else None
+    )
     if compiled.plan is not plan:
         repaired_plan_payload = compiled.plan.model_dump(mode="json", exclude_none=False)
         # The editor recompiles from the persisted rows: keep them equal to what compiled.
@@ -4951,6 +5213,23 @@ def _run_phone_guided_job(
             # Creator-visible (job projection -> render_notes): what Kria changed so
             # the plan could render on the phone (KRI-129: never a silent override).
             current["variants"][0]["phone_repair_notes"] = list(repair_notes)
+        if timed_receipt is not None:
+            from app.pipeline.phone_timed_cards import (  # noqa: PLC0415
+                TIMED_CARD_RECEIPT_FIELD,
+                TIMED_CARDS_FIELD,
+                timed_card_rows,
+            )
+
+            # The creator-safe receipt the brief check reads, and the grounded rows the
+            # editor's Save recompiles (a text-only Save keeps the cards).
+            current["variants"][0][TIMED_CARD_RECEIPT_FIELD] = timed_receipt
+            if timed_cards:
+                current["variants"][0][TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
+        if toggle_receipt is not None:
+            from app.services.phone_clip_sound_toggle import TOGGLE_RECEIPT_FIELD  # noqa: PLC0415
+
+            # KRI-942: what the pinned recipe plays for each on/off ask, and why not.
+            current["variants"][0][TOGGLE_RECEIPT_FIELD] = toggle_receipt
         if repaired_plan_payload is not None:
             # The editor's first Save recompiles from this private per-variant plan, not
             # the approved canonical plan (whose text lane is re-validated against the
@@ -5600,7 +5879,41 @@ def _run_phone_voiceover_montage_job(
                     resolved_text_elements=rows,
                 )
 
-    validate_phone_pilot_recipe(recipe)
+    # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): grounded against the
+    # compiled montage clock and added as the KRI-281 overlay lane on top of the finished
+    # recipe (pins, intro and beds untouched); the editor derives the lane from the pinned
+    # recipe on its first Save. Never fails the job.
+    timed_cards: tuple = ()
+    timed_receipt: dict | None = None
+    timed_lane = _phone_timed_card_lane(
+        job_id,
+        strategy=raw_creator_strategy,
+        bindings=bindings,
+        clip_windows=_phone_clip_windows(recipe, video_track_id="montage", bindings=bindings),
+        timeline_end=recipe.duration,
+    )
+    if timed_lane is not None:
+        timed_cards, card_visuals, timed_receipt = timed_lane
+        if timed_cards:
+            from app.pipeline.phone_narrated_plan import replace_editor_lanes  # noqa: PLC0415
+            from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes  # noqa: PLC0415
+
+            try:
+                recipe = replace_editor_lanes(
+                    recipe,
+                    lanes=PhoneSubtitledLanes(overlays=list(timed_cards)),
+                    visuals=card_visuals,
+                    video_track_id="montage",
+                )
+            except (UnsupportedPhonePlan, ValueError) as exc:
+                log.warning("phone_timed_cards.compile_dropped", job_id=job_id, error=str(exc))
+                timed_receipt = _demote_timed_card_receipt(
+                    timed_receipt,
+                    card_ids=frozenset(card.id for card in timed_cards),
+                    reason="compile_dropped",
+                )
+                timed_cards = ()
+    validate_phone_pilot_recipe(recipe, allow_editor_media=bool(timed_cards))
     request = make_device_request(
         job_id=uuid.UUID(job_id), variant_id=spec["variant_id"], revision=1, recipe=recipe
     )
@@ -5653,6 +5966,16 @@ def _run_phone_voiceover_montage_job(
             "original_audio_level": float(recipe.audio.original_volume),
             "ok": False,
         }
+        if timed_receipt is not None:
+            from app.pipeline.phone_timed_cards import (  # noqa: PLC0415
+                TIMED_CARD_RECEIPT_FIELD,
+                TIMED_CARDS_FIELD,
+                timed_card_rows,
+            )
+
+            new_entry[TIMED_CARD_RECEIPT_FIELD] = timed_receipt
+            if timed_cards:
+                new_entry[TIMED_CARDS_FIELD] = timed_card_rows(timed_cards)
         if existing_index is not None:
             variants[existing_index] = new_entry
         else:
@@ -6096,6 +6419,7 @@ def _plan_phone_user_song_montage(
     output_orientation: str | None = None,
     creator_text: str = "",
     plan_authority: bool = False,
+    freeze_frames: bool = False,
 ) -> Any:
     """Plan the creator-song montage, with the song's lyrics as captions when asked (KRI-569).
 
@@ -6118,13 +6442,29 @@ def _plan_phone_user_song_montage(
         font_covers=font_covers,
         creator_order=creator_order,
         output_orientation=output_orientation,
+        freeze_frames=freeze_frames,
     )
+    if not settings.song_captions_enabled:
+        return plan
     if plan_authority:
         pinned = strategy.get("song_captions")
-        if settings.song_captions_enabled and pinned in ("word", "sentence"):
+        asked = pinned in ("word", "sentence")
+        if asked:
             _attach_song_captions(plan, analysis, strategy, style=pinned)
-    elif settings.song_captions_enabled and _song_captions_wanted(creator_text, strategy):
-        _attach_song_captions(plan, analysis, strategy, creator_text)
+    else:
+        asked = _song_captions_wanted(creator_text, strategy)
+        if asked:
+            _attach_song_captions(plan, analysis, strategy, creator_text)
+    if not asked and settings.song_captions_available_by_default:
+        from app.pipeline.song_captions import caption_style_for  # noqa: PLC0415
+
+        _attach_song_captions(
+            plan,
+            analysis,
+            strategy,
+            style=caption_style_for(strategy.get("caption_style")),
+            hidden=True,
+        )
     return plan
 
 
@@ -6195,12 +6535,20 @@ def _song_captions_wanted(creator_text: str, strategy: dict) -> bool:
 
 
 def _attach_song_captions(
-    plan: Any, analysis: Any, strategy: dict, creator_text: str = "", *, style: str | None = None
+    plan: Any,
+    analysis: Any,
+    strategy: dict,
+    creator_text: str = "",
+    *,
+    style: str | None = None,
+    hidden: bool = False,
 ) -> None:
     """Pin the song's words on the plan's snapshot and note it in the plan record.
 
     ``style`` is the planner's pinned decision (KRI-578); without it (legacy jobs) the
-    style is read from ``creator_text``.
+    style is read from ``creator_text``. ``hidden`` pins lyrics nobody asked for, off
+    until the creator turns captions on: nothing to caption then pins nothing, and
+    never declines a montage that did not ask.
     """
     from app.kria.brief_checks import text_asks_for_word_captions  # noqa: PLC0415
     from app.pipeline.phone_guided_plan import UserSongPlanDeclined  # noqa: PLC0415
@@ -6213,7 +6561,12 @@ def _attach_song_captions(
         )
     track = track_from_analysis(analysis, caption_style=style)
     if track is None or plan.snapshot.user_song is None:
+        if hidden:
+            return
         raise UserSongPlanDeclined(_SONG_CAPTIONS_NO_WORDS_MESSAGE)
+    if hidden:
+        track = track.model_copy(update={"hidden": True})
+    unpinned = plan.snapshot
     # `model_copy` does not validate: re-validate so the song generation fence holds.
     plan.snapshot = EditProposalSnapshot.model_validate(
         {**plan.snapshot.model_dump(mode="json"), "song_captions": track.model_dump(mode="json")}
@@ -6226,11 +6579,15 @@ def _attach_song_captions(
     )
     inside = project_snapshot_words(plan.snapshot)
     if not inside:
+        if hidden:
+            plan.snapshot = unpinned
+            return
         # Words exist, but none are sung in the stretch this video uses (an instrumental
         # intro or tail): never report captions that nothing on screen will show.
         raise UserSongPlanDeclined(_SONG_CAPTIONS_NO_WORDS_IN_WINDOW_MESSAGE)
     plan.caption_receipt = {
-        "status": "placed",
+        # Never "placed" while hidden: the receipt check would claim captions were added.
+        "status": "available_hidden" if hidden else "placed",
         "style": style,
         "words": len(inside),
         "lines": sum(1 for word in inside if word.line_end),
@@ -6252,6 +6609,7 @@ def _plan_phone_user_song_core(
     font_covers: Any,
     creator_order: list[int],
     output_orientation: str | None = None,
+    freeze_frames: bool = False,
 ) -> tuple[Any, Any]:
     """Plan a phone montage around the creator's own song (KRI-374).
 
@@ -6351,6 +6709,7 @@ def _plan_phone_user_song_core(
                 font_covers=font_covers,
                 output_orientation=output_orientation,
                 creator_choices=creator_choices,
+                freeze_frames=freeze_frames,
             ),
             analysis,
         )
@@ -6625,6 +6984,7 @@ def _plan_phone_unified_montage(
         skia_font_covers,
     )
     from app.services.phone_rollout import (  # noqa: PLC0415
+        clip_speed_planned_for,
         freeze_frame_planned_for,
         stamped_client_protocol,
     )
@@ -6654,6 +7014,9 @@ def _plan_phone_unified_montage(
         freeze_frames=freeze_frame_planned_for(
             stamped_client_protocol(all_candidates.get("creator_client_protocol"))
         ),
+        # KRI-689: a chat speed ask is planned only where the phone retimes (`variableSpeed`
+        # verified); otherwise the plan records it as locked and the receipt says so.
+        clip_speed=clip_speed_planned_for(),
     )
 
 
@@ -6802,6 +7165,8 @@ def _run_phone_unified_montage_job(
         clips = _unified_montage_clips(clip_paths, entries, binding_by_path, facts_on=facts_on)
         user_song = all_candidates.get("user_song")
         if isinstance(user_song, dict) and user_song.get("gcs_path"):
+            from app.services import phone_rollout  # noqa: PLC0415
+
             plan = _plan_phone_user_song_montage(
                 job_id,
                 user_song,
@@ -6819,6 +7184,13 @@ def _run_phone_unified_montage_job(
                 output_orientation=_creator_shape_orientation(all_candidates),
                 creator_text="" if plan_authority else _creator_request_text(all_candidates),
                 plan_authority=plan_authority,
+                # KRI-996: a held frame over song nobody filmed, only where the approving phone
+                # can hold one (the KRI-828 / KRI-898 gate).
+                freeze_frames=phone_rollout.freeze_frame_planned_for(
+                    phone_rollout.stamped_client_protocol(
+                        all_candidates.get("creator_client_protocol")
+                    )
+                ),
             )
         else:
             if plan_authority:
@@ -6867,9 +7239,22 @@ def _run_phone_unified_montage_job(
             needs_creator_choice,
             plan_facts_from_unified_montage,
         )
+        from app.kria.select_asks import exclusion_facts  # noqa: PLC0415
 
         record["generation_id"] = generation
+        from app.pipeline.phone_plan_repair import contract_text_drawn  # noqa: PLC0415
+
         with _worker_reply_language(snapshot):
+            receipt_facts = replace(
+                plan_facts_from_unified_montage(record),
+                # KRI-994: the creator's tapped skips, judged against the clips this plan plays.
+                exclusions=exclusion_facts(strategy if isinstance(strategy, dict) else None, brief),
+                contract_drawn_texts=tuple(
+                    row.text
+                    for row in (contract.exact_texts if contract is not None else ())
+                    if contract_text_drawn(row, route="unified_montage")
+                ),
+            )
             record["requirement_receipts"] = [
                 {
                     **receipt.model_dump(mode="json"),
@@ -6878,7 +7263,7 @@ def _run_phone_unified_montage_job(
                 }
                 for receipt in build_receipts(
                     brief.live(),
-                    plan_facts_from_unified_montage(record),
+                    receipt_facts,
                     include_unchecked=bool(snapshot.get("creator_brief_binding")),
                 )
             ]
@@ -7098,6 +7483,23 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
     return isinstance(visual_id, str) and bool(
         _pool_media_keys(visual_id) & _pool_media_keys(media_id)
     )
+
+
+def _creator_pinned_media_keys(beats: list, closing: dict | None) -> frozenset[str]:
+    """Every Visuals-pool asset the creator pinned to a reaction beat, the closing photo or the
+    closing badge (KRI-1019), in both spellings (`_pool_media_keys`).
+
+    Read straight off the approved strategy, so it holds whatever became of the beat lane:
+    placed, unplaced for any reason, grounding raised, a lane request, or beats switched off.
+    Malformed entries (a non-object beat, a missing or non-string ``visual_id``) name nothing."""
+    named: list[object] = [beat.get("visual_id") for beat in beats if isinstance(beat, dict)]
+    if isinstance(closing, dict):
+        named += [closing.get("visual_id"), closing.get("badge_visual_id")]
+    keys: set[str] = set()
+    for visual_id in named:
+        if isinstance(visual_id, str) and visual_id.strip():
+            keys |= _pool_media_keys(visual_id)
+    return frozenset(keys)
 
 
 def _without_ending_media(
@@ -7390,6 +7792,7 @@ def _run_phone_subtitled_job(
     from app.pipeline.caption_language import (  # noqa: PLC0415
         SOURCE_DETECTED,
         SOURCE_FALLBACK,
+        SUPPORTED_CAPTION_LANGUAGES,
         coerce_caption_language_request,
         crosscheck_detected_language,
         resolve_spoken_caption_language,
@@ -7407,6 +7810,7 @@ def _run_phone_subtitled_job(
     from app.pipeline.phone_spoken_text import SPOKEN_TEXT_FIELD  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import remap_lanes_for_cut  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import (  # noqa: PLC0415
+        _LANDSCAPE_STORY_CANVAS,
         MAX_CLIP_DURATION_S,
         SFX_DUCK_RECEIPT_FIELD,
         PhoneCutaway,
@@ -7421,7 +7825,6 @@ def _run_phone_subtitled_job(
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.silence_cut import (  # noqa: PLC0415
         is_filler_token,
-        plan_summary,
         remap_words,
     )
     from app.pipeline.transcribe import Word, transcribe_whisper_cached  # noqa: PLC0415
@@ -7589,6 +7992,17 @@ def _run_phone_subtitled_job(
     landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
     if landscape_fit not in ("fill", "fit"):
         landscape_fit = "fill"
+    # The creator's explicit output shape (`render_shape`): only a landscape pick moves the
+    # canvas (no choice = today's portrait, byte-identical). A landscape canvas has no bars
+    # and no sideways overflow to face-fill, so it compiles "fill" with no speaker shift.
+    landscape_canvas = _creator_shape_orientation(all_candidates) == "landscape"
+    if landscape_canvas:
+        landscape_fit = "fill"
+    # Passed to every `compile_phone_subtitled_plan` call below (empty = portrait).
+    canvas_compile: dict[str, Any] = {"output_orientation": "landscape"} if landscape_canvas else {}
+    # The canvas every text helper measures against: the landscape one when picked; the
+    # helpers default to the portrait story canvas, so the portrait path is untouched.
+    text_canvas: dict[str, Any] = {"canvas": _LANDSCAPE_STORY_CANVAS} if landscape_canvas else {}
     # KRI-297: "fullscreen" => every Visual becomes a full-screen cutaway
     # (deterministic even-spread sequence). Anything else (absent/None/"pip"/
     # unknown) or the kill switch off => today's PiP grounding, unchanged.
@@ -8058,6 +8472,7 @@ def _run_phone_subtitled_job(
                         else [(0.0, float(binding.original.duration_s))]
                     ),
                     landscape_fit=landscape_fit,
+                    **text_canvas,
                 )
                 if settings.phone_speaker_face_fill_enabled and not extra_speaker_bindings
                 else None
@@ -8067,13 +8482,14 @@ def _run_phone_subtitled_job(
             # it through the same crop the recipe draws.
             framed_fit = "fill" if speaker_position_x is not None else landscape_fit
             face_box_to_canvas = (
-                _phone_face_box_mapper(binding, speaker_position_x)
+                _phone_face_box_mapper(binding, speaker_position_x, **text_canvas)
                 if speaker_position_x is not None
                 else None
             )
             framed_compile: dict[str, Any] = (
                 {"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}
             )
+            framed_compile.update(canvas_compile)
             framed_grounding: dict[str, Any] = (
                 {"face_box_to_canvas": face_box_to_canvas} if face_box_to_canvas is not None else {}
             )
@@ -8100,6 +8516,10 @@ def _run_phone_subtitled_job(
                     _beats if isinstance(_beats, list) else [],
                     _closing if isinstance(_closing, dict) else None,
                 )
+
+            # KRI-1015: the INDEPENDENT read of the spoken language ("" = unknown) the
+            # caption-language ensure step ran with; set by whichever branch ran below.
+            caption_spoken_lang = ""
 
             def _requested_language_caption_words(
                 spoken_words: list[Any], spoken_lang: str
@@ -8221,6 +8641,7 @@ def _run_phone_subtitled_job(
                 # KRI-838: the spoken language, only when something detected it (never the
                 # job language the fallback chain ends on): what an unmet ask is stamped.
                 spoken_caption_lang = detected_lang if _lang_source != SOURCE_FALLBACK else ""
+                caption_spoken_lang = spoken_caption_lang
                 caption_words, detected_lang = _requested_language_caption_words(
                     words, detected_lang
                 )
@@ -8351,16 +8772,17 @@ def _run_phone_subtitled_job(
                     # not reliably translate). Only the CAPTIONS take the verified or
                     # translated words; `raw_words` and `timeline_words` stay on the spoken
                     # pass (KRI-839).
+                    # The spoken pass's language when whisper or its text said it,
+                    # else Gemini's independent read of the clip, else "".
+                    caption_spoken_lang = (
+                        _spoken_lang
+                        if _lang_source != SOURCE_FALLBACK
+                        else _clip_spoken_language(clip_metas, clip_id)
+                    )
                     ensured = _ensure_requested_caption_language(
                         caption_words,
                         requested=caption_language_req,
-                        # The spoken pass's language when whisper or its text said it,
-                        # else Gemini's independent read of the clip, else "".
-                        fallback_language=(
-                            _spoken_lang
-                            if _lang_source != SOURCE_FALLBACK
-                            else _clip_spoken_language(clip_metas, clip_id)
-                        ),
+                        fallback_language=caption_spoken_lang,
                         job_id=job_id,
                         variant_id="subtitled",
                         glossary=_caption_glossary(snapshot, all_candidates),
@@ -8408,6 +8830,18 @@ def _run_phone_subtitled_job(
                         if spoken_text_asks:
                             timeline_words.extend(extra_words)
                     extra_offset_s += float(extra_binding.original.duration_s)
+            # KRI-1015: the review says when the captions were translated -- the spoken language
+            # (a language Nova names, never a whisper guess) when the final one differs from it.
+            caption_translated_from = ""
+            if caption_language_req is not None:
+                _translated_source = caption_spoken_lang.casefold().split("-")[0]
+                _caption_final = str(detected_lang or "").casefold().split("-")[0]
+                if (
+                    _translated_source in SUPPORTED_CAPTION_LANGUAGES
+                    and _caption_final
+                    and _caption_final != _translated_source
+                ):
+                    caption_translated_from = _translated_source
             cues = correct_caption_cues(
                 cues,
                 detected_lang,
@@ -8455,12 +8889,16 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     cues=cues,
                     caption_style=caption_style,
+                    **text_canvas,
                 )
             )
             if protected_caption_look is not None:
                 framed_compile["caption_look"] = protected_caption_look
             protected_caption_avoid = _protected_caption_avoid(
-                cues, caption_style=caption_style, caption_look=protected_caption_look
+                cues,
+                caption_style=caption_style,
+                caption_look=protected_caption_look,
+                **text_canvas,
             )
             if talking_title_text:
                 title_rows, title_receipt = _phone_talking_title_rows(
@@ -8474,6 +8912,7 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     protected=protected_plan,
                     caption_avoid=protected_caption_avoid,
+                    **text_canvas,
                 )
 
             # KRI-719: the whole main track -- the first speaker's (cut) span
@@ -8505,6 +8944,7 @@ def _run_phone_subtitled_job(
                     protected=protected_plan,
                     caption_look=protected_caption_look,
                     removals=cut_plan.removed if cut_plan is not None else (),
+                    **text_canvas,
                 )
 
             def _closing_rows_for(photo_card: Any) -> tuple[list[dict], dict[str, Any] | None]:
@@ -8523,6 +8963,7 @@ def _run_phone_subtitled_job(
                         clip_path=clip_id_to_local.get(extra_speaker_ids[-1]),
                         keep_segments=[(0.0, last_duration_s)],
                         landscape_fit=landscape_fit,
+                        **text_canvas,
                     )
                     offset_s = talking_timeline_s - last_duration_s
                     return [
@@ -8544,6 +8985,7 @@ def _run_phone_subtitled_job(
                     position_x=speaker_position_x or 0.0,
                     protected=protected_plan,
                     caption_avoid=protected_caption_avoid,
+                    **text_canvas,
                 )
 
             def _schedule_talking_footage(blocked: list[tuple[float, float]]) -> tuple:
@@ -8632,6 +9074,7 @@ def _run_phone_subtitled_job(
                     title_rows + spoken_text_rows + closing_text_rows,
                     job_id=job_id,
                     protected=protected_plan,
+                    **text_canvas,
                 )
                 title_ids = {row["id"] for row in title_rows}
                 spoken_ids = {row["id"] for row in spoken_text_rows}
@@ -8732,6 +9175,12 @@ def _run_phone_subtitled_job(
                 beats: list = raw_beats if isinstance(raw_beats, list) else []
                 raw_closing = strategy.get("closing_media")
                 closing: dict | None = raw_closing if isinstance(raw_closing, dict) else None
+                # KRI-1019: a Visual the creator pinned to a beat (or the closing photo / badge)
+                # is the beat lane's to place as asked -- or to report and leave out. Read off
+                # the strategy, not off the PLACED cards: an unheard beat, a beat grounding that
+                # raised, a manual lane request or beats switched off place nothing and so
+                # reserved nothing, and the generic pass below put the same photo elsewhere.
+                creator_pinned_media_ids = _creator_pinned_media_keys(beats, closing)
 
                 if beats_enabled and (beats or closing):
                     if lane_request is not None:
@@ -8891,6 +9340,9 @@ def _run_phone_subtitled_job(
                                     for card in (lane_request.overlays if lane_request else [])
                                 )
                                 | beat_media_ids
+                                # KRI-1019: nor is a Visual pinned to a beat the beat lane
+                                # placed nowhere (or could not run for).
+                                | creator_pinned_media_ids
                                 # KRI-841: the Visual that ends the video is never also a card
                                 # or a full-screen insert mid-talk.
                                 | (
@@ -9160,7 +9612,10 @@ def _run_phone_subtitled_job(
 
                 def _compile_lanes(text_rows: list[dict]) -> Any:
                     styled = _protected_style_rows(
-                        text_rows, job_id=job_id, protected=protected_plan
+                        text_rows,
+                        job_id=job_id,
+                        protected=protected_plan,
+                        **text_canvas,
                     )
                     for row, updated in zip(text_rows, styled, strict=True):
                         row.update(updated)
@@ -9384,6 +9839,7 @@ def _run_phone_subtitled_job(
                 "variant_id": "subtitled",
                 "fit": "letterbox" if _letterboxed else "crop",
                 "landscape_fit": landscape_fit,
+                **({"canvas": "landscape"} if landscape_canvas else {}),
                 **({"framing": speaker_framing.mode} if speaker_framing is not None else {}),
             },
         )
@@ -9447,6 +9903,8 @@ def _run_phone_subtitled_job(
             "caption_language": detected_lang,
             "ok": False,
         }
+        if caption_translated_from:
+            new_entry["caption_translated_from"] = caption_translated_from  # KRI-1015
         if media_lanes_enabled:
             if not ending_lane_only:
                 new_entry["overlay_transcript"] = raw_words
@@ -9486,6 +9944,12 @@ def _run_phone_subtitled_job(
                 # A face crop IS a crop: the editor's bars/crop control shows it,
                 # and a Save without a bars/crop change keeps it.
                 new_entry["landscape_fit"] = "fill"
+        if landscape_canvas:
+            # The creator's landscape pick: the editor reads the canvas from here (its Save
+            # recompiles on it) and a landscape variant never carries bars. Portrait writes
+            # neither key, exactly as before.
+            new_entry["orientation"] = "landscape"
+            new_entry["landscape_fit"] = "fill"
         if title_rows or spoken_text_rows or closing_text_rows:
             # KRI-467: the title is an ordinary saved text row. `user_edited`
             # makes the read path serve it beside the projected caption
@@ -9588,16 +10052,21 @@ def _run_phone_subtitled_job(
             new_entry["phone_overlay_receipt"] = overlay_receipt
         if beats_enabled:
             new_entry["phone_beat_receipt"] = beat_receipt
-        if cut_plan is not None and not opening_cut_only:
-            # Admin/debug parity with the cloud `required_v1` render
-            # (`base["silence_cut"]`/`base["silence_cut_outcome"]`), and the
-            # source `_speech_cleanup_outcome_context` the device-export
-            # completion route (`app.routes.device_render.
-            # _device_speech_cleanup_outcome`) reads to publish the public
-            # "applied"/"checked_no_change" receipt once the device uploads.
-            new_entry["silence_cut"] = plan_summary(
-                cut_plan, original_duration_s=float(probe.duration_s)
+        if cut_plan is not None:
+            # Admin/debug parity with the cloud `required_v1` render (`base["silence_cut"]`).
+            # KRI-965: also the cut the editor rebuilds this take from (iOS
+            # `NativePhoneTalkingSource.removedSpans`, server `editor_deletion_timeline`), so a
+            # start/end or named cut with cleanup off is written too; without it the editor
+            # played and exported the whole take under captions timed for the cut.
+            new_entry["silence_cut"] = _phone_cut_summary(
+                cut_plan,
+                probe_s=float(probe.duration_s),
+                original_s=float(binding.original.duration_s),
             )
+        if cut_plan is not None and not opening_cut_only:
+            # The source `_speech_cleanup_outcome_context` the device-export completion route
+            # (`app.routes.device_render._device_speech_cleanup_outcome`) reads to publish the
+            # public "applied"/"checked_no_change" receipt once the device uploads.
             # A start/end cut is not speech cleanup: only cleanup's own removals count.
             cleanup_removed = cleanup_cut_plan is not None and bool(cleanup_cut_plan.removed)
             new_entry["silence_cut_outcome"] = "applied" if cleanup_removed else "no_change"
@@ -9634,6 +10103,25 @@ def _run_phone_subtitled_job(
             ),
         },
     )
+
+
+def _phone_cut_summary(cut_plan: CutPlan, *, probe_s: float, original_s: float) -> dict[str, Any]:
+    """The persisted ``silence_cut`` of a phone Talking cut, the record the editor rebuilds the
+    take from (KRI-965).
+
+    The cut is planned on the probed analysis proxy, but the editor plays the original, which
+    can be a hair longer (T1: 26.934 s vs 26.933 s). A removal that runs to the proxy's end
+    runs to the original's end too, or the editor keeps a sliver of the take's last moment after
+    an end cut. Readers clamp each span to the source they play, so it never overshoots."""
+    from app.pipeline.silence_cut import plan_summary  # noqa: PLC0415
+
+    summary = plan_summary(cut_plan, original_duration_s=probe_s)
+    take_end_s = round(probe_s, 3)
+    if original_s > probe_s:
+        for row in summary["removed"]:
+            if row["end_s"] >= take_end_s:
+                row["end_s"] = round(original_s, 3)
+    return summary
 
 
 def _phone_speech_cut_asks(snapshot: dict) -> tuple:
@@ -9912,6 +10400,7 @@ def _phone_speaker_framing(
     clip_path: str | None,
     keep_segments: list[tuple[float, float]],
     landscape_fit: str,
+    canvas: Any = None,
 ) -> Any:
     """KRI-547: how to frame the phone Talking speaker for a creator who asked
     for a vertical / full-screen / face-in-frame video.
@@ -9945,7 +10434,8 @@ def _phone_speaker_framing(
         keep_segments=keep_segments,
         display_width=display_width,
         display_height=display_height,
-        canvas=_STORY_CANVAS,
+        # A landscape canvas (creator's pick) records `landscape_canvas` and samples nothing.
+        canvas=canvas if canvas is not None else _STORY_CANVAS,
         landscape_fit=landscape_fit,
         asked_by=asked_by,
     )
@@ -9956,7 +10446,7 @@ def _phone_speaker_framing(
     return framing
 
 
-def _phone_face_box_mapper(binding: Any, position_x: float) -> Any:
+def _phone_face_box_mapper(binding: Any, position_x: float, canvas: Any = None) -> Any:
     """Raw source face box -> the face core (eyes, nose, mouth) on the KRI-547
     face-filled canvas (`phone_speaker_framing.face_core_mapper`), for beat and
     PiP card grounding only; titles and captions keep the full protection."""
@@ -9964,11 +10454,13 @@ def _phone_face_box_mapper(binding: Any, position_x: float) -> Any:
     from app.pipeline.phone_speaker_framing import face_core_mapper  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+
     display_width, display_height = display_dims(binding.original)
     return face_core_mapper(
         display_width=display_width,
         display_height=display_height,
-        canvas=_STORY_CANVAS,
+        canvas=canvas,
         position_x=position_x,
     )
 
@@ -9981,7 +10473,9 @@ def _protected_placement_kwargs(protected: Any) -> dict[str, Any]:
     return {"objects": protected.objects, "protect_all_faces": protected.protect_all_faces}
 
 
-def _protected_caption_avoid(cues: list[dict], *, caption_style: str, caption_look: Any) -> Any:
+def _protected_caption_avoid(
+    cues: list[dict], *, caption_style: str, caption_look: Any, canvas: Any = None
+) -> Any:
     """KRI-827: when the captions moved off the marked object (possibly up into the title's
     band), the caption lines on screen during a window, for the title / closing rows to keep
     clear of; ``None`` when the captions stay in their usual bottom band."""
@@ -9990,19 +10484,23 @@ def _protected_caption_avoid(cues: list[dict], *, caption_style: str, caption_lo
     from app.pipeline.phone_spoken_text import caption_boxes  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+
     def boxes(window: tuple[float, float]) -> list[Any]:
         return caption_boxes(
             cues,
             window=window,
             caption_style=caption_style,
-            canvas=_STORY_CANVAS,
+            canvas=canvas,
             look=caption_look,
         )
 
     return boxes
 
 
-def _protected_style_rows(rows: list[dict], *, job_id: str, protected: Any) -> list[dict]:
+def _protected_style_rows(
+    rows: list[dict], *, job_id: str, protected: Any, canvas: Any = None
+) -> list[dict]:
     """`generation_style_rows`, then (KRI-827) any restyle that moved or grew a protected
     row onto a face or the marked object is undone, so the placement receipt stays true."""
     styled = generation_style_rows(rows, job_id=job_id)
@@ -10011,7 +10509,9 @@ def _protected_style_rows(rows: list[dict], *, job_id: str, protected: Any) -> l
     from app.pipeline.phone_protected_text import keep_styled_rows_clear  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
 
-    styled, kept = keep_styled_rows_clear(rows, styled, plan=protected, canvas=_STORY_CANVAS)
+    canvas = canvas if canvas is not None else _STORY_CANVAS
+
+    styled, kept = keep_styled_rows_clear(rows, styled, plan=protected, canvas=canvas)
     if kept:
         try:
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
@@ -10032,6 +10532,7 @@ def _phone_protected_plan(
     position_x: float,
     cues: list[dict],
     caption_style: str,
+    canvas: Any = None,
 ) -> tuple[Any, Any, dict[str, Any] | None]:
     """KRI-827: what the creator asked to keep text off ("no text on her face or on the
     plate"), tracked over the speaker's kept span, and the caption look that keeps the
@@ -10045,6 +10546,8 @@ def _phone_protected_plan(
     )
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
 
     kept = [(float(a), float(b)) for a, b in keep_segments if float(b) > float(a)]
     if not kept:
@@ -10062,7 +10565,7 @@ def _phone_protected_plan(
     look = None
     if plan.objects or plan.protect_all_faces:
         display_width, display_height = display_dims(binding.original)
-        scale = fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale
+        scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
         timeline_s = sum(end - start for start, end in kept)
         geometry = ProtectedGeometry(
             keep_segments=tuple(kept),
@@ -10079,7 +10582,7 @@ def _phone_protected_plan(
                 keep_segments=kept,
                 display_width=display_width,
                 display_height=display_height,
-                canvas=_STORY_CANVAS,
+                canvas=canvas,
                 scale=scale,
                 sample=title_mod.sample_face_regions,
                 position_x=position_x,
@@ -10089,7 +10592,7 @@ def _phone_protected_plan(
             look, caption_receipt = choose_caption_look(
                 cues,
                 caption_style=caption_style,
-                canvas=_STORY_CANVAS,
+                canvas=canvas,
                 objects=plan.objects,
                 # Faces are a hard limit for the captions only when the creator named a
                 # face; "no text on the plate" alone never moves captions off a face.
@@ -10120,6 +10623,7 @@ def _phone_talking_title_rows(
     position_x: float = 0.0,
     protected: Any = None,
     caption_avoid: Any = None,
+    canvas: Any = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's opening title row (KRI-467), placed off the
     speaker's face, plus its placement receipt; ``([], None)`` when the title
@@ -10128,6 +10632,8 @@ def _phone_talking_title_rows(
     (with ``landscape_fit="fill"``), so the face is checked where it is drawn."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
     from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
         first_cue_word_end_s,
         place_talking_title,
@@ -10140,7 +10646,7 @@ def _phone_talking_title_rows(
         duration_s=duration_s,
         first_word_end_s=first_cue_word_end_s(cues),
         timeline_duration_s=sum(max(0.0, end - start) for start, end in keep_segments),
-        canvas=_STORY_CANVAS,
+        canvas=canvas,
     )
     if row is None:
         return [], None
@@ -10151,8 +10657,8 @@ def _phone_talking_title_rows(
         keep_segments=keep_segments,
         display_width=display_width,
         display_height=display_height,
-        canvas=_STORY_CANVAS,
-        scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
+        canvas=canvas,
+        scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
         position_x=position_x,
         avoid=caption_avoid((float(row["start_s"]), float(row["end_s"]))) if caption_avoid else (),
         **_protected_placement_kwargs(protected),
@@ -10176,6 +10682,7 @@ def _phone_talking_closing_rows(
     position_x: float = 0.0,
     protected: Any = None,
     caption_avoid: Any = None,
+    canvas: Any = None,
 ) -> tuple[list[dict], dict[str, Any] | None]:
     """The phone Talking edit's closing text row (KRI-514) plus its placement
     receipt; ``([], None)`` when the text is empty or the clip has no time for
@@ -10185,6 +10692,8 @@ def _phone_talking_closing_rows(
     speaker's face."""
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
     from app.pipeline.phone_subtitled_title import (  # noqa: PLC0415
         ClosingPhoto,
         place_closing_on_photo,
@@ -10205,7 +10714,7 @@ def _phone_talking_closing_rows(
     if row is None:
         return [], None
     if photo is not None:
-        placed, receipt = place_closing_on_photo(row, photo, canvas=_STORY_CANVAS)
+        placed, receipt = place_closing_on_photo(row, photo, canvas=canvas)
     else:
         display_width, display_height = display_dims(binding.original)
         placed, receipt = place_talking_title(
@@ -10214,8 +10723,8 @@ def _phone_talking_closing_rows(
             keep_segments=keep_segments,
             display_width=display_width,
             display_height=display_height,
-            canvas=_STORY_CANVAS,
-            scale=fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale,
+            canvas=canvas,
+            scale=fit_transform(display_width, display_height, canvas, landscape_fit).scale,
             position_x=position_x,
             avoid=(
                 caption_avoid((float(row["start_s"]), float(row["end_s"]))) if caption_avoid else ()
@@ -10441,6 +10950,7 @@ def _phone_talking_spoken_text_rows(
     protected: Any = None,
     caption_look: Any = None,
     removals: Any = (),
+    canvas: Any = None,
 ) -> tuple[list[dict], dict[str, Any]]:
     """KRI-707: one text row per ``asks`` entry the take says, from the word's start
     (cut-timeline ``words``), placed off the speaker's face and clear of the
@@ -10450,11 +10960,13 @@ def _phone_talking_spoken_text_rows(
     from app.pipeline.phone_recipe_shared import display_dims, fit_transform  # noqa: PLC0415
     from app.pipeline.phone_spoken_text import spoken_text_rows  # noqa: PLC0415
     from app.pipeline.phone_subtitled_plan import _STORY_CANVAS  # noqa: PLC0415
+
+    canvas = canvas if canvas is not None else _STORY_CANVAS
     from app.pipeline.phone_subtitled_title import place_talking_title  # noqa: PLC0415
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
     display_width, display_height = display_dims(binding.original)
-    scale = fit_transform(display_width, display_height, _STORY_CANVAS, landscape_fit).scale
+    scale = fit_transform(display_width, display_height, canvas, landscape_fit).scale
     speaker_span_s = sum(max(0.0, end - start) for start, end in keep_segments)
 
     def place(row: dict, avoid: Any) -> tuple[dict, dict[str, Any]]:
@@ -10464,7 +10976,7 @@ def _phone_talking_spoken_text_rows(
             keep_segments=keep_segments,
             display_width=display_width,
             display_height=display_height,
-            canvas=_STORY_CANVAS,
+            canvas=canvas,
             scale=scale,
             position_x=position_x,
             avoid=avoid,
@@ -10485,7 +10997,7 @@ def _phone_talking_spoken_text_rows(
         cues=cues,
         caption_style=caption_style,
         timeline_duration_s=timeline_duration_s,
-        canvas=_STORY_CANVAS,
+        canvas=canvas,
         place=place,
         shown_rows=shown_rows,
         caption_look=caption_look,
@@ -10934,16 +11446,24 @@ def _narrated_alignment_receipts(
     caption receipts are reported, never blocking.
     """
     from app.kria.brief_checks import (  # noqa: PLC0415
+        asks_caption_spelling,
         build_receipts,
         plan_facts_from_narrated_alignment,
     )
 
     live = brief.live() if brief is not None else []
+    # KRI-961: the record has the captions' language, not their lines; a captions ask that
+    # lists words to spell is judged on the finished captions (the variant's review).
+    live = [req for req in live if not asks_caption_spelling(req)]
     if not live:
         return []
     kinds = {req.id: req.kind for req in live}
+    # KRI-963: the record holds no on-screen text, so a text ask is left to the finished-video
+    # review, which reads the title and text rows the variant really drew.
     receipts = build_receipts(
-        live, plan_facts_from_narrated_alignment(record), include_unchecked=bound
+        [req for req in live if req.kind != "text"],
+        plan_facts_from_narrated_alignment(record),
+        include_unchecked=bound,
     )
     rows = [
         {
@@ -11490,6 +12010,9 @@ def _run_phone_narrated_job(
                     trusted_aliases=None,
                 )
                 cues = resplit_cues_into_sentences(cues)
+                # KRI-961: the creator's spellings (quoted asks + the approved brief's list),
+                # applied last as Talking does (KRI-793), so "Olloda bife" reads "ojo de bife".
+                cues = _apply_creator_spellings(cues, _caption_glossary(snapshot, all_candidates))
 
             # KRI-533: what the worker pinned, and the receipts it can judge from it
             # (a first/last clip, a clip-group timing, the caption language). Like the
@@ -11680,6 +12203,31 @@ def _run_phone_narrated_job(
                     ],
                     duration_s=voiceover_duration_s,
                 )
+            # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): grounded on the
+            # voice timeline (each step's window IS the output clock) and merged into the
+            # same KRI-281 lane the beats use. Never fails the job.
+            timed_cards: tuple = ()
+            timed_receipt: dict | None = None
+            timed_lane = _phone_timed_card_lane(
+                job_id,
+                strategy=strategy,
+                bindings=bindings,
+                clip_windows=_narrated_step_windows(steps),
+                timeline_end=voiceover_duration_s,
+            )
+            if timed_lane is not None:
+                timed_cards, card_visuals, timed_receipt = timed_lane
+                if timed_cards:
+                    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+                        PhoneSubtitledLanes,
+                    )
+
+                    lanes = (
+                        lanes.model_copy(update={"overlays": [*lanes.overlays, *timed_cards]})
+                        if lanes is not None
+                        else PhoneSubtitledLanes(overlays=list(timed_cards))
+                    )
+                    visuals = _merge_visual_bindings(visuals, card_visuals)
             while True:
                 try:
                     recipe = compile_phone_narrated_plan(
@@ -11729,7 +12277,7 @@ def _run_phone_narrated_job(
                         raise
                     # A beat lane never fails the job: drop the lane that failed
                     # (every lane when the error names none), then recompile.
-                    if lanes is None or beat_receipt is None:
+                    if lanes is None or (beat_receipt is None and timed_receipt is None):
                         raise
                     lane = exc.lane if isinstance(exc, SubtitledLaneError) else None
                     log.warning("phone_narrated_beats.lane_dropped", job_id=job_id, lane=lane)
@@ -11738,14 +12286,21 @@ def _run_phone_narrated_job(
                         if lane is not None
                         else lanes.model_copy(update={"overlays": [], "sound_effects": []})
                     )
-                    beat_receipt = _demote_beat_receipt(
-                        beat_receipt,
-                        card_ids=frozenset(card.id for card in lanes.overlays)
-                        - frozenset(card.id for card in dropped.overlays),
-                        sfx_ids=frozenset(sfx.request.id for sfx in lanes.sound_effects)
-                        - frozenset(sfx.request.id for sfx in dropped.sound_effects),
-                        reason="compile_dropped",
+                    dropped_card_ids = frozenset(card.id for card in lanes.overlays) - frozenset(
+                        card.id for card in dropped.overlays
                     )
+                    if beat_receipt is not None:
+                        beat_receipt = _demote_beat_receipt(
+                            beat_receipt,
+                            card_ids=dropped_card_ids,
+                            sfx_ids=frozenset(sfx.request.id for sfx in lanes.sound_effects)
+                            - frozenset(sfx.request.id for sfx in dropped.sound_effects),
+                            reason="compile_dropped",
+                        )
+                    if timed_receipt is not None:
+                        timed_receipt = _demote_timed_card_receipt(
+                            timed_receipt, card_ids=dropped_card_ids, reason="compile_dropped"
+                        )
                     lanes = dropped if dropped.overlays or dropped.sound_effects else None
             # An explicit photo-then-original sequence is atomic. Only the final
             # surviving full-screen photo may restart its aligned video. A lost
@@ -11887,6 +12442,17 @@ def _run_phone_narrated_job(
             # KRI-519: the same creator-safe receipt Talking keeps; the chat's
             # render notes read it to say which named moment never came up.
             new_entry["phone_beat_receipt"] = beat_receipt
+        if timed_receipt is not None:
+            from app.pipeline.phone_timed_cards import (  # noqa: PLC0415
+                TIMED_CARD_RECEIPT_FIELD,
+                TIMED_CARDS_FIELD,
+                timed_card_rows,
+            )
+
+            new_entry[TIMED_CARD_RECEIPT_FIELD] = timed_receipt
+            kept_cards = [card for card in timed_cards if lanes and card in lanes.overlays]
+            if kept_cards:
+                new_entry[TIMED_CARDS_FIELD] = timed_card_rows(kept_cards)
         if clip_sound_plan is not None:
             # KRI-842: what the pinned recipe plays for each clip-sound ask, read back from
             # the recipe itself (the receipts judge this, never the global bed level).
@@ -29002,6 +29568,28 @@ def _silence_cut_analysis(
                 if analysis_policy == "required_v1" and settings.speech_cleanup_budget_clamp_enabled
                 else "bailout"
             )
+
+            def _voice_guarded(unguarded):  # noqa: ANN001, ANN202
+                # KRI-1017: a silence/filler cut that holds sustained voicing is not dead
+                # air, whatever the transcript and the silence spans agreed on. Judged on the
+                # same media the plan was built from; a decode fault drops the judged cuts.
+                from app.pipeline.speech_voice_guard import apply_voice_guard  # noqa: PLC0415
+
+                guarded, guard_report = apply_voice_guard(
+                    unguarded,
+                    clip_path,
+                    words=transcript.words,
+                    retake_spans=retake_spans,
+                    forced=forced_removals,
+                )
+                if (
+                    guard_report["status"] != "ok"
+                    or guard_report["dropped"]
+                    or guard_report["trimmed"]
+                ):
+                    record_pipeline_event("silence_cut", "silence_cut_voice_guard", guard_report)
+                return guarded
+
             if mixed_gap_selection.effective_mode == "off":
                 plan = build_cut_plan(
                     transcript.words,
@@ -29013,6 +29601,7 @@ def _silence_cut_analysis(
                     over_budget_policy=over_budget_policy,
                     max_removal_frac_required=(settings.speech_cleanup_max_removal_frac_required),
                 )
+                plan = _voice_guarded(plan)
             else:
                 comparison = build_cut_plan_comparison(
                     transcript.words,
@@ -29106,6 +29695,9 @@ def _silence_cut_analysis(
                         "speech_cleanup_receipt_failed",
                         error_class=type(exc).__name__,
                     )
+                # After the receipt blocks above: they can swap the candidate back for the
+                # baseline, and the guard must judge the plan that actually ships.
+                plan = _voice_guarded(plan)
                 entry["speech_cleanup_outcome_context"] = _speech_cleanup_outcome_context(
                     analysis_policy=analysis_policy,
                     assignment=assignment,

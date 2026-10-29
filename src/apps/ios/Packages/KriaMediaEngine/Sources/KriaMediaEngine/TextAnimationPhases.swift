@@ -8,7 +8,7 @@ public extension TextAnimationPhases {
         guard time >= 0, time < duration else {
             return TextTransformSample(alpha: 0, scale: 1, xTranslate: 0, yTranslate: 0, revealProgress: 0)
         }
-        let edgeDuration = min(0.4 / speed, duration / 2)
+        let edgeDuration = edgeDuration(duration: duration)
         var alpha = 1.0, scale = 1.0, x = 0.0, y = 0.0, reveal = 1.0
         for (effect, progress) in [(entrance, min(1, time / edgeDuration)), (exit, min(1, (duration - time) / edgeDuration))] {
             let eased = 1 - pow(1 - progress, 3)
@@ -18,6 +18,7 @@ public extension TextAnimationPhases {
             case .pop: scale *= 0.7 + 0.3 * eased; alpha *= eased
             case .slide: x += 40 * (1 - eased); alpha *= eased
             case .typewriter: reveal = min(reveal, progress)
+            case .silkReveal, .elasticCondensed, .focusPull, .wordRelay, .ribbonWipe, .echoStack: break
             }
         }
         let wave = sin(2 * Double.pi * time * speed / 1.2)
@@ -29,8 +30,31 @@ public extension TextAnimationPhases {
         }
         return TextTransformSample(alpha: alpha, scale: scale, xTranslate: x, yTranslate: y, revealProgress: reveal)
     }
+    func edgeDuration(duration: Double) -> Double {
+        min(Self.edgeSeconds / speed, duration / 2)
+    }
     static func visiblePrefix(_ text: String, progress: Double) -> String {
         guard progress.isFinite else { return "" }
         return String(text.prefix(min(text.count, max(0, Int(floor(Double(text.count) * progress + 1e-9))))))
+    }
+}
+
+public extension TextAnimationPhases.Edge {
+    static let designed: [Self] = [.silkReveal, .elasticCondensed, .focusPull, .wordRelay, .ribbonWipe, .echoStack]
+    var isDesigned: Bool { Self.designed.contains(self) }
+    var title: String {
+        switch self {
+        case .none: "None"
+        case .fade: "Fade"
+        case .pop: "Pop"
+        case .slide: "Slide"
+        case .typewriter: "Typewriter"
+        case .silkReveal: "Silk Reveal"
+        case .elasticCondensed: "Elastic Condensed"
+        case .focusPull: "Focus Pull"
+        case .wordRelay: "Word Relay"
+        case .ribbonWipe: "Ribbon Wipe"
+        case .echoStack: "Echo Stack"
+        }
     }
 }

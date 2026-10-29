@@ -17,6 +17,158 @@
   ],
   "gates": [
     {
+      "id": "launch-clarification-preservation",
+      "tickets": [
+        "KRI-948",
+        "KRI-950",
+        "KRI-954",
+        "KRI-941"
+      ],
+      "symptom": "A picker answer loses settled photo copy or repeats a membership question; a collapsed listed order loses member order.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-950",
+      "journey": "launch-clarification-preservation",
+      "paths": [
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/app/schemas/clip_intents.py",
+        "src/apps/api/app/kria/brief_checks.py"
+      ],
+      "regression_tests": [
+        "tests/services/test_launch_clarification_replay.py",
+        "tests/services/test_kri948_single_take_resolution.py",
+        "tests/pipeline/test_launch_listed_members.py",
+        "tests/kria/test_kri950_tap_keeps_checked_list.py",
+        "tests/kria/test_kri950_tap_keeps_checked_list_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real inventory/resolver agents with provider transport replay; before/after clarification, missing-moment and listed-order checks retained in the launch proof report.",
+        "live_model": "Not run. Prompt compliance remains unverified.",
+        "native_output": "Existing media-engine export checks run separately. No iPhone original-case fulfillment claim.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "include/group/order selection carry without crossing into exclusion",
+        "exact photo copy and wrong/missing target controls",
+        "upstream server-held inventory is bound to the request; typed corrections replan",
+        "missing moment check defers technical failure instead of asking for a tap",
+        "typed member order preserves groups without a listed order"
+      ],
+      "neighbours_gap": [
+        "physical iPhone and named TestFlight acceptance",
+        "legacy unmarked lists cannot establish internal order"
+      ],
+      "follow_ups": [
+        "KRI-946",
+        "KRI-954"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "request-outcome-measurement",
+      "tickets": [
+        "KRI-728"
+      ],
+      "symptom": "Ready jobs and unreviewed or partial outputs must not count as fulfilled requests.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-728",
+      "journey": "request-outcome-measurement",
+      "paths": [
+        "src/apps/api/app/services/request_following_outcomes.py"
+      ],
+      "regression_tests": [
+        "tests/integration/test_request_following_queue.py",
+        "tests/routes/test_actual_export_publication.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "32 real HTTP review/database and export-publication controls passed.",
+        "live_model": "Not applicable to count projection.",
+        "native_output": "No new exporter; uses the existing current published output checks.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "current complete human review versus unknown or partial review",
+        "unverified and stale export evidence cannot count as a verified current export",
+        "pre-Job failures stay in captured-session denominators"
+      ],
+      "neighbours_gap": [
+        "original request/recovery lineage and client/server cost/version cohorts",
+        "Photos save acknowledgements"
+      ],
+      "follow_ups": [
+        "KRI-728"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-852-speech-editor",
+      "tickets": [
+        "KRI-852",
+        "KRI-771"
+      ],
+      "symptom": "After deleting a cleaned Talking segment, source-window edits return TIMELINE_STALE and reorder leaves captions on the wrong source occurrence.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-852",
+      "journey": "kri-852-speech-editor",
+      "paths": [
+        "src/apps/api/app/pipeline/speech_cut_state.py",
+        "src/apps/api/app/services/authored_editor.py",
+        "src/apps/api/app/pipeline/phone_authored_timeline.py",
+        "src/apps/api/app/services/editor_empty_drafts.py",
+        "src/apps/api/app/kria/drafts.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/NativeSpeechTimelineProjection.swift",
+        "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Tests/Fixtures/speech_editor_projection.json",
+        "src/apps/ios/Tests/KriaTests/NativeSpeechTimelineTests.swift"
+      ],
+      "regression_tests": [
+        "tests/routes/test_editor_save_contract_matrix.py",
+        "tests/integration/test_durable_editor_save.py",
+        "tests/pipeline/test_speech_cut_state.py",
+        "tests/routes/test_editor_save_code_catalog.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real authored Save/compiler plus scratch Postgres Save/reopen, source/generation/owner/bounds and simultaneous Save controls. Initial source guard and wrong-caption failures retained at baseline 49edd1c34.",
+        "live_model": "Not run. No new provider calls, prompts, flags or credentials.",
+        "native_output": "Paired source-occurrence/fractional fixtures, native undo/save/source/compiler tests and inspected current-engine macOS exports of a constructed cleaned state from retained synthetic Talking media. docs/reviews/kri-852-speech-editor.md records commands/hashes/limits.",
+        "production": "Not deployed; physical original iPhone draft untouched."
+      },
+      "neighbours_covered": [
+        "trim/slide/reorder and combined sequence",
+        "trim/extend and slide/back after serialized reopen",
+        "newly exposed words require matching full-source transcript generation",
+        "missing transcript saves exact draft with recoverable render prerequisite; creator captions/disabled captions recover",
+        "stale generation, foreign owner/slot/source generation, invalid source bounds, simultaneous Save",
+        "repeated source occurrences, crossing intervals, right-biased points in overlap and fractional renderer parity",
+        "Save-matrix rows talking-segment-* (from #1788, inverted to prove editing works): deleting the middle segment drops its caption and moves the later caption with its clip; Range saves with the caption clipped to the window; reorder moves captions with their clips; a slide into untranscribed speech saves exactly and flags caption timing for export",
+        "iOS NativeEditorSessionTests testTalkingSegment*: Range/slide/timing/move on a server-snapshot speech segment write the window (source start locked) with captions following in one undo step"
+      ],
+      "neighbours_gap": [
+        "Physical original Talking Save/reopen/export acceptance remains KRI-771; no original phone-draft mutation authorized.",
+        "KRI-724/#1760 precise phrase planning, processed audio and noise work remain separate."
+      ],
+      "follow_ups": [
+        "KRI-771",
+        "KRI-724"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-802-question-batch",
       "tickets": [
         "KRI-802"
@@ -2218,7 +2370,15 @@
         "src/apps/ios/Kria/Core/CameraRollStories.swift",
         "src/apps/ios/Kria/Core/CreationFlow.swift",
         "src/apps/ios/Kria/Core/Services.swift",
-        "src/apps/ios/Kria/Features/CameraRollCollectionView.swift",
+        "src/apps/ios/Kria/Core/CameraRollItemState.swift",
+        "src/apps/ios/Kria/Core/CameraRollSurface.swift",
+        "src/apps/ios/Kria/Core/CameraRollUploadEngine.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollIdeaViews.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceView.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollTasteView.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollThumbnail.swift",
+        "src/apps/ios/Kria/Features/CameraRoll/CameraRollTileView.swift",
         "src/apps/ios/Kria/Features/CameraRollExportProofView.swift",
         "src/apps/ios/Kria/Features/CameraRollSavedPicker.swift",
         "src/apps/ios/Kria/Features/CameraRollStoriesUITestFixture.swift",
@@ -2401,6 +2561,53 @@
         "A resolver question that is text-only (no clip picker) does not carry the skip rows; they are asked on the next turn.",
         "Thread events and the earlier-draft read are stubbed in the turn tests (the earlier-draft read has its own Postgres test in test_kri761_look_alike_exclusions.py).",
         "Blur is still not in any clip record: a measured sharpness fact was calibrated on 170 kit clips and rejected (M1_04 ranks 8th; its sharp look-alike M1_06 is only 6% sharper)."
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-962-voiceover-tie-question",
+      "tickets": [
+        "KRI-962",
+        "KRI-960"
+      ],
+      "symptom": "\"the DON JULIO sign while I say 'Don Julio'\" matched the window-sign clip and Atakan at the PARRILLA DON JULIO plaque, both at 0.9, and nothing asked: the Voiceover opened on Atakan (a whip-pan and his face at \"Don Julio\", no sign) and the real sign landed on the unrelated last line (Don Julio walk-in N1, thread 99627FBC, job bdb0c798).",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-962",
+      "journey": "kri-962-voiceover-tie-question",
+      "paths": [
+        "src/apps/api/app/kria/clip_ties.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/tests/fixtures/kri962_voiceover_tie_jobs.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri962_voiceover_tie_question.py",
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "tests/kria/test_kri692_spoken_text_is_not_a_clip_question.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": "kria_voiceover_tie_questions_enabled",
+      "evidence": {
+        "offline_replay": "N1's prod clip records (attachment order), message, approved strategy and the resolver's matches (the job's resolved intents) through the real clip-intent parse, resolver and runtime-v2 planner turn: the turn asks the picker for the sign with Atakan and the window sign pre-ticked, nothing else. Red with a no-op tie check (12 of 22 fail: the turn drafts without asking), green after. Ask -> tap the window sign -> next turn drafts with it as the shot; simpler version, keep-both and none-of-these never ask again. Over the recorded resolved intents of all 6 prod Voiceover jobs with an alignment record (2026-10-08..27), only N1 is asked (Troy: a clear 1.0 winner; the museum: an order ask and an every-clip include).",
+        "live_model": "Not run; no paid calls. The fix adds no model call.",
+        "native_output": "unknown; the picker card is the existing include category, not device-checked for a tie.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "a tie whose other clips are another ask's only match (N1's grill) is not asked",
+        "another ask using Atakan's clip leaves one free clip: not asked",
+        "a clear winner, order/group/caption asks and an every-clip include are not asked",
+        "photos never count; a clip left out is never counted, offered or pre-ticked",
+        "a tap or typed file name is never asked again; keep-both and none-of-these settle the shot",
+        "the tie rides in the resolver's own picker (the ribeye photo), one card",
+        "Montage never asks; either flag off asks nothing",
+        "a tie-check error fails open",
+        "Turkish copy"
+      ],
+      "neighbours_gap": [
+        "A resolver question that is text-only (no clip picker) does not carry the tie rows; they are asked on the next turn.",
+        "Talking cutaways and other formats are not asked (Voiceover only, as requested).",
+        "Thread events are stubbed in the turn tests; the tap path is the shared fold_clip_selections path."
       ],
       "red_control": "not_applicable"
     },
@@ -2754,6 +2961,56 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-967-unheard-quote-head",
+      "tickets": [
+        "KRI-967",
+        "KRI-964"
+      ],
+      "symptom": "Don Julio walk-in T1 (F0F3D5FB): the quoted start line \"Parrilla Don Julio, what do you think?\" was not in the timed transcript (whisper wrote 'So,' for the name), so the take-line question recommended \"what do you think?\" and the video opened one line late (16.05 s), without the words the creator asked to open on.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-967",
+      "journey": "kri-628-opening-cut",
+      "paths": [
+        "src/apps/api/app/kria/take_lines.py",
+        "src/apps/api/app/kria/opening_cut_ask.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/tests/fixtures/kri967_dj_walkin_t1_unheard_head.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri967_unheard_quote_head.py",
+        "tests/kria/test_kri844_take_line_ask.py",
+        "tests/kria/test_kri844_dj_t2_cross_language_replay.py"
+      ],
+      "harness": "mocked_internal",
+      "evidence": {
+        "offline_replay": "The thread's real clip record (round-1 question digest f1017fed1df5aefc1d17c0cb reproduced from it), real question and tap, prod receipts and the reference listener's words, through the planner gate, answered_brief, estimate_take_window and generative_build._phone_opening_cut. Red on 18a46b862 (6 of 21: recommendation, cut, copy, cap, end mirror, Turkish); green after. Recommended pick: draft card 14.85-20.29 s, worker cut 14.85-20.27 s (prod 16.05-20.27). Seven scratch mutations (no reference evidence, said-as line dropped when capped, pin not joined, no gap check, own-utterance accepted, quote words accepted, length unbounded) each turn a test red.",
+        "live_model": "Not run; no paid calls. The change adds no model call and no prompt edit.",
+        "native_output": "unknown; the option description is additive and the iOS card already shows option details; not device-checked.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "no independent transcript / it never heard the head / heard it elsewhere: tail stays recommended, card names the missing words",
+        "neighbour line far away, its own utterance, made of quote words, or much longer than the head: no invented start",
+        "fully matched quote asks nothing; unmatched quote asked byte-identically",
+        "prod tap on line_1 keeps its value and digest; prod aliases still answer their options",
+        "neighbour kept when more lines than fit; 'you choose' takes it",
+        "end-side mirror (heard head, unheard tail of the end quote)",
+        "brief rewritten to the tapped label (the path prod took after the tap)",
+        "worker words without 'So,' and the reference listener's words: the cut never opens later than today or at 0",
+        "Turkish card"
+      ],
+      "neighbours_gap": [
+        "The Main Creator draft is a literal strategy and the thread's database reads are mocked (planner gate replayed).",
+        "The worker's own pre-cut word timings were not in the run folder; they are reconstructed from the prod caption cues. If the real preflight words lack 'So,', the cut stays at 16.05 s while the draft card says 0:14.",
+        "On words that heard the name itself (the reference listener's), the joined pin grounds fuzzily on the tail and opens where prod did (16.33 s there), not at the name."
+      ],
+      "follow_ups": [
+        "Don Julio walk-in T1 iPhone re-send after deploy: the start question recommends \"So, what do you think?\" and the opening_cut receipt starts near 14.85 s with spoken \"So, what do you think?\""
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-804-label-text-reply",
       "tickets": [
         "KRI-804",
@@ -3019,6 +3276,57 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-966-take-window-length",
+      "tickets": [
+        "KRI-966",
+        "KRI-964"
+      ],
+      "symptom": "Don Julio walk-in T1 (F0F3D5FB): with start/end lines that keep 0:15 -> 0:20 of a 26.9 s take and 'About 7 seconds', Kria asked 'the available spoken take is 10.2 seconds' (the whole take's speech) with one option; the model filed the tapped label as a new timing row (r7, 10.2 s), the approval card listed it and the review said 'you asked for 10.2s' after a 4.2 s render.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-966",
+      "journey": "kri-966-take-window-length",
+      "paths": [
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/tests/fixtures/kri966_donjulio_walkin_t1_length.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri966_take_window_length.py",
+        "tests/kria/test_kri966_t1_runtime_postgres.py",
+        "tests/kria/test_kri844_take_line_ask.py",
+        "tests/kria/test_kri844_dj_t2_cross_language_replay.py",
+        "tests/kria/test_kri849_dj_t1_unclear_word_replay.py",
+        "tests/services/test_choice_questions_turkish_guard.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "kria_choice_questions_enabled",
+      "evidence": {
+        "offline_replay": "The thread's real snapshot, brief and taps through the question gate, the approval backstop, the draft card and the after-render review of the real variant, plus the real runtime over scratch Postgres (only the Main Creator replaced: prod's turn-1 brief, its turn-2 start-line rewrite and its turn-3 echo of the tapped label). The fixture reproduces both prod question digests and prod's 'you asked for 10.2s' row. Red on 18a46b862 (15 tests), green after; eight scratch mutations (window ignored, no in-pass line picks, planner filter off, filter on any answer, whole-take capacity, window row reworded, partial-change kind, Turkish label in English) each turn a test red.",
+        "live_model": "Not run; no paid calls. The change adds no model call and no prompt edit.",
+        "native_output": "unknown; server-side question and brief only, no client change.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "prod's brief shape (model rewrote the start line) and the server-owned pick on the answer",
+        "a line not found: no whole-take card before or after the picker is declined",
+        "10 % tolerance both sides, a window shorter and longer than the ask (one option, no trim)",
+        "one line only (start / end), a strict whole-video limit, Turkish copy",
+        "no window: the prod whole-take card unchanged (same digest)",
+        "a typed length and the start-line tap keep their brief updates",
+        "a partial change with no kind (KRI-805) putting seconds on a timing row is dropped too"
+      ],
+      "neighbours_gap": [
+        "The Main Creator is replaced by recorded outputs; its draft strategy is reconstructed (prod kept its hash).",
+        "A window whose line is not found and was declined still compares nothing (no card); the receipt states the take length.",
+        "KRI-965 (iPhone editor plays the whole take) and KRI-967 (the quoted 'Parrilla Don Julio' is not in the forced-English words) stay open."
+      ],
+      "follow_ups": [
+        "Don Julio walk-in T1 iPhone re-send after deploy: the length card names the lines and ~5 s; no 'you asked for' row after the render"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-848-song-genre-honesty",
       "tickets": [
         "KRI-848",
@@ -3059,6 +3367,261 @@
       ],
       "follow_ups": [
         "Don Julio M1 iPhone re-send after deploy: reply names the suggested song and says tango only if its labels say tango"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-950-tap-keeps-checked-list",
+      "tickets": [
+        "KRI-950",
+        "KRI-946"
+      ],
+      "symptom": "Don Julio walk-in M2 round 2: the creator only tapped the clip picker, the clip-intent planner was asked again from scratch, its new answer wrote the photo text \"Ojo de bife \ud83e\udd69\" as a label whose quote missed the text (creator_text_not_source_backed), and the salvage held all six good rows to ask \"I couldn't safely verify 'label: the ribeye photo'. Please restate just those\".",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-950",
+      "paths": [
+        "src/apps/api/app/agents/clip_intent_planner.py",
+        "src/apps/api/app/kria/contracts.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/routes/admin_creation_threads.py",
+        "src/apps/api/app/services/clip_intent_planning.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri950_tap_keeps_checked_list.py",
+        "tests/kria/test_kri950_tap_keeps_checked_list_postgres.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Scratch Postgres: a real picker turn (submit, worker, persist) keeps the list in creator_agent_turns.plan_json and not in the chat event; the tap's turn finds the asking turn and reads it back. Thread 545F53A9 rounds 1-2: the real M2 prompt, the video + photo, round 1's intent_stats as the planner and resolver answers, round 2's rejected row rebuilt from its diagnostics (kept=6, creator_text_not_source_backed, preview 'label: the ribeye photo'); real Main Creator parse, _plan_from_creator_output, clip-intent parse, picker build and selection fold behind a provider-transport fake. Red on main 831781faa: the tap turn calls the planner again and replies with the prod text byte for byte; green: no second planner call, the queue lands on the tapped video and 'Ojo de bife \ud83e\udd69' on the photo (creator_text grounding).",
+        "live_model": "Not run; no paid calls. The fix removes a planner call on tap-only turns and adds none.",
+        "native_output": "n/a: server-only planner change; the iPhone shows the same picker and draft cards.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "Skip (none of these) still reuses the list",
+        "a second picker in a row: turn 3's tap reuses what turn 2 kept",
+        "Turkish chat tap stand-in",
+        "a server-written event (render ready, review) after the tap",
+        "typed correction after the picker: re-plans",
+        "words changed between question and answer (re-send): re-plans",
+        "tap riding with a choice card, moment order or mark answer: re-plans",
+        "question asked before this deploy (no saved list): re-plans as today",
+        "broken / unknown-version saved list: ignored, re-plans",
+        "list never in the chat event; admin view shows ids and ops only; plans without a picker unchanged",
+        "parser safety net: quote stops before the quoted text in the same sentence (repaired); other emoji, capitals, paraphrase, text from another sentence or another quoted instruction (still asked); emoji presentation selector added or dropped (prints the creator's form)"
+      ],
+      "neighbours_gap": [
+        "The legacy v1 creator-agent route (routes/creator_agent.py) still re-plans on every turn; the iPhone uses runtime v2.",
+        "The exact model answer of prod round 2 is not stored (sensitive agent); the rejected row is rebuilt from its diagnostics and preview."
+      ],
+      "follow_ups": [
+        "KRI-947/948/949 before the M2 iPhone re-send can reach a draft"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-947-951-same-moment-picker",
+      "tickets": [
+        "KRI-947",
+        "KRI-951",
+        "KRI-946"
+      ],
+      "symptom": "Don Julio walk-in M2 (545F53A9): the tapped queue was asked again once the re-plan filed it under order, the skipped ribeye photo came back under order, and one question named the butcher twice and the photo twice with two identical iPhone rows each.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-947",
+      "journey": "kri-947-951-same-moment-picker",
+      "paths": [
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/tests/fixtures/kri947_kri951_don_julio_walkin_m2_picker.json"
+      ],
+      "regression_tests": [
+        "tests/services/test_kri947_kri951_m2_picker_rows.py",
+        "tests/services/test_clip_selection.py",
+        "tests/services/test_kri696_picker_creator_caption.py"
+      ],
+      "harness": "mocked_internal",
+      "kill_switch": "kria_clip_selection_questions_enabled",
+      "evidence": {
+        "offline_replay": "Every clip_question / clip_selection event of the prod thread, unchanged, through the real fold, match and question builder: rounds 3 and 6 re-asks gone, rounds 3 and 4 one row and one name per moment (EN + TR). Chain: the round 1 and round 3 planner rows through plan_and_resolve_clip_intents with a resolver that finds nothing: the queue settles from the round 1 tap, the butcher is one row with the one-moment sentence, one tap settles both butcher intents and the resolver is not called. Red before the change, green after; wrong-content controls green both ways; four scratch mutations (exclude/label sharing, cross-op word overlap, joining different clips, hidden rows not recorded) each turn a test red.",
+        "live_model": "Not run; no paid calls. The change adds no model call.",
+        "native_output": "unknown; the joined row is additive (also_answers) and the iOS parser reads only key/label/op/candidates/suggestions; not device-checked.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "tap, None of these and Skip on a joined row answer every hidden row",
+        "a later re-plan rewording the hidden caption row still binds by intent id + creator text",
+        "different clips, exclude and label rows are never joined or shared",
+        "long descriptions cut at different places per op prefix",
+        "rebuilding a joined question (exclude merge path)",
+        "title words on a hidden row keep the KRI-802 wording card alone",
+        "one-video and several-clip wording, Turkish copy"
+      ],
+      "neighbours_gap": [
+        "The clip-intent planner and resolver agents are replaced by their parsed outputs (no raw provider text through their parsers).",
+        "Label rows about the same moment as an include row stay a second row (existing rule: a label never borrows a membership answer).",
+        "M2 still needs KRI-948 (single take) and KRI-949 (photo candidate) to reach a proposal."
+      ],
+      "follow_ups": [
+        "Don Julio walk-in M2 iPhone re-send after KRI-947/948/949 deploy: no moment asked twice, no name repeated"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-968-simpler-version-names-drops",
+      "tickets": [
+        "KRI-968",
+        "KRI-964"
+      ],
+      "symptom": "Don Julio walk-in T1 (F0F3D5FB): the held first draft asked \"Should I try a different approach, or make this simpler version?\" without saying the simpler version drops the ATAKAN name tag; after the tap the draft and approval card said \"Left out as agreed\" (printed under \"Have a look at these in the video:\"), and the after-render review never mentioned the tag.",
+      "boundary": "reply",
+      "status": "open_pr",
+      "owner": "KRI-968",
+      "journey": "kri-968-simpler-version-names-drops",
+      "paths": [
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri968_don_julio_walkin_t1_simpler.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri968_simpler_version_names_drops_postgres.py",
+        "tests/kria/test_runtime_simpler_version_loop.py",
+        "tests/kria/test_runtime_automatic_simplification.py",
+        "tests/kria/test_kri759_simpler_version_refusal.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Real runtime turns over scratch Postgres from prod's state before the held draft (brief v3, prod events 4-8, the take, the approved strategy); only the Main Creator model call is replayed. The held draft reproduces prod's receipts and reply word for word, plus \"The simpler version leaves out: name tag when he first appears (\\\"ATAKAN\\\").\" and the question's omitted_requirement_ids [r4]; the tap drops r4 \"as agreed\" above \"Have a look\"; the after-render review on prod's rendered variant equals prod's review plus that line. Prod's own stored offer (no list) is still accepted and says \"Left out in the simpler version\". Red before the change (8 of 10), green after; scratch mutations (offer names every live row, consent ignores the list, set check dropped, review line removed, line appended under \"Have a look\", live ids listed, \"as agreed\" for legacy offers) each turn a test red.",
+        "live_model": "Not run; no paid calls. The change adds no model call.",
+        "native_output": "unknown; text-only reply change plus one additive choice_question key (omitted_requirement_ids, brief_version) the iOS parser ignores; not device-checked.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "unmet set changed between the offer and the tap: offered again naming the new set, nothing dropped",
+        "prod's legacy offer without a list: accepted, copy says \"in the simpler version\", not \"as agreed\"",
+        "Turkish offer, agreed line and review line",
+        "a second offer in the same thread names only its own drop; the first offer's tap is stale",
+        "readiness offers (KRI-901 Merope) name every blocked row and stay within the 1200-char reply",
+        "automatic omissions (\"Left out: X (reason)\") and the KRI-759 policy refusal (dropped_fields) unchanged",
+        "review skips an omitted id that is live again or unknown to the approved brief"
+      ],
+      "neighbours_gap": [
+        "The Main Creator's own turn output on the two replayed turns was recorded only as hashes; the approved draft's strategy stands in (no brief updates, as the brief did not change).",
+        "An agreed omission whose acceptance turn was blocked by a later choice question (accepted_omission_ids on a response, not the draft) is not repeated on the next draft or the review.",
+        "An omission agreed in an earlier round is not repeated after a second simpler version replaces the draft.",
+        "The ATAKAN tag itself is still not drawn: a name tag timed \"when he first appears\" has no placement path on a one-take Talking edit."
+      ],
+      "follow_ups": [
+        "Don Julio walk-in T1 iPhone re-send after deploy: the held draft names the tag, the card says \"as agreed\", the review lists it",
+        "KRI-964: place a \"when <person> first appears\" name tag at the start of the cut"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-983-lipsync-readiness",
+      "tickets": [
+        "KRI-983",
+        "KRI-721"
+      ],
+      "symptom": "Lipsync Creation (prod thread 953a5265, 2026-10-27): four videos, an uploaded song and \"Create a lipsync\" were held at approval with \"I need to resolve these changes before you approve: - Create a lipsync to the uploaded song: I haven't established how to render this change yet.\" No draft checker read a lip-sync ask, and readiness held every ask nothing checks before render; \"Make this simpler version\" would have dropped the only ask, and \"Try a different approach\" re-ran the planner into the same question.",
+      "boundary": "contract",
+      "status": "open_pr",
+      "owner": "KRI-983",
+      "paths": [
+        "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/choice_questions.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/fixtures/kri983_lipsync_song_turns.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri983_lipsync_song_journey.py",
+        "tests/kria/test_approval_readiness_postgres.py",
+        "tests/kria/test_kri759_simpler_version_refusal.py",
+        "tests/kria/test_kri945_claims_journey.py",
+        "tests/kria/test_kri968_simpler_version_names_drops_postgres.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The prod turn through submit_turn, run_kria_turn and the HTTP approve route over scratch Postgres; only the provider transport is recorded (Main Creator answer authored from the user-song prompt section, prod LLM I/O is hash-only). Red before the change: the reply equals prod's held reply word for word, r1 evidence_missing; a background-song draft is held with the internal reason and an empty simpler version; the legacy \"different_approach\" tap made 1 provider call and asked a new question. Green after: r1 executable and approved over HTTP; the background draft holds with a plain reason and no card; \"Change my request\" (new and legacy key) answers with zero provider calls. Class pair: \"Make it feel dreamy\" is unverified, approved and named under \"Have a look at these in the video:\"; a freeze frame and a withdrawn renderer still hold.",
+        "live_model": "Not run; no paid calls. No prompt changed; the change adds no model call and removes one on \"Change my request\".",
+        "native_output": "unknown; the iOS choice card already renders option descriptions; not device-checked.",
+        "production": "Not deployed. Readiness is enrolled for one account in prod."
+      },
+      "neighbours_covered": [
+        "no song attached, song not used by the strategy, song only in the background: each a plain Couldn't",
+        "asks whose only check reads the finished video (judged_at_render, clip speed off the phone montage) are unverified",
+        "researched-text asks and keep-text-off marks keep blocking (KRI-945 research, KRI-901 marks)",
+        "an editor draft never gets unverified: its diff is the check (title red + glow still holds)",
+        "Turkish copy for every new reason, header, button and reply",
+        "the legacy path keeps KRI-610: a sole unmet ask can still be waived by \"simpler version\""
+      ],
+      "neighbours_gap": [
+        "A typed audio_intent noise_removal and Turkish wind-noise wording have no draft checker, so they are approved as unverified instead of held.",
+        "A text ask whose look only the finished video shows still blocks, because its words and its look share one receipt.",
+        "The after-render review does not re-judge a lip-sync ask: rendered montage facts carry no user_song_attached, so it reads \"Have a look\".",
+        "The Oct 7 and Oct 11 lip-sync jobs' assembly_plan was not re-read; the replayed strategy is authored from the prompt."
+      ],
+      "follow_ups": [
+        "Prod: the creator re-sends \"Create a lipsync\" after deploy; the turn reaches an approval card and the job renders lip-sync takes",
+        "A draft checker for audio_intent noise_removal off phone Talking"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1009-talking-top-text-title",
+      "tickets": [
+        "KRI-1009",
+        "KRI-1008"
+      ],
+      "symptom": "Plaza T1 \"maximo 1\" (job c7430eed): 'Title \"The Cabildo \ud83c\udde6\ud83c\uddf7\" at the top, never over his face' on a phone Talking edit. The Main Creator wrote it as one top_center pinned_texts line; Talking has no corner lane, so the strategy policy dropped it, the runtime waived brief r2 as an automatic omission and drafted \"Here's the simpler version\" with \"Left out: Title at the top...\" straight to the render approval. Nothing was asked and the video had no title, though the phone Talking title lane (KRI-467) was open.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1009",
+      "paths": [
+        "src/apps/api/app/kria/strategy_policy.py",
+        "src/apps/api/app/services/creator_capabilities.py",
+        "src/apps/api/app/pipeline/phone_subtitled_title.py",
+        "src/apps/api/app/pipeline/narrated_title.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1009_talking_top_text_title.py",
+        "tests/kria/test_runtime_automatic_simplification.py",
+        "tests/kria/test_runtime_simpler_version_loop.py",
+        "tests/kria/test_strategy_policy.py",
+        "tests/tasks/test_phone_subtitled_title_worker.py"
+      ],
+      "harness": "real_with_db",
+      "kill_switch": "phone_subtitled_title_enabled",
+      "evidence": {
+        "offline_replay": "Real runtime turns over scratch Postgres (submit_turn + run_kria_turn), real planner/strategy policy/receipts/approval; only the Main Creator transport is scripted with the incident's pin and brief r2. Before the fix 4 incident checks fail word for word as prod; after, the pin is the opening title, r2 stays live, nothing is 'Left out', and the worker builds the opening-title row and text-0 layer off a synthetic face. Title lane closed: the draft is held with the simpler-version card naming the title; the tap drops it as agreed.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "macOS host build of KriaMediaEngine AVFoundationLocalExporter (scripts/ios/kri-1009-talking-title.py, synthetic portrait clip): 'The Cabildo' plus a real Argentina flag drawn in the top band for the first ~2.5 s; the pre-fix twin draws no title. Not a device run.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "phone Talking title lane open: one whole-video top-corner pin becomes the opening title",
+        "title lane closed (PHONE_SUBTITLED_TITLE_ENABLED=false): quoted text asked about before the draft, tap drops it as agreed",
+        "wrong words (flag dropped by the model): never receipted met, with readiness on and off",
+        "quoted per-clip lines on a voiceover edit: asked, then the agreed version reaches the native phone recipe",
+        "footage-brightness facet beside a kept title: still automatic"
+      ],
+      "neighbours_gap": [
+        "Approval readiness on (off in prod): a title with a position fact is evidence_missing before render, so the draft is still held (xfail in the KRI-1009 test).",
+        "Phone Talking/voiceover titles over 80 characters are cut silently at render (talking_title_element / phone_narrated_plan) while the strategy accepts 280.",
+        "Bottom-corner, multi-line, time- or clip-scoped corner text on Talking stays unsupported (asked about, not drawn)."
+      ],
+      "follow_ups": [
+        "Plaza T1 iPhone re-send after deploy: the title renders at the top, off Maximo's face",
+        "Readiness: treat a phone Talking title's top position as checkable",
+        "80-character title cut on phone titles"
       ],
       "red_control": "not_applicable"
     }

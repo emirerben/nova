@@ -683,6 +683,23 @@ word (seen in the simulator render of the `subtitled_word` E2E case);
 behind `PHONE_TALKING_HEAD_RENDERING_ENABLED` (KRI-136), as cutaways over the
 speaker clip and without speech cleanup.
 
+*Landscape output on phone Talking.* A phone-rendered `subtitled` edit (multi-clip
+Talking included) can now be a landscape video: the creator picks it on the confirm
+screen (`render_shape.creation_offer`, `subtitled` is offered the same landscape + bars/crop
+choice as montage while `LANDSCAPE_OUTPUT_ENABLED` is on and the render is on the device)
+or in the editor's Video shape sheet (`orientation` capability, open while the Talking
+editor lanes are -- `PHONE_SUBTITLED_EDITOR_LANES_ENABLED`; `phone_edit_unsupported` when
+off, `disabled` when the output flag is off). The worker and the editor Save pass
+`output_orientation="landscape"` to `compile_phone_subtitled_plan`, which compiles onto the
+1920x1080 canvas with no bars (`landscape_fit` is forced to `fill`) and no face-fill shift
+(`speaker_position_x` ignored; with a framing ask the `speaker_framing` receipt says
+`centre_fill` / `landscape_canvas` and samples no face); the variant records
+`orientation="landscape"` + `landscape_fit="fill"`. Title, closing, spoken text and the
+protected-text plan are placed and measured on the 1920x1080 canvas. The cloud subtitled
+render has no landscape canvas and stays `orientation_unsupported`. An editor Save that
+changes the canvas marks the protected-text receipt `stale` (`edited_geometry`; it does not
+re-place the text), and keeps the framing receipt's face window so portrait + crop restores it.
+
 #### Talking-to-camera media lanes: stickers, photo cards, SFX, ending clip (KRI-174 Phase 1)
 
 `PHONE_SUBTITLED_MEDIA_LANES_ENABLED` (`settings.phone_subtitled_media_lanes
@@ -812,6 +829,97 @@ words, `GET /admin/jobs/{id}`), not from the corrected captions:
 caption band. The request is private job state (`_phone_subtitled_lanes_v1`,
 stripped from public assembly-plan responses) and stays on the item until
 deleted, so clear it once Phase 2 owns the lanes.
+
+#### Exact-timed small cards on Montage and Voiceover edits (`PHONE_TIMED_CARDS_ENABLED`)
+
+"Show the menu photo as a small card at 3 seconds for 2 seconds" / "put the receipt in the
+corner during the second clip" on a phone Montage (guided / unified montage via
+`_run_phone_guided_job`, montage-family voiceover via `_run_phone_voiceover_montage_job`) or
+narrated Voiceover (`_run_phone_narrated_job`). Flag `PHONE_TIMED_CARDS_ENABLED`
+(`settings.phone_timed_cards_enabled`, default `false`); gate
+`phone_rollout.phone_timed_cards_supported()` = flag AND `media_overlays_enabled` AND every
+`PHONE_TIMED_CARD_FEATURES` (= the Talking overlay features `stillImages`, `visualBlocks`,
+`alphaOverlay`, `audioMix`) verified; a VIDEO card also needs `visualVideos`
+(`phone_timed_video_cards_supported()`).
+
+- **Request**: `strategy.timed_cards` (`app.agents._schemas.reaction_beats.TimedCard`:
+  `visual_id`, `label`, ONE of `at_s` (output seconds) or `clip_id` + `offset_s`, `hold_s`).
+  Taught to the Main Creator only when the manifest advertises `timed_cards`
+  (`creator_capabilities.CAPABILITY_TIMED_CARDS`: phone guided formats, or `narrated*` WITH a
+  recorded voiceover; never Talking, never cloud). Word-timed photos stay `reaction_beats`.
+- **Repair** (`repair_creator_timed_cards`, run by `compile_strategy_to_plan` and the brief
+  checks): capability off -> all cards dropped with one notice; unresolved visual / clip ->
+  that card dropped, named by the creator's words and time; ids canonicalised.
+- **Grounding** (`app/pipeline/phone_timed_cards.py`, pure): the worker compiles once, reads
+  where each clip REALLY starts on the output clock (`clip_windows_from_recipe`; a narrated
+  edit uses its step windows), then `ground_timed_cards` -> `SubtitledOverlayCard`s on the
+  Talking `subtitled-overlays` track via `_compile_overlay_track`. Rules: start inside the last
+  0.3 s or after the end -> `past_end`; a card outlasting the video is shortened; spots are
+  tried right-corner, left-corner, right-middle, left-middle, all above `CAPTION_BAND_TOP_FRAC`;
+  a face shown in the card's window (`FaceWindow`) moves it, and if every spot collides the
+  card is `face_collision` (never drawn over a face); overlapping cards -> the later one is
+  `overlaps_card`; a video needs `videos_allowed`.
+- **Receipt**: `variants[i].phone_timed_card_receipt` = `{matcher: "timed"|"disabled",
+  timeline_end_s, placed: [{card_id, media_id, label, anchor, at_s, end_s, hold_s, kind,
+  x_frac, y_frac}], unplaced: [{card_id, ..., reason}]}` (reasons: `lane_disabled`, `invalid`,
+  `clip_not_in_edit`, `past_end`, `visual_not_bound`, `video_not_supported`,
+  `overlaps_card`, `face_collision`, `compile_dropped`). The brief check
+  (`brief_checks._check_timed_cards`, ask = the model's `facts["timed_card"]`) reads it: "Small
+  card of menu photo at 3.0 s for 2.0 s" / "3.0 s is past the end of the video (2.4 s)".
+- **Editor round-trip**: the grounded rows persist as `variants[i].phone_timed_cards`; a guided
+  text-only Save re-attaches them (`phone_editor._compile_editor_commit`); Voiceover edits
+  derive the lane from the pinned recipe like any KRI-281 lane.
+- **Flag off**: byte-identical -- no `timed_cards` manifest key (hashes unchanged),
+  `media_overlays` keeps `unsupported_on_phone`, strategies stripped with a notice, the
+  worker writes a `matcher: "disabled"` receipt and no lane. Apply / rollback: `fly secrets set
+  PHONE_TIMED_CARDS_ENABLED=true|false --app nova-video` + `fly machine restart <id>` (api +
+  worker). Failure modes: `docs/reviews/timed-cards-montage-voiceover-failure-modes.md`;
+  tests `tests/pipeline/test_phone_timed_cards.py`, `tests/tasks/test_phone_timed_cards_dispatch.py`,
+  `tests/kria/test_brief_timed_cards.py`.
+- **Not yet wired**: the guided / voiceover workers pass no `FaceWindow`s (the grounding
+  honours them; a face sampler on the montage clips is the follow-up), so face avoidance on
+  these edits is not active until that lands.
+
+#### Clip sound on / off where the creator says (KRI-942, `PHONE_CLIP_SOUND_WINDOWS_ENABLED`)
+
+"Clip sound off except that last line", "mute the last clip", "only keep the sound on the
+butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit through
+`_run_phone_guided_job`, the unified montage included).
+
+- **Request**: the brief, not the strategy. The Main Creator / brief extractor record an
+  `audio` requirement with `facts.clip_sound` `"on"`/`"off"` plus where (`clip:<id>` scope or
+  `sound_media`, `sound_clip` first/last, `sound_from_s`/`sound_to_s`, `sound_line`) and
+  `sound_except` parts (`app/kria/clip_sound_toggle_ask.py`). The brief is cumulative, so a
+  correction turn keeps the ask; when the brief holds a sound ask that a turn leaves unchanged,
+  the draft's `montage_audio`/`voice_mode` are kept too (`app/kria/draft_sound_carry.py`), so the
+  route holds.
+- **Build**: after the first compile, `phone_clip_sound_toggle.plan_toggle_lane` resolves the asks
+  on that recipe's clips (`app/pipeline/clip_sound_toggle.py`, pure): whole-video asks first,
+  then targeted ones, `sound_except` last inside an ask; "last" is the edit's last picture clip; a
+  line is grounded with `phone_clip_sound.ground_trigger_line` and padded 0.2 s; runs under
+  0.2 s are not built. A clip silent end to end gets `source_audio_muted` (clip volume 0, no
+  flag needed); part of a clip gets `source_audio_mute_spans` (source seconds) -> recipe
+  `mute_windows` (engine ramps 25 ms per edge) only while
+  `phone_rollout.phone_clip_sound_windows_supported()` = flag AND `visualBlocks` verified.
+  The strategy's `montage_audio.source_media_ids` is the base: only those clips start audible.
+  Candidates step down (spans -> whole clips -> base -> unchanged) on a compile / pilot / contract
+  camera-audio refusal, so a sound ask never fails the job.
+- **Receipt**: `variants[i].clip_sound_toggles` = `{version, rows: [{requirement_id, state,
+  status, reason_code, on_windows, off_windows, line, ...}], windows, degraded_clip_ids?}`;
+  the render-ready review re-judges the asks against the recipe pinned then
+  (`rendered_toggle_receipt`, editor Saves included) and `brief_checks._check_sound_toggle`
+  words it ("Clip sound off except the last clip, where "Super excited!" is said (17.0-17.9 s)").
+  Reasons: `partial_unsupported`, `line_not_found`, `line_ambiguous`, `line_unknown`,
+  `line_not_in_edit`, `line_partly_in_edit`, `not_in_edit`, `clip_mismatch`, `window_past_end`,
+  `no_sound`, `contract_conflict`, `render_refused`, `not_built`, `overridden`.
+- **Flag off** (default): whole-clip on/off works; a part-of-a-clip "off" is not built, a
+  part-of-a-clip "on" keeps that clip whole (the line is heard), and the draft and receipt say
+  so. Apply / rollback: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=true|false --app
+  nova-video` + restart api + worker. Tests: `tests/tasks/test_kri942_clip_sound_toggle.py`;
+  design, failure modes and native export evidence: `docs/reviews/kri-942-clip-sound-toggle.md`.
+- **Known gaps**: the in-app editor preview doesn't show part-of-a-clip mutes and an editor Save
+  drops them (the receipt then says so); the speech-excerpt route doesn't apply the asks (its
+  recipe is judged as it is).
 
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 
@@ -2745,8 +2853,12 @@ word. No model or prompt is involved:
   land inside "muchas gracias"); a line said twice is the first for a start, the last for
   an end. Receipts keep the creator's quote (+ `spoken`). A found quote never asks;
   "none of these" and a pick the worker's words don't hold leave today's honest
-  `not_found`. `length_vs_natural` still compares a length ask with the whole take,
-  not the part the lines keep.
+  `not_found`. KRI-966: `length_vs_natural` compares a length ask with the part the lines
+  keep (`estimate_take_window`), names the lines, and asks nothing while a line is not
+  found; a pick from the same pass is seen (the later questions are collected again
+  with it). The answer keeps the creator's row words (`detail.basis = take_window`), and
+  on that answer turn the planner drops a model-written length restating the tapped label
+  (`without_length_answer_echo`). `docs/reviews/kri-966-take-window-length.md`.
 
 Gap: cleanup off with no checked preflight snapshot still reports `cleanup_off`.
 Verify on a real take (writes `report.json`, and with `--video` a `window.mp4` to
@@ -2755,7 +2867,21 @@ tests/fixtures/kri790_merope_t1_take.json --video <take.mp4>`.
 Tests: `tests/pipeline/test_phone_take_window.py`, `tests/pipeline/test_phone_opening_cut.py`,
 `tests/kria/test_kri837_one_word_end_line.py`,
 `tests/kria/test_kri844_take_line_ask.py`,
-`tests/kria/test_kri844_dj_t2_cross_language_replay.py` (fixture `kri844_dj_t2_take.json`).
+`tests/kria/test_kri844_dj_t2_cross_language_replay.py` (fixture `kri844_dj_t2_take.json`),
+`tests/kria/test_kri966_take_window_length.py` + `test_kri966_t1_runtime_postgres.py`
+(fixture `kri966_donjulio_walkin_t1_length.json`).
+
+**A quote the take holds only part of (KRI-967).** "Parrilla Don Julio, what do you
+think?" over whisper's "So," / "what do you think?" (Don Julio walk-in T1):
+`take_lines.partly_heard` finds the line holding the said part and the card names
+the words it could not find. When the clip record's Gemini transcript
+(`speech.transcript`) hears those words right next to the said part, the adjacent
+line (≤1 s away, ≤ their length + 2 tokens, neither quote words nor words that
+transcript heard on their own) is recommended, shown and pinned joined to the said
+line ("So, what do you think?"), so the cut opens where they were said. No such
+evidence: the old recommendation stays. Option keys and the digest are unchanged.
+Review: `docs/reviews/kri-967-unheard-quote-head.md`; tests:
+`tests/kria/test_kri967_unheard_quote_head.py`.
 
 ### Text on a spoken word on phone Talking edits (KRI-707)
 
@@ -3313,6 +3439,15 @@ caption lane, reported the ask as unmet and the job died as `phone_plan_unsuppor
   restart): no lyric track is planned and no ask is made, so output is byte-identical
   to before (and a lip-sync + captions ask fails as it did). Already-approved plans
   keep their captions; the compiler never reads the flag.
+- **Available but hidden.** With no captions ask (legacy: no ask in the request;
+  plan authority: no `song_captions` pin), the worker still pins the track with
+  `hidden: true` in the planned style. `editor_caption_meta` (and the revision's
+  `caption_meta`) then carry `enabled: false`, so the phone recipe draws no lyric layers
+  and the receipt is `available_hidden`, never `placed`. Show captions in the editor
+  commits `caption_meta.enabled: true`, which recompiles through
+  `compile_guided_runtime_plan` and draws them. A song with no words in the window pins
+  nothing and never declines. Kill switch `SONG_CAPTIONS_AVAILABLE_BY_DEFAULT=false`
+  (same apply): unasked montages carry no track, as before. New videos only.
 - **Limits.** Whisper timing on singing is "close", not frame-exact; lyrics follow
   whatever language whisper returned. Lip-sync trim does not re-time other text.
 
@@ -3411,6 +3546,35 @@ Prod step before the Bend control appears: add `textBend` to `PHONE_RENDER_VERIF
 (fly secret, api + worker, restart). Builds below protocol 9 get `426 client_update_required`
 (`feature: "text_bend"`) from `device-render` and `editor-commit` for a variant with bent text.
 The app reads `capabilities.text_bend` (creation) and `editor_capabilities.text_bend` (per variant).
+
+## Caption animation (KRI-1007)
+
+Captions take the same `animation_phases` as text, validated by the one
+`TextAnimationPhases` model (`app/agents/_schemas/text_animation_phases.py`): `entrance`/`exit`
+include the designed edges (`docs/pipelines/designed-text-animations.md`), `loop` in
+`none|pulse|bounce|float`, `speed` 0.25..3.
+
+| Where | Wire field | Stored as |
+|---|---|---|
+| One line, cue-native (narrated, subtitled, phone voiceover) | `caption_cues[i].animation_phases` | the cue row |
+| One line, guided / song / montage | `animation_phases` on the `caption_cue`-source text row | the revision text row |
+| All captions | `caption_meta.animation_phases` (explicit `null` clears) | `caption_animation_phases` on a cue-native variant; `caption_meta.animation_phases` in a guided revision |
+
+Precedence: line > all-captions default > `caption_meta.appearance.animation_phases` (#1898,
+stored in `caption_editor_style`; it turns the karaoke sweep off and collapses a guided line)
+> today's look (pop-in, or the karaoke sweep). Unset
+compiles byte-identical recipes (`tests/routes/test_caption_animation.py` golden). The phone
+draws the recipe's existing `animationPhases`, so the layer needs `authoredText`. A word
+highlight line keeps its karaoke sweep and the phases move the whole line (typewriter shows the
+line without a reveal). Guided captions animate the displayed line: its first interval enters,
+its last exits, every interval loops. Cloud caption burns do not draw phases.
+
+Gate: `CAPTION_ANIMATION_ENABLED` (default on; off compiles stored phases away and hides the
+capability) + `authoredText` verified + client protocol >= `CAPTION_ANIMATION_MIN_CLIENT_PROTOCOL`
+(24; protocol 23 is the designed-edge build, which does not keep line phases) for
+`editor_capabilities.caption_animation`. A Save from an older build that carries caption
+phases, or replaces cues / guided `caption_meta` holding them, gets `426 client_update_required`
+(`feature: "caption_animation"`).
 
 ## Actual-export verifier v3 rollout boundary (KRI-832)
 

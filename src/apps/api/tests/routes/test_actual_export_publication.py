@@ -219,6 +219,19 @@ def test_pinned_verifier_accepts_its_own_or_the_current_verifier_only(
     )
     response = checked_completion(fixture, body(fixture, attempt))
     assert response.status_code == expected, response.text
+    from app.services.request_following_outcomes import delivery_counts
+
+    capture = {
+        "sections": {
+            f"job-{fixture.job.id}": {
+                "id": str(fixture.job.id),
+                "status": fixture.job.status,
+                "assembly_plan": fixture.job.assembly_plan,
+            }
+        }
+    }
+    counts = delivery_counts(capture)
+    assert counts["verified_device_exports"] == int(expected == 200)
     stored = device_record(fixture.job, "first")
     if expected == 200:
         assert stored["status"]["phase"] == "published"

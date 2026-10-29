@@ -42,6 +42,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
+from app.agents._schemas.text_animation_phases import TextAnimationPhases
 from app.agents._schemas.text_element import (
     append_ai_text_tombstones,
     merge_projected_text_elements_for_variant,
@@ -1222,6 +1223,7 @@ class EditorCaptionAppearance(BaseModel):
     stroke_color: str | None = None
     shadow_color: str | None = None
     shadow_opacity: float | None = Field(None, ge=0, le=1, allow_inf_nan=False)
+    animation_phases: TextAnimationPhases | None = None
     highlight_spoken_word: bool | None = None
     position_x_frac: float | None = Field(None, ge=0.05, le=0.95, allow_inf_nan=False)
     position_y_frac: float | None = Field(None, ge=0.10, le=0.90, allow_inf_nan=False)
@@ -1247,6 +1249,9 @@ class EditorCommitCaptionMeta(BaseModel):
     highlight_color: str | None = None
     stroke_width: int | None = Field(None, ge=0, le=12)
     shadow_enabled: bool | None = None
+    # KRI-1007: the all-captions animation default. Rows with their own `animation_phases`
+    # win. An explicit null clears the default; omitted keeps the stored one.
+    animation_phases: TextAnimationPhases | None = None
 
     @field_validator("color", "highlight_color")
     @classmethod
@@ -2295,6 +2300,18 @@ def _variants_for_response(job: Job) -> list[dict]:
     public_plan = projection.value
     public_variants = public_plan.get("variants") if isinstance(public_plan, dict) else None
     for v in public_variants if isinstance(public_variants, list) else []:
+        if (
+            v.get("render_destination") == "device"
+            and v.get("resolved_archetype") == "subtitled"
+            and (v.get("render_status") == "ready" or v.get("editor_timeline_mode") == "authored")
+        ):
+            rows = editor_deletion_timeline(job, v)
+            if any(
+                str(row.get("slot_id")).startswith("native-phone-talking-source") for row in rows
+            ):
+                from app.services.authored_editor import speech_timing_basis_for_job
+
+                v = {**v, "speech_timing_basis": speech_timing_basis_for_job(job, v, rows)}
         if v.get("editor_state") == "empty":
             from app.services.editor_empty_drafts import (
                 public_empty_editor_variant,  # noqa: PLC0415
@@ -3357,6 +3374,8 @@ class CaptionCue(BaseModel):
     size_px: int | None = Field(None, ge=36, le=160)
     stroke_width: int | None = Field(None, ge=0, le=12)
     shadow_enabled: bool | None = Field(None, strict=True)
+    # KRI-1007: this line's own animation; absent inherits `caption_animation_phases`.
+    animation_phases: TextAnimationPhases | None = None
 
     @field_validator("font_family")
     @classmethod
@@ -5371,7 +5390,15 @@ def _variant_orientation(variant: dict) -> str:
 
 def _orientation_unsupported_reason(variant: dict) -> str | None:
     archetype = variant.get("resolved_archetype")
-    if archetype in {"subtitled", "narrated", "talking_head"}:
+    if archetype == "subtitled" and is_phone_subtitled_editor_variant(variant):
+        # A phone-rendered Talking edit (incl. the multi-clip Talking head, which stays
+        # `subtitled`) re-canvases on Save: `_compile_subtitled_editor_commit` recompiles onto
+        # 1920x1080. It is open exactly while that Save lane is -- the same predicate
+        # `device_editor_offer(subtitled_lanes=...)` is given. The CLOUD subtitled renderer
+        # has no landscape canvas, so a cloud variant falls to the closed branch below.
+        if not phone_subtitled_editor_lanes_supported():
+            return "phone_edit_unsupported"
+    elif archetype in {"subtitled", "narrated", "talking_head"}:
         return "orientation_unsupported"
     if is_collage_montage_preset(
         variant.get("montage_preset_rendered") or variant.get("montage_preset")
@@ -6969,8 +6996,12 @@ def _clamp_phone_editor_capabilities(
 
     ``shape`` (KRI-306, `render_shape.device_editor_offer`): what Save accepts for
     orientation and bars/crop on this variant. Orientation is only ever CLOSED
-    here (never opened beyond the base map); `landscape_fit` is replaced by the
-    device truth (the cloud map always advertises it closed).
+    here (never opened beyond the base map): a phone Talking variant is opened by
+    the base map itself (`_orientation_unsupported_reason` knows a device-rendered
+    `subtitled` variant), and `device_editor_offer` agrees on the same predicates,
+    so "device offer wins" only ever matters when they would disagree.
+    `landscape_fit` is replaced by the device truth (the cloud map always
+    advertises it closed).
 
     ``source_crop`` (KRI-140): a guided-story device variant keeps the footage
     crop control once the device has verified ``sourceCrop`` -- the phone
@@ -7166,11 +7197,39 @@ def _base_editor_capabilities(job: Job, variant: dict) -> dict:
     return capabilities
 
 
+def _caption_rows_lock_speed(states: tuple[dict, ...]) -> bool:
+    """Caption rows lock clip speed unless all are song lyrics with the lane turned off.
+
+    Lyrics are timed on the song clock, so a speed change cannot desync them; speech
+    captions are timed to source audio. A Save replaces ``caption_meta`` wholesale, so
+    the last state carrying one decides whether the lane is off.
+    """
+    from app.pipeline.song_captions import SONG_CAPTION_ORIGIN  # noqa: PLC0415
+
+    if any(state.get("caption_cues") for state in states):
+        return True
+    rows = [
+        row
+        for state in states
+        for row in state.get("text_elements") or []
+        if _is_caption_cue_row(row)
+    ]
+    if any(row["source_params"].get("origin") != SONG_CAPTION_ORIGIN for row in rows):
+        return True
+    metas = [
+        state["caption_meta"] for state in states if isinstance(state.get("caption_meta"), dict)
+    ]
+    return bool(rows) and (not metas or metas[-1].get("enabled") is not False)
+
+
 def _phone_speed_lane_reason(*states: dict) -> str | None:
     """Keep clocks without native source-time projection closed on both surfaces."""
+    captions_locked = _caption_rows_lock_speed(states)
     for state in states:
         texts = state.get("text_elements") or []
-        if state.get("caption_cues") or any(_is_caption_cue_row(row) for row in texts):
+        if captions_locked and (
+            state.get("caption_cues") or any(_is_caption_cue_row(row) for row in texts)
+        ):
             return "caption_timing_locked"
         for lane in (
             "media_overlays",
@@ -7366,7 +7425,28 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # Bend (recorded editor snapshots and replays), and the app reads a missing key as off.
     if _text_bend_capability(variant):
         capabilities["text_bend"] = True
+    if _caption_animation_capability(variant, capabilities):
+        capabilities["caption_animation"] = True
     return capabilities
+
+
+def _caption_animation_capability(variant: dict, capabilities: dict) -> bool:
+    """KRI-1007: may the app set caption phases (``editor_capabilities.caption_animation``)?
+
+    Device variants only (cloud caption burns do not draw phases), only where captions are
+    editable at all, and only for a build that keeps the phases on Save.
+    """
+    from app.services.phone_rollout import caption_animation_supported  # noqa: PLC0415
+
+    def editable(key: str) -> bool:
+        value = capabilities.get(key)
+        return isinstance(value, dict) and value.get("editable") is True
+
+    return bool(
+        variant.get("render_destination") in {"device", "phone"}
+        and (editable("caption_meta") or editable("caption_cues"))
+        and caption_animation_supported(require_client=True)
+    )
 
 
 _VOICEOVER_ORIGINAL_AUDIO_ARCHETYPES = frozenset({"narrated", "voiceover"})
@@ -7442,6 +7522,7 @@ def _device_clamped_editor_capabilities(job: Job, variant: dict) -> dict:
             job.assembly_plan or {},
             subtitled_lanes=subtitled_lanes,
             voiceover_lanes=voiceover_lanes,
+            landscape_enabled=_LANDSCAPE_OUTPUT_ENABLED,
             guided_revision=(
                 variant.get("resolved_archetype") == "guided_story"
                 and bool(getattr(settings, "guided_story_editor_v2_enabled", False))
@@ -8409,8 +8490,9 @@ def dispatch_get_timeline(
 
         draft = saved_editor_draft(job, variant_id)
         sections = (draft.snapshot.get("editor_payload") or {}).get("sections") or {}
+        if "timeline_slots" in sections:
+            timeline["slots"] = copy.deepcopy(sections["timeline_slots"] or [])
         timeline.update(
-            slots=copy.deepcopy(sections.get("timeline_slots") or []),
             draft=draft.model_dump(mode="json"),
             base_generation=variant_render_baseline(variant),
             has_user_edits=True,
@@ -8866,10 +8948,24 @@ def _active_timeline_duration_s(slots: list[dict]) -> float:
     return round(max(0.0, total), 3)
 
 
+def _stored_variant_field(job: Job, variant: dict, field: str) -> Any:
+    """``variant[field]``, read from the job's stored row when ``variant`` is a public copy.
+
+    The status route walks the public assembly plan, which drops private fields such as the
+    phone editor plan. KRI-1032: reading that copy built the editor from the approved plan
+    instead of what the phone rendered (other label height and font in the creator's copy).
+    """
+    if field in variant:
+        return variant[field]
+    stored = _find_variant(job, str(variant.get("variant_id") or ""))
+    return stored.get(field) if stored is not None else None
+
+
 def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
     """Read the active revision or derive a non-persisted initial projection."""
 
     assembly = job.assembly_plan or {}
+    from app.services.phone_editor import PHONE_EDITOR_PLAN_FIELD
     from app.services.phone_editor_sources import merge_editor_sources
 
     def with_editor_sources(revision: dict) -> dict:
@@ -8879,7 +8975,10 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         return normalize_guided_editor_revision({**revision, "sources": sources, "state_hash": ""})
 
     guided_snapshot = assembly.get("guided_edit")
-    execution_plan = assembly.get("guided_story_execution_plan")
+    # Match the worker's repaired render while leaving the approval immutable.
+    execution_plan = _stored_variant_field(job, variant, PHONE_EDITOR_PLAN_FIELD) or assembly.get(
+        "guided_story_execution_plan"
+    )
     if not isinstance(guided_snapshot, dict) or not isinstance(execution_plan, dict):
         return None
     persisted = variant.get("guided_edit_revision")
@@ -10360,8 +10459,13 @@ def require_guided_story_editor_commit(
     if isinstance(variant, dict) and variant.get("render_destination") == "device":
         # A stale client must not bypass the capability, including a reset to
         # 1x or adding a locked lane in the same transaction as a speed change.
+        # The saved states come first so a Save that only turns hidden lyrics on is judged
+        # against the stored rows. A revision without caption_meta drops it, which shows them.
         speed_reason = _phone_clip_speed_reason(job, variant) or _phone_speed_lane_reason(
-            payload.model_dump(exclude_unset=True), payload.guided_revision or {}
+            variant,
+            _guided_v2_revision(job, variant) or {},
+            {"caption_meta": {}, **payload.guided_revision} if payload.guided_revision else {},
+            payload.model_dump(exclude_unset=True),
         )
         if speed_reason and payload.timeline_slots is not None:
             old_by_id = {row.get("slot_id"): row for row in editor_deletion_timeline(job, variant)}
@@ -10541,6 +10645,7 @@ def prepare_editor_commit(
         _require_render_affecting_mutation_allowed(
             job, variant, allow_authored=payload.editor_state_version in (1, 2)
         )
+        _require_caption_animation_client(job, variant, payload)
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
         from app.services.phone_editor_sources import editor_sources_for_variant
@@ -10563,6 +10668,20 @@ def prepare_editor_commit(
             if adds_visual or adds_imported_source:
                 raise HTTPException(422, detail={"code": "phone_editor_media_unavailable"})
 
+        if (
+            variant.get("editor_timeline_mode") == "authored"
+            and variant.get("resolved_archetype") == "subtitled"
+        ):
+            from app.services.authored_editor import prepare_authored_editor_commit
+
+            return prepare_authored_editor_commit(
+                job,
+                variant_id,
+                payload,
+                validation_arguments=arguments,
+                phone_sfx_catalog_paths=phone_sfx_catalog_paths,
+                creator_brief_binding=creator_brief_binding,
+            )
         return prepare_phone_editor_commit(
             job,
             variant_id,
@@ -10572,6 +10691,43 @@ def prepare_editor_commit(
             learning_sections=payload.model_fields_set,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
+
+
+def _require_caption_animation_client(
+    job: Job, variant: dict, payload: EditorCommitRequest
+) -> None:
+    """426 for an app build that cannot keep caption ``animation_phases`` (KRI-1007).
+
+    Refused when the Save carries phases, or replaces caption state that holds them: an
+    older build re-sends cues and the guided caption meta without the key, which would
+    silently wipe the creator's animation.
+    """
+    from app.services.phone_rollout import caption_animation_client_supported  # noqa: PLC0415
+
+    if caption_animation_client_supported():
+        return
+
+    def has_phases(rows: object) -> bool:
+        return isinstance(rows, list) and any(
+            isinstance(row, dict) and row.get("animation_phases") is not None for row in rows
+        )
+
+    carries = has_phases(payload.caption_cues) or (
+        payload.caption_meta is not None and payload.caption_meta.animation_phases is not None
+    )
+    drops = payload.caption_cues is not None and has_phases(variant.get("caption_cues"))
+    if payload.caption_meta is not None and not drops:
+        stored_meta = (_guided_v2_revision(job, variant) or {}).get("caption_meta")
+        drops = isinstance(stored_meta, dict) and stored_meta.get("animation_phases") is not None
+    if carries or drops:
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "caption_animation",
+                "minimum_client_protocol": settings.caption_animation_min_client_protocol,
+            },
+        )
 
 
 def _validate_drawings_section(
@@ -11017,8 +11173,21 @@ def _prepare_editor_commit(
             caption_meta_patch["caption_font_user_edited"] = True
         if meta.y_frac is not None:
             from app.pipeline.captions import y_frac_to_margin_v  # noqa: PLC0415
+            from app.pipeline.phone_captions import caption_y_fields  # noqa: PLC0415
 
             caption_meta_patch["caption_margin_v"] = y_frac_to_margin_v(meta.y_frac)
+            # KRI-1008: the phone compiler and the iOS editor read the style's y before the
+            # margin, so a y_frac move (a chat op sends no appearance, or the client echoes
+            # the stale one) moves both. An appearance that moved its own y in this Save is
+            # the newer placement and stays.
+            sent_y = meta.appearance.position_y_frac if meta.appearance is not None else None
+            stored_style = variant.get("caption_editor_style")
+            if sent_y is None or sent_y == (
+                stored_style.get("position_y_frac") if isinstance(stored_style, dict) else None
+            ):
+                caption_meta_patch.update(
+                    caption_y_fields({**variant, **caption_meta_patch}, meta.y_frac)
+                )
             caption_meta_patch["caption_position_user_edited"] = True
         if meta.size_px is not None:
             caption_meta_patch["caption_size_px"] = int(meta.size_px)
@@ -11030,6 +11199,10 @@ def _prepare_editor_commit(
             caption_meta_patch["caption_stroke_width"] = int(meta.stroke_width)
         if meta.shadow_enabled is not None:
             caption_meta_patch["caption_shadow_enabled"] = bool(meta.shadow_enabled)
+        if "animation_phases" in meta.model_fields_set:
+            caption_meta_patch["caption_animation_phases"] = (
+                meta.animation_phases.model_dump() if meta.animation_phases is not None else None
+            )
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None and not guided_v2:
@@ -11812,6 +11985,8 @@ def _prepare_editor_commit(
             updated["caption_cues"] = validated_caption_cues
         if caption_meta_patch is not None:
             updated.update(caption_meta_patch)
+            if updated.get("caption_animation_phases", False) is None:
+                del updated["caption_animation_phases"]
         if resolved_slots is not None:
             updated["user_timeline"] = {"slots": resolved_slots}
         if payload.mix is not None:

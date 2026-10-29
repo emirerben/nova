@@ -326,10 +326,18 @@ def run_phone_speech_montage_job(
         ordered = order_by_capture_time(broll_ids, times)
         broll_ids, ordering_basis = ordered.ordered_ids, ordered.basis
     broll = tuple(binding_by_media[m] for m in broll_ids)
+    opening, labels = _confirmed_text(contract)
     recipe, receipt = compile_phone_speech_montage_plan(
         tuple(sections),
         broll,
         target_lufs=settings.output_target_lufs,
+        opening_title=opening.text if opening else None,
+        opening_title_hold_s=opening.duration_s if opening else None,
+        clip_labels=labels,
+        pinned_texts=_creator_pins(strategy),
+        pinned_font_family=(strategy or {}).get("font_family")
+        if isinstance(strategy, dict)
+        else None,
     )
     recipe, pin_rows, pins_drawn, pin_notes = _with_creator_pins(recipe, strategy)
     validate_phone_pilot_recipe(recipe)
@@ -430,7 +438,7 @@ def run_phone_speech_montage_job(
                                 "read_only": True,
                             },
                         }
-                        for row in generation_resolved_rows("title")
+                        for row in receipt.text_rows
                     ),
                     *pin_rows,
                 ],
@@ -446,6 +454,28 @@ def run_phone_speech_montage_job(
         job.failure_reason = None
         db.commit()
     return True
+
+
+def _confirmed_text(contract: Any) -> tuple[Any, tuple[Any, ...]]:
+    """KRI-939: the approved title and clip labels an excerpt montage must draw.
+
+    The title is the contract's ``opening`` text, else its first ``any`` text (both are
+    satisfied by one title from 0 s). ``clip`` texts become labels on their clip's cuts.
+    A ``closing`` text, or a second free-standing ``any`` text, is not drawn here, so the
+    verifier still refuses it by name instead of the edit claiming words it lacks.
+    """
+    from app.pipeline.phone_speech_montage_plan import PhoneClipLabel  # noqa: PLC0415
+
+    texts = tuple(contract.exact_texts) if contract is not None else ()
+    opening = next((t for t in texts if t.role == "opening"), None) or next(
+        (t for t in texts if t.role == "any"), None
+    )
+    labels = tuple(
+        PhoneClipLabel(text=t.text, media_id=t.media_id, shot_index=t.shot_index)
+        for t in texts
+        if t.role == "clip"
+    )
+    return opening, labels
 
 
 def _creator_pins(strategy: Any) -> list[Any]:

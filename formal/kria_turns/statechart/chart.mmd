@@ -1,0 +1,88 @@
+---
+title: "Kria chat: sending messages"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): the fix
+  classDef plain fill:#f4f6f7,stroke:#566573,color:#1b2631
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#e8f0fe,stroke:#74787f,color:#1b2631
+  classDef group0Fixed fill:#e8f0fe,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group1 fill:#e6f4ea,stroke:#737a75,color:#1b2631
+  classDef group2 fill:#fde7e9,stroke:#7f7475,color:#1b2631
+  classDef group2Fixed fill:#fde7e9,stroke:#1e8449,stroke-width:4px,color:#145a32
+  state "Legend" as legend {
+    state "Kria is working" as legendGroup0
+    state "Your turn" as legendGroup1
+    state "Stuck" as legendGroup2
+    state "Fixed in codex/kri-chat-turn-tla" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendGroup2 group2
+  class legendFixed plainFixed
+  state "2 messages" as g0 {
+    state "1 answered using 2, 2<br/>about to start" as s0
+    state "1 answered using 2, 2<br/>answered" as s1
+    state "1 answered using 2, 2<br/>stopped" as s2
+    state "1 answered using 2, 2<br/>thinking" as s3
+    state "1 answered, 2 answered" as s4
+    state "1 answered, 2 stopped" as s5
+    state "1 answered, 2 thinking" as s6
+    state "1 stopped, 2 about to<br/>start" as s7
+    state "1 stopped, 2 answered" as s8
+    state "1 stopped, 2 stopped" as s9
+    state "1 stopped, 2 stuck waiting" as s10
+    state "1 stopped, 2 thinking" as s11
+    state "1 stopped, 2 waiting for<br/>the sweep (up to a minute)" as s12
+    state "1 thinking, 2 stopped" as s13
+    state "1 thinking, 2 waiting" as s14
+  }
+  state "One message" as g1 {
+    state "1 answered" as s15
+    state "1 stopped" as s16
+    state "1 thinking" as s17
+  }
+  state "Empty chat: nothing sent" as s18
+  [*] --> s18
+  s18 --> s17 : you send message 1
+  s17 --> s14 : you send message 2
+  s17 --> s16 : you remove message 1
+  s14 --> s7 : you remove message 1
+  s14 --> s13 : you remove message 2
+  s16 --> s11 : you send message 2
+  s7 --> s10 : the server restarts
+  s17 --> s15 : Kria replies to message 1
+  s13 --> s9 : you remove message 1
+  s14 --> s0 : Kria replies to message 1
+  s15 --> s6 : you send message 2
+  s13 --> s2 : Kria replies to message 1
+  s0 --> s3 : message 2 starts
+  s11 --> s8 : Kria replies to message 2
+  s6 --> s5 : you remove message 2
+  s6 --> s4 : Kria replies to message 2
+  s3 --> s1 : Kria replies to message 2
+  s7 --> s12 : with the fix, the server<br/>restarts
+  s14 --> s14 : with the fix, Kria replies to<br/>message 1 cannot happen
+  class s0 group0Fixed
+  class s1 plainFixed
+  class s2 plainFixed
+  class s3 group0Fixed
+  class s4 plain
+  class s5 plain
+  class s6 group0
+  class s7 group0
+  class s8 plain
+  class s9 plain
+  class s10 group2Fixed
+  class s11 group0
+  class s12 group0Fixed
+  class s13 group0
+  class s14 group0
+  class s18 group1
+  class s15 plain
+  class s16 plain
+  class s17 group0

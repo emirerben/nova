@@ -195,10 +195,19 @@ enum AccountIdentity {
     }
 }
 
+/// A full-screen place in the workspace, chosen from the projects drawer.
+enum WorkspaceDestination: Equatable, Sendable {
+    case chat(UUID)
+    case cameraRoll
+}
+
 @MainActor final class AppModel: ObservableObject {
     @Published var projects: [ProjectSummary] = []
     @Published var libraryProjects: [ProjectSummary] = []
     @Published var selectedProject: ProjectSummary?
+    /// What the workspace shows beside the drawer. Nil until the creator picks something other than the
+    /// default: the selected project's chat.
+    @Published private(set) var destination: WorkspaceDestination?
     @Published private(set) var isCreatingProject = false
     @Published var isLoading = false
     @Published var errorMessage: String?
@@ -458,11 +467,12 @@ enum AccountIdentity {
             projectsState = .loaded
             try? cache?.upsert([project])
             selectedProject = project
+            destination = .chat(project.id)
         } catch {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
                 let project = ProjectSummary(id: UUID(), title: "Untitled project", status: .draft, updatedAt: .now, posterURL: nil)
-                projects.insert(project, at: 0); selectedProject = project; projectsState = .loaded
+                projects.insert(project, at: 0); selectedProject = project; destination = .chat(project.id); projectsState = .loaded
             } else { errorMessage = error.localizedDescription }
             #else
             errorMessage = error.localizedDescription
@@ -527,11 +537,19 @@ enum AccountIdentity {
     /// the older video's card would only repeat what it asked for.
     func clearChatDeviceRenderFocus() { chatDeviceRenderFocus = nil }
 
-    func selectProject(_ project: ProjectSummary) {
-        guard !deletedProjectIDs.contains(project.id) else { return }
+    /// False when the chat was deleted on this phone, which never reopens it.
+    @discardableResult func selectProject(_ project: ProjectSummary) -> Bool {
+        guard !deletedProjectIDs.contains(project.id) else { return false }
         selectedProject = projects.first(where: { $0.id == project.id }) ?? project
+        destination = .chat(project.id)
         errorMessage = nil
+        return true
     }
+
+    /// Shows the camera roll in the workspace. The selected project stays selected underneath, so closing the
+    /// camera roll by choosing a chat needs no extra state.
+    func openCameraRoll() { destination = .cameraRoll }
+    var showsCameraRoll: Bool { destination == .cameraRoll }
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws {
         do {
             let updated = try await api.renameProject(project, title: title, clientEventID: clientEventID).summary

@@ -30,6 +30,7 @@ from app.services.phone_editor import _StagedJob
 
 _DIRECT_SECTIONS = (
     "text_elements",
+    "speech_timing_basis",
     "caption_cues",
     "caption_meta",
     "captions_enabled",
@@ -336,6 +337,19 @@ def editor_sections(job: Job, variant_id: str) -> dict[str, Any]:
             sections["music_start_s"] = 0
         sections["revision_number"] = revision.get("revision_number")
         sections["revision_hash"] = revision.get("state_hash")
+    if (
+        variant.get("render_destination") == "device"
+        and variant.get("resolved_archetype") == "subtitled"
+    ):
+        from app.routes.generative_jobs import editor_deletion_timeline
+        from app.services.authored_editor import speech_timing_basis_for_job
+
+        rows = editor_deletion_timeline(job, variant)
+        if any(str(row.get("slot_id")).startswith("native-phone-talking-source") for row in rows):
+            from app.pipeline.speech_cut_state import authored_speech_texts
+
+            sections["text_elements"] = authored_speech_texts(sections.get("text_elements") or [])
+            sections["speech_timing_basis"] = speech_timing_basis_for_job(job, variant, rows)
     return sections
 
 

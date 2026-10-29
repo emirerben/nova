@@ -132,9 +132,21 @@ def test_build_question_too_long_falls_back_in_the_chat_language() -> None:
 
 def test_caption_question_in_both_languages() -> None:
     caption = _intent(op="caption", attribute="pub clips")
-    assert _caption_question(caption) == "What should the caption on the pub clips say?"
+    assert _caption_question(caption) == 'What should the caption for "pub clips" say?'
     with reply_language_for("tr"):
-        assert _caption_question(caption) == '"pub clips" kliplerindeki yazı ne olsun?'
+        assert _caption_question(caption) == '"pub clips" için yazı ne olsun?'
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    ["an introductory explanation", "Cunda Island introductory explanation", "the pub clips"],
+)
+def test_caption_question_never_glues_a_free_form_attribute_behind_an_article(
+    attribute: str,
+) -> None:
+    question = _caption_question(_intent(op="caption", attribute=attribute))
+    assert question == f'What should the caption for "{attribute}" say?'
+    assert "caption on the" not in question
 
 
 def test_vision_questions_stay_english_in_a_turkish_chat() -> None:
@@ -349,8 +361,11 @@ def test_resolver_prompt_gets_the_language_line_only_for_turkish() -> None:
 
 
 def test_prompt_versions_moved_with_the_new_prompt_tail() -> None:
-    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-21.1"  # KRI-552
-    assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-25-editorial-skills-v2"
+    assert (
+        ClipIntentPlannerAgent.spec.prompt_version
+        == "2026-10-27-subject-scope-exclude-requirement-id"
+    )
+    assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-27-order-certainty"
 
 
 # ── grounding folds Turkish case ────────────────────────────────────────────────────

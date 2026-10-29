@@ -1418,6 +1418,12 @@ def project_editor_draft(
     for key, value in (payload.get("caption_meta") or {}).items():
         if key != "font_set":
             projected["captions_enabled" if key == "enabled" else f"caption_{key}"] = value
+        if key == "y_frac" and isinstance(value, (int, float)) and not isinstance(value, bool):
+            from app.pipeline.phone_captions import caption_y_fields  # noqa: PLC0415
+
+            # KRI-1008: the next turn's snapshot reads caption_margin_v (the phone compiler,
+            # the style y) before caption_y_frac, so the staged spot must reach both.
+            projected.update(caption_y_fields(projected, float(value)))
     return projected
 
 
@@ -1839,7 +1845,11 @@ def _op_remove_visual_media(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_edit_text(state: _DraftState, op: dict[str, Any]) -> None:
-    state.text_bar(op.get("bar_index"))["text"] = str(op["text"])
+    from app.services.kria_editor_ops_text import keep_authored_breaks  # noqa: PLC0415
+
+    bar = state.text_bar(op.get("bar_index"))
+    bar["text"] = str(op["text"])
+    keep_authored_breaks(bar)
     state.changed.add("text")
 
 
@@ -1929,21 +1939,23 @@ def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
 
         add_text_v2(state, op)
         return
-    state.text.append(
-        {
-            "id": f"kria-{uuid.uuid4().hex}",
-            "text": str(op["text"]),
-            "start_s": float(op["start_s"]),
-            "end_s": float(op["end_s"]),
-            "role": "generative_intro",
-            "font_family": "Playfair Display",
-            "size_px": 72,
-            "color": "#FFFFFF",
-            "effect": "static",
-            "alignment": "center",
-            "position": "middle",
-        }
-    )
+    from app.services.kria_editor_ops_text import keep_authored_breaks  # noqa: PLC0415
+
+    row = {
+        "id": f"kria-{uuid.uuid4().hex}",
+        "text": str(op["text"]),
+        "start_s": float(op["start_s"]),
+        "end_s": float(op["end_s"]),
+        "role": "generative_intro",
+        "font_family": "Playfair Display",
+        "size_px": 72,
+        "color": "#FFFFFF",
+        "effect": "static",
+        "alignment": "center",
+        "position": "middle",
+    }
+    keep_authored_breaks(row)
+    state.text.append(row)
     state.explicit_text_ids.add(str(state.text[-1]["id"]))
     state.changed.add("text")
 

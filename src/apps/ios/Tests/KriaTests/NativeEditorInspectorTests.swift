@@ -410,6 +410,43 @@ final class NativeEditorInspectorTests: XCTestCase {
         XCTAssertLessThanOrEqual(window.end, 1)
     }
 
+    func testSoundEffectPanelTrimResizesTheTimelineBlock() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes) // at 0.5, trim 0...0.3, duration 1
+        session.setSoundEffectTrim(id: "sfx-1", trimStartS: 0.1, trimEndS: 0.9)
+        var effect = try! XCTUnwrap(session.document.soundEffects.first)
+        XCTAssertEqual(effect.startS, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(effect.endS, 1.3, accuracy: 0.0001)
+
+        session.setSoundEffectTrim(id: "sfx-1", trimEndS: 0.4)
+        effect = try! XCTUnwrap(session.document.soundEffects.first)
+        XCTAssertEqual(effect.endS, 0.8, accuracy: 0.0001)
+
+        session.resetSoundEffectTrim(id: "sfx-1")
+        effect = try! XCTUnwrap(session.document.soundEffects.first)
+        XCTAssertEqual(effect.endS, 1.5, accuracy: 0.0001, "an untrimmed sound spans its whole duration")
+    }
+
+    func testSoundEffectMoveAndOutTimingKeepBlockEqualToKeptAudio() {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
+        session.setSoundEffectTiming(id: "sfx-1", atS: 2)
+        var effect = try! XCTUnwrap(session.document.soundEffects.first)
+        XCTAssertEqual(effect.endS, 2.3, accuracy: 0.0001)
+
+        session.setSoundEffectTiming(id: "sfx-1", endS: 2.8)
+        effect = try! XCTUnwrap(session.document.soundEffects.first)
+        XCTAssertEqual(effect.raw["trim_end_s"]?.numberValue ?? -1, 0.8, accuracy: 0.0001)
+        XCTAssertEqual(effect.endS, 2.8, accuracy: 0.0001)
+    }
+
+    func testSoundEffectTrimWindowWithoutDurationUsesCurrentTrimEnd() {
+        let effect = EditorTimedEffect(id: "x", startS: 2, endS: 2.8, pointS: 2, kind: "sfx",
+                                       raw: ["trim_start_s": .number(0.1), "trim_end_s": .number(0.6)])
+        let window = NativeEditorSession.soundEffectTrimWindow(effect)
+        XCTAssertEqual(window.source, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(window.start, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(window.end, 0.6, accuracy: 0.0001)
+    }
+
     func testResetSoundEffectTrimRestoresTheFullSound() {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.allLanes)
         session.setSoundEffectTrim(id: "sfx-1", trimStartS: 0.1, trimEndS: 0.4)

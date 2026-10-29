@@ -61,6 +61,7 @@ from app.services.length_policy import (
     creator_duration_s,
     length_owner,
 )
+from app.services.order_mode import order_mode
 
 CONTRACT_FIELD = "creator_render_requirements"
 REQUIREMENT_VERSION_FIELD = "creator_render_requirements_version"
@@ -216,6 +217,10 @@ _CLIP_INTENT_LEAVES = (
     "placeholder",
     "position",
     "order_by",
+    "ordered_members",
+    "exclusive",
+    # KRI-994: the brief `select` ask an exclusion carries out; read only by receipts.
+    "requirement_id",
 )
 
 FIELD_MATRIX: dict[str, FieldRule] = {
@@ -485,6 +490,30 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "closing_media.badge_visual_id",
         "closing_media.from_trigger",
         note="grounded against the real transcript by the server; placement is not verified",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "timed_cards_grounding",
+        "timed_cards[]",
+        *(
+            f"timed_cards[].{leaf}"
+            for leaf in (
+                "card_id",
+                "visual_id",
+                "label",
+                "at_s",
+                "clip_id",
+                "offset_s",
+                "hold_s",
+            )
+        ),
+        note=(
+            "exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): kept or dropped by "
+            "creator_capabilities.repair_creator_timed_cards, grounded onto the compiled output "
+            "clock by the phone writers (app.pipeline.phone_timed_cards) and recorded on "
+            "variant['phone_timed_card_receipt'], which the brief receipts judge. The contract "
+            "itself does not verify placement"
+        ),
     ),
     **_rules(
         "upstream_resolved",
@@ -1264,7 +1293,9 @@ def build_render_contract(
                     # the approved strategy carries it (target_duration_s, requested).
                     continue
                 durations.append(float(requirement.facts["duration_s"]))
-            if requirement.kind == "text" and requirement.literal:
+            # 29 Ekim: a `text_sequence` pins the same words as a `text` ask; the draft shows
+            # them whole.
+            if requirement.kind in {"text", "text_sequence"} and requirement.literal:
                 if (talking_edit or voiceover_spoken_text) and (
                     requirement_spoken_text(requirement) is not None
                     or is_spoken_text_cue(requirement)
@@ -1357,6 +1388,10 @@ def build_render_contract(
                     # server-resolved song placement IS the order authority and the
                     # render verifies it through the lip-sync receipts, so it is not
                     # an unverifiable media-order rule (and must never pin capture time).
+                    continue
+                if order_mode(requirement) is not None:
+                    # A seeded shuffle is proved by the brief receipt (`_check_order`), and
+                    # "any order" has nothing to pin: neither is an unverifiable rule.
                     continue
                 key = requirement.facts.get("key")
                 answered = order_answer is not None and (

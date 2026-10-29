@@ -230,6 +230,9 @@ MediaCapability = Literal[
     "singleWordText",
     # KRI-828: a creator's freeze frame (a main-video hold longer than one frame).
     "freezeFrame",
+    # Text behind people: `text_layers[].behind_subject`, occluded on device by a Vision
+    # person mask (`KriaMediaEngine.NativeSubjectMatte`).
+    "behindSubject",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the

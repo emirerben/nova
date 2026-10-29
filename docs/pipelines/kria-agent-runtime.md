@@ -178,10 +178,30 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
 - **Request.** With the flag on, the Main Creator and the clip-intent planner
   read `render_brief_request(brief)`, and the approval dispatch passes it as
   `creator_request` instead of the draft summary.
+- **Approved hook wording (KRI-945).** Approving a generated wording ("Use this wording")
+  writes it into the one live `text`/`title` requirement's `literal`, marked
+  `facts.approved_copy = {target, text}` (`creative_copy_decisions.bind_approved_copy`, added
+  by the planner to the turn's updates and persisted in its brief version). Only a title ask
+  stated no later than the approving tap is filled, so "Start fresh" or a newer hook ask never
+  inherits old words. The marked literal is withdrawn when the fold stops approving it (revise,
+  skip, new footage) and replaced by a newer approval; words anyone else wrote are never
+  touched. Readiness then proves the hook with the literal check.
+- **Whole-video text the render draws (KRI-945).** A `global` literal missing from a draft's
+  texts is `met` when the draft renders on a phone route whose writer runs
+  `phone_plan_repair.repair_plan_for_contract` (unified, user-song and lip-sync montages;
+  `contract_text_drawn`) and the contract pins it with a role that repair always places. Not
+  for the spoken-excerpt, voice-behind-footage or voiceover writers, cloud renders, or an ask
+  with facts of its own (a position, a clip, a spoken-word cue): those keep "That exact text
+  isn't in this draft." `assess_readiness` takes `creator_id` to resolve the route; a caller
+  without it gets no such evidence (fail closed). Pins: `tests/kria/test_kri945_*`.
 - **Automatic simpler drafts.** The runtime planner removes only typed, unavailable
-  optional text/SFX fields and recompiles the remaining strategy. At draft completion,
-  exact compiler-removed text, unavailable native/Talking clip labels and typed
-  brightness requests can be superseded automatically when they are the only blockers.
+  optional text/SFX fields and recompiles the remaining strategy. On a phone Talking edit
+  with its title lane open, one whole-video top-corner text is the opening title instead
+  of an omission (KRI-1009, `strategy_policy._talking_top_text_as_title`). At draft
+  completion, unquoted native/Talking clip labels and typed brightness requests can be
+  superseded automatically when they are the only blockers. Text the creator quoted (a
+  brief `literal`) never is: the draft is held back with the "simpler version?" question
+  naming it and the compiler's reason, and only the tap drops it (KRI-1009).
   Receipt/readiness failure alone is insufficient: a missing supported label or
   spoken trigger still needs repair/clarification. The same transaction
   appends an omission revision, rebuilds approval readiness, and pins the effective
@@ -253,25 +273,33 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   v64-shaped reply (key-less `order` with quoted `start` / `end`) on a one-video edit, and
   `choice_questions.one_clip_edit` keeps both the order_basis question and the render
   contract quiet about any free-form order rule on one clip.
-- **Clip speed (KRI-689).** Initial creation still does not author requested clip speed.
-  Post-creation phone editing supports 0.25–4x in the clip control and editor chat when
-  `variableSpeed` is verified: it preserves the exact source selection, changes output
-  duration, and carries the rate through preview, Save and export. Captions, narration,
-  lip-sync and unprojected timed effects remain explicitly locked; website speed controls
-  are separate work. See `plans/playback-speed.md` for the contract and measured evidence.
-  The initial-creation notice below remains necessary. A speed ask ("speed the
-  river shots up 2x", slow motion, time-lapse, "2 kat hızlandır") used to be dropped
-  silently and only listed under "Have a look at these in the video" after the render.
-  `brief_checks.clip_speed_notice` now adds one plain sentence to the draft reply and the
-  approval card for a draft the unified montage will render, and the render-ready review
-  reports the ask as "Couldn't" with the same reason (a format limit: it never asks
-  "simpler version?" and never blocks the approved render). `kria/speed_ask.py` reads
-  `facts.playback_rate` (or `speed`) first; the Main Creator is not asked for it yet, so
-  today the narrow EN/TR wording fallback decides. Next step: ask for the fact in the
-  Main Creator / extractor prompt, then delete the wording fallback. Pins:
-  `tests/kria/test_kri689_clip_speed_ask.py`, `tests/kria/test_kri689_speed_notice_postgres.py`,
-  `tests/tasks/test_kri689_speed_review.py`, the KRI-689 cases in
-  `tests/tasks/test_unified_montage_dispatch.py`.
+- **Clip speed (KRI-689).** A chat speed ask at creation ("speed the river shots up 2x",
+  "slow motion on the pour", "klipleri 2 kat hızlandır", time-lapse) is planned on a phone
+  Montage. `kria/speed_ask.py` reads it into a `SpeedSpec` (`facts.playback_rate` first --
+  Main Creator v95 / extractor v35 record it -- else the words incl. the number; "slow motion"
+  = 0.5, "speed up" = 2; held to the native 0.25-4x). `unified_montage.brief_view` carries the
+  specs and `plan_unified_montage(clip_speed=...)` grounds each to its cuts
+  (`_ground_speeds`: a `clip:<id>` scope, the creator-pointed moment, one clip's analysed
+  moment, "the last clip", else every video cut) and writes `FastMontageCut.playback_rate`;
+  `compile_execution_plan` carries it onto the moment and `phone_guided_plan` emits `rate` +
+  `variableSpeed`. A planned cut keeps its OUTPUT length (no drift): its source window becomes
+  `length x rate` on the same start, lowered to what the footage covers when it runs out; a
+  creator-approved window keeps its edges and its slot follows the rate. The plan record's
+  `clip_speeds` rows drive the receipt (`brief_checks._check_clip_speed`: "Clips 1, 2 and 3
+  play at 2x" / "Her video klibi 2x hızda oynuyor"; partial for a held or lowered rate; honest
+  "Couldn't" for the locked cases: no verified `variableSpeed` (`phone_rollout.clip_speed_planned_for`),
+  a song montage, a frozen frame, a photo, a speed ramp; "which clip?" is the creator's call).
+  The pre-approval plan (`phone_montage_preflight`) returns speed receipts whatever their
+  status so the draft says it before the card; `clip_speed_notice` keeps the one-line heads-up
+  only where no plan can carry the speed. A record without `clip_speeds` (written before this)
+  keeps the original "Couldn't". The finished-video review re-judges the ask against the
+  variant's `story_timeline` (`playback_rate` on the moment rows). Still open: narrated /
+  Talking formats, the web editor, a device acceptance pass. Pins:
+  `tests/kria/test_kri689_chat_speed_spec.py`, `tests/kria/test_kri689_clip_speed_ask.py`,
+  `tests/kria/test_kri689_speed_notice_postgres.py`, `tests/tasks/test_kri689_speed_review.py`,
+  the KRI-689 groups in `tests/tasks/test_unified_montage_dispatch.py` and
+  `tests/pipeline/test_phone_guided_speed.py`; failure modes:
+  `docs/reviews/kri-689-chat-speed-failure-modes.md`; contract: `plans/playback-speed.md`.
 - **Freeze frame (KRI-777).** No edit can hold a frame (no strategy field; neither the
   phone recipe nor the cloud renderer freezes a creator-chosen frame). Café M2 filed
   "freeze the frame for one second on Atakan's bite" as `timing/global {"duration_s": 1,
@@ -504,6 +532,22 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   own judgment instead (`visual_quality`, with `props` / `actions`; see
   `docs/pipelines/clip-understanding.md`). Guard:
   `tests/kria/test_kri807_unmatched_exclusion_picker.py`.
+  *Voiceover ties (KRI-962, Don Julio walk-in N1)*: `app/kria/clip_ties.py`. In a
+  Voiceover edit (`_is_voiceover_strategy`) each named shot sits on one moment of the
+  voice, so a resolved `include` whose top-confidence footage matches are 2+ videos no
+  other ask needs is asked with the picker before the draft (N1: "the DON JULIO sign"
+  matched the window sign and Atakan at the plaque, both 0.9; both really show a Don
+  Julio sign). A video is needed elsewhere when it is another ask's only footage match
+  (N1's "the grill" matched three clips, two of them the only flowers and butcher clips:
+  no question). Photos, clips an exclude leaves out, an include matching every footage
+  clip (the whole set), order/group/caption asks and shots the creator already answered
+  never count. The tied clips come pre-ticked, every clip not left out is offered, and the
+  rows ride in the card the turn already asks (`with_tie_categories`). The tap settles the
+  shot through `fold_clip_selections` / `apply_creator_selections`; keeping both ticked
+  leaves the narrated alignment to place them, as before. Of the 6 prod Voiceover jobs with an
+  alignment record (2026-10-08..27), only N1 would have been asked. Kill switch
+  `KRIA_VOICEOVER_TIE_QUESTIONS_ENABLED` (default on; needs the picker flag). Guard:
+  `tests/kria/test_kri962_voiceover_tie_question.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains
@@ -706,9 +750,13 @@ exactly that wording on exactly those clips.
   fails the job naming the explanation.
 - **Never speech.** Sourced text is `add_text` rows with `research` provenance, never caption
   cues, narration or voiceover inputs.
-- **Scope.** Unified phone montage only, and the non-readiness draft path (KRI-721 readiness
-  drafts keep render-time research). Guided proposals already research before their offer;
-  follow-up chat research already shows a draft first.
+- **Scope.** Unified phone montage only, on both draft paths. Since KRI-945 a KRI-721
+  readiness draft is researched too, and readiness judges the research requirement on the
+  result (`brief_checks._check_research`): `met` only when the pinned explanations were
+  researched for exactly that requirement, `unsupported` with the precise reason for a
+  research limit, `evidence_missing` when nothing was researched. The approval re-check reads
+  the same result from `BriefBinding.prepared_research`. Guided proposals already research
+  before their offer; follow-up chat research already shows a draft first.
 - **Kill switch.** `KRIA_RESEARCH_PREVIEW_ENABLED=false` + restart api + worker: nothing runs,
   no field is pinned, render-time research is unchanged.
 - **Proof.** `tests/evals/request_following/test_kri881_research_before_approval.py` (real
@@ -724,6 +772,52 @@ Approval consumption and exact editor/Job commit happen atomically; broker
 publication follows the commit through the existing deterministic Job dispatcher
 or editor rerender task. Accepted editor executions persist enough dispatch
 metadata for the reconciler to publish the same generation after process death.
+
+## On-screen text shown in sequence (KRI-1038)
+
+A quoted sentence the creator wants shown a word at a time is a `text_sequence` brief requirement
+(`kria/text_sequence.py`), not `captions: word_by_word`. The Main Creator prompt teaches it;
+`refile_text_sequence` only re-files a captions reply when the creator did not name captions, no
+voiceover is recorded, and the message does not talk about words said in the footage
+(`names_footage_speech`: "when I say", "dediğim yerde").
+
+Deploy order: roll api and worker together. A thread stored with `text_sequence` fails
+`CreativeBrief` validation on an older api or worker machine (autostopped machines, or a revert),
+and this kind has no kill switch of its own.
+
+## Compose with the editor ops (KRI-1039, `KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`)
+
+The copilot's ops are the base layer: an ask a person could do in the editor is composed with them,
+not refused, asked about or re-planned.
+
+- A `text_sequence` ask is one `replace_text_sequence`: windows are weighted by character count
+  (`weight: "length"`, the default; `"equal"` keeps equal windows), and `mode: "cumulative"` builds
+  the sentence up (step k shows the first k words, children carry `source_params.sequence_mode`,
+  the full sentence holds the last quarter). Both fields are written into the op when it is
+  authored, so replaying a saved draft never depends on the flag. Evidence
+  (`sequence_text_evidence.complete_sequences`) reads a cumulative chain as its last step.
+- Creation: Main Creator plans the footage; `compose_creation_text` is the one op pass on the
+  new draft, in the same render job, and it reads `text_sequence` requirements. `check_requirement`
+  judges one (`PlanFacts.sequence_texts`): met when the words are on screen in pieces, otherwise a
+  neutral receipt, so an uncomposed sequence is never a creator question.
+- Follow-ups: an edit-shaped turn on a draft that has a render goes to the copilot with no
+  `nova.creator.main` call; `replace_text_sequence` is on the fast path. A job that FAILED before
+  producing any variant has no editable lanes (prod job debug: no `variants` key), so its follow-up
+  is still a re-plan; the fix for that case is that the render no longer fails (title fit, lane A).
+  The re-plan cues are unchanged.
+- Readability floor: an op authored with `weight` gives every piece at least 0.25 s
+  (`_MIN_PIECE_S`). When the source window is too short the compiler lengthens it, up to the end of
+  the video or the next text in the same role and place; if even that cannot hold the pieces, or the
+  video length cannot be read, the op fails naming the seconds needed and left (never an unbounded
+  stretch).
+- Capability parity: `kria/editor_capability_parity.py` maps every public action of
+  `NativeEditorSession.swift` and the files extending it (`NativeEditorRetiming.swift`,
+  `NativeTextEditing.swift`) to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
+  `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when
+  an action has none.
+
+Default `false` (off until enabled). Flag off restores the earlier routing, cues, fast-path set and op shape
+(`test_compose_unmet_flag_off_is_byte_identical`). Apply: fly secret + restart api and worker.
 
 ## Local proof
 

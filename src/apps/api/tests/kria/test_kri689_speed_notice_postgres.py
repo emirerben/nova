@@ -47,6 +47,8 @@ def _flags(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "kria_brief_binding_enabled", True)
     monkeypatch.setattr(settings, "kria_brief_binding_user_ids", [])
     monkeypatch.setattr(settings, "phone_rendering_enabled", True)
+    # No verified `variableSpeed`: the plan cannot carry the speed, so the heads-up is owed.
+    monkeypatch.setattr(settings, "phone_render_verified_features", [])
     monkeypatch.setattr(settings, "phone_render_user_ids", [])
 
 
@@ -157,5 +159,19 @@ async def test_no_notice_where_it_would_be_false(monkeypatch, description, clip)
     status, reply, card = await _draft(monkeypatch, description, clip=clip)
 
     assert status == "awaiting_approval"
+    assert reply == _SUMMARY
+    assert card == f"Render this draft: {_SUMMARY}"
+
+
+@pytest.mark.asyncio
+async def test_with_a_verified_speed_renderer_the_draft_promises_nothing_it_cannot_judge(
+    monkeypatch,
+):
+    """The plan will carry the speed (or its receipt will say why not): no blanket refusal."""
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["variableSpeed"])
+    status, reply, card = await _draft(monkeypatch, "Speed the river shots up 2x")
+
+    assert status == "awaiting_approval"
+    assert _EN not in reply and _EN not in card
     assert reply == _SUMMARY
     assert card == f"Render this draft: {_SUMMARY}"

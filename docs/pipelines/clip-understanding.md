@@ -154,6 +154,21 @@ Flow (flag on):
    changed the middle of a stated sequence. Clips attached before this change
    carry no name, so a creator testing it needs a new chat. Journey test:
    `tests/kria/test_kri614_file_name_clips.py`.
+   **"Only about X" limits the edit (KRI-993).** An `include` only guarantees its clips are
+   in the edit. When the creator limits the whole edit to a subject ("only about the steak",
+   "sadece biftek"), the planner states one `include` with `exclusive` true (typed flag, no
+   server-side word reading; rides `CLIP_INTENT_EXCLUDE_ENABLED`). After resolution,
+   `clip_scope.apply_subject_scope` (called beside the exclusions in `kria/planner.py`) limits
+   the VIDEO pick to the clips the intent matched at the resolver's membership bar (0.6,
+   vision re-query results included), adds a matched clip the model left out, and keeps any
+   clip another ask names or the strategy places plus every non-video item. A creator skip
+   beats a scope match (`excluded_clips` ignores exclusive includes when protecting). A scope
+   that matched nothing drops nothing: the existing include picker asks which clips show it.
+   Log: `kria_clip_subject_scope_applied kept= dropped= added=`. The receipt row is an
+   `include` outcome in `unified_montage._intent_outcomes` ("only about X": met / partial /
+   not_possible). The clip records alone often cannot tell look-alikes apart ("food" on a
+   board), so the vision re-query, not a text match, is what separates them. Tests:
+   `tests/kria/test_kri993_subject_scope*.py`.
    **File names beat attachment numbers (KRI-763).** A name with a trailing
    `_footage` ("M1_08_footage") is also named without it ("M1_08"); typed names may
    carry the iOS upload prefix; `exclude` intents that are only file names ("M1_05
@@ -249,6 +264,14 @@ Flow (flag on):
    ("Img_7833: clip 1") is transcript copy, so `song_order.model_text` gives every
    model a neutral sentence instead (KRI-614; the echo used to become a new
    `include` intent and a second question about the answer itself).
+   One answer about an attribute settles it under any of `group`/`include`/
+   `order`/`caption` (`_SAME_CLIPS_OPS`, exact attribute or identity only;
+   never `exclude` or `label`), so a re-plan that files the tapped "include:
+   the queue" as "order: the queue" no longer asks again (KRI-947). Rows about
+   the same attribute that offer the same clips are one picker row (the rest
+   ride `also_answers`, which the app ignores) and the question names each
+   moment once (KRI-951). Guard:
+   `tests/services/test_kri947_kri951_m2_picker_rows.py` (Don Julio walk-in M2).
 5. **Plan.** On confirm the intents travel `ProposalBrief.clip_intents` (chat
    `asset-{uuid}` ids translated to planner ids) into `EditProposalAgent` as
    alias-only constraints: group (creator's words as the chapter title), order

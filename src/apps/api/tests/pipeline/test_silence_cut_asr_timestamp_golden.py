@@ -44,6 +44,7 @@ from app.pipeline.speech_cleanup_analysis import (
     analyze_speech_cleanup,
 )
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
+from tests._silent_pcm import silent_pcm
 
 
 def w(text: str, start: float, end: float) -> dict:
@@ -488,6 +489,7 @@ def test_analysis_payload_carries_token_adjustments_and_round_trips():
         ),
         transcribe_fn=lambda *_args, **_kwargs: transcript,
         silence_detect_fn=lambda *_args, **_kwargs: silence,
+        pcm_loader=silent_pcm,
     )
     assert result.detector_version == DETECTOR_VERSION
     assert result.safety_signals.selected_plan == "candidate"
@@ -508,7 +510,7 @@ def test_analysis_payload_carries_token_adjustments_and_round_trips():
 def test_detector_version_was_bumped_with_the_detector():
     # Snapshot reuse and the render-side cut cache key on this string; an
     # un-bumped detector change would keep serving pre-fix plans forever.
-    assert DETECTOR_VERSION == "mixed-gap-v5-retakes"
+    assert DETECTOR_VERSION == "mixed-gap-v8-voice-guard"
     assert Removal(0.0, 1.0, "silence").reason == "silence"  # import kept intentional
 
 

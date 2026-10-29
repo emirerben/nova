@@ -5,6 +5,32 @@ import KriaMediaEngine
 @testable import Kria
 
 @MainActor final class NativeEditorRenderCompilerTests: XCTestCase {
+    func testSelectingSubframeStartDisplaysTheSelectedItemsFrame() async throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.selectionBoundary)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "montage", withExtension: "mp4"))
+        await session.prepareFixtureSourcePreview(url: url)
+        XCTAssertEqual(session.sourcePreviewState, .ready)
+        let items = session.timelineItems.filter { $0.start == 2.001 }
+        XCTAssertTrue(items.contains { $0.kind == .clip })
+        XCTAssertTrue(items.contains { $0.kind == .text })
+        for item in items {
+            session.seek(to: 0)
+            for _ in 0..<200 {
+                if session.scrubPreviewTime == 0 { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            session.select(item)
+            for _ in 0..<400 {
+                if (session.scrubPreviewTime ?? 0) >= 2 { break }
+                try await Task.sleep(for: .milliseconds(25))
+            }
+            let displayed = try XCTUnwrap(session.scrubPreviewTime)
+            XCTAssertGreaterThanOrEqual(displayed, item.start, "Selected \(item.kind) shows the preceding frame")
+            XCTAssertLessThan(displayed, item.end)
+            XCTAssertFalse(session.isPlaying)
+        }
+    }
+
     func testFootageRateAndCropCompileAsAdditiveRecipeFields() throws {
         let fingerprint = AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)
         let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original",
@@ -682,6 +708,45 @@ import KriaMediaEngine
         XCTAssertEqual(document.textElements.dropFirst().map(\.id), ["caption-0", "caption-1", "caption-2", "caption-3"])
         XCTAssertEqual(document.textElements.map(\.text), ["A title", "It", "costs", "172.5", "dollars.”"])
         XCTAssertEqual(document.textElements.dropFirst().map(\.endS), [0.1, 0.4, 0.7, 1.0])
+    }
+
+    /// Text behind people: the editor's "Behind subject" toggle used to refuse the whole preview
+    /// (`unsupportedLane`). It now compiles to the layer's `behindSubject` (every painter branch:
+    /// plain effect, typed phases, handwriting), the recipe derives the `behindSubject` capability,
+    /// and an element without the toggle keeps today's shape. A giant-title scene transition still refuses.
+    func testBehindSubjectCompilesToTheLayerFlagAndCapability() throws {
+        let source = ResolvedEditorSource(clipIndex: 0, mediaID: "original", asset: MediaAsset(id: "local", relativePath: "original.mov",
+            fingerprint: AssetFingerprint(hex: String(repeating: "a", count: 64), byteCount: 100)), url: URL(fileURLWithPath: "/fixture/original.mov"))
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 6,
+            trimIn: 0, trimOut: 6, sourceDuration: 6, slotID: "slot")
+        let compiler = try NativeEditorRenderCompiler(fontDirectory: XCTUnwrap(Bundle.main.url(forResource: "fonts", withExtension: nil)))
+        func element(_ id: String, _ raw: [String: JSONValue]) -> EditorTextElement {
+            EditorTextElement(id: id, text: "Behind me", startS: 0, endS: 3, role: "generative_intro",
+                raw: ["size_px": .number(96), "font_family": .string("Inter")].merging(raw) { _, new in new })
+        }
+        let elements = [
+            element("plain-behind", ["effect": .string("fade-in"), "behind_subject": .bool(true)]),
+            element("phased-behind", ["animation_phases": .object(["entrance": .string("pop"), "exit": .string("fade")]), "behind_subject": .bool(true)]),
+            element("hand-behind", ["effect": .string("handwriting"), "behind_subject": .bool(true)]),
+            element("plain", ["effect": .string("fade-in"), "behind_subject": .bool(false)]),
+        ]
+        let items = elements.map { NativeEditorTimelineItem(selection: .init(kind: .text, id: $0.id), start: 0, end: 3) }
+        let recipe = try compiler.compile(document: EditorDocument(textElements: elements), clips: [clip], items: items, sources: [0: source]).recipe
+        XCTAssertEqual(recipe.textLayers.map(\.id), elements.map(\.id))
+        XCTAssertEqual(recipe.textLayers.map(\.behindSubject), [true, true, true, nil])
+        XCTAssertTrue(recipe.effectiveCapabilities.contains(.behindSubject))
+
+        let plainOnly = try compiler.compile(document: EditorDocument(textElements: [elements[3]]), clips: [clip],
+                                             items: [items[3]], sources: [0: source]).recipe
+        XCTAssertFalse(plainOnly.effectiveCapabilities.contains(.behindSubject))
+        XCTAssertFalse(String(decoding: try RecipeJSON.encoder().encode(plainOnly), as: UTF8.self).contains("behind_subject"))
+
+        let giant = element("giant", ["theme_transition": .object(["type": .string("giant-title-wipe")])])
+        XCTAssertThrowsError(try compiler.compile(document: EditorDocument(textElements: [giant]), clips: [clip],
+                                                  items: [NativeEditorTimelineItem(selection: .init(kind: .text, id: "giant"), start: 0, end: 3)],
+                                                  sources: [0: source])) { error in
+            XCTAssertEqual(error as? NativeEditorRenderError, .unsupportedLane("text scene compositing"))
+        }
     }
 
     // KRI-569: lyric captions have no terminal punctuation; the server flags the last

@@ -307,3 +307,255 @@ def test_main_video_padding_is_limited_to_one_recipe_frame(frame_rate):
     clip["overlay_above_text"] = True
     with pytest.raises(ValueError, match="V2 overlay"):
         EditRecipeV2.model_validate(raw)
+
+
+# --- KRI-689: a chat speed ask at creation reaches the phone recipe through the montage plan ---
+# docs/reviews/kri-689-chat-speed-failure-modes.md, section C: C1 (no drift), C2 (footage runs
+# out), C3 (approved windows keep their edges), C4/C5/C6 (cut -> moment -> recipe math at every
+# native rate), C9 (`variableSpeed` capability).
+
+
+def _montage_clips(count: int = 3, duration_s: float = 6.0):
+    from app.pipeline.unified_montage import UnifiedClip
+
+    return [
+        UnifiedClip(
+            media_id=f"clip-{index}",
+            proxy_path=f"users/u/analysis-proxy-clip-{index}.mp4",
+            generation="7",
+            duration_s=duration_s,
+            width=1920,
+            height=1080,
+            analysis={
+                "best_moments": [
+                    {
+                        "start_s": 1.0,
+                        "end_s": 3.0,
+                        "energy": 0.9,
+                        "description": "a boat crossing the river" if index == 1 else "a street",
+                    }
+                ]
+            },
+        )
+        for index in range(count)
+    ]
+
+
+def _montage_bindings(clips):
+    from app.kria.media_sources import OriginalMediaDescriptor
+    from app.services.phone_sources import PhoneSourceBinding
+
+    return tuple(
+        PhoneSourceBinding(
+            media_id=clip.media_id,
+            proxy_path=clip.proxy_path,
+            generation=clip.generation,
+            original=OriginalMediaDescriptor(
+                sha256=f"{index:x}".rjust(64, "a"),
+                byte_count=1000 + index,
+                duration_s=clip.duration_s,
+                width=1920,
+                height=1080,
+                has_audio=True,
+            ),
+        )
+        for index, clip in enumerate(clips)
+    )
+
+
+def _montage_plan(description: str | None, clips, *, clip_speed: bool = True):
+    from app.kria.brief import BriefRequirement, CreativeBrief
+    from app.pipeline.unified_montage import brief_view, plan_unified_montage
+
+    requirements = [BriefRequirement(id="r1", kind="text", scope="title", literal="River day")]
+    if description is not None:
+        requirements.append(
+            BriefRequirement(id="r5", kind="style", scope="global", description=description)
+        )
+    brief = CreativeBrief(version=1, requirements=requirements)
+    return plan_unified_montage(clips, brief_view(brief), strategy={}, clip_speed=clip_speed)
+
+
+def _compiled(plan, clips):
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan, compile_execution_plan
+
+    execution = GuidedStoryExecutionPlan.model_validate(
+        compile_execution_plan(plan.guided_edit(), track=None)
+    )
+    return execution, compile_phone_guided_plan(execution, _montage_bindings(clips))
+
+
+@pytest.mark.parametrize(
+    ("description", "rate"),
+    [
+        ("slow the clips down to 0.25x", 0.25),
+        ("slow motion on everything", 0.5),
+        ("speed up the footage 2x", 2.0),
+        ("speed it up 4x", 4.0),
+    ],
+)
+def test_a_whole_edit_speed_ask_reaches_every_recipe_clip_without_moving_the_timeline(
+    description, rate
+):
+    clips = _montage_clips(duration_s=12.0)  # room for 4x on a 2 s cut
+    baseline, _ = _compiled(_montage_plan(None, clips), clips)
+    plan = _montage_plan(description, clips)
+    execution, recipe = _compiled(plan, clips)
+
+    # C1: the output timeline is byte-identical to the plan without the ask.
+    assert [(m.output_start_s, m.output_end_s) for m in execution.story_timeline] == [
+        (m.output_start_s, m.output_end_s) for m in baseline.story_timeline
+    ]
+    assert execution.resolved_duration_s == baseline.resolved_duration_s
+    for moment, base in zip(execution.story_timeline, baseline.story_timeline, strict=True):
+        assert moment.playback_rate == rate
+        # The source window is the slot's length times the rate, anchored on the same start.
+        assert moment.source_start_s == base.source_start_s
+        assert moment.source_end_s - moment.source_start_s == pytest.approx(
+            moment.duration_s * rate, abs=0.002 * max(1.0, rate)
+        )
+    clips_by_id = {clip.id: clip for clip in recipe.tracks[0].clips}
+    for moment in execution.story_timeline:
+        clip = clips_by_id[moment.moment_id]
+        assert clip.rate == rate
+        assert clip.source_duration / rate + (clip.hold_duration or 0) == pytest.approx(
+            moment.duration_s, abs=1e-6
+        )
+    assert "variableSpeed" in recipe.required_capabilities
+    (row,) = plan.record()["clip_speeds"]
+    assert row["status"] == "applied" and row["rate"] == rate
+    assert row["cut_positions"] == [1, 2, 3] and row["grounding"] == "all_clips"
+
+
+def test_a_named_moment_grounds_the_rate_on_that_clip_only():
+    clips = _montage_clips()
+    baseline, _ = _compiled(_montage_plan(None, clips), clips)
+    plan = _montage_plan("Speed the river shots up 2x", clips)
+    execution, recipe = _compiled(plan, clips)
+
+    rates = {m.media_id: m.playback_rate for m in execution.story_timeline}
+    assert rates == {"clip-0": None, "clip-1": 2.0, "clip-2": None}
+    # B1 negative control: the other clips keep their exact 1x windows.
+    for moment, base in zip(execution.story_timeline, baseline.story_timeline, strict=True):
+        if moment.media_id != "clip-1":
+            assert (moment.source_start_s, moment.source_end_s) == (
+                base.source_start_s,
+                base.source_end_s,
+            )
+    clips_by_id = {clip.id: clip for clip in recipe.tracks[0].clips}
+    assert {m.media_id: clips_by_id[m.moment_id].rate for m in execution.story_timeline} == {
+        "clip-0": 1,
+        "clip-1": 2.0,
+        "clip-2": 1,
+    }
+    (row,) = plan.record()["clip_speeds"]
+    assert row["status"] == "applied"
+    assert row["media_ids"] == ["clip-1"] and row["cut_positions"] == [2]
+    assert row["grounding"] == "analysed_moment"
+
+
+def test_words_that_name_no_clip_apply_the_rate_nowhere():
+    clips = _montage_clips()
+    plan = _montage_plan("speed up the fireworks 2x", clips)
+    execution, recipe = _compiled(plan, clips)
+    assert all(m.playback_rate is None for m in execution.story_timeline)
+    assert "variableSpeed" not in recipe.required_capabilities
+    (row,) = plan.record()["clip_speeds"]
+    assert row["status"] == "not_grounded"
+
+
+def test_the_last_clip_is_the_final_cut():
+    clips = _montage_clips()
+    plan = _montage_plan("Slow down the last clip", clips)
+    execution, _ = _compiled(plan, clips)
+    assert [m.playback_rate for m in execution.story_timeline] == [None, None, 0.5]
+    (row,) = plan.record()["clip_speeds"]
+    assert row["grounding"] == "cut_position" and row["rate_stated"] is False
+
+
+def test_footage_that_runs_out_lowers_the_rate_and_keeps_the_cut_length():
+    # C2: 4x on a 2 s cut needs 8 s of footage; a 3 s clip has 2.95 s to give. The cut keeps
+    # its length (no drift) and plays as fast as the footage allows; the record says so.
+    clips = _montage_clips(duration_s=3.0)
+    baseline, _ = _compiled(_montage_plan(None, clips), clips)
+    plan = _montage_plan("speed it up 4x", clips)
+    execution, recipe = _compiled(plan, clips)
+    assert execution.resolved_duration_s == baseline.resolved_duration_s
+    for moment in execution.story_timeline:
+        assert moment.playback_rate is not None and 1.05 <= moment.playback_rate < 4.0
+        assert moment.source_end_s <= 3.0 - 0.05 + 1e-6
+        assert moment.source_end_s - moment.source_start_s == pytest.approx(
+            moment.duration_s * moment.playback_rate, abs=0.002 * moment.playback_rate
+        )
+    assert recipe.duration == pytest.approx(execution.resolved_duration_s, abs=1e-6)
+    (row,) = plan.record()["clip_speeds"]
+    assert row["status"] == "applied" and row["footage_limited"] is True
+    assert row["rate"] == min(m.playback_rate for m in execution.story_timeline)
+    assert row["rate_requested"] == 4.0
+
+
+def test_without_a_verified_speed_renderer_no_rate_is_planned():
+    clips = _montage_clips()
+    plan = _montage_plan("speed up the footage 2x", clips, clip_speed=False)
+    execution, recipe = _compiled(plan, clips)
+    assert all(m.playback_rate is None for m in execution.story_timeline)
+    assert "variableSpeed" not in recipe.required_capabilities
+    (row,) = plan.record()["clip_speeds"]
+    assert (row["status"], row["reason"]) == ("locked", "renderer")
+
+
+def test_a_plan_without_a_speed_ask_records_nothing_new():
+    clips = _montage_clips()
+    assert "clip_speeds" not in _montage_plan(None, clips).record()
+
+
+def test_an_approved_window_keeps_its_edges_and_the_slot_follows_the_rate():
+    """C3: a creator-picked source window is never widened; its output length changes."""
+    from app.kria.brief import BriefRequirement
+    from app.kria.speed_ask import speed_spec
+    from app.pipeline.unified_montage import _ground_speeds
+
+    clips = _montage_clips()
+    spans = [("clip-0", 0.0, 1.2, False), ("clip-1", 1.0, 3.0, True), ("clip-2", 0.0, 1.2, False)]
+    spec = speed_spec(
+        BriefRequirement(
+            id="r5", kind="style", scope="global", description="slow motion on the river"
+        )
+    )
+    spans, rates, rows = _ground_speeds([spec], spans, clips, pinned=(), freeze_holds={})
+    assert spans[1] == ("clip-1", 1.0, 3.0, True)
+    assert rates == {1: 0.5}
+    assert rows[0]["status"] == "applied" and rows[0]["grounding"] == "analysed_moment"
+
+
+def test_a_fast_montage_cut_validates_its_output_against_the_rate():
+    from pydantic import ValidationError
+
+    from app.schemas.edit_proposal import FastMontageCut
+
+    cut = FastMontageCut(
+        cut_id="c",
+        media_id="m",
+        source_start_s=1.0,
+        source_end_s=3.4,
+        output_duration_s=1.2,
+        role="hook",
+        playback_rate=2.0,
+    )
+    assert cut.model_dump(mode="json")["playback_rate"] == 2.0
+    # The legacy dump is untouched: no rate, no key.
+    plain = FastMontageCut(
+        cut_id="c", media_id="m", source_start_s=1.0, source_end_s=2.2, output_duration_s=1.2,
+        role="hook",
+    )  # fmt: skip
+    assert "playback_rate" not in plain.model_dump(mode="json")
+    with pytest.raises(ValidationError, match="output duration"):
+        FastMontageCut(
+            cut_id="c", media_id="m", source_start_s=1.0, source_end_s=3.4,
+            output_duration_s=2.4, role="hook", playback_rate=2.0,
+        )  # fmt: skip
+    with pytest.raises(ValidationError, match="freeze"):
+        FastMontageCut(
+            cut_id="c", media_id="m", source_start_s=1.0, source_end_s=3.4,
+            output_duration_s=2.2, role="hook", playback_rate=2.0, freeze_hold_s=1.0,
+        )  # fmt: skip

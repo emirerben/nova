@@ -68,12 +68,18 @@ EXPECTED_VF = (
     f",crop={settings.output_width}:{settings.output_height}"
 )
 
-EXPECTED_SILENT_AUDIO_INPUT = [
-    "-f",
-    "lavfi",
-    "-i",
-    "anullsrc=channel_layout=stereo:sample_rate=44100",
-]
+
+def _expected_silent_audio_input(duration: str) -> list[str]:
+    # The input -t ends the silence with the picture: -shortest alone lets it
+    # overrun on FFmpeg < 8.1 (tests/pipeline/test_reframe_silent_pad.py).
+    return [
+        "-t",
+        duration,
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=channel_layout=stereo:sample_rate=44100",
+    ]
 
 
 def _expected_encoding_tail(output_path: str) -> list[str]:
@@ -189,7 +195,7 @@ class TestNonePathByteIdentical:
             "12.0",
             "-i",
             "/fake/in.mp4",
-            *EXPECTED_SILENT_AUDIO_INPUT,
+            *_expected_silent_audio_input("12.000000"),
             "-map",
             "0:v:0",
             "-map",
@@ -438,7 +444,10 @@ class TestKeepSegmentsCommand:
             first, end = (round(float(value) * fps + 0.25) for value in match.groups())
             trimmed.append((first / fps, end / fps))
             i += 1
-        assert trimmed == pytest.approx(rendered_spans(segments, cut_frame_grid(start_s, end_s)))
+        for actual_window, expected_window in zip(
+            trimmed, rendered_spans(segments, cut_frame_grid(start_s, end_s)), strict=True
+        ):
+            assert actual_window == pytest.approx(expected_window)
 
     def test_sub_frame_segment_is_dropped(self) -> None:
         # (5.02, 5.04) snaps to no frame (both ends snap to frame 151).
@@ -549,7 +558,8 @@ class TestKeepSegmentsCommand:
             "12.0",
             "-i",
             "/fake/in.mp4",
-            *EXPECTED_SILENT_AUDIO_INPUT,
+            # 120 + 90 + 60 kept frames at 30 fps.
+            *_expected_silent_audio_input("9.000000"),
             "-filter_complex",
             expected_fc,
             "-map",

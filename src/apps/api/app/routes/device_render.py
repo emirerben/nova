@@ -56,6 +56,7 @@ from app.limiter import limiter
 from app.models import (
     ContentPlan,
     Job,
+    MediaAssetSource,
     PlanItem,
     PlanItemAsset,
     TemporaryMediaUpload,
@@ -101,6 +102,7 @@ from app.services.phone_rollout import (
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
     single_word_text_client_supported,
+    text_behind_subject_phone_client_supported,
     text_bend_client_supported,
 )
 from app.services.render_library import catalog_path, inspect_library_asset
@@ -462,6 +464,21 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
     newer than the one that declined is not necessarily new enough for the recipe.
     """
     protocol = _caller_protocol()
+    recipe = status.request.recipe
+    from app.agents._schemas.text_animation_phases import DESIGNED_TEXT_EDGES
+
+    if protocol < 23 and any(
+        layer.animation_phases is not None
+        and DESIGNED_TEXT_EDGES.intersection(
+            (layer.animation_phases.entrance, layer.animation_phases.exit)
+        )
+        for layer in getattr(recipe, "text_layers", None) or []
+    ):
+        return {
+            "code": "client_update_required",
+            "feature": "designed_text_motion",
+            "minimum_client_protocol": 23,
+        }
     if "actual_export_policy" in record and protocol < 13:
         return {
             "code": "client_update_required",
@@ -481,7 +498,6 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
         if isinstance(exc.detail, dict):
             return dict(exc.detail)
         return {"code": "client_update_required", "feature": "text_preferences"}
-    recipe = status.request.recipe
     if getattr(recipe, "drawing_layers", None) and not freehand_drawing_client_supported():
         # KRI-589: an older build rejects `drawingLayers` as an unknown recipe key and would
         # FAIL the job instead of rendering. Tell it to update; the pinned recipe is untouched.
@@ -498,6 +514,17 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "text_bend",
             "minimum_client_protocol": settings.text_bend_min_client_protocol,
+        }
+    if not text_behind_subject_phone_client_supported() and any(
+        layer.behind_subject for layer in getattr(recipe, "text_layers", None) or []
+    ):
+        # Text behind people: an older build rejects `behind_subject` as an unknown recipe key
+        # and would FAIL the job. Compile already strips the flag for such a build's own saves;
+        # this covers a recipe a newer build or the worker pinned before this build read it.
+        return {
+            "code": "client_update_required",
+            "feature": "text_behind_subject",
+            "minimum_client_protocol": settings.text_behind_subject_phone_min_client_protocol,
         }
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(recipe):
         # KRI-828: the worker planned a creator's freeze (a main-track hold, capability
@@ -817,8 +844,9 @@ async def _visual_download_url(
 
     The recipe pinned one immutable generation; the device verifies the SHA-256.
     Here the row must still be this job's plan item's ready visual of the pinned
-    kind, at that exact generation, under its owner's pool prefix, so a removed
-    or replaced visual fails closed instead of rendering different bytes.
+    kind and exact generation. Library-linked visuals retain their owned original
+    source; unlinked uploads stay under the project's pool prefix. Removed or
+    replaced sources fail closed instead of rendering different bytes.
     """
     try:
         visual_id = uuid.UUID(asset.visual_id)
@@ -832,14 +860,35 @@ async def _visual_download_url(
         or row.plan_item_id != job.content_plan_item_id
     ):
         raise HTTPException(404, "Visual unavailable")
-    prefix = f"users/{user_id}/plan/{row.plan_item_id}/pool/"
     if (
         row.status != "ready"
         or row.kind != asset.media_kind
         or str(row.gcs_generation or "") != asset.generation
-        or not row.gcs_path.startswith(prefix)
-        or any(part in {"", ".", ".."} for part in row.gcs_path[len(prefix) :].split("/"))
     ):
+        raise HTTPException(409, "Visual changed; refresh the recipe")
+    if row.library_asset_id is not None or row.library_source_id is not None:
+        source = (
+            await db.get(MediaAssetSource, row.library_source_id, populate_existing=True)
+            if row.library_source_id is not None
+            else None
+        )
+        authorized = (
+            source is not None
+            and source.user_id == user_id
+            and source.asset_id == row.library_asset_id
+            and source.role == "original"
+            and source.status == "available"
+            and source.object_path == row.gcs_path
+            and source.object_generation == asset.generation
+            and source.uploaded_sha256 == asset.fingerprint.sha256
+            and source.byte_count == asset.fingerprint.byte_count
+        )
+    else:
+        prefix = f"users/{user_id}/plan/{row.plan_item_id}/pool/"
+        authorized = row.gcs_path.startswith(prefix) and not any(
+            part in {"", ".", ".."} for part in row.gcs_path[len(prefix) :].split("/")
+        )
+    if not authorized:
         raise HTTPException(409, "Visual changed; refresh the recipe")
     path = row.gcs_path
     await db.rollback()

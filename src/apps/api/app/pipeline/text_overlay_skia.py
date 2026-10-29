@@ -3296,6 +3296,56 @@ def _draw_overlay_on_canvas(
             )
 
             phases = TextAnimationPhases.model_validate(overlay["animation_phases"])
+            from app.pipeline.designed_text_motion import has_designed_motion, paint_designed_motion
+
+            if has_designed_motion(phases):
+                from PIL import Image
+
+                state = sample_text_phases(phases, t_local, duration_s)
+                full_text = _overlay_text(overlay)
+                graphemes = regex.findall(r"\X", full_text)
+                visible_text = (
+                    full_text
+                    if phases.entrance == "wordRelay"
+                    else "".join(graphemes[: visible_grapheme_count(len(graphemes), state.reveal)])
+                )
+
+                surface = skia.Surfaces.MakeRasterN32Premul(
+                    render_canvas.width, render_canvas.height
+                )
+                _draw_centered_text(
+                    surface.getCanvas(),
+                    visible_text,
+                    {**overlay, "rotation_deg": 0},
+                    render_canvas=render_canvas,
+                    layout_text=full_text,
+                    shape_text=bool(overlay.get("shape_text")),
+                )
+                rgba = surface.makeImageSnapshot().toarray(
+                    colorType=skia.ColorType.kRGBA_8888_ColorType,
+                    alphaType=skia.AlphaType.kUnpremul_AlphaType,
+                )
+                painted = paint_designed_motion(
+                    Image.fromarray(rgba), overlay, phases, t_local, duration_s
+                )
+                import numpy as np
+
+                frame = skia.Image.fromarray(
+                    np.asarray(painted),
+                    colorType=skia.ColorType.kRGBA_8888_ColorType,
+                    alphaType=skia.AlphaType.kUnpremul_AlphaType,
+                )
+                cx, cy = _resolve_anchor(overlay, render_canvas)
+                canvas.save()
+                canvas.translate(cx + state.x, cy + state.y)
+                canvas.rotate(_finite_float(overlay.get("rotation_deg"), 0))
+                canvas.scale(state.scale, state.scale)
+                canvas.translate(-cx, -cy)
+                paint = skia.Paint()
+                paint.setAlphaf(state.alpha)
+                canvas.drawImage(frame, 0, 0, paint=paint)
+                canvas.restore()
+                return
             state = sample_text_phases(phases, t_local, duration_s)
             text = _overlay_text(overlay)
             graphemes = regex.findall(r"\X", text)

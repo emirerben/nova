@@ -2,6 +2,486 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.20.0] - 2026-10-29
+
+### Changed
+- feat(api): add admin read of stored phone-export verification evidence (KRI-1042) (#1938) <!-- release-pr: 1938 -->
+
+## [0.82.19.0] - 2026-10-29
+
+### Changed
+- fix(camera-roll): keep an event's ideas when it is saved or gains footage (KRI-1044) (#1935) <!-- release-pr: 1935 -->
+
+## [0.82.18.0] - 2026-10-29
+
+### Changed
+- feat(kria): long titles wrap, shrink or grow taller instead of failing to fit (KRI-1035) (#1927) <!-- release-pr: 1927 -->
+
+## [0.82.17.0] - 2026-10-29
+
+### Changed
+- fix(phone-text): flag emoji in a creator's title no longer fails the phone render; undrawable text named before approval (KRI-1024) (#1919) <!-- release-pr: 1919 -->
+
+## [0.82.16.0] - 2026-10-29
+
+### Changed
+- feat(kria): words shown a piece at a time are text_sequence, not captions (KRI-1038) (#1925) <!-- release-pr: 1925 -->
+
+## [0.82.15.0] - 2026-10-29
+
+### Changed
+- feat(kria): random and any-order clip orders are first-class (KRI-1036) (#1923) <!-- release-pr: 1923 -->
+
+## [0.82.14.0] - 2026-10-29
+
+### Changed
+- fix(ios): align format cards and play signup previews together (#1920) <!-- release-pr: 1920 -->
+
+## [0.82.13.0] - 2026-10-29
+
+### Changed
+- fix(ios): Use this idea opens the idea's chat instead of leaving the camera roll page on top (KRI-1041) (#1922) <!-- release-pr: 1922 -->
+
+## [0.82.12.0] - 2026-10-29
+
+### Changed
+- fix(ios): preserve guided source cuts in saved text drafts (#1918) <!-- release-pr: 1918 -->
+
+## [0.82.11.0] - 2026-10-29
+
+### Fixed
+- fix(ios): a dead upload no longer keeps Send disabled after a crash (#1921) <!-- release-pr: 1921 -->
+
+## [0.82.10.0] - 2026-10-29
+
+### Fixed
+- fix(kria): Talking title asked "at the top" renders as the opening title; quoted text is asked about, never dropped (KRI-1009) (#1912) <!-- release-pr: 1912 -->
+
+## [0.82.9.0] - 2026-10-29
+
+### Changed
+- fix(captions): faster designed animations and animation per word under Word display (KRI-1007) (#1917) <!-- release-pr: 1917 -->
+
+## [0.82.8.0] - 2026-10-29
+
+### Fixed
+- fix(kria): name the speaker, not "you", in framing and face copy (KRI-1008 Finding 3) (#1911) <!-- release-pr: 1911 -->
+
+## [0.82.7.0] - 2026-10-29
+
+### Fixed
+- fix(ios): keep the chat in view after "Clean up speech and create" (KRI-1008) (#1903) <!-- release-pr: 1903 -->
+
+## [0.82.6.0] - 2026-10-29
+
+### Changed
+- fix(editor): the creator's saved copy of a phone montage is the render (KRI-1032) (#1916) <!-- release-pr: 1916 -->
+
+## [0.82.5.0] - 2026-10-28
+
+### Fixed
+- fix(captions): mixed-language asks keep each language as spoken (KRI-1015) (#1914) <!-- release-pr: 1914 -->
+
+## [0.82.4.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): re-listen wordless stretches and hear the whole mixed take (KRI-1016) (#1913) <!-- release-pr: 1913 -->
+
+## [0.82.3.0] - 2026-10-28
+
+### Changed
+- fix(ios): the Kria sheet's "Open editor" adopts the newer job; keyboard-open UI guard (KRI-986) (#1902) <!-- release-pr: 1902 -->
+
+## [0.82.2.0] - 2026-10-28
+
+### Changed
+- feat(ios): refresh onboarding and edit previews (#1904) <!-- release-pr: 1904 -->
+
+## [0.82.1.0] - 2026-10-28
+
+### Changed
+- feat(ios): caption animation tab for one line or all captions (KRI-1007) (#1906) <!-- release-pr: 1906 -->
+
+## [0.82.0.0] - 2026-10-28
+
+### Added
+- feat(kria): landscape 16:9 output for phone-rendered Talking edits (KRI-306 follow-up, KRI-1008) (#1905) <!-- release-pr: 1905 -->
+
+## [0.81.192.0] - 2026-10-28
+
+### Fixed
+- fix(kria): a photo pinned to a spoken beat is never re-placed as a corner card (KRI-1019) (#1910) <!-- release-pr: 1910 -->
+
+## [0.81.191.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): never cut a span that holds a voice, whatever the transcript says (KRI-1017) (#1915) <!-- release-pr: 1915 -->
+
+## [0.81.190.0] - 2026-10-28
+
+### Changed
+- fix(captions): chat caption move reaches the phone render; plain-words reply (KRI-1008) (#1909) <!-- release-pr: 1909 -->
+
+## [0.81.189.0] - 2026-10-28
+
+### Changed
+- fix(ios): preserve completed videos across app updates (#1907) <!-- release-pr: 1907 -->
+
+## [0.81.188.0] - 2026-10-28
+
+### Changed
+- feat(ios): Camera roll events list, event page, About, and usable idea cards (KRI-1005, KRI-1006) (#1908) <!-- release-pr: 1908 -->
+
+## [0.81.187.0] - 2026-10-28
+
+### Changed
+- feat(camera-roll): event title and notes plus a social-first idea prompt (KRI-1003, KRI-1004) (#1899) <!-- release-pr: 1899 -->
+
+## [0.81.186.0] - 2026-10-28
+
+### Changed
+- feat(ios): redesign caption panel rows and move switches into Edit captions (KRI-1007) (#1901) <!-- release-pr: 1901 -->
+
+## [0.81.185.0] - 2026-10-28
+
+### Changed
+- feat(captions): animation phases per caption line or for all captions (KRI-1007) (#1900) <!-- release-pr: 1900 -->
+
+## [0.81.184.0] - 2026-10-28
+
+### Changed
+- feat(ios): add six reusable text animations (#1898) <!-- release-pr: 1898 -->
+
+## [0.81.183.0] - 2026-10-28
+
+### Changed
+- fix(ios): text-selection handle drags extend the selection instead of opening the projects drawer (KRI-1002) (#1897) <!-- release-pr: 1897 -->
+
+## [0.81.182.0] - 2026-10-28
+
+### Fixed
+- fix(reframe): end the silent audio pad at the planned length (KRI-997) (#1887) <!-- release-pr: 1887 -->
+
+## [0.81.181.0] - 2026-10-28
+
+### Changed
+- fix(ios): show selected timeline items on their first visible frame (KRI-999) (#1893) <!-- release-pr: 1893 -->
+
+## [0.81.180.0] - 2026-10-28
+
+### Changed
+- feat(song-captions): lip-sync lyrics pinned hidden so Show captions works (KRI-1000) (#1894) <!-- release-pr: 1894 -->
+
+## [0.81.179.0] - 2026-10-28
+
+### Changed
+- fix(ci): register preferences tests for native releases (#1896) <!-- release-pr: 1896 -->
+
+## [0.81.178.0] - 2026-10-28
+
+### Changed
+- fix(ios): save and simplify text preferences (#1895) <!-- release-pr: 1895 -->
+
+## [0.81.177.0] - 2026-10-28
+
+### Changed
+- fix(ios): refresh editor permissions after connection recovery (#1891) <!-- release-pr: 1891 -->
+
+## [0.81.176.0] - 2026-10-28
+
+### Changed
+- fix(ios): keep confirmed intro facts readable and editable (KRI-984) (#1889) <!-- release-pr: 1889 -->
+
+## [0.81.175.0] - 2026-10-28
+
+### Changed
+- fix(montage): never print the internal Montage title on an untitled edit (KRI-998) (#1888) <!-- release-pr: 1888 -->
+
+## [0.81.174.0] - 2026-10-28
+
+### Fixed
+- fix(kria): "only about X" scopes a montage to the clips that show X (KRI-993) (#1880) <!-- release-pr: 1880 -->
+
+## [0.81.173.0] - 2026-10-28
+
+### Fixed
+- fix(kria): pre-tick the resolver's near-miss clips and keep the asking turn's matches (KRI-991) (#1879) <!-- release-pr: 1879 -->
+
+## [0.81.172.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): the review counts only cleanup's own cuts and says what it heard (KRI-978) (#1872) <!-- release-pr: 1872 -->
+
+## [0.81.171.0] - 2026-10-28
+
+### Changed
+- fix(kria): a selected pool photo is attached, and a waiting length choice is never a dead end (KRI-989, KRI-990) (#1878) <!-- release-pr: 1878 -->
+
+## [0.81.170.0] - 2026-10-28
+
+### Changed
+- fix(ios): "Open editor" in the editor's Kria sheet returns to the editor (KRI-986) (#1875) <!-- release-pr: 1875 -->
+
+## [0.81.169.0] - 2026-10-28
+
+### Changed
+- fix(lipsync): back-to-back takes all play, held frame over filming breaks; no fallback title (KRI-996) (#1885) <!-- release-pr: 1885 -->
+
+## [0.81.168.0] - 2026-10-28
+
+### Changed
+- fix(ios): allow verified library originals in device source grants (KRI-835) (#1884) <!-- release-pr: 1884 -->
+
+## [0.81.167.0] - 2026-10-28
+
+### Changed
+- fix(ios): recover TestFlight history cancelled before job creation (#1883) <!-- release-pr: 1883 -->
+
+## [0.81.166.0] - 2026-10-27
+
+### Fixed
+- fix(kria): review receipts honour tapped skips and withdrawn photo asks (KRI-994) (#1882) <!-- release-pr: 1882 -->
+
+## [0.81.165.0] - 2026-10-27
+
+### Fixed
+- fix(kria): lift planner flags written inside the action instead of retrying (KRI-992) (#1881) <!-- release-pr: 1881 -->
+
+## [0.81.164.0] - 2026-10-27
+
+### Changed
+- feat(kria): ask which clip when two clips tie for one Voiceover shot (KRI-962) (#1871) <!-- release-pr: 1871 -->
+
+## [0.81.163.0] - 2026-10-27
+
+### Changed
+- fix(ci): preserve timing-window checks with pytest 9.2 (KRI-577) (#1886) <!-- release-pr: 1886 -->
+
+## [0.81.162.0] - 2026-10-27
+
+### Fixed
+- fix(speech-cleanup): keep fillers stamped over squeezed words; cut fillers where they were said (KRI-970) (#1868) <!-- release-pr: 1868 -->
+
+## [0.81.161.0] - 2026-10-27
+
+### Fixed
+- feat(ios): clip picker Next between questions and tap to watch a clip (KRI-995) (#1877) <!-- release-pr: 1877 -->
+
+## [0.81.160.0] - 2026-10-27
+
+### Changed
+- feat(metrics): preserve request outcomes and expand iPhone verification (#1876) <!-- release-pr: 1876 -->
+
+## [0.81.159.0] - 2026-10-27
+
+### Changed
+- fix(kria): unblock Cunda compilation and report saved drafts honestly (#1869) <!-- release-pr: 1869 -->
+
+## [0.81.158.0] - 2026-10-27
+
+### Changed
+- fix(kria): lip-sync reaches approval; unchecked asks no longer dead-end (KRI-983) (#1870) <!-- release-pr: 1870 -->
+
+## [0.81.157.0] - 2026-10-27
+
+### Changed
+- fix(ios): sideways scroll rows scroll themselves instead of dragging the projects drawer (KRI-985) (#1873) <!-- release-pr: 1873 -->
+
+## [0.81.156.0] - 2026-10-27
+
+### Changed
+- fix(launch): recover Photos interruptions and strengthen request replays (#1854) <!-- release-pr: 1854 -->
+
+## [0.81.155.0] - 2026-10-27
+
+### Changed
+- fix(ios): SFX trim resizes the timeline block; first tap selects for trim (KRI-977) (#1867) <!-- release-pr: 1867 -->
+
+## [0.81.154.0] - 2026-10-27
+
+### Changed
+- fix(ios): text alignment keeps the block still; add safe-area Position buttons (KRI-976) (#1866) <!-- release-pr: 1866 -->
+
+## [0.81.153.0] - 2026-10-27
+
+### Fixed
+- fix(kria): the simpler version names what it leaves out (KRI-968) (#1863) <!-- release-pr: 1863 -->
+
+## [0.81.152.0] - 2026-10-27
+
+### Fixed
+- fix(kria): open where an unheard quote head was said, not on the heard tail (KRI-967) (#1862) <!-- release-pr: 1862 -->
+
+## [0.81.151.0] - 2026-10-27
+
+### Fixed
+- fix(phone): editor plays the quoted Talking window, not the whole take (KRI-965) (#1860) <!-- release-pr: 1860 -->
+
+## [0.81.150.0] - 2026-10-27
+
+### Fixed
+- fix(phone): hear a creator-named phrase spoken as one word more or fewer (KRI-961) (#1858) <!-- release-pr: 1858 -->
+
+## [0.81.149.0] - 2026-10-27
+
+### Fixed
+- fix(kria): a finished Voiceover video no longer says its drawn title is missing (KRI-963) (#1856) <!-- release-pr: 1856 -->
+
+## [0.81.148.0] - 2026-10-27
+
+### Changed
+- fix(ci): main green — picker tests expect each other's fix; camera-roll iPhone step runs tests that exist (#1865) <!-- release-pr: 1865 -->
+
+## [0.81.147.0] - 2026-10-26
+
+### Changed
+- feat(ios): full-screen Camera roll surface, ideas per event, old sheets deleted (KRI-944) (#1855) <!-- release-pr: 1855 -->
+
+## [0.81.146.0] - 2026-10-26
+
+### Changed
+- feat(ios): camera roll per-item engine and state reducer (KRI-944) (#1841) <!-- release-pr: 1841 -->
+
+## [0.81.145.0] - 2026-10-26
+
+### Changed
+- feat(api): photos feed ideas behind a build gate (KRI-944) (#1848) <!-- release-pr: 1848 -->
+
+## [0.81.144.0] - 2026-10-26
+
+### Changed
+- feat(api): ideas per event with delete, restore, another idea and delete event (KRI-944) (#1845) <!-- release-pr: 1845 -->
+
+## [0.81.143.0] - 2026-10-26
+
+### Changed
+- feat(api): camera-roll analysis converges + per-item state route (KRI-944) (#1842) <!-- release-pr: 1842 -->
+
+## [0.81.142.0] - 2026-10-26
+
+### Fixed
+- fix(kria): one picker answer counts for every row about the same moment (KRI-947, KRI-951) (#1852) <!-- release-pr: 1852 -->
+
+## [0.81.141.0] - 2026-10-26
+
+### Changed
+- fix(kria): seat a listed middle order and judge every order row against the cut (KRI-941) (#1846) <!-- release-pr: 1846 -->
+
+## [0.81.140.0] - 2026-10-26
+
+### Changed
+- feat(kria): voiceover and talk-to-camera edits may run 240s (KRI-955) (#1850) <!-- release-pr: 1850 -->
+
+## [0.81.139.0] - 2026-10-26
+
+### Changed
+- feat(phone): turn clip sound on/off by clip, seconds or spoken line (KRI-942) (#1847) <!-- release-pr: 1847 -->
+
+## [0.81.138.0] - 2026-10-26
+
+### Fixed
+- fix(kria): a failed clip vision check records its exception class (KRI-952) (#1851) <!-- release-pr: 1851 -->
+
+## [0.81.137.0] - 2026-10-26
+
+### Fixed
+- fix(clips): offer the photos when the resolver found nothing for a one-video picker (KRI-949) (#1849) <!-- release-pr: 1849 -->
+
+## [0.81.136.0] - 2026-10-26
+
+### Fixed
+- fix(kria): blame the 120s edit cap, not the footage, for an over-long voiceover (KRI-953) (#1844) <!-- release-pr: 1844 -->
+
+## [0.81.135.0] - 2026-10-26
+
+### Changed
+- fix(kria): intro facts + hook request no longer dead-ends (KRI-945) (#1843) <!-- release-pr: 1843 -->
+
+## [0.81.134.0] - 2026-10-26
+
+### Fixed
+- fix(phone): draw the confirmed title and clip labels on kept-line montages (KRI-939) (#1839) <!-- release-pr: 1839 -->
+
+## [0.81.133.0] - 2026-10-26
+
+### Changed
+- fix(ios): keep Talking captions with source segment edits (KRI-852) (#1770) <!-- release-pr: 1770 -->
+
+## [0.81.132.0] - 2026-10-26
+
+### Fixed
+- fix(kria): chat follow-ups never stick, run twice, or start alongside a turn (KRI-866) (#1785) <!-- release-pr: 1785 -->
+
+## [0.81.131.0] - 2026-10-26
+
+### Added
+- feat(phone): exact-timed small cards on Montage and Voiceover edits (PHONE_TIMED_CARDS_ENABLED) (#1835) <!-- release-pr: 1835 -->
+
+## [0.81.130.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): suggest background research, label footage vs background (#1832) <!-- release-pr: 1832 -->
+
+## [0.81.129.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): open questions gate building an idea (#1830) <!-- release-pr: 1830 -->
+
+## [0.81.128.0] - 2026-10-26
+
+### Changed
+- feat(camera-roll): typed idea form with server-side evidence rules (#1828) <!-- release-pr: 1828 -->
+
+## [0.81.127.0] - 2026-10-26
+
+### Changed
+- feat(taste): one-tap "Use as a taste example?" for would-post ideas and rewrites (#1831) <!-- release-pr: 1831 -->
+
+## [0.81.126.0] - 2026-10-26
+
+### Changed
+- feat(taste): similarity-ranked feedback and no re-offered rejected ideas (#1829) <!-- release-pr: 1829 -->
+
+## [0.81.125.0] - 2026-10-26
+
+### Changed
+- feat(taste): wrong_facts feedback excludes rejected research facts on the next run (#1827) <!-- release-pr: 1827 -->
+
+## [0.81.124.0] - 2026-10-26
+
+### Changed
+- feat(taste): read-only repeat-rejection measurement lever (#1826) <!-- release-pr: 1826 -->
+
+## [0.81.123.0] - 2026-10-25
+
+### Added
+- feat(speech): bundle the RNNoise model for phone engine-noise reduction (#1838) <!-- release-pr: 1838 -->
+
+## [0.81.122.0] - 2026-10-25
+
+### Added
+- feat(kria): plan chat-requested clip speed on phone montages at creation (KRI-689) (#1836) <!-- release-pr: 1836 -->
+
+## [0.81.121.0] - 2026-10-25
+
+### Added
+- feat(ios): text behind people on the phone (Vision person matte, protocol 21) (#1834) <!-- release-pr: 1834 -->
+
+## [0.81.120.0] - 2026-10-25
+
+### Fixed
+- fix(speech): merge mixed-language takes on the phone Talking live branch (KRI-843) (#1833) <!-- release-pr: 1833 -->
+
+## [0.81.119.0] - 2026-10-25
+
+### Changed
+- feat(taste): allow ["*"] in editorial taste allowlist to admit every account (#1825) <!-- release-pr: 1825 -->
+
+## [0.81.118.0] - 2026-10-25
+
+### Changed
+- feat(ios): saved uploads use the Photos grid and load fast (KRI-937) (#1824) <!-- release-pr: 1824 -->
+
 ## [0.81.117.0] - 2026-10-25
 
 ### Changed

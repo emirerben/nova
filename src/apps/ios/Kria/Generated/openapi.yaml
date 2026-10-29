@@ -644,7 +644,8 @@
               "select",
               "timing",
               "audio",
-              "style"
+              "style",
+              "text_sequence"
             ],
             "title": "Kind",
             "type": "string"
@@ -1052,6 +1053,36 @@
         "title": "CoarseLocation",
         "type": "object"
       },
+      "CollectionEvent": {
+        "additionalProperties": false,
+        "description": "Creator-written context for one event, keyed by the members' `group` string.\n\n`group` need not match any member: a brand-new event is empty until footage is added.",
+        "properties": {
+          "about": {
+            "default": "",
+            "maxLength": 600,
+            "title": "About",
+            "type": "string"
+          },
+          "group": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Group",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "title"
+        ],
+        "title": "CollectionEvent",
+        "type": "object"
+      },
       "CollectionIndexBody": {
         "additionalProperties": false,
         "properties": {
@@ -1112,6 +1143,14 @@
             "title": "Revision",
             "type": "integer"
           },
+          "sampled_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Sampled Asset Ids",
+            "type": "array"
+          },
           "truncated_asset_ids": {
             "items": {
               "format": "uuid",
@@ -1156,6 +1195,101 @@
         "title": "CollectionIndexOut",
         "type": "object"
       },
+      "CollectionItemOut": {
+        "description": "One collection member's server-derived progress. See media_collection_items.py.\n\n`uploading` and `icloud_unavailable` are device-side: a member's bytes are on the server\nby definition, so the client owns both while it exports and uploads.",
+        "properties": {
+          "asset_id": {
+            "format": "uuid",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "attempts": {
+            "default": 0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "group": {
+            "nullable": true,
+            "title": "Group",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "video",
+              "image"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "provider_error",
+              "budget_paused",
+              "unsupported_type",
+              "too_large",
+              "too_long",
+              "icloud_unavailable",
+              "no_usable_moment",
+              "access_revoked"
+            ],
+            "nullable": true,
+            "title": "Reason",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "queued",
+              "uploading",
+              "analyzing",
+              "ready",
+              "needs_retry",
+              "failed",
+              "excluded"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "kind",
+          "state",
+          "updated_at"
+        ],
+        "title": "CollectionItemOut",
+        "type": "object"
+      },
+      "CollectionItemsOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionItemOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "items"
+        ],
+        "title": "CollectionItemsOut",
+        "type": "object"
+      },
       "CollectionMember": {
         "additionalProperties": false,
         "properties": {
@@ -1186,6 +1320,13 @@
       },
       "CollectionOut": {
         "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -1239,6 +1380,11 @@
             },
             "title": "Stories",
             "type": "array"
+          },
+          "suggested_research_topic": {
+            "nullable": true,
+            "title": "Suggested Research Topic",
+            "type": "string"
           }
         },
         "required": [
@@ -1276,6 +1422,11 @@
           "duration_s": {
             "title": "Duration S",
             "type": "number"
+          },
+          "group": {
+            "nullable": true,
+            "title": "Group",
+            "type": "string"
           },
           "hook": {
             "title": "Hook",
@@ -1352,6 +1503,15 @@
       "CollectionWrite": {
         "additionalProperties": false,
         "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CollectionEvent"
+            },
+            "maxItems": 50,
+            "nullable": true,
+            "title": "Events",
+            "type": "array"
+          },
           "expected_revision": {
             "minimum": 0.0,
             "title": "Expected Revision",
@@ -1448,6 +1608,11 @@
             "title": "Formats",
             "type": "array"
           },
+          "idea_example_feedback": {
+            "default": false,
+            "title": "Idea Example Feedback",
+            "type": "boolean"
+          },
           "live_plan_review_enabled": {
             "default": false,
             "title": "Live Plan Review Enabled",
@@ -1462,7 +1627,7 @@
             "$ref": "#/components/schemas/CreationMediaCapabilitiesOut"
           },
           "media_collection_cache_only": {
-            "default": true,
+            "default": false,
             "title": "Media Collection Cache Only",
             "type": "boolean"
           },
@@ -1492,6 +1657,11 @@
           "protected_region_marks": {
             "default": false,
             "title": "Protected Region Marks",
+            "type": "boolean"
+          },
+          "request_outcome_context": {
+            "default": false,
+            "title": "Request Outcome Context",
             "type": "boolean"
           },
           "runtime_versions": {
@@ -1583,6 +1753,11 @@
           "voiceover_script_cards": {
             "default": false,
             "title": "Voiceover Script Cards",
+            "type": "boolean"
+          },
+          "wrong_fact_feedback": {
+            "default": false,
+            "title": "Wrong Fact Feedback",
             "type": "boolean"
           }
         },
@@ -2994,6 +3169,7 @@
                 "textBend",
                 "singleWordText",
                 "freezeFrame",
+                "behindSubject",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3118,6 +3294,7 @@
                 "textBend",
                 "singleWordText",
                 "freezeFrame",
+                "behindSubject",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3190,6 +3367,11 @@
             "nullable": true,
             "title": "Alignment",
             "type": "string"
+          },
+          "animation_phases": {
+            "$ref": "#/components/schemas/TextAnimationPhases",
+            "default": null,
+            "nullable": true
           },
           "highlight_spoken_word": {
             "default": null,
@@ -3292,6 +3474,11 @@
       },
       "EditorCommitCaptionMeta": {
         "properties": {
+          "animation_phases": {
+            "$ref": "#/components/schemas/TextAnimationPhases",
+            "default": null,
+            "nullable": true
+          },
           "appearance": {
             "$ref": "#/components/schemas/EditorCaptionAppearance",
             "default": null,
@@ -4804,6 +4991,50 @@
           "to"
         ],
         "title": "GradientBackground",
+        "type": "object"
+      },
+      "GroupDeleteBody": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "group": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Group",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "expected_revision"
+        ],
+        "title": "GroupDeleteBody",
+        "type": "object"
+      },
+      "GroupDeleteOut": {
+        "properties": {
+          "deleted_story_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Deleted Story Ids",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "deleted_story_ids"
+        ],
+        "title": "GroupDeleteOut",
         "type": "object"
       },
       "GuidedEditorSource": {
@@ -6964,6 +7195,22 @@
             },
             "title": "Unindexed Asset Ids",
             "type": "array"
+          },
+          "unoffered_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unoffered Asset Ids",
+            "type": "array"
+          },
+          "unsupported_asset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Unsupported Asset Ids",
+            "type": "array"
           }
         },
         "required": [
@@ -8185,6 +8432,12 @@
             "default": null,
             "nullable": true
           },
+          "behind_subject": {
+            "default": null,
+            "nullable": true,
+            "title": "Behind Subject",
+            "type": "boolean"
+          },
           "bend": {
             "default": null,
             "maximum": 100,
@@ -8926,6 +9179,50 @@
           "default"
         ],
         "title": "RenderShapeOut",
+        "type": "object"
+      },
+      "RequestOutcomeContext": {
+        "additionalProperties": false,
+        "properties": {
+          "client_build": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^[0-9]{1,10}$",
+            "title": "Client Build",
+            "type": "string"
+          },
+          "client_version": {
+            "default": null,
+            "maxLength": 32,
+            "nullable": true,
+            "pattern": "^[0-9]+(?:\\.[0-9]+){0,3}$",
+            "title": "Client Version",
+            "type": "string"
+          },
+          "parent_turn_id": {
+            "default": null,
+            "format": "uuid",
+            "nullable": true,
+            "title": "Parent Turn Id",
+            "type": "string"
+          },
+          "relation": {
+            "enum": [
+              "original",
+              "continuation",
+              "retry",
+              "revision",
+              "recovery",
+              "unclassified"
+            ],
+            "title": "Relation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relation"
+        ],
+        "title": "RequestOutcomeContext",
         "type": "object"
       },
       "RequirementReceipt": {
@@ -10660,6 +10957,18 @@
             "title": "Closing Text",
             "type": "string"
           },
+          "form": {
+            "enum": [
+              "guide",
+              "factual_story",
+              "atmosphere",
+              "review",
+              "performance"
+            ],
+            "nullable": true,
+            "title": "Form",
+            "type": "string"
+          },
           "format": {
             "default": "text_story",
             "enum": [
@@ -10667,6 +10976,14 @@
             ],
             "title": "Format",
             "type": "string"
+          },
+          "open_questions": {
+            "items": {
+              "$ref": "#/components/schemas/StoryOpenQuestion"
+            },
+            "maxItems": 3,
+            "title": "Open Questions",
+            "type": "array"
           },
           "opening_text": {
             "maxLength": 100,
@@ -10764,6 +11081,21 @@
         "title": "StoryCorrectionBody",
         "type": "object"
       },
+      "StoryDeletedOut": {
+        "description": "An idea is soft-deleted; restoring it is possible until this moment.",
+        "properties": {
+          "restore_until": {
+            "format": "date-time",
+            "title": "Restore Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "restore_until"
+        ],
+        "title": "StoryDeletedOut",
+        "type": "object"
+      },
       "StoryGenerationBody": {
         "additionalProperties": false,
         "properties": {
@@ -10777,14 +11109,30 @@
             "title": "Cache Only",
             "type": "boolean"
           },
+          "exclude_story_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Exclude Story Ids",
+            "type": "array"
+          },
           "expected_revision": {
             "minimum": 1.0,
             "title": "Expected Revision",
             "type": "integer"
           },
-          "query": {
-            "maxLength": 500,
+          "group": {
+            "maxLength": 80,
             "minLength": 1,
+            "nullable": true,
+            "title": "Group",
+            "type": "string"
+          },
+          "query": {
+            "default": "",
+            "maxLength": 500,
             "title": "Query",
             "type": "string"
           },
@@ -10797,10 +11145,44 @@
           }
         },
         "required": [
-          "expected_revision",
-          "query"
+          "expected_revision"
         ],
         "title": "StoryGenerationBody",
+        "type": "object"
+      },
+      "StoryOpenQuestion": {
+        "additionalProperties": false,
+        "description": "An unknown the creator must answer or skip before the idea is built.",
+        "properties": {
+          "answer": {
+            "maxLength": 200,
+            "minLength": 1,
+            "nullable": true,
+            "title": "Answer",
+            "type": "string"
+          },
+          "dismissed": {
+            "default": false,
+            "title": "Dismissed",
+            "type": "boolean"
+          },
+          "id": {
+            "default": "",
+            "maxLength": 8,
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 140,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "StoryOpenQuestion",
         "type": "object"
       },
       "StoryResearch": {
@@ -10962,6 +11344,11 @@
           },
           "moment_order": {
             "$ref": "#/components/schemas/MomentOrderAnswerIn",
+            "default": null,
+            "nullable": true
+          },
+          "outcome_context": {
+            "$ref": "#/components/schemas/RequestOutcomeContext",
             "default": null,
             "nullable": true
           },
@@ -11235,7 +11622,13 @@
               "fade",
               "pop",
               "slide",
-              "typewriter"
+              "typewriter",
+              "silkReveal",
+              "elasticCondensed",
+              "focusPull",
+              "wordRelay",
+              "ribbonWipe",
+              "echoStack"
             ],
             "title": "Entrance",
             "type": "string"
@@ -11247,7 +11640,13 @@
               "fade",
               "pop",
               "slide",
-              "typewriter"
+              "typewriter",
+              "silkReveal",
+              "elasticCondensed",
+              "focusPull",
+              "wordRelay",
+              "ribbonWipe",
+              "echoStack"
             ],
             "title": "Exit",
             "type": "string"
@@ -15841,6 +16240,65 @@
         ]
       }
     },
+    "/me/media-collections/{identifier}/groups": {
+      "delete": {
+        "description": "Remove one event's members and soft-delete its ideas; other events are untouched.",
+        "operationId": "delete_group_me_media_collections__identifier__groups_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupDeleteBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupDeleteOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Delete Group",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
     "/me/media-collections/{identifier}/index": {
       "post": {
         "operationId": "index_me_media_collections__identifier__index_post",
@@ -15952,6 +16410,55 @@
           }
         ],
         "summary": "Inspect",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
+    "/me/media-collections/{identifier}/items": {
+      "get": {
+        "description": "Per-member progress (queued -> analyzing -> ready, or an honest failure) for polling.",
+        "operationId": "items_me_media_collections__identifier__items_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionItemsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Items",
         "tags": [
           "media-library"
         ]
@@ -16225,6 +16732,28 @@
               "title": "Story Ids",
               "type": "array"
             }
+          },
+          {
+            "in": "query",
+            "name": "group",
+            "required": false,
+            "schema": {
+              "maxLength": 80,
+              "minLength": 1,
+              "nullable": true,
+              "title": "Group",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -16269,6 +16798,16 @@
             "schema": {
               "format": "uuid",
               "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16317,6 +16856,62 @@
       }
     },
     "/me/media-collections/{identifier}/stories/{story_id}": {
+      "delete": {
+        "operationId": "delete_story_me_media_collections__identifier__stories__story_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "story_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Story Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoryDeletedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Delete Story",
+        "tags": [
+          "media-library"
+        ]
+      },
       "patch": {
         "operationId": "correct_story_me_media_collections__identifier__stories__story_id__patch",
         "parameters": [
@@ -16337,6 +16932,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
@@ -16407,6 +17012,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16475,6 +17090,16 @@
               "title": "Story Id",
               "type": "string"
             }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -16520,6 +17145,74 @@
         ]
       }
     },
+    "/me/media-collections/{identifier}/stories/{story_id}/restore": {
+      "post": {
+        "operationId": "restore_story_me_media_collections__identifier__stories__story_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "identifier",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Identifier",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "story_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionStoryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "mobileBearer": []
+          }
+        ],
+        "summary": "Restore Story",
+        "tags": [
+          "media-library"
+        ]
+      }
+    },
     "/me/media-collections/{identifier}/stories/{story_id}/select": {
       "post": {
         "operationId": "select_story_me_media_collections__identifier__stories__story_id__select_post",
@@ -16541,6 +17234,16 @@
             "schema": {
               "format": "uuid",
               "title": "Story Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Kria-Client-Protocol",
+            "required": false,
+            "schema": {
+              "nullable": true,
+              "title": "X-Kria-Client-Protocol",
               "type": "string"
             }
           }
