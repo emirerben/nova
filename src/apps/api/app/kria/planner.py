@@ -1961,6 +1961,11 @@ _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar
 turn_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "kria_turn_deadline", default=None
 )
+# KRI-1037: set by the turn task when the thread's last turn ended at a provider deadline, so
+# the Main Creator starts on its lighter rung instead of repeating the call that timed out.
+start_degraded_retry: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "kria_start_degraded_retry", default=False
+)
 # Sequence of the creator message the running turn answers (set by the turn task). A later
 # message is a queued follow-up with its own turn, so the history this turn plans from stops
 # here. None = no bound.
@@ -2563,6 +2568,7 @@ async def _call_main_creator(
                     deadline - _POST_UNDERSTANDING_RESERVE_S if deadline is not None else None
                 ),
                 thought_summary_callback=current_thought_publisher(),
+                start_degraded=start_degraded_retry.get(),
             ),
         )
 
