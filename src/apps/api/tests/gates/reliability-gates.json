@@ -2192,7 +2192,7 @@
       ],
       "status": "open_pr",
       "owner": "KRI-1042",
-      "symptom": "A correct Lisbon phone export (job 3daccc8c) was rejected by phone-simple-cut-v3: white Inter-Bold titles over white shirts broke one word at 0.45 s and 1.5 s ('The energy of arathon a spectators.'), and v3 needed the exact copy in every visible sample. A copy with a straight quote could never pass because the Tesseract TSV was parsed with CSV quoting.",
+      "symptom": "A correct Lisbon phone export (job 3daccc8c) was rejected by phone-simple-cut-v3: white Inter-Bold titles over white shirts broke one word at 0.45 s and 1.5 s, and v3 needed the exact copy in every visible sample. A copy with a straight quote could never pass because the Tesseract TSV was parsed with CSV quoting.",
       "boundary": "publication",
       "journey": "kri-492-length-ownership",
       "paths": [
