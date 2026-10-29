@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.28.0] - 2026-10-29
+
+### Changed
+- fix(montage): keep a named line's whole sentence and check it in the receipt (KRI-1028) (#1929) <!-- release-pr: 1929 -->
+
 ## [0.82.27.0] - 2026-10-29
 
 ### Changed
