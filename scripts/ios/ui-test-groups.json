@@ -267,6 +267,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingTextBlockToRightEdgeAutoScrollsPastVisibleWindow",
       "KriaUITests/NativeCaptionVisualUITests/testAnalyzingGalleryCanScrollInBothDirections",
       "KriaUITests/NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens",
+      "KriaUITests/NativeCaptionVisualUITests/testCaptionSizePositionScopesAndGestureChoice",
       "KriaUITests/NativeCaptionVisualUITests/testCaptionSwitchesAndDisplayAtLargestTextSize",
       "KriaUITests/NativeCaptionVisualUITests/testLegacyServerAllowsOpeningVisualImporterAndAddingCard",
       "KriaUITests/NativeCaptionVisualUITests/testVisualControlsEditAndPlaybackRemainAvailable",
