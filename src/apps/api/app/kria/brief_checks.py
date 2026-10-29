@@ -373,6 +373,10 @@ class PlanFacts:
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
     sequence_spots_met: tuple[str, ...] | None = None
     texts: tuple[str, ...] = ()
+    # 29 Ekim: the whole text of every complete fragment sequence on screen (a title shown a
+    # piece at a time), so a `text_sequence` ask is judged by how the words are SHOWN, not by
+    # the sentence appearing somewhere. Empty = none, or this facts source never has it.
+    sequence_texts: tuple[str, ...] = ()
     # KRI-945: pinned contract texts the render puts on screen whatever the plan holds
     # (`phone_plan_repair.contract_text_drawn`). Empty = no such writer, or not known.
     contract_drawn_texts: tuple[str, ...] = ()
@@ -1764,7 +1768,10 @@ def plan_facts_from_editor_payload(
     # KRI-560: a phrase the compiler split into one-word-at-a-time fragments (a word-by-word
     # hook) is on screen as the whole phrase, but no single row says it. Only a complete,
     # contiguous, same-source run counts; a missing or removed word leaves the phrase unseen.
-    strings.extend(composed["text"] for composed in complete_sequences(sequence_fragments))
+    composed_sequences = tuple(
+        composed["text"] for composed in complete_sequences(sequence_fragments)
+    )
+    strings.extend(composed_sequences)
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue
@@ -1794,6 +1801,7 @@ def plan_facts_from_editor_payload(
             and payload.get("text_elements")
         ),
         texts=tuple(strings),
+        sequence_texts=composed_sequences,
         editor=True,
         has_clip_structure=bool(per_clip),
         per_clip_text=per_clip,
@@ -9475,6 +9483,8 @@ def _has_checker(req: BriefRequirement) -> bool:
     if judged_at_render(req):
         # Neutral (`_NO_CHECKER`) anywhere but a finished phone montage (KRI-546).
         return True
+    if req.kind == "text_sequence":
+        return True  # 29 Ekim: judged against the fragment sequences on screen
     if req.kind == "text":
         return bool(
             req.scope in ("per_clip", "title") or req.scope.startswith("clip:") or req.literal
@@ -9884,7 +9894,23 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
     return receipt
 
 
+def _check_text_sequence(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """The creator's words are shown a piece at a time (29 Ekim).
+
+    Met only when a complete fragment sequence on screen reads as exactly those words. The
+    sentence sitting in one title is NOT the ask. A draft that has not composed the sequence
+    yet says nothing (neutral, never a question): the editor ops compose it, the creator is
+    not asked to settle for a static title.
+    """
+    wanted = _fold(req.literal or "")
+    if wanted and any(_fold(text) == wanted for text in facts.sequence_texts):
+        return _receipt(req, "met", None)
+    return _receipt(req, "partial", _NO_CHECKER)
+
+
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if req.kind == "text_sequence":
+        return _check_text_sequence(req, facts)
     if wants_engine_noise_reduction(req):
         # This owns only the explicit engine-noise request.  Bed/mix controls keep their
         # existing checker and cannot be satisfied by a noise filter.
