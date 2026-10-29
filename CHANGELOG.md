@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.11.0] - 2026-10-29
+
+### Fixed
+- fix(ios): a dead upload no longer keeps Send disabled after a crash (#1921) <!-- release-pr: 1921 -->
+
 ## [0.82.10.0] - 2026-10-29
 
 ### Fixed
