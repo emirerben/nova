@@ -11,3 +11,5 @@ A further independent review found narration acceptance locking CreationThread b
 The existing 21 judge tests were relocated intact into the structural-evaluation suite. WebSockets is now a direct dependency, qualified locally against 16.0 and compatible with the installed Gemini SDK range. No live Realtime behavior is inferred from signatures or mocked contracts.
 
 [VERIFY.md](VERIFY.md) records current checks and gaps. No live quality winner, verified billing balance, complete final-head broad-suite pass or inspected physical-phone export is claimed. Eligible real holdouts remain unavailable. Draft PR publication is authorized; deployment-sensitive merge and denied metadata writes remain held.
+
+The final deadline-runtime merge at `1e82c2c8` was independently reviewed: upstream model client is preserved, runtime retains judge attribution, and budget/generated-media/native implementation is unchanged. Obsolete PR-only deadline test skips were removed while retaining all assertions. The consolidated run passed 1,660 tests and 24 subtests with zero failures/errors/skips.

@@ -1,6 +1,6 @@
 {
   "mode": "offline_credit_preflight",
-  "packet_sha256": "38955b50fbe8b709f7129c8f1efe0f10790126bc3d66ca13f246a07340428431",
+  "packet_sha256": "9045ec3e3fb50eb6e7b25a4ed37d65302a221ebf8d51261e017de28354cae7cd",
   "provider_estimated_max_usd": {
     "anthropic": 0.192074,
     "openai": 0.192074

@@ -2098,7 +2098,7 @@
     {
       "id": "api-credit-capabilities",
       "needs_native": true,
-      "api_tests": "tests/services/test_generated_media_service.py tests/services/test_generated_media_transport.py tests/services/test_generated_media_admission.py tests/services/test_credit_cap_budgets.py tests/services/test_text_provider_ledger.py tests/evals/test_online_judge_acceptance.py tests/routes/test_generated_media.py tests/routes/test_content_plan_lock_mode.py tests/routes/test_lock_order.py tests/test_content_plan_schema.py",
+      "api_tests": "tests/services/test_generated_media_service.py tests/services/test_generated_media_transport.py tests/services/test_generated_media_admission.py tests/services/test_credit_cap_budgets.py tests/services/test_text_provider_ledger.py tests/evals/test_online_judge_acceptance.py tests/routes/test_generated_media.py tests/routes/test_content_plan_lock_mode.py tests/routes/test_lock_order.py tests/test_content_plan_schema.py tests/services/test_credit_deadline_compatibility.py tests/agents/test_deadline_ladder.py tests/tasks/test_kria_turn_failure_code.py",
       "xctests": [
         "KriaTests/GeneratedMediaTests",
         "KriaUITests/GeneratedMediaUITests/testApprovedNarrationPreviewThenUseAttachesAudioWithoutImageAsset",
@@ -2131,7 +2131,8 @@
         "src/apps/ios/Tests/KriaTests/GeneratedMediaTests.swift",
         "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift",
         "src/apps/api/tests/evals/test_online_judge_acceptance.py",
-        "src/apps/api/tests/test_content_plan_schema.py"
+        "src/apps/api/tests/test_content_plan_schema.py",
+        "src/apps/api/tests/services/test_credit_deadline_compatibility.py"
       ]
     }
   ]

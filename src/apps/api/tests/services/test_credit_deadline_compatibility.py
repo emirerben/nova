@@ -1,13 +1,12 @@
 """Unknown deadline liabilities must survive lighter calls and concurrent turns.
 
 Failure modes: releasing a timeout, reusing a reservation, bypassing a shared
-cap, and estimating the old output limit. PR runtime checks run only when its
-exact checkout is explicitly selected; provider timing is simulated.
+cap, and estimating the old output limit. The merged runtime uses real ledger
+reservations here; provider timing is simulated.
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -20,9 +19,6 @@ from app.agents._runtime import AiBudgetExceededError, RunContext
 from app.config import settings
 from app.database import sync_engine
 from app.services import ai_cost_control as costs
-
-PR_HEAD = "05ea27c29a918973ba20a4c58006fcc56a5e8749"
-
 
 @pytest.fixture
 def deadline_ledger(monkeypatch):
@@ -152,11 +148,8 @@ def test_doubled_copilot_output_budget_increases_reservation():
     assert estimates[1] - estimates[0] == pytest.approx(2 * 8192 * 12 / 1_000_000)
 
 
-@pytest.mark.skipif(
-    os.getenv("NOVA_DEADLINE_PR_HEAD") != PR_HEAD, reason="requires exact PR 1934 runtime checkout"
-)
 @pytest.mark.parametrize("exhaust_cap", [False, True])
-def test_actual_pr_ladder_uses_real_ledger(deadline_ledger, monkeypatch, exhaust_cap):
+def test_runtime_ladder_uses_real_ledger(deadline_ledger, monkeypatch, exhaust_cap):
     import json
     from types import SimpleNamespace
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at": "2026-10-29T14:52:00.535291+00:00",
+  "recorded_at": "2026-10-29T14:58:30.183816+00:00",
   "implementation_head": "8d13cc470df688b7d7d79c94ef6315aa0037337a",
   "evidence_level": "offline_transport_replay_real_postgresql_and_native_simulator",
   "scope": "Metered optional image generation/editing, script-bound narration, existing online evaluation; Gemini default and iPhone final rendering retained.",
@@ -13,9 +13,10 @@
     "passed": 286,
     "failed": 0,
     "artifact": "credit-evidence/reliability-main-reconciled.log",
-    "note": "Overlaps focused tests; do not add counts.",
+    "note": "Historical pre-deadline-main check; final preship rechecks mapped gates. Counts overlap other suites.",
     "environment_skips": 0,
-    "environment_errors": 0
+    "environment_errors": 0,
+    "source_head": "9c128d23b8a04e195def48e49d36851ddaca14c6"
   },
   "native": {
     "passed": 14,
@@ -95,15 +96,14 @@
     "claim_limit": "A complete final-corrected-head broad suite has not been rerun; no green full-suite claim."
   },
   "final_consolidated_api": {
-    "passed": 1640,
+    "passed": 1660,
     "failed": 0,
     "errors": 0,
-    "skipped": 2,
+    "skipped": 0,
     "subtests_passed": 24,
-    "duration_seconds": 58.16,
-    "artifact": "credit-evidence/final-consolidated-api.xml",
-    "scope": "All credit capabilities, budget/judge/provider tests, real PostgreSQL admission, canonical lock/schema guards, Apple-revocation fixtures and all root API tests.",
-    "skip_reason": "Two PR1934-only runtime checks; exact PR overlay independently passed six."
+    "duration_seconds": 57.17,
+    "artifact": "credit-evidence/landed-ladder-consolidated.xml",
+    "scope": "All prior targeted credit/ownership/migration/root checks plus merged deadline-ladder and turn-failure suites."
   },
   "narration_lock_regression": {
     "red_artifact": "credit-evidence/narration-lock-red.xml",
@@ -141,16 +141,15 @@
   },
   "verified_files_sha256": {
     ".env.example": "91d65a65e5b73e0c68d9abad8e2f333d94f57600f8ec9322ce010e5217461c8b",
-    "scripts/ci/journey-manifest.json": "e0484c18cf12276128023f9f019bca7a2661ace66922e1c02724c9d8f2113534",
+    "scripts/ci/journey-manifest.json": "cab5ca64294e25ed8e25fbcfa57f5ce877effef3e51e82f99d5e47af6fc70496",
     "src/apps/api/OBSERVABILITY.md": "dd1bc0bbaade0561358e0fb67c7b0a6e9887e46c7ec11e886f350cb8b5391b5d",
-    "src/apps/api/app/agents/_model_client.py": "cff0d86f500e54189c9ddc3ad757f60efe565c95db63ce68f51e0e7738545675",
+    "src/apps/api/app/agents/_model_client.py": "9bcb082c48a3d6865b8207b0aae1e2d624ad4a2ecac92b77cc3be7f69a7abb31",
     "src/apps/api/app/agents/_online_eval.py": "bade9e51426557ef93a83133a489e71b4efe45b03295f0f53bfa8d842acd79a8",
-    "src/apps/api/app/agents/_runtime.py": "74458e8573062c9cf61751467d60175d17b34f52410dc59f33513c6d4e43591b",
-    "src/apps/api/app/agents/edit_copilot.py": "ec7a2112754151b00684a71c55e68749f8ff4017971a96597ae979a3dedf15e0",
-    "src/apps/api/app/agents/main_creator.py": "44b59b819fcf5418a14ea5ff3ed028ae9cc9600d071eefd4bb6995692cb1132f",
+    "src/apps/api/app/agents/_runtime.py": "8fa1684cdc4d840154e165a31ff9e1435458c83e1091bd4bc71d44cf8db0ccb5",
+    "src/apps/api/app/agents/edit_copilot.py": "8b166d4dfa42d3d540df5950784cc93798e65b439949f9e44d1dc048d6c682ab",
+    "src/apps/api/app/agents/main_creator.py": "8cc791f65ccd2c28c07fc67ede80d8471ecc4582c36fdd94ed80331e397d9332",
     "src/apps/api/app/cli/compare_creator_models.py": "84b59217559f70124d561341ba1e91c9be66eed67aeee08066809e818bd1a12d",
-    "src/apps/api/app/config.py": "7e387055de30e9165fa127261a53cb2759238f179992e6ad9d5b2670a3056375",
-    "src/apps/api/app/kria/planner.py": "70190d776a91c861ced5a1c78df6e1bf863f7dac253ae2f62dc3ddd11b398e02",
+    "src/apps/api/app/config.py": "1bcf7b7b0fd10867f4d1c193008eb87456e820c4dfbdce4a6fddc809c72b67eb",
     "src/apps/api/app/main.py": "867f967742dec5fed1931beb5a5fd0cbb14615aacbc6c853f64d7e510708b81a",
     "src/apps/api/app/migrations/versions/0127_generated_media_operations.py": "4f46a0b9021db6ad4e65520c0112c99cf373a8a7504125a9a9ad5d68e243671d",
     "src/apps/api/app/models.py": "a0b0116e3db42e0419f270a4eb2634738f9f59b5b227db8ecf850e2cd6569c19",
@@ -163,25 +162,22 @@
     "src/apps/api/app/services/generated_media.py": "c6ef0de845db61c634d55d1c57e0144c0efe3eba7ee5e8a59f1a0636b1110a7a",
     "src/apps/api/app/services/generated_media_admission.py": "979028e9486e008081d3fb1feda19e92ea81f7a5eb8948382716d4f348998112",
     "src/apps/api/app/services/generated_media_transport.py": "c3f9a2004d7ced6b20e965866a8f8a0f9856c698e12bcfdf555d0fc0ba80291a",
-    "src/apps/api/app/tasks/kria_runtime.py": "88069cd9966e739397bba72ac5580e157dbf29eaaf8288af4fccc8c027d614e7",
     "src/apps/api/app/tasks/maintenance.py": "520ed41d54010f52b4d12bcca4aae6a858a6250089bb0e360d77b263c772f1c1",
     "src/apps/api/app/tasks/online_eval.py": "6d0f1139c68eb3db3661bbb4001143cab7542affe6eba900bd59104d0e145206",
     "src/apps/api/app/worker.py": "44f8eee476edec9eb7d83bbce2dcbf944488a13743099041c8a29910e51bb5c2",
     "src/apps/api/pyproject.toml": "e6955905b3db4f301428e0d6ecfd132eb7186d25b60db5d91982bd00a84e876a",
     "src/apps/api/tests/agents/test_comparison_workflow.py": "86bebd626a6fa6a411e4f68f60f2e6c7ad2fdac7b542c1d3dbf5153aec8529c9",
     "src/apps/api/tests/agents/test_credit_plan_contracts.py": "1783b53e93be8876e52b4bec8b66572877dbb045cc2dda6cbae8a077820fc744",
-    "src/apps/api/tests/agents/test_thinking_budget.py": "baf9bc969f63184a3742136160e967dc9243a671cd5b60de7e812b89fabb3a78",
     "src/apps/api/tests/evals/test_online_judge_acceptance.py": "57a46933f21af1fabe016c153dd40cbc0c76681c202251f025def6debb74e15b",
     "src/apps/api/tests/routes/test_generated_media.py": "440dde5b4df5404dc2f1293e9aa2b3b57e320c4be57dfa41ae53b6fe0b708a6d",
     "src/apps/api/tests/services/test_ai_cost_control.py": "2abb6e2fbc8b94f9f49808133e4184f23a4bf6aa62b4a444b400b794e253c4cd",
     "src/apps/api/tests/services/test_credit_cap_budgets.py": "a9d4ec988d5496ace4f0c8a37cd33f579c43493cc30012f9e3d3d35a8c1b9ac1",
-    "src/apps/api/tests/services/test_credit_deadline_compatibility.py": "a79a4706267da8e8686cc014821defd693a4857b30f9ed3e5adb704070816cfa",
+    "src/apps/api/tests/services/test_credit_deadline_compatibility.py": "32ce662c1f7bbcf3fea6d5ce6ed974efef5e357f9a9e1b690748fd4c689697a6",
     "src/apps/api/tests/services/test_generated_media_admission.py": "65f138f110cb4589a771d011d7a4af753dd07bf0190952c9ac257867a823eb90",
     "src/apps/api/tests/services/test_generated_media_admission_postgres.py": "7085ce0f9a67fa8eaa6917497ba99def07c3f190e7d1b0d2ba533a2a23d4ce55",
     "src/apps/api/tests/services/test_generated_media_service.py": "5b267004130ea28b3e66e4cd323255e3dcae358c105aedb45786c4ebe85b404b",
     "src/apps/api/tests/services/test_generated_media_transport.py": "2f731d688324093c900a5c53c3f68fe915e189e71df2eb9f2661cf438fc8d6dd",
     "src/apps/api/tests/test_content_plan_schema.py": "b7869e6e79d98f257fafd4f1be81c230a570e78ae7573c16151e60652d920fd8",
-    "src/apps/api/tests/test_edit_copilot.py": "3058b5a6f4321910cbfcb27ca32203d940b052f5c0481f2785a98c4261035827",
     "src/apps/ios/Kria/Core/CreationFlow.swift": "5c0ed83e3dd51756750e8061e5468f5b4e6f7c57b7cad621309af35d98a81a6b",
     "src/apps/ios/Kria/Core/GeneratedMedia.swift": "fe100b0aeb6f78b4e47f085480d95ae6cdf4dee23454ebf3fd4d0de21f55f2b3",
     "src/apps/ios/Kria/Core/Services.swift": "98059dd2389d5dcd89d595613df99efaeae8f0fa552a326f10ca4cc3e65f8913",
@@ -195,11 +191,31 @@
     "src/apps/ios/Tests/KriaTests/GeneratedMediaTests.swift": "64a614d2ff1940684e11538e5759e5117f6f17223e30edf2fb80a115c62427e9",
     "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "18d4c28258e5d029cd0f0d9942561715d703c6e061860e6859e3b70649bf8ffa"
   },
-  "code_tree_sha256": "74dce802c2374a3dddf5ec675221866abfdab815d66136c64a16cb820ba8e43d",
+  "code_tree_sha256": "14d093f8b3f3983e19e5f2ea4442b2f4d729f1c6466b119ae8fbd6cb1057ecc4",
   "final_independent_review": {
     "verdict": "no_remaining_blocking_finding",
     "family": "same-family independent review",
     "scope": "Final source tree atop 9c128d23b; inspected SQL lock-order red/green and consolidated XML receipts.",
     "limits": "Observed acquisition order is not a two-transaction deadlock-freedom proof; final full suite and CI remain separate."
+  },
+  "landed_deadline_integration": {
+    "head": "1e82c2c8da8c8ab8ac0c4ce6ee95804d9abd9e4b",
+    "upstream_main": "fc0c8ff84",
+    "review": "Independent read-only review found no blocker; model client matches upstream and runtime retains only ctx=ctx attribution delta.",
+    "compatibility_checks": 6,
+    "skip_gates_removed": true,
+    "provider_calls": "mocked; actual PostgreSQL ledger",
+    "note": "Historical exact PR overlay receipt remains separate."
+  },
+  "previous_corrected_consolidated_api": {
+    "passed": 1640,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 2,
+    "subtests_passed": 24,
+    "duration_seconds": 58.16,
+    "artifact": "credit-evidence/final-consolidated-api.xml",
+    "scope": "All credit capabilities, budget/judge/provider tests, real PostgreSQL admission, canonical lock/schema guards, Apple-revocation fixtures and all root API tests.",
+    "skip_reason": "Two PR1934-only runtime checks; exact PR overlay independently passed six."
   }
 }
