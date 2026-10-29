@@ -1598,7 +1598,10 @@
       "xctests": [
         "KriaTests/ChatDraftStagingTests/testDurableSnapshotReopensExactLanesWithCurrentCapabilities",
         "KriaTests/NativeEditorRenderCompilerTests/testFeasibleSourceOverrunKeepsThreeSecondClockAndAuthoredWindow",
-        "KriaTests/NativeEditorSessionTests/testPersistedCommitWithFailedEnqueueCanRetryRender"
+        "KriaTests/NativeEditorSessionTests/testPersistedCommitWithFailedEnqueueCanRetryRender",
+        "KriaTests/SavedDraftPreviewRangeTests/testSavedPhotoWindowBuildsTheSamePreviewAfterHydration",
+        "KriaTests/SavedDraftPreviewRangeTests/testSavedVideoWindowBuildsTheSamePreviewAfterHydration",
+        "KriaTests/SavedDraftPreviewRangeTests/testARealOneMillisecondVideoOverrunIsStillRejected"
       ],
       "paths": [
         "src/apps/api/app/pipeline/editor_render_window.py",
@@ -1607,7 +1610,8 @@
         "src/apps/api/app/services/editor_empty_drafts.py",
         "src/apps/api/tests/integration/test_durable_editor_save.py",
         "src/apps/api/tests/pipeline/test_editor_render_window_intent.py",
-        "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift"
+        "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift",
+        "src/apps/ios/Tests/KriaTests/SavedDraftPreviewRangeTests.swift"
       ]
     },
     {
