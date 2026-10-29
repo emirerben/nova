@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.24.0] - 2026-10-29
+
+### Changed
+- fix(ios): show submitted prompts and preserve send recovery (#1926) <!-- release-pr: 1926 -->
+
 ## [0.82.23.0] - 2026-10-29
 
 ### Changed
