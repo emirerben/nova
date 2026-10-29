@@ -94,6 +94,7 @@ from app.services.length_policy import (
     length_owner,
     natural_length_owner,
 )
+from app.services.order_mode import order_mode, seeded_permutation
 from app.services.phone_noise_reduction import engine_noise_reduction_available
 from app.text_fold import capitalize, uses_turkish_case
 from app.text_fold import lower as text_lower
@@ -342,6 +343,10 @@ class PlanFacts:
     ordering_fallback_clip_ids: tuple[str, ...] = ()
     # KRI-282: the creator's answer to a chronological-vs-grouped conflict, if any.
     ordering_choice: str | None = None
+    # 29 Ekim: a "random order" plan records the seed it used and the clips it shuffled, so a
+    # receipt can prove the result is a permutation of exactly the selected clips.
+    random_order_seed: int | None = None
+    random_order_source_ids: tuple[str, ...] = ()
     # KRI-458: how each described group ("start with the football, end at the pub")
     # landed in a unified montage: one status per sequence intent. Empty = none asked.
     sequence_statuses: tuple[str, ...] = ()
@@ -1117,6 +1122,18 @@ def _strategy_sequence_conflicts(strategy: Mapping[str, Any]) -> tuple[str, ...]
     )
 
 
+def _random_order_record(record: Mapping[str, Any]) -> tuple[int | None, tuple[str, ...]]:
+    raw = record.get("random_order")
+    if not isinstance(raw, Mapping):
+        return None, ()
+    seed = raw.get("seed")
+    ids = raw.get("source_ids")
+    return (
+        seed if isinstance(seed, int) and not isinstance(seed, bool) else None,
+        tuple(str(i) for i in ids) if isinstance(ids, list) else (),
+    )
+
+
 def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFacts:
     """Read verifiable facts off a unified montage plan record (KRI-190).
 
@@ -1164,6 +1181,8 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             str(c) for c in record.get("ordering_fallback_clip_ids") or []
         ),
         ordering_choice=str(record["ordering_choice"]) if record.get("ordering_choice") else None,
+        random_order_seed=_random_order_record(record)[0],
+        random_order_source_ids=_random_order_record(record)[1],
         sequence_statuses=tuple(
             str(row.get("status"))
             for row in record.get("intent_outcomes") or []
@@ -1761,7 +1780,13 @@ def plan_facts_from_editor_payload(
         str(change).startswith("Order clips by filming time") for change in changes or ()
     )
     return PlanFacts(
-        ordering_basis="capture_time" if ordered_by_capture else None,
+        ordering_basis=(
+            "capture_time"
+            if ordered_by_capture
+            else "random"
+            if any(str(change).startswith("Shuffle clips") for change in changes or ())
+            else None
+        ),
         duration_s=_editor_payload_duration(payload),
         editor_text_edited=bool(
             isinstance(payload, Mapping)
@@ -2870,6 +2895,47 @@ def _listed_order_miss(facts: PlanFacts) -> str:
     return " ".join(said)
 
 
+_RANDOM_ORDER_NOT_APPLIED = "I couldn't confirm the clips are in a random order."
+_RANDOM_ORDER_OVERRIDDEN = "You moved the clips yourself, so your own order is kept."
+
+
+def _check_random_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A random order is met when the plan's order IS the stored seed's permutation.
+
+    A unified montage records the seed and the clips it shuffled, so the check recomputes
+    ``seeded_permutation(source, seed)`` and compares it with the order the plan used (an
+    explicit start/end sequence outranks it, so there only "a permutation, nothing lost or
+    repeated" can be promised). The editor op only says "Shuffle clips", which can prove the
+    permutation but not the seed. A creator's own later hand reorder displaces the ask.
+    """
+    required = facts.strict_order and _order_is_required(req)
+    if not facts.ordering_basis:
+        if required and facts.rendered_output:
+            return _receipt(req, "not_possible", _ORDER_NOT_RECORDED)
+        return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
+    if facts.ordering_basis == "creator_order":
+        return _receipt(
+            req, "met", say(en=_RANDOM_ORDER_OVERRIDDEN, tr=_REASON_TR[_RANDOM_ORDER_OVERRIDDEN])
+        )
+    unmet = "not_possible" if required else "partial"
+    reason = say(en=_RANDOM_ORDER_NOT_APPLIED, tr=_REASON_TR[_RANDOM_ORDER_NOT_APPLIED])
+    if facts.ordering_basis != "random":
+        return _receipt(req, unmet, reason)
+    source = facts.random_order_source_ids
+    if source:
+        wanted = set(source)
+        used = [c for c in facts.clip_ids if c in wanted]
+        if sorted(used) != sorted(source):
+            return _receipt(req, unmet, reason)
+        if (
+            facts.random_order_seed is not None
+            and not facts.sequence_statuses
+            and used != seeded_permutation(source, facts.random_order_seed)
+        ):
+            return _receipt(req, unmet, reason)
+    return _receipt(req, "met", None)
+
+
 def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A required order is met, partly met (an honest fallback), or FAILED. Neutral
     (unchecked) is only for an optional preference, and for a draft that has not been
@@ -2895,6 +2961,11 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
                 ),
             ),
         )
+    mode = order_mode(req)
+    if mode == "any":
+        return _receipt(req, "met", None)  # any order is the order they asked for
+    if mode == "random":
+        return _check_random_order(req, facts)
     key = str(req.facts.get("key") or req.facts.get("by") or "").casefold()
     required = facts.strict_order and _order_is_required(req)
     unmet = "not_possible" if required else "partial"
@@ -4288,6 +4359,8 @@ _REASON_TR: dict[str, str] = {
     _CANT_CHECK_EDITOR_CLIP_TEXT: "Editör düzenlemesinde klip başına yazıyı doğrulayamıyorum.",
     _CANT_CHECK_TARGET_CLIP_TEXT: "Bu taslakta o klibin yazısını doğrulayamıyorum.",
     _CANT_CONFIRM_ORDER: "Bu taslağın kullandığı sırayı doğrulayamıyorum.",
+    _RANDOM_ORDER_NOT_APPLIED: "Kliplerin rastgele sırada olduğunu doğrulayamadım.",
+    _RANDOM_ORDER_OVERRIDDEN: "Klipleri kendin taşıdığın için senin sıran korundu.",
     _CANT_CHECK_ORDER_RULE: "Bu sıralamayı otomatik olarak doğrulayamıyorum.",
     _ORDER_NOT_APPLIED: (
         "Anlattığını kliplerle eşleştiremedim, o yüzden klipler eklediğin sırada kaldı."

@@ -54,7 +54,8 @@ from app.pipeline.prompt_loader import load_prompt
 # creator's own last voiceover words.
 # v39 (KRI-994): the shared brief section records `only_media_kind` / `include_media_kind` on a
 # select ask.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-27-v39"
+# v40 (29 Ekim): random / any-order asks carry `facts.key`, a whole-set select carries `all`.
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-29-v40"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
