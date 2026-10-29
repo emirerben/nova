@@ -263,7 +263,14 @@ def _preflight(monkeypatch: pytest.MonkeyPatch, title: str):
 def test_preflight_passes_the_flag_title(monkeypatch: pytest.MonkeyPatch) -> None:
     _brief, blockers = _preflight(monkeypatch, FLAG_TITLE)
     assert blockers is not None, "the draft renders on the unified phone montage"
-    assert [r.requirement_id for r in blockers if r.requirement_id == "r5"] == []
+    # r5 also asks for a curve (KRI-1029): its shape verdict is returned whatever it says
+    # (`textBend` isn't verified in these settings, so it stays straight), but nothing names
+    # the flag title as undrawable.
+    r5 = [r for r in blockers if r.requirement_id == "r5"]
+    assert all(FLAG_TITLE not in (r.reason or "") for r in r5), r5
+    assert [r.reason for r in r5] == [
+        "I can't curve text in this edit on your iPhone yet, so it stays straight"
+    ]
 
 
 def test_preflight_names_undrawable_text_before_the_approval_card(
