@@ -1,0 +1,26 @@
+{
+  "pr": 1933,
+  "reviewed_code_sha": "3001855adc3591c5624b874463569a464084e53b",
+  "claim": "local_fix",
+  "summary": "Current main is integrated while preserving its text_sequence missing-glyph refusal. The shared helper handles text and text_sequence, with flag acceptance/refusal coverage for both. Image-qualified Xcode caches are included so the required native CI does not reuse an incompatible SDK cache.",
+  "cache_contract": {
+    "tests": 16,
+    "command": "python3 scripts/ci/test_ci_throughput.py",
+    "red_control": "Three methods/six workflow subcases failed before cache key changes",
+    "selector_command": "python3 scripts/ci/test_select_tests.py",
+    "selector_result": "passed",
+    "hosted_validation": "pending exact new-head CI; no waiver"
+  },
+  "independent_review": "No material findings on cache boundary and final phone-text/source-range integration",
+  "remaining_gaps": [
+    "Fresh exact-head CI",
+    "Physical original incident/installed TestFlight acceptance remains unverified"
+  ],
+  "local_replay": {
+    "tests_passed": 10,
+    "command": "cd src/apps/api && pytest tests/kria/test_kri1024_flag_emoji_title.py tests/routes/test_phone_text_sequence_followup.py",
+    "scope": "Montage missing-glyph/flag behavior and current text-sequence neighbors",
+    "postgresql": "Not rerun locally; original8b66 head passed four new PG cases in CI; fresh-head CI required",
+    "source_identity": "No API differences when current-main/cache commit was integrated after the tested af151743d tree."
+  }
+}
