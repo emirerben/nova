@@ -20,6 +20,7 @@ from app.config import settings
 from app.database import sync_engine
 from app.services import ai_cost_control as costs
 
+
 @pytest.fixture
 def deadline_ledger(monkeypatch):
     run_id = f"deadline-credit:{uuid.uuid4()}"

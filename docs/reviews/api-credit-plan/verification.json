@@ -172,7 +172,7 @@
     "src/apps/api/tests/routes/test_generated_media.py": "440dde5b4df5404dc2f1293e9aa2b3b57e320c4be57dfa41ae53b6fe0b708a6d",
     "src/apps/api/tests/services/test_ai_cost_control.py": "2abb6e2fbc8b94f9f49808133e4184f23a4bf6aa62b4a444b400b794e253c4cd",
     "src/apps/api/tests/services/test_credit_cap_budgets.py": "a9d4ec988d5496ace4f0c8a37cd33f579c43493cc30012f9e3d3d35a8c1b9ac1",
-    "src/apps/api/tests/services/test_credit_deadline_compatibility.py": "32ce662c1f7bbcf3fea6d5ce6ed974efef5e357f9a9e1b690748fd4c689697a6",
+    "src/apps/api/tests/services/test_credit_deadline_compatibility.py": "ce51d55c83fd9a158229ce2eaabd5c05348a026bbca1785c5c88ce2ad9b1f23c",
     "src/apps/api/tests/services/test_generated_media_admission.py": "65f138f110cb4589a771d011d7a4af753dd07bf0190952c9ac257867a823eb90",
     "src/apps/api/tests/services/test_generated_media_admission_postgres.py": "7085ce0f9a67fa8eaa6917497ba99def07c3f190e7d1b0d2ba533a2a23d4ce55",
     "src/apps/api/tests/services/test_generated_media_service.py": "5b267004130ea28b3e66e4cd323255e3dcae358c105aedb45786c4ebe85b404b",
@@ -191,7 +191,7 @@
     "src/apps/ios/Tests/KriaTests/GeneratedMediaTests.swift": "64a614d2ff1940684e11538e5759e5117f6f17223e30edf2fb80a115c62427e9",
     "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "18d4c28258e5d029cd0f0d9942561715d703c6e061860e6859e3b70649bf8ffa"
   },
-  "code_tree_sha256": "14d093f8b3f3983e19e5f2ea4442b2f4d729f1c6466b119ae8fbd6cb1057ecc4",
+  "code_tree_sha256": "144b8f3bee014ecf9658dfe61f57a15cdbbfc9248ffe4966a85b5953a062ee07",
   "final_independent_review": {
     "verdict": "no_remaining_blocking_finding",
     "family": "same-family independent review",
