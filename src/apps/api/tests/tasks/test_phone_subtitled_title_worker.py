@@ -125,7 +125,7 @@ def test_close_selfie_title_lands_below_the_face_or_the_receipt_says_it_collides
     )
     receipt = check_requirement(requirement, plan_facts_from_phone_variant(variant))
     assert receipt.status == "partial"
-    assert "yüzünün üstüne" in receipt.reason or "your face" in receipt.reason
+    assert "bir yüzün üstüne" in receipt.reason or "lands on a face" in receipt.reason
 
 
 def test_without_a_confirmed_hold_the_title_fades_after_the_first_word(monkeypatch):

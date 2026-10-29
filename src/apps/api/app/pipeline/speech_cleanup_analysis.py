@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import tempfile
+import wave
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -42,11 +43,14 @@ from app.pipeline.silence_cut import (
 from app.pipeline.speech_cleanup_alignment import AlignerUnavailable, align_words
 from app.pipeline.speech_voice_guard import apply_voice_guard
 from app.pipeline.transcribe import TranscribeError, Transcript, Word
+from app.services import mixed_language_transcript
 from app.services.mixed_language_transcript import (
     MAX_EXTRA_PASSES,
     MixedPass,
+    UnheardStretch,
     merge_passes,
     reference_languages,
+    unheard_stretches,
 )
 from app.services.speech_cleanup_selection import DETECTOR_VERSION
 
@@ -372,6 +376,12 @@ class _RetakeDetectFn(Protocol):
     ) -> Sequence[tuple[int, int]]: ...
 
 
+class _ExcerptFn(Protocol):
+    """Cut ``[start_s, end_s]`` of the audio at ``path`` into its own file; return that path."""
+
+    def __call__(self, path: str, *, start_s: float, end_s: float) -> str: ...
+
+
 def _default_transcribe(
     path: str,
     *,
@@ -387,6 +397,24 @@ def _default_silence_detect(path: str, *, min_silence_s: float) -> Any:
     from app.services.clip_speech import detect_silences_with_status
 
     return detect_silences_with_status(path, min_silence_s=min_silence_s, ambient_adaptive=True)
+
+
+def _default_excerpt(path: str, *, start_s: float, end_s: float) -> str:
+    """Slice the WAV at ``path`` into a sibling file (the artifact is already 16 kHz mono PCM)."""
+
+    with wave.open(path, "rb") as artifact:
+        params = artifact.getparams()
+        rate = artifact.getframerate()
+        artifact.setpos(min(int(start_s * rate), artifact.getnframes()))
+        frames = artifact.readframes(max(0, int((end_s - start_s) * rate)))
+    if not frames:
+        raise wave.Error("no audio in the excerpt window")
+    stem, _extension = os.path.splitext(path)
+    excerpt_path = f"{stem}.stretch-{round(start_s * 1000)}-{round(end_s * 1000)}.wav"
+    with wave.open(excerpt_path, "wb") as excerpt:
+        excerpt.setparams(params)
+        excerpt.writeframes(frames)
+    return excerpt_path
 
 
 def _value(record: Any, *names: str) -> Any:
@@ -674,12 +702,91 @@ def _word_rows(transcript: Any) -> list[dict[str, Any]]:
     return [word.model_dump() for word in _timed_words(transcript)]
 
 
+def _stretch_rows(
+    transcript: Any, stretch: UnheardStretch, *, offset_s: float
+) -> list[dict[str, Any]]:
+    """The words of an excerpt's transcript, in take time, clipped strictly inside ``stretch``."""
+
+    rows: list[dict[str, Any]] = []
+    for row in _word_rows(transcript):
+        start = row["start_s"] + offset_s
+        end = row["end_s"] + offset_s
+        if not stretch.start_s <= (start + end) / 2 <= stretch.end_s:
+            continue
+        start = min(max(start, stretch.start_s), stretch.end_s)
+        rows.append({**row, "start_s": start, "end_s": max(start, min(end, stretch.end_s))})
+    return rows
+
+
+def _relistened_passes(
+    stretches: Sequence[UnheardStretch],
+    analysis_input: SpeechCleanupAnalysisInput,
+    transcribe: _TranscriptFn,
+    excerpt: _ExcerptFn,
+    languages: list[str],
+) -> tuple[list[MixedPass], list[dict[str, Any]]]:
+    """Each wordless stretch the reference heard speech in, transcribed alone (KRI-1016).
+
+    whisper-1 decodes a whole take in one language and wrote NOTHING for the other language's
+    speech (Plaza T2: about 12 s of real Turkish in a 48 s take). Cut out on its own a stretch
+    has no other-language speech around it to be translated into, so each is transcribed once per
+    language the reference names, at most `RELISTEN_MAX_CALLS` calls in all. The words come
+    back as extra passes, shifted to take time and clipped inside the stretch; `merge_passes`
+    keeps them only where the reference confirms them. An excerpt or call that fails for a media
+    or provider reason is skipped (the receipt lists ``failed``); a bug or a timeout escapes.
+    """
+
+    fills: list[MixedPass] = []
+    relistened: list[dict[str, Any]] = []
+    calls = 0
+    for stretch in stretches:
+        asked = languages[: max(0, mixed_language_transcript.RELISTEN_MAX_CALLS - calls)]
+        entry: dict[str, Any] = {
+            "start_s": round(stretch.start_s, 3),
+            "end_s": round(stretch.end_s, 3),
+            "tried": asked,
+            "heard": [],
+            "failed": [],
+        }
+        relistened.append(entry)
+        if not asked:
+            continue
+        start = max(0.0, stretch.start_s - mixed_language_transcript.RELISTEN_PAD_S)
+        end = min(
+            analysis_input.duration_s, stretch.end_s + mixed_language_transcript.RELISTEN_PAD_S
+        )
+        try:
+            excerpt_path = excerpt(analysis_input.local_media_path, start_s=start, end_s=end)
+        except Exception as exc:  # noqa: BLE001 - only a media or provider failure skips it
+            if not isinstance(exc, wave.Error | EOFError) and not _optional_pass_unavailable(exc):
+                raise
+            entry["failed"] = list(asked)
+            continue
+        for language in asked:
+            calls += 1
+            try:
+                again = transcribe(
+                    excerpt_path, language=language, verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT
+                )
+            except Exception as exc:  # noqa: BLE001 - only a transcription failure skips the call
+                if not _optional_pass_unavailable(exc):
+                    raise
+                entry["failed"].append(language)
+                continue
+            rows = _stretch_rows(again, stretch, offset_s=start)
+            if rows:
+                fills.append(MixedPass(language, rows))
+                entry["heard"].append(language)
+    return fills, relistened
+
+
 def _mixed_language_transcript(
     transcript: Any,
     analysis_input: SpeechCleanupAnalysisInput,
     transcribe: _TranscriptFn,
     receipt: dict[str, Any],
     languages: list[str],
+    excerpt: _ExcerptFn = _default_excerpt,
 ) -> tuple[Any, dict[str, Any]]:
     """Per-stretch transcript of a take whose reference speaks several languages (KRI-843).
 
@@ -692,6 +799,10 @@ def _mixed_language_transcript(
     dropped, because wordless sound reads as a pause to the cleanup cut, which removes it.
     An extra pass that fails to transcribe or hears nothing is skipped (the receipt lists
     ``failed`` and ``heard``); when no pass confirms anything the first pass stands untouched.
+    Stretches the stored words leave wordless where the reference heard speech (every pass wrote
+    nothing for them) are then listened to alone (`_relistened_passes`, ``relistened`` in the
+    receipt) and merged in the same way; `reference_covers_s` shows how much of the take the
+    reference heard.
     """
 
     first_language = str(receipt["whisper_language"]).lower()
@@ -714,6 +825,7 @@ def _mixed_language_transcript(
         rows = _word_rows(again)
         if rows:
             extras.append(MixedPass(language, rows))
+    relisten = settings.speech_cleanup_mixed_relisten_enabled
     receipt = {
         **receipt,
         "mixed": True,
@@ -722,18 +834,51 @@ def _mixed_language_transcript(
         "tried": wanted,
         "heard": [extra.language for extra in extras],
         "failed": failed,
+        **({"reference_covers_s": analysis_input.reference_covers_s} if relisten else {}),
     }
+    first = MixedPass(first_language, _word_rows(transcript))
+    reference_text = str(analysis_input.reference_transcript)
     merged = (
         merge_passes(
-            MixedPass(first_language, _word_rows(transcript)),
+            first,
             extras,
-            str(analysis_input.reference_transcript),
+            reference_text,
             duration_s=analysis_input.duration_s,
             covers_s=analysis_input.reference_covers_s,
+            keep_tokenless=relisten,
         )
         if extras
         else None
     )
+    stretches = (
+        unheard_stretches(
+            list(merged.words) if merged is not None else first.words,
+            reference_text,
+            duration_s=analysis_input.duration_s,
+            covers_s=analysis_input.reference_covers_s,
+        )
+        if relisten
+        else ()
+    )
+    if stretches:
+        fills, relistened = _relistened_passes(
+            stretches, analysis_input, transcribe, excerpt, languages
+        )
+        receipt = {**receipt, "relistened": relistened}
+        with_fills = (
+            merge_passes(
+                first,
+                [*extras, *fills],
+                reference_text,
+                duration_s=analysis_input.duration_s,
+                covers_s=analysis_input.reference_covers_s,
+                keep_tokenless=relisten,
+            )
+            if fills
+            else None
+        )
+        if with_fills is not None:
+            merged = with_fills
     if merged is None:
         return transcript, {**receipt, "segments": []}
     words = [
@@ -761,6 +906,7 @@ def _crosschecked_transcript(
     transcript: Any,
     analysis_input: SpeechCleanupAnalysisInput,
     transcribe: _TranscriptFn,
+    excerpt: _ExcerptFn = _default_excerpt,
 ) -> tuple[Any, dict[str, Any] | None]:
     """Re-transcribe when whisper's detected language contradicts Gemini's.
 
@@ -792,7 +938,7 @@ def _crosschecked_transcript(
         languages = reference_languages(reference)
         if len(languages) >= 2 and _timed_words(transcript):
             return _mixed_language_transcript(
-                transcript, analysis_input, transcribe, receipt, languages
+                transcript, analysis_input, transcribe, receipt, languages, excerpt
             )
     heard_language = crosscheck_detected_language(whisper_language, reference_text=reference)
     if heard_language is None:
@@ -1083,6 +1229,7 @@ def analyze_speech_cleanup(
     silence_detect_fn: _SilenceFn | None = None,
     retake_detect_fn: _RetakeDetectFn | None = None,
     pcm_loader: Callable[[str], np.ndarray] | None = None,
+    excerpt_fn: _ExcerptFn | None = None,
 ) -> SpeechCleanupAnalysisResult:
     """Analyze one exact, already-bounded local narration artifact.
 
@@ -1096,13 +1243,14 @@ def analyze_speech_cleanup(
 
     transcribe = transcribe_fn or _default_transcribe
     detect_silences = silence_detect_fn or _default_silence_detect
+    excerpt = excerpt_fn or _default_excerpt
     transcript = transcribe(
         analysis_input.local_media_path,
         language=None,
         verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT,
     )
     transcript, language_crosscheck = _crosschecked_transcript(
-        transcript, analysis_input, transcribe
+        transcript, analysis_input, transcribe, excerpt
     )
     words = _timed_words(transcript)
     detected_retakes: tuple[tuple[int, int], ...] = ()

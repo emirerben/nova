@@ -406,7 +406,7 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
     if reason == "sound_not_found":
         return f'Couldn\'t find a sound for "{trigger}" in the library'
     if reason in _MISS_REASON_NO_ROOM:
-        return f'No room to show "{trigger}" without covering your face or the captions'
+        return f'No room to show "{trigger}" without covering a face or the captions'
     if reason == "fullscreen_overlap":
         # KRI-840: another full-screen photo was already on screen at that moment.
         return f'Another full-screen photo was already on screen when you said "{trigger}"'
@@ -424,7 +424,7 @@ def beat_miss_sentence(trigger: str, reason: str | None) -> str:
 
 def _closing_miss_sentence(reason: object) -> str:
     if isinstance(reason, str) and reason in _MISS_REASON_NO_ROOM:
-        return "Couldn't place the closing photo without covering your face or the captions"
+        return "Couldn't place the closing photo without covering a face or the captions"
     return "Couldn't place the closing photo"
 
 
@@ -543,7 +543,7 @@ def _overlay_miss_sentence(label: str, reason: str | None) -> str:
     if reason in _OVERLAY_MISS_REASON_VIDEO_UNSUPPORTED:
         return f'"{label}" is a video, which can\'t be a card on your iPhone yet'
     if reason in _OVERLAY_MISS_REASON_NO_SAFE_SPOT:
-        return f'No room to show "{label}" without covering your face or the captions'
+        return f'No room to show "{label}" without covering a face or the captions'
     if reason in _OVERLAY_MISS_REASON_OVERLAP:
         return f'"{label}" overlapped another visual, so it was skipped'
     if reason in _OVERLAY_MISS_REASON_CROWDED:

@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.9.0] - 2026-10-29
+
+### Changed
+- fix(captions): faster designed animations and animation per word under Word display (KRI-1007) (#1917) <!-- release-pr: 1917 -->
+
+## [0.82.8.0] - 2026-10-29
+
+### Fixed
+- fix(kria): name the speaker, not "you", in framing and face copy (KRI-1008 Finding 3) (#1911) <!-- release-pr: 1911 -->
+
+## [0.82.7.0] - 2026-10-29
+
+### Fixed
+- fix(ios): keep the chat in view after "Clean up speech and create" (KRI-1008) (#1903) <!-- release-pr: 1903 -->
+
+## [0.82.6.0] - 2026-10-29
+
+### Changed
+- fix(editor): the creator's saved copy of a phone montage is the render (KRI-1032) (#1916) <!-- release-pr: 1916 -->
+
+## [0.82.5.0] - 2026-10-28
+
+### Fixed
+- fix(captions): mixed-language asks keep each language as spoken (KRI-1015) (#1914) <!-- release-pr: 1914 -->
+
+## [0.82.4.0] - 2026-10-28
+
+### Changed
+- fix(speech-cleanup): re-listen wordless stretches and hear the whole mixed take (KRI-1016) (#1913) <!-- release-pr: 1913 -->
+
+## [0.82.3.0] - 2026-10-28
+
+### Changed
+- fix(ios): the Kria sheet's "Open editor" adopts the newer job; keyboard-open UI guard (KRI-986) (#1902) <!-- release-pr: 1902 -->
+
+## [0.82.2.0] - 2026-10-28
+
+### Changed
+- feat(ios): refresh onboarding and edit previews (#1904) <!-- release-pr: 1904 -->
+
+## [0.82.1.0] - 2026-10-28
+
+### Changed
+- feat(ios): caption animation tab for one line or all captions (KRI-1007) (#1906) <!-- release-pr: 1906 -->
+
 ## [0.82.0.0] - 2026-10-28
 
 ### Added

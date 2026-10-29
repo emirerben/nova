@@ -544,7 +544,8 @@ The native editor's Text, Captions, Visuals, and Sounds tools use one connected
 bottom shell. Covered timeline content stays visible for continuity but is
 disabled for hit testing and accessibility; the shell clips the retained
 timeline around the keyboard and keeps the source preview visible. Text
-animation previews reuse the media-engine sampler with one shared preview clock and pause for lifecycle
+and caption animation previews (one shared card picker; the selected card is a Selection
+Soft fill, not a stroke) reuse the media-engine sampler with one shared preview clock and pause for lifecycle
 changes or Reduce Motion, while panel drafts and outgoing edit cleanup stay
 shared across tool switches. See the KRI-148 section of the iOS development
 runbook for the interaction and verification contract.
