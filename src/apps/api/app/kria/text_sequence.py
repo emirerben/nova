@@ -15,10 +15,12 @@ choice in the reply so the creator can flip it.
 
 The Main Creator prompt teaches the shape. `refile_text_sequence` is the backstop for a reply
 that still files the ask as ``captions: word_by_word`` (the model under the older prompt, a
-cached cassette). KRI-667: it adds no reading of the creator's words. The model's own fact says
-what the ask is; the server hands it BACK to the speech lane on structured evidence only: the
-creator named captions (the existing `text_asks_for_captions` recogniser) or the item already
-has a recorded voiceover. Everything else is returned exactly as the model wrote it.
+cached cassette). The model's own fact says what the ask is; the server hands it BACK to the
+speech lane (leaves the model's filing alone) when the creator named captions
+(`text_asks_for_captions`), the item already has a recorded voiceover, or the message talks
+about words said in the footage (`names_footage_speech`: "when I say", "dediğim yerde"). A bare
+"and say “...”" is not that: with no voiceover it is on-screen text. Everything else is
+returned exactly as the model wrote it.
 """
 
 from __future__ import annotations
@@ -47,6 +49,22 @@ _MAX_LITERAL = 200
 _FILED_AS = frozenset({"style", "text"})
 _CAPTION_FACTS = ("captions", "caption_language")
 
+# A quote is something SAID in the footage, not a title to show, when the message puts a speaker
+# or a spoken tense on the speech verb ("when I say", "Deniz says", "as they are spoken",
+# "dediğim yerde"). A bare imperative ("and say “...”", "I meant say to mean show") is the
+# creator talking to the editor, so it is not on this list. The bare forms below count only
+# right after a speaker. Folded words; Turkish by stem.
+_SPOKEN_FORMS = frozenset(
+    {
+        "says", "said", "saying", "speaks", "speaking", "spoke", "spoken", "talks", "talking",
+        "talked", "tells", "telling", "told", "sings", "singing", "sang", "sung", "shouts",
+        "shouting", "shouted",
+    }
+)  # fmt: skip
+_BARE_SPEECH = frozenset({"say", "speak", "talk", "tell", "sing", "shout"})
+_SPEAKERS = frozenset({"i", "we", "he", "she", "they", "someone", "everyone", "anyone"})
+_TR_SPOKEN_STEMS = ("dedi", "diyor", "derken", "deyince", "soyledi", "soylerken", "konus", "bagir")
+
 
 def _nfc(text: str) -> str:
     return unicodedata.normalize("NFC", text).strip()
@@ -54,6 +72,18 @@ def _nfc(text: str) -> str:
 
 def _words(text: str) -> list[str]:
     return "".join(ch if ch.isalnum() else " " for ch in loose_text(text)).split()
+
+
+def names_footage_speech(text: str) -> bool:
+    """The message talks about words SAID in the footage (a spoken tense, or a speaker on the
+    verb), so a quote in it is speech and never a title to show."""
+    words = _words(text)
+    for i, word in enumerate(words):
+        if word in _SPOKEN_FORMS or word.startswith(_TR_SPOKEN_STEMS):
+            return True
+        if word in _BARE_SPEECH and i > 0 and words[i - 1] in _SPEAKERS:
+            return True
+    return False
 
 
 def is_text_sequence(req: object) -> bool:
@@ -82,8 +112,11 @@ def _quoted_literal(message: str) -> str | None:
 
 def last_quoted_literal(texts: Iterable[str]) -> str | None:
     """The newest quoted sentence among ``texts`` (newest last), for a follow-up that points
-    back at the words ("show each word after the other in the text")."""
+    back at the words ("show each word after the other in the text"). A quote in a message that
+    talks about speech in the footage is a spoken line, so it is never offered as a title."""
     for text in reversed(list(texts)):
+        if names_footage_speech(text):
+            continue
         literal = _quoted_literal(text)
         if literal:
             return literal
@@ -110,9 +143,10 @@ def refile_text_sequence(
 
     Re-filed only when all hold: the update is an add / change filed as ``style`` or ``text``
     with the model's own ``captions: word_by_word`` fact; the creator did not name captions
-    and the item has no recorded voiceover (``has_voiceover``); and the words themselves are
-    known, either quoted in the message (at least two words, 200 characters at most) or
-    ``known_literal`` from earlier in the thread. ``unit`` is ``word`` and ``mode`` is
+    and the item has no recorded voiceover (``has_voiceover``); the message does not talk about
+    words said in the footage (`names_footage_speech`: "when I say", "dediğim yerde"); and the
+    words themselves are known, either quoted in the message (at least two words, 200 characters
+    at most) or ``known_literal`` from earlier in the thread. ``unit`` is ``word`` and ``mode`` is
     ``agent_choice``: the editor agent reads the wording for the rest. Anything else is returned
     exactly as the model wrote it.
     """
@@ -123,6 +157,7 @@ def refile_text_sequence(
         _caption_fact(facts) != "word_by_word"
         or has_voiceover
         or text_asks_for_captions(creator_message)
+        or names_footage_speech(creator_message)
     ):
         return update
     literal = _quoted_literal(creator_message) or (
@@ -165,6 +200,7 @@ __all__ = [
     "UNIT_FACT",
     "is_text_sequence",
     "last_quoted_literal",
+    "names_footage_speech",
     "refile_text_sequence",
     "refile_text_sequences",
     "text_sequence_mode",
