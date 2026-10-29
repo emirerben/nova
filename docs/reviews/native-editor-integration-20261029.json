@@ -1,12 +1,5 @@
 {
-  "source_revision": "649550f69",
   "integrated_main": "91838ad6226bf8fa9d8ea7a985b85d8eac8dc14b",
-  "sources": {
-    "src/apps/ios/Kria/Features/NativeEditorView.swift": "3274a90e6aeac8d1cd8c32f6cd306caa74a4b2f992b435993b7f0e7c79940941",
-    "src/apps/ios/Tests/KriaUITests/NativeSpeedUITests.swift": "e8003529fe8b182405791f96806fb0d45076ff6b514bf78bd5351b3656583612",
-    "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift": "d746cb88d19085a9e4a7ae2a68c6dca87414058461ea3e89a189d7dd7f605c42",
-    "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "96a1642b29c2b61b69db6cb57b6b90355b6acad4076fe97791cb4cc3bc7b71dd"
-  },
   "native_primary": {
     "bundle": "/tmp/unattended1892-result.xcresult",
     "passed": 248,
@@ -102,5 +95,13 @@
     "independent_review": "Read-only review confirmed test-only change and stronger oracle. No app-source changes.",
     "full_uninstrumented_iteration_passes": 3,
     "counts_scope": "Xcresult summary groups the three passing iterations as one test case. The execution log records three passes and zero failures."
-  }
+  },
+  "original_integration_source_revision": "649550f6927d261a58ee1ebf564fff1537e01bac",
+  "original_integration_sources": {
+    "src/apps/ios/Kria/Features/NativeEditorView.swift": "3274a90e6aeac8d1cd8c32f6cd306caa74a4b2f992b435993b7f0e7c79940941",
+    "src/apps/ios/Tests/KriaUITests/NativeSpeedUITests.swift": "e8003529fe8b182405791f96806fb0d45076ff6b514bf78bd5351b3656583612",
+    "src/apps/ios/Tests/KriaUITests/GamedayAddClipUITests.swift": "d746cb88d19085a9e4a7ae2a68c6dca87414058461ea3e89a189d7dd7f605c42",
+    "src/apps/ios/Tests/KriaUITests/NativeEditorInspectorUITests.swift": "96a1642b29c2b61b69db6cb57b6b90355b6acad4076fe97791cb4cc3bc7b71dd"
+  },
+  "provenance_scopes": "original_integration_sources binds the original248-test source revision. corner_target_followup.test_source_sha256 binds the corrected full journey run; app source is unchanged."
 }
