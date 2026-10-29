@@ -79,6 +79,32 @@ def face_box_to_canvas(
     return mapped
 
 
+def shown_crop(
+    moment: GuidedStoryMoment,
+    *,
+    source_width: float,
+    source_height: float,
+    canvas_width: float,
+    canvas_height: float,
+) -> Mapping[str, float] | None:
+    """The part of the source the device shows for ``moment``, as a crop rectangle.
+
+    The moment's own ``source_crop``, else -- for a sideways clip slid to keep its
+    face in a vertical crop (KRI-1027 ``fill_position_x``) -- the canvas-shaped
+    window that shift shows, so faces map onto the canvas where the device draws
+    them. None = the engine's centred cover fill."""
+    if moment.source_crop is not None:
+        return moment.source_crop
+    shift = moment.fill_position_x
+    if not shift or source_width <= 0 or source_height <= 0:
+        return None
+    cover = max(canvas_width / source_width, canvas_height / source_height)
+    shown_w = source_width * cover
+    window = min(1.0, canvas_width / shown_w)
+    left = min(max(0.5 - window / 2 - float(shift) / shown_w, 0.0), 1.0 - window)
+    return {"x": left, "y": 0.0, "width": window, "height": 1.0}
+
+
 def _moment_at(plan: GuidedStoryExecutionPlan, at_s: float) -> GuidedStoryMoment | None:
     for moment in plan.story_timeline:
         if moment.output_start_s <= at_s < moment.output_end_s:
@@ -186,7 +212,13 @@ def build_phone_face_sampler(
                     source_height=height,
                     canvas_width=canvas.width,
                     canvas_height=canvas.height,
-                    crop=owner.source_crop,
+                    crop=shown_crop(
+                        owner,
+                        source_width=width,
+                        source_height=height,
+                        canvas_width=canvas.width,
+                        canvas_height=canvas.height,
+                    ),
                 )
                 if mapped is not None:
                     regions.append(

@@ -162,7 +162,9 @@ log = structlog.get_logger()
 # v102 (29 Ekim lane D, KRI-1038): words shown a piece at a time are a `text_sequence`
 # requirement, not `captions: word_by_word`; "say" plus a quote with no voiceover is on-screen
 # text. (v101 is lane B's order-key edit; they merge in that order.)
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-29-v102"
+# v103 (KRI-1027): the shared brief records how sideways clips sit in a vertical video
+# (`landscape_fit` "fill" / "fit"), which preselects crop or black bars on the confirm screen.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-29-v103"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -653,7 +655,13 @@ later answer that question in their own words, record it on that same requiremen
 translated; brighten or darken
 the footage itself ("brighten the dark clips", "klipleri aydınlat") => a `style` requirement with
 {"footage_light": "brighter"} or {"footage_light": "darker"}; no edit can change the footage's
-light yet, so never say in `summary` that it is brightened or darkened; keep text off something
+light yet, so never say in `summary` that it is brightened or darkened; how sideways
+(horizontal) clips sit in a vertical video => a `style` requirement with {"landscape_fit": "fill"}
+when the creator wants them cropped to fill the frame ("make it all vertical", "no black bars",
+"hepsini dikey yap", "siyah bant olmasın") or {"landscape_fit": "fit"} when they want them whole
+with black bars ("keep the black bars", "don't crop the clips", "siyah bantlar kalsın"); a
+vertical camera move, vertical text or picking a clip filmed vertically records no
+`landscape_fit`; keep text off something
 in the frame ("no text on her face or on the plate", "yüzüme ve tabağa yazı gelmesin") => a
 `style` requirement with {"keep_text_off": [{"kind": "face"}, {"kind": "object", "label":
 "plate"}]}, each object in the creator's own words, never translated (the app asks the creator to

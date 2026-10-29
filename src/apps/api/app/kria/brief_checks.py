@@ -554,6 +554,11 @@ class PlanFacts:
     # Seconds of the kept take with no speaker face in view, out of shot or turned away
     # (`faces.absent_s`, receipt v2). None = not recorded.
     speaker_framing_absent_s: float | None = None
+    # KRI-1027: how a finished phone montage framed its sideways clips for a bars/crop ask
+    # (`variant["landscape_framing"]`, `phone_montage_framing`) and the bars/crop the variant
+    # renders now (an editor Save can change it). None = no receipt: nothing is claimed.
+    landscape_framing: Mapping[str, Any] | None = None
+    variant_landscape_fit: str | None = None
     # KRI-628: whether a phone Talking render started at the line the creator quoted
     # (`variant["opening_cut"]`): "applied" or "not_applied", and why not. None = no
     # receipt (no such ask, a draft, or an older render): nothing is claimed.
@@ -2055,6 +2060,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_explicit_speech_cut_facts(variant))
     changes.update(_engine_noise_reduction_facts(variant))
     changes.update(_speaker_framing_facts(variant))
+    changes.update(_landscape_framing_facts(variant))
     changes.update(_opening_cut_facts(variant))
     named = variant.get("named_cuts")
     if isinstance(named, list):
@@ -9044,7 +9050,15 @@ def judged_at_render(req: BriefRequirement) -> bool:
         or asks_clip_speed(req)
         # KRI-942: clip sound on/off is read off the recipe the phone renders.
         or requirement_sound_toggle(req) is not None
+        # KRI-1027: bars/crop of the sideways clips is read off the render's framing receipt.
+        or _asks_landscape_fit(req)
     )
+
+
+def _asks_landscape_fit(req: BriefRequirement) -> bool:
+    from app.kria.landscape_fit_ask import requirement_landscape_fit  # noqa: PLC0415
+
+    return requirement_landscape_fit(req) is not None
 
 
 _CLIP_ID_PART_RE = re.compile(r"[^0-9A-Za-z]+")
@@ -9501,12 +9515,64 @@ def _check_engine_noise_reduction(req: BriefRequirement, facts: PlanFacts) -> Re
     return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_MISSED))
 
 
+# KRI-1027: "make it all vertical" / "keep the black bars" on a montage, answered from the
+# phone montage's framing receipt (`app.kria.landscape_fit_ask.judge_landscape_fit`).
+_MONTAGE_FIT_FORMATS = frozenset({"montage", "day_vlog", "single_hero"})
+
+
+def _landscape_framing_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = variant.get("landscape_framing")
+    if not isinstance(receipt, Mapping) or not isinstance(receipt.get("clips"), list):
+        return {}
+    fit = variant.get("landscape_fit")
+    return {
+        "landscape_framing": receipt,
+        "variant_landscape_fit": fit if fit in ("fit", "fill") else None,
+    }
+
+
+def _montage_landscape_fit(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """The receipt for a montage's bars/crop ask, or None when another check owns it
+    (a Talking edit's framing, an editor turn's own diff)."""
+    from app.kria.landscape_fit_ask import (  # noqa: PLC0415
+        judge_landscape_fit,
+        requirement_landscape_fit,
+    )
+
+    fit = requirement_landscape_fit(req)
+    if fit is None or facts.phone_talking:
+        return None
+    rendered = facts.rendered_montage
+    if facts.landscape_framing is None:
+        if facts.rendered_variant or (facts.editor and not rendered):
+            # A finished Talking/Voiceover render, or an editor turn (its diff names
+            # what changed): their own checks answer.
+            return None
+        if not rendered and facts.edit_format not in _MONTAGE_FIT_FORMATS:
+            return None
+    verdict = judge_landscape_fit(
+        fit,
+        receipt=facts.landscape_framing,
+        rendered=rendered,
+        variant_fit=facts.variant_landscape_fit,
+    )
+    return _receipt(
+        req,
+        verdict.status,
+        verdict.reason,
+        verification=None if verdict.checked else "unchecked",
+    )
+
+
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
+    from app.kria.landscape_fit_ask import requirement_landscape_fit  # noqa: PLC0415
+
     if (
         wants_engine_noise_reduction(req)
         or requirement_speech_cut(req) is not None
         or _wants_speaker_framing(req)
+        or requirement_landscape_fit(req) is not None
         or wants_light_change(req)
         or asks_freeze_frame(req)
     ):
@@ -9997,6 +10063,11 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
         return _check_speech_cleanup(req, facts)
+    montage_fit = _montage_landscape_fit(req, facts)
+    if montage_fit is not None:
+        # KRI-1027: a montage's "make it all vertical" / "keep the black bars"; a Talking
+        # edit's framing ask keeps its own check below.
+        return montage_fit
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
     if (
