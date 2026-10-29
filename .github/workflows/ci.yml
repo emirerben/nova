@@ -1143,7 +1143,8 @@ jobs:
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         id: xcode-cache
         run: |
-          echo "toolchain=$(xcodebuild -version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageVersion:?Hosted runner image version is required for SDK caches}" >> "$GITHUB_OUTPUT"
+          echo "toolchain=$({ xcode-select -p; xcodebuild -version; } | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Restore Xcode build data
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         id: build-cache
@@ -1156,9 +1157,9 @@ jobs:
             src/apps/ios/.derived-data/ModuleCache.noindex
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
-          key: ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
+          key: ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-${{ github.sha }}
           restore-keys: |
-            ios-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
+            ios-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.xcode-cache.outputs.image }}-${{ steps.xcode-cache.outputs.toolchain }}-${{ hashFiles('src/apps/ios/project.yml', 'src/apps/ios/**/Package.resolved', 'src/apps/ios/**/Package.swift') }}-
       - name: Build iPhone app and run selected unit tests
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         env:
