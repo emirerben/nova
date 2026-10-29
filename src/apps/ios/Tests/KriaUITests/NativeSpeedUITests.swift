@@ -67,15 +67,11 @@ final class NativeSpeedUITests: XCTestCase {
             XCTAssertTrue(slider.waitForExistence(timeout: 5), app.debugDescription)
         }
         revealSpeed()
-        // The SDK's adjustment is approximate. Undo must restore the actual
-        // visible choice, independently of the exact-endpoint test above.
-        slider.adjust(toNormalizedSliderPosition: 0.8)
+        slider.adjust(toNormalizedSliderPosition: 1)
         let chosenRate = slider.value as? String
         let chosenDuration = duration.value as? String
-        let numericRate = Double((chosenRate ?? "").replacingOccurrences(of: "x", with: "")) ?? 0
-        XCTAssertTrue((2...4).contains(numericRate), "The creator must have a faster clip before Reset")
-        XCTAssertNotNil(chosenDuration)
-        XCTAssertNotEqual(chosenDuration, "00:06.0")
+        XCTAssertEqual(chosenRate, "4.00x", "Pre-Reset rate: \(chosenRate ?? "missing"), duration: \(chosenDuration ?? "missing")")
+        XCTAssertEqual(chosenDuration, "00:01.5", "Pre-Reset duration must match the selected 4x rate")
         app.buttons["Reset speed"].tap()
         XCTAssertEqual(slider.value as? String, "1.00x")
         XCTAssertEqual(duration.value as? String, "00:06.0")
