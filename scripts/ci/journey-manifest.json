@@ -399,6 +399,7 @@
         "src/apps/api/tests/pipeline/test_render_geometry.py",
         "src/apps/api/tests/kria/test_speaker_framing_ask.py",
         "src/apps/api/tests/kria/test_brief_speaker_framing.py",
+        "src/apps/api/tests/fixtures/kri1008_plaza_t1_framing_review.json",
         "src/apps/api/tests/tasks/test_phone_subtitled_speaker_framing_worker.py",
         "src/apps/ios/Tests/KriaTests/DeviceSpeakerFaceFillE2ETests.swift",
         "src/apps/ios/Tests/Fixtures/KRI547SpeakerFaceFill.json"

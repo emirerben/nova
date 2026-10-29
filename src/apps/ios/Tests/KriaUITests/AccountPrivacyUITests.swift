@@ -19,12 +19,21 @@ import XCTest
             if element.exists {
                 let fixedAction = ["text-preferences-save", "text-preferences-reload"].contains(element.identifier)
                 if element.isHittable && (fixedAction || (element.frame.minY >= top && element.frame.maxY <= bottom)) { break }
-                if element.frame.minY < top { app.swipeDown(); continue }
+                if element.frame.minY < top { scrollForm(app, down: true); continue }
             }
-            app.swipeUp()
+            scrollForm(app, down: false)
         }
         XCTAssertTrue(element.waitForExistence(timeout: 3))
-        XCTAssertTrue(element.isHittable)
+        XCTAssertTrue(element.isHittable, "Control must be visible: \(element.identifier)\n\(app.debugDescription)")
+    }
+
+    private func scrollForm(_ app: XCUIApplication, down: Bool) {
+        // Whole-screen flings can jump a row from below the fixed Save bar to
+        // above the navigation bar, then back again. Move within the form in
+        // small steps so reveal converges instead of oscillating on CI devices.
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.4 : 0.65))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.65 : 0.4))
+        start.press(forDuration: 0.05, thenDragTo: end)
     }
 
     func testExcludedFontSurvivesPickerReturnSaveAndReopen() {
@@ -148,7 +157,7 @@ import XCTest
         reveal(count, app: app)
         let accept = app.buttons["text-learning-accept-learning-position"]
         reveal(accept, app: app); accept.tap()
-        XCTAssertFalse(app.buttons["text-learning-accept-learning-position"].exists)
+        XCTAssertTrue(app.buttons["text-learning-accept-learning-position"].waitForNonExistence(timeout: 5))
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["account-text-preferences"].tap()
         reveal(learn, app: app)
@@ -176,9 +185,11 @@ import XCTest
         reveal(learn, app: app); learn.switches.firstMatch.tap()
         let dismiss = app.buttons["text-learning-dismiss-learning-position"]
         reveal(dismiss, app: app); dismiss.tap()
-        XCTAssertFalse(dismiss.exists)
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5), "Dismiss must finish its asynchronous save and reload")
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["account-text-preferences"].tap()
+        XCTAssertTrue(app.buttons["text-preference-role"].waitForExistence(timeout: 5),
+                      "Loaded preferences must appear before checking persistence")
         XCTAssertFalse(dismiss.exists)
         let reset = app.buttons["text-learning-reset"]
         reveal(reset, app: app); reset.tap()
