@@ -2147,6 +2147,29 @@
         "scripts/kria/score_29_ekim.py",
         "scripts/kria/capture_29_ekim_post_approval.py"
       ]
+    },
+    {
+      "id": "rendered-editor-original-clock",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_phone_editor_rendered_clock.py",
+      "xctests": [
+        "KriaTests/RenderedOriginalClockTests/testRenderedPhotoWindowBuildsAndExportsAfterHydration",
+        "KriaTests/RenderedOriginalClockTests/testRenderedVideoWindowBuildsAndExportsAfterHydration",
+        "KriaTests/RenderedOriginalClockTests/testProxyRoundedVideoOverrunIsStillRejected",
+        "KriaTests/NativeEditorInteractionTests/testRenderedOriginalWindowDoesNotExpandOntoProxyFrameClock",
+        "KriaTests/NativeEditorInteractionTests/testRenderedSpeedWindowRetainsExactSourceConsumption"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/guided_edit_revision.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock.py",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
+        "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift"
+      ]
     }
   ]
 }

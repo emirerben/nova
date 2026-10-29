@@ -3714,6 +3714,53 @@
         "80-character title cut on phone titles"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "rendered-editor-original-clock",
+      "tickets": [
+        "KRI-1039",
+        "KRI-984"
+      ],
+      "symptom": "A successful native original window1.920s reopens as1.933333s after editor frame normalization and fails source bounds.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "KRI-1039",
+      "journey": "rendered-editor-original-clock",
+      "paths": [
+        "src/apps/api/app/schemas/guided_edit_revision.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift"
+      ],
+      "regression_tests": [
+        "tests/routes/test_phone_editor_rendered_clock.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Initial projection and text Save failed1.933333 versus1.920 before fix;167 focused tests pass with1expected failure; retained28moment normalization is idempotent.",
+        "live_model": "Not run; no provider or prompt change.",
+        "native_output": "Final iOS26.5 simulator run117 passed0failures: measured25fps1.920s source, saved-draft hydration, compiler, preview and MP4 export; incorrect1.933333 window rejected. Export duration checked; blue pixel checked in preview only.",
+        "production": "Not deployed; original-phone reopen pending protocol25 API/worker/client release."
+      },
+      "neighbours_covered": [
+        "Legacy frozen hashes",
+        "original and Visuals receipts",
+        "text-only Save/reopen",
+        "old/missing/current protocol",
+        "actual source overrun",
+        "rate and transition reflow"
+      ],
+      "neighbours_gap": [
+        "original physical-phone stack/local binding duration",
+        "original request word/order and export fidelity",
+        "native manual rate setter with crossfade interaction"
+      ],
+      "follow_ups": [
+        "KRI-1039"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

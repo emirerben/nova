@@ -80,6 +80,7 @@ import KriaMediaEngine
         let second = directory.appendingPathComponent(video ? "blue.mp4" : "blue.png")
         if video { try await writeVideo(second) } else { try image(.blue).write(to: second) }
         let assetDuration = video ? try await AVURLAsset(url: second).load(.duration).seconds : nil
+        if let assetDuration { XCTAssertEqual(assetDuration, 1.92, accuracy: 1e-9) }
         let slots: [JSONValue] = [
             .object(["slot_id": .string("first"), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(5)]),
             .object(["slot_id": .string("second"), "clip_index": .number(1), "in_s": .number(0),
