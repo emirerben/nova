@@ -90,3 +90,38 @@ def test_placement_and_both_renderers_draw_the_authored_rows():
 def test_wrapped_text_keeps_legacy_layout(flag):
     row = {**_row(), "text": "one two three", "wrap_lines": flag}
     assert resolve_phone_text_style([row])[0]["text"] == "one two three"
+
+
+# A sentence this long lands below the old 40 px floor in a wide face; the cascade accepts it
+# at placement, so every later measurement of that title (fill sampling, overlap checks) must
+# accept the same size. Ways it can break: a later measure_box applies the stricter default
+# floor and raises after placement; only the lone, frame-free path is exercised.
+LONG = (
+    "Bu güzel vatan, çağdaş imkanlar ve başımsızlık için, yani her şeyimiz için sana ve "
+    "seninle mücadele veren Türk halkına teşekkürler Atam. 29 Ekim Cumhuriyet Bayramımız "
+    "kutlu olsun"
+)
+
+
+def _wide_row(row_id="guided-title", start=0, end=3, text=LONG):
+    return {
+        **_row(),
+        "id": row_id,
+        "text": text,
+        "font_family": "Unbounded",
+        "wrap_lines": True,
+        "start_s": start,
+        "end_s": end,
+    }
+
+
+def test_sub_floor_title_survives_background_frames():
+    frames = [{"start_s": 0, "end_s": 3, "pixels": [128] * (108 * 192)}]
+    placed = resolve_phone_text_style([_wide_row()], background_frames=frames)[0]
+    assert 30 <= placed["size_px"] < 40
+
+
+def test_sub_floor_titles_survive_overlap_checks():
+    rows = [_wide_row("title-a"), _wide_row("title-b")]
+    placed = resolve_phone_text_style(rows)
+    assert all(30 <= row["size_px"] for row in placed)
