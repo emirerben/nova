@@ -1,6 +1,6 @@
 # Failed editor recovery safeguards
 
-This bounded recovery change is stacked on compose lane E at `580e67b5e`.
+This bounded recovery change builds on merged compose lane E, PR #1936.
 It does not replace E's sequence operations, prompts, capability registry or Save lifecycle.
 
 ## Acceptance
@@ -28,7 +28,7 @@ The immutable recovery basis contains the canonical draft ID and snapshot hash. 
 
 ## Local verification
 
-The focused database suite passed 20 cases using a disposable UTF8 PostgreSQL database. Model/provider and queue edges were stubbed. Planner, persistence, compiler, approval admission and native recipe preparation ran locally. The final combined scope passed404 tests. All845 repository-mapped reliability tests passed with zero environment skips/errors. Neighboring planner, editor operation, retry, sequence and capability tests also passed. This is a representative state replay, not the unavailable original voice incident.
+The focused database suite passed 20 cases using a disposable UTF8 PostgreSQL database. Model/provider and queue edges were stubbed. Planner, persistence, compiler, approval admission and native recipe preparation ran locally. The combined scope passed404 tests before rebase and407 tests against merged E/current main, including both compose settings. All845 repository-mapped reliability tests passed with zero environment skips/errors. Neighboring planner, editor operation, retry, sequence and capability tests also passed. This is a representative state replay, not the unavailable original voice incident.
 
 The native simulator ran 25 failure-card and approval-request tests with zero failures. The task created its own iOS 26.5 simulator after the previous task simulator had been removed.
 
@@ -40,7 +40,9 @@ An independent Astra reviewer found no blocking defect in the safeguards. Its su
 
 ## Integration limits
 
-The branch is a draft stacked on the existing E owner branch. Merging E with current main has conflicts, including a restricted replay-harness file. That attempted merge was aborted in the task-owned checkout without editing the harness. Parent/E-owner coordination must resolve the base before a main merge. Full inherited E verification, the recorded 65.6-second creation turn, D's persisted-schema compatibility with old API/workers, real providers, original phone incident and rollout remain open under KRI-1039 and its dependency lanes.
+The earlier attempted E/main merge was aborted without editing restricted replay-harness files. E subsequently merged as PR #1936, and the recovery-only commits rebased cleanly onto main. No changes were made to the existing owner's branch. The recorded 65.6-second creation turn, D's persisted-schema compatibility with old API/workers, real providers, original phone incident and rollout remain separate limitations under KRI-1039 and its dependency lanes.
+
+T6 does not require a template ledger for this recovery diff. Its exact local-test path matcher in scripts/ci/check-touched-paths.sh returns no matches. GitHub run40885781024/job123488978032 passed with the marker step skipped. Native evidence is still required by the journey mapping and is documented above. No server render, fabricated run ID, skip marker or policy change was used.
 
 The approval unknown-outcome guard does not add a new check to the separate native Save HTTP endpoint. Late execution-outcome transitions at that endpoint remain outside this bounded change and must not be claimed as covered by the approval regression.
 
