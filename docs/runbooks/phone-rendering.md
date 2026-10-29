@@ -2446,7 +2446,7 @@ The app sends the confirm screen's preselected bars/crop back with the approval
 (`VideoShapePicker.wire(for:)`), so the preselection IS the render's choice unless the
 creator changes it. `render_shape.apply_creator_ask` moves that default to the creator's
 own words: a style requirement with `facts.landscape_fit` ("fill" / "fit", taught by the
-shared brief section from Main Creator v101 / Brief Extractor v40), or the KRI-547
+shared brief section from Main Creator v103 / Brief Extractor v42), or the KRI-547
 vertical / no-bars / face-in-frame wording Talking already reads, preselects crop or black
 bars on a vertical canvas (`app/kria/landscape_fit_ask.py`). No ask = the item's remembered
 `landscape_fit` as before. The thread projection and the approve validation read the same

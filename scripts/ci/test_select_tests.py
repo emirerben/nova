@@ -668,7 +668,19 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/schemas/guided_edit_revision.py",
-                (True, "covered", "kri-561-song-order,kri-689-clip-speed"),
+                (
+                    True,
+                    "covered",
+                    "kri-561-song-order,kri-1032-montage-copy-parity,kri-689-clip-speed",
+                ),
+            ),
+            (
+                "src/apps/api/tests/routes/test_kri1032_editor_matches_render.py",
+                (True, "covered", "kri-1032-montage-copy-parity"),
+            ),
+            (
+                "src/apps/ios/Tests/Fixtures/KRI1032PlazaM1Editor.json",
+                (True, "covered", "kri-1032-montage-copy-parity"),
             ),
             (
                 "src/apps/api/app/kria/speaker_framing_ask.py",
@@ -780,11 +792,19 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/agents/gemini_analyzer.py",
-                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
+                (
+                    True,
+                    "covered",
+                    "kri-845-clip-detail-evidence,kri-625-moment-quality",
+                ),
             ),
             (
                 "src/apps/api/prompts/analyze_clip.txt",
-                (True, "covered", "kri-845-clip-detail-evidence,kri-625-moment-quality"),
+                (
+                    True,
+                    "covered",
+                    "kri-845-clip-detail-evidence,kri-625-moment-quality",
+                ),
             ),
             (
                 "src/apps/api/prompts/edit_copilot.txt",

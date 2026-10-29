@@ -3222,7 +3222,9 @@ async def read_creative_brief(
         requirements=[
             CreativeBriefRequirementOut(
                 id=req.id,
-                kind=req.kind,
+                # The public enum predates `text_sequence`; clients (and the iOS generated
+                # contract) see the creator's words as the `text` they are.
+                kind="text" if req.kind == "text_sequence" else req.kind,
                 scope=req.scope,
                 literal=req.literal,
                 description=req.description,

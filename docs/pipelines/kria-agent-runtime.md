@@ -195,9 +195,13 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   isn't in this draft." `assess_readiness` takes `creator_id` to resolve the route; a caller
   without it gets no such evidence (fail closed). Pins: `tests/kria/test_kri945_*`.
 - **Automatic simpler drafts.** The runtime planner removes only typed, unavailable
-  optional text/SFX fields and recompiles the remaining strategy. At draft completion,
-  exact compiler-removed text, unavailable native/Talking clip labels and typed
-  brightness requests can be superseded automatically when they are the only blockers.
+  optional text/SFX fields and recompiles the remaining strategy. On a phone Talking edit
+  with its title lane open, one whole-video top-corner text is the opening title instead
+  of an omission (KRI-1009, `strategy_policy._talking_top_text_as_title`). At draft
+  completion, unquoted native/Talking clip labels and typed brightness requests can be
+  superseded automatically when they are the only blockers. Text the creator quoted (a
+  brief `literal`) never is: the draft is held back with the "simpler version?" question
+  naming it and the compiler's reason, and only the tap drops it (KRI-1009).
   Receipt/readiness failure alone is insufficient: a missing supported label or
   spoken trigger still needs repair/clarification. The same transaction
   appends an omission revision, rebuilds approval readiness, and pins the effective
@@ -768,6 +772,19 @@ Approval consumption and exact editor/Job commit happen atomically; broker
 publication follows the commit through the existing deterministic Job dispatcher
 or editor rerender task. Accepted editor executions persist enough dispatch
 metadata for the reconciler to publish the same generation after process death.
+
+## On-screen text shown in sequence (KRI-1038)
+
+A quoted sentence the creator wants shown a word at a time is a `text_sequence` brief requirement
+(`kria/text_sequence.py`), not `captions: word_by_word`. The Main Creator prompt teaches it;
+`refile_text_sequence` only re-files a captions reply when the creator did not name captions, no
+voiceover is recorded, and the message does not talk about words said in the footage
+(`names_footage_speech`: "when I say", "dediğim yerde").
+
+Deploy order: roll api and worker together. A thread stored with `text_sequence` fails
+`CreativeBrief` validation on an older api or worker machine (autostopped machines, or a revert),
+and this kind has no kill switch of its own. Nothing judges it until the editor-op lane lands, so
+the draft shows the sentence whole.
 
 ## Local proof
 

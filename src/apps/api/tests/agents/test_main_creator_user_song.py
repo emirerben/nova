@@ -69,13 +69,15 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # creator's own last voiceover words: brief-on hashes re-pinned; brief-off unchanged.
 # v100 (KRI-994) teaches the select media-kind facts (`only_media_kind`, `include_media_kind`):
 # brief-on hashes re-pinned; brief-off unchanged.
-# v101 (KRI-1027) teaches the `landscape_fit` fact ("fill" / "fit") for how sideways clips sit in
+# v102 (29 Ekim lane D, KRI-1038): text_sequence in the brief section (brief-on) and the
+# "words to SHOW are on-screen text" rule in main_creator.txt (all four hashes re-pinned).
+# v103 (KRI-1027) teaches the `landscape_fit` fact ("fill" / "fit") for how sideways clips sit in
 # a vertical video: brief-on hashes re-pinned; brief-off unchanged.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "2f7e73d5a0dc21d0c8b62ac2b6c5fe110181bab844f11a60bac0a0924092a137",
-    (True, False): "08ca6790e63f9522dff8b85d4c84906c0b1e784b9fc21dc1f812d753dbc6fe9d",
-    (False, True): "ed8a964a055bf0aef2d4c8a995cd5e675960416373748f27e6b127127432b0e1",
-    (False, False): "038960cbc071317802dbc9a082906f258c7f59cb5e064c7069c52ef52f4d79be",
+    (True, True): "89ef3d63c6207b32c8aba76876f3db0ba02a3be8794670ca00f8ef1fbc07f9d6",
+    (True, False): "7750407c6061324b3a6c034144f94e1f2340dfe337f24957b8b4f88bd29ace8f",
+    (False, True): "638b32c7bbdabfe44a2f7d751caf2d3c6863ad3d18ec773efa846226286c979c",
+    (False, False): "48f744f1f02dfc89d44310431a53150ca269664efc22d552f161ede6c02f0760",
 }
 
 
@@ -156,7 +158,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-28-v101"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-29-v103"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

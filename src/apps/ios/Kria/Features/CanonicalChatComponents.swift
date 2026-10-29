@@ -397,7 +397,7 @@ struct FormatStage: View {
     let select: (CreationFormat) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @State private var centeredFormat: CreationFormat?
+    @State private var leadingFormat: CreationFormat?
     @State private var visible = true
 
     private var autoplay: Bool {
@@ -418,9 +418,9 @@ struct FormatStage: View {
                         ForEach(formats) { format in
                             Group {
                                 if format == .slides {
-                                    SlidePostFormatCard(isBusy: isBusy, active: centeredFormat == format && autoplay) { select(format) }
+                                    SlidePostFormatCard(isBusy: isBusy, active: leadingFormat == format && autoplay) { select(format) }
                                 } else {
-                                    FormatVideoCard(format: format, isBusy: isBusy, active: centeredFormat == format,
+                                    FormatVideoCard(format: format, isBusy: isBusy, active: leadingFormat == format,
                                                     allowed: autoplay) { select(format) }
                                 }
                             }
@@ -429,17 +429,17 @@ struct FormatStage: View {
                     }
                     .scrollTargetLayout()
                 }
-                .contentMargins(.horizontal, max(0, (viewport.size.width - FormatTileMetrics.image.width) / 2), for: .scrollContent)
+                .contentMargins(.trailing, max(0, viewport.size.width - FormatTileMetrics.image.width), for: .scrollContent)
                 .scrollTargetBehavior(.viewAligned)
-                .scrollPosition(id: $centeredFormat, anchor: .center)
+                .scrollPosition(id: $leadingFormat, anchor: .leading)
                 .accessibilityIdentifier("format-carousel")
             }
             .frame(height: FormatTileMetrics.image.height + 32)
             .onScrollVisibilityChange(threshold: 0.5) { visible = $0 }
         }
-        .onAppear { if centeredFormat == nil { centeredFormat = formats.first } }
+        .onAppear { if leadingFormat == nil { leadingFormat = formats.first } }
         .onChange(of: formats) { _, values in
-            if let centeredFormat, !values.contains(centeredFormat) { self.centeredFormat = values.first }
+            if let leadingFormat, !values.contains(leadingFormat) { self.leadingFormat = values.first }
         }
     }
 }

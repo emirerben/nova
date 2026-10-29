@@ -89,8 +89,8 @@ def _snapshot_with_r2(description: str | None, facts: dict | None = None) -> dic
     return snapshot
 
 
-# M1's r2 as the shared brief section teaches it from v101 (Main Creator / Brief Extractor
-# v40): the creator's words, plus the meaning the model records. Prod stored it on v100,
+# M1's r2 as the shared brief section teaches it from Main Creator v103 (Brief Extractor
+# v42): the creator's words, plus the meaning the model records. Prod stored it on v100,
 # where nothing taught the fact, as {"description": "make it all vertical", "facts": {}}.
 M1_R2 = "make it all vertical"
 M1_RECORDED = _snapshot_with_r2(M1_R2, {"landscape_fit": "fill"})

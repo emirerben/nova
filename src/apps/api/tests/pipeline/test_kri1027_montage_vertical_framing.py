@@ -217,7 +217,7 @@ def test_unframed_plans_dump_exactly_as_before():
 
 
 def _r2(description="make it all vertical", fit="fill"):
-    """M1's r2 as the v101 brief section records it (`landscape_fit` fact)."""
+    """M1's r2 as the v103 brief section records it (`landscape_fit` fact)."""
     return BriefRequirement(
         id="r2", kind="style", scope="global", description=description, facts={"landscape_fit": fit}
     )

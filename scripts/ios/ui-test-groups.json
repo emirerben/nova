@@ -13,6 +13,7 @@
       "KriaUITests/CreationUITests/testClipsOnlySubmissionUsesSuggestAnEdit",
       "KriaUITests/CreationUITests/testDictationShowsLiveWordsThenServerTextAndIsSendable",
       "KriaUITests/CreationUITests/testIncomingResponseDoesNotPullReaderFromScrolledHistory",
+      "KriaUITests/CreationUITests/testCleanUpSpeechApprovalShowsTheRenderStageAndKeepsTheConversationInView",
       "KriaUITests/CreationUITests/testTypedPromptAppearsBetweenMediaReceiptAndAssistantResponse",
       "KriaUITests/CreationUITests/testSlowDirectionAndPreJobFailureNeverReturnToUploading",
       "KriaUITests/CreationUITests/testStaleFootageConflictShowsServerReasonAndRefreshesTheDirection",
@@ -171,6 +172,7 @@
       "KriaUITests/CameraRollCollectionUITests/testOpenQuestionsSayWhyUseWaitsAndAnsweringEnablesIt",
       "KriaUITests/CameraRollCollectionUITests/testUseShowsEachStepThenOpensTheChat",
       "KriaUITests/CameraRollCollectionUITests/testUseKeepsGoingAfterTheSheetCloses",
+      "KriaUITests/CameraRollCollectionUITests/testUseFromTheDrawerOpensTheIdeasChat",
       "KriaUITests/CameraRollCollectionUITests/testAFailedStepOffersRetry",
       "KriaUITests/CameraRollCollectionUITests/testUseSaysWhenTheChatCannotOpen",
       "KriaUITests/CameraRollCollectionUITests/testEveryItemStateIsVisible",
@@ -187,9 +189,9 @@
       "KriaUITests/CameraRollCollectionUITests/testUnavailableAnalysisIsNotAnEditConflict",
       "KriaUITests/CameraRollCollectionUITests/testRealConflictCanOpenLatestWithoutLosingLocalCollection",
       "KriaUITests/CameraRollCollectionUITests/testUndoTappedWhileTheEventDeleteIsInFlightKeepsItsIdeas",
-      "KriaUITests/FeaturedEditPreviewUITests/testCenteredFormatOwnsPlayback",
-      "KriaUITests/FeaturedEditPreviewUITests/testOnboardingPlaysFourEditsInOrder",
-      "KriaUITests/FeaturedEditPreviewUITests/testSliderAdvancesWhenCenteredAndPauses",
+      "KriaUITests/FeaturedEditPreviewUITests/testLeadingFormatOwnsPlayback",
+      "KriaUITests/FeaturedEditPreviewUITests/testSignupPlaysAllFiveEditsTogether",
+      "KriaUITests/FeaturedEditPreviewUITests/testSliderAdvancesWhenLeadingAndPauses",
       "KriaUITests/ProductionSignInUITests/testBuildControlsDevelopmentSignIn",
       "KriaUITests/CreationUITests/testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries"
     ],
@@ -303,7 +305,8 @@
       "KriaUITests/NativeCaptionAnimationUITests/testLyricCaptionsAnimateAllThenOneLine",
       "KriaUITests/NativeCaptionAnimationUITests/testTextMotionPresetShowsInAllCaptions",
       "KriaUITests/NativeCaptionAnimationUITests/testWithoutTheCapabilityThereIsNoAnimationTab",
-      "KriaUITests/NativeCaptionAnimationUITests/testReduceMotionKeepsPreviewsStillUntilPlayed"
+      "KriaUITests/NativeCaptionAnimationUITests/testReduceMotionKeepsPreviewsStillUntilPlayed",
+      "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimation"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",

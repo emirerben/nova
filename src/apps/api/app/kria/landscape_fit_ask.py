@@ -7,14 +7,14 @@ preselected black bars on the confirm screen, the app sent that default back wit
 the approval, and the montage letterboxed every sideways clip.
 
 The model that reads the message records the meaning (KRI-667): the shared brief
-section (Main Creator v101 / Brief Extractor v40) puts ``{"landscape_fit": "fill"}``
+section (Main Creator v103 / Brief Extractor v42) puts ``{"landscape_fit": "fill"}``
 on a style requirement asking for the sideways clips cropped to fill the frame ("make
 it all vertical", "no black bars") and ``{"landscape_fit": "fit"}`` on one asking to
 keep them whole with black bars ("keep the black bars", "don't crop the clips"). The
 server checks that field and adds no word reading of its own; the one fallback is
 the KRI-547 vertical / full-screen / face-in-frame reader Talking already applies to
 the same words (`speaker_framing_ask.requirement_asks_vertical_framing`), which a
-requirement recorded before v101 can still match ("make it vertical", "9:16", "no
+requirement recorded before v103 can still match ("make it vertical", "9:16", "no
 black bars"). A requirement that says neither, as prod stored M1's r2, asks nothing.
 
 The newest live requirement that asks either wins (a later correction replaces an

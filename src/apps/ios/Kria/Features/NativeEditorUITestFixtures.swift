@@ -73,6 +73,7 @@ enum NativeEditorUITestFixtures {
             // KRI-1007: the server advertises `editor_capabilities.caption_animation` to a protocol-24 build.
             var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
             caps["caption_animation"] = .bool(true)
+            caps["caption_editor_style"] = .bool(true)
             value.serverSnapshot["editor_capabilities"] = .object(caps)
         }
         if arguments.contains("-ui-testing-editor-caption-text-motion") {
