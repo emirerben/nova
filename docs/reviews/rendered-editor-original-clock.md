@@ -59,8 +59,10 @@ Result bundle retained locally: /tmp/task4-rendered-clock-tests-final.xcresult.
 The first build's Swift expression error and first run's obsolete protocol fixture
 were corrected; the final combined run has zero failures. Reliability manifest
 checks:127 passed. Timeline contract checks:209 Jest tests,28 desktop browser
-tests and583 API tests passed. Mobile browser contracts are still running.
-These results do not imply every required check is complete.
+tests,42 mobile browser contracts and583 API tests passed. These are the
+mandatory timeline gate components, run separately after an interrupted first
+combined browser run. Preship lint, drift, release metadata, journey mapping and
+HEAD-bound local-fix evidence checks passed. Remote CI remains to be run.
 
 No production project repair, regeneration, paid provider call, feature activation
 or deployment was performed. Original physical-phone reopen and local binding
