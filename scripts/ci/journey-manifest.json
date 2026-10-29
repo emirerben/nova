@@ -827,7 +827,8 @@
         "KriaTests/NativeEditorInteractionTests/testMarkedTimelineUsesTheFrameClockForMixedClipAndTransitionBoundaries",
         "KriaTests/NativeEditorInteractionTests/testRemovedMarkedSpeedSlotDoesNotPutLegacySurvivorsOnFrameClock",
         "KriaTests/GuidedLabelRebaseVectorTests/testSourceBoundTextUsesMarkedThirtyFPSWindowAfterHalfFrameSpeedRetime",
-        "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector"
+        "KriaUITests/NativeSpeedUITests/testDeviceClipSpeedAdjustsResetsAndUndoesThroughTheInspector",
+        "KriaUITests/NativeSpeedUITests/testClosingSpeedInspectorCommitsResetForSingleUndo"
       ]
     },
     {

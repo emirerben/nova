@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.30.0] - 2026-10-29
+
+### Changed
+- fix(ios): finish inspector edits on close and verify native journeys (#1892) <!-- release-pr: 1892 -->
+
 ## [0.82.29.0] - 2026-10-29
 
 ### Fixed
