@@ -1292,3 +1292,236 @@ def test_wrong_titles_still_fail_the_relaxed_text_check(
         c["status"] == "failed" and c["expected_visible"] == (failing == "visible")
         for c in _texts(report)
     ), (case, _texts(report))
+
+
+# --- KRI-1042: frame profile against a soft analysis proxy (verifier v5) ---
+#
+# Failure modes written before the verifier change:
+# - the phone's analysis proxy is 568x320 at ~0.7 Mbps; against it a correct export of
+#   detailed handheld footage scores 0.91-0.95 SSIM, under the 0.95 bar (Lisbon job
+#   3daccc8c), so the export is rejected;
+# - a one- or two-frame shift either way, or a cut two frames late, moves the best match
+#   to a neighbouring source frame; a lower bar must still reject it, on fast footage,
+#   and on a slow zoom where the shifted picture still scores 0.89-0.95;
+# - a 30 fps proxy of a 25 fps original shows some pictures twice; a repeated neighbour
+#   must not read as a shift, and is no evidence against one;
+# - still footage has no best frame, so below the exact bar it must not pass;
+# - a wrong clip, a 2% zoom or a 1% offset keeps the timing but not the picture.
+
+SOFT_SOURCES = {
+    # Mandelbrot detail (still at this scale), then the camera over 1600x900 of it.
+    "handheld": (
+        0.06,
+        "crop=1280:720:x='160+80*sin(2*PI*0.9*t)+16*sin(2*PI*5.3*t)'"
+        ":y='90+50*sin(2*PI*0.6*t+1)+12*sin(2*PI*4.1*t)',tmix=frames=2",
+    ),
+    "calm": (0.02, "crop=1280:720:x='160+45*t':y='90+10*t'"),
+    "zoom": (
+        0.02,
+        "zoompan=z=1+0.08*it:d=1:x=iw/2-(iw/zoom/2):y=ih/2-(ih/zoom/2):s=1280x720:fps=25",
+    ),
+    "still_grain": (0.06, "crop=1280:720:x=160:y=90,noise=alls=40:allf=t"),
+}
+SOFT_EXPORT = (270, 480)
+SOFT_GEOMETRY = {
+    "cover": "crop=ih*9/16:ih",
+    "zoom2": "crop=ih*9/16/1.02:ih/1.02",
+    "offset1": "crop=ih*9/16:ih:(iw-ih*9/16)/2+0.01*ih*9/16:0",
+}
+
+
+def _raw_frames(source, vf, size):
+    raw = subprocess.run(
+        [FFMPEG, "-v", "error", "-i", str(source), "-vf", f"{vf},scale={size[0]}:{size[1]}"]
+        + ["-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    ).stdout
+    frame = size[0] * size[1] * 3
+    return [raw[i * frame : (i + 1) * frame] for i in range(len(raw) // frame)]
+
+
+def _held(frames, fps_in, windows, fps=30):
+    """Frame n of each window shows the last source frame at/before start + n/fps."""
+    return b"".join(
+        frames[min(int((start + n / fps) * fps_in + 1e-6), len(frames) - 1)]
+        for start, duration in windows
+        for n in range(round(duration * fps))
+    )
+
+
+def _encode_raw(data, size, path, *quality):
+    subprocess.run(
+        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo"]
+        + ["-pix_fmt", "rgb24", "-s", f"{size[0]}x{size[1]}", "-r", "30", "-i", "-"]
+        + ["-c:v", "libx264", "-pix_fmt", "yuv420p", *quality, str(path)],
+        input=data,
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def soft_proxy(exports):
+    """Per footage: a 568x320 ~0.7 Mbps 30 fps proxy, and an exporter of 9:16 cuts."""
+    root, _, _ = exports
+    stills, built = {}, {}
+
+    def footage(name):
+        if name in built:
+            return built[name]
+        kind, fps_in = name.rsplit("_", 1)
+        scale, camera = SOFT_SOURCES[kind]
+        if scale not in stills:
+            stills[scale] = root / f"mandelbrot-{scale}.png"
+            ffmpeg(
+                "-f",
+                "lavfi",
+                "-i",
+                f"mandelbrot=s=1600x900:maxiter=300:start_scale={scale}:end_scale={scale}",
+                "-frames:v",
+                1,
+                stills[scale],
+            )
+        source = root / f"soft-{name}.mp4"
+        ffmpeg(
+            "-loop",
+            1,
+            "-framerate",
+            fps_in,
+            "-i",
+            stills[scale],
+            "-t",
+            4,
+            "-vf",
+            f"{camera},format=yuv420p",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            14,
+            source,
+        )
+        frames = _raw_frames(source, "null", (568, 320))
+        proxy = _encode_raw(
+            _held(frames, int(fps_in), [(0, len(frames) / int(fps_in))]),
+            (568, 320),
+            root / f"soft-{name}-proxy.mp4",
+            *("-preset", "medium", "-b:v", "700k", "-maxrate", "800k", "-bufsize", "1400k"),
+        )
+        cache = {}
+
+        def cut(windows, geometry="cover"):
+            if geometry not in cache:
+                cache[geometry] = _raw_frames(source, SOFT_GEOMETRY[geometry], SOFT_EXPORT)
+            return _encode_raw(
+                _held(cache[geometry], int(fps_in), windows),
+                SOFT_EXPORT,
+                root / f"{uuid.uuid4()}.mp4",
+                *("-preset", "fast", "-crf", "17"),
+            )
+
+        built[name] = proxy, cut
+        return built[name]
+
+    return footage
+
+
+def _portrait(recipe, windows):
+    """Contiguous clips of source "a" at (source_start, duration), on a 9:16 canvas."""
+    recipe = _single_clip(recipe, start=windows[0][0], duration=windows[0][1])
+    recipe.canvas = recipe.canvas.model_copy(update={"width": 1080, "height": 1920})
+    template = recipe.tracks[0].clips[0]
+    clips, cursor = [], 0.0
+    for index, (start, duration) in enumerate(windows):
+        clip = copy.deepcopy(template)
+        clip.id = f"c{index}"
+        clip.source_start, clip.source_duration, clip.timeline_start = start, duration, cursor
+        clips.append(clip)
+        cursor += duration
+    recipe.tracks[0].clips = clips
+    return recipe
+
+
+SOFT_WINDOWS = [(0.5, 1.9)]
+ZOOM_WINDOWS = [(1.5, 1.9)]
+
+
+@pytest.mark.parametrize("footage", ["handheld_25", "handheld_30"])
+def test_correct_export_against_a_soft_proxy_passes_on_its_frame_profile(
+    exports, soft_proxy, footage
+):
+    root, _, recipe = exports
+    proxy, cut = soft_proxy(footage)
+    report = verify_actual_export(
+        cut(SOFT_WINDOWS), status(_portrait(recipe, SOFT_WINDOWS)), {"a": proxy}
+    )
+    (root / f"kri1042-profile-{footage}.json").write_text(json.dumps(report, indent=2))
+    assert report["status"] == "checked", report
+    (picture,) = [c for c in report["checks"] if c["kind"] == "picture"]
+    below_bar = [s for s in picture["sample_evidence"] if s["ssim_displayed"] < 0.95]
+    assert below_bar and picture["profile_samples"] == len(below_bar), picture
+
+
+@pytest.mark.parametrize(
+    "footage,export_windows,geometry,recipe_windows",
+    [
+        ("handheld_25", [(0.5 + 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_25", [(0.5 - 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_25", [(0.5 + 2 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_25", [(0.5 - 2 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_30", [(0.5 + 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_30", [(0.5 - 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("calm_25", [(0.5 - 1 / 30, 1.9)], "cover", SOFT_WINDOWS),
+        ("zoom_25", [(1.5 - 1 / 30, 1.9)], "cover", ZOOM_WINDOWS),
+        ("zoom_25", [(1.5 + 2 / 30, 1.9)], "cover", ZOOM_WINDOWS),
+        ("zoom_25", [(1.5 - 2 / 30, 1.9)], "cover", ZOOM_WINDOWS),
+        ("handheld_25", [(0.5, 1.2 + 2 / 30), (2.6, 1.0 - 2 / 30)], "cover", None),
+        ("handheld_25", [(2.0, 1.9)], "cover", SOFT_WINDOWS),
+        ("handheld_25", SOFT_WINDOWS, "zoom2", SOFT_WINDOWS),
+        ("handheld_25", SOFT_WINDOWS, "offset1", SOFT_WINDOWS),
+    ],
+    ids=[
+        "handheld25-1-frame-late",
+        "handheld25-1-frame-early",
+        "handheld25-2-frames-late",
+        "handheld25-2-frames-early",
+        "handheld30-1-frame-late",
+        "handheld30-1-frame-early",
+        "calm25-1-frame-early",
+        "zoom25-1-frame-early",
+        "zoom25-2-frames-late",
+        "zoom25-2-frames-early",
+        "handheld25-cut-2-frames-late",
+        "handheld25-wrong-window",
+        "handheld25-zoom-2pct",
+        "handheld25-offset-1pct",
+    ],
+)
+def test_frame_profile_never_accepts_a_shifted_or_wrong_picture(
+    exports, soft_proxy, footage, export_windows, geometry, recipe_windows
+):
+    root, _, recipe = exports
+    proxy, cut = soft_proxy(footage)
+    recipe_windows = recipe_windows or [(0.5, 1.2), (2.6, 1.0)]
+    report = verify_actual_export(
+        cut(export_windows, geometry), status(_portrait(recipe, recipe_windows)), {"a": proxy}
+    )
+    assert report["status"] == "rejected", report
+    assert any(c["kind"] == "picture" and c["status"] == "failed" for c in report["checks"])
+
+
+def test_still_footage_below_the_exact_bar_has_no_profile_to_pass_on(exports, soft_proxy):
+    """Grain over a still: every frame differs, none is the best match."""
+    root, _, recipe = exports
+    proxy, cut = soft_proxy("still_grain_25")
+    report = verify_actual_export(
+        cut(SOFT_WINDOWS), status(_portrait(recipe, SOFT_WINDOWS)), {"a": proxy}
+    )
+    (picture,) = [c for c in report["checks"] if c["kind"] == "picture"]
+    assert min(s["ssim_displayed"] for s in picture["sample_evidence"]) < 0.95, picture
+    assert (picture["status"], picture["profile_samples"]) == ("failed", 0), picture
