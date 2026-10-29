@@ -38,6 +38,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.clip_sound_toggle_ask import SoundTarget, SoundToggleAsk, requirement_sound_toggle
+from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.freeze_ask import (
     asks_freeze_frame,
@@ -373,6 +374,10 @@ class PlanFacts:
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
     sequence_spots_met: tuple[str, ...] | None = None
     texts: tuple[str, ...] = ()
+    # 29 Ekim: the whole text of every complete fragment sequence on screen (a title shown a
+    # piece at a time), so a `text_sequence` ask is judged by how the words are SHOWN, not by
+    # the sentence appearing somewhere. Empty = none, or this facts source never has it.
+    sequence_texts: tuple[str, ...] = ()
     # KRI-945: pinned contract texts the render puts on screen whatever the plan holds
     # (`phone_plan_repair.contract_text_drawn`). Empty = no such writer, or not known.
     contract_drawn_texts: tuple[str, ...] = ()
@@ -549,6 +554,11 @@ class PlanFacts:
     # Seconds of the kept take with no speaker face in view, out of shot or turned away
     # (`faces.absent_s`, receipt v2). None = not recorded.
     speaker_framing_absent_s: float | None = None
+    # KRI-1027: how a finished phone montage framed its sideways clips for a bars/crop ask
+    # (`variant["landscape_framing"]`, `phone_montage_framing`) and the bars/crop the variant
+    # renders now (an editor Save can change it). None = no receipt: nothing is claimed.
+    landscape_framing: Mapping[str, Any] | None = None
+    variant_landscape_fit: str | None = None
     # KRI-628: whether a phone Talking render started at the line the creator quoted
     # (`variant["opening_cut"]`): "applied" or "not_applied", and why not. None = no
     # receipt (no such ask, a draft, or an older render): nothing is claimed.
@@ -1764,7 +1774,10 @@ def plan_facts_from_editor_payload(
     # KRI-560: a phrase the compiler split into one-word-at-a-time fragments (a word-by-word
     # hook) is on screen as the whole phrase, but no single row says it. Only a complete,
     # contiguous, same-source run counts; a missing or removed word leaves the phrase unseen.
-    strings.extend(composed["text"] for composed in complete_sequences(sequence_fragments))
+    composed_sequences = tuple(
+        composed["text"] for composed in complete_sequences(sequence_fragments)
+    )
+    strings.extend(composed_sequences)
     for entry in text_diff or ():
         if not isinstance(entry, Mapping) or not isinstance(entry.get("after"), str):
             continue
@@ -1794,6 +1807,7 @@ def plan_facts_from_editor_payload(
             and payload.get("text_elements")
         ),
         texts=tuple(strings),
+        sequence_texts=composed_sequences,
         editor=True,
         has_clip_structure=bool(per_clip),
         per_clip_text=per_clip,
@@ -2046,6 +2060,7 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     changes.update(_explicit_speech_cut_facts(variant))
     changes.update(_engine_noise_reduction_facts(variant))
     changes.update(_speaker_framing_facts(variant))
+    changes.update(_landscape_framing_facts(variant))
     changes.update(_opening_cut_facts(variant))
     named = variant.get("named_cuts")
     if isinstance(named, list):
@@ -6003,6 +6018,30 @@ def _toggle_summary(ask: SoundToggleAsk) -> str:
     return say(en=en, tr=tr)
 
 
+def _kept_line_rows(req: BriefRequirement, facts: PlanFacts) -> list[Mapping[str, Any]]:
+    """The draft's length-plan records of clips this ask keeps for a named line (KRI-1028)."""
+    snapshot = facts.media_snapshot if isinstance(facts.media_snapshot, Mapping) else {}
+    plan = snapshot.get("length_plan")
+    return [
+        row
+        for row in (plan.get("kept_lines") if isinstance(plan, Mapping) else None) or []
+        if isinstance(row, Mapping) and row.get("requirement_id") == req.id and row.get("line")
+    ]
+
+
+def _kept_line_whole(summary: str, line: str, span: str | None = None) -> str:
+    """``summary`` plus the named line the kept clip plays whole (KRI-1028)."""
+    if span:
+        return say(
+            en=f'{summary}; "{line}" plays whole ({span} of that clip)',
+            tr=f'{summary}; "{line}" baştan sona duyuluyor (o klibin {span} kısmı)',
+        )
+    return say(
+        en=f'{summary}; "{line}" plays whole',
+        tr=f'{summary}; "{line}" baştan sona duyulacak',
+    )
+
+
 def _toggle_seconds(windows: object) -> str:
     rows = [w for w in windows or [] if isinstance(w, (list, tuple)) and len(w) == 2]
     return ", ".join(f"{float(a):.1f}-{float(b):.1f} s" for a, b in rows)
@@ -6116,6 +6155,12 @@ def _check_sound_toggle(
             summary = _toggle_summary(ask)
             if ask.exceptions and seconds:
                 summary = say(en=f"{summary} ({seconds})", tr=f"{summary} ({seconds})")
+            kept = (
+                row.get("line") if not any(p.lines for p in (ask.target, *ask.exceptions)) else None
+            )
+            if kept:
+                span = _toggle_seconds([[row.get("line_start_s"), row.get("line_end_s")]])
+                summary = _kept_line_whole(summary, str(kept), span)
             return _receipt(req, "met", summary)
         return _receipt(
             req, "partial" if status == "partial" else "not_possible", _toggle_missed(ask, row)
@@ -6169,6 +6214,20 @@ def _draft_sound_toggle(
     )
     if silences_part and not phone_clip_sound_windows_supported():
         return _receipt(req, "partial", _toggle_missed(ask, {"reason_code": "partial_unsupported"}))
+    kept = _kept_line_rows(req, facts)
+    short = next((row for row in kept if row.get("held") is False), None)
+    if short is not None:
+        line = str(short["line"])
+        return _receipt(
+            req,
+            "partial",
+            say(
+                en=f"\"{line}\" doesn't fit whole in the video's length, so part of it is cut",
+                tr=f'"{line}" videonun süresine tam sığmıyor, bu yüzden bir kısmı kesiliyor',
+            ),
+        )
+    if kept:
+        return _receipt(req, "met", _kept_line_whole(_toggle_summary(ask), str(kept[0]["line"])))
     return _receipt(req, "met", _toggle_summary(ask))
 
 
@@ -8991,7 +9050,15 @@ def judged_at_render(req: BriefRequirement) -> bool:
         or asks_clip_speed(req)
         # KRI-942: clip sound on/off is read off the recipe the phone renders.
         or requirement_sound_toggle(req) is not None
+        # KRI-1027: bars/crop of the sideways clips is read off the render's framing receipt.
+        or _asks_landscape_fit(req)
     )
+
+
+def _asks_landscape_fit(req: BriefRequirement) -> bool:
+    from app.kria.landscape_fit_ask import requirement_landscape_fit  # noqa: PLC0415
+
+    return requirement_landscape_fit(req) is not None
 
 
 _CLIP_ID_PART_RE = re.compile(r"[^0-9A-Za-z]+")
@@ -9448,12 +9515,64 @@ def _check_engine_noise_reduction(req: BriefRequirement, facts: PlanFacts) -> Re
     return _receipt(req, "not_possible", _loc(_NOISE_REDUCTION_MISSED))
 
 
+# KRI-1027: "make it all vertical" / "keep the black bars" on a montage, answered from the
+# phone montage's framing receipt (`app.kria.landscape_fit_ask.judge_landscape_fit`).
+_MONTAGE_FIT_FORMATS = frozenset({"montage", "day_vlog", "single_hero"})
+
+
+def _landscape_framing_facts(variant: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = variant.get("landscape_framing")
+    if not isinstance(receipt, Mapping) or not isinstance(receipt.get("clips"), list):
+        return {}
+    fit = variant.get("landscape_fit")
+    return {
+        "landscape_framing": receipt,
+        "variant_landscape_fit": fit if fit in ("fit", "fill") else None,
+    }
+
+
+def _montage_landscape_fit(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
+    """The receipt for a montage's bars/crop ask, or None when another check owns it
+    (a Talking edit's framing, an editor turn's own diff)."""
+    from app.kria.landscape_fit_ask import (  # noqa: PLC0415
+        judge_landscape_fit,
+        requirement_landscape_fit,
+    )
+
+    fit = requirement_landscape_fit(req)
+    if fit is None or facts.phone_talking:
+        return None
+    rendered = facts.rendered_montage
+    if facts.landscape_framing is None:
+        if facts.rendered_variant or (facts.editor and not rendered):
+            # A finished Talking/Voiceover render, or an editor turn (its diff names
+            # what changed): their own checks answer.
+            return None
+        if not rendered and facts.edit_format not in _MONTAGE_FIT_FORMATS:
+            return None
+    verdict = judge_landscape_fit(
+        fit,
+        receipt=facts.landscape_framing,
+        rendered=rendered,
+        variant_fit=facts.variant_landscape_fit,
+    )
+    return _receipt(
+        req,
+        verdict.status,
+        verdict.reason,
+        verification=None if verdict.checked else "unchecked",
+    )
+
+
 def _has_checker(req: BriefRequirement) -> bool:
     """True when ``check_requirement`` can actually verify this requirement."""
+    from app.kria.landscape_fit_ask import requirement_landscape_fit  # noqa: PLC0415
+
     if (
         wants_engine_noise_reduction(req)
         or requirement_speech_cut(req) is not None
         or _wants_speaker_framing(req)
+        or requirement_landscape_fit(req) is not None
         or wants_light_change(req)
         or asks_freeze_frame(req)
     ):
@@ -9475,6 +9594,8 @@ def _has_checker(req: BriefRequirement) -> bool:
     if judged_at_render(req):
         # Neutral (`_NO_CHECKER`) anywhere but a finished phone montage (KRI-546).
         return True
+    if req.kind == "text_sequence" and compose_unmet_with_ops():
+        return True  # 29 Ekim: judged against the fragment sequences on screen
     if req.kind == "text":
         return bool(
             req.scope in ("per_clip", "title") or req.scope.startswith("clip:") or req.literal
@@ -9884,7 +10005,33 @@ def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRec
     return receipt
 
 
+def _check_text_sequence(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """The creator's words are shown a piece at a time (29 Ekim).
+
+    Met only when a complete fragment sequence on screen reads as exactly those words. The
+    sentence sitting in one title is NOT the ask. A draft that has not composed the sequence
+    yet says nothing (neutral, never a question): the editor ops compose it, the creator is
+    not asked to settle for a static title.
+    """
+    wanted = _fold(req.literal or "")
+    if wanted and any(_fold(text) == wanted for text in facts.sequence_texts):
+        return _receipt(req, "met", None)
+    return _receipt(req, "partial", _NO_CHECKER)
+
+
+def text_sequence_shown(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """Whether a complete fragment sequence on screen reads as the requirement's words.
+
+    The same test as the receipt above, without the compose flag: the creation text pass
+    composes a live ``text_sequence`` whatever the flag says, so it never skips one that only
+    sits on screen as a static title.
+    """
+    return _check_text_sequence(req, facts).status == "met"
+
+
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if req.kind == "text_sequence" and compose_unmet_with_ops():
+        return _check_text_sequence(req, facts)
     if wants_engine_noise_reduction(req):
         # This owns only the explicit engine-noise request.  Bed/mix controls keep their
         # existing checker and cannot be satisfied by a noise filter.
@@ -9916,6 +10063,11 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
         # edit: the cleanup ask owns the sentence; the length it names is judged
         # inside it. Elsewhere the sentence takes its kind's usual path.
         return _check_speech_cleanup(req, facts)
+    montage_fit = _montage_landscape_fit(req, facts)
+    if montage_fit is not None:
+        # KRI-1027: a montage's "make it all vertical" / "keep the black bars"; a Talking
+        # edit's framing ask keeps its own check below.
+        return montage_fit
     if _wants_speaker_framing(req):
         return _check_speaker_framing(req, facts)
     if (
@@ -10745,5 +10897,6 @@ __all__ = [
     "render_block_recovery",
     "reply_from_receipts",
     "speech_cleanup_review_note",
+    "text_sequence_shown",
     "wants_lipsync",
 ]

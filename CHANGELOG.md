@@ -2,6 +2,76 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.30.0] - 2026-10-29
+
+### Changed
+- fix(ios): finish inspector edits on close and verify native journeys (#1892) <!-- release-pr: 1892 -->
+
+## [0.82.29.0] - 2026-10-29
+
+### Fixed
+- fix(kria): "make it all vertical" crops a montage's sideways clips, keeping faces (KRI-1027) (#1932) <!-- release-pr: 1932 -->
+
+## [0.82.28.0] - 2026-10-29
+
+### Changed
+- fix(montage): keep a named line's whole sentence and check it in the receipt (KRI-1028) (#1929) <!-- release-pr: 1929 -->
+
+## [0.82.27.0] - 2026-10-29
+
+### Changed
+- fix(kria): a shuffle plus a word-by-word title reaches an approved draft and renders (#1944) <!-- release-pr: 1944 -->
+
+## [0.82.26.0] - 2026-10-29
+
+### Changed
+- chore(research): weekly TikTok artifact refresh 2026-10-25 (#1837) <!-- release-pr: 1837 -->
+
+## [0.82.25.0] - 2026-10-29
+
+### Changed
+- fix(export-verifier): pass soft-proxy pictures on the displayed frame's lead (KRI-1042) (#1943) <!-- release-pr: 1943 -->
+
+## [0.82.24.0] - 2026-10-29
+
+### Changed
+- fix(ios): show submitted prompts and preserve send recovery (#1926) <!-- release-pr: 1926 -->
+
+## [0.82.23.0] - 2026-10-29
+
+### Changed
+- fix(export-verifier): read text copy once per layer, prove glyphs per sample (KRI-1042) (#1942) <!-- release-pr: 1942 -->
+
+## [0.82.22.0] - 2026-10-29
+
+### Changed
+- feat(kria): provider deadlines degrade the next attempt instead of repeating it (KRI-1037) (#1934) <!-- release-pr: 1934 -->
+
+## [0.82.21.0] - 2026-10-29
+
+### Changed
+- feat(kria): follow-up and creation requests compose editor ops instead of being refused (KRI-1039) (#1936) <!-- release-pr: 1936 -->
+
+## [0.82.20.0] - 2026-10-29
+
+### Changed
+- feat(api): add admin read of stored phone-export verification evidence (KRI-1042) (#1938) <!-- release-pr: 1938 -->
+
+## [0.82.19.0] - 2026-10-29
+
+### Changed
+- fix(camera-roll): keep an event's ideas when it is saved or gains footage (KRI-1044) (#1935) <!-- release-pr: 1935 -->
+
+## [0.82.18.0] - 2026-10-29
+
+### Changed
+- feat(kria): long titles wrap, shrink or grow taller instead of failing to fit (KRI-1035) (#1927) <!-- release-pr: 1927 -->
+
+## [0.82.17.0] - 2026-10-29
+
+### Changed
+- fix(phone-text): flag emoji in a creator's title no longer fails the phone render; undrawable text named before approval (KRI-1024) (#1919) <!-- release-pr: 1919 -->
+
 ## [0.82.16.0] - 2026-10-29
 
 ### Changed

@@ -58,6 +58,9 @@ struct ChatConversationScroll<Content: View>: View {
             userIsScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
             if phase == .idle { followsLatest = nearBottom }
         }
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { old, new in
+            if old != new, followsLatest, !userIsScrolling { scrollToEnd() }
+        }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentInsets.bottom } action: { old, new in
             // Keyboard / composer growth changes the bottom inset; keep the end in view for a
             // reader who is following, so the last message never hides behind them.

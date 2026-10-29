@@ -286,6 +286,7 @@ def copilot_schema():
             "background_color",
             "style",
             "transition_after",
+            "weight",
         }
         if name not in strings:
             raise ValueError("unregistered wire field type: " + name)

@@ -34,6 +34,7 @@ from app.pipeline.phone_recipe_shared import (
     PhoneNarrationBed,
     PhoneSongBed,
     display_dims,
+    face_fill_transform,
     fit_transform,
     snap_text_overshoot,
     timeline_end_s,
@@ -231,7 +232,10 @@ def compile_phone_guided_plan(
     (``all_candidates["creator_render_shape"]``), so existing guided output
     never changes. Clips with a ``source_crop`` (the creator's own re-frame) or
     a ``look`` (the device throws on a look + transform), stills, and any
-    landscape output canvas keep the identity transform.
+    landscape output canvas keep the identity transform. On ``"fill"`` a moment
+    the worker framed for a "make it vertical" ask (KRI-1027,
+    `phone_montage_framing`) slides by its ``fill_position_x`` to keep its face in
+    the crop, or letterboxes alone when ``fill_letterbox`` (no crop holds the face).
     """
     # Import lazily: guided_story owns the shared caption-meta projection and
     # imports this compiler for its device path.
@@ -637,13 +641,20 @@ def compile_phone_guided_plan(
         source_crop = _phone_source_crop(moment.source_crop)
         transform = MediaTransform()
         if (
-            landscape_fit == "fit"
-            and canvas.height > canvas.width
+            canvas.height > canvas.width
             and source_crop is None
             and moment.look_preset != "golden_hour"
         ):
-            display_w, display_h = display_dims(source)
-            transform = fit_transform(display_w, display_h, canvas, landscape_fit)
+            if landscape_fit == "fit" or moment.fill_letterbox:
+                display_w, display_h = display_dims(source)
+                transform = fit_transform(display_w, display_h, canvas, "fit")
+            elif moment.fill_position_x:
+                # KRI-1027: the face-following crop (`phone_montage_framing`), the same
+                # clamped sideways shift the Talking face fill uses (KRI-547).
+                display_w, display_h = display_dims(source)
+                transform = face_fill_transform(
+                    display_w, display_h, canvas, moment.fill_position_x
+                )
         hold_duration = None
         if freeze_hold:
             # The source window plays at 1x, then its last frame holds for the rest of the

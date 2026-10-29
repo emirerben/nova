@@ -171,9 +171,20 @@ def test_measured_output_with_stale_authority_never_keeps_a_checked_receipt(
         # 57602026 was pinned to v2) publishes bytes the repaired verifier checks.
         ("phone-simple-cut-v2", "phone-simple-cut-v3", 200),
         ("phone-simple-cut-v3", "phone-simple-cut-v3", 200),
+        # KRI-1042: a request pinned to v3 (Lisbon job 3daccc8c) publishes bytes
+        # the v4 text proof checks.
+        ("phone-simple-cut-v3", "phone-simple-cut-v4", 200),
+        ("phone-simple-cut-v4", "phone-simple-cut-v4", 200),
+        # KRI-1042 frame profile: the Lisbon request (pinned to v3) and v4 pins
+        # publish bytes the v5 picture rule checks.
+        ("phone-simple-cut-v3", "phone-simple-cut-v5", 200),
+        ("phone-simple-cut-v4", "phone-simple-cut-v5", 200),
+        ("phone-simple-cut-v5", "phone-simple-cut-v5", 200),
         # An older verifier never satisfies a pin, nor a newer pin.
         ("phone-simple-cut-v2", "phone-simple-cut-v1", 422),
         ("phone-simple-cut-v3", "phone-simple-cut-v2", 422),
+        ("phone-simple-cut-v4", "phone-simple-cut-v3", 422),
+        ("phone-simple-cut-v5", "phone-simple-cut-v4", 422),
     ],
 )
 def test_pinned_verifier_accepts_its_own_or_the_current_verifier_only(

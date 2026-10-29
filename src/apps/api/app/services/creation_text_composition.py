@@ -29,12 +29,17 @@ from app.agents.edit_copilot import (
     _format_snapshot,
 )
 from app.kria.brief import BriefRequirement
+from app.kria.text_sequence import is_text_sequence
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.schemas.research import PreparedResearch
 from app.schemas.text_composition import TextCompositionProgram
 from app.services.kria_editor_ops import apply_text_lane_ops, is_caption_text_bar
 
 log = structlog.get_logger()
+
+# A `text_sequence` in these scopes is the opening title (`unified_montage.brief_view` seeds
+# the bar from its literal); the composer splits that bar rather than adding a text.
+_SEQUENCE_TITLE_SCOPES = frozenset({"title", "global"})
 
 # Same flash model `main_creator` / `brief_extractor` already fall back to.
 _FAST_COMPOSER_MODEL = "gemini-3.6-flash"
@@ -70,10 +75,17 @@ with the actual bars. Compose operations for arbitrary chunks, simultaneous or s
 and independent entrances/exits; an entrance effect alone does not change segmentation.
 The typewriter entrance reveals CHARACTERS inside one bar, never separate words. For a
 word-by-word title, use replace_text_sequence with one exact word per segment and the
-requested entrance in its patch. Preserve the combined wording and choose readable timing
-inside the requested clip. Apply timing and shared style operations BEFORE splitting the
-title. Selectors bind the original draft: after splitting, the original title id no longer
-exists, so never follow the split with a title/all-text selector containing that old id.
+requested entrance in its patch. A brief requirement of kind text_sequence is this ask: its
+literal is the exact wording, facts.unit says word or phrase, and facts.mode says replace (each
+piece replaces the last), cumulative (the sentence builds up and holds, "mode":"cumulative") or
+agent_choice: then use replace unless the request asks the earlier words to stay on screen, and
+say which in the reply. A title or whole-video sequence is already the opening title bar: split
+THAT bar, never add another text for it. Give every piece at least 0.25 s: when the bar is
+shorter than 0.25 s per piece, first lengthen it with set_texts_timing (about 0.45 s per word
+reads well; never past total_duration_s). Preserve the combined wording and choose
+readable timing inside the requested clip. Apply timing and shared style operations BEFORE
+splitting the title. Selectors bind the original draft: after splitting, the original title id
+no longer exists, so never follow the split with a title/all-text selector containing that old id.
 Put per-word styles in the replacement's patch, or style the original before splitting.
 Use readable timing within the existing video and requested clip window; extend a short default
 title window before splitting when needed. Never leave an unintended static duplicate of a
@@ -131,7 +143,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v14-hidden-song-caption-lane",
+        prompt_version="v16-text-sequence-title-bar",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -328,7 +340,13 @@ def _check_copy(texts: list[dict], constraints: Mapping[str, str]) -> None:
             raise CreationTextCompositionError("Text composition changed confirmed copy")
         rows = [row for row in live if _owns(row, source_id)]
         if rows:
-            actual = " ".join(row["text"] for row in sorted(rows, key=lambda row: row["start_s"]))
+            ordered = sorted(rows, key=lambda row: row["start_s"])
+            # A cumulative build-up shows the first k words at step k: the copy is its last step.
+            cumulative = len(ordered) > 1 and all(
+                (row.get("source_params") or {}).get("sequence_mode") == "cumulative"
+                for row in ordered
+            )
+            actual = ordered[-1]["text"] if cumulative else " ".join(row["text"] for row in ordered)
             if _copy_key(actual) != _copy_key(expected):
                 raise CreationTextCompositionError("Text composition changed confirmed copy")
             continue
@@ -349,7 +367,14 @@ def _check_added_text(
     operations: list[dict], requirements: Sequence[BriefRequirement] | None
 ) -> None:
     if requirements is None or any(
-        req.live and req.kind == "text" and req.scope != "title" for req in requirements
+        req.live
+        and (
+            (req.kind == "text" and req.scope != "title")
+            # A title or whole-video sequence already has its bar (the opening title,
+            # `unified_montage.brief_view`): only one on a clip needs a new text to split.
+            or (is_text_sequence(req) and req.scope not in _SEQUENCE_TITLE_SCOPES)
+        )
+        for req in requirements
     ):
         return
     if any(op.get("op") == "add_text" for op in operations):
@@ -664,7 +689,8 @@ def creation_model_snapshot(
         model_snapshot["text_requirements"] = [
             req.model_dump(mode="json")
             for req in text_requirements
-            if req.live and (req.kind in {"text", "style"} or req.scope == "title")
+            if req.live
+            and (req.kind in {"text", "style"} or req.scope == "title" or is_text_sequence(req))
         ]
     return model_snapshot
 
@@ -725,14 +751,18 @@ def compose_creation_text(
         constraints = {**snapshot_copy_constraints(snapshot, plan), **constraints}
     _check_copy(texts, constraints)
     if text_requirements is not None and constraints and pinned_research is None:
-        from app.kria.brief_checks import check_requirement, plan_facts_from_editor_payload
+        from app.kria.brief_checks import (
+            check_requirement,
+            plan_facts_from_editor_payload,
+            text_sequence_shown,
+        )
 
         # A bound brief owns the current request, not the historical conversation.
         # Skip only when every requested text/style behavior is already proven.
         relevant = [
             req
             for req in text_requirements
-            if req.kind in {"text", "style"} or req.scope == "title"
+            if req.kind in {"text", "style"} or req.scope == "title" or is_text_sequence(req)
         ]
         facts = plan_facts_from_editor_payload({**plan, "title": snapshot.opening_title})
         relationships_verified = not _requests_text_relationships(creator_request) or all(
@@ -751,7 +781,13 @@ def compose_creation_text(
             and snapshot.title_animation is None
             and relevant
             and relationships_verified
-            and all(check_requirement(req, facts).status == "met" for req in relevant)
+            and all(
+                # A static title is not words shown a piece at a time, flag or not.
+                text_sequence_shown(req, facts)
+                if is_text_sequence(req)
+                else check_requirement(req, facts).status == "met"
+                for req in relevant
+            )
         ):
             return snapshot.model_copy(
                 update={

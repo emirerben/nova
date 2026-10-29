@@ -1845,7 +1845,11 @@ def _op_remove_visual_media(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_edit_text(state: _DraftState, op: dict[str, Any]) -> None:
-    state.text_bar(op.get("bar_index"))["text"] = str(op["text"])
+    from app.services.kria_editor_ops_text import keep_authored_breaks  # noqa: PLC0415
+
+    bar = state.text_bar(op.get("bar_index"))
+    bar["text"] = str(op["text"])
+    keep_authored_breaks(bar)
     state.changed.add("text")
 
 
@@ -1935,21 +1939,23 @@ def _op_add_text(state: _DraftState, op: dict[str, Any]) -> None:
 
         add_text_v2(state, op)
         return
-    state.text.append(
-        {
-            "id": f"kria-{uuid.uuid4().hex}",
-            "text": str(op["text"]),
-            "start_s": float(op["start_s"]),
-            "end_s": float(op["end_s"]),
-            "role": "generative_intro",
-            "font_family": "Playfair Display",
-            "size_px": 72,
-            "color": "#FFFFFF",
-            "effect": "static",
-            "alignment": "center",
-            "position": "middle",
-        }
-    )
+    from app.services.kria_editor_ops_text import keep_authored_breaks  # noqa: PLC0415
+
+    row = {
+        "id": f"kria-{uuid.uuid4().hex}",
+        "text": str(op["text"]),
+        "start_s": float(op["start_s"]),
+        "end_s": float(op["end_s"]),
+        "role": "generative_intro",
+        "font_family": "Playfair Display",
+        "size_px": 72,
+        "color": "#FFFFFF",
+        "effect": "static",
+        "alignment": "center",
+        "position": "middle",
+    }
+    keep_authored_breaks(row)
+    state.text.append(row)
     state.explicit_text_ids.add(str(state.text[-1]["id"]))
     state.changed.add("text")
 

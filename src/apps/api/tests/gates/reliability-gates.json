@@ -2186,6 +2186,96 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1042-lisbon-export-text-false-reject",
+      "tickets": [
+        "KRI-1042"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1042",
+      "symptom": "A correct Lisbon phone export (job 3daccc8c) was rejected by phone-simple-cut-v3: white Inter-Bold titles over white shirts broke one word at 0.45 s and 1.5 s, and v3 needed the exact copy in every visible sample. A copy with a straight quote could never pass because the Tesseract TSV was parsed with CSV quoting.",
+      "boundary": "publication",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/services/actual_export_verification.py",
+        "src/apps/api/app/services/export_verification_admin.py",
+        "src/apps/api/app/services/device_render.py"
+      ],
+      "regression_tests": [
+        "tests/integration/test_actual_export_verification.py",
+        "tests/integration/test_admin_export_verification.py",
+        "tests/routes/test_actual_export_publication.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Retained Lisbon read-area crops and proxy backgrounds (0.45/1.5/2.55 s): v3 fails 0.45 and 1.5; v4 passes them on presence (3/5 and 4/5 words in order, ink 0.184/0.180) with the copy read at 2.55. Wrong-word, stale-copy, never-drawn and drawn-late controls on the same pixels fail. On 40 synthetic exports v3 and v4 give identical picture/audio/duration checks; only the shirt, stray-mark and straight-quote positives change (rejected to checked).",
+        "live_model": "No model calls or paid evaluation.",
+        "native_output": "The Lisbon export and proxies were not retained, so the full report was not replayed end to end; the picture check still rejects Lisbon (min SSIM 0.889).",
+        "production": "Not deployed. Requests pinned to v3 accept a v4 report after deploy."
+      },
+      "neighbours_covered": [
+        "white title over a fill-coloured shirt behind its first letters",
+        "straight quote in the copy",
+        "one short letter-like stray token in every read",
+        "consecutive layers in the same place",
+        "missing, wrong, extra-word, late, outside-region and lingering titles",
+        "title lingering behind a shirt where the whole copy is unreadable"
+      ],
+      "neighbours_gap": [
+        "copy that changes mid-window to text sharing more than half its words",
+        "ink threshold calibrated on one real export and synthetic fixtures, no replay corpus",
+        "phone drops the text shadow (separate renderer ticket)"
+      ],
+      "follow_ups": [
+        "KRI-1042 PR 2 (kri-1042-lisbon-export-picture-false-reject): frame-profile picture rule"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1042-lisbon-export-picture-false-reject",
+      "tickets": [
+        "KRI-1042"
+      ],
+      "status": "open_pr",
+      "owner": "KRI-1042",
+      "symptom": "A correct Lisbon phone export (job 3daccc8c) was rejected by the picture check: against the 568x320 ~0.7 Mbps analysis proxy, 9 of 16 samples of detailed handheld footage scored 0.89-0.95 local SSIM, under the fixed 0.95 bar, although the displayed source frame was the best match in all 16.",
+      "boundary": "publication",
+      "journey": "kri-492-length-ownership",
+      "paths": [
+        "src/apps/api/app/services/actual_export_verification.py",
+        "src/apps/api/app/services/export_verification_admin.py",
+        "src/apps/api/app/services/device_render.py"
+      ],
+      "regression_tests": [
+        "tests/integration/test_actual_export_verification.py",
+        "tests/integration/test_admin_export_verification.py",
+        "tests/routes/test_actual_export_publication.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": "phone_actual_export_verification_enabled",
+      "evidence": {
+        "offline_replay": "Lisbon per-sample scores (16 samples, 3 clips): v4 rejects all three clips, v5 passes all three on the frame profile (window leads >= 0.041, peak margin >= 0.0068, window mean >= 0.942). Real v4 and v5 verifiers on 564 picture windows (iOS proxy generator and exporter on 9 footage types, plus synthetic soft proxies): 0 of 241 shift or wrong-clip windows v4 rejects are accepted; 30 correct windows flip to checked; 27 tone-only wrong-picture windows (brightness, saturation, blur, low quality) flip, no zoom or offset window does.",
+        "live_model": "No model calls or paid evaluation.",
+        "native_output": "The Lisbon export and proxies were not retained, so v5 was replayed on the stored per-sample scores, not on the media.",
+        "production": "Not deployed. Requests pinned to v4 accept a v5 report after deploy."
+      },
+      "neighbours_covered": [
+        "one- and two-frame shifts either way on fast, calm and slow-zoom footage",
+        "a cut two frames late",
+        "wrong source window",
+        "2% zoom and 1% offset at the right time",
+        "25 fps original in a 30 fps proxy (repeated proxy frames)",
+        "still footage below the exact bar"
+      ],
+      "neighbours_gap": [
+        "tone changes (about 8 codes brightness, saturation, mild blur) that keep SSIM >= 0.93 pass on soft-proxy footage, as v4 passed them on sharp-proxy footage",
+        "one-frame-late export on calm footage passes through the unchanged v4 next-frame tolerance",
+        "calibrated on one real export plus generated footage, no replay corpus"
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-726-background-recovery",
       "tickets": [
         "KRI-734",

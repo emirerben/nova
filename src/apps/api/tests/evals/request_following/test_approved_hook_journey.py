@@ -35,6 +35,18 @@ from app.services.creative_copy_decisions import (
 from app.services.creative_copy_gate import creative_copy_problem
 from app.services.phone_sources import PhoneSourceBinding
 
+
+@pytest.fixture(autouse=True)
+def _recorded_prod_windows(monkeypatch):
+    """These replay captured prod videos whose title windows are shorter than a quarter second
+    per word; the flag-off op shape keeps those recorded windows. The readable-window floor is
+    covered by tests/kria/test_compose_unmet_with_ops.py.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_compose_unmet_with_ops_enabled", False)
+
+
 CASE = json.loads(
     (Path(__file__).parents[2] / "fixtures/prompt_coverage/kri651_approved_hook.json").read_text()
 )

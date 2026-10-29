@@ -90,6 +90,7 @@ from app.kria.clip_exclusions import (
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope, apply_subject_scope
 from app.kria.clip_ties import left_out, tie_question, voiceover_ties, with_tie_categories
+from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import KriaTurnPlan
 from app.kria.draft_sound_carry import sound_asks_unchanged
 from app.kria.duplicate_send import is_duplicate_answer
@@ -161,6 +162,7 @@ from app.services.clip_intent_planning import (
     brief_label_asks,
     kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
+    sequence_text_literals,
     shot_captions_safe,
     whole_video_text_asks,
 )
@@ -184,6 +186,7 @@ from app.services.creator_sessions import (
     load_intent_clips_for_item,
     resolve_item_creator_context,
 )
+from app.services.kept_sound_lines import kept_line_records
 from app.services.kria_editor_ops import (
     EDITOR_STATE_STALE_REPLY,
     MAX_EDITOR_OPS,
@@ -317,7 +320,9 @@ def _enrich_best_parts_snapshot(
     the lines the creator wants heard whole (KRI-803, word timings included), else the timed
     sentences alone place them; the brief's moment ask (KRI-596, "the best six
     moments, each very short") lets a long take give several windows; a clip the creator's
-    sound or order ask describes by what is said in it starts on that sentence (KRI-681).
+    sound or order ask describes by what is said in it starts on that sentence (KRI-681), and
+    one a sound ask keeps audible for that line plays the whole sentence (KRI-1028,
+    ``kept_sound_lines.kept_line_records``).
     ``camera_sound`` (``narration_notes.keeps_camera_sound``, KRI-585): every clip's own
     sound plays, so a welcome the clips' words move forward keeps its line and a pinned
     closing clip that only introduces someone plays its stretch without words.
@@ -375,6 +380,16 @@ def _enrich_best_parts_snapshot(
             _described_clip_texts(brief), media_snapshot, skip_ids=held, named=named
         ).items()
     }
+    named_ids = {row.get("media_id") for row in named if row.get("status") == "found"}
+    kept = kept_line_records(brief, media_snapshot, skip_ids=held)
+    for row in kept:
+        window = (row["window_start_s"], row["window_end_s"])
+        if row["media_id"] in named_ids and row["media_id"] in described:
+            # A whole line the creator named in the same clip (KRI-760) plays too.
+            other = described[row["media_id"]]
+            window = (min(window[0], other[0]), max(window[1], other[1]))
+            row.update(window_start_s=window[0], window_end_s=window[1])
+        described[row["media_id"]] = window
 
     # KRI-824: a photo the creator gave its own seconds gets exactly that window. KRI-825:
     # so does every photo when the creator gave the photos a length as a group, and the
@@ -447,6 +462,7 @@ def _enrich_best_parts_snapshot(
             quiet_moments=dict([quiet]) if quiet else None,
             spoken_order=seats.record() if seats is not None else None,
             named_lines=named,
+            kept_lines=kept,
             still_holds=still_holds,
             attached_visual_ids=attached_visual_ids,
             pinned_moments=(
@@ -958,6 +974,29 @@ async def _with_approved_copy(
                 for req_id in unbound.get(turn_id, ())
             }
     return bind_approved_copy(prior, updates, states, answered_ids=answered)
+
+
+def brief_order_fields(
+    resolved_intents: list[ResolvedClipIntent],
+    brief: CreativeBrief | None,
+    ordering_choice: str | None,
+) -> tuple[list[ResolvedClipIntent], str | None]:
+    """The server-owned order fields a strategy draft carries for the brief's order ask.
+
+    29 Ekim: a random-order ask rides the strategy as its own choice; the seed itself stays
+    on the requirement so every re-run draws the same permutation. A creator's answer to an
+    order question (``ordering_choice``) is never replaced. Under that ask a described group
+    with no stated inner order takes it as its inner order (`confirm_unordered_groups`), so
+    the draft never asks the creator to order a group they asked to have shuffled.
+    """
+    from app.services.order_mode import confirm_unordered_groups  # noqa: PLC0415
+
+    if ordering_choice is None and brief is not None:
+        from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
+
+        if brief_view(brief).random_order_seed is not None:
+            ordering_choice = "random"
+    return confirm_unordered_groups(resolved_intents, brief), ordering_choice
 
 
 def adapt_creator_action(
@@ -1954,6 +1993,11 @@ _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar
 turn_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "kria_turn_deadline", default=None
 )
+# KRI-1037: set by the turn task when the thread's last turn ended at a provider deadline, so
+# the Main Creator starts on its lighter rung instead of repeating the call that timed out.
+start_degraded_retry: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "kria_start_degraded_retry", default=False
+)
 # Sequence of the creator message the running turn answers (set by the turn task). A later
 # message is a queued follow-up with its own turn, so the history this turn plans from stops
 # here. None = no bound.
@@ -2485,6 +2529,7 @@ async def _call_main_creator(
                     deadline - _POST_UNDERSTANDING_RESERVE_S if deadline is not None else None
                 ),
                 thought_summary_callback=current_thought_publisher(),
+                start_degraded=start_degraded_retry.get(),
             ),
         )
 
@@ -3557,6 +3602,7 @@ async def _plan_creator_action(
         )
         kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
         whole_video_texts = whole_video_text_asks(effective_brief)
+        sequence_texts = sequence_text_literals(effective_brief)
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
         )
@@ -3598,6 +3644,8 @@ async def _plan_creator_action(
                 **({} if shot_captions else {"shot_captions": False}),
                 # KRI-945: a caption for the brief's researched text or title is never asked.
                 **({"whole_video_texts": whole_video_texts} if whole_video_texts else {}),
+                # 29 Ekim: the brief's word-by-word text is the text lane's, never a caption.
+                **({"sequence_texts": sequence_texts} if sequence_texts else {}),
                 **({"checked_inventory": checked_inventory} if checked_inventory else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
@@ -3901,18 +3949,14 @@ async def _plan_creator_action(
                         manifest_hash=manifest.manifest_hash,
                         context_hash=manifest.context_hash,
                     )
-        if ordering_choice is None and effective_brief is not None:
-            # 29 Ekim: a random-order ask rides the strategy as its own choice; the seed
-            # itself stays on the requirement so every re-run draws the same permutation.
-            from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
-
-            if brief_view(effective_brief).random_order_seed is not None:
-                ordering_choice = "random"
+        resolved_intents, ordering_choice = brief_order_fields(
+            planned.resolution.intents, effective_brief, ordering_choice
+        )
         return PlannedKriaTurn(
             plan=adapt_creator_action(
                 action,
                 server_clip_intents=planned.requested_intents,
-                server_resolved_clip_intents=planned.resolution.intents,
+                server_resolved_clip_intents=resolved_intents,
                 server_resolved_song_takes=server_song_takes,
                 server_song_captions=server_song_captions,
                 ordering_choice=ordering_choice,
@@ -4371,6 +4415,9 @@ _FAST_PATH_OPS = frozenset(
         "reorder_clips_by",
     }
 )
+# 29 Ekim: a word-by-word title is one in-place text op, so it rides the fast path too
+# (`KRIA_COMPOSE_UNMET_WITH_OPS_ENABLED`; off = the set above, unchanged).
+_COMPOSE_FAST_PATH_OPS = frozenset({"replace_text_sequence"})
 _GROUNDED_REORDERS = (None, "capture_time", "random")
 _FAST_PATH_MAX_CHARS = 280
 # A text/label/caption ask: when the copilot answers it with a question or a refusal, that
@@ -4456,7 +4503,9 @@ def _is_fast_path_plan(plan: KriaTurnPlan | None) -> bool:
             return False
         for op in ops:
             name = op.get("op") if isinstance(op, dict) else getattr(op, "op", None)
-            if str(name) not in _FAST_PATH_OPS:
+            if str(name) not in _FAST_PATH_OPS and not (
+                str(name) in _COMPOSE_FAST_PATH_OPS and compose_unmet_with_ops()
+            ):
                 return False
             # A model-authored clip order is no in-place text/label op: only the
             # server-grounded capture_time and seeded random reorders ride the fast path.

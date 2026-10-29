@@ -1,0 +1,754 @@
+{
+ "_source": "prod thread A228E85B (2026-10-28, Plaza de Mayo kit M1 'maximo 3'), approved job 97d55f9a: creator_brief_binding.brief + media_snapshot.clip_assignments (trimmed to duration, sound, size, capture and analysis), all_candidates.creator_strategy, and the approved length_plan windows. Ids are the kit file names (m1_05 = 05_going_to_recoleta_selfie).",
+ "clips": [
+  {
+   "media_id": "m1_08",
+   "kind": "video",
+   "duration_s": 11.633333,
+   "has_audio": true,
+   "width": 568,
+   "height": 320,
+   "capture": {
+    "capture_time": "2025-12-12T22:00:16Z"
+   },
+   "analysis": {
+    "transcript": "Now we'll we'll take the bus, right? Yes.",
+    "description": "man speaks about taking bus man adjusts his hair while talking",
+    "best_moments": [
+     {
+      "end_s": 2.5,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "man speaks about taking bus"
+     },
+     {
+      "end_s": 10.9,
+      "energy": 3.5,
+      "start_s": 8.1,
+      "description": "man adjusts his hair while talking"
+     }
+    ],
+    "on_screen_text": "Now we'll we'll take the bus, right? Yes.",
+    "understanding": {
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "Now we'll take the bus, right?",
+        "end_s": 2.46,
+        "start_s": 0.0
+       },
+       {
+        "text": "Yes.",
+        "end_s": 2.94,
+        "start_s": 2.5
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "Now we'll we'll take the bus, right? Yes."
+     },
+     "summary": "Two men are walking outdoors, one of whom is speaking to the camera about taking a bus. They are in a city square or park setting."
+    }
+   }
+  },
+  {
+   "media_id": "m1_j1",
+   "kind": "video",
+   "duration_s": 0.966667,
+   "has_audio": true,
+   "width": 568,
+   "height": 320,
+   "capture": {
+    "capture_time": "2025-12-12T22:00:08Z"
+   },
+   "analysis": {
+    "transcript": "",
+    "description": "",
+    "best_moments": [],
+    "on_screen_text": "",
+    "understanding": {
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "summary": "The clip features a static shot of a tiled ground with a distinct curved pattern made of larger, darker tiles."
+    }
+   }
+  },
+  {
+   "media_id": "m1_07",
+   "kind": "video",
+   "duration_s": 23.4,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2025-12-12T22:01:47Z"
+   },
+   "analysis": {
+    "transcript": "Yeah. Yes. Well, and this is the cathedral, by the way. You might have. What is this? It's not the Pantheon, this is the cathedral. Okay. It looks like Pantheon. I know, they try to imitate it, but it's not. Yeah. It was opened just a while ago. You could have seen, have you, if you entered here? No.",
+    "description": "It's not the Pantheon, this is the cathedral.",
+    "best_moments": [],
+    "on_screen_text": "Yeah. Yes. Well, and this is the cathedral, by the way. You might have. What is this? It's not the Pantheon, this is the cathedral. Okay. It looks like Pantheon. I know, they try to imitate it, but it's not. Yeah. It was opened just a while ago. You could have seen, have you, if you entered here? No.",
+    "understanding": {
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "Yes.",
+        "end_s": 1.42,
+        "start_s": 0.96
+       },
+       {
+        "text": "This is the cathedral.",
+        "end_s": 5.32,
+        "start_s": 4.2
+       },
+       {
+        "text": "You might have...",
+        "end_s": 6.8,
+        "start_s": 5.96
+       },
+       {
+        "text": "What is this?",
+        "end_s": 7.4,
+        "start_s": 6.8
+       },
+       {
+        "text": "This is not the pantheon, this is the cathedral.",
+        "end_s": 9.38,
+        "start_s": 7.44
+       },
+       {
+        "text": "Okay.",
+        "end_s": 9.8,
+        "start_s": 9.46
+       },
+       {
+        "text": "It looks like pantheon.",
+        "end_s": 11.1,
+        "start_s": 9.88
+       },
+       {
+        "text": "I know.",
+        "end_s": 11.66,
+        "start_s": 11.3
+       },
+       {
+        "text": "They tried to imitate it.",
+        "end_s": 13.04,
+        "start_s": 11.88
+       },
+       {
+        "text": "It was open just a while ago.",
+        "end_s": 19.88,
+        "start_s": 17.68
+       },
+       {
+        "text": "You could have seen...",
+        "end_s": 21.74,
+        "start_s": 20.72
+       },
+       {
+        "text": "Have you...",
+        "end_s": 22.06,
+        "start_s": 21.74
+       },
+       {
+        "text": "Did you enter here?",
+        "end_s": 22.78,
+        "start_s": 22.06
+       },
+       {
+        "text": "No.",
+        "end_s": 23.02,
+        "start_s": 22.78
+       },
+       {
+        "text": "Ah, okay.",
+        "end_s": 23.38,
+        "start_s": 23.16
+       }
+      ],
+      "to_camera": false,
+      "has_speech": true,
+      "transcript": "Yeah. Yes. Well, and this is the cathedral, by the way. You might have. What is this? It's not the Pantheon, this is the cathedral. Okay. It looks like Pantheon. I know, they try to imitate it, but it's not. Yeah. It was opened just a while ago. You could have seen, have you, if you entered here? No."
+     },
+     "summary": "The video shows two people walking past a large, columned building, which one person identifies as a cathedral. They discuss its resemblance to the Pantheon."
+    }
+   }
+  },
+  {
+   "media_id": "m1_j2",
+   "kind": "video",
+   "duration_s": 0.2,
+   "has_audio": false,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2025-12-12T22:10:13Z"
+   },
+   "analysis": {
+    "transcript": "",
+    "description": "man standing on bus holding bar man slightly swaying with bus motion man looking around on bus",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "man standing on bus holding bar"
+     },
+     {
+      "end_s": 6.0,
+      "energy": 4.0,
+      "start_s": 3.0,
+      "description": "man slightly swaying with bus motion"
+     },
+     {
+      "end_s": 10.0,
+      "energy": 3.0,
+      "start_s": 6.0,
+      "description": "man looking around on bus"
+     }
+    ],
+    "on_screen_text": "",
+    "understanding": {
+     "speech": {
+      "to_camera": false,
+      "has_speech": false,
+      "transcript": ""
+     },
+     "summary": "A man with a beard stands on a bus, holding onto a yellow overhead bar as the bus moves."
+    }
+   }
+  },
+  {
+   "media_id": "m1_09",
+   "kind": "video",
+   "duration_s": 14.0,
+   "has_audio": true,
+   "width": 568,
+   "height": 320,
+   "capture": {
+    "capture_time": "2025-12-12T21:49:02Z"
+   },
+   "analysis": {
+    "transcript": "of the square, you had the the real government, the government of the whole, the whole country. And it was in the hands of Spain, right? And when the when the viceroy, you know, viceroy,",
+    "description": "camera pans to wide view of square man speaks to camera",
+    "best_moments": [
+     {
+      "end_s": 7.0,
+      "energy": 6.0,
+      "start_s": 1.0,
+      "description": "camera pans to wide view of square"
+     },
+     {
+      "end_s": 12.0,
+      "energy": 4.0,
+      "start_s": 9.0,
+      "description": "man speaks to camera"
+     }
+    ],
+    "on_screen_text": "of the square, you had the the real government, the government of the whole, the whole country. And it was in the hands of Spain, right? And when the when the viceroy, you know, viceroy,",
+    "understanding": {
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "a square you have the the real government the government of the whole the whole country and it was in the hands of spain right and when the when the viceroy you know viceroy",
+        "end_s": 13.98,
+        "start_s": 0.0
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "of the square, you had the the real government, the government of the whole, the whole country. And it was in the hands of Spain, right? And when the when the viceroy, you know, viceroy,"
+     },
+     "summary": "A man speaks to the camera in a public square, explaining the history of the square and the government building. The camera pans from the man to a wide shot of the square with a pink building in the background, then back to the man."
+    }
+   }
+  },
+  {
+   "media_id": "m1_01",
+   "kind": "video",
+   "duration_s": 14.333333,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2025-12-12T21:41:10Z"
+   },
+   "analysis": {
+    "transcript": "Yeah, we started. Uh, hello everyone. I think, should I do in English or Turkish? Turkish? Would you mind? Turkish? Okay, you'll tell and I'll just translate into Turkish. Okay. Okay.",
+    "description": "tall palm trees and building view speaker begins addressing audience asking about language preference agreeing on translation plan",
+    "best_moments": [
+     {
+      "end_s": 1.9,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "tall palm trees and building view"
+     },
+     {
+      "end_s": 3.8,
+      "energy": 5.0,
+      "start_s": 2.2,
+      "description": "speaker begins addressing audience"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 6.0,
+      "start_s": 5.3,
+      "description": "asking about language preference"
+     },
+     {
+      "end_s": 13.9,
+      "energy": 4.0,
+      "start_s": 9.9,
+      "description": "agreeing on translation plan"
+     }
+    ],
+    "on_screen_text": "Yeah, we started. Uh, hello everyone. I think, should I do in English or Turkish? Turkish? Would you mind? Turkish? Okay, you'll tell and I'll just translate into Turkish. Okay. Okay.",
+    "understanding": {
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "Yeah, we started.",
+        "end_s": 2.36,
+        "start_s": 1.24
+       },
+       {
+        "text": "Hello everyone.",
+        "end_s": 4.7,
+        "start_s": 3.88
+       },
+       {
+        "text": "Should I do it in English or Turkish?",
+        "end_s": 7.06,
+        "start_s": 5.02
+       },
+       {
+        "text": "Turkish.",
+        "end_s": 7.52,
+        "start_s": 7.22
+       },
+       {
+        "text": "Would you mind?",
+        "end_s": 8.04,
+        "start_s": 7.58
+       },
+       {
+        "text": "Turkish.",
+        "end_s": 8.94,
+        "start_s": 8.54
+       },
+       {
+        "text": "Yeah.",
+        "end_s": 9.7,
+        "start_s": 9.36
+       },
+       {
+        "text": "Okay, you'll tell and I'll just translate into Turkish.",
+        "end_s": 11.48,
+        "start_s": 9.7
+       },
+       {
+        "text": "Okay.",
+        "end_s": 12.14,
+        "start_s": 11.74
+       },
+       {
+        "text": "Okay.",
+        "end_s": 12.76,
+        "start_s": 12.38
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "Yeah, we started. Uh, hello everyone. I think, should I do in English or Turkish? Turkish? Would you mind? Turkish? Okay, you'll tell and I'll just translate into Turkish. Okay. Okay."
+     },
+     "summary": "The video shows a sunny park setting with tall palm trees and a historic building in the background. Two people are visible sitting on the grass. The speaker asks whether to speak in English or Turkish."
+    }
+   }
+  },
+  {
+   "media_id": "m1_05",
+   "kind": "video",
+   "duration_s": 14.5,
+   "has_audio": true,
+   "width": 320,
+   "height": 568,
+   "capture": {
+    "capture_time": "2025-12-12T22:00:46Z"
+   },
+   "analysis": {
+    "transcript": "Yeah, we started great. Now we are going to Recoleta. Recoleta. Yeah. Everyone less that",
+    "description": "Now we are going to Recoleta.",
+    "best_moments": [],
+    "on_screen_text": "Yeah, we started great. Now we are going to Recoleta. Recoleta. Yeah. Everyone less that",
+    "understanding": {
+     "speech": {
+      "language": "en",
+      "segments": [
+       {
+        "text": "We started great, now we are going to Recoleta,",
+        "end_s": 8.88,
+        "start_s": 4.62
+       },
+       {
+        "text": "Recoleta everyone lays down",
+        "end_s": 14.48,
+        "start_s": 10.14
+       }
+      ],
+      "to_camera": true,
+      "has_speech": true,
+      "transcript": "Yeah, we started great. Now we are going to Recoleta. Recoleta. Yeah. Everyone less that"
+     },
+     "summary": "A man wearing an Argentina soccer jersey and sunglasses talks to the camera, giving a thumbs up. Another man appears briefly beside him as he mentions going to Recoleta."
+    }
+   }
+  }
+ ],
+ "brief": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "last_clip": "the cathedral"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "in the order we filmed it, ending on the cathedral",
+    "source_turn_id": "ce114667-fd3d-45b1-b614-d83ebc149ae1"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "make it all vertical",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip anything too short to use",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "m1_05"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Only the clip where I say 'we are going to Recoleta' keeps its sound, mute the rest",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "clip:m1_01",
+    "status": "open",
+    "literal": "Plaza de Mayo",
+    "description": "title on the palm trees",
+    "source_turn_id": "5e202709-403e-44ba-a50f-3d4143d0d372"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "Casa Rosada",
+    "description": "label on the pink building",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "Catedral",
+    "description": "label on the columns",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r8",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 20
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "About 20 seconds",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r9",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Suggest a tango track but don't add it",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "archetype": "day_vlog",
+  "direction": "guided_story",
+  "rationale": "I've updated the opening title to 'Plaza de Mayo' without the flag to resolve the font capability issue. The edit follows the chronological sequence of your day, ending on the Cathedral and running approximately 20 seconds. The original audio remains muted everywhere except on the Recoleta clip, with the specified labels applied to the corresponding shots.",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed"
+   },
+   {
+    "op": "exclude",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_short",
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Plaza de Mayo",
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Plaza de Mayo title over the palm trees",
+   "Casa Rosada labeled on the pink building",
+   "Walking and taking the bus",
+   "Heading to Recoleta with audible dialogue",
+   "Ending on the Cathedral"
+  ],
+  "target_duration_s": 20,
+  "selected_media_ids": [],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed",
+    "assignments": [
+     {
+      "evidence": "filming order",
+      "media_id": "m1_08",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "m1_j1",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "m1_07",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "m1_j2",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "m1_09",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "m1_01",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "m1_05",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "exclude",
+    "status": "resolved",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_short",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "m1_j1",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "creator selected",
+      "media_id": "m1_j2",
+      "confidence": 1.0
+     }
+    ],
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "assignments": [
+     {
+      "value": "Casa Rosada",
+      "evidence": "kept from your draft",
+      "media_id": "m1_09",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "assignments": [
+     {
+      "value": "Catedral",
+      "evidence": "kept from your draft",
+      "media_id": "m1_07",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral",
+    "assignments": [
+     {
+      "evidence": "one person identifies as a cathedral. They discuss its resemblance to the Pantheon. ... and this is the cathedral, by the way.",
+      "media_id": "m1_07",
+      "confidence": 0.9
+     }
+    ]
+   }
+  ],
+  "selected_music_section": null
+ },
+ "approved_windows": [
+  {
+   "score": 6.0,
+   "reason": "best_moment",
+   "media_id": "m1_01",
+   "source_end_s": 8.0,
+   "source_start_s": 5.3
+  },
+  {
+   "score": 6.0,
+   "reason": "best_moment",
+   "media_id": "m1_09",
+   "source_end_s": 5.007,
+   "source_start_s": 1.0
+  },
+  {
+   "score": 0.0,
+   "reason": "analysis_fallback",
+   "media_id": "m1_j1",
+   "source_end_s": 0.96,
+   "source_start_s": 0.0
+  },
+  {
+   "score": 3.5,
+   "reason": "best_moment",
+   "media_id": "m1_08",
+   "source_end_s": 10.9,
+   "source_start_s": 8.1
+  },
+  {
+   "score": 100.0,
+   "reason": "best_moment",
+   "media_id": "m1_05",
+   "source_end_s": 9.18,
+   "source_start_s": 3.82
+  },
+  {
+   "score": 5.0,
+   "reason": "best_moment",
+   "media_id": "m1_j2",
+   "source_end_s": 0.167,
+   "source_start_s": 0.0
+  },
+  {
+   "score": 0.0,
+   "reason": "analysis_fallback",
+   "media_id": "m1_07",
+   "source_end_s": 4.007,
+   "source_start_s": 0.0
+  }
+ ],
+ "recoleta_measured": {
+  "sentence_s": [
+   4.6,
+   8.9
+  ],
+  "next_word_s": 9.35,
+  "method": "kit source 05_going_to_recoleta_selfie.mp4: voice-band (300-3400 Hz) RMS in 50 ms steps (speech bursts 4.65-6.40 and 7.50-8.90 s over a -27 dB floor, quiet 8.90-9.30, the repeated 'Recoleta' from 9.35 s) and local whisper large-v3-turbo on short cuts (3.82-5.6 s: 'Well,' 4.58-4.88 'yeah.'; 7.3-9.18 s: 'Now we are going to Recolata.'; 1.5-4.6 s: no words). The kit's truth/clip05_words.txt (one whisper pass over the whole clip) puts 'Well,' at 2.00 s: about 2.6 s early."
+ }
+}
