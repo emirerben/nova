@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.21.0] - 2026-10-29
+
+### Changed
+- feat(kria): follow-up and creation requests compose editor ops instead of being refused (KRI-1039) (#1936) <!-- release-pr: 1936 -->
+
 ## [0.82.20.0] - 2026-10-29
 
 ### Changed
