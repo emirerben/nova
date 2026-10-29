@@ -2063,6 +2063,16 @@
         "src/apps/api/app/services/render_library.py",
         "src/apps/api/tests/services/test_render_library.py"
       ]
+    },
+    {
+      "id": "kri-1036-random-order",
+      "needs_native": false,
+      "api_tests": "tests/services/test_order_mode.py",
+      "paths": [
+        "src/apps/api/app/services/order_mode.py",
+        "src/apps/api/tests/services/test_order_mode.py",
+        "src/apps/api/tests/fixtures/kria_replay/29-ekim/fixture.json"
+      ]
     }
   ]
 }
