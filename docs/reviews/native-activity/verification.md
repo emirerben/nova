@@ -15,3 +15,11 @@ Native build-for-testing passed. Three ActivityUITests initially passed, includi
 Independent read-only architecture and implementation reviews selected the dedicated table, required all terminal writer hooks, and found a thread/item/Job binding omission. That omission was fixed and pinned by a real PostgreSQL negative control. Final independent static review found no remaining blocker. Suggested follow-ups include pagination cursor invalidation and account switch during native navigation. The implementation checks account identity after asynchronous calls, but no UI account-switch claim is made.
 
 No production rollout, push delivery, physical-phone background execution or new native-render fidelity claim is made. These remain separate follow-ups under the broader notification design and KRI-1039 coordination context.
+
+## Latest-main integration
+
+Integrated main 1692d1751cb78d0695f16b4170362e9e4ae4f615, including provider deadlines, API cost work and Send recovery, without rewriting the feature branch. Four overlapping integration files merged cleanly. Independent comparison against both parents found Activity ownership/navigation and Send's project-specific recovery preserved; the UI test registry contains the union of both parents. Activity during a delayed send and account switching remain explicit coverage gaps.
+
+The actual merged source passed 237 focused backend tests, including the native lifecycle, migration chain, provider deadlines and failure-code controls. Its dedicated local database migrated through 0127. The native app then built and passed all three Activity UI journeys and all eleven ChatSendReceiptTests on the same task-owned iOS26.5 simulator. The inspected result bundle reports 14 passed, zero failed and zero skipped. Retained artifacts are `.dev/latest-main-api.log`, `.dev/latest-main-native.log`, `.dev/latest-main-native.xcresult` and `.dev/latest-main-native-summary.json`.
+
+The earlier detached integration snapshot at main fc0c8ff84 also passed 237 tests; its retained log was inspected after the executor reconnected. It is supporting historical evidence, not a substitute for the actual 1692d1751 merge above. No production deployment or push delivery is claimed. GitHub checks must bind to the new merge head.

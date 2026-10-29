@@ -118,6 +118,7 @@ struct ChatWorkspaceView: View {
                         openProjects: { setDrawerOpen(!showsProjects) },
                         openAccount: { showsAccount = true }
                     )
+                    .environmentObject(model.chatDrafts)
                     .id(project.id)
                 } else {
                     Group {
@@ -467,6 +468,7 @@ private struct CreationWorkspaceView: View {
     let openAccount: () -> Void
 
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var chatDrafts: ChatDraftStore
     @EnvironmentObject private var auth: AuthStore
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -504,6 +506,7 @@ private struct CreationWorkspaceView: View {
     @StateObject private var responsePresentation = ChatResponsePresentation()
     @Environment(\.scenePhase) private var scenePhase
     @State private var pendingTurnSubmission: ChatTurnSubmissionIdentity?
+    @State private var sendReceipt: ChatSendReceipt?
     @State private var approval: ApprovalSnapshot?
     @State private var allowAutomaticRepairs = true
     /// KRI-306: the creator's pending video-shape pick for the approval / plan on screen.
@@ -546,7 +549,9 @@ private struct CreationWorkspaceView: View {
     @State private var afterSequence = -1
     @State private var threadRevision: Int
     @State private var projectionOrder = ThreadProjectionOrder()
-    @State private var isSending = false
+    @State private var ownsSendAttempt = false
+    @State private var hasActivatedDraftStorage = false
+    private var isSending: Bool { ownsSendAttempt || chatDrafts.isSubmitting(for: project.id) }
     /// Clip-picker answers sent from this device, by question id, for the collapsed "answered" summary.
     @State private var answeredClipSelections: [String: ClipSelectionSubmission] = [:]
     /// Conflict-choice answers sent from this device, by question id, for the collapsed "answered" summary.
@@ -973,6 +978,25 @@ private struct CreationWorkspaceView: View {
         return !(completedThoughtSummaries[requestID] ?? []).isEmpty
     }
 
+    @ViewBuilder private var submissionStatus: some View {
+        if let receipt = sendReceipt, receipt.phase != .accepted {
+            HStack {
+                Text(isSending ? "Sending your message…" : "Message not confirmed")
+                    .accessibilityIdentifier("chat-submission-status")
+                if !isSending {
+                    Button { Task { await send(retrying: receipt) } } label: {
+                        Text("Retry message").frame(minHeight: 44).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chat-retry-message")
+                }
+            }
+            .font(KriaFont.body(13))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 44)
+        }
+    }
+
     @ViewBuilder private var conversationContent: some View {
         ForEach(ChatTimelineGroup.group(timeline)) { group in
             if case .media = group.entries[0].content {
@@ -987,7 +1011,8 @@ private struct CreationWorkspaceView: View {
                 finishedEditSuggestionUpdate += 1
             }
         }
-        if (isThinking || isSending) && workspaceStage != .rendering {
+        submissionStatus
+        if isThinking && workspaceStage != .rendering {
             ThoughtSummaryDisclosure(summaries: streamingThoughtSummaries)
                 .id("thought-summary")
             if streamingThoughtSummaries.isEmpty && !hasCompletedThoughtForActiveRequest { ThinkingRow().id("thinking") }
@@ -1545,12 +1570,10 @@ private struct CreationWorkspaceView: View {
         // floating chat chrome), which also implicitly gates it on
         // !hasDedicatedSlideWorkspace via the if/else above.
         .onAppear {
-            if prompt.isEmpty { prompt = model.chatDrafts.draft(for: project.id) }
+            activateDraftStorage()
             Task { await loadCompletedThoughtSummaries() }
-            // Persisted from the holder, not `.onChange(of: prompt)`: reading `prompt` in
-            // this body would subscribe the whole workspace to every keystroke.
-            promptDraft.onChange = { [chatDrafts = model.chatDrafts, id = project.id] in chatDrafts.setDraft($0, for: id) }
         }
+        .onReceive(chatDrafts.$revision) { _ in synchronizeSubmissionStorage() }
         .onChange(of: renderShapeScope) { _, scope in renderShapePick.reset(scope: scope) }
         .task {
             Perf.begin("chat.open", id: project.id.uuidString)
@@ -1752,7 +1775,7 @@ private struct CreationWorkspaceView: View {
                     canAttach: canAttachMedia,
                     canSendWithoutText: readyMediaCount > 0,
                     // be99a3f12 (origin/main): a failed attach never blocks Send.
-                    blocksSubmission: isThinking || pendingUploadCount > 0,
+                    blocksSubmission: isThinking || sendReceipt != nil || pendingUploadCount > 0,
                     placeholder: readyMediaCount > 0 ? "Add instructions (optional)" : "Tell Kria what you want…",
                     isFocused: $composerFocused,
                     dictation: dictationForComposer,
@@ -1773,9 +1796,10 @@ private struct CreationWorkspaceView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ChatComposer(
                 text: promptBinding, isSending: isSending || isActing,
-                canAttach: false, blocksSubmission: isThinking || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
+                canAttach: false, blocksSubmission: isThinking || sendReceipt != nil || pendingUploadCount > 0, isFocused: $composerFocused, dictation: dictationForComposer, dictationTerms: dictationContextTerms, attach: {}, send: { Task { await send() } }
             )
         }
+        .onAppear { activateDraftStorage() }
         .background(KriaColor.paper)
         .accessibilityIdentifier("native-editor-project-conversation")
     }
@@ -2114,76 +2138,115 @@ private struct CreationWorkspaceView: View {
         Task { await send(message: chip.message, suggestion: tap, keepsDraft: true) }
     }
 
-    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false) async {
-        // Slide direction is intentionally handled by SlidePostWorkspaceView.
-        // Generic creator runtime has no slide proposal/create tools.
-        guard selectedFormat != .slides else { return }
-        guard !isSending, !isActing, !isThinking,
-              !ChatSubmission.isBareCorrectionStub(submittedMessage ?? prompt),
-              let message = ChatSubmission.message(
-                text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
-                pendingUploadCount: pendingUploadCount
-              ) else { return }
-        // A chip tap sends the chip's message and leaves the composer alone: whatever the creator typed stays,
-        // and a failed tap never drops the chip's own text (often not in their language) into the composer.
-        let draftToRestore = keepsDraft ? "" : (submittedMessage == nil ? prompt : message)
+    private func send(message submittedMessage: String? = nil, clipSelection: ClipSelectionSubmission? = nil, songOrder: SongOrderSubmission? = nil, choiceSelection: ChoiceSelectionSubmission? = nil, songRange: SongRangeAnswer? = nil, suggestion: SuggestionTap? = nil, protectedRegion: ProtectedRegionAnswer? = nil, markQuestionID: String? = nil, momentOrder: MomentOrderAnswer? = nil, keepsDraft: Bool = false, retrying: ChatSendReceipt? = nil) async {
+        guard selectedFormat != .slides, !isSending, !isActing, !isThinking else { return }
+        if let retrying {
+            guard let current = chatDrafts.submission(for: project.id),
+                  current.clientEventID == retrying.clientEventID, current.phase == .unconfirmed else {
+                synchronizeSubmissionStorage()
+                return
+            }
+        }
+        guard sendReceipt == nil || retrying?.clientEventID == sendReceipt?.clientEventID else { return }
+        guard let message = retrying?.message ?? ChatSubmission.message(
+            text: submittedMessage ?? prompt, readyMediaCount: readyMediaCount,
+            pendingUploadCount: pendingUploadCount
+        ), !ChatSubmission.isBareCorrectionStub(message) else { return }
+        let draftToRestore = retrying?.draft ?? (keepsDraft ? "" : (submittedMessage == nil ? prompt : message))
+        var submission = retrying.map {
+            ChatTurnSubmissionIdentity(message: $0.message, clientEventID: $0.clientEventID, expectedRevision: $0.expectedRevision)
+        } ?? ChatTurnSubmissionIdentity(message: message, clientEventID: UUID().uuidString, expectedRevision: threadRevision)
+        var receipt = retrying ?? ChatSendReceipt(message: message, clientEventID: submission.clientEventID,
+            expectedRevision: submission.expectedRevision, afterSequence: afterSequence,
+            draft: draftToRestore, runtimeVersion: currentProject.runtimeVersion ?? 1)
+        if retrying == nil {
+            if let songRange { receipt.responseContext = .songRange(songRange.questionID) }
+            else if let momentOrder { receipt.responseContext = .momentOrder(momentOrder.questionID) }
+            else if protectedRegion != nil { receipt.responseContext = .protectedRegion(markQuestionID) }
+        }
+        let songRangeQuestionID = receipt.responseContext?.songRangeQuestionID
+        let momentOrderQuestionID = receipt.responseContext?.momentOrderQuestionID
+        ownsSendAttempt = true
+        do {
+            guard try chatDrafts.beginSubmission(receipt, for: project.id) else {
+                ownsSendAttempt = false
+                synchronizeSubmissionStorage()
+                return
+            }
+        } catch {
+            ownsSendAttempt = false
+            failure = ChatFailure("Your message is still here. It could not be saved for recovery.", error: error)
+            return
+        }
+        sendReceipt = receipt
+        pendingTurnSubmission = submission
         model.clearChatDeviceRenderFocus()
-        isSending = true
         failure = nil
         confirmationConflict = nil
-        defer { isSending = false }
+        defer {
+            ownsSendAttempt = false
+            chatDrafts.endSubmission(clientEventID: receipt.clientEventID, for: project.id)
+        }
+        nextLocalOrder += 1
+        let optimistic = submissionAnchor ?? ChatPendingMessage(content: message, clientEventID: submission.clientEventID,
+            afterSequence: receipt.afterSequence, localOrder: nextLocalOrder, songOrder: songOrder, songRange: songRange,
+            protectedRegion: protectedRegion, momentOrder: momentOrder)
+        submissionAnchor = optimistic
+        if !pendingMessages.contains(where: { $0.id == optimistic.id }) {
+            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.42, bounce: 0.18)) {
+                pendingMessages.append(optimistic)
+            }
+        }
+        if !keepsDraft && retrying == nil { prompt = "" }
+        scrollRequest += 1
         // Edits staged from a chat draft already live in the server's draft head;
         // committing them here would render on every send. Only real local edits flush.
         // Runtime-v2 + server `editor_state_turns`: the copilot continues on top of the editor's
         // CURRENT unsaved state, so nothing is saved or rendered here.
         var editorState: EditorStateRequest?
-        if currentProject.runtimeVersion == 2 {
-            if Date().timeIntervalSince(capabilitiesReadAt ?? .distantPast) > 30 {
-                await refreshEditorStateCapability()
+        if retrying?.requestBody == nil && retrying?.phase != .unconfirmed {
+            if currentProject.runtimeVersion == 2 {
+                if Date().timeIntervalSince(capabilitiesReadAt ?? .distantPast) > 30 {
+                    await refreshEditorStateCapability()
+                }
+                if capabilities?.editorStateTurnsEnabled == true {
+                    // KRI-529: stage the previous chat edit first; the server ignores its own head
+                    // draft when it receives this state, so an unstaged edit would be dropped.
+                    editorState = await editorSession.exportEditorStateSyncingDraft(maxBytes: capabilities?.editorStateMaxBytes)
+                }
             }
-            if capabilities?.editorStateTurnsEnabled == true {
-                // KRI-529: stage the previous chat edit first; the server ignores its own head
-                // draft when it receives this state, so an unstaged edit would be dropped.
-                editorState = await editorSession.exportEditorStateSyncingDraft(maxBytes: capabilities?.editorStateMaxBytes)
+            if editorState == nil, editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
+                await editorSession.save()
+                guard !editorSession.hasUnsavedChanges else {
+                    rejectSubmission(optimistic)
+                    failure = ChatFailure("Your message is still here. Save or resolve your editor changes before sending it.")
+                    return
+                }
+                await refreshNow()
             }
         }
-        if editorState == nil, editorSession.hasUnsavedChanges, !editorSession.hasOnlyChatStagedChanges {
-            await editorSession.save()
-            guard !editorSession.hasUnsavedChanges else {
-                failure = ChatFailure("Your message is still here. Save or resolve your editor changes before sending it.")
-                return
-            }
-            await refreshNow()
+        if receipt.phase == .preparing {
+            submission = ChatTurnSubmissionIdentity(message: message, clientEventID: receipt.clientEventID,
+                                                    expectedRevision: threadRevision)
+            receipt.expectedRevision = threadRevision
+            pendingTurnSubmission = submission
         }
-        let submission = ChatTurnSubmissionIdentity.reusing(
-            pendingTurnSubmission, for: message, expectedRevision: threadRevision
-        )
-        pendingTurnSubmission = submission
+        guard model.chatDrafts.submission(for: project.id)?.clientEventID == receipt.clientEventID else { return }
         thoughtRequestID = submission.clientEventID
         liveThoughtSummaries = []
-        let optimistic: ChatPendingMessage
-        if let previous = submissionAnchor, previous.clientEventID == submission.clientEventID {
-            optimistic = previous
-        } else {
-            nextLocalOrder += 1
-            optimistic = ChatPendingMessage(content: message, clientEventID: submission.clientEventID,
-                                            afterSequence: afterSequence, localOrder: nextLocalOrder, songOrder: songOrder, songRange: songRange,
-                                            protectedRegion: protectedRegion, momentOrder: momentOrder)
-        }
-        submissionAnchor = optimistic
-        if !pendingMessages.contains(where: { $0.id == optimistic.id }) {
-            // Animated insertion: the bubble springs in instead of appearing.
-            withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.42, bounce: 0.18)) {
-                pendingMessages.append(optimistic)
-            }
-        }
-        if !keepsDraft { prompt = "" }
-        scrollRequest += 1
         songRangeProblem = nil
-        if currentProject.runtimeVersion != 2 {
+        if receipt.runtimeVersion != 2 {
+            receipt.phase = .unconfirmed
+            do { try model.chatDrafts.setSubmission(receipt, for: project.id); sendReceipt = receipt }
+            catch { rejectSubmission(optimistic); failure = ChatFailure("Your message could not be saved for recovery.", error: error); return }
             let requestSequence = projectionOrder.begin()
             do {
                 let thread = try await model.api.sendCreationMessage(threadID: project.id, message: message, expectedRevision: submission.expectedRevision, clientEventID: submission.clientEventID)
+                if model.chatDrafts.submission(for: project.id)?.clientEventID == receipt.clientEventID {
+                    receipt.phase = .accepted
+                    try? model.chatDrafts.setSubmission(receipt, for: project.id)
+                    sendReceipt = receipt
+                }
                 pendingTurnSubmission = nil
                 model.uploads.clearUnreadableFailures(projectID: project.id)
                 apply(thread, requestSequence: requestSequence)
@@ -2193,17 +2256,23 @@ private struct CreationWorkspaceView: View {
             } catch APIError.conflict {
                 thoughtRequestID = nil; liveThoughtSummaries = []
                 pendingMessages.removeAll { $0.id == optimistic.id }
-                if prompt.isEmpty { prompt = draftToRestore }
+                recoverSubmissionDraft()
                 pendingTurnSubmission = nil
                 submissionAnchor = nil
+                clearSubmissionReceipt()
                 await refreshNow()
                 failure = ChatFailure("This conversation changed. Your message is still here; review the latest direction and send again.")
             } catch {
                 thoughtRequestID = nil; liveThoughtSummaries = []
-                pendingMessages.removeAll { $0.id == optimistic.id }
-                if prompt.isEmpty { prompt = draftToRestore }
+                if ChatSendReceipt.isRejected(error) {
+                    rejectSubmission(optimistic)
+                    failure = ChatFailure("Your message was not sent. Your draft is ready to edit.", error: error)
+                    return
+                }
+                await refreshNow()
+                guard sendReceipt != nil else { return }
                 failure = ChatFailure(
-                    "Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely.",
+                    "Kria couldn’t confirm that message. Retry message checks the same submission safely.",
                     cause: RequestFailureCause(error)
                 )
             }
@@ -2225,27 +2294,33 @@ private struct CreationWorkspaceView: View {
                     choice: choiceSelection
                 )
             }
+            if let frozen = retrying?.requestBody { request.frozenBody = frozen }
+            receipt.requestBody = try JSONEncoder().encode(request)
+            receipt.phase = .unconfirmed
+            try model.chatDrafts.setSubmission(receipt, for: project.id)
+            sendReceipt = receipt
             accepted = try await model.api.submitTurn(threadID: project.id, request: request)
         } catch let error as APIError where error == .conflict {
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
-            let staleSongRange = songRange != nil && error.conflictCode == SongRangeAnswer.staleConflictCode
+            let staleSongRange = songRangeQuestionID != nil && error.conflictCode == SongRangeAnswer.staleConflictCode
             // KRI-723: a moments answer is the card's, never composer text to restore.
-            if prompt.isEmpty && !staleSongRange && momentOrder == nil { prompt = draftToRestore }
+            if !staleSongRange && momentOrderQuestionID == nil { recoverSubmissionDraft() }
             pendingTurnSubmission = nil
             submissionAnchor = nil
+            clearSubmissionReceipt()
             if let thread = try? await model.api.project(threadID: project.id) { apply(thread) }
             // KRI-588: the question is already closed on the server. Refresh and close the card here too, with
             // no alert: there is nothing left for the creator to fix.
-            if staleSongRange, let songRange {
-                closedSongRangeQuestions.insert(songRange.questionID)
+            if staleSongRange, let songRangeQuestionID {
+                closedSongRangeQuestions.insert(songRangeQuestionID)
                 return
             }
             // KRI-374: the order was answered against a question Kria has since replaced. The thread refresh above
             // brings the new question (or the settled plan); say so instead of a generic conflict.
             // KRI-723: the moments question was replaced (or the take re-uploaded). The refresh above brings the newest
             // card (the old one hides as superseded); say why, in the chat's language, instead of a generic conflict.
-            if momentOrder != nil, error.conflictCode == MomentOrderAnswer.staleCode {
+            if momentOrderQuestionID != nil, error.conflictCode == MomentOrderAnswer.staleCode {
                 failure = ChatFailure(MomentOrderStrings(ClipAnswerLanguage(threadState: threadState)).stale)
                 return
             }
@@ -2258,39 +2333,57 @@ private struct CreationWorkspaceView: View {
                 detail: error.conflictDetail, approvalExpired: approvalNotice != nil
             ).map { ChatFailure($0) }
             return
-        } catch let error as APIError where protectedRegion != nil && ProtectedRegionProblem.isMarkProblem(error) {
+        } catch let error as APIError where receipt.responseContext?.isProtectedRegion == true && ProtectedRegionProblem.isMarkProblem(error) {
             // KRI-901: the server refused the mark (not this thread's clip, or too small). Say why on the card.
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             pendingTurnSubmission = nil
             submissionAnchor = nil
-            if let markQuestionID { protectedRegionProblem = ProtectedRegionProblem(questionID: markQuestionID, error: error) }
+            clearSubmissionReceipt()
+            if let questionID = receipt.responseContext?.protectedRegionQuestionID {
+                protectedRegionProblem = ProtectedRegionProblem(questionID: questionID, error: error)
+            }
             return
-        } catch let error as APIError where momentOrder != nil && MomentOrderProblem.isAnswerProblem(error) {
+        } catch let error as APIError where momentOrderQuestionID != nil && MomentOrderProblem.isAnswerProblem(error) {
             // KRI-723: the server refused the answer (not this thread's take, bad bounds, overlap). Say why on the card.
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             pendingTurnSubmission = nil
             submissionAnchor = nil
-            if let momentOrder {
-                momentOrderProblem = MomentOrderProblem(questionID: momentOrder.questionID, error: error,
+            clearSubmissionReceipt()
+            if let momentOrderQuestionID {
+                momentOrderProblem = MomentOrderProblem(questionID: momentOrderQuestionID, error: error,
                                                         language: ClipAnswerLanguage(threadState: threadState))
             }
             return
-        } catch let error as APIError where songRange != nil && SongRangeProblem.isInvalid(error) {
+        } catch let error as APIError where songRangeQuestionID != nil && SongRangeProblem.isInvalid(error) {
             // KRI-588: the server refused the range. Say why on the card; the answer is not a draft to restore.
             thoughtRequestID = nil; liveThoughtSummaries = []
             pendingMessages.removeAll { $0.id == optimistic.id }
             pendingTurnSubmission = nil
             submissionAnchor = nil
-            if let songRange { songRangeProblem = SongRangeProblem(questionID: songRange.questionID, error: error) }
+            clearSubmissionReceipt()
+            if let songRangeQuestionID { songRangeProblem = SongRangeProblem(questionID: songRangeQuestionID, error: error) }
             return
         } catch {
             thoughtRequestID = nil; liveThoughtSummaries = []
-            pendingMessages.removeAll { $0.id == optimistic.id }
-            if prompt.isEmpty { prompt = draftToRestore }
-            failure = ChatFailure("Kria couldn’t confirm that message. Your draft is saved here; retry to check it safely.", error: error)
+            if sendReceipt?.phase == .preparing || ChatSendReceipt.isRejected(error) {
+                rejectSubmission(optimistic)
+                failure = ChatFailure("Your message was not sent. Your draft is ready to edit.", error: error)
+                return
+            }
+            await refreshNow()
+            guard sendReceipt != nil else { return }
+            failure = ChatFailure("Kria couldn’t confirm that message. Retry message checks the same submission safely.", error: error)
             return
+        }
+        // A poll may already have acknowledged this identity while POST was returning.
+        if sendReceipt?.clientEventID == receipt.clientEventID,
+           model.chatDrafts.submission(for: project.id)?.clientEventID == receipt.clientEventID {
+            receipt.phase = .accepted
+            receipt.turnID = accepted.turnID
+            try? model.chatDrafts.setSubmission(receipt, for: project.id)
+            sendReceipt = receipt
         }
         pendingTurnSubmission = nil
         // The banner said these files won't be sent. Only now that the server has the message has it
@@ -2298,10 +2391,11 @@ private struct CreationWorkspaceView: View {
         model.uploads.clearUnreadableFailures(projectID: project.id)
         threadRevision = ThreadRevisionOrder.advance(current: threadRevision, incoming: accepted.threadRevision)
         conversationAcceptedID = UUID()
-        thinkingAnchor = afterSequence
+        thinkingAnchor = receipt.afterSequence
         thinkingTurnID = accepted.turnID
         thinkingSettlesOnJobStatus = false
         isThinking = true
+        settleThinking()
         failure = await acceptedMutationRefreshError(
             "Your message was sent, but the conversation couldn’t refresh.",
             refresh: { try await refreshDelta() }
@@ -2706,6 +2800,89 @@ private struct CreationWorkspaceView: View {
         }
     }
 
+    private func activateDraftStorage() {
+        hasActivatedDraftStorage = true
+        promptDraft.onChange = nil
+        synchronizeSubmissionStorage()
+        promptDraft.onChange = { [chatDrafts, id = project.id] in chatDrafts.setDraft($0, for: id) }
+    }
+
+    private func synchronizeSubmissionStorage() {
+        guard hasActivatedDraftStorage, !ownsSendAttempt else { return }
+        prompt = chatDrafts.draft(for: project.id)
+        let stored = chatDrafts.submission(for: project.id)
+        if let previous = sendReceipt, stored?.clientEventID != previous.clientEventID {
+            sendReceipt = nil
+            if case .acknowledged(let receipt) = chatDrafts.resolution(for: project.id),
+               receipt.clientEventID == previous.clientEventID {
+                thinkingAnchor = receipt.afterSequence
+                thinkingTurnID = receipt.turnID
+                isThinking = true
+                settleThinking()
+            } else {
+                pendingMessages.removeAll { $0.clientEventID == previous.clientEventID }
+                if submissionAnchor?.clientEventID == previous.clientEventID { submissionAnchor = nil }
+                if pendingTurnSubmission?.clientEventID == previous.clientEventID { pendingTurnSubmission = nil }
+            }
+        }
+        if sendReceipt == nil, stored != nil { restoreSubmission() }
+        else if let stored {
+            sendReceipt = stored
+            if stored.phase == .accepted {
+                thinkingAnchor = stored.afterSequence
+                thinkingTurnID = stored.turnID
+                isThinking = true
+                settleThinking()
+            }
+        }
+    }
+
+    private func clearSubmissionReceipt() {
+        if let id = sendReceipt?.clientEventID,
+           model.chatDrafts.submission(for: project.id)?.phase != .accepted {
+            model.chatDrafts.discardSubmission(clientEventID: id, for: project.id)
+        }
+        sendReceipt = nil
+    }
+
+    private func recoverSubmissionDraft() {
+        guard let receipt = sendReceipt,
+              let recovered = model.chatDrafts.recoverSubmission(clientEventID: receipt.clientEventID, for: project.id) else { return }
+        prompt = recovered
+    }
+
+    private func rejectSubmission(_ pending: ChatPendingMessage) {
+        pendingMessages.removeAll { $0.id == pending.id }
+        pendingTurnSubmission = nil
+        submissionAnchor = nil
+        recoverSubmissionDraft()
+        clearSubmissionReceipt()
+    }
+
+    private func restoreSubmission() {
+        guard sendReceipt == nil, let receipt = model.chatDrafts.submission(for: project.id) else { return }
+        if receipt.phase == .preparing, !chatDrafts.isSubmitting(for: project.id) {
+            if let recovered = model.chatDrafts.recoverSubmission(clientEventID: receipt.clientEventID, for: project.id) {
+                prompt = recovered
+            }
+            return
+        }
+        sendReceipt = receipt
+        pendingTurnSubmission = ChatTurnSubmissionIdentity(message: receipt.message,
+            clientEventID: receipt.clientEventID, expectedRevision: receipt.expectedRevision)
+        nextLocalOrder += 1
+        let pending = ChatPendingMessage(content: receipt.message, clientEventID: receipt.clientEventID,
+            afterSequence: receipt.afterSequence, localOrder: nextLocalOrder)
+        submissionAnchor = pending
+        pendingMessages.append(pending)
+        if receipt.phase == .accepted, let turnID = receipt.turnID {
+            thinkingAnchor = receipt.afterSequence
+            thinkingTurnID = turnID
+            isThinking = true
+        }
+        reconcilePendingMessages()
+    }
+
     private func reconcilePendingMessages() {
         var candidates = pendingMessages
         if let submissionAnchor, !candidates.contains(where: { $0.id == submissionAnchor.id }) {
@@ -2714,9 +2891,10 @@ private struct CreationWorkspaceView: View {
         let acknowledged = ChatPendingReconciliation.acknowledged(candidates, events: events)
         pendingMessages.removeAll { acknowledged.contains($0.id) }
         if let submissionAnchor, acknowledged.contains(submissionAnchor.id) {
+            model.chatDrafts.acknowledgeSubmission(clientEventID: submissionAnchor.clientEventID, for: project.id)
+            if sendReceipt?.clientEventID == submissionAnchor.clientEventID { sendReceipt = nil }
             if let submission = pendingTurnSubmission, submission.clientEventID == submissionAnchor.clientEventID {
                 pendingTurnSubmission = nil
-                if prompt.normalizedChatText == submission.message.normalizedChatText { prompt = "" }
             }
             self.submissionAnchor = nil
         }
@@ -3379,5 +3557,4 @@ struct ChatTurnSubmissionIdentity: Equatable, Sendable {
 
 private extension String {
     var canonicalSubmissionText: String { split(whereSeparator: \.isWhitespace).joined(separator: " ") }
-    var normalizedChatText: String { split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased() }
 }

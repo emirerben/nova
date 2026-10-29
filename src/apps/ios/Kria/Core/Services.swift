@@ -2214,9 +2214,14 @@ private enum ServerDateCoding {
 }
 struct SubmitTurnRequest: Encodable, Sendable {
     let message: String; let clientEventID: String; let expectedThreadRevision: Int; var editorState: EditorStateRequest? = nil; var clipSelection: ClipSelectionSubmission? = nil; var songOrder: SongOrderSubmission? = nil; var choiceSelection: ChoiceSelectionSubmission? = nil; var songRange: SongRangeAnswer? = nil; var suggestion: SuggestionTap? = nil; var protectedRegion: ProtectedRegionAnswer? = nil; var momentOrder: MomentOrderAnswer? = nil
+    var frozenBody: Data? = nil
     var outcomeContext: RequestOutcomeContext? = nil
     enum CodingKeys: String, CodingKey { case message; case clientEventID = "client_event_id"; case expectedThreadRevision = "expected_thread_revision"; case editorState = "editor_state"; case clipSelection = "clip_selection"; case songOrder = "song_order"; case choiceSelection = "choice_selection"; case songRange = "song_range"; case suggestion; case protectedRegion = "protected_region"; case momentOrder = "moment_order"; case outcomeContext = "outcome_context" }
     func encode(to encoder: Encoder) throws {
+        if let frozenBody {
+            try JSONDecoder().decode(JSONValue.self, from: frozenBody).encode(to: encoder)
+            return
+        }
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(message, forKey: .message); try c.encode(clientEventID, forKey: .clientEventID)
         try c.encode(expectedThreadRevision, forKey: .expectedThreadRevision)
