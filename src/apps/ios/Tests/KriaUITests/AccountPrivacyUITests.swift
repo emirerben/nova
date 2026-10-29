@@ -157,7 +157,7 @@ import XCTest
         reveal(count, app: app)
         let accept = app.buttons["text-learning-accept-learning-position"]
         reveal(accept, app: app); accept.tap()
-        XCTAssertFalse(app.buttons["text-learning-accept-learning-position"].exists)
+        XCTAssertTrue(app.buttons["text-learning-accept-learning-position"].waitForNonExistence(timeout: 5))
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["account-text-preferences"].tap()
         reveal(learn, app: app)
@@ -185,9 +185,10 @@ import XCTest
         reveal(learn, app: app); learn.switches.firstMatch.tap()
         let dismiss = app.buttons["text-learning-dismiss-learning-position"]
         reveal(dismiss, app: app); dismiss.tap()
-        XCTAssertFalse(dismiss.exists)
+        XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5), "Dismiss must finish its asynchronous save and reload")
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["account-text-preferences"].tap()
+        XCTAssertTrue(learn.waitForExistence(timeout: 5), "Preferences must reload before checking persistence")
         XCTAssertFalse(dismiss.exists)
         let reset = app.buttons["text-learning-reset"]
         reveal(reset, app: app); reset.tap()
