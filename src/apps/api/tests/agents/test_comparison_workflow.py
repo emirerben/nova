@@ -107,6 +107,12 @@ def test_cli_freeze_replay_resume_is_offline_with_ledger_enabled(tmp_path, monke
         ]
     )
     capsys.readouterr()
+    main(["credit-preflight", "--packet", str(packet)])
+    credit_report = json.loads(capsys.readouterr().out)
+    assert set(credit_report["provider_estimated_max_usd"]) == {"google", "openai", "anthropic"}
+    assert credit_report["live_authorized"] is False
+    assert credit_report["allocation_status"] == "blocked"
+    assert credit_report["unfunded_providers"] == ["google"]
     # Any ledger/database or provider access would fail this offline run.
     from app.services import ai_cost_control
 
