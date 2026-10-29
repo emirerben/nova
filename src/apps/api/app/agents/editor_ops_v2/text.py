@@ -292,8 +292,8 @@ def _coerce_replace_text_sequence(
 
     if compose_unmet_with_ops():
         # Resolved here, not at compile time, so a re-render of a saved draft keeps the timing
-        # it was authored with whatever the flag says later. Equal windows stay the default
-        # for an op that names neither field.
+        # it was authored with whatever the flag says later. Weighting by length is the
+        # default; `weight` is always written so the compiler knows the op was authored here.
         mode = str(payload.get("mode") or "replace").strip().casefold()
         if mode not in {"replace", "cumulative"}:
             state.invalid_value()
@@ -304,8 +304,7 @@ def _coerce_replace_text_sequence(
         if weight not in {"equal", "length"}:
             state.invalid_value()
             return None
-        if weight == "length":
-            out["weight"] = "length"
+        out["weight"] = weight
     if "patch" in payload:
         patch = coerce_text_patch(payload["patch"], state)
         if patch is None:

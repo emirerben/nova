@@ -800,10 +800,14 @@ not refused, asked about or re-planned.
   new draft, in the same render job, and it reads `text_sequence` requirements. `check_requirement`
   judges one (`PlanFacts.sequence_texts`): met when the words are on screen in pieces, otherwise a
   neutral receipt, so an uncomposed sequence is never a creator question.
-- Follow-ups: an edit-shaped turn goes to the copilot with no `nova.creator.main` call, also after a
-  failed latest render when the item still has an editor target (`_plan_live_turn` probes it). A job
-  that never produced a variant has nothing to edit and still re-plans. The fast path includes
-  `replace_text_sequence`; "different" and "farkli" no longer force a re-plan.
+- Follow-ups: an edit-shaped turn on a draft that has a render goes to the copilot with no
+  `nova.creator.main` call; `replace_text_sequence` is on the fast path. A job that FAILED before
+  producing any variant has no editable lanes (prod job debug: no `variants` key), so its follow-up
+  is still a re-plan; the fix for that case is that the render no longer fails (title fit, lane A).
+  The re-plan cues are unchanged.
+- Readability floor: an op authored with `weight` gives every piece at least 0.25 s
+  (`_MIN_PIECE_S`). When the source window is too short the compiler lengthens it, up to the end of
+  the video; if even that cannot hold the pieces the op fails naming the seconds needed and left.
 - Capability parity: `kria/editor_capability_parity.py` maps every public action of
   `NativeEditorSession.swift` to agent ops, `agent_unsupported` (with a reason) or `not_an_edit`;
   `tests/kria/test_editor_capability_parity.py::test_ios_editor_actions_have_agent_ops` fails when

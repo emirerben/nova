@@ -697,6 +697,9 @@ def _sequence_canonical(value: str) -> str:
 _SEQUENCE_WEIGHT_PAD = 2
 # Share of the source window the cumulative build-up takes; the full sentence holds the rest.
 _CUMULATIVE_BUILD_SHARE = 0.75
+# A piece on screen for less than this is a flicker, not a word. An op authored with `weight`
+# (the compose path) lengthens its window to honor it, up to the end of the video.
+_MIN_PIECE_S = 0.25
 
 
 def _sequence_windows(
@@ -806,6 +809,23 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     windows = _sequence_windows(
         clean_segments, start, end, weighted=weight == "length", cumulative=cumulative
     )
+    if "weight" in op:
+        smallest = min(w_end - w_start for w_start, w_end in windows)
+        if smallest < _MIN_PIECE_S - 1e-9:
+            # Edges scale linearly with the window, so the end that gives every piece its
+            # minimum is exact; the video's own length is the only ceiling.
+            wanted_end = start + (end - start) * _MIN_PIECE_S / smallest
+            limit = _variant_total(state) or _number(state.variant.get("duration_s")) or 0.0
+            new_end = wanted_end if not limit else max(end, min(wanted_end, limit))
+            windows = _sequence_windows(
+                clean_segments, start, new_end, weighted=weight == "length", cumulative=cumulative
+            )
+            if min(w_end - w_start for w_start, w_end in windows) < _MIN_PIECE_S - 1e-9:
+                raise KriaEditorOpError(
+                    f"Showing that text in {len(clean_segments)} pieces needs about "
+                    f"{wanted_end - start:.1f}s on screen and the video only leaves "
+                    f"{max(new_end - start, 0.0):.1f}s from where it starts"
+                )
     for index, segment in enumerate(clean_segments):
         row = copy.deepcopy(source)
         row["id"] = child_ids[index]

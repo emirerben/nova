@@ -9,8 +9,9 @@ Written from the failure list, before the code was trusted:
 * the evidence layer reads a cumulative chain as one long wrong sentence;
 * a text_sequence ask turns into a creator question (a checked, unmet receipt) when it simply
   has not been composed yet;
-* a follow-up after a FAILED latest render still reaches nova.creator.main although an editor
-  target exists.
+* the edit-shaped follow-up still reaches nova.creator.main when a render is editable, or the
+  flag-on path starts guessing an editor target for a render that never produced a variant
+  (nothing exists to edit, so that follow-up stays a re-plan whatever the flag says).
 """
 
 from __future__ import annotations
@@ -89,25 +90,30 @@ def test_compose_unmet_flag_off_is_byte_identical(monkeypatch) -> None:
     )
     assert planner._is_fast_path_plan(replace_sequence) is False
     assert planner._fast_path_eligible("make the font different") is False
-    # A turn after a FAILED latest render is a fresh plan: Main Creator, no copilot.
     card = _scorecard()
     fx = card.load_fixture()
     with card._prod_flags():
-        legacy = asyncio.run(card.replay_followup_turn(fx, "T5", job_status="processing_failed"))
+        failed = asyncio.run(card.replay_followup_turn(fx, "T5", job_status="processing_failed"))
         ready = asyncio.run(card.replay_followup_turn(fx, "T5", job_status="variants_ready"))
-    assert legacy["model_calls"] == ["nova.creator.main"]
+    assert failed["model_calls"] == ["nova.creator.main"]
     assert ready["model_calls"] == ["nova.brief.extractor", "nova.edit.copilot"]
 
 
-def test_followup_after_a_failed_render_reaches_the_copilot(monkeypatch) -> None:
+def test_followup_reaches_the_copilot_on_a_ready_render_and_replans_without_one(
+    monkeypatch,
+) -> None:
     _flag(monkeypatch, True)
     card = _scorecard()
     fx = card.load_fixture()
     with card._prod_flags():
-        replay = asyncio.run(card.replay_followup_turn(fx, "T5", job_status="processing_failed"))
-    assert replay["model_calls"] == ["nova.brief.extractor", "nova.edit.copilot"]
-    assert replay["route"] == "editor_ops" and replay["ops"] == ["replace_text_sequence"]
-    assert planner._fast_path_eligible("make the font different") is True
+        ready = asyncio.run(card.replay_followup_turn(fx, "T5", job_status="variants_ready"))
+        failed = asyncio.run(card.replay_followup_turn(fx, "T5", job_status="processing_failed"))
+    assert ready["model_calls"] == ["nova.brief.extractor", "nova.edit.copilot"]
+    assert ready["route"] == "editor_ops" and ready["ops"] == ["replace_text_sequence"]
+    # A job that never produced a variant has no editable lanes (prod job 51f7124f: no
+    # `variants` key), so the follow-up is a re-plan whatever the flag says.
+    assert failed["model_calls"] == ["nova.creator.main"]
+    assert planner._fast_path_eligible("farkli bir versiyon istiyorum") is False
     assert planner._fast_path_eligible("give me another version") is False
 
 
@@ -230,3 +236,63 @@ def test_replace_text_sequence_rides_the_fast_path_when_composing(monkeypatch) -
         }
     )
     assert planner._is_fast_path_plan(plan) is True
+
+
+def test_flag_off_text_sequence_routing_and_checker_are_the_legacy_ones(monkeypatch) -> None:
+    brief = CreativeBrief.model_validate(
+        {
+            "version": 1,
+            "requirements": [
+                {
+                    "id": "r1",
+                    "kind": "text_sequence",
+                    "scope": "title",
+                    "facts": {"unit": "word", "mode": "agent_choice"},
+                    "status": "open",
+                    "literal": "Bu güzel vatan",
+                    "description": "Show the words one at a time",
+                }
+            ],
+        }
+    )
+    req = brief.live()[0]
+    shown = PlanFacts(texts=("Bu güzel vatan",), sequence_texts=("Bu güzel vatan",), editor=True)
+    shape = CurrentPlanShape(has_render=True, can_edit_text=False)
+    _flag(monkeypatch, True)
+    on = (route_requirements(brief.live(), shape, message="x"), check_requirement(req, shown))
+    _flag(monkeypatch, False)
+    off = (route_requirements(brief.live(), shape, message="x"), check_requirement(req, shown))
+    assert on[0] == "replan" and on[1].status == "met"
+    assert off[0] == "editor_ops" and off[1].status == "partial"
+
+
+def _short_window_rows(words: list[str], *, video_s: float, window_s: float) -> list[dict]:
+    text = " ".join(words)
+    variant = _variant(text, end=window_s)
+    variant["duration_s"] = video_s
+    parsed = _parse([_op(words)], snapshot=_snapshot(text))
+    return compile_editor_ops(_job(variant), variant, parsed.ops).payload.text_elements
+
+
+def test_a_piece_holds_a_quarter_second_by_lengthening_the_window(monkeypatch) -> None:
+    _flag(monkeypatch, True)
+    words = [f"w{i}" for i in range(12)]
+    rows = _short_window_rows(words, video_s=30.0, window_s=1.0)
+    spans = [r["end_s"] - r["start_s"] for r in rows]
+    assert min(spans) >= 0.25 - 1e-6
+    assert rows[-1]["end_s"] > 1.0 and rows[-1]["end_s"] <= 30.0
+    assert [r["text"] for r in rows] == words
+
+
+def test_a_video_too_short_for_the_pieces_refuses_naming_the_seconds(monkeypatch) -> None:
+    _flag(monkeypatch, True)
+    from app.services.kria_editor_ops import KriaEditorOpError
+
+    with pytest.raises(KriaEditorOpError, match=r"needs about \d+\.\d+s.*only leaves \d+\.\d+s"):
+        _short_window_rows([f"w{i}" for i in range(12)], video_s=2.0, window_s=1.0)
+
+
+def test_flag_off_keeps_the_recorded_short_window(monkeypatch) -> None:
+    _flag(monkeypatch, False)
+    rows = _short_window_rows([f"w{i}" for i in range(12)], video_s=2.0, window_s=1.0)
+    assert rows[-1]["end_s"] == 1.0

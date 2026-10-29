@@ -38,6 +38,7 @@ from app.kria.brief_route import (
     wants_hour_only_text,
 )
 from app.kria.clip_sound_toggle_ask import SoundTarget, SoundToggleAsk, requirement_sound_toggle
+from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import InferredLabel, RequirementReceipt
 from app.kria.freeze_ask import (
     asks_freeze_frame,
@@ -9483,7 +9484,7 @@ def _has_checker(req: BriefRequirement) -> bool:
     if judged_at_render(req):
         # Neutral (`_NO_CHECKER`) anywhere but a finished phone montage (KRI-546).
         return True
-    if req.kind == "text_sequence":
+    if req.kind == "text_sequence" and compose_unmet_with_ops():
         return True  # 29 Ekim: judged against the fragment sequences on screen
     if req.kind == "text":
         return bool(
@@ -9909,7 +9910,7 @@ def _check_text_sequence(req: BriefRequirement, facts: PlanFacts) -> Requirement
 
 
 def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
-    if req.kind == "text_sequence":
+    if req.kind == "text_sequence" and compose_unmet_with_ops():
         return _check_text_sequence(req, facts)
     if wants_engine_noise_reduction(req):
         # This owns only the explicit engine-noise request.  Bed/mix controls keep their
