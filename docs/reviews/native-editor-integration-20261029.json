@@ -45,5 +45,60 @@
     "Fresh exact-head original-runtime CI required.",
     "Specific production deployment consent and code-owner review remain unfulfilled.",
     "Main advanced only release/package metadata after the tested source; no native inputs changed."
-  ]
+  ],
+  "corner_target_followup": {
+    "original_miss_cause": "Not established. Original failure preserved.",
+    "driver_defect": "AX outer corner includes a22point decorative resize handle; old target was near the outer edge rather than its center.",
+    "scope": "Unrotated text fixture only. No general rotated-object coordinate helper.",
+    "canvas_origin": [
+      136.33333333333331,
+      67
+    ],
+    "pre_gesture_renderer_bounds": [
+      24.121856689453125,
+      81.6561279296875,
+      33.7166748046875,
+      6.58245849609375
+    ],
+    "old_target": [
+      205,
+      167
+    ],
+    "renderer_corner": [
+      194.17186482747394,
+      155.23858642578125
+    ],
+    "new_target": [
+      194,
+      156
+    ],
+    "old_target_distance_points": 15.98684961392685,
+    "new_target_distance_points": 0.7805691192503191,
+    "unchanged_target_prefix_runs": {
+      "passed": 13,
+      "failed": 0,
+      "claim": "Diagnostic prefixes only, not full journey proof. No original rare failure reproduced."
+    },
+    "new_target_prefix_runs": {
+      "passed": 3,
+      "failed": 0,
+      "claim": "Pre-admission probe confirmed transform=true and fresh samples."
+    },
+    "full_uninstrumented_runs": {
+      "result": "Passed",
+      "totalTestCount": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "skippedTests": 0
+    },
+    "full_bundle": "/tmp/unattended1892-full-handle-fix.xcresult",
+    "test_source_sha256": "9127141237f91a8bae0380182c19722c8a20beb2906dac560b96858e7a5b93f8",
+    "app_source_sha256": "f3bdb2f23064dfe93e4f94bea4eea148ff8bbef1fbd0b5ba9c8c52e8b7d0ae79",
+    "assertions": "Fresh live-text delta>4, guide growth and all later unsafe/safe pinch, animation and cancellation checks retained. No timeout change or retry.",
+    "excluded": [
+      "Zero-test discovery result",
+      "Interrupted broad diagnostic after unrelated animation-idle wait"
+    ],
+    "independent_review": "Read-only review confirmed test-only change and stronger oracle. No app-source changes."
+  }
 }

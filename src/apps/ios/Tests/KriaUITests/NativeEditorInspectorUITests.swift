@@ -820,11 +820,15 @@ final class NativeEditorInspectorUITests: XCTestCase {
                 .first(where: { $0.hasPrefix("dangerGuideSamples:") }) ?? ""
             return Int(value.replacingOccurrences(of: "dangerGuideSamples:", with: "")) ?? 0
         }
+        let previewBeforeCorner = preview.value as? String ?? ""
         let guideSamplesBeforeCorner = guideSamples()
-        let corner = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: textObject.frame.maxX, dy: textObject.frame.maxY))
+        let liveSamplesBeforeCorner = Int(previewBeforeCorner.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? "") ?? 0
+        // Drag the center of the 22-point handle included in the accessibility frame.
+        let cornerFrame = textObject.frame.insetBy(dx: 11, dy: 11)
+        let corner = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: cornerFrame.maxX, dy: cornerFrame.maxY))
         corner.press(forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: 24, dy: 18)), withVelocity: 20, thenHoldForDuration: 0.1)
         let cornerSamples = (preview.value as? String)?.components(separatedBy: ";").first?.replacingOccurrences(of: "liveTextSamples:", with: "") ?? ""
-        XCTAssertGreaterThan(Int(cornerSamples) ?? 0, 4, "Corner resizing must use the immediate text layer")
+        XCTAssertGreaterThan(Int(cornerSamples) ?? 0, liveSamplesBeforeCorner + 4, "Corner resizing must add fresh immediate text samples")
         XCTAssertGreaterThan(guideSamples(), guideSamplesBeforeCorner,
                              "The guide must update during the live scale/rotation gesture")
         XCTAssertFalse(app.descendants(matching: .any)["native-editor-danger-guide"].firstMatch.exists)
