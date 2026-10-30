@@ -745,6 +745,15 @@
       ]
     },
     {
+      "id": "lev-m2-found-clip-picker",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_lev_m2_found_clip_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/services/test_clip_intent_resolution.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/lev_m2_picker_turns.json",
+        "src/apps/api/tests/kria/test_lev_m2_found_clip_picker.py"
+      ]
+    },
+    {
       "id": "kri-962-voiceover-tie-question",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri962_voiceover_tie_question.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri692_spoken_text_is_not_a_clip_question.py",
