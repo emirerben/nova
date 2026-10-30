@@ -91,7 +91,7 @@ struct NativeOverlayGenerationPanel: View {
                     guard let plan, let assetID = operation.assetID else { throw APIError.invalidResponse }
                     try await session.applyOverlayProposal(row, assetID: assetID, plan: plan)
                 }, allowsNewGeneration: !stale && generationAvailable, allowsUse: !stale,
-                    embedded: true, automaticallyGenerate: !stale && generationAvailable,
+                    embedded: true,
                     apiOverride: session.overlayGenerationAPI)
                 Text("Then edit it like any other image.")
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
@@ -118,7 +118,7 @@ struct NativeOverlayGenerationPanel: View {
                 }
                 Button { createPlan() } label: { Text("Generate preview").frame(maxWidth: .infinity) }
                     .buttonStyle(KriaPrimaryButtonStyle())
-                    .disabled(busy || (mode == .prompt && prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || prompt.count > 1500 || tasteNotes.count > 800)
+                    .disabled(busy || !generationAvailable || (mode == .prompt && prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || prompt.count > 1500 || tasteNotes.count > 800)
                     .accessibilityIdentifier("overlay-generation-plan")
                 if busy {
                     ProgressView("Finding the right moment…")
@@ -130,7 +130,7 @@ struct NativeOverlayGenerationPanel: View {
                         proposalView(row)
                     }
                 }
-                Text(generationAvailable ? "Image generation uses your account’s allowance. Your footage stays as it is." : "Image generation is unavailable for this account. Text and uploaded visuals can still be planned.")
+                Text(generationAvailable ? "Planning and image generation use your account’s allowance. Your footage stays as it is." : "Generate media is unavailable for this account.")
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
             }
             if stale {

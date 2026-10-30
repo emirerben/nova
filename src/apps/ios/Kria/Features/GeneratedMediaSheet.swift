@@ -72,7 +72,6 @@ struct GeneratedMediaSheet: View {
     var allowsNewGeneration = true
     var allowsUse = true
     var embedded = false
-    var automaticallyGenerate = false
     var apiOverride: (any KriaAPIClient)? = nil
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -103,8 +102,7 @@ struct GeneratedMediaSheet: View {
         }
         .onDisappear { pollTask?.cancel(); player?.pause() }
         .onAppear {
-            if automaticallyGenerate && draft.recovery == nil { submit() }
-            else { pollTask = Task { await restore() } }
+            pollTask = Task { await restore() }
         }
     }
 
@@ -113,11 +111,18 @@ struct GeneratedMediaSheet: View {
             if narration {
                 Text("This voice is AI-generated. Review the script and listen before using it.")
                 Text(draft.script?.text ?? "").textSelection(.enabled)
-            } else if !embedded {
-                TextField("Image title", text: $draft.title)
-                    .accessibilityIdentifier("generated-media-title").disabled(draft.recovery != nil || draft.submissionRejection != nil)
+            } else {
+                if !embedded {
+                    TextField("Image title", text: $draft.title)
+                        .accessibilityIdentifier("generated-media-title").disabled(draft.recovery != nil || draft.submissionRejection != nil)
+                }
+                // The exact prompt that will be paid for is always visible before the first request.
                 TextField(draft.source == nil ? "Describe your image" : "Describe the changes", text: $draft.prompt, axis: .vertical)
-                    .lineLimit(3...8).accessibilityIdentifier("generated-media-prompt").disabled(draft.recovery != nil || draft.submissionRejection != nil)
+                    .lineLimit(embedded ? 2...6 : 3...8).accessibilityIdentifier("generated-media-prompt").disabled(draft.recovery != nil || draft.submissionRejection != nil)
+                if embedded && draft.recovery == nil && draft.submissionRejection == nil {
+                    Text("Generating uses your account’s allowance.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                }
             }
             if draft.recovery == nil, draft.submissionRejection == nil {
                 Button(narration ? "Approve script and generate AI voice" : "Generate preview") { submit() }

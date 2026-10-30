@@ -1,6 +1,21 @@
 import XCTest
 
 @MainActor final class OverlayGenerationUITests: XCTestCase {
+    private func waitUntilEnabled(_ element: XCUIElement) {
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: element)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 10), .completed, "Planning waits for the account gate")
+    }
+
+    /// Planning and image generation use allowance; the image prompt is visible before the separate explicit Generate action.
+    private func approveVisiblePromptAndGenerate(_ app: XCUIApplication) {
+        let submit = app.buttons["generated-media-submit"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.textFields["generated-media-prompt"].exists || app.textViews["generated-media-prompt"].exists,
+                      "The prompt to be paid for is shown before generation")
+        XCTAssertFalse(app.buttons["generated-media-use"].exists, "No hidden first spend")
+        XCTAssertTrue(submit.isEnabled)
+        submit.tap()
+    }
     func testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-overlays"]
@@ -11,7 +26,9 @@ import XCTest
         app.buttons["native-editor-tool-visuals"].tap()
         app.buttons["native-editor-generate-media"].tap()
         app.segmentedControls["overlay-generation-mode"].buttons["Let Kria choose"].tap()
+        waitUntilEnabled(app.buttons["overlay-generation-plan"])
         app.buttons["overlay-generation-plan"].tap()
+        approveVisiblePromptAndGenerate(app)
         let use = app.buttons["generated-media-use"]
         XCTAssertTrue(use.waitForExistence(timeout: 15))
         let scroll = app.scrollViews["native-editor-visuals-scroll"]
@@ -58,7 +75,9 @@ import XCTest
         promptShot.name = "inline-visuals-prompt"
         promptShot.lifetime = .keepAlways
         add(promptShot)
+        waitUntilEnabled(generate)
         generate.tap()
+        approveVisiblePromptAndGenerate(app)
         let addImage = app.buttons["generated-media-use"]
         XCTAssertTrue(addImage.waitForExistence(timeout: 15))
         for _ in 0..<4 where !addImage.isHittable { scroll.swipeUp() }
@@ -137,6 +156,7 @@ import XCTest
         input.typeText("Show 10 when I say number ten")
         app.segmentedControls["overlay-generation-mode"].buttons["Let Kria choose"].tap()
         XCTAssertFalse(input.exists)
+        waitUntilEnabled(app.buttons["overlay-generation-plan"])
         app.buttons["overlay-generation-plan"].tap()
         let use = app.buttons["overlay-generation-use-DCC14763-5702-4AE3-8510-8C72845E6B15"]
         for _ in 0..<5 where !use.isHittable { app.scrollViews.firstMatch.swipeUp() }

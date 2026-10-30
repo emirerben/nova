@@ -276,6 +276,24 @@ def _speech_start(fact: dict, quote: str) -> float:
     return matches[0]
 
 
+LOGO_NOTICE = "Upload the real logo or choose it from your visual library."
+
+# Folded text (accents stripped, casefolded) so Turkish İ/ı/ş and English forms match alike.
+_LOGO_TERMS = re.compile(
+    r"\b(?:\w*(?:firmen|marken|brand|company)logo\w*|logo\w*|wordmark\w*|monogram\w*"
+    r"|[ae]mblem\w*|brand\s?mark\w*|marka\s+(?:isaret|simge|sembol|damga)\w*)"
+)
+
+
+def _fold(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value.replace("ı", "i").replace("İ", "I"))
+    return "".join(ch for ch in text if not unicodedata.combining(ch)).casefold()
+
+
+def _requests_logo(*parts: str) -> bool:
+    return bool(_LOGO_TERMS.search(_fold(" ".join(parts))))
+
+
 def materialize_overlays(
     raw: OverlayPlanOutput,
     evidence: list[dict],
@@ -285,12 +303,18 @@ def materialize_overlays(
     prompt: str,
     existing_overlays: list[dict] | None = None,
     insertion_base: float | None = None,
+    notices: list[str] | None = None,
 ) -> list[PlannedOverlay]:
     by_ref = {(row["kind"], row["reference_id"]): row for row in evidence}
     by_asset = {row["asset_id"]: row for row in assets}
     result = []
     occupied = [(row["start_s"], row["end_s"]) for row in existing_overlays or []]
     for row in raw.overlays:
+        if row.kind == "image" and _requests_logo(row.prompt, row.title):
+            # Only this row is refused; the rest of a mixed request still gets planned.
+            if notices is not None and LOGO_NOTICE not in notices:
+                notices.append(LOGO_NOTICE)
+            continue
         if all(ref.kind == "visual" for ref in row.evidence) and re.search(
             r"\b(?:when|once|as soon as|exactly when)\b|(?:dığımda|diğimde|duğumda|düğümde)",
             prompt,
@@ -347,12 +371,6 @@ def materialize_overlays(
                 raise ValueError(
                     "Generated pictures require a description; use native text for lettering."
                 )
-            if re.search(
-                r"\b(?:logo|logos|logotype|wordmark)\b",
-                row.prompt + " " + row.title + " " + prompt,
-                re.I,
-            ):
-                raise ValueError("Upload the real logo or choose it from your visual library.")
         if row.kind == "text" and not row.text.strip():
             raise ValueError("A text overlay needs readable text.")
         result.append(PlannedOverlay(**{**row.model_dump(), "start_s": start}))
@@ -586,6 +604,7 @@ def generate_overlay_plan(
             ),
         )
     raw = (agent or OverlayGenerationAgent(default_client())).run(context, ctx=ctx)
+    notices: list[str] = []
     try:
         overlays = materialize_overlays(
             raw,
@@ -595,10 +614,13 @@ def generate_overlay_plan(
             prompt=body.prompt,
             existing_overlays=context.existing_overlays,
             insertion_base=context.insertion_base,
+            notices=notices,
         )
     except ValueError as exc:
         return OverlayPlanResponse(**response, message=str(exc))
     message = raw.message
     if overlays:
         message = (message + " Review placement over your footage.").strip()
+    if notices:
+        message = " ".join(part for part in (message, *notices) if part).strip()
     return OverlayPlanResponse(**response, overlays=overlays, message=message)

@@ -36,12 +36,78 @@ def test_exact_turkish_trigger_uses_word_clock_not_model_guess():
         {"evidence": [dict(kind="speech", reference_id="speech-0", quote="tea")]},
         {"kind": "library_asset", "asset_id": "foreign"},
         {"end_s": 20},
-        {"kind": "image", "prompt": "Invent an Acme logo"},
     ],
 )
 def test_wrong_content_control_refuses_invented_or_unowned_evidence(change):
     with pytest.raises(ValueError):
         materialize_overlays(proposal(**change), evidence(), [], duration_s=8, prompt="coffee")
+
+
+def _two_rows(first, second):
+    rows = proposal().overlays
+    base = rows[0].model_dump()
+    return OverlayPlanOutput(
+        overlays=[
+            {**base, **first, "start_s": 1.0, "end_s": 2.0},
+            {**base, **second, "start_s": 3.0, "end_s": 4.0},
+        ]
+    )
+
+
+LOGO_PROMPTS = [
+    "Invent an Acme logo",
+    "Acme LOGOSU kahve fincanının yanında",
+    "markanın logoları",
+    "Şirket AMBLEMİ",
+    "MARKA İŞARETİ büyük",
+    "a wordmark for Acme",
+    "company emblem",
+    "Firmenlogo auf Tasse",
+]
+
+
+@pytest.mark.parametrize("logo", LOGO_PROMPTS)
+def test_generated_logo_is_refused_without_losing_the_rest_of_a_mixed_request(logo):
+    notices = []
+    raw = _two_rows({"prompt": logo, "title": "Brand"}, {"prompt": "A cup of coffee"})
+    facts = evidence() + [
+        dict(kind="speech", reference_id="speech-1", quote="kahve", start_s=3.25, end_s=3.7)
+    ]
+    raw.overlays[1].evidence[0].reference_id = "speech-1"
+    rows = materialize_overlays(raw, facts, [], duration_s=8, prompt="", notices=notices)
+    assert [row.prompt for row in rows] == ["A cup of coffee"]
+    assert notices == ["Upload the real logo or choose it from your visual library."]
+
+
+def test_refused_logo_row_does_not_reserve_its_window():
+    raw = _two_rows(
+        {"prompt": "Acme logo"}, {"prompt": "A cup of coffee", "start_s": 1.0, "end_s": 2.0}
+    )
+    assert len(materialize_overlays(raw, evidence(), [], duration_s=8, prompt="", notices=[])) == 1
+
+
+def test_only_logo_request_returns_no_overlays_and_a_notice():
+    notices = []
+    rows = materialize_overlays(
+        proposal(prompt="Invent an Acme logo"),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="",
+        notices=notices,
+    )
+    assert rows == [] and len(notices) == 1
+
+
+@pytest.mark.parametrize(
+    "fine", ["A cup of coffee", "analogous colors palette", "A catalogue page"]
+)
+def test_ordinary_pictures_are_not_mistaken_for_logos(fine):
+    notices = []
+    rows = materialize_overlays(
+        proposal(prompt=fine), evidence(), [], duration_s=8, prompt="", notices=notices
+    )
+    assert len(rows) == 1 and notices == []
 
 
 def test_silent_visual_window_cannot_escape_the_source_slot():

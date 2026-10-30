@@ -8,7 +8,7 @@ from starlette.concurrency import run_in_threadpool
 from app.agents._runtime import RunContext
 from app.auth import CurrentUser, KriaClientProtocol, NativeClient
 from app.database import sync_session
-from app.routes.generated_media import _native
+from app.routes.generated_media import _native, generated_capabilities
 from app.services.overlay_generation import (
     OverlayPlanRequest,
     OverlayPlanResponse,
@@ -28,6 +28,10 @@ async def overlay_plan(
     client_protocol: KriaClientProtocol = None,
 ):
     _native(native_client, client_protocol)
+    # Planning is a paid Gemini call. It rides the same account gate as image generation:
+    # native protocol, cost control on, live approval, budgets and the images kill switch.
+    if not generated_capabilities(user.id, native_client, client_protocol)["generated_images"]:
+        raise HTTPException(404, "Generated media is unavailable")
 
     def run():
         try:
