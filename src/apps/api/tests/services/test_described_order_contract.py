@@ -317,6 +317,7 @@ def test_filming_order_ending_on_the_sip_pins_the_seated_order() -> None:
 
 def test_filming_order_without_capture_times_asks_for_them_once() -> None:
     _brief_, contract = _world(_strategy(_sip_last()), _brief(filming_order=True))
+    # KRI-1069: the line says what is missing (no clip here has a filming time).
     assert contract.unresolved == (
-        "I need capture times for every selected clip to verify chronological order.",
+        "Your clips have no filming time, so I can't put them in the order you filmed.",
     )

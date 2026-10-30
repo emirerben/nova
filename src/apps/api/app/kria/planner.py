@@ -288,6 +288,29 @@ def _attached_visual_ids(manifest: Any) -> tuple[str, ...]:
     )
 
 
+async def _snapshot_visual_rows(db: AsyncSession, item: PlanItem) -> list:
+    """KRI-1069: the item's Visuals the turn's media snapshot keeps (``snapshot_visual``).
+
+    Every creator-visible pool row, as the manifest lists them, so a photo still being
+    analyzed keeps its capture time; the dispatch gate waits for it to be ready.
+    """
+    from app.models import PlanItemAsset  # noqa: PLC0415
+    from app.services.creator_sessions import CREATOR_VISIBLE_ASSET_STATES  # noqa: PLC0415
+
+    owner = select(ContentPlan.user_id).where(ContentPlan.id == item.content_plan_id)
+    rows = await db.execute(
+        select(PlanItemAsset)
+        .where(
+            PlanItemAsset.plan_item_id == item.id,
+            PlanItemAsset.user_id == owner.scalar_subquery(),
+            PlanItemAsset.status.in_(CREATOR_VISIBLE_ASSET_STATES),
+            PlanItemAsset.deduplicated_to_asset_id.is_(None),
+        )
+        .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
+    )
+    return list(rows.scalars())
+
+
 def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | None:
     """The strategy's server-read photo/video timing (``recognize_mixed_media_timing``)."""
     raw = strategy.get("mixed_media_timing")
@@ -4812,7 +4835,16 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     if planned.plan.mode != "act":
         return planned
     current = await db.get(PlanItem, kwargs["item_id"], populate_existing=True)
-    after = snapshot_media(current) if current is not None else {}
+    after = (
+        snapshot_media(
+            current,
+            visuals=await _snapshot_visual_rows(db, current)
+            if _attached_visual_ids(planned.brief_manifest)
+            else None,
+        )
+        if current is not None
+        else {}
+    )
     if media_identity(before) != media_identity(after):
         return replace(
             planned,

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.kria.brief import CreativeBrief
+from app.kria.brief_binding import SNAPSHOT_VISUALS_KEY
 from app.kria.brief_checks import is_spoken_text_cue
 from app.kria.brief_route import chapter_list
 from app.kria.freeze_ask import times_one_moment
@@ -27,6 +28,7 @@ from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import (
     OriginalRenderAsset,
     ProcessedAudioRenderAsset,
+    VisualRenderAsset,
     VoiceoverRenderAsset,
 )
 from app.kria.reply_language import say
@@ -48,6 +50,7 @@ from app.services.choice_questions import (
     one_clip_edit,
     pin_anchors,
 )
+from app.services.clip_file_names import clip_display_name
 from app.services.clip_order_sequence import (
     apply_sequence,
     sequence_rows,
@@ -1038,6 +1041,89 @@ def text_clip_not_found(literal: str) -> str:
     )
 
 
+# KRI-1069: the fixed words after the named media in ``capture_time_missing``, in both
+# languages, so a refusal over it still names the order choice (``unresolved_field_path``).
+_NO_CAPTURE_TAILS = {
+    "en": (
+        "has no filming time, so I can't put it in the order you filmed.",
+        "have no filming time, so I can't put them in the order you filmed.",
+    ),
+    "tr": (
+        "için çekim saati yok, o yüzden onu çektiğin sıraya koyamıyorum.",
+        "için çekim saati yok, o yüzden onları çektiğin sıraya koyamıyorum.",
+    ),
+}
+
+
+def capture_time_missing(
+    names: Sequence[tuple[str, str]], *, total: int = 0, photos: bool = False
+) -> str:
+    """Media of a filming-order edit with no capture time, named, in the chat's language.
+
+    ``names`` are ``(en, tr)`` pairs (a file name is the same in both); ``total`` is how
+    many media the edit shows and ``photos`` whether Visuals are among them. When none of
+    several has a time, naming each is noise, so the line says "your clips". KRI-1069: the
+    contract once said "every selected clip" when one selected photo was not a clip at all.
+    """
+    shown = list(names[:3])
+    more = len(names) - len(shown)
+    one = len(names) == 1
+    en = ", ".join(name for name, _tr in shown) + (f" and {more} more" if more else "")
+    tr = ", ".join(name for _en, name in shown) + (f" ve {more} tane daha" if more else "")
+    if len(names) == total > 1:
+        en = "Your clips and photos" if photos else "Your clips"
+        tr = f"{'Kliplerinin ve fotoğraflarının' if photos else 'Kliplerinin'} hiçbiri"
+    return say(
+        en=f"{en} {_NO_CAPTURE_TAILS['en'][0 if one else 1]}",
+        tr=f"{tr} {_NO_CAPTURE_TAILS['tr'][0 if one else 1]}",
+    )
+
+
+def _media_name(row: Mapping[str, Any], kind: str, ordinal: int) -> tuple[str, str]:
+    """How the creator knows one medium: its file name as the app shows it, else its place."""
+    name = clip_display_name(row.get("source_filename"))
+    if name:
+        return f'"{name}"', f'"{name}"'
+    if kind == "photo":
+        return f"photo {ordinal}", f"{ordinal}. fotoğraf"
+    return f"clip {ordinal}", f"{ordinal}. klip"
+
+
+def _edit_visuals(
+    media_snapshot: Mapping[str, Any] | None,
+    strategy: Mapping[str, Any],
+    hidden_ids: frozenset[str] = frozenset(),
+) -> list[Mapping[str, Any]]:
+    """KRI-1069: the Visuals a phone montage shows beside the clips, as the snapshot lists them.
+
+    Mirrors the unified montage worker: only the montage family without a recorded voiceover
+    places Visuals (``planner._held_visual_pool``), narrowed to an explicit ``selected``
+    scope (``unified_montage.selected_visual_ids``). A snapshot that lists no Visuals (one
+    written before KRI-1069) gives none.
+    """
+    rows = (media_snapshot or {}).get(SNAPSHOT_VISUALS_KEY)
+    if (
+        not isinstance(rows, list)
+        or strategy.get("edit_format") != "montage"
+        or strategy.get("audio_strategy") == "voiceover"
+    ):
+        return []
+    ids = strategy.get("selected_media_ids")
+    selected = (
+        {str(media_id) for media_id in ids}
+        if strategy.get("media_scope") == "selected" and isinstance(ids, list) and ids
+        else None
+    )
+    return [
+        row
+        for row in rows
+        if isinstance(row, Mapping)
+        and str(row.get("media_id") or "").startswith("asset-")
+        and str(row["media_id"]) not in hidden_ids
+        and (selected is None or str(row["media_id"]) in selected)
+    ]
+
+
 def _clip_intents_on() -> bool:
     """The planner seats a described sequence only when clip intents are on; so does the
     contract, or the two would disagree after a flag flip."""
@@ -1577,22 +1663,34 @@ def build_render_contract(
             order_ids = tuple(ids)
             order_basis = "attachment_order"
     elif order_required:
-        from app.services.clip_facts import capture_from_assignment
+        from app.services.clip_facts import capture_from_assignment, visual_capture_time
 
         rows = edit_rows
         selected = set(typed.selected_media_ids or ()) - hidden_ids if typed else set()
+        # KRI-1069: the Visuals the montage shows sit in the chronology by their own capture
+        # time, after the clips on a tie, exactly as the planner orders them.
+        visuals = _edit_visuals(media_snapshot, raw, hidden_ids)
         dates = {}
-        for row in rows:
+        names: dict[str, tuple[str, str]] = {}
+        for ordinal, row in enumerate(rows, start=1):
             if not isinstance(row, Mapping) or not row.get("media_id"):
                 continue
+            names[str(row["media_id"])] = _media_name(row, "clip", ordinal)
             capture = capture_from_assignment(row)
             if capture and capture.capture_time:
                 dates[str(row["media_id"])] = capture.capture_time
+        for ordinal, row in enumerate(visuals, start=1):
+            names[str(row["media_id"])] = _media_name(row, "photo", ordinal)
+            taken = visual_capture_time(row.get("capture"))
+            if taken is not None:
+                dates[str(row["media_id"])] = taken
         ids = [
             str(row["media_id"]) for row in rows if isinstance(row, Mapping) and row.get("media_id")
         ]
-        # KRI-661: a single clip is trivially in order, dated or not.
-        single_clip = one_clip
+        shown = [*ids, *(str(row["media_id"]) for row in visuals)]
+        # KRI-661: a single clip is trivially in order, dated or not (with no Visual beside it).
+        single_clip = one_clip and not visuals
+        undated = [media_id for media_id in shown if media_id not in dates]
         if single_clip and not ids:
             # The one clip has no snapshot id to pin (``_one_unkeyed_clip``): a single
             # take is already in filming order, so there is nothing left to verify.
@@ -1600,19 +1698,28 @@ def build_render_contract(
         elif (
             not ids
             or len(ids) != len(rows)
-            or len(set(ids)) != len(ids)
-            or (set(ids) != set(dates) and not single_clip)
-            or (selected and set(ids) != selected)
+            or len(set(shown)) != len(shown)
+            or (selected and set(shown) != selected)
         ):
+            # Which media the edit shows is unclear (KRI-1069: a selected Visuals photo in a
+            # format that orders none by time, or a snapshot that lists no Visuals): that
+            # is not a missing capture time, so the reply never says it is.
+            order_ids = ()
+            unresolved.append("I need to know which clips are in the edit to verify their order.")
+        elif undated and not single_clip:
             order_ids = ()
             unresolved.append(
-                "I need capture times for every selected clip to verify chronological order."
+                capture_time_missing(
+                    [names[media_id] for media_id in undated],
+                    total=len(shown),
+                    photos=bool(visuals),
+                )
             )
         else:
             order_ids = (
                 tuple(ids)
                 if single_clip
-                else tuple(sorted(ids, key=lambda media_id: dates[media_id]))
+                else tuple(sorted(shown, key=lambda media_id: dates[media_id]))
             )
             order_basis = "capture_time"
     if (
@@ -1826,7 +1933,9 @@ ORDER_BASIS_UNRESOLVED = frozenset(
 def unresolved_field_path(message: str) -> str | None:
     """The strategy field an unresolved line's refusal names, or ``None``."""
 
-    if message in ORDER_BASIS_UNRESOLVED:
+    if message in ORDER_BASIS_UNRESOLVED or message.endswith(
+        (*_NO_CAPTURE_TAILS["en"], *_NO_CAPTURE_TAILS["tr"])
+    ):
         return REQUIREMENT_FIELD_PATHS["order_required"]
     return None
 
@@ -2533,13 +2642,18 @@ def verify_phone_recipe(
         actual: list[str] = []
         for clip in picture:
             asset = manifest.get(clip.source_asset_id)
-            if not isinstance(asset, OriginalRenderAsset):
+            if isinstance(asset, OriginalRenderAsset):
+                media_id = asset.media_id
+            elif isinstance(asset, VisualRenderAsset):
+                # KRI-1069: a Visuals photo or video sits in the order under its manifest id.
+                media_id = f"asset-{asset.visual_id}"
+            else:
                 raise _phone_decline(
                     "order_required",
                     "This edit has an unverified picture source in the confirmed order.",
                 )
-            if not actual or actual[-1] != asset.media_id:
-                actual.append(asset.media_id)
+            if not actual or actual[-1] != media_id:
+                actual.append(media_id)
         if not contract.order_ids or tuple(actual) != contract.order_ids:
             raise _phone_decline(
                 "order_required", "This edit couldn't keep the confirmed clip order."
