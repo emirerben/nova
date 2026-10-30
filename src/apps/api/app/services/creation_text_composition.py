@@ -14,11 +14,11 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
 import structlog
 
+from app.agents import editor_ops_v2
 from app.agents._model_client import default_client
 from app.agents._runtime import ProviderOutcomeUnknownError, RunContext
 from app.agents._schemas.text_element import TextElement
@@ -143,7 +143,7 @@ class CreationTextComposer(EditCopilotAgent):
     # task's soft limit is 1740 s and this runs before any FFmpeg work.
     spec = replace(
         EditCopilotAgent.spec,
-        prompt_version="v16-text-sequence-title-bar",
+        prompt_version="v17-text-animation-vocab",
         timeout_s=180.0,
         fallback_models=(_FAST_COMPOSER_MODEL,),
     )
@@ -151,9 +151,7 @@ class CreationTextComposer(EditCopilotAgent):
     def render_prompt(self, input: EditCopilotInput) -> str:
         # Reuse the editor's text capability documentation without advertising its
         # unrelated timeline/audio tools. The same parser and compiler enforce it.
-        text_tools = (
-            Path(__file__).resolve().parents[2] / "prompts/edit_copilot_ops/text.txt"
-        ).read_text()
+        text_tools = editor_ops_v2.read_fragment("text.txt")
         response_contract = (
             'Return JSON: {"intent":"edit|describe|clarify|reject", "confidence":0.0-1.0, '
             '"reply":"short explanation", "ops":[], "needs_clarification":false, '

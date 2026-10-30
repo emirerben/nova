@@ -23,6 +23,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+from app.agents._schemas.text_animation_phases import (
+    LEGACY_EFFECT_ENTRANCE,
+    TEXT_ANIMATION_VOCAB,
+)
 from app.kria.reply_language import say
 
 # --------------------------------------------------------------------------- vocabulary
@@ -30,14 +34,6 @@ from app.kria.reply_language import say
 _FACE_WORDS = re.compile(
     r"[\s\-_]+(regular|medium|semibold|bold|extrabold|black|light|italic)$", re.IGNORECASE
 )
-_LEGACY_EFFECT_ENTRANCE = {
-    "static": "none",
-    "none": "none",
-    "fade-in": "fade",
-    "pop-in": "pop",
-    "slide-in": "slide",
-    "typewriter": "typewriter",
-}
 # Style keys compared as-is (after rounding); each is its own diff field.
 _PLAIN_STYLE_KEYS = (
     "alignment",
@@ -176,7 +172,7 @@ def effective_entrance(row: Mapping[str, Any]) -> str | None:
         entrance = phases.get("entrance")
         return entrance if isinstance(entrance, str) else None
     effect = row.get("effect")
-    return _LEGACY_EFFECT_ENTRANCE.get(effect) if effect is not None else "none"
+    return LEGACY_EFFECT_ENTRANCE.get(effect) if effect is not None else "none"
 
 
 def _phase(row: Mapping[str, Any], key: str) -> Any:
@@ -722,13 +718,13 @@ def describe_targets(entry: DiffEntry, live_text_count: int) -> str:
     return _plural(count, "text", "yazı")
 
 
+# A legacy edge keeps the name of the `effect` it replaced ("a fade-in"); the rest use their label.
 _ENTRANCE_EN = {
-    "fade": "a fade-in",
-    "pop": "a pop-in",
-    "slide": "a slide-in",
-    "typewriter": "a typewriter",
+    edge: f"a {vocab.label}" for edge, vocab in TEXT_ANIMATION_VOCAB.items() if edge != "none"
+} | {edge: f"a {effect}" for effect, edge in LEGACY_EFFECT_ENTRANCE.items() if edge != "none"}
+_ENTRANCE_TR = {
+    edge: vocab.label_tr for edge, vocab in TEXT_ANIMATION_VOCAB.items() if edge != "none"
 }
-_ENTRANCE_TR = {"fade": "solma", "pop": "pop", "slide": "kayma", "typewriter": "daktilo"}
 _CASE_EN = {
     "upper": "UPPERCASE",
     "lower": "lowercase",

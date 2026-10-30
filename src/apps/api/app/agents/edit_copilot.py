@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.agents import editor_ops_v2 as _v2
 from app.agents._runtime import Agent, AgentSpec, RefusalError, RunContext, SchemaError
+from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.length_options import length_options
@@ -57,7 +58,9 @@ log = structlog.get_logger()
 # v94 (30 Ekim): prompt-cache layout only, no rule change. Rules, catalogs and lane
 # fragments come first; the per-turn data (user message, draft, prior turns, max ops)
 # moved to prompts/edit_copilot_turn.txt at the end so the shared head is cacheable.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v94"
+# v95 (KRI-1077): animation ids come from {{TEXT_ANIMATION_EDGES}} (the vocab registry), so the
+# six designed animations are offered; the model writes the id, not the label.
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v95"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -4463,7 +4466,9 @@ def _creator_vocab(utterance: str) -> set[str]:
 
 
 _EFFECT_WORDS = re.compile(
-    r"\b(effects?|animat\w*|typewriter|fade|pop|motion|efekt\w*|animasyon\w*)\b"
+    r"\b(effects?|animat\w*|pop|motion|efekt\w*|animasyon\w*|"
+    + edge_alias_pattern(TEXT_ANIMATION_VOCAB)
+    + r")\b"
 )
 _SHADOW_WORDS = re.compile(
     r"\b(shadows?|outlines?|strokes?|borders?|glow|g[\u00f6o]lge\w*|kontur\w*)\b"
@@ -4478,7 +4483,7 @@ _NO_PHASES = {"entrance": "none", "exit": "none", "loop": "none"}
 def _effect_removal_pass(
     ops: list[dict], snapshot: dict, utterance: str, state: _ParseState
 ) -> list[dict]:
-    """ "Remove the effect" means the ANIMATION (typewriter/fade/pop), not shadow or stroke.
+    """ "Remove the effect" means the text ANIMATION, not shadow or stroke.
 
     Real draft: title and captions carried ``animation_phases.entrance = typewriter`` with a
     static text effect and shadow on; the model removed the shadow. When the creator names an

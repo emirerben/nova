@@ -22,9 +22,10 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
+from app.agents._schemas.text_animation_phases import TextAnimationEdge
 from app.kria.asset_holds import HOLD_TOLERANCE_S, hold_seconds
 from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
 from app.kria.brief_route import (
@@ -1683,16 +1684,8 @@ def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
     return total or None
 
 
-_LEGACY_EFFECT_ENTRANCE = {
-    "static": "none",
-    "none": "none",
-    "fade-in": "fade",
-    "pop-in": "pop",
-    "slide-in": "slide",
-    "typewriter": "typewriter",
-}
 _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
-_ENTRANCES = frozenset({"none", "fade", "pop", "slide", "typewriter"})
+_ENTRANCES = frozenset(get_args(TextAnimationEdge))
 _TEXT_CASES = frozenset({"none", "upper", "lower", "title"})
 _ALIGNMENTS = frozenset({"left", "center", "right"})
 
