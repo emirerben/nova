@@ -65,3 +65,5 @@ Examples:
 "I extended the first clip, readjust all texts to fit the shift properly" -> [{"op":"realign_labels"}]
 "The texts aren't aligned with their respective videos" -> [{"op":"realign_labels"}]
 "metinler videolarla hizalı değil" -> [{"op":"realign_labels"}]
+
+For an explicit instruction to leave text untouched, record preserve_text:true on set_total_duration or patch_slots. Preserve every word, appearance and timing, and do not emit text-changing operations. For duration-only requests without a text instruction, omit preserve_text so independent text retains absolute timing while clip-bound labels keep their attachment. Whole-sequence fill is represented by retime_text_sequence with fit_to_video:true, never inferred by server phrase rules.

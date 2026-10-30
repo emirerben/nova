@@ -10216,13 +10216,22 @@ def _check_sequence_timing(req: BriefRequirement, facts: PlanFacts) -> Requireme
             )
         )
     total = facts.duration_s
+    bounded = policy.get("mode") == "range"
+    start = policy.get("start_s") if bounded else 0.0
+    end = policy.get("end_s") if bounded else total
+    bounds_valid = all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        for value in (start, end)
+    )
     valid = (
         gaps_valid
-        and policy.get("mode") == "fill"
+        and policy.get("mode") in {"fill", "range"}
         and total is not None
-        and abs(windows[0][0]) <= 0.000002
-        and abs(windows[-1][1] - total) <= 0.000002
-        and all(end - start >= 0.25 - 0.000002 for start, end in windows)
+        and bounds_valid
+        and 0 <= start < end <= total + 0.000002
+        and abs(windows[0][0] - start) <= 0.000002
+        and abs(windows[-1][1] - end) <= 0.000002
+        and all(right - left >= 0.25 - 0.000002 for left, right in windows)
         and all(left[1] <= right[0] + 0.000002 for left, right in zip(windows, windows[1:]))
     )
     reason = (
@@ -10239,6 +10248,11 @@ def _check_sequence_timing(req: BriefRequirement, facts: PlanFacts) -> Requireme
         if valid
         else _CANT_CHECK_TIMING
     )
+    if valid and bounded:
+        reason = say(
+            en=f"Retimed {len(ids)} words in sequence from {start:g}s to {end:g}s.",
+            tr=f"{len(ids)} kelimeyi {start:g} ile {end:g} saniye arasında sırayla yaydım.",
+        )
     return _receipt(req, "met" if valid else "partial", reason)
 
 

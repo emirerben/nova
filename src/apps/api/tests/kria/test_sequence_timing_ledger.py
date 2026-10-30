@@ -154,3 +154,67 @@ def test_sequence_receipt_rejects_a_removed_final_word():
         {"timeline_slots": [{"duration_s": 10}], "text_elements": rows}
     )
     assert check_requirement(fill_requirement(), facts).status == "partial"
+
+
+def test_structured_timing_reconciliation_keeps_unrelated_model_updates():
+    from app.kria.brief import BriefUpdate
+    from app.kria.editor_sequence_timing import merge_sequence_brief_updates
+
+    prior = CreativeBrief(
+        version=3,
+        requirements=[
+            BriefRequirement(id="r1", kind="audio", scope="global", description="Keep audio"),
+        ],
+    )
+    planned = [
+        BriefUpdate(
+            kind="timing",
+            scope="global",
+            description="Fill the video",
+            facts={"editor_timing_only": True},
+        ),
+        BriefUpdate(kind="style", scope="global", description="Use red text"),
+    ]
+    updates = merge_sequence_brief_updates(
+        prior, planned, timing_plan("fill", 20), snapshot(), "Fill and use red"
+    )
+    final = apply_updates(prior, updates, source_turn_id="turn")
+    assert next(req for req in final.live() if req.id == "r1") == prior.live()[0]
+    assert len([req for req in final.live() if req.description == "Use red text"]) == 1
+    policy = next(req for req in final.live() if req.facts.get("sequence_timing"))
+    assert policy.id == "r2"
+    assert policy.facts["sequence_timing"]["target_ids"] == list(timing_plan("fill", 20).target_ids)
+    assert len([req for req in final.live() if req.facts.get("duration_s") == 20]) == 1
+
+
+def test_compiled_duration_replaces_model_guess_without_duplicate_requirement():
+    from app.kria.brief import BriefUpdate
+    from app.kria.editor_sequence_timing import merge_sequence_brief_updates
+
+    prior = CreativeBrief(
+        version=4,
+        requirements=[
+            BriefRequirement(
+                id="r1",
+                kind="timing",
+                scope="global",
+                description="Video length",
+                facts={"duration_s": 30, "editor_video_duration": True},
+            ),
+        ],
+    )
+    planned = [
+        BriefUpdate(
+            operation="change",
+            target_requirement_id="r1",
+            expected_version=4,
+            description="Video length",
+            facts={"duration_s": 30},
+        )
+    ]
+    updates = merge_sequence_brief_updates(
+        prior, planned, timing_plan("fill", 20), snapshot(), "Fill restored video"
+    )
+    final = apply_updates(prior, updates, source_turn_id="turn")
+    durations = [req for req in final.live() if req.facts.get("duration_s") is not None]
+    assert [(req.id, req.facts["duration_s"]) for req in durations] == [("r1", 20)]

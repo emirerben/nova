@@ -177,7 +177,19 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
                 detail="unsupported timeline field: " + ", ".join(unavailable),
             )
             return None
-    return {"selector": selector, "patch": clean}
+    preservation = _preservation_fields(payload, state)
+    if preservation is None:
+        return None
+    return {"selector": selector, "patch": clean, **preservation}
+
+
+def _preservation_fields(payload: dict, state: Any) -> dict | None:
+    if "preserve_text" not in payload:
+        return {}
+    if not isinstance(payload["preserve_text"], bool):
+        state.invalid_value()
+        return None
+    return {"preserve_text": payload["preserve_text"]}
 
 
 def _coerce_set_total_duration(name: str, payload: dict, snapshot: dict, state: Any) -> dict | None:
@@ -189,7 +201,10 @@ def _coerce_set_total_duration(name: str, payload: dict, snapshot: dict, state: 
     if strategy not in _STRATEGIES:
         state.invalid_value()
         return None
-    return {"target_s": target, "strategy": strategy}
+    preservation = _preservation_fields(payload, state)
+    if preservation is None:
+        return None
+    return {"target_s": target, "strategy": strategy, **preservation}
 
 
 _ORDER_CRITERIA = ("capture_time", "custom", "random")
@@ -385,14 +400,14 @@ SPECS: list[OpSpec] = [
     OpSpec(
         name="patch_slots",
         required=frozenset({"selector", "patch"}),
-        fields=frozenset({"selector", "patch"}),
+        fields=frozenset({"selector", "patch", "preserve_text"}),
         family=_FAMILY,
         coerce=_coerce_patch_slots,
     ),
     OpSpec(
         name="set_total_duration",
         required=frozenset({"target_s"}),
-        fields=frozenset({"target_s", "strategy"}),
+        fields=frozenset({"target_s", "strategy", "preserve_text"}),
         family=_FAMILY,
         coerce=_coerce_set_total_duration,
     ),

@@ -1598,26 +1598,25 @@ def _complete_draft_turn(
                     raise EditorStateSpeechCutError(EditorStateSpeechCutError.reply)
             elif wants_speech_cut and prior_payload:
                 raise RuntimeError("Save the current draft before applying speech processing")
-            from app.kria.creator_cues import preserves_editor_text
-
-            source_event = db.get(CreationThreadEvent, turn.source_event_id)
-            compiled = compile_editor_ops(
-                job,
-                editor_base.projected,
-                arguments.operations,
-                preserve_text=preserves_editor_text(source_event.content or "")
-                if source_event
-                else False,
+            from app.kria.editor_sequence_timing import (
+                sequence_timing_plan_from_operations,
+                timing_only_operations,
             )
-            from app.kria.editor_sequence_timing import sequence_timing_plan
             from app.services.kria_editor_ops_text import validate_timing_only_text
 
-            if (
-                source_event
-                and sequence_timing_plan(
-                    source_event.content or "", build_editor_snapshot(job, editor_base.projected)
-                )
-                is not None
+            source_event = db.get(CreationThreadEvent, turn.source_event_id)
+            timing_snapshot = build_editor_snapshot(job, editor_base.projected)
+            preserve_text = any(
+                update.facts.get("preserve_editor_text") is True for update in planned.brief_updates
+            ) or any(op.get("preserve_text") is True for op in arguments.operations)
+            timing_plan = sequence_timing_plan_from_operations(
+                arguments.operations, timing_snapshot, preserve_text=preserve_text
+            )
+            compiled = compile_editor_ops(
+                job, editor_base.projected, arguments.operations, preserve_text=preserve_text
+            )
+            if timing_only_operations(arguments.operations) or any(
+                update.facts.get("editor_timing_only") is True for update in planned.brief_updates
             ):
                 validate_timing_only_text(
                     editor_base.projected.get("text_elements") or [],
@@ -1748,45 +1747,34 @@ def _complete_draft_turn(
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
+            current_brief = load_latest_brief_sync(db, thread.id)
             if planned.brief_expected_version is not None:
-                current_brief = load_latest_brief_sync(db, thread.id)
                 if planned.brief_expected_version != (
                     current_brief.version if current_brief else 0
                 ):
                     raise RuntimeError("The request changed during planning; please retry")
-            if (
-                apply_intent.tool_name == "draft.apply_editor_ops"
-                and compiled.canonical_duration_s is not None
-                and (planned.brief_coverage or {}).get("reason") == "deterministic_timing"
-            ):
-                from app.kria.editor_sequence_timing import (
-                    sequence_brief_updates,
-                    sequence_timing_plan,
-                )
+            if apply_intent.tool_name == "draft.apply_editor_ops" and timing_plan is not None:
+                from app.kria.editor_sequence_timing import merge_sequence_brief_updates
 
-                authoritative_snapshot = build_editor_snapshot(job, editor_base.projected)
-                timing_plan = sequence_timing_plan(
-                    source_event.content or "", authoritative_snapshot
-                )
+                canonical_plan = timing_plan
                 if (
-                    timing_plan is not None
-                    and timing_plan.intent is not None
+                    timing_plan.intent is not None
                     and timing_plan.intent.mode == "fill"
+                    and timing_plan.span_s is None
                     and timing_plan.intent.target_s is None
+                    and compiled.canonical_duration_s is not None
                 ):
-                    timing_plan = replace(
+                    canonical_plan = replace(
                         timing_plan,
-                        intent=replace(
-                            timing_plan.intent,
-                            target_s=compiled.canonical_duration_s,
-                        ),
+                        intent=replace(timing_plan.intent, target_s=compiled.canonical_duration_s),
                     )
-                    effective_brief_updates = sequence_brief_updates(
-                        current_brief,
-                        timing_plan,
-                        authoritative_snapshot,
-                        source_event.content or "",
-                    )
+                effective_brief_updates = merge_sequence_brief_updates(
+                    current_brief,
+                    planned.brief_updates,
+                    canonical_plan,
+                    timing_snapshot,
+                    source_event.content or "" if source_event else "",
+                )
             brief = persist_brief_version_sync(
                 db,
                 thread_id=thread.id,

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Regenerate synthetic native timing fixtures through the backend compiler."""
+"""Regenerate synthetic typed-intent fixtures; this does not test live interpretation."""
 
+import argparse
 import json
 import os
 import sys
@@ -8,6 +9,11 @@ from pathlib import Path
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", type=Path, help="Write a comparison fixture outside the repository"
+    )
+    args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(root / "src/apps/api"))
     os.environ.setdefault("STORAGE_BUCKET", "synthetic")
@@ -22,7 +28,10 @@ def main() -> None:
         compile_editor_ops,
         project_editor_draft,
     )
-    from app.kria.editor_sequence_timing import sequence_timing_plan
+    from app.kria.editor_sequence_timing import (
+        SequenceTimingIntent,
+        sequence_timing_plan,
+    )
     from tests._prod_profile import apply_prod_profile
     from tests.services.test_duration_text_preservation import sequence
 
@@ -55,7 +64,7 @@ def main() -> None:
             before = deepcopy(variant["text_elements"])
             if name == "retimeAfterResize20":
                 initial_plan = sequence_timing_plan(
-                    "Make the video 12 seconds and fill the text across the whole video",
+                    SequenceTimingIntent("fill", target_s=12),
                     build_editor_snapshot(job, variant),
                 )
                 initial = compile_editor_ops(
@@ -69,12 +78,12 @@ def main() -> None:
             operations = [{"op": "set_total_duration", "target_s": target}]
             if name.startswith("retime"):
                 plan = sequence_timing_plan(
-                    f"Make the video {target} seconds and fill the text across the whole video",
+                    SequenceTimingIntent("fill", target_s=target),
                     build_editor_snapshot(job, variant),
                 )
                 if plan is None or not plan.operations:
                     raise AssertionError(
-                        "Synthetic natural-language route must produce a plan"
+                        "Synthetic typed timing intent must produce a plan"
                     )
                 operations = list(plan.operations)
             result = compile_editor_ops(job, variant, operations)
@@ -87,7 +96,10 @@ def main() -> None:
                     payload=result.payload.model_dump(mode="json", exclude_none=True),
                 )
             )
-    output = root / "src/apps/ios/Tests/Fixtures/DurationTextPreservation.json"
+    output = (
+        args.output
+        or root / "src/apps/ios/Tests/Fixtures/DurationTextPreservation.json"
+    )
     output.write_text(json.dumps(cases, indent=2) + "\n")
 
 

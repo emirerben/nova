@@ -177,6 +177,45 @@ def test_phone_minimum_clip_length_leaves_room_for_the_label_bar(monkeypatch):
     _assert_clean_commit(job, prep, before, target_s=4 * MIN_RETARGET_CLIP_S)
 
 
+def test_minimum_clip_edit_preserves_an_independent_opening_text(monkeypatch):
+    from app.agents.editor_ops_v2.timeline import MIN_RETARGET_CLIP_S
+    from app.services.kria_editor_ops import TextTimingConflict
+
+    job, variant, _revision = _guided_phone_job(monkeypatch)
+    variant["text_elements"][0]["id"] = "independent-opening-text"
+    ops = [
+        {
+            "op": "patch_slots",
+            "selector": {"all": True},
+            "patch": {"duration_s": MIN_RETARGET_CLIP_S},
+        }
+    ]
+    with pytest.raises(TextTimingConflict):
+        compile_editor_ops(job, variant, ops)
+    assert variant["text_elements"][0]["end_s"] == 2.2
+    assert variant["render_generation_id"] == "first"
+
+
+def test_explicit_preservation_does_not_shorten_an_opening_title(monkeypatch):
+    from app.agents.editor_ops_v2.timeline import MIN_RETARGET_CLIP_S
+    from app.services.kria_editor_ops import TextTimingConflict
+
+    job, variant, _revision = _guided_phone_job(monkeypatch)
+    variant["text_elements"] = variant["text_elements"][:1]
+    ops = [
+        {
+            "op": "patch_slots",
+            "selector": {"all": True},
+            "patch": {"duration_s": MIN_RETARGET_CLIP_S},
+        }
+    ]
+    with pytest.raises(TextTimingConflict) as error:
+        compile_editor_ops(job, variant, ops, preserve_text=True)
+    assert error.value.conflicting_text_ids == ("guided-title",)
+    assert variant["text_elements"][0]["end_s"] == 2.2
+    assert variant["render_generation_id"] == "first"
+
+
 def test_target_below_shortest_possible_is_a_clear_op_error_not_a_422(monkeypatch):
     from app.agents.editor_ops_v2.timeline import MIN_RETARGET_CLIP_S
 

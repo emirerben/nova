@@ -536,11 +536,9 @@ def rebase_guided_text(
         sequential = bool(bar.get("sequence_source_id")) or (
             isinstance(params, dict) and bool(params.get("sequence_source_id"))
         )
-        anchored = (
-            old_total > 0
-            and end >= old_total - _EDGE_S
-            and (start <= _EDGE_S or _is_edge_titled(bar_id))
-        )
+        opening = start <= _EDGE_S
+        closing = old_total > 0 and end >= old_total - _EDGE_S
+        anchored = (opening and closing) or ((opening or closing) and _is_edge_titled(bar_id))
         if text_timing == "preserve_absolute" and (sequential or not (clip_bound or anchored)):
             if end > new_total + 1e-6:
                 overflowing_text.append(bar)
@@ -561,8 +559,6 @@ def rebase_guided_text(
             updated["segment_id"] = window[2]
             rebased.append(updated)
             continue
-        opening = start <= _EDGE_S
-        closing = old_total > 0 and end >= old_total - _EDGE_S
         # Edge anchoring ("keep the start / pin to the end") belongs to titles and pins.
         # Ordinary text that merely touches one edge (a group title over the first clips,
         # chat text over the last) follows its footage through source time instead;

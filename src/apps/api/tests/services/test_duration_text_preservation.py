@@ -128,26 +128,6 @@ def test_explicit_preservation_ignores_incidental_model_text_operations(monkeypa
     assert not compiled.text_diff
 
 
-@pytest.mark.parametrize(
-    "message,expected",
-    [
-        ("Don’t touch the text, shorten all clips to make the video 12 seconds", True),
-        ("Don't touch the text", True),
-        ("Do not change the words", True),
-        ("Keep the text unchanged", True),
-        ("Yazılara dokunma, videoyu kısalt", True),
-        ("Metni değiştirmeyin", True),
-        ("Don't change the music; shorten the text", False),
-        ("Change the text timing", False),
-        ("Metni değiştirmek istiyorum", False),
-    ],
-)
-def test_preservation_cues_are_tied_to_text(message, expected):
-    from app.kria.creator_cues import preserves_editor_text
-
-    assert preserves_editor_text(message) is expected
-
-
 def retime(rows, end_s):
     return {
         "op": "retime_text_sequence",

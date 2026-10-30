@@ -389,9 +389,10 @@ def test_incident_rebase_reads_old_segments_from_the_clients_timeline(guided, mo
     captured: dict = {}
     real = timeline.rebase_guided_text
 
-    def spy(editor_state, guided_rev):  # noqa: ANN001, ANN202
+    def spy(editor_state, guided_rev, *, text_timing="follow"):  # noqa: ANN001, ANN202
         captured["initial"] = copy.deepcopy(editor_state.initial_slots)
-        return real(editor_state, guided_rev)
+        captured["text_timing"] = text_timing
+        return real(editor_state, guided_rev, text_timing=text_timing)
 
     monkeypatch.setattr(timeline, "rebase_guided_text", spy)
     compile_editor_ops(
@@ -399,6 +400,7 @@ def test_incident_rebase_reads_old_segments_from_the_clients_timeline(guided, mo
         base.projected,
         [{"op": "set_total_duration", "target_s": 15, "strategy": "proportional"}],
     )
+    assert captured["text_timing"] == "preserve_absolute"
     first = captured["initial"][0]
     assert first["duration_s"] == 1.0  # CLIENT timeline, not the saved 2.0
     assert first["output_end_s"] == pytest.approx(1.0)

@@ -3,29 +3,12 @@
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from app.kria.brief_route import loose_text
-from app.kria.creator_cues import preserves_editor_text
 from app.kria.reply_language import say
 
 GapPolicy = Literal["scale", "close", "fixed"]
-_NUMBER = r"([0-9]+(?:[.,][0-9]+)?)\s*(?:s|seconds?)"
-_VIDEO_DURATION = (
-    r"(?:make|shorten|extend|resize|keep) (?:the )?video (?:(?:to|at) )?"
-    r"([0-9]+(?:[.,][0-9]+)?)(?:\s*(?:s|seconds?))?"
-)
-_WHOLE_VIDEO = (
-    r"(?:please )?(?:fill|spread|distribute|redistribute|stretch|fit|shrink|compress) "
-    r"(?:the )?(?:text|texts|words|word sequence) (?:across |over |throughout |to |for )?"
-    r"(?:the )?(?:whole|entire|full) video"
-)
-_FIT_LENGTH = (
-    r"(?:please )?(?:fit|stretch|shrink|compress) (?:the )?(?:text|words|word sequence) "
-    r"(?:to |across )?(?:the )?video(?:s)? (?:length|duration)"
-)
 
 
 @dataclass(frozen=True)
@@ -42,113 +25,11 @@ class SequenceTimingPlan:
     intent: SequenceTimingIntent | None = None
     source_id: str | None = None
     target_ids: tuple[str, ...] = ()
+    span_s: tuple[float, float] | None = None
 
 
-def sequence_timing_intent(message: str) -> SequenceTimingIntent | None:
-    if len(message) > 600:
-        return None
-    text = loose_text(message.replace("'", "").replace("’", "")).strip(" .?!")
-    text = re.sub(r"(?<![0-9])[,;.!?]|[,;.!?](?![0-9])", " ", text)
-    text = " ".join(text.split())
-    preserved = preserves_editor_text(message)
-    if preserved:
-        text = re.sub(
-            r"(?:dont|do not|never) (?:touch|change|alter|modify|retime|edit|move) "
-            r"(?:the )?(?:text|texts|words)[,; ]*(?:and )?",
-            "",
-            text,
-        )
-        text = re.sub(
-            r"(?:yazilara|yazilari|metne|metni|kelimelere|kelimeleri) "
-            r"(?:dokunma|dokunmayin|degistirme|degistirmeyin|degistirmeden|dokunmadan) "
-            r"(?:ve )?",
-            "",
-            text,
-        )
-    tr_duration = re.fullmatch(
-        r"videoyu ([0-9]+(?:[.,][0-9]+)?) saniye(?:ye)? (?:kisalt|uzat|yap|getir|tut)", text
-    )
-    if tr_duration:
-        return SequenceTimingIntent("preserve", float(tr_duration[1].replace(",", ".")))
-    duration = re.fullmatch(_VIDEO_DURATION, text)
-    if duration:
-        return SequenceTimingIntent("preserve", float(duration[1].replace(",", ".")))
-    clip_duration = re.fullmatch(rf"shorten all clips to make (?:the )?video {_NUMBER}", text)
-    if clip_duration:
-        return SequenceTimingIntent("preserve", float(clip_duration[1].replace(",", ".")))
-    if preserved:
-        return None
-    gap_policy: GapPolicy = "scale"
-    seen_gap_policy = None
-    while True:
-        match = re.search(
-            r"(?: and)? (?:without (?:overlap|overlapping)|(?:keep|keeping) (?:the )?"
-            r"(?:sequential format|sequence|word order)(?: and)?)$",
-            text,
-        )
-        if match:
-            text = text[: match.start()]
-            continue
-        matched_gap = False
-        for suffix, policy in (
-            (r"(?: and)? (?:with no|without) gaps", "close"),
-            (r"(?: and)? keep (?:the )?gaps unchanged", "fixed"),
-            (r"(?: and)? keep (?:the )?gaps", "scale"),
-        ):
-            match = re.search(suffix + r"$", text)
-            if match:
-                if seen_gap_policy is not None and seen_gap_policy != policy:
-                    return None
-                gap_policy = policy
-                seen_gap_policy = policy
-                text = text[: match.start()]
-                matched_gap = True
-                break
-        if not matched_gap:
-            break
-    target = None
-    combined = re.fullmatch(rf"{_VIDEO_DURATION} (?:and|then) (.+)", text)
-    if combined:
-        target, text = float(combined[1].replace(",", ".")), combined[2]
-    else:
-        tail_duration = _VIDEO_DURATION.replace("(?:the )?video", "(?:the )?(?:video|it)")
-        combined = re.fullmatch(rf"(.+) (?:and|then) {tail_duration}", text)
-        if combined:
-            text, target = combined[1], float(combined[2].replace(",", "."))
-    requested = re.fullmatch(
-        rf"(?:please )?(?:retime|spread) (?:the )?(?:text|words|word sequence) "
-        rf"(?:to|over|across) {_NUMBER}",
-        text,
-    )
-    tr_requested = re.fullmatch(
-        r"(?:yazilari|kelimeleri|metni) ([0-9]+(?:[.,][0-9]+)?) "
-        r"saniye(?:ye|lik)? (?:yay|dagit|yeniden zamanla)",
-        text,
-    )
-    matched = requested or tr_requested
-    if matched:
-        if target is not None:
-            return None
-        target = float(matched[1].replace(",", "."))
-    whole = any(
-        re.fullmatch(pattern, text)
-        for pattern in (
-            _WHOLE_VIDEO,
-            _FIT_LENGTH,
-            r"(?:make|have) (?:the )?(?:text|words) (?:fill|fit|span|cover) "
-            r"(?:the )?(?:whole|entire|full) video",
-            r"(?:yazilari|kelimeleri|metni) videonun (?:tamamina|suresine|uzunluguna) "
-            r"(?:yay|sigdir|uyarla)",
-            r"(?:the )?texts? (?:are|is) overlapping[. ]+they shouldnt overlap "
-            r"and the last one should end at the end of the video",
-        )
-    )
-    return SequenceTimingIntent("fill", target, gap_policy) if matched or whole else None
-
-
-def sequence_timing_plan(message: str, snapshot: dict) -> SequenceTimingPlan | None:
-    intent = sequence_timing_intent(message)
-    if intent is None or snapshot.get("editor_ops_version") != 2:
+def sequence_timing_plan(intent: SequenceTimingIntent, snapshot: dict) -> SequenceTimingPlan | None:
+    if snapshot.get("editor_ops_version") != 2:
         return None
     total_raw = snapshot.get("total_duration_s")
     total = (
@@ -259,6 +140,108 @@ def sequence_timing_plan(message: str, snapshot: dict) -> SequenceTimingPlan | N
     return SequenceTimingPlan(tuple(parsed), reply, intent, source, ids)
 
 
+def timing_only_operations(operations: list[dict]) -> bool:
+    return bool(operations) and all(
+        op.get("op") in {"set_total_duration", "retime_text_sequence"}
+        or (
+            op.get("op") == "patch_slots"
+            and bool(op.get("patch"))
+            and set(op["patch"]) <= {"duration_s"}
+        )
+        for op in operations
+    )
+
+
+def sequence_timing_plan_from_operations(
+    operations: list[dict], snapshot: dict, *, preserve_text: bool = False
+) -> SequenceTimingPlan | None:
+    durations = [op for op in operations if op.get("op") == "set_total_duration"]
+    preserve_text = preserve_text or any(op.get("preserve_text") is True for op in operations)
+    retimes = [
+        op for op in operations if not preserve_text and op.get("op") == "retime_text_sequence"
+    ]
+    target = durations[-1]["target_s"] if durations else None
+    if len(retimes) == 1:
+        retime = retimes[0]
+        intent = SequenceTimingIntent("fill", target, retime.get("gap_policy", "scale"))
+        selected = set(retime.get("target_ids") or [])
+        sources = {
+            row.get("sequence_source_id")
+            for row in snapshot.get("text_bars", [])
+            if row.get("id") in selected
+        }
+        if len(sources) != 1 or None in sources:
+            return None
+        source = next(iter(sources))
+        candidate = sequence_timing_plan(
+            intent,
+            {
+                **snapshot,
+                "text_bars": [
+                    row
+                    for row in snapshot.get("text_bars", [])
+                    if row.get("sequence_source_id") == source
+                ],
+            },
+        )
+        if candidate is None or set(candidate.target_ids) != set(retime.get("target_ids") or []):
+            return None
+        return SequenceTimingPlan(
+            tuple(operations),
+            candidate.reply,
+            intent,
+            candidate.source_id,
+            candidate.target_ids,
+            None
+            if retime.get("fit_to_video") is True
+            else (float(retime["start_s"]), float(retime["end_s"])),
+        )
+    if not retimes and any(
+        op.get("op") == "set_total_duration"
+        or (op.get("op") == "patch_slots" and "duration_s" in (op.get("patch") or {}))
+        for op in operations
+    ):
+        return SequenceTimingPlan(tuple(operations), "", SequenceTimingIntent("preserve", target))
+    return None
+
+
+def merge_sequence_brief_updates(prior, planned, plan, snapshot, message):
+    from app.kria.brief import BriefUpdate, apply_updates
+
+    projected = apply_updates(prior, planned, source_turn_id=None)
+    reconciled = apply_updates(
+        projected,
+        sequence_brief_updates(projected, plan, snapshot, message),
+        source_turn_id=None,
+    )
+    old = {req.id: req for req in (prior.live() if prior else ())}
+    current = {req.id: req for req in reconciled.live()}
+    version = prior.version if prior else 0
+    updates = []
+    fields = ("kind", "scope", "literal", "description", "facts")
+    for identifier, before in old.items():
+        after = current.get(identifier)
+        if after is None:
+            updates.append(
+                BriefUpdate(
+                    operation="remove", target_requirement_id=identifier, expected_version=version
+                )
+            )
+        elif any(getattr(before, key) != getattr(after, key) for key in fields):
+            updates.append(
+                BriefUpdate(
+                    operation="change",
+                    target_requirement_id=identifier,
+                    expected_version=version,
+                    **{key: getattr(after, key) for key in fields},
+                )
+            )
+    for identifier, after in current.items():
+        if identifier not in old:
+            updates.append(BriefUpdate(**{key: getattr(after, key) for key in fields}))
+    return tuple(updates)
+
+
 def sequence_brief_updates(prior, plan: SequenceTimingPlan, snapshot: dict, message: str):
     from app.kria.brief import BriefUpdate
     from app.kria.freeze_ask import times_one_moment
@@ -314,7 +297,10 @@ def sequence_brief_updates(prior, plan: SequenceTimingPlan, snapshot: dict, mess
         ]
         replace_matching(
             matches,
-            f"Video length {plan.intent.target_s:g}s",
+            say(
+                en=f"Video length {plan.intent.target_s:g}s",
+                tr=f"Video süresi {plan.intent.target_s:g} saniye",
+            ),
             {
                 "duration_s": plan.intent.target_s,
                 "editor_video_duration": True,
@@ -325,9 +311,11 @@ def sequence_brief_updates(prior, plan: SequenceTimingPlan, snapshot: dict, mess
         policy = {
             "source_id": plan.source_id,
             "target_ids": list(plan.target_ids),
-            "mode": "fill",
+            "mode": "range" if plan.span_s is not None else "fill",
             "gap_policy": plan.intent.gap_policy,
         }
+        if plan.span_s is not None:
+            policy["start_s"], policy["end_s"] = plan.span_s
         if plan.intent.gap_policy == "fixed":
             policy["gaps_s"] = [
                 max(0, float(rows[right]["start_s"]) - float(rows[left]["end_s"]))
@@ -336,9 +324,18 @@ def sequence_brief_updates(prior, plan: SequenceTimingPlan, snapshot: dict, mess
         matches = [
             req
             for req in live
-            if isinstance(req.facts.get("sequence_timing"), dict)
-            and req.facts["sequence_timing"].get("source_id") == plan.source_id
+            if (
+                isinstance(req.facts.get("sequence_timing"), dict)
+                and req.facts["sequence_timing"].get("source_id") == plan.source_id
+            )
+            or (
+                req.kind in {"timing", "text_sequence"}
+                and req.scope == "global"
+                and req.facts.get("editor_timing_only") is True
+                and not isinstance(req.facts.get("duration_s"), (int, float))
+            )
         ]
+        matches.sort(key=lambda req: isinstance(req.facts.get("sequence_timing"), dict))
         replace_matching(matches, message, {"sequence_timing": policy})
     else:
         sources = {
@@ -366,7 +363,11 @@ def sequence_brief_updates(prior, plan: SequenceTimingPlan, snapshot: dict, mess
                 ),
             }
             replace_matching(
-                matches, "Preserve the current word timings", {"sequence_timing": policy}
+                matches,
+                say(
+                    en="Preserve the current word timings", tr="Mevcut kelime zamanlamalarını koru"
+                ),
+                {"sequence_timing": policy},
             )
     return tuple(updates)
 

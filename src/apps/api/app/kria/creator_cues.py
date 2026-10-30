@@ -450,32 +450,6 @@ def tr_seconds_spellings(seconds: float) -> list[tuple[str, str]]:
 _TIMING_STEMS = ("timing", "zamanlama", "tempo", "gecis")
 _RESET_STEMS = ("sifirla", "kaldir", "iptal", "normal", "standart", "varsayilan")
 _PRESERVE_STEMS = ("degistirme", "elleme", "dokunma", "bozma")
-
-
-def preserves_editor_text(text: str) -> bool:
-    """An explicit preservation request tied to text, not another editor lane."""
-    for words in _clauses(loose_text(text.replace("'", "").replace("’", ""))):
-        for index, word in enumerate(words):
-            if word not in {"text", "texts", "word", "words"} and not _starts(
-                word, ("metin", "metn", "yazi", "kelime")
-            ):
-                continue
-            before, after = words[max(0, index - 4) : index], words[index + 1 : index + 5]
-            if any(w in {"unchanged", "untouched"} for w in after) and "not" not in before:
-                return True
-            if any(w in {"dont", "never", "not"} for w in before) and any(
-                w in {"change", "touch", "alter", "modify", "retime", "edit", "move"}
-                for w in before
-            ):
-                return True
-            if any(
-                _starts(w, _PRESERVE_STEMS) and (_negated(w) or w.endswith(("madan", "meden")))
-                for w in before + after
-            ):
-                return True
-    return False
-
-
 _PHOTO_STEMS = ("foto", "resim", "resm")
 _FAST_STEMS = ("hizli", "cabuk", "seri", "flash")
 

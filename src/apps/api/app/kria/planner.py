@@ -2272,13 +2272,6 @@ async def _plan_editor_revision(
     # Release the read transaction before Copilot model I/O. The response is
     # derived only from the immutable snapshot and copied conversation rows.
     await db.rollback()
-    from app.kria.editor_sequence_timing import sequence_timing_plan
-
-    sequence_plan = sequence_timing_plan(user_message, target.snapshot)
-    if sequence_plan is not None:
-        return adapt_editor_action(
-            reply=_phone_editor_reply(sequence_plan.reply), ops=list(sequence_plan.operations)
-        )
     planner_deadline = turn_deadline.get()
     response = await run_copilot_turn(
         CopilotTurnBody(
@@ -5517,61 +5510,6 @@ async def _plan_live_turn(
     if item.current_job_id is not None:
         latest_job = await db.get(Job, item.current_job_id)
         latest_job_failed = str(getattr(latest_job, "status", "") or "").endswith("failed")
-    from app.kria.editor_sequence_timing import (
-        sequence_brief_updates,
-        sequence_timing_intent,
-        sequence_timing_plan,
-    )
-
-    if (
-        sequence_timing_intent(user_message) is not None
-        and item.current_job_id is not None
-        and not latest_job_failed
-        and not pending_analysis_ids
-        and not answers_clip_question
-        and not creative_copy_pending
-        and manifest.capabilities["dispatch_render"].available
-    ):
-        _editor_target_miss.set(None)
-        try:
-            target = await _load_editor_target(
-                db, thread_id=thread_id, item=item, **_state_kw(editor_state)
-            )
-        except BriefCoverageError:
-            return _request_recovery(manifest, None, reason="context_limit")
-        if target is None:
-            return _editor_target_recovery(manifest)
-        timing_plan = sequence_timing_plan(user_message, target.snapshot)
-        if timing_plan is not None:
-            prior = await load_latest_brief(db, thread_id) if brief_on else None
-            updates = (
-                sequence_brief_updates(prior, timing_plan, target.snapshot, user_message)
-                if brief_on
-                else ()
-            )
-            effective = apply_updates(prior, updates, source_turn_id=None)
-            ids = [req.id for req in effective.live()]
-            await db.rollback()
-            return PlannedKriaTurn(
-                plan=adapt_editor_action(reply=timing_plan.reply, ops=list(timing_plan.operations)),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
-                brief_updates=updates,
-                brief_route="editor_ops" if brief_on else None,
-                brief_clip_ids=tuple(str(media.media_id) for media in manifest.media),
-                brief_manifest=manifest if brief_on else None,
-                brief_expected_version=(prior.version if prior else 0) if brief_on else None,
-                brief_coverage={
-                    "applicable_ids": ids,
-                    "retrieved_ids": ids,
-                    "enforced_ids": [],
-                    "unresolved_ids": ids,
-                    "stage": "editor",
-                    "reason": "deterministic_timing",
-                }
-                if brief_on
-                else None,
-            )
     extract_first = (
         brief_on
         and item.current_job_id is not None

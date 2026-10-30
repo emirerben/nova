@@ -2421,6 +2421,7 @@ def compile_editor_ops(
     """
 
     _load_lane_handlers()
+    preserve_text = preserve_text or any(op.get("preserve_text") is True for op in ops)
     if preserve_text:
         from app.agents.editor_ops_v2 import lane_specs
 
