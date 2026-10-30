@@ -23,6 +23,7 @@ from app.kria.brief_checks import (
     _has_checker,
     _wants_source_sound_kept,
     build_receipts,
+    defers_text_to_phone,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
 )
@@ -33,6 +34,7 @@ from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
     FIELD_MATRIX,
     build_render_contract,
+    field_matrix_for_strategy,
 )
 from app.services.creator_sessions import resolve_item_creator_context
 from app.services.length_planning import read_length_plan
@@ -360,6 +362,10 @@ def assess_readiness(
             ),
             research=dict(prepared_research) if prepared_research is not None else None,
             user_song_attached=bool(media.get("song_path")),
+            # KRI-1024: a literal no phone font draws is never executable on the phone.
+            phone_text=defers_text_to_phone(
+                creator_id=creator_id, clip_paths=media.get("clip_paths") or ()
+            ),
         )
     )
     if editor_payload is None and facts.ordering_basis is None:
@@ -537,7 +543,7 @@ def assess_readiness(
             {
                 "capabilities": manifest.capabilities if manifest else None,
                 "verified_phone_features": sorted(settings.phone_render_verified_features),
-                "field_matrix": FIELD_MATRIX,
+                "field_matrix": field_matrix_for_strategy(strategy),
                 "adapters": ADAPTER_DECLARATIONS,
             }
         ),

@@ -86,6 +86,9 @@ from app.kria.clip_exclusions import (
     earlier_exclusions,
     exclusion_question,
     exclusions_to_ask,
+    length_exclusion_notice,
+    still_played_exclusions,
+    still_played_notice,
     with_exclusion_categories,
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope, apply_subject_scope
@@ -129,6 +132,11 @@ from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     PinnedText,
+)
+from app.schemas.story_intents import (
+    RejectedClipSelection,
+    SelectionReconciliation,
+    StoryIntentRefs,
 )
 from app.schemas.user_song import (
     SONG_ALIGNMENT_VERSION,
@@ -236,6 +244,7 @@ from app.services.spoken_quotes import (
     transcribe_stored_quote,
 )
 from app.services.spoken_roles import SpokenSeats
+from app.services.story_intent_reconciliation import reconcile_story_intents
 
 log = structlog.get_logger()
 
@@ -1007,6 +1016,9 @@ def adapt_creator_action(
     server_resolved_song_takes: list[dict[str, Any]] | None = None,
     server_song_captions: str | None = None,
     ordering_choice: str | None = None,
+    server_rejected_selections: Sequence[RejectedClipSelection] = (),
+    server_checked_intents: Sequence[ClipIntent] = (),
+    server_story_refs: StoryIntentRefs | None = None,
 ) -> KriaTurnPlan:
     """``server_resolved_song_takes`` (KRI-374) is the ONLY way ``resolved_song_takes``
     survives into the draft: it is server-owned (the song-order gate writes it after the
@@ -1081,7 +1093,37 @@ def adapt_creator_action(
             if intent.label_source == "transcript"
         ]
     )
+    reconciled_story = list(action.strategy.story_structure)
+    selection_reconciliation = None
+    if server_rejected_selections:
+        result = reconcile_story_intents(
+            reconciled_story,
+            refs=server_story_refs,
+            checked_intents=server_checked_intents,
+            rejected_intents=[selection.intent for selection in server_rejected_selections],
+        )
+        unresolved = result.status == "unresolved"
+        selection_reconciliation = SelectionReconciliation(
+            rejected_selections=tuple(server_rejected_selections),
+            status="unresolved" if unresolved else "reconciled",
+            unresolved_story_rows=tuple(reconciled_story) if unresolved else (),
+            story_refs=result.refs,
+        )
+        reconciled_story = [] if unresolved else list(result.rows)
+        omitted = ", ".join(selection.intent.attribute for selection in server_rejected_selections)
+        summary = say(
+            en=f"I left out {omitted} based on your clip answer.",
+            tr=f"Klip yanıtına göre {omitted} bölümünü çıkardım.",
+        )
+        if unresolved:
+            summary += " " + say(
+                en="The earlier story outline is saved for review and is not part of this plan.",
+                tr="Önceki hikâye taslağı inceleme için saklandı ve bu planın parçası değil.",
+            )
     strategy_update = {
+        "story_structure": reconciled_story,
+        "selection_reconciliation": selection_reconciliation,
+        **({"rationale": summary} if selection_reconciliation else {}),
         "clip_intents": requested_intents or None,
         "resolved_clip_intents": server_resolved_clip_intents or None,
         "resolved_song_takes": server_resolved_song_takes or None,
@@ -3912,6 +3954,32 @@ async def _plan_creator_action(
                         update={"summary": " ".join([action.summary.strip(), notice]).strip()}
                     )
                     policy_notices = (*policy_notices, notice)
+            media_ids = [media.media_id for media in manifest.media]
+            still_played = still_played_exclusions(
+                planned.resolution.intents, action.strategy, media_ids
+            )
+            if still_played:
+                # KRI-1026: a skip that matched clips but could not take them out (another
+                # settled ask or the strategy uses them, or nothing would be left) is said.
+                log.info(
+                    "kria_clip_exclusions_kept",
+                    thread_id=str(thread_id),
+                    kept=len(still_played),
+                )
+                notice = still_played_notice([media_ids.index(m) + 1 for m in still_played])
+                if notice not in policy_notices:
+                    action = action.model_copy(
+                        update={"summary": " ".join([action.summary.strip(), notice]).strip()}
+                    )
+                    policy_notices = (*policy_notices, notice)
+            # KRI-1031: "skip anything too short to use" names the clips it left out (or says
+            # none is too short), so the creator sees what the measured rule did.
+            measured = length_exclusion_notice(planned.resolution.intents, still_played, media_ids)
+            if measured is not None and measured not in policy_notices:
+                action = action.model_copy(
+                    update={"summary": " ".join([action.summary.strip(), measured]).strip()}
+                )
+                policy_notices = (*policy_notices, measured)
         tie_asked = tie_question(ties, intent_clips, excluded=skipped)
         if tie_asked is not None:
             log.info(
@@ -4092,7 +4160,11 @@ def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:
     unmatched = sum(
         1
         for intent in planned.resolution.intents
-        if intent.op == "exclude" and intent.status == "resolved" and not intent.assignments
+        if intent.op == "exclude"
+        and intent.status == "resolved"
+        and not intent.assignments
+        # KRI-1031: a measured length ask that matched nothing kept every clip on purpose.
+        and intent.by_length is None
     )
     return planned.dropped_exclusions + unmatched
 
@@ -4769,6 +4841,18 @@ async def _gate_unresolved_choices(
     if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
         return planned
     events = await _load_thread_events(db, thread_id)
+    from app.services.clip_none_answers import NoneAnswers, none_answer_choices  # noqa: PLC0415
+
+    # KRI-1025: a pin or text whose clip the creator answered None to on the picker is
+    # recorded as their answer, so nothing below (or the contract) waits on it.
+    none_answers = (
+        none_answer_choices(brief, strategy, events)
+        if settings.kria_choice_questions_enabled
+        else NoneAnswers()
+    )
+    typed_brief = brief
+    if none_answers.answers:
+        brief = answered_brief(brief, {"choice_answers": list(none_answers.answers)})
     music_inputs = {
         "media": (planned.media_snapshot or {}).get("clip_assignments"),
         "selected": strategy.get("selected_media_ids"),
@@ -4995,7 +5079,7 @@ async def _gate_unresolved_choices(
                 response=waiting,
             ),
         )
-    if not resolution.answers:
+    if not resolution.answers and not none_answers.answers:
         return _with_narration_note(
             planned,
             strategy,
@@ -5004,29 +5088,43 @@ async def _gate_unresolved_choices(
             camera_sound=camera_sound,
             closing_quote=closing_quote,
         )
-    summary = _summary_with_notices(model_summary, [*plan_notices, *resolution.notices])
-    rewritten = apply_intent.model_copy(
-        update={"arguments": {**arguments, "strategy": resolution.strategy, "summary": summary}}
+    if none_answers.answers and resolution.answers:
+        # What the video ends on instead follows the creator's other answers (their upload
+        # order, say), so the notices are worded against the brief those answers give.
+        none_answers = none_answer_choices(
+            answered_brief(typed_brief, resolution.strategy), strategy, events
+        )
+    chosen = resolution.strategy
+    if none_answers.answers:
+        chosen = {**chosen, "choice_answers": [*resolution.answers, *none_answers.answers]}
+    summary = _summary_with_notices(
+        model_summary, [*plan_notices, *resolution.notices, *none_answers.notices]
     )
-    final_brief = answered_brief(brief, resolution.strategy)
+    rewritten = apply_intent.model_copy(
+        update={"arguments": {**arguments, "strategy": chosen, "summary": summary}}
+    )
+    final_brief = answered_brief(brief, chosen)
     final_snapshot = _enrich_best_parts_snapshot(
-        resolution.strategy,
+        chosen,
         enriched_snapshot,
         final_brief,
         closing_quote=closing_quote,
         named_lines=named_lines,
         camera_sound=camera_sound,
-        visual_photo_ids=_held_visual_pool(planned.brief_manifest, resolution.strategy),
+        visual_photo_ids=_held_visual_pool(planned.brief_manifest, chosen),
         attached_visual_ids=_attached_visual_ids(planned.brief_manifest),
         moment_pins=moments,
     )
+    # The receipts reply keeps only the policy notices when it replaces the summary.
+    kept_notices = [n for n in none_answers.notices if n not in planned.policy_notices]
     return _with_narration_note(
         replace(
             planned,
             plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]}),
             media_snapshot=final_snapshot,
+            policy_notices=(*planned.policy_notices, *kept_notices),
         ),
-        resolution.strategy,
+        chosen,
         final_snapshot,
         final_brief,
         camera_sound=camera_sound,

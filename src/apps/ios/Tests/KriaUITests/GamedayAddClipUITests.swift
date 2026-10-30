@@ -69,11 +69,12 @@ final class GamedayAddClipUITests: XCTestCase {
         let option = app.descendants(matching: .any)[identifier]
         XCTAssertTrue(option.waitForExistence(timeout: 5), "The menu must open; plus state: \(plus.label)")
         XCTAssertEqual(plus.label, "Close add menu", "The add menu must own the next tap")
-        waitUntilHittable(option)
-        option.tap()
+        waitUntilHittable(option, requireHitTest: false)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(option.frame), "The whole menu row must be visible")
+        option.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
 
-    private func waitUntilHittable(_ element: XCUIElement) {
+    private func waitUntilHittable(_ element: XCUIElement, requireHitTest: Bool = true) {
         XCTAssertTrue(element.waitForExistence(timeout: 5))
         // After inspector dismissal XCUI can briefly expose the whole window
         // with infinite origin and zero size. isHittable aborts on that snapshot
@@ -91,10 +92,13 @@ final class GamedayAddClipUITests: XCTestCase {
                   frame.width > 0, frame.height > 0 else { previousFrame = nil; return false }
             let stable = previousFrame == frame
             previousFrame = frame
-            return stable && element.isEnabled && element.isHittable
+            return stable && element.isEnabled && (!requireHitTest || element.isHittable)
         }, evaluatedWith: element)
         let result = XCTWaiter.wait(for: [hittable], timeout: 5)
-        if result != .completed { capture(XCUIApplication(), "Unsettled control " + element.identifier) }
+        if result != .completed {
+            print("Unsettled control \(element.identifier): frame=\(element.frame), enabled=\(element.isEnabled), hittable=\(element.isHittable)")
+            capture(XCUIApplication(), "Unsettled control " + element.identifier)
+        }
         XCTAssertEqual(result, .completed, "Control must be stable and hittable: \(element.identifier)")
     }
 

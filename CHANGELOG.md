@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.5.0] - 2026-10-30
+
+### Changed
+- fix(kria): never play clips the creator left out; measure "too short to use" (KRI-1026, KRI-1031) (#1928) <!-- release-pr: 1928 -->
+
+## [0.83.4.0] - 2026-10-30
+
+### Changed
+- fix(export): preserve sample evidence precision (#1950) <!-- release-pr: 1950 -->
+
+## [0.83.3.0] - 2026-10-30
+
+### Changed
+- fix(kria): draw the montage title once and keep the creator's curve (KRI-1029, KRI-1030) (#1930) <!-- release-pr: 1930 -->
+
+## [0.83.2.0] - 2026-10-30
+
+### Changed
+- feat(kria): preserve source and selection evidence with compatible readers (#1948) <!-- release-pr: 1948 -->
+
+## [0.83.1.0] - 2026-10-30
+
+### Changed
+- feat(rollout): open founder-only cohorts to every account, add cohort_parity check (KRI-1059) (#1949) <!-- release-pr: 1949 -->
+
+## [0.83.0.0] - 2026-10-30
+
+### Added
+- feat(kria): add gated credit capabilities and metered evaluation (#1940) <!-- release-pr: 1940 -->
+
+## [0.82.36.0] - 2026-10-30
+
+### Changed
+- fix(phone-text): every phone format names undrawable creator text before approval (KRI-1024 follow-up) (#1933) <!-- release-pr: 1933 -->
+
+## [0.82.35.0] - 2026-10-30
+
+### Changed
+- fix(kria): a clip-picker "None" voids the pin instead of dead-ending the draft (KRI-1025) (#1931) <!-- release-pr: 1931 -->
+
 ## [0.82.34.0] - 2026-10-30
 
 ### Changed

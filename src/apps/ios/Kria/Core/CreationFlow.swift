@@ -8,6 +8,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var mediaLibrary: Bool? = nil
     var mediaCollections: Bool? = nil
     var mediaCollectionCacheOnly: Bool? = nil
+    var generatedImages: Bool? = nil
+    var generatedImageEditing: Bool? = nil
+    var generatedNarration: Bool? = nil
     var visualsEnabled: Bool? = nil
     var phoneRendering: PhoneRenderingCapabilities? = nil
     /// Server accepts the editor's unsaved state with a chat turn (nil/false = legacy flush-then-send).
@@ -108,6 +111,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostChatComposerEnabled: Bool { slidePostRichTextEnabled && slidePostChatEditEnabled }
     var preferredRuntimeVersion: Int { runtimeVersions?.contains(2) == true ? 2 : 1 }
     enum CodingKeys: String, CodingKey {
+        case generatedImages = "generated_images", generatedImageEditing = "generated_image_editing", generatedNarration = "generated_narration"
         case formats, media
         case runtimeVersions = "runtime_versions", visualsEnabled = "visuals_enabled"
         case mediaLibrary = "media_library"
@@ -147,6 +151,9 @@ extension CreationCapabilities {
     /// so one absent capability can never fail the whole capabilities load. Every other field is unchanged.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        generatedImages = try container.decodeIfPresent(Bool.self, forKey: .generatedImages)
+        generatedImageEditing = try container.decodeIfPresent(Bool.self, forKey: .generatedImageEditing)
+        generatedNarration = try container.decodeIfPresent(Bool.self, forKey: .generatedNarration)
         formats = try container.decode([CreationFormatCapability].self, forKey: .formats)
         media = try container.decodeIfPresent([String: CreationMediaLimit?].self, forKey: .media)?.compactMapValues { $0 }
         runtimeVersions = try container.decodeIfPresent([Int].self, forKey: .runtimeVersions)
@@ -238,6 +245,7 @@ struct CreationVisual: Codable, Sendable, Identifiable {
     let displayURL: URL?
     let previewURL: URL?
     let retryable: Bool?
+    var sourceGeneration: String? = nil
     var gcsPath: String? = nil
     var sourceURL: URL? = nil
     var durationS: Double? = nil
@@ -263,6 +271,7 @@ struct CreationVisual: Codable, Sendable, Identifiable {
         return displayURL
     }
     enum CodingKeys: String, CodingKey {
+        case sourceGeneration = "generation"
         case libraryAssetID = "library_asset_id"
         case id, kind, status, retryable
         case gcsPath = "gcs_path", sourceURL = "source_url", durationS = "duration_s", mediaStatus = "media_status"

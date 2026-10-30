@@ -23,6 +23,9 @@ struct AttachmentSheet: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var role: CreationMediaRole = .clip
     @State private var step: AttachmentStep = .footage
+    @State private var lastGeneratedDraft: GeneratedMediaDraft?
+    @State private var generatedDraft: GeneratedMediaDraft?
+    @State private var loadingNarration = false
     @State private var pool: CreationVisuals?
     @State private var error: String?
     @State private var mutatingVisual = false
@@ -185,6 +188,11 @@ struct AttachmentSheet: View {
         NavigationStack {
             VStack(spacing: 0) {
                 attachmentNavigation
+                if let lastGeneratedDraft, lastGeneratedDraft.recovery != nil,
+                   capabilitiesLoaded, generatedMediaEnabled(lastGeneratedDraft.capability) {
+                    Button("Resume generated preview") { generatedDraft = lastGeneratedDraft }
+                        .frame(minHeight: 44).accessibilityIdentifier("generated-media-resume")
+                }
                 AttachmentStepProgress(steps: steps, current: step, overlaysTitle: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil)
                 TabView(selection: $step) {
                     ForEach(steps) { aStep in
@@ -214,6 +222,15 @@ struct AttachmentSheet: View {
                 attachmentFooter
             }
             .background(KriaColor.paper)
+            .sheet(item: $generatedDraft) { draft in
+                if let itemID {
+                    GeneratedMediaSheet(itemID: itemID, draft: draft) {
+                        await loadVisuals()
+                        await refresh()
+                        lastGeneratedDraft = nil
+                    }
+                }
+            }
             .fullScreenCover(isPresented: $showsTeleprompter, onDismiss: { Task { await refresh() } }) {
                 if let accountID = auth.localStorageIdentity {
                     TeleprompterScreen(accountID: accountID, projectID: projectID,
@@ -408,6 +425,26 @@ struct AttachmentSheet: View {
             if let voiceoverScript, !recorder.hasRecording {
                 VoiceoverScriptReadAlong(script: voiceoverScript)
                     .id("\(voiceoverScript.scriptID)-\(voiceoverScript.revision)")
+                if capabilitiesLoaded, capabilities?.generatedNarration == true, canRecord, itemID != nil {
+                    Button("Generate AI voice from this script") {
+                        guard let itemID, !loadingNarration else { return }
+                        loadingNarration = true
+                        Task {
+                            defer { loadingNarration = false }
+                            do {
+                                let approved = try await model.api.generatedNarrationScript(itemID: itemID)
+                                guard approved.matches(voiceoverScript) else {
+                                    voiceoverUploadError = "The script changed. Open its latest card before generating narration."
+                                    return
+                                }
+                                openGeneratedMedia(GeneratedMediaDraft(capability: .narration, script: approved))
+                            } catch { voiceoverUploadError = "Couldn’t load the current script. Try again when connected." }
+                        }
+                    }
+                    .buttonStyle(KriaSecondaryButtonStyle())
+                    .disabled(loadingNarration || recorder.isRecording)
+                    .accessibilityIdentifier("generate-narration")
+                }
             }
             if !recorder.hasRecording {
                 FootageDurationCard(summary: footageDurationSummary)
@@ -464,10 +501,37 @@ struct AttachmentSheet: View {
         }
     }
 
+    private func generatedMediaEnabled(_ capability: GeneratedMediaCapability) -> Bool {
+        switch capability {
+        case .image: capabilities?.generatedImages == true
+        case .imageEdit: capabilities?.generatedImageEditing == true
+        case .narration: capabilities?.generatedNarration == true
+        }
+    }
+
+    private func openGeneratedMedia(_ draft: GeneratedMediaDraft) {
+        guard let accountID = auth.localStorageIdentity, let itemID else { return }
+        draft.configureRecovery(accountID: accountID, itemID: itemID)
+        if let lastGeneratedDraft, lastGeneratedDraft.recovery != nil,
+           lastGeneratedDraft.capability == draft.capability, lastGeneratedDraft.source?.id == draft.source?.id,
+           generatedMediaEnabled(lastGeneratedDraft.capability) {
+            lastGeneratedDraft.source = draft.source
+            lastGeneratedDraft.script = draft.script
+            generatedDraft = lastGeneratedDraft
+        } else {
+            lastGeneratedDraft = draft
+            generatedDraft = draft
+        }
+    }
+
     private var overlaysStep: some View {
         VStack(alignment: .leading, spacing: 20) {
             AttachmentHeading(title: usesVisualPoolOnly ? SlideMediaCopy.addHeading : "Add overlays", subtitle: usesVisualPoolOnly ? SlideMediaCopy.subtitle : "Optional photos and supporting clips can add context to your video.")
             if uploadDestination(for: .visual).canUpload, !usesVisualPoolOnly { Text(visualsCaption).font(KriaFont.body(14)).foregroundStyle(KriaColor.zinc) }
+            if capabilitiesLoaded, capabilities?.generatedImages == true, itemID != nil {
+                Button("Generate an image") { openGeneratedMedia(GeneratedMediaDraft(capability: .image)) }
+                    .buttonStyle(KriaSecondaryButtonStyle()).accessibilityIdentifier("generate-image")
+            }
             if pool == nil, error == nil { ProgressView(usesVisualPoolOnly ? SlideMediaCopy.loading : "Loading overlays…") }
             if pool != nil {
                 FootagePickerView(projectID: projectID, uploads: model.uploads, maximumClipCount: maximum(for: .visual), attachedClipCount: existing(for: .visual), attachedMediaIDs: attachedMediaIDs(for: .visual), role: .visual, itemID: itemID, limit: capabilities?.media?["visuals"], destination: uploadDestination(for: .visual), onPickerFilled: nil, onSelectionCompleted: nil, showsHeading: false, titleOverride: usesVisualPoolOnly ? SlideMediaCopy.poolTitle : nil, libraryEnabled: capabilities?.mediaLibrary == true)
@@ -593,6 +657,11 @@ struct AttachmentSheet: View {
                             .font(KriaFont.body(11))
                     }
                     Spacer()
+                    if capabilitiesLoaded, capabilities?.generatedImageEditing == true,
+                       asset.kind == "image", asset.status == "ready", asset.sourceGeneration != nil {
+                        Button("Edit image") { openGeneratedMedia(GeneratedMediaDraft(capability: .imageEdit, source: asset)) }
+                            .accessibilityIdentifier("generate-image-edit-\(asset.id)")
+                    }
                     if asset.status == "failed", asset.retryable != false { Button("Retry") { Task { await retry(asset) } }.disabled(mutatingVisual || !autoRetry.canRetryManually(asset.id)) }
                     Button { Task { await remove(asset) } } label: { Image(systemName: "trash").frame(width: 44, height: 44) }
                         .accessibilityLabel("Remove \(asset.sourceFilename ?? (usesVisualPoolOnly ? SlideMediaCopy.removeFallback : "visual"))").disabled(mutatingVisual)

@@ -51,6 +51,10 @@ def ledger(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(settings, "ai_cost_control_enabled", True)
     monkeypatch.setattr(settings, "ai_paid_test_attribution_required", True)
+    monkeypatch.setattr(settings, "ai_openai_monthly_budget_usd", 1_000.0)
+    monkeypatch.setattr(settings, "ai_anthropic_monthly_budget_usd", 1_000.0)
+    monkeypatch.setattr(settings, "ai_openai_evaluation_budget_usd", 1_000.0)
+    monkeypatch.setattr(settings, "ai_anthropic_evaluation_budget_usd", 1_000.0)
     monkeypatch.setattr(settings, "ai_production_monthly_budget_usd", 1_000.0)
     monkeypatch.setattr(settings, "ai_development_monthly_budget_usd", 1_000.0)
     monkeypatch.setattr(settings, "ai_omni_lab_monthly_budget_usd", 1_000.0)

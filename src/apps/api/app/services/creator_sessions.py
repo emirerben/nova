@@ -734,6 +734,7 @@ async def load_intent_clips_for_item(
                 or None,
                 capture_time=_assignment_capture_time(assignment),
                 file_name=clip_display_name(assignment.get("source_filename")),
+                duration_s=_positive_duration_s(assignment.get("duration_s")),
             )
         )
 
@@ -775,6 +776,7 @@ async def load_intent_clips_for_item(
                         {"capture": getattr(asset, "capture", None)}
                     ),
                     file_name=clip_display_name(getattr(asset, "source_filename", None)),
+                    duration_s=_positive_duration_s(getattr(asset, "duration_s", None)),
                 )
             )
 
@@ -905,6 +907,16 @@ def compile_active_plan(
         "story_shape": getattr(edit_plan.strategy, "archetype", None),
         "audio_strategy": getattr(strategy, "audio_strategy", None),
         "story_structure": list(getattr(strategy, "story_structure", []) or []),
+        **(
+            {
+                "story_reconciliation_status": strategy.selection_reconciliation.status,
+                "unresolved_story_structure": list(
+                    strategy.selection_reconciliation.unresolved_story_rows
+                ),
+            }
+            if strategy.selection_reconciliation is not None
+            else {}
+        ),
         "caption_style": getattr(strategy, "caption_style", None),
         "intro_hook": getattr(strategy, "intro_hook", None),
         "opening_title": getattr(strategy, "opening_title", None),

@@ -4543,6 +4543,68 @@ class RequestFollowingCase(Base):
     )
 
 
+class GeneratedMediaOperation(Base):
+    """Paid provider completion survives storage retries without another generation."""
+
+    __tablename__ = "generated_media_operations"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "plan_item_id", "client_event_id", name="uq_generated_media_event"
+        ),
+        CheckConstraint(
+            "capability IN ('image', 'image_edit', 'narration')",
+            name="ck_generated_media_capability",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'submitting', 'provider_complete', 'ready', 'unknown', 'failed')",
+            name="ck_generated_media_state",
+        ),
+        CheckConstraint(
+            "pending_content IS NULL OR octet_length(pending_content) BETWEEN 1 AND 20971520",
+            name="ck_generated_media_bytes",
+        ),
+        Index("idx_generated_media_expiry", "expires_at"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    client_event_id: Mapped[str] = mapped_column(Text, nullable=False)
+    request_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    request_metadata: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    capability: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(
+        Text, nullable=False, default="pending", server_default="pending"
+    )
+    pending_content: Mapped[bytes | None] = mapped_column(BYTEA, nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    usage: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    provider_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    editable_title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reservation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_item_assets.id", ondelete="SET NULL"), nullable=True
+    )
+    output_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_generation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=text("now() + interval '24 hours'")
+    )
+
+
 class NativeActivity(Base):
     __tablename__ = "native_activities"
 

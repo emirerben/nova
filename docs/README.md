@@ -1,5 +1,7 @@
 # Nova navigation map
 
+Native generated images, narration and metered quality review: [API credit capabilities](runbooks/api-credit-capabilities.md).
+
 Use this as an entry-point map, not as a second architecture document. Start at
 the symptom, open the named symbol, then run the focused tests in the same row.
 For working-tree freshness, branch handoff, and ownership checks, read the

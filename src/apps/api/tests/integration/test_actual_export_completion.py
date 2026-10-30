@@ -66,7 +66,6 @@ def test_actual_bytes_are_checked_before_publication_and_retry(
         for key in sources
     ]
     monkeypatch.setattr(settings, "phone_actual_export_verification_enabled", True)
-    monkeypatch.setattr(settings, "phone_actual_export_verification_user_ids", [fixture.user.id])
     fixture.job.assembly_plan[CONTRACT_FIELD] = (
         CreatorRenderContract(generation_id="approved")
         .rebind(original_audio="require", audio_source_ids=("a", "b"))
@@ -189,7 +188,6 @@ def test_prepared_story_cannot_drop_actual_output_checks_when_enrollment_is_with
         .model_dump(mode="json")
     )
     monkeypatch.setattr(settings, "phone_actual_export_verification_enabled", False)
-    monkeypatch.setattr(settings, "phone_actual_export_verification_user_ids", [])
     pin_device_request(fixture.job, fixture.request, base_generation="approved")
     policy = device_record(fixture.job, "first")["actual_export_policy"]
     assert policy["verifier_version"] == "phone-simple-cut-v5"

@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import groupby
 from typing import Any, get_args
 
@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.kria.reply_language import current_reply_language, detect_chat_language, say
 from app.kria.text_trim import trim_at_word
 from app.schemas.clip_intents import ClipIntent, ClipIntentOp
+from app.schemas.story_intents import RejectedClipSelection
 from app.text_fold import loose_text
 
 CLIP_QUESTION_VERSION = 1
@@ -367,6 +368,8 @@ class SelectionEntry:
     none: bool = False
     # Order of the creator's answer in the thread: the newest answer for an intent wins.
     seq: int = field(default=0, compare=False)
+    question_id: str | None = field(default=None, compare=False)
+    category_key: str | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -377,6 +380,21 @@ class ClipSelections:
 
     def __bool__(self) -> bool:
         return bool(self.by_key)
+
+    def rejected(self, intents: Iterable[ClipIntent]) -> tuple[RejectedClipSelection, ...]:
+        out = []
+        for intent in intents:
+            entry = self.match(intent)
+            if entry and entry.none and entry.question_id and entry.category_key:
+                out.append(
+                    RejectedClipSelection(
+                        intent=intent.model_copy(deep=True),
+                        question_id=entry.question_id,
+                        category_key=entry.category_key,
+                        selection_sequence=entry.seq,
+                    )
+                )
+        return tuple(out)
 
     def match(self, intent: ClipIntent) -> SelectionEntry | None:
         """Newest of the same-attribute / identity answers, else token-set similarity.
@@ -451,9 +469,12 @@ def fold_clip_selections(
 
     def record(category: dict[str, Any], entry: SelectionEntry) -> None:
         for row in answered_rows(category):
-            by_key[row["key"]] = entry
+            bound = replace(
+                entry, question_id=str(question.get("question_id")), category_key=row["key"]
+            )
+            by_key[row["key"]] = bound
             for identity in _identities(row.get("intent_id"), row.get("creator_text")):
-                by_identity[identity] = (str(row.get("op") or ""), entry)
+                by_identity[identity] = (str(row.get("op") or ""), bound)
 
     seq = 0
     for role, payload in events:

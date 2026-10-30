@@ -756,6 +756,7 @@ def compose_creation_text(
             plan_facts_from_editor_payload,
             text_sequence_shown,
         )
+        from app.kria.text_shape_ask import words_only
 
         # A bound brief owns the current request, not the historical conversation.
         # Skip only when every requested text/style behavior is already proven.
@@ -785,7 +786,7 @@ def compose_creation_text(
                 # A static title is not words shown a piece at a time, flag or not.
                 text_sequence_shown(req, facts)
                 if is_text_sequence(req)
-                else check_requirement(req, facts).status == "met"
+                else check_requirement(words_only(req), facts).status == "met"
                 for req in relevant
             )
         ):

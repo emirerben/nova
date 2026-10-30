@@ -1,0 +1,757 @@
+{
+ "_source": "Plaza de Mayo kit M1 (\"maximo 3\"), prod thread A228E85B-C293-44EC-9ADF-1228AE19B4BF, plan item 08b8b60a, 2026-10-28, Fly v1904 (dde04eb74), iPhone build 1784 (protocol 23). clips: the approved job 97d55f9a media snapshot (attachment order; analysis trimmed to best_moments and the clip record summary fields). strategy_t3: the turn-3 draft after the picker answer (clips 2 and 4 tapped out). strategy_t5: the turn-4 re-draft after the title-only follow-up. main_render: what that approval rendered (creator_render_requirements.order_ids and the guided story timeline). turn1_exclude_question: the \"too short\" picker the creator was asked (KRI-1031). brief_v3: the brief the render was approved with.",
+ "prompt": "Montage of our afternoon at Plaza de Mayo, in the order we filmed it. Some of the clips are horizontal and some vertical, make it all vertical. Skip anything too short to use. Only the clip where I say \"we are going to Recoleta\" keeps its sound, mute the rest. Curved title \"Plaza de Mayo 🇦🇷\" on the palm trees, label \"Casa Rosada\" on the pink building and \"Catedral\" on the columns. End on the Obelisco. About 20 seconds. Suggest a tango track but don't add it.",
+ "title_follow_up": "Make the title just \"Plaza de Mayo\", no flag. Keep everything else and render it.",
+ "clips": [
+  {
+   "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+   "kind": "video",
+   "duration_s": 11.633333,
+   "has_audio": true,
+   "capture": {
+    "capture_time": "2025-12-12T22:00:16Z"
+   },
+   "analysis": {
+    "best_moments": [
+     {
+      "end_s": 2.5,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "man speaks about taking bus"
+     },
+     {
+      "end_s": 10.9,
+      "energy": 3.5,
+      "start_s": 8.1,
+      "description": "man adjusts his hair while talking"
+     }
+    ],
+    "understanding": {
+     "summary": "Two men are walking outdoors, one of whom is speaking to the camera about taking a bus. They are in a city square or park setting.",
+     "subject": "man in Argentina jersey",
+     "setting": "city square or park outdoors during daytime",
+     "activity": "walking and talking to camera",
+     "content_type": "talking_head"
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+   "kind": "video",
+   "duration_s": 0.966667,
+   "has_audio": true,
+   "capture": {
+    "capture_time": "2025-12-12T22:00:08Z"
+   },
+   "analysis": {
+    "best_moments": [],
+    "understanding": {
+     "summary": "The clip features a static shot of a tiled ground with a distinct curved pattern made of larger, darker tiles.",
+     "subject": "tiled ground",
+     "setting": "outdoor tiled area",
+     "activity": "static view of pavement",
+     "content_type": "ambience"
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+   "kind": "video",
+   "duration_s": 23.4,
+   "has_audio": true,
+   "capture": {
+    "capture_time": "2025-12-12T22:01:47Z"
+   },
+   "analysis": {
+    "best_moments": [],
+    "understanding": {
+     "summary": "The video shows two people walking past a large, columned building, which one person identifies as a cathedral. They discuss its resemblance to the Pantheon.",
+     "subject": "people walking past a large building",
+     "setting": "city street in front of a classical-style building",
+     "activity": "walking on a sidewalk and discussing architecture",
+     "content_type": "broll"
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+   "kind": "video",
+   "duration_s": 0.2,
+   "has_audio": false,
+   "capture": {
+    "capture_time": "2025-12-12T22:10:13Z"
+   },
+   "analysis": {
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 5.0,
+      "start_s": 0.0,
+      "description": "man standing on bus holding bar"
+     },
+     {
+      "end_s": 6.0,
+      "energy": 4.0,
+      "start_s": 3.0,
+      "description": "man slightly swaying with bus motion"
+     },
+     {
+      "end_s": 10.0,
+      "energy": 3.0,
+      "start_s": 6.0,
+      "description": "man looking around on bus"
+     }
+    ],
+    "understanding": {
+     "summary": "A man with a beard stands on a bus, holding onto a yellow overhead bar as the bus moves.",
+     "subject": "man on a bus",
+     "setting": "public bus interior during the day",
+     "activity": "riding a bus",
+     "content_type": "broll"
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+   "kind": "video",
+   "duration_s": 14.0,
+   "has_audio": true,
+   "capture": {
+    "capture_time": "2025-12-12T21:49:02Z"
+   },
+   "analysis": {
+    "best_moments": [
+     {
+      "end_s": 7.0,
+      "energy": 6.0,
+      "start_s": 1.0,
+      "description": "camera pans to wide view of square"
+     },
+     {
+      "end_s": 12.0,
+      "energy": 4.0,
+      "start_s": 9.0,
+      "description": "man speaks to camera"
+     }
+    ],
+    "understanding": {
+     "summary": "A man speaks to the camera in a public square, explaining the history of the square and the government building. The camera pans from the man to a wide shot of the square with a pink building in the background, then back to the man.",
+     "subject": "man speaking in public square",
+     "setting": "public square in Buenos Aires, daytime",
+     "activity": "giving a historical explanation while standing in a square",
+     "content_type": "talking_head"
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+   "kind": "video",
+   "duration_s": 14.333333,
+   "has_audio": true,
+   "capture": {
+    "capture_time": "2025-12-12T21:41:10Z"
+   },
+   "analysis": {
+    "best_moments": [
+     {
+      "end_s": 1.9,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "tall palm trees and building view"
+     },
+     {
+      "end_s": 3.8,
+      "energy": 5.0,
+      "start_s": 2.2,
+      "description": "speaker begins addressing audience"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 6.0,
+      "start_s": 5.3,
+      "description": "asking about language preference"
+     },
+     {
+      "end_s": 13.9,
+      "energy": 4.0,
+      "start_s": 9.9,
+      "description": "agreeing on translation plan"
+     }
+    ],
+    "understanding": {
+     "summary": "The video shows a sunny park setting with tall palm trees and a historic building in the background. Two people are visible sitting on the grass. The speaker asks whether to speak in English or Turkish.",
+     "subject": "palm trees and building",
+     "setting": "outdoor park with historical building",
+     "activity": "walking and speaking to camera",
+     "content_type": "talking_head"
+    }
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+   "kind": "video",
+   "duration_s": 14.5,
+   "has_audio": true,
+   "capture": {
+    "capture_time": "2025-12-12T22:00:46Z"
+   },
+   "analysis": {
+    "best_moments": [],
+    "understanding": {
+     "summary": "A man wearing an Argentina soccer jersey and sunglasses talks to the camera, giving a thumbs up. Another man appears briefly beside him as he mentions going to Recoleta.",
+     "subject": "man in soccer jersey",
+     "setting": "outdoor public space with trees",
+     "activity": "talking to camera and giving a thumbs up",
+     "content_type": "talking_head"
+    }
+   }
+  }
+ ],
+ "strategy_t3": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "rationale": "Ending on the Cathedral updates the sequence to match your available footage. The very short clips are skipped to keep the pacing solid. Audio will only play on the Recoleta clip, and the labels will be placed on the specific locations you described.",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed"
+   },
+   {
+    "op": "exclude",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_too_short",
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "attribute": "the palm trees",
+    "intent_id": "title_plaza_de_mayo",
+    "creator_text": "Plaza de Mayo 🇦🇷"
+   },
+   {
+    "op": "label",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Open with the palm trees and Plaza de Mayo title",
+   "Show the Casa Rosada",
+   "Walk to the bus",
+   "Mention going to Recoleta with audio on",
+   "End at the Cathedral"
+  ],
+  "target_duration_s": 20,
+  "selected_media_ids": [
+   "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+   "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+   "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+   "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+   "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed",
+    "assignments": [
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "exclude",
+    "status": "resolved",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_too_short",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the palm trees",
+    "intent_id": "title_plaza_de_mayo",
+    "assignments": [
+     {
+      "value": "Plaza de Mayo 🇦🇷",
+      "evidence": "tall palm trees and building view",
+      "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Plaza de Mayo 🇦🇷"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "assignments": [
+     {
+      "value": "Casa Rosada",
+      "evidence": "pink government building",
+      "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "assignments": [
+     {
+      "value": "Catedral",
+      "evidence": "large, columned building, which one person identifies as a cathedral",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral",
+    "assignments": [
+     {
+      "evidence": "the cathedral",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "confidence": 0.95
+     }
+    ]
+   }
+  ]
+ },
+ "strategy_t5": {
+  "pacing": "balanced",
+  "archetype": "day_vlog",
+  "direction": "guided_story",
+  "rationale": "I've updated the opening title to 'Plaza de Mayo' without the flag to resolve the font capability issue. The edit follows the chronological sequence of your day, ending on the Cathedral and running approximately 20 seconds. The original audio remains muted everywhere except on the Recoleta clip, with the specified labels applied to the corresponding shots.",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed"
+   },
+   {
+    "op": "exclude",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_short",
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Plaza de Mayo",
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Plaza de Mayo title over the palm trees",
+   "Casa Rosada labeled on the pink building",
+   "Walking and taking the bus",
+   "Heading to Recoleta with audible dialogue",
+   "Ending on the Cathedral"
+  ],
+  "target_duration_s": 20,
+  "selected_media_ids": [],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed",
+    "assignments": [
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "exclude",
+    "status": "resolved",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_short",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "assignments": [
+     {
+      "value": "Casa Rosada",
+      "evidence": "kept from your draft",
+      "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "assignments": [
+     {
+      "value": "Catedral",
+      "evidence": "kept from your draft",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral",
+    "assignments": [
+     {
+      "evidence": "one person identifies as a cathedral. They discuss its resemblance to the Pantheon. ... and this is the cathedral, by the way.",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "confidence": 0.9
+     }
+    ]
+   }
+  ]
+ },
+ "brief_v3": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "last_clip": "the cathedral"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "in the order we filmed it, ending on the cathedral",
+    "source_turn_id": "ce114667-fd3d-45b1-b614-d83ebc149ae1"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "make it all vertical",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip anything too short to use",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Only the clip where I say 'we are going to Recoleta' keeps its sound, mute the rest",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "clip:analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+    "status": "open",
+    "literal": "Plaza de Mayo",
+    "description": "title on the palm trees",
+    "source_turn_id": "5e202709-403e-44ba-a50f-3d4143d0d372"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "Casa Rosada",
+    "description": "label on the pink building",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "Catedral",
+    "description": "label on the columns",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r8",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 20
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "About 20 seconds",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r9",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Suggest a tango track but don't add it",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   }
+  ]
+ },
+ "main_render": {
+  "order_ids": [
+   "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+   "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+   "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+   "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+   "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+   "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+   "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4"
+  ],
+  "order_basis": "capture_time",
+  "timeline": [
+   {
+    "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+    "source_start_s": 5.3,
+    "source_end_s": 8.0
+   },
+   {
+    "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+    "source_start_s": 1.0,
+    "source_end_s": 5.007
+   },
+   {
+    "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+    "source_start_s": 0.0,
+    "source_end_s": 0.96
+   },
+   {
+    "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+    "source_start_s": 8.1,
+    "source_end_s": 10.9
+   },
+   {
+    "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+    "source_start_s": 3.82,
+    "source_end_s": 9.18
+   },
+   {
+    "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+    "source_start_s": 0.0,
+    "source_end_s": 0.166
+   },
+   {
+    "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+    "source_start_s": 0.0,
+    "source_end_s": 4.007
+   }
+  ]
+ },
+ "turn1_exclude_question": [
+  {
+   "op": "exclude",
+   "key": "exclude:anything-too-short-to-use",
+   "label": "anything too short to use",
+   "intent_id": "exclude_short_clips",
+   "candidate_media_ids": [
+    "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+    "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+    "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+    "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4"
+   ],
+   "suggested_media_ids": []
+  }
+ ],
+ "turn1_intent_stats": [
+  "exclude_short_clips:n=0:min=0.00:max=0.00:nv=0:q=1",
+  "label_casarosada:n=1:min=0.90:max=0.90:nv=0:q=0",
+  "label_catedral:n=1:min=0.90:max=0.90:nv=0:q=0",
+  "order_last_obelisco:n=0:min=0.00:max=0.00:nv=0:q=0"
+ ]
+}

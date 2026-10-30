@@ -1608,6 +1608,21 @@
             "title": "Formats",
             "type": "array"
           },
+          "generated_image_editing": {
+            "default": false,
+            "title": "Generated Image Editing",
+            "type": "boolean"
+          },
+          "generated_images": {
+            "default": false,
+            "title": "Generated Images",
+            "type": "boolean"
+          },
+          "generated_narration": {
+            "default": false,
+            "title": "Generated Narration",
+            "type": "boolean"
+          },
           "idea_example_feedback": {
             "default": false,
             "title": "Idea Example Feedback",
@@ -8055,6 +8070,12 @@
           },
           "gcs_path": {
             "title": "Gcs Path",
+            "type": "string"
+          },
+          "generation": {
+            "default": null,
+            "nullable": true,
+            "title": "Generation",
             "type": "string"
           },
           "height": {

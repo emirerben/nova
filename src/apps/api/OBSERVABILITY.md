@@ -121,44 +121,17 @@ LANGFUSE_PUBLIC_KEY=... LANGFUSE_SECRET_KEY=... \
 
 The inner `Agent.run()` invocation inside `run_eval` is suppressed from posting its own per-call trace (`ctx.extra["skip_langfuse_trace"] = True`). The eval-runner postscript is the only trace per fixture, so source:eval and source:prod cleanly separate in the UI.
 
-## Loop B: online evals on sampled prod traffic
+## Loop B: metered operational trace scoring
 
-Sample a fraction of successful prod `Agent.run()` calls, score them with the same LLM judge, post per-dimension scores back to the prod Langfuse trace.
+The optional online judge scores successful `Agent.run()` trace projections and posts rubric scores to Langfuse. It never changes, regenerates or approves a proposal. This is operational trace scoring, not enrollment into the consented provider-comparison corpus. Real-request comparison and heldout evaluation retain their separate eligibility and source-grant checks.
 
-```
-# Configure on Fly:
-fly secrets set -a nova-video \
-  NOVA_ONLINE_EVAL_SAMPLE_RATE=0.05 \   # 5%
-  ANTHROPIC_API_KEY=sk-ant-...           # judge runs Claude Sonnet
-```
+Sampling defaults to zero. `CREDIT_QUALITY_REVIEW_ENABLED` and `CREDIT_QUALITY_REVIEW_BILLING_VERIFIED` also default false. An Anthropic key, enforced paid ledger, positive provider/evaluation budgets and a rubric are required. Production uses the server-approved `CREDIT_QUALITY_REVIEW_APPROVED_RUN_ID` and bounded `CREDIT_QUALITY_REVIEW_MAX_RUN_USD`, together with runtime ownership attribution. Nonproduction needs an explicitly approved live-eval or provider-smoke context.
 
-Four gates — all must be true for online eval to fire on a given trace:
-1. The Langfuse trace was posted (trace_id returned).
-2. `NOVA_ONLINE_EVAL_SAMPLE_RATE > 0` (default 0).
-3. `ANTHROPIC_API_KEY` is set.
-4. The agent has a rubric at `tests/evals/rubrics/<short>.md`.
+The worker rechecks authorization before reserving. The current transport uses `claude-sonnet-5-5`, low effort and at most 800 output tokens. SDK and task retries are disabled. Duplicate trace/prompt/model identities cannot submit again. Uncertain provider outcomes retain their reservation liability. Scores do not establish human preference, native output quality or request fulfillment.
 
-Sampling happens in the request thread (cheap dice roll). When the dice hit, a Celery task is dispatched — judge runs in the worker, scores post back via `score_trace(trace_id, ...)`. Producer is fire-and-forget; the request path never blocks on judge latency.
+See [API credit configuration and recovery](../../../docs/runbooks/api-credit-capabilities.md) for the complete gates and offline verification. No grant amount or sampling-rate change authorizes a paid run.
 
-Cost: at 5% sample × ~6 agents × ~50 jobs/day = ~15 judge calls/day. At ~$0.01 per Claude Sonnet judge call ≈ ~$5/month.
-
-Architecture:
-```
-Agent.run() ──→ _log_outcome ──→ trace_agent_run() returns trace_id
-                       │
-                       └──→ maybe_schedule_judge(trace_id, agent, in, out)
-                                  │ [sample + gates pass]
-                                  ▼
-                          Celery: score_trace_async(trace_id, ...)
-                                  │
-                                  ├──→ load rubric for agent
-                                  ├──→ Claude Sonnet judge call
-                                  └──→ score_trace(trace_id, name, value) × N
-```
-
-Files:
-- `app/agents/_online_eval.py` — sampling, rubric loading, judge call. Self-contained (does not import from `tests/`).
-- `app/tasks/online_eval.py` — Celery task `score_trace_async`. Bounded soft_time_limit=120s so a slow Anthropic call can't tie up a worker slot.
+Files remain `app/agents/_online_eval.py`, `app/tasks/online_eval.py` and the runtime scheduling call. The API request does not wait for judge latency.
 
 ## Verified loops (prod)
 
