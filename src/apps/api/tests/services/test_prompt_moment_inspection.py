@@ -224,3 +224,21 @@ def test_uncertain_sample_is_not_conclusive_absence():
     assert subject.located_windows(uncertain, moment, 3) is None
     absent = {**uncertain, "status": "absent"}
     assert subject.located_windows(absent, moment, 3) == []
+
+
+@pytest.mark.asyncio
+async def test_inspection_evidence_never_replaces_turkish_creator_labels(monkeypatch):
+    source, moment, named = fixture()
+    named = replace(named, moments=(NamedMoment("wave", "selam verme", 0),))
+
+    async def target(*args, **kwargs):
+        return source, [moment]
+
+    monkeypatch.setattr(subject, "_target", target)
+    monkeypatch.setattr(subject, "get_collection_analysis", lambda key: positive())
+    result = await subject.inspect_named_moments(
+        None, creator_id=uuid.uuid4(), item_id=uuid.uuid4(), moment_set=named, events=[]
+    )
+    found = result.groundings["wave"].found
+    assert found.description == "selam verme"
+    assert found.evidence["answer_evidence"] == "A hand waves"
