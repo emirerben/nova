@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.17.0] - 2026-10-30
+
+### Added
+- feat(agents): chat can animate captions, gated on the build's capability (KRI-1077 part 2) (#1968) <!-- release-pr: 1968 -->
+
 ## [0.83.16.0] - 2026-10-30
 
 ### Fixed
