@@ -239,7 +239,8 @@ async def _run(job_id: str, user_id: str, payload: dict) -> str:
                 )
                 return result.status
             except HTTPException as exc:
-                # Rejected output commits needs_attention in the publication
+                # Failed quality checks publish with a warning (advisory); only bytes that
+                # differ from the reserved upload commit needs_attention in the publication
                 # service. Missing upload / transient storage is retried under
                 # this same finite lease, never by rendering another candidate.
                 return f"refused:{exc.status_code}"

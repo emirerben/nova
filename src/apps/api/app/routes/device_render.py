@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 import subprocess
 import tempfile
 import uuid
@@ -105,6 +106,7 @@ from app.services.phone_rollout import (
     text_behind_subject_phone_client_supported,
     text_bend_client_supported,
 )
+from app.services.pipeline_trace import pipeline_trace_for, record_pipeline_event
 from app.services.render_library import catalog_path, inspect_library_asset
 from app.services.speech_cleanup import SpeechCleanupFailure
 from app.services.speech_cleanup_outcome import build_preflight_public_outcome
@@ -245,7 +247,6 @@ async def _refuse_publication(
     refusal: _ContractRefusal,
     *,
     stage: str = "publication",
-    reason_code: str | None = None,
 ) -> None:
     """Persist a refused publication WITHOUT touching the last accepted artifact.
 
@@ -268,14 +269,31 @@ async def _refuse_publication(
         mark_device_failed(
             job,
             refusal.variant_id,
-            reason_code=reason_code
-            or ("export_failed" if stage == "actual_export" else "contract_changed"),
+            reason_code="export_failed" if stage == "actual_export" else "contract_changed",
             detail=str(refusal.cause)[:500],
         )
     except (KeyError, ValueError):
         pass  # already terminal (published / needs_attention): the decline is enough
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job.id)
+
+
+def _record_export_advisory(
+    job_id: uuid.UUID, identity: DeviceRenderIdentity, warning: dict
+) -> None:
+    """Quality checks never withhold a finished export; they leave a trace instead."""
+    log.warning(
+        "device_export_published_with_advisory",
+        job_id=str(job_id),
+        variant_id=identity.variant_id,
+        **warning,
+    )
+    with pipeline_trace_for(job_id):
+        record_pipeline_event(
+            "device_export",
+            "verification_advisory",
+            {"variant_id": identity.variant_id, **warning},
+        )
 
 
 def _nudge_kria_observer(job_id: uuid.UUID) -> None:
@@ -701,14 +719,6 @@ async def _device_render_status(
         if noted:
             await db.commit()
         raise _client_update_required(update, status)
-    if (
-        verification_required
-        and status.phase == "published"
-        and not checked_export_report(record, status, str(record.get("published_attempt") or ""))
-    ):
-        raise _DeviceConflict(
-            "output_unverified", "This export has no matching successful output check"
-        )
     if update is not None:
         raise _client_update_required(update, status)
     from app.services.device_render import device_export_maximum  # noqa: PLC0415
@@ -1442,6 +1452,10 @@ async def _retry_device_export(
     return DeviceRetryOut(identity=new_status.request.identity, phase="awaiting_device")
 
 
+class _ExportIntegrityError(ValueError):
+    """The stored bytes are not the reserved upload: the only file defect that withholds."""
+
+
 def _verify_export(
     path: str,
     generation: str,
@@ -1455,21 +1469,25 @@ def _verify_export(
     verification_report: dict | None = None,
     export_measurements: dict | None = None,
     max_export_duration_s: float | None = None,
+    advisories: list[dict] | None = None,
 ) -> str | None:
-    """Verify the phone's export; with ``poster_job_id``, also publish its poster.
+    """Measure the phone's export; with ``poster_job_id``, also publish its poster.
 
     Returns the poster key, or ``None`` when no poster was requested or the
     extraction failed. The poster is fail-open: a healthy export still
     publishes without one, and the library's repair path can mint it later.
+    Only a byte mismatch (`_ExportIntegrityError`) raises. A quality finding never
+    withholds the video: the duration cap lands in ``advisories`` and the picture,
+    audio and text verdicts in ``verification_report``, whatever they say.
     """
     with tempfile.TemporaryDirectory(prefix="kria_device_export_") as directory:
         local = Path(directory) / "export.mp4"
         storage.download_generation_to_file(path, str(local), generation=generation)
         if local.stat().st_size != expected_size:
-            raise ValueError("export size mismatch")
+            raise _ExportIntegrityError("export size mismatch")
         with local.open("rb") as source:
             if hashlib.file_digest(source, "sha256").hexdigest() != expected_sha256:
-                raise ValueError("export checksum mismatch")
+                raise _ExportIntegrityError("export checksum mismatch")
         result = subprocess.run(
             [
                 "ffprobe",
@@ -1542,7 +1560,19 @@ def _verify_export(
         if maximum is not None:
             from app.services.export_duration_policy import check_export_maximum  # noqa: PLC0415
 
-            check_export_maximum(duration, maximum)
+            try:
+                check_export_maximum(duration, maximum)
+            except CreatorRenderContractError:
+                if advisories is not None:
+                    advisories.append(
+                        {
+                            "kind": "duration_cap",
+                            "status": "failed",
+                            "reason": "over_maximum",
+                            "actual_s": round(duration, 3),
+                            "expected_s": maximum,
+                        }
+                    )
         if export_measurements is not None:
             export_measurements["measured_export_duration_s"] = duration
         if verification_report is not None:
@@ -1565,7 +1595,7 @@ def _verify_export(
                 verification_report.update(
                     verify_actual_export(local, status, sources, brand_tail=brand_tail)
                 )
-            except Exception as exc:  # noqa: BLE001 - uncertainty blocks publication
+            except Exception as exc:  # noqa: BLE001 - uncertainty is recorded, never blocks
                 verification_report.update(
                     status="partial",
                     checks=[
@@ -1576,23 +1606,36 @@ def _verify_export(
                         }
                     ],
                 )
-            if verification_report.get("status") != "checked":
-                return None
         if poster_job_id is None:
             return None
         # Reuse the verified download: phone renders never pass through a
         # worker, so this is the only point that holds the published bytes.
+        return _export_poster(local, path, poster_job_id)
+
+
+def _export_poster(local: Path, path: str, job_id: uuid.UUID) -> str | None:
+    try:
+        return upload_video_poster(str(local), path, job_id=job_id)
+    except Exception as exc:  # noqa: BLE001 - poster is fail-open by contract
+        log.warning(
+            "device_export_poster_failed",
+            job_id=str(job_id),
+            video_path=path,
+            error_class=type(exc).__name__,
+            error=str(exc)[:300],
+        )
+        return None
+
+
+def _poster_of_unmeasured_export(path: str, generation: str, job_id: uuid.UUID) -> str | None:
+    """The poster of bytes whose measurement failed: the video still publishes."""
+    with tempfile.TemporaryDirectory(prefix="kria_device_poster_") as directory:
+        local = Path(directory) / "export.mp4"
         try:
-            return upload_video_poster(str(local), path, job_id=poster_job_id)
-        except Exception as exc:  # noqa: BLE001 - poster is fail-open by contract
-            log.warning(
-                "device_export_poster_failed",
-                job_id=str(poster_job_id),
-                video_path=path,
-                error_class=type(exc).__name__,
-                error=str(exc)[:300],
-            )
+            storage.download_generation_to_file(path, str(local), generation=generation)
+        except Exception:  # noqa: BLE001 - poster is fail-open by contract
             return None
+        return _export_poster(local, path, job_id)
 
 
 @router.post("/jobs/{job_id}/device-render/complete", response_model=DeviceExportCompleteOut)
@@ -1635,8 +1678,6 @@ async def _complete_device_export(
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
             raise HTTPException(409, "Another export was published")
-        if not checked_export_report(record, status, attempt_id):
-            raise HTTPException(409, "This export has no matching successful output check")
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
@@ -1709,10 +1750,14 @@ async def _complete_device_export(
     if maximum is not None:
         verify_kwargs["export_measurements"] = export_measurements
         verify_kwargs["max_export_duration_s"] = maximum
-    duration_refusal = None
+    # Quality findings are advisory: they are recorded and the video still publishes.
+    # Only bytes that are not the reserved upload are withheld.
+    advisories: list[dict] = []
+    integrity_failure: _ExportIntegrityError | None = None
     # Do not hold database locks while downloading/probing the MP4. Reacquire the full fence below.
     await db.rollback()
     metadata = None
+    poster_path = None
     try:
         metadata = await asyncio.to_thread(storage.object_metadata, attempt["path"])
         if (
@@ -1720,7 +1765,7 @@ async def _complete_device_export(
             or metadata.content_type != "video/mp4"
             or not metadata.generation
         ):
-            raise ValueError("export metadata mismatch")
+            raise _ExportIntegrityError("export metadata mismatch")
         poster_path = await asyncio.to_thread(
             _verify_export,
             attempt["path"],
@@ -1730,27 +1775,45 @@ async def _complete_device_export(
             status,
             attempt.get("brand_tail", "none"),
             poster_job_id=job_id,
+            advisories=advisories,
             **verify_kwargs,
         )
     except FileNotFoundError as exc:
         raise HTTPException(409, "Export upload has not finished") from exc
-    except CreatorRenderContractError as exc:
-        duration_refusal = exc
-        poster_path = None
+    except _ExportIntegrityError as exc:
+        integrity_failure = exc
     except (ValueError, KeyError, subprocess.SubprocessError) as exc:
-        if verification_report is None:
-            raise HTTPException(422, "Export does not match the approved recipe") from exc
-        verification_report.update(
-            status="rejected", checks=[{"kind": "format", "status": "failed"}]
-        )
-        poster_path = None
+        if metadata is None:
+            integrity_failure = _ExportIntegrityError("export metadata unavailable")
+        else:
+            # The file could not be read as the edit's video (format, codec, probe).
+            advisories.append(
+                {
+                    "kind": "format",
+                    "status": "failed",
+                    "reason": re.sub(r"\W+", "_", str(exc).lower()).strip("_")[:80]
+                    if isinstance(exc, ValueError)
+                    else type(exc).__name__,
+                }
+            )
+            poster_path = await asyncio.to_thread(
+                _poster_of_unmeasured_export, attempt["path"], str(metadata.generation), job_id
+            )
+    if integrity_failure is not None:
+        if verification_report is not None:
+            verification_report.update(
+                status="rejected", checks=[{"kind": "format", "status": "failed"}]
+            )
+    elif verification_report is not None and advisories:
+        verification_report.setdefault("checks", []).extend(advisories)
+        if verification_report.get("status") in (None, "checked"):
+            verification_report["status"] = "rejected"
     # A short-lived (5-min) default TTL here would expire long before playback:
     # match the playback TTL every other read path re-signs against (see
     # PLAYBACK_URL_TTL_MIN docstring in generative_jobs.py).
     url = (
         await asyncio.to_thread(storage.signed_get_url, attempt["path"], PLAYBACK_URL_TTL_MIN)
-        if duration_refusal is None
-        and (verification_report is None or verification_report.get("status") == "checked")
+        if integrity_failure is None
         else None
     )
     job = await _owned_job(db, user_id, job_id)
@@ -1762,8 +1825,6 @@ async def _complete_device_export(
     if status.phase == "published":
         if record.get("published_attempt") != attempt_id:
             raise HTTPException(409, "Another export was published")
-        if not checked_export_report(record, status, attempt_id):
-            raise HTTPException(409, "This export has no matching successful output check")
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
@@ -1775,20 +1836,13 @@ async def _complete_device_export(
         if not claim_valid(record, attempt_id, verification_token):
             raise HTTPException(409, "Verification claim changed")
         record["attempts"][attempt_id]["verification_task"].update(state="done")
-    if duration_refusal is not None:
-        if verification_report is not None and (
-            record.get("actual_export_policy") != policy
-            or export_source_digest(approved_export_sources(job, status.request)) != sources_digest
-        ):
-            raise HTTPException(409, "Export verification authority changed")
-        save_device_record(job, body.identity.variant_id, record)
-        await _refuse_publication(
-            db,
-            job,
-            _ContractRefusal(duration_refusal, body.identity.variant_id),
-            stage="actual_export",
-        )
-        raise HTTPException(422, str(duration_refusal))
+    if integrity_failure is not None and verification_report is None:
+        raise HTTPException(422, "Export does not match the approved recipe")
+    quality_warning: dict | None = (
+        {"status": "rejected", "failed_checks": sorted({a["kind"] for a in advisories})}
+        if advisories and verification_report is None
+        else None
+    )
     if verification_report is not None:
         # Fence the source/policy snapshot again after downloading and decoding.
         if (
@@ -1812,6 +1866,21 @@ async def _complete_device_export(
             row["result"] = copy.deepcopy(verification_report)
             row["model_cost_usd"] = 0
             row["infrastructure_cost_usd"] = None
+        if integrity_failure is not None:
+            save_device_record(job, body.identity.variant_id, record)
+            cause = CreatorRenderContractError(
+                "I couldn't confirm this export is the file your iPhone uploaded.",
+                decline_reason="evidence_missing",
+                field_path="export_verification",
+                alternative="Retry this same approved edit.",
+            )
+            await _refuse_publication(
+                db,
+                job,
+                _ContractRefusal(cause, body.identity.variant_id),
+                stage="actual_export",
+            )
+            raise HTTPException(422, "Export does not match the uploaded file")
         if not checked_export_report(record, status, attempt_id):
             if verification_report.get("status") == "checked":
                 verification_report["status"] = "rejected"
@@ -1828,45 +1897,38 @@ async def _complete_device_export(
             ):
                 await db.commit()
                 return DeviceExportCompleteOut(status="checking", identity=body.identity)
-            failed = next(
-                (
-                    row.get("kind")
-                    for row in verification_report.get("checks", [])
-                    if row.get("status") != "passed"
+            # Advisory: the finished video still reaches the creator.
+            quality_warning = {
+                "status": verification_report["status"],
+                "failed_checks": sorted(
+                    {
+                        str(row.get("kind"))
+                        for row in verification_report.get("checks", [])
+                        if row.get("status") != "passed"
+                    }
                 ),
-                "output",
-            )
-            cause = CreatorRenderContractError(
-                "I couldn't confirm this export belongs to your approved edit."
-                if failed == "authority"
-                else (
-                    f"I couldn't confirm the exported video's {failed} matches your approved edit."
-                ),
-                decline_reason="evidence_missing",
-                field_path="export_verification",
-                alternative=(
-                    "Retry this same approved edit; the output must pass its checks "
-                    "before it can replace your video."
-                ),
-            )
-            # A real rejection of the measured bytes has its own code and copy, apart
-            # from a phone that could not encode (export_failed).
-            await _refuse_publication(
-                db,
-                job,
-                _ContractRefusal(cause, body.identity.variant_id),
-                stage="actual_export",
-                reason_code="output_check_failed",
-            )
-            raise HTTPException(422, "Export does not match the approved recipe")
+            }
     try:
         # This is deliberately inside the reacquired owner/row fence.  The
         # byte probe above only proves the file against the recipe; publication
         # must also prove that recipe still has its approved creator authority.
         verify_device_record_contract(job, record, status)
     except CreatorRenderContractError as exc:
-        await _refuse_publication(db, job, _ContractRefusal(exc, body.identity.variant_id))
-        raise HTTPException(422, "Export does not match the approved recipe") from exc
+        if isinstance(exc, DeviceRecipeSuperseded):
+            await _refuse_publication(db, job, _ContractRefusal(exc, body.identity.variant_id))
+            raise HTTPException(422, "Export does not match the approved recipe") from exc
+        # The approved requirements moved after the phone rendered: advisory, like any
+        # other quality finding. The finished video still publishes.
+        if verification_report is not None:
+            verification_report.setdefault("checks", []).append(
+                {"kind": "authority", "status": "failed", "reason": "contract_changed"}
+            )
+            verification_report["status"] = "rejected"
+        failed_checks = (quality_warning or {}).get("failed_checks", [])
+        quality_warning = {
+            "status": "rejected",
+            "failed_checks": sorted({*failed_checks, "contract"}),
+        }
     except ValueError as exc:
         raise HTTPException(422, "Export does not match the approved recipe") from exc
     cleanup = (
@@ -1938,5 +2000,8 @@ async def _complete_device_export(
 
     await record_finished_style_edit(db, user_id, job, body.identity.variant_id, status)
     await db.commit()
+    if quality_warning is not None:
+        # After the commit: the trace write opens its own connection to the Job row.
+        await asyncio.to_thread(_record_export_advisory, job_id, body.identity, quality_warning)
     await asyncio.to_thread(_nudge_kria_observer, job_id)
     return DeviceExportCompleteOut(identity=body.identity)

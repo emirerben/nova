@@ -792,7 +792,7 @@ def test_actual_output_failure_keeps_exact_retry_without_repeating_the_request()
     assert execution.error["recovery"] == "retry"
     assert execution.error["retryable"] is True
     assert "approved edit" in events[-1]["content"]
-    assert "checks" in events[-1]["content"]
+    assert "intact" in events[-1]["content"]
 
 
 def test_a_cloud_render_failure_keeps_the_chat_retry_recovery() -> None:

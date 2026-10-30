@@ -7497,7 +7497,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             if device_failed
             else None
         )
-        output_check_failed = bool(
+        export_not_intact = bool(
             device_decline and device_decline.get("field_path") == "export_verification"
         )
         typed_decline = (
@@ -7532,7 +7532,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             recovery, retryable = "retry", True
         elif native_without_program:
             recovery, retryable = "ask_user", False
-        if device_decline is not None and not output_check_failed:
+        if device_decline is not None and not export_not_intact:
             # The contract refused this edit, so the phone's own Retry (which re-pins the
             # same refused recipe) is a dead end, and nothing re-runs it automatically.
             # The creator's real next step is a new message, never a retry button.
@@ -7631,19 +7631,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             from app.services.device_render import has_accepted_artifact  # noqa: PLC0415
 
             last_good = has_accepted_artifact(job, str(execution.target_variant_id or "") or None)
-            if output_check_failed:
+            if export_not_intact:
                 failure_content = (
                     say(
                         en=(
-                            "The exported video hasn't passed its checks against "
-                            "your approved edit. "
-                            "Your approved edit is saved. Retry the same edit after reviewing "
-                            "its approval."
+                            "The exported video didn't arrive intact, so it wasn't published. "
+                            "Your approved edit is saved. Retry the same edit."
                         ),
                         tr=(
-                            "Dışa aktarılan video, onayladığın düzenlemeye göre yapılan "
-                            "kontrolleri geçemedi. Onayladığın düzenleme kayıtlı. "
-                            "Onayını gözden geçirip aynı düzenlemeyi yeniden dene."
+                            "Dışa aktarılan video eksiksiz ulaşmadığı için yayınlanmadı. "
+                            "Onayladığın düzenleme kayıtlı. Aynı düzenlemeyi yeniden dene."
                         ),
                     )
                     + " "

@@ -47,8 +47,7 @@ Phone render lifecycle (killer-screens train):
 - Phone-facing 409s carry `problem.code` beside the legacy `detail`:
   `superseded` (with `active_job_id` when a newer Job owns the project),
   `render_cancelled`, `editor_empty`, `contract_changed`, `requires_change`,
-  `requires_update`, `held_by_newer_build`, `published`, `not_awaiting_retry`,
-  `output_unverified`.
+  `requires_update`, `held_by_newer_build`, `published`, `not_awaiting_retry`.
 - A contract refusal found on `GET` is persisted once (`contract_changed`).
 - A reaped render restarts on its own when a phone build reopens the project.
 - A recipe the phone declines is the creator's turn, never "needs attention":
@@ -78,9 +77,13 @@ Phone render lifecycle (killer-screens train):
 - A phone that loses a verified capability after its export started (or finished)
   lets it finish and uploads it; it declines (and tells the server) only otherwise.
 - Verification that could not run is requeued for the same bytes for up to
-  24h (`verification_unavailable` after that); a real rejection is
-  `output_check_failed`. A check whose record the fence moved past is closed as
-  `superseded` and never fails the newer attempt.
+  24h (`verification_unavailable` after that). Output checks (text, picture, audio,
+  format, duration cap) are advisory: a finished export always publishes, with the
+  report saved and a `device_export/verification_advisory` pipeline event; picture/audio
+  failures still try the automatic source repair first. Only bytes that differ from the
+  reserved upload, a source/policy digest mismatch, or a superseded attempt withhold a
+  video. A recipe the verifier cannot cover renders with verification off. A check whose
+  record the fence moved past is closed as `superseded` and never fails the newer attempt.
 - The phone waits on a running check with 2-30 s backoff for 15 min, then parks
   the finished MP4 without re-uploading; parked renders resume on foreground.
 - A failure on an edit whose variant has an accepted output never relabels the
