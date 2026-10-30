@@ -24,7 +24,7 @@ from tests.services.test_kria_editor_ops import _job, _variant
 
 
 def test_prompt_version_pinned() -> None:
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-10-30-v93"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-10-30-v94"
 
 
 def test_op_cap_is_a_single_shared_constant() -> None:
@@ -73,22 +73,29 @@ def test_prompt_preserves_legacy_contract_and_uses_server_bound_with_marker(monk
         )
 
     baseline = render(plain)
-    expected = load_prompt(
-        "edit_copilot",
-        utterance=edit_copilot._clean_utterance("make it pop"),
-        prior_turns=edit_copilot._format_prior_turns([]),
-        original_request_block=edit_copilot._original_request_block(None),
-        snapshot=edit_copilot._format_snapshot(plain),
-        font_catalog=edit_copilot._font_catalog(),
-        effect_catalog=edit_copilot._effect_catalog(),
-        caption_font_catalog=edit_copilot._caption_font_catalog(),
-        custom_effect_catalog=edit_copilot._custom_effect_catalog(),
-        max_ops=edit_copilot._MAX_OPS,
+    expected = (
+        load_prompt(
+            "edit_copilot",
+            font_catalog=edit_copilot._font_catalog(),
+            effect_catalog=edit_copilot._effect_catalog(),
+            caption_font_catalog=edit_copilot._caption_font_catalog(),
+            custom_effect_catalog=edit_copilot._custom_effect_catalog(),
+        ).rstrip("\n")
+        + "\n\n"
+        + load_prompt(
+            "edit_copilot_turn",
+            utterance=edit_copilot._clean_utterance("make it pop"),
+            prior_turns=edit_copilot._format_prior_turns([]),
+            original_request_block=edit_copilot._original_request_block(None),
+            snapshot=edit_copilot._format_snapshot(plain),
+            max_ops=edit_copilot._MAX_OPS,
+        ).rstrip("\n")
+        + "\n"
     )
     assert baseline == expected
-    assert render(marked) == baseline.replace(
-        "up to 48 ops", f"up to {MAX_EDITOR_OPS} ops"
-    ).replace("editor_ops_version: 1", "editor_ops_version: 2")
+    assert render(marked) == baseline.replace("MAX OPS: 48", f"MAX OPS: {MAX_EDITOR_OPS}").replace(
+        "editor_ops_version: 1", "editor_ops_version: 2"
+    )
     assert "editor_ops_version: 1" in baseline
     # Empty fragments: even a v2 snapshot appends nothing.
     assert edit_copilot._with_v2_fragments(baseline, marked) == baseline

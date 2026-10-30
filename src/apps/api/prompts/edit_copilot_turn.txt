@@ -1,0 +1,18 @@
+## Turn block
+
+Everything below is this turn's input. The rules, catalogs and operation definitions above apply to it.
+
+MAX OPS: $max_ops
+
+## User message
+
+$utterance
+
+## CURRENT DRAFT
+
+$snapshot
+
+## Prior turns
+
+$prior_turns
+$original_request_block

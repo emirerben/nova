@@ -556,7 +556,7 @@ def test_copilot_prompt_preserves_two_thousand_character_request() -> None:
     )
 
     assert utterance in rendered
-    assert "up to 48 ops" in rendered
+    assert "MAX OPS: 48" in rendered
 
 
 def test_bulk_media_ops_are_preserved_as_typed_single_operations() -> None:

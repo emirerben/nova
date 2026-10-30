@@ -164,7 +164,10 @@ log = structlog.get_logger()
 # text. (v101 is lane B's order-key edit; they merge in that order.)
 # v103 (KRI-1027): the shared brief records how sideways clips sit in a vertical video
 # (`landscape_fit` "fill" / "fit"), which preselects crop or black bars on the confirm screen.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-29-v103"
+# v104 (30 Ekim): prompt-cache layout only, no rule change. The per-turn INPUT block
+# (creator context, footage, manifest, conversation, message) moved to
+# prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-30-v104"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -926,22 +929,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             exclude_none=True,
             exclude={"narration": True},
         )
+        # Cache-friendly order: fixed rules and flag/manifest sections first, per-turn
+        # data last, so Gemini's implicit prefix cache can reuse the long shared head.
         prompt = load_prompt(
             "main_creator",
-            creator_context=input.creator_context or "(not available)",
-            creator_direction=input.creator_direction or "(none)",
-            item_context=input.item_context or "(not available)",
-            media_context=json.dumps(input.media_context, ensure_ascii=False),
-            # Rendered only when a clip carries facts (the flag gates their
-            # presence in media_context), so a flag-off prompt is unchanged.
-            clip_facts_note=(
-                _CLIP_FACTS_NOTE if any(row.get("facts") for row in input.media_context) else ""
-            ),
-            capability_manifest=prompt_manifest,
-            conversation=json.dumps(input.conversation, ensure_ascii=False),
-            creator_request=input.creator_request or input.user_message,
-            user_message=input.user_message,
-            creative_copy_state=json.dumps(input.creative_copy_state, ensure_ascii=False),
             # Renders to "" (flag off) on the one blank template line it
             # occupies, so the rest of the prompt is untouched byte-for-byte.
             clip_intents_section=(
@@ -1002,6 +993,23 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
             ),
         )
+        turn = load_prompt(
+            "main_creator_turn",
+            creator_context=input.creator_context or "(not available)",
+            creator_direction=input.creator_direction or "(none)",
+            item_context=input.item_context or "(not available)",
+            media_context=json.dumps(input.media_context, ensure_ascii=False),
+            # Rendered only when a clip carries facts (the flag gates their
+            # presence in media_context), so a flag-off prompt is unchanged.
+            clip_facts_note=(
+                _CLIP_FACTS_NOTE if any(row.get("facts") for row in input.media_context) else ""
+            ),
+            capability_manifest=prompt_manifest,
+            conversation=json.dumps(input.conversation, ensure_ascii=False),
+            creator_request=input.creator_request or input.user_message,
+            user_message=input.user_message,
+            creative_copy_state=json.dumps(input.creative_copy_state, ensure_ascii=False),
+        )
         prompt = (
             load_skill("edit-story")
             + "\n\n"
@@ -1009,7 +1017,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             + "\n\n"
             + load_skill("meaningful-moment")
             + "\n\n"
-            + prompt
+            + prompt.rstrip("\n")
+            + "\n\n"
+            + turn
         )
         if input.reply_language == "tr":
             prompt += (
