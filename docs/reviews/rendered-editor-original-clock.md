@@ -147,3 +147,43 @@ Tracking is KRI-1060. PR1946 remains a compatibility prerequisite until its
 current-head checks pass. The earlier publication/ticket blockers are historical;
 the dedicated ticket exists. No original-project migration or phone acceptance is
 claimed by this reader-first phase.
+
+## Authored Save boundary after #1960
+
+The combined source includes main's silent guided-to-authored Save lifecycle.
+Independent review found that conversion could hide an explicitly rendered
+clock from guided-only checks. A protocol-25 request incorrectly committed in a
+disposable-database replay; ordinary and direct authored preparation also
+accepted it. This is latent until clock activation and does not attribute the
+creator's current unmarked Save failure to rendered timing.
+
+The canonical reader requirement now runs before PlanItems changes editor mode,
+after ownership and generation checks. The direct authored entry checks it
+before validation/staging mutations, and the common validator checks it before
+deletion normalization. Unreadable marked/saved clocks refuse with 422 rather
+than falling back. Valid rendered clocks require protocol 26; unmarked legacy
+state keeps its existing fast path. No clock writer, activation, migration or
+protocol promotion is added.
+
+The current combined matrix passes 468 backend cases without skips and 42
+selector contracts. Nine new controls cover real-route refusal without
+mutation, compatible Save, corrupt saved-clock refusal, and both preparation
+entries with missing/25/26 protocol contexts. All 116 incoming main journey
+rows remain unchanged; the union has 117 unique journeys. The PlanItems
+selection expectation now requires the added reader journey; selector policy
+is unchanged.
+
+The earlier hosted Gameday failure remains retained in run 41052326749 at
+`e3118dd3`: complete text and a correctly positioned Done tap left the creation
+panel focused after four animation-idle timeouts. The unchanged local case
+passed on iOS 26.5 in 54.8 seconds. Run 41062674763 at `dfe03986` also passed
+the unchanged case on hosted iOS 26.2 in 76.5 seconds with zero idle timeouts.
+These controls narrow an intermittent interaction/environment failure; they do
+not establish its root cause. The reader guard is not presented as a tap fix.
+Fresh hosted checks are required for the combined source before readiness.
+
+The required `make verify-editor-timeline` gate was repeated after the boundary
+repair: 209 web unit cases, 28 desktop-browser cases, 42 mobile-browser cases
+and 585 backend cases passed. Browser checks used headless local fixtures and
+did not take shared-screen control. These counts overlap the focused backend
+matrix. No original project, production flag, media or paid provider was used.

@@ -9364,6 +9364,20 @@ def _require_rendered_clock_reader(revision: dict) -> None:
         )
 
 
+def require_editor_clock_reader(job: Job, variant: dict) -> None:
+    """Check server-owned clock state before changing the editor's mode."""
+    saved = variant.get("guided_edit_revision")
+    marker = _stored_variant_field(job, variant, "_guided_editor_clock")
+    if marker is None and not (isinstance(saved, dict) and saved.get("timing_mode") is not None):
+        return
+    current = _guided_v2_revision(job, variant)
+    if current is None:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_revision_unavailable"
+        )
+    _require_rendered_clock_reader(current)
+
+
 def _guided_v2_timeline_projection(
     job: Job,
     variant: dict,
@@ -11080,6 +11094,7 @@ def _prepare_editor_commit(
         require_phone_text_style_client,
     )
 
+    require_editor_clock_reader(job, variant)
     require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
     payload = normalize_editor_deletion_request(job, variant_id, payload)
     require_guided_story_editor_commit(job, variant_id, payload)

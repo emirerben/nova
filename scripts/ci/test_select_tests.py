@@ -664,7 +664,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/routes/plan_items.py",
-                (True, "covered", "kri-557-thinking,slide-post-binding-recovery"),
+                (
+                    True,
+                    "covered",
+                    "kri-557-thinking,slide-post-binding-recovery,rendered-editor-original-clock",
+                ),
             ),
             (
                 "src/apps/api/app/schemas/user_song.py",
