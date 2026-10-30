@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.34.0] - 2026-10-30
+
+### Changed
+- feat(captions): add scoped size and position controls (#1924) <!-- release-pr: 1924 -->
+
 ## [0.82.33.0] - 2026-10-29
 
 ### Changed
