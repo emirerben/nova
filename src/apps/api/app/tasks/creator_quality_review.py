@@ -436,8 +436,27 @@ def claim_exact_review(
 ) -> tuple[Any, str, dict[str, Any]] | None:
     """Claim a pending review only if the Job/variant/generation still match."""
 
+    from app.config import settings
     from app.db_locks import acquire_locked_rows_sync  # noqa: PLC0415
     from app.models import CreatorAgentSession, Job  # noqa: PLC0415
+
+    if settings.kria_intent_review_enabled:
+        from sqlalchemy import select
+
+        from app.models import CreationThread
+
+        if (
+            db.scalar(
+                select(CreationThread.id)
+                .where(
+                    CreationThread.active_creator_agent_session_id == uuid.UUID(session_id),
+                    CreationThread.runtime_version == 2,
+                )
+                .limit(1)
+            )
+            is not None
+        ):
+            return None
 
     # Canonical lock order (app/db_locks.CANONICAL_LOCK_ORDER): Job before
     # CreatorAgentSession.  The Job used to be read unlocked here, but callers

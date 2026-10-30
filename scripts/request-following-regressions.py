@@ -23,6 +23,13 @@ SUITES = (
     "tests/incidents/",
     "tests/evals/request_following/",
     "tests/integration/test_request_following_queue.py",
+    "tests/services/test_render_review_evidence.py",
+    "tests/kria/test_render_review_context.py",
+    "tests/kria/test_render_review_context_postgres.py",
+    "tests/kria/test_render_review_admission.py",
+    "tests/kria/test_render_review_admission_postgres.py",
+    "tests/kria/test_initial_render_review_authority_postgres.py",
+    "tests/kria/test_initial_render_review_admission_postgres.py",
 )
 CLAIM = (
     "Deterministic regression execution and recorded-evidence checks only. "

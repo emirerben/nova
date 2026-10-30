@@ -89,6 +89,7 @@ class RenderReviewPacket(FrozenModel):
     original_request: str
     binding_json: str
     binding_digest: str
+    dispatch_settings_json: str
     approved_plan_json: str
     recipe_json: str
     recipe_digest: str
@@ -204,11 +205,18 @@ def build_render_review_context(
             and bool(binding.creator_request.strip()),
             "approved_binding_missing_or_changed",
         )
+        initial_authority = None
+        if document.kind == "strategy":
+            from app.kria.initial_render_review_authority import resolve_initial_render_authority
+
+            initial_authority = resolve_initial_render_authority(rows)
         variant_id = e.target_variant_id
         _require(
             bool(variant_id)
-            and d.variant_key == variant_id == a.target_variant_id
-            and a.target_job_id == j.id,
+            and (
+                initial_authority is not None
+                or (d.variant_key == variant_id == a.target_variant_id and a.target_job_id == j.id)
+            ),
             "variant_changed",
         )
         variant = next(v for v in j.assembly_plan["variants"] if v.get("variant_id") == variant_id)
@@ -222,7 +230,12 @@ def build_render_review_context(
             and variant.get("render_generation_id")
             == record.get("published_attempt")
             == status.published_generation
-            and generation == e.target_generation_id
+            and generation
+            == (
+                initial_authority.requirement_generation
+                if initial_authority
+                else e.target_generation_id
+            )
             and bool(generation),
             "publication_changed",
         )
@@ -232,7 +245,11 @@ def build_render_review_context(
             and identity.variant_id == variant_id
             and identity.recipe_digest == digest == record.get("recipe_digest")
             and identity.recipe_revision
-            == (e.result or {}).get("editor_prep", {}).get("device_recipe_revision"),
+            == (
+                initial_authority.recipe_revision
+                if initial_authority
+                else (e.result or {}).get("editor_prep", {}).get("device_recipe_revision")
+            ),
             "recipe_changed",
         )
         contract = read_render_contract({CONTRACT_FIELD: record.get("contract_snapshot")})
@@ -296,6 +313,7 @@ def build_render_review_context(
             binding_json=binding.model_dump_json(),
             binding_digest=binding.digest,
             approved_plan_json=_json(d.snapshot_json),
+            dispatch_settings_json=_json((j.all_candidates or {}).get("creator_strategy")),
             recipe_json=status.request.recipe.model_dump_json(),
             recipe_digest=digest,
             contract_json=contract.model_dump_json(),
