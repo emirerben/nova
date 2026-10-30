@@ -867,10 +867,17 @@ def _unresolved_choice_plan(
                 ),
                 "label_text_unusable",
             )
-        question = _worker_copy(contract.unresolved[0]) or say(
-            en=contract.unresolved[0],
-            tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
-        )
+        quoted = _quoted_unresolved(contract.unresolved[0])
+        if quoted is not None:
+            # KRI-1025: a clip the contract names ("which clip "X" means") comes with the
+            # way forward, never as a reply with nothing to do next.
+            reason, step = quoted
+            question = f"{reason} {say(en=step[0], tr=step[1])}"
+        else:
+            question = _worker_copy(contract.unresolved[0]) or say(
+                en=contract.unresolved[0],
+                tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
+            )
         return (
             KriaTurnPlan(
                 mode="respond",

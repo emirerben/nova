@@ -1,0 +1,513 @@
+{
+ "source": "Plaza de Mayo M1 'maximo 3', thread A228E85B-C293-44EC-9ADF-1228AE19B4BF, 2026-10-28. events = sequences 10/13/14 of events_t2.json verbatim (prompt, clip picker, the None answer). brief_v1 = the brief_binding brief of turns_t4.json (v2) with r1 as it stood before the typed 'End on the cathedral' (last_clip 'the Obelisco', quoted verbatim by the refusal). strategy_turn3 = strategy_t3.json verbatim. media = attach order, upload-contract durations, kit README filming times.",
+ "events": [
+  {
+   "sequence": 10,
+   "kind": "user_message",
+   "actor": "user",
+   "content": "Montage of our afternoon at Plaza de Mayo, in the order we filmed it. Some of the clips are horizontal and some vertical, make it all vertical. Skip anything too short to use. Only the clip where I say \"we are going to Recoleta\" keeps its sound, mute the rest. Curved title \"Plaza de Mayo 🇦🇷\" on the palm trees, label \"Casa Rosada\" on the pink building and \"Catedral\" on the columns. End on the Obelisco. About 20 seconds. Suggest a tango track but don't add it.",
+   "payload": {
+    "turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f",
+    "turn_status": "pending",
+    "request_digest": "8ca5266e5945be4d6bc53e3f9ca83def743c17027d897727414c33d6f8578138",
+    "client_protocol": 23,
+    "runtime_version": 2,
+    "request_outcome_link": {
+     "relation": "original",
+     "link_status": "known",
+     "client_build": "1784",
+     "client_version": "0.1.0",
+     "original_known": true,
+     "schema_version": 1,
+     "client_protocol": 23,
+     "request_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f",
+     "server_revision": "e8049a86d9316e60f07cb0d95f39e53acf36551d",
+     "intent_revision_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+    },
+    "marks_protected_regions": true,
+    "answers_moment_questions": true,
+    "answers_batched_questions": true
+   }
+  },
+  {
+   "sequence": 13,
+   "kind": "assistant_response",
+   "actor": "assistant",
+   "content": "I couldn't tell which of your clips show \"the Obelisco\". Tap the clips that do, or tell me there aren't any. I couldn't tell which of your clips to leave out for \"anything too short to use\". Tap the ones to leave out, or tell me none.",
+   "payload": {
+    "turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f",
+    "turn_value": "question",
+    "receipt_ids": [],
+    "next_actions": [],
+    "clip_question": {
+     "version": 1,
+     "allow_none": true,
+     "categories": [
+      {
+       "op": "order",
+       "key": "order:the-obelisco",
+       "label": "the Obelisco",
+       "intent_id": "order_last_obelisco",
+       "candidate_media_ids": [
+        "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+        "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+        "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+        "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+        "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+        "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+        "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4"
+       ],
+       "suggested_media_ids": []
+      },
+      {
+       "op": "exclude",
+       "key": "exclude:anything-too-short-to-use",
+       "label": "anything too short to use",
+       "intent_id": "exclude_short_clips",
+       "candidate_media_ids": [
+        "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+        "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+        "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+        "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4"
+       ],
+       "suggested_media_ids": []
+      }
+     ],
+     "question_id": "7553aa8a-596b-4cc8-bb67-e0aa39de7afe"
+    },
+    "brief_coverage": {
+     "enforced_ids": [],
+     "retrieved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7",
+      "r8",
+      "r9"
+     ],
+     "applicable_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7",
+      "r8",
+      "r9"
+     ],
+     "unresolved_ids": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5",
+      "r6",
+      "r7",
+      "r8",
+      "r9"
+     ]
+    },
+    "schema_version": 2
+   }
+  },
+  {
+   "sequence": 14,
+   "kind": "user_message",
+   "actor": "user",
+   "content": "None of these for The Obelisco. Anything too short to use: clips 2, 4",
+   "payload": {
+    "turn_id": "3ddfb156-5a49-4c67-9997-65c939ef4090",
+    "turn_status": "pending",
+    "clip_selection": {
+     "answers": [
+      {
+       "key": "exclude:anything-too-short-to-use",
+       "media_ids": [
+        "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+        "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4"
+       ]
+      }
+     ],
+     "skipped": false,
+     "none_keys": [
+      "order:the-obelisco"
+     ],
+     "question_id": "7553aa8a-596b-4cc8-bb67-e0aa39de7afe"
+    },
+    "request_digest": "97ab7a15117aeb108f6474a669870d1c9c1a0f8cc5972872b33197b048e6b463",
+    "client_protocol": 23,
+    "runtime_version": 2,
+    "request_outcome_link": {
+     "relation": "continuation",
+     "link_status": "known",
+     "client_build": "1784",
+     "client_version": "0.1.0",
+     "original_known": true,
+     "parent_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f",
+     "schema_version": 1,
+     "client_protocol": 23,
+     "request_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f",
+     "server_revision": "dde04eb74cf28041f01e5017f61c0fc71489264e",
+     "intent_revision_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+    },
+    "marks_protected_regions": true,
+    "answers_moment_questions": true,
+    "answers_batched_questions": true
+   }
+  }
+ ],
+ "turn2_reply": "I couldn't tell which clip \"the Obelisco\" means, so I can't confirm the order.",
+ "brief_v1": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "last_clip": "the Obelisco"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "in the order we filmed it, ending on the Obelisco",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "make it all vertical",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip anything too short to use",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Only the clip where I say 'we are going to Recoleta' keeps its sound, mute the rest",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "clip:analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+    "status": "open",
+    "literal": "Plaza de Mayo 🇦🇷",
+    "description": "Curved title on the palm trees",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "Casa Rosada",
+    "description": "label on the pink building",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r7",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "Catedral",
+    "description": "label on the columns",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r8",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 20
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "About 20 seconds",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   },
+   {
+    "id": "r9",
+    "kind": "audio",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Suggest a tango track but don't add it",
+    "source_turn_id": "a3c3982c-b029-45fa-90b5-289a62904a0f"
+   }
+  ]
+ },
+ "strategy_turn3": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "rationale": "Ending on the Cathedral updates the sequence to match your available footage. The very short clips are skipped to keep the pacing solid. Audio will only play on the Recoleta clip, and the labels will be placed on the specific locations you described.",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed"
+   },
+   {
+    "op": "exclude",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_too_short",
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "attribute": "the palm trees",
+    "intent_id": "title_plaza_de_mayo",
+    "creator_text": "Plaza de Mayo 🇦🇷"
+   },
+   {
+    "op": "label",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Open with the palm trees and Plaza de Mayo title",
+   "Show the Casa Rosada",
+   "Walk to the bus",
+   "Mention going to Recoleta with audio on",
+   "End at the Cathedral"
+  ],
+  "target_duration_s": 20,
+  "selected_media_ids": [
+   "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+   "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+   "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+   "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+   "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "our afternoon at Plaza de Mayo",
+    "intent_id": "order_filmed",
+    "assignments": [
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "exclude",
+    "status": "resolved",
+    "attribute": "anything too short to use",
+    "intent_id": "exclude_too_short",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "requirement_id": "r3"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the palm trees",
+    "intent_id": "title_plaza_de_mayo",
+    "assignments": [
+     {
+      "value": "Plaza de Mayo 🇦🇷",
+      "evidence": "tall palm trees and building view",
+      "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Plaza de Mayo 🇦🇷"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the pink building",
+    "intent_id": "label_casa_rosada",
+    "assignments": [
+     {
+      "value": "Casa Rosada",
+      "evidence": "pink government building",
+      "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Casa Rosada"
+   },
+   {
+    "op": "label",
+    "status": "resolved",
+    "attribute": "the columns",
+    "intent_id": "label_catedral",
+    "assignments": [
+     {
+      "value": "Catedral",
+      "evidence": "large, columned building, which one person identifies as a cathedral",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "grounding": "creator_text",
+      "confidence": 1.0
+     }
+    ],
+    "creator_text": "Catedral"
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "position": "last",
+    "attribute": "the cathedral",
+    "intent_id": "order_end_cathedral",
+    "assignments": [
+     {
+      "evidence": "the cathedral",
+      "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+      "confidence": 0.95
+     }
+    ]
+   }
+  ]
+ },
+ "media": [
+  {
+   "media_id": "analysis-proxy-ios-0E376590-356E-4229-97EB-59D03ADBA72D.mp4",
+   "shows": "take the bus selfie (landscape)",
+   "duration_s": 11.633333,
+   "capture_time": "2025-12-12T19:00:16Z"
+  },
+  {
+   "media_id": "analysis-proxy-ios-2B3DABCB-AEE9-4BF1-87C9-DF2CE6D1A521.mp4",
+   "shows": "J1 one second of the square",
+   "duration_s": 0.966667,
+   "capture_time": "2025-12-12T19:00:08Z"
+  },
+  {
+   "media_id": "analysis-proxy-ios-A61E17CA-C7A7-4363-B7A6-6BF129E93A95.mp4",
+   "shows": "cathedral columns",
+   "duration_s": 23.4,
+   "capture_time": "2025-12-12T19:01:47Z"
+  },
+  {
+   "media_id": "analysis-proxy-ios-9ECFFEBC-3E41-4F34-B52B-C83A1E4D7FFE.mp4",
+   "shows": "J2 fifth of a second, no audio",
+   "duration_s": 0.2,
+   "capture_time": "2025-12-12T19:10:13Z"
+  },
+  {
+   "media_id": "analysis-proxy-ios-AB2850CF-EE2D-40F8-A1D6-6874E13740BC.mp4",
+   "shows": "Casa Rosada pan (landscape)",
+   "duration_s": 14.0,
+   "capture_time": "2025-12-12T18:49:02Z"
+  },
+  {
+   "media_id": "analysis-proxy-ios-4869C2B5-F7C3-4304-9BA2-D713372FBD21.mp4",
+   "shows": "palms",
+   "duration_s": 14.333333,
+   "capture_time": "2025-12-12T18:41:10Z"
+  },
+  {
+   "media_id": "analysis-proxy-ios-71B14ED8-DDAF-42F5-9803-9285030AD2DD.mp4",
+   "shows": "going to Recoleta selfie",
+   "duration_s": 14.5,
+   "capture_time": "2025-12-12T19:00:46Z"
+  }
+ ]
+}
