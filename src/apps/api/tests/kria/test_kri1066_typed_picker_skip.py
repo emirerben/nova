@@ -261,7 +261,13 @@ async def test_t7_an_ending_whose_source_message_is_not_before_the_picker_is_not
 # -- the runtime wrapper: what `submit_turn` calls -----------------------------------------
 
 
-async def _derived(monkeypatch, asked, message: str, **overrides: Any):  # noqa: ANN001, ANN202
+async def _derived(  # noqa: ANN202
+    monkeypatch,
+    asked,
+    message: str,
+    validator_error: Exception | None = None,
+    **overrides: Any,  # noqa: ANN001
+):
     events = _after_picker(asked)
     rows = MagicMock()
     rows.all.return_value = [
@@ -270,26 +276,29 @@ async def _derived(monkeypatch, asked, message: str, **overrides: Any):  # noqa:
     ]
     db = SimpleNamespace(execute=AsyncMock(return_value=rows))
     monkeypatch.setattr(runtime, "load_latest_brief", AsyncMock(return_value=_brief()))
+    # The validator has its own two-column query; the fake rows above are the helper's.
+    validate = AsyncMock(side_effect=validator_error)
+    monkeypatch.setattr(runtime, "_validate_clip_selection", validate)
     for name, value in overrides.items():
         monkeypatch.setattr(settings, name, value)
     derived = await runtime._free_text_clip_skip(db, THREAD, message)
-    return derived, db.execute.await_count
+    return derived, db.execute.await_count, validate.await_count
 
 
 async def test_the_runtime_wrapper_reads_the_thread_and_returns_the_skip(monkeypatch) -> None:
     asked = await _asked(monkeypatch)
-    derived, reads = await _derived(monkeypatch, asked, "skip that")
+    derived, reads, validated = await _derived(monkeypatch, asked, "skip that")
     assert derived == ClipSelectionIn(
         question_id=asked.plan.clip_question["question_id"], skipped=True
     )
-    assert reads == 1
+    assert (reads, validated) == (1, 1)  # the derived answer is validated like a tap
 
 
 async def test_the_runtime_wrapper_does_not_read_the_thread_for_an_ordinary_message(
     monkeypatch,
 ) -> None:
     asked = await _asked(monkeypatch)
-    assert await _derived(monkeypatch, asked, "make it 30 seconds") == (None, 0)
+    assert await _derived(monkeypatch, asked, "make it 30 seconds") == (None, 0, 0)
 
 
 async def test_t8_with_the_picker_flag_off_nothing_is_derived(monkeypatch) -> None:
@@ -297,7 +306,30 @@ async def test_t8_with_the_picker_flag_off_nothing_is_derived(monkeypatch) -> No
     off = await _derived(
         monkeypatch, asked, "skip that", kria_clip_selection_questions_enabled=False
     )
-    assert off == (None, 0)
+    assert off == (None, 0, 0)
+
+
+async def test_a_derived_skip_the_validator_refuses_falls_back_to_the_plain_message(
+    monkeypatch,
+) -> None:
+    asked = await _asked(monkeypatch)
+    stale = runtime.RuntimeFailure(
+        422, "clip_selection_stale", "stale", recovery="refresh_replan", current_revision=1
+    )
+    derived, _reads, validated = await _derived(
+        monkeypatch, asked, "skip that", validator_error=stale
+    )
+    assert derived is None and validated == 1  # never a hard error for a typed message
+
+
+async def test_a_message_that_also_drops_the_other_spot_still_skips_this_picker(
+    monkeypatch,
+) -> None:
+    # The opening is read from the message text by the planner, as for any message; this
+    # picker's own Skip is still right.
+    asked = await _asked(monkeypatch)
+    assert _skip(asked, "skip that, forget the opening") is not None
+    assert _skip(asked, "forget the opening, forget the ending") is not None
 
 
 def test_no_events_derive_nothing() -> None:

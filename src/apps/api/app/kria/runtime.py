@@ -605,7 +605,14 @@ async def _free_text_clip_skip(
     events = [
         tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
     ]
-    return typed_picker_skip(await load_latest_brief(db, thread.id), events, message)
+    skip = typed_picker_skip(await load_latest_brief(db, thread.id), events, message)
+    if skip is None:
+        return None
+    try:
+        await _validate_clip_selection(db, thread, skip)
+    except RuntimeFailure:
+        return None  # a typed message must never become a hard error: let the planner read it
+    return skip
 
 
 async def _owned_thread(
@@ -902,7 +909,8 @@ async def submit_turn(
         if derived is not None:
             choice_selection, choice_delegated, choice_reanswer = derived
     # KRI-1066: like the choice above, a typed answer to the clip picker is stored as the
-    # selection it is; an explicit tap in the same send always wins.
+    # selection it is (already validated by the helper); an explicit tap in the same send
+    # always wins.
     clip_selection = body.clip_selection
     if (
         clip_selection is None
@@ -914,8 +922,8 @@ async def submit_turn(
         and scope is None
     ):
         clip_selection = await _free_text_clip_skip(db, thread, body.message)
-    if clip_selection is not None and settings.kria_clip_selection_questions_enabled:
-        await _validate_clip_selection(db, thread, clip_selection)
+    if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
+        await _validate_clip_selection(db, thread, body.clip_selection)
     if body.song_order is not None and settings.user_song_montage_enabled:
         await _validate_song_order(db, thread, body.song_order)
     if body.song_range is not None and settings.song_filming_range_enabled:

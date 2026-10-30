@@ -434,9 +434,11 @@ def typed_picker_skip(
     """KRI-1066: a whole typed withdrawal right after the ending picker is that picker's Skip.
 
     ``events`` are the thread's ``(role, payload)`` before this message. The picker must ask
-    about exactly one brief first / last clip, the message must withdraw that spot and nothing
-    else, and the brief's clip must have been stated before the picker asked. The result is
-    the same ``ClipSelectionIn`` a tap on Skip sends, so everything after it is the tap's path.
+    about exactly one brief first / last clip, every clause of the message must be a
+    withdrawal that covers that spot, and the brief's clip must have been stated before the
+    picker asked. The result is the same ``ClipSelectionIn`` a tap on Skip sends, so
+    everything after it is the tap's path. The message itself still reaches the planner as
+    usual: another spot it also drops ("skip that, forget the opening") is read there.
     """
     if brief is None or not withdrawal_candidate(message):
         return None
