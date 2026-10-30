@@ -71,10 +71,12 @@ def test_background_queue_deadline_preserves_last_good_and_respects_live_worker(
             assert task["first_queued_at"] == first_queued.isoformat()
             assert [args[2]["attempt_id"] for args in enqueued] == ["pending"]
         else:
-            assert record["status"]["phase"] == "needs_attention"
-            assert record["status"]["reason_code"] == "verification_unavailable"
-            assert "couldn't check this video" in record["status"]["reason"]
-            assert enqueued == []
+            # Past the window the finished export publishes unverified: the phone keeps
+            # "Checking" only until that delivery, never a failure.
+            assert record["status"]["phase"] == "syncing"
+            assert task["state"] == "queued"
+            assert task["publish_unverified"] is True
+            assert [args[2]["attempt_id"] for args in enqueued] == ["pending"]
 
 
 @pytest.mark.parametrize(

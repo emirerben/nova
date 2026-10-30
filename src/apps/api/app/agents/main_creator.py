@@ -1153,6 +1153,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         # model-authored per-take song placement is never trusted.
                         "resolved_song_takes": None,
                         "selection_reconciliation": None,
+                        "confirmed_order_replacement": None,
                         # KRI-578: the caption pin is the planner's call, never the model's.
                         "song_captions": None,
                         # KRI-476: server-owned conflict answers, never model-authored.

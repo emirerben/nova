@@ -663,12 +663,8 @@ def pin_device_request(
             unsupported_reasons,
         )
 
-        reasons = unsupported_reasons(request.recipe)
-        if prepared_initial and reasons:
-            raise CreatorRenderContractError(
-                "This prepared story exceeds actual-output verification coverage"
-            )
-        if not reasons:
+        # A recipe the verifier cannot cover renders with verification off.
+        if not unsupported_reasons(request.recipe):
             record[POLICY_FIELD] = {
                 "version": 1,
                 "verifier_version": VERIFIER_VERSION,

@@ -354,7 +354,6 @@ async def prepare_story_snapshot(db, owner, story, item):
     # can execute this same source-bound snapshot. No media or model I/O occurs.
     from app.pipeline.guided_story import GuidedStoryExecutionPlan
     from app.pipeline.phone_guided_plan import UnsupportedPhonePlan, compile_phone_guided_plan
-    from app.services.actual_export_verification import unsupported_reasons
     from app.services.creator_render_contract import build_render_contract, verify_phone_recipe
     from app.services.phone_rollout import validate_phone_pilot_recipe
 
@@ -371,11 +370,6 @@ async def prepare_story_snapshot(db, owner, story, item):
         )
     except (UnsupportedPhonePlan, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
-    if unsupported_reasons(recipe):
-        raise HTTPException(
-            422,
-            "These story settings cannot be verified on your iPhone; review the clips and wording",
-        )
     return PreparedCollectionStory(
         story_id=story.id,
         story_revision=story.revision,

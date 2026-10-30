@@ -84,6 +84,7 @@ _DECISION_FIELDS: dict[str, frozenset[str]] = {
             "closing_media",
             "archetype",
             "editorial_plan",
+            "confirmed_order_replacement",
             "media_scope",
             "reaction_beats",
         }

@@ -149,13 +149,14 @@ def test_published_record_is_ready_and_needs_attention_is_failed() -> None:
     assert _device_render_state(published, _execution(variant=VARIANT, minimum=1)) == "ready"
 
 
-def test_promoted_record_cannot_settle_ready_without_actual_output_proof() -> None:
+def test_published_record_with_failed_output_checks_still_settles_ready() -> None:
     job = _device_job()
     _publish(job)
     record = device_record(job, VARIANT)
     record["actual_export_policy"] = {"version": 1}
     save_device_record(job, VARIANT, record)
-    assert _device_render_state(job, _execution(variant=VARIANT, minimum=1)) == "failed"
+    # Output checks are advisory: a published export is a finished video.
+    assert _device_render_state(job, _execution(variant=VARIANT, minimum=1)) == "ready"
 
 
 def test_refused_replacement_cannot_complete_using_the_last_good_video():
@@ -792,7 +793,7 @@ def test_actual_output_failure_keeps_exact_retry_without_repeating_the_request()
     assert execution.error["recovery"] == "retry"
     assert execution.error["retryable"] is True
     assert "approved edit" in events[-1]["content"]
-    assert "checks" in events[-1]["content"]
+    assert "intact" in events[-1]["content"]
 
 
 def test_a_cloud_render_failure_keeps_the_chat_retry_recovery() -> None:

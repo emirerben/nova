@@ -734,6 +734,7 @@ async def load_intent_clips_for_item(
                 or None,
                 capture_time=_assignment_capture_time(assignment),
                 file_name=clip_display_name(assignment.get("source_filename")),
+                duration_s=_positive_duration_s(assignment.get("duration_s")),
             )
         )
 
@@ -775,6 +776,7 @@ async def load_intent_clips_for_item(
                         {"capture": getattr(asset, "capture", None)}
                     ),
                     file_name=clip_display_name(getattr(asset, "source_filename", None)),
+                    duration_s=_positive_duration_s(getattr(asset, "duration_s", None)),
                 )
             )
 

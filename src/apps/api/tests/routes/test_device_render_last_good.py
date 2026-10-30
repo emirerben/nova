@@ -240,13 +240,14 @@ def _artifact(job) -> dict:
     }
 
 
-def test_a_publication_the_contract_no_longer_proves_keeps_the_last_good_artifact(
+def test_a_publication_the_contract_no_longer_proves_still_publishes_the_finished_video(
     fixture, monkeypatch
 ):
+    """Changed approved requirements are advisory at completion: the phone's finished
+    export replaces the last good one (only a superseded attempt withholds it)."""
     attempt = _syncing(fixture, monkeypatch)
     job = fixture.job
     good = _artifact(job)
-    receipts = copy.deepcopy(device_record(job, VARIANT)["contract_receipts"])
     # The approved authority changes underneath the pinned recipe.
     other = build_render_contract({"opening_title": "Something else"}, generation_id="second")
     job.assembly_plan[CONTRACT_REVISIONS_FIELD][VARIANT] = other.model_dump(mode="json")
@@ -255,15 +256,14 @@ def test_a_publication_the_contract_no_longer_proves_keeps_the_last_good_artifac
         f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
     )
 
-    assert response.status_code == 409
-    assert _artifact(job) == good  # the previously published output is still the output
+    assert response.status_code == 200, response.text
+    assert _artifact(job) != good
+    variant = job.assembly_plan["variants"][0]
+    assert variant["video_path"].endswith(f"{attempt}.mp4")
+    assert variant["render_generation_id"] == attempt
     record = device_record(job, VARIANT)
-    assert record["status"]["phase"] == "needs_attention"  # the creator will hear about it
-    assert record["contract_receipts"] == receipts
-    decline = contract_decline(job, VARIANT)
-    assert decline["decline_reason"] == "evidence_missing"
-    assert decline["stage"] == "publication"
-    assert decline["message"]
+    assert record["status"]["phase"] == "published"
+    assert CONTRACT_DECLINE_FIELD not in record
     fixture.db.commit.assert_awaited()
 
 
@@ -367,9 +367,7 @@ def _first_render_syncing(fixture, monkeypatch):
     return attempt
 
 
-def test_a_refused_first_render_fails_visibly_instead_of_waiting_for_a_phone_forever(
-    fixture, monkeypatch
-):
+def test_a_first_render_whose_contract_changed_still_publishes(fixture, monkeypatch):
     attempt = _first_render_syncing(fixture, monkeypatch)
     job = fixture.job
     assert not job.assembly_plan["variants"][0].get("video_path")
@@ -378,51 +376,24 @@ def test_a_refused_first_render_fails_visibly_instead_of_waiting_for_a_phone_for
         f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 200, response.text
     variant = job.assembly_plan["variants"][0]
-    assert (variant["ok"], variant["render_status"]) == (False, "needs_attention")
-    assert variant["decline_reason"] == "evidence_missing"
-    assert job.failure_reason == "creator_render_contract_unverified"
-    assert job.error_detail
-    assert not variant.get("video_path")  # nothing was published
-    record = device_record(job, VARIANT)
-    assert record["status"]["phase"] == "needs_attention"
-    # The reaper only rescans awaiting_device / syncing records.
-    from app.tasks.device_render_reaper import _STALE_PHASES
-
-    assert record["status"]["phase"] not in _STALE_PHASES
+    assert variant["ok"] is True
+    assert variant["video_path"].endswith(f"{attempt}.mp4")
+    assert device_record(job, VARIANT)["status"]["phase"] == "published"
 
 
-def test_a_repeated_refusal_of_a_first_render_changes_nothing_more(fixture, monkeypatch):
+def test_a_repeated_completion_of_a_published_contract_changed_render_changes_nothing_more(
+    fixture, monkeypatch
+):
     attempt = _first_render_syncing(fixture, monkeypatch)
     job = fixture.job
     post = lambda: fixture.client.post(  # noqa: E731
         f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
     )
-    assert post().status_code == 409
+    assert post().status_code == 200
     variant_once = copy.deepcopy(job.assembly_plan["variants"][0])
-    failure_once = (job.failure_reason, job.error_detail)
 
-    assert post().status_code == 409
+    assert post().status_code == 200
 
     assert job.assembly_plan["variants"][0] == variant_once
-    assert (job.failure_reason, job.error_detail) == failure_once
-
-
-def test_a_refused_edit_keeps_the_previous_artifact_and_the_job_state(fixture, monkeypatch):
-    attempt = _syncing(fixture, monkeypatch)
-    job = fixture.job
-    other = build_render_contract({"opening_title": "Something else"}, generation_id="second")
-    job.assembly_plan[CONTRACT_REVISIONS_FIELD][VARIANT] = other.model_dump(mode="json")
-    before = (job.status, getattr(job, "failure_reason", None), _artifact(job))
-    render_status = job.assembly_plan["variants"][0]["render_status"]
-
-    assert (
-        fixture.client.post(
-            f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
-        ).status_code
-        == 409
-    )
-
-    assert (job.status, getattr(job, "failure_reason", None), _artifact(job)) == before
-    assert job.assembly_plan["variants"][0]["render_status"] == render_status

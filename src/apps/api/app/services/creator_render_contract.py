@@ -222,6 +222,10 @@ _CLIP_INTENT_LEAVES = (
     "exclusive",
     # KRI-994: the brief `select` ask an exclusion carries out; read only by receipts.
     "requirement_id",
+    # KRI-1031: a length-only exclusion, settled from clip lengths while planning (the
+    # narrowed pick is what the contract sees).
+    "by_length",
+    "under_s",
 )
 
 
@@ -270,12 +274,55 @@ def schema_field_paths(model: type[BaseModel] = CreativeStrategy, prefix: str = 
 FIELD_MATRIX: dict[str, FieldRule] = {
     **_rules(
         "upstream_resolved",
+        "confirmed_order_execution",
+        "confirmed_order_replacement",
+        "confirmed_order_replacement.option_key",
+        "confirmed_order_replacement.proposal",
+        "confirmed_order_replacement.proposal.moments[]",
+        "confirmed_order_replacement.proposal.moments[].duration_s",
+        "confirmed_order_replacement.proposal.moments[].evidence_origin",
+        "confirmed_order_replacement.proposal.moments[].evidence_ref",
+        "confirmed_order_replacement.proposal.moments[].freeze_hold_s",
+        "confirmed_order_replacement.proposal.moments[].gcs_path",
+        "confirmed_order_replacement.proposal.moments[].generation",
+        "confirmed_order_replacement.proposal.moments[].hold_duration_s",
+        "confirmed_order_replacement.proposal.moments[].intent_id",
+        "confirmed_order_replacement.proposal.moments[].kind",
+        "confirmed_order_replacement.proposal.moments[].label",
+        "confirmed_order_replacement.proposal.moments[].media_id",
+        "confirmed_order_replacement.proposal.moments[].occurrence_id",
+        "confirmed_order_replacement.proposal.moments[].output_end_s",
+        "confirmed_order_replacement.proposal.moments[].output_start_s",
+        "confirmed_order_replacement.proposal.moments[].phone_binding_digest",
+        "confirmed_order_replacement.proposal.moments[].playback_rate",
+        "confirmed_order_replacement.proposal.moments[].source_end_s",
+        "confirmed_order_replacement.proposal.moments[].source_fence_digest",
+        "confirmed_order_replacement.proposal.moments[].source_slot",
+        "confirmed_order_replacement.proposal.moments[].source_start_s",
+        "confirmed_order_replacement.proposal.predecessor_brief_version",
+        "confirmed_order_replacement.proposal.predecessor_requirement_digest",
+        "confirmed_order_replacement.proposal.predecessor_requirement_id",
+        "confirmed_order_replacement.proposal.rejected_intent_id",
+        "confirmed_order_replacement.proposal.rejection_category_key",
+        "confirmed_order_replacement.proposal.rejection_question_id",
+        "confirmed_order_replacement.proposal.rejection_selection_sequence",
+        "confirmed_order_replacement.proposal.version",
+        "confirmed_order_replacement.question_id",
+        "confirmed_order_replacement.question_input_digest",
+        "confirmed_order_replacement.question_sequence",
+        "confirmed_order_replacement.selection_sequence",
+        "confirmed_order_replacement.version",
+        note="Server-confirmed sequence; receipts require the current complete compiled artifact.",
+    ),
+    **_rules(
+        "upstream_resolved",
         "clip_selection_reconciliation",
         "selection_reconciliation",
         "selection_reconciliation.rejected_selections[]",
         "selection_reconciliation.rejected_selections[].category_key",
         "selection_reconciliation.rejected_selections[].intent",
         "selection_reconciliation.rejected_selections[].intent.attribute",
+        "selection_reconciliation.rejected_selections[].intent.by_length",
         "selection_reconciliation.rejected_selections[].intent.caption_attribute",
         "selection_reconciliation.rejected_selections[].intent.creator_text",
         "selection_reconciliation.rejected_selections[].intent.exclusive",
@@ -289,6 +336,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[].intent.requirement_id",
         "selection_reconciliation.rejected_selections[].intent.source_kind",
         "selection_reconciliation.rejected_selections[].intent.transcript_kind",
+        "selection_reconciliation.rejected_selections[].intent.under_s",
         "selection_reconciliation.rejected_selections[].question_id",
         "selection_reconciliation.rejected_selections[].selection_sequence",
         "selection_reconciliation.status",
@@ -653,6 +701,8 @@ FIELD_MATRIX: dict[str, FieldRule] = {
 
 def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRule]:
     unused = set()
+    if not strategy.get("confirmed_order_replacement"):
+        unused.add("confirmed_order_replacement")
     if not strategy.get("selection_reconciliation"):
         unused.add("selection_reconciliation")
     if not any(
@@ -664,10 +714,7 @@ def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRul
     return {
         path: rule
         for path, rule in FIELD_MATRIX.items()
-        if path not in unused
-        and not (
-            "selection_reconciliation" in unused and path.startswith("selection_reconciliation.")
-        )
+        if path not in unused and not any(path.startswith(prefix + ".") for prefix in unused)
     }
 
 
