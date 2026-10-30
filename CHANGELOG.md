@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.1.0] - 2026-10-30
+
+### Changed
+- feat(rollout): open founder-only cohorts to every account, add cohort_parity check (KRI-1059) (#1949) <!-- release-pr: 1949 -->
+
 ## [0.83.0.0] - 2026-10-30
 
 ### Added
