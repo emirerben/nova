@@ -777,17 +777,23 @@ enum NativeEditorUITestCommitTransport {
             if url.path.hasSuffix("/capabilities"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
                 status = 200; body = Data(#"{"formats":[],"generated_images":true}"#.utf8)
             } else if url.path.contains("/generated-media"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_REGISTRATION_RECOVERY"] == "1",
+                   url.path.hasSuffix("/generated-media"), request.httpMethod == "POST" {
+                    UserDefaults.standard.set(UserDefaults.standard.integer(forKey: "overlay-fixture-generation-count") + 1, forKey: "overlay-fixture-generation-count")
+                }
+                let count = UserDefaults.standard.integer(forKey: "overlay-fixture-generation-count")
+                let generatedID = count > 1 ? "fixture-generated-image-b" : "fixture-generated-image"
                 let imageURL = "https://generated-media-image.invalid/cover.jpg"
                 let response: [String: JSONValue] = ["id": .string("fixture-overlay-operation"), "state": .string("ready"),
-                    "capability": .string("image"), "retryable": .bool(false), "asset_id": .string("fixture-generated-image"),
+                    "capability": .string("image"), "retryable": .bool(false), "asset_id": .string(generatedID),
                     "preview_url": .string(imageURL), "source_url": .string(imageURL)]
                 status = 200; body = (try? JSONEncoder().encode(response)) ?? body
             } else if url.path.hasSuffix("/assets"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
-                let response: [String: JSONValue] = ["max_assets": .number(20), "assets": .array([.object([
-                    "id": .string("fixture-generated-image"), "kind": .string("image"), "status": .string("ready"),
+                let response: [String: JSONValue] = ["max_assets": .number(20), "assets": .array(["fixture-generated-image", "fixture-generated-image-b"].map { id in .object([
+                    "id": .string(id), "kind": .string("image"), "status": .string("ready"),
                     "source_filename": .string("Generated fixture.jpg"), "gcs_path": .string("fixture/generated.jpg"),
                     "source_url": .string("https://generated-media-image.invalid/cover.jpg")
-                ])])]
+                ]) })]
                 status = 200; body = (try? JSONEncoder().encode(response)) ?? body
             } else if url.path.hasSuffix("/overlay-plan") {
                 var data = request.httpBody ?? Data()
@@ -826,6 +832,24 @@ enum NativeEditorUITestCommitTransport {
                     while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
                 }
                 let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_REGISTRATION_RECOVERY"] == "1" {
+                    let key = fields["client_import_id"]?.stringValue ?? ""
+                    let source = fields["source_id"]?.stringValue ?? ""
+                    var registrations = UserDefaults.standard.dictionary(forKey: "overlay-fixture-registrations") as? [String: String] ?? [:]
+                    if let existing = registrations[key], existing != source {
+                        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 409, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+                        client?.urlProtocol(self, didLoad: Data(#"{"detail":"import_id_reused"}"#.utf8))
+                        client?.urlProtocolDidFinishLoading(self)
+                        return
+                    }
+                    let first = registrations.isEmpty
+                    registrations[key] = source
+                    UserDefaults.standard.set(registrations, forKey: "overlay-fixture-registrations")
+                    if first {
+                        client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+                        return
+                    }
+                }
                 let response: [String: JSONValue] = ["import_id": fields["client_import_id"] ?? .string(UUID().uuidString),
                     "status": .string("ready"), "source_id": .string("gameday-istanbul-source-4"), "source_index": .number(4),
                     "source": .object(["media_id": .string("gameday-istanbul-source-4"), "duration_s": .number(4)]), "retryable": .bool(false)]

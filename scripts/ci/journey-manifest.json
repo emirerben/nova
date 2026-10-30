@@ -2293,7 +2293,8 @@
         "KriaTests/OverlayGenerationTests/testAppliedNumberKeepsAuthoredTimeSurvivesReopenAndUndoesOnce",
         "KriaTests/OverlayGenerationTests/testUnsavedChangeRejectsAPlanWithoutAddingAnything",
         "KriaUITests/OverlayGenerationUITests/testVisualsPlansAndAddsAnEditableNumberOverlay",
-        "KriaUITests/OverlayGenerationUITests/testInlineImageApprovalUsesNormalVisualControlsUndoAndSavedReopen"
+        "KriaUITests/OverlayGenerationUITests/testInlineImageApprovalUsesNormalVisualControlsUndoAndSavedReopen",
+        "KriaUITests/OverlayGenerationUITests/testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost"
       ],
       "paths": [
         "src/apps/api/app/agents/overlay_generation.py",

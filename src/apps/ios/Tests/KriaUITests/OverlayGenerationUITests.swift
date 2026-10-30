@@ -1,6 +1,36 @@
 import XCTest
 
 @MainActor final class OverlayGenerationUITests: XCTestCase {
+    func testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-overlays"]
+        app.launchEnvironment = ["KRIA_OVERLAY_IMAGE": "1", "KRIA_OVERLAY_RESET": "1",
+            "KRIA_OVERLAY_REGISTRATION_RECOVERY": "1", "UI_TEST_REDUCE_MOTION": "1"]
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-visuals"].waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-visuals"].tap()
+        app.buttons["native-editor-generate-media"].tap()
+        app.segmentedControls["overlay-generation-mode"].buttons["Let Kria choose"].tap()
+        app.buttons["overlay-generation-plan"].tap()
+        let use = app.buttons["generated-media-use"]
+        XCTAssertTrue(use.waitForExistence(timeout: 15))
+        let scroll = app.scrollViews["native-editor-visuals-scroll"]
+        for _ in 0..<4 where !use.isHittable { scroll.swipeUp() }
+        use.tap()
+        XCTAssertTrue(app.staticTexts["generated-media-error"].waitForExistence(timeout: 10))
+        let block = app.buttons["native-editor-timeline-visual_block-DCC14763-5702-4AE3-8510-8C72845E6B15"]
+        XCTAssertFalse(block.exists)
+        app.buttons["Try another look"].tap()
+        XCTAssertTrue(use.waitForExistence(timeout: 10))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: use)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+        use.tap()
+        XCTAssertTrue(app.buttons["native-editor-visuals-tab-Animation"].waitForExistence(timeout: 15))
+        app.buttons["native-editor-visuals-done"].tap()
+        XCTAssertTrue(block.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: block.identifier).count, 1)
+    }
+
     func testInlineImageApprovalUsesNormalVisualControlsUndoAndSavedReopen() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-overlays"]

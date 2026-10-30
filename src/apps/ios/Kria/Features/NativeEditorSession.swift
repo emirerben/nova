@@ -1426,6 +1426,8 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
             if ProcessInfo.processInfo.environment["KRIA_OVERLAY_RESET"] == "1" {
                 UserDefaults.standard.removeObject(forKey: "overlay-fixture-saved-visuals")
+                UserDefaults.standard.removeObject(forKey: "overlay-fixture-generation-count")
+                UserDefaults.standard.removeObject(forKey: "overlay-fixture-registrations")
                 for key in UserDefaults.standard.dictionaryRepresentation().keys {
                     if key.hasPrefix("overlay-plan.overlay-ui-fixture.") {
                         UserDefaults.standard.removeObject(forKey: key)
@@ -5095,7 +5097,8 @@ struct NativeEditorTemporaryVideo {
               let originalURL = asset.originalMediaURL else { throw APIError.invalidResponse }
         var admittedPath = asset.gcsPath
         if rendersOnDevice {
-            guard let originalTarget = editorSourceTarget(kind: .visual), let stableID = UUID(uuidString: proposal.id) else { throw APIError.unsupported }
+            guard let originalTarget = editorSourceTarget(kind: .visual) else { throw APIError.unsupported }
+            let stableID = proposal.sourceRegistrationID(assetID: asset.id)
             let target = EditorSourceRegistrationTarget(itemID: originalTarget.itemID, variantID: originalTarget.variantID,
                 clientImportID: stableID, baseGeneration: originalTarget.baseGeneration,
                 guidedRevisionNumber: originalTarget.guidedRevisionNumber, sourceKind: .visual)
