@@ -179,6 +179,18 @@
       ]
     },
     {
+      "id": "leverkusen-m2-hidden-part",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_m2_hidden_part_replay.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/agents/test_clip_intent_planner.py",
+      "paths": [
+        "src/apps/api/app/kria/hidden_parts.py",
+        "src/apps/api/app/pipeline/hidden_parts.py",
+        "src/apps/api/tests/fixtures/creator_render_contract.schema.json",
+        "src/apps/api/tests/fixtures/m2_leverkusen_hidden_part.json",
+        "src/apps/api/tests/kria/test_m2_hidden_part_replay.py"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "needs_native": true,
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
