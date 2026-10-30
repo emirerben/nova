@@ -5,7 +5,8 @@ Scheduled from `app/agents/_runtime.py._log_outcome` via
 `app/agents/_online_eval.maybe_schedule_judge`. See OBSERVABILITY.md.
 
 Designed to be lightweight (Anthropic HTTP call + Langfuse HTTP call only —
-no FFmpeg, no GCS, no DB). Never blocks the producer; failures are logged
+no FFmpeg or GCS; paid calls require the PostgreSQL ledger).
+Never blocks the producer; failures are logged
 and dropped so a misbehaving judge can't backpressure the request path.
 """
 
@@ -21,7 +22,7 @@ log = structlog.get_logger()
 @celery_app.task(
     name="tasks.score_trace_async",
     bind=True,
-    max_retries=2,
+    max_retries=0,
     default_retry_delay=30,
     # Bound the worker so a slow Anthropic call can't tie up a slot indefinitely.
     soft_time_limit=120,
@@ -34,6 +35,7 @@ def score_trace_async(
     agent_name: str,
     input_dict: dict,
     output_dict: dict,
+    attribution: dict | None = None,
 ) -> None:
     """Run the LLM judge for one prod trace and post scores back to Langfuse.
 
@@ -49,6 +51,7 @@ def score_trace_async(
             agent_name=agent_name,
             input_dict=input_dict,
             output_dict=output_dict,
+            attribution=attribution,
         )
     except Exception as exc:  # noqa: BLE001
         # Online eval is best-effort. Don't requeue forever — log and drop.
@@ -56,6 +59,6 @@ def score_trace_async(
             "online_eval_task_failed",
             agent=agent_name,
             trace_id=trace_id,
-            error=str(exc),
+            error_type=type(exc).__name__,
             attempt=self.request.retries,
         )

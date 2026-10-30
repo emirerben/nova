@@ -11,9 +11,9 @@ import hashlib
 import json
 import unicodedata
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from types import UnionType
-from typing import Annotated, Any, Literal, Union, get_args, get_origin
+from typing import Annotated, Any, Literal, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -210,6 +210,7 @@ _CLIP_INTENT_LEAVES = (
     "intent_id",
     "op",
     "attribute",
+    "source_kind",
     "label_source",
     "transcript_kind",
     "creator_text",
@@ -221,9 +222,135 @@ _CLIP_INTENT_LEAVES = (
     "exclusive",
     # KRI-994: the brief `select` ask an exclusion carries out; read only by receipts.
     "requirement_id",
+    # KRI-1031: a length-only exclusion, settled from clip lengths while planning (the
+    # narrowed pick is what the contract sees).
+    "by_length",
+    "under_s",
 )
 
+
+def _model_children(annotation: Any) -> list[type[BaseModel]]:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _model_children(get_args(annotation)[0])
+    if origin is not None:
+        found: list[type[BaseModel]] = []
+        for arg in get_args(annotation):
+            found += _model_children(arg)
+        return found
+    if isinstance(annotation, type) and (
+        issubclass(annotation, BaseModel) or is_dataclass(annotation)
+    ):
+        return [annotation]
+    return []
+
+
+def _is_list(annotation: Any) -> bool:
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _is_list(get_args(annotation)[0])
+    if origin in (Union, UnionType):
+        return any(_is_list(arg) for arg in get_args(annotation))
+    return origin in (list, tuple, set, frozenset)
+
+
+def schema_field_paths(model: type[BaseModel] = CreativeStrategy, prefix: str = "") -> set[str]:
+    """Every nested field path of ``model``; list-typed fields end in ``[]``."""
+
+    paths: set[str] = set()
+    annotations = (
+        {name: field.annotation for name, field in model.model_fields.items()}
+        if issubclass(model, BaseModel)
+        else {field.name: get_type_hints(model)[field.name] for field in fields(model)}
+    )
+    for name, annotation in annotations.items():
+        path = prefix + name + ("[]" if _is_list(annotation) else "")
+        paths.add(path)
+        for child in _model_children(annotation):
+            paths |= schema_field_paths(child, path + ".")
+    return paths
+
+
 FIELD_MATRIX: dict[str, FieldRule] = {
+    **_rules(
+        "upstream_resolved",
+        "confirmed_order_execution",
+        "confirmed_order_replacement",
+        "confirmed_order_replacement.option_key",
+        "confirmed_order_replacement.proposal",
+        "confirmed_order_replacement.proposal.moments[]",
+        "confirmed_order_replacement.proposal.moments[].duration_s",
+        "confirmed_order_replacement.proposal.moments[].evidence_origin",
+        "confirmed_order_replacement.proposal.moments[].evidence_ref",
+        "confirmed_order_replacement.proposal.moments[].freeze_hold_s",
+        "confirmed_order_replacement.proposal.moments[].gcs_path",
+        "confirmed_order_replacement.proposal.moments[].generation",
+        "confirmed_order_replacement.proposal.moments[].hold_duration_s",
+        "confirmed_order_replacement.proposal.moments[].intent_id",
+        "confirmed_order_replacement.proposal.moments[].kind",
+        "confirmed_order_replacement.proposal.moments[].label",
+        "confirmed_order_replacement.proposal.moments[].media_id",
+        "confirmed_order_replacement.proposal.moments[].occurrence_id",
+        "confirmed_order_replacement.proposal.moments[].output_end_s",
+        "confirmed_order_replacement.proposal.moments[].output_start_s",
+        "confirmed_order_replacement.proposal.moments[].phone_binding_digest",
+        "confirmed_order_replacement.proposal.moments[].playback_rate",
+        "confirmed_order_replacement.proposal.moments[].source_end_s",
+        "confirmed_order_replacement.proposal.moments[].source_fence_digest",
+        "confirmed_order_replacement.proposal.moments[].source_slot",
+        "confirmed_order_replacement.proposal.moments[].source_start_s",
+        "confirmed_order_replacement.proposal.predecessor_brief_version",
+        "confirmed_order_replacement.proposal.predecessor_requirement_digest",
+        "confirmed_order_replacement.proposal.predecessor_requirement_id",
+        "confirmed_order_replacement.proposal.rejected_intent_id",
+        "confirmed_order_replacement.proposal.rejection_category_key",
+        "confirmed_order_replacement.proposal.rejection_question_id",
+        "confirmed_order_replacement.proposal.rejection_selection_sequence",
+        "confirmed_order_replacement.proposal.version",
+        "confirmed_order_replacement.question_id",
+        "confirmed_order_replacement.question_input_digest",
+        "confirmed_order_replacement.question_sequence",
+        "confirmed_order_replacement.selection_sequence",
+        "confirmed_order_replacement.version",
+        note="Server-confirmed sequence; receipts require the current complete compiled artifact.",
+    ),
+    **_rules(
+        "upstream_resolved",
+        "clip_selection_reconciliation",
+        "selection_reconciliation",
+        "selection_reconciliation.rejected_selections[]",
+        "selection_reconciliation.rejected_selections[].category_key",
+        "selection_reconciliation.rejected_selections[].intent",
+        "selection_reconciliation.rejected_selections[].intent.attribute",
+        "selection_reconciliation.rejected_selections[].intent.by_length",
+        "selection_reconciliation.rejected_selections[].intent.caption_attribute",
+        "selection_reconciliation.rejected_selections[].intent.creator_text",
+        "selection_reconciliation.rejected_selections[].intent.exclusive",
+        "selection_reconciliation.rejected_selections[].intent.intent_id",
+        "selection_reconciliation.rejected_selections[].intent.label_source",
+        "selection_reconciliation.rejected_selections[].intent.op",
+        "selection_reconciliation.rejected_selections[].intent.order_by",
+        "selection_reconciliation.rejected_selections[].intent.ordered_members",
+        "selection_reconciliation.rejected_selections[].intent.placeholder",
+        "selection_reconciliation.rejected_selections[].intent.position",
+        "selection_reconciliation.rejected_selections[].intent.requirement_id",
+        "selection_reconciliation.rejected_selections[].intent.source_kind",
+        "selection_reconciliation.rejected_selections[].intent.transcript_kind",
+        "selection_reconciliation.rejected_selections[].intent.under_s",
+        "selection_reconciliation.rejected_selections[].question_id",
+        "selection_reconciliation.rejected_selections[].selection_sequence",
+        "selection_reconciliation.status",
+        "selection_reconciliation.story_refs",
+        "selection_reconciliation.story_refs.inventory_revision",
+        "selection_reconciliation.story_refs.rows[]",
+        "selection_reconciliation.story_refs.rows[].intent_ids[]",
+        "selection_reconciliation.story_refs.rows[].kind",
+        "selection_reconciliation.story_refs.rows[].row_index",
+        "selection_reconciliation.story_refs.story_revision",
+        "selection_reconciliation.unresolved_story_rows[]",
+        "selection_reconciliation.version",
+        note="Server-owned omitted moments and quarantined story prose; never visual proof.",
+    ),
     **_rules(
         "supported",
         "render_contract:order",
@@ -572,39 +699,23 @@ FIELD_MATRIX: dict[str, FieldRule] = {
 }
 
 
-def _model_children(annotation: Any) -> list[type[BaseModel]]:
-    origin = get_origin(annotation)
-    if origin is Annotated:
-        return _model_children(get_args(annotation)[0])
-    if origin is not None:
-        found: list[type[BaseModel]] = []
-        for arg in get_args(annotation):
-            found += _model_children(arg)
-        return found
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return [annotation]
-    return []
-
-
-def _is_list(annotation: Any) -> bool:
-    origin = get_origin(annotation)
-    if origin is Annotated:
-        return _is_list(get_args(annotation)[0])
-    if origin in (Union, UnionType):
-        return any(_is_list(arg) for arg in get_args(annotation))
-    return origin in (list, tuple, set, frozenset)
-
-
-def schema_field_paths(model: type[BaseModel] = CreativeStrategy, prefix: str = "") -> set[str]:
-    """Every nested field path of ``model``; list-typed fields end in ``[]``."""
-
-    paths: set[str] = set()
-    for name, field in model.model_fields.items():
-        path = prefix + name + ("[]" if _is_list(field.annotation) else "")
-        paths.add(path)
-        for child in _model_children(field.annotation):
-            paths |= schema_field_paths(child, path + ".")
-    return paths
+def field_matrix_for_strategy(strategy: Mapping[str, Any]) -> dict[str, FieldRule]:
+    unused = set()
+    if not strategy.get("confirmed_order_replacement"):
+        unused.add("confirmed_order_replacement")
+    if not strategy.get("selection_reconciliation"):
+        unused.add("selection_reconciliation")
+    if not any(
+        isinstance(intent, Mapping) and intent.get("source_kind") is not None
+        for key in ("clip_intents", "resolved_clip_intents")
+        for intent in strategy.get(key) or ()
+    ):
+        unused.update({"clip_intents[].source_kind", "resolved_clip_intents[].source_kind"})
+    return {
+        path: rule
+        for path, rule in FIELD_MATRIX.items()
+        if path not in unused and not any(path.startswith(prefix + ".") for prefix in unused)
+    }
 
 
 # --- Adapter declarations ----------------------------------------------------

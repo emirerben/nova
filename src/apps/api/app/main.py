@@ -47,6 +47,7 @@ from app.routes import (
     dictation,
     editor_sources,
     editorial_taste,
+    generated_media,
     generative_jobs,
     kria_runtime,
     landing,
@@ -431,6 +432,7 @@ app.include_router(dictation.router, prefix="/dictation", tags=["dictation"])
 app.include_router(kria_runtime.router, prefix="/creation-threads", tags=["kria-runtime-v2"])
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(editor_sources.router, prefix="/plan-items", tags=["plan-items"])
+app.include_router(generated_media.router, prefix="/plan-items", tags=["generated-media"])
 app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-agent"])
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])

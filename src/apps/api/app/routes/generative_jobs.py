@@ -1215,6 +1215,13 @@ class EditorCommitBackgroundMusic(BaseModel):
         return value
 
 
+class EditorCaptionLinePlacement(BaseModel):
+    model_config = {"extra": "forbid"}
+    size_px: int | None = Field(None, ge=36, le=160)
+    position_x_frac: float | None = Field(None, ge=0.05, le=0.95, allow_inf_nan=False)
+    position_y_frac: float | None = Field(None, ge=0.10, le=0.90, allow_inf_nan=False)
+
+
 class EditorCaptionAppearance(BaseModel):
     """Explicit native-editor appearance; missing values retain legacy renders."""
 
@@ -1228,6 +1235,7 @@ class EditorCaptionAppearance(BaseModel):
     position_x_frac: float | None = Field(None, ge=0.05, le=0.95, allow_inf_nan=False)
     position_y_frac: float | None = Field(None, ge=0.10, le=0.90, allow_inf_nan=False)
     max_width_frac: float | None = Field(None, ge=0.2, le=1, allow_inf_nan=False)
+    line_overrides: dict[str, EditorCaptionLinePlacement] | None = Field(None, max_length=500)
 
     @field_validator("stroke_color", "shadow_color")
     @classmethod
@@ -3652,6 +3660,10 @@ async def _patch_narrated_variant(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Captions are being applied — try again once the render finishes.",
+        )
+    if "caption_cues" in mutation:
+        _require_caption_animation_client(
+            job, target, EditorCommitRequest(caption_cues=mutation["caption_cues"])
         )
     for i, v in enumerate(variants):
         if v.get("variant_id") == variant_id:
@@ -7427,6 +7439,16 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         capabilities["text_bend"] = True
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
+    from app.services.client_protocol import CAPTION_STYLE_SCOPE_PROTOCOL, current_client_protocol
+
+    protocol = current_client_protocol()
+    if (
+        variant.get("render_destination") in {"device", "phone"}
+        and capabilities.get("caption_editor_style") is True
+        and protocol is not None
+        and protocol >= CAPTION_STYLE_SCOPE_PROTOCOL
+    ):
+        capabilities["caption_style_scope"] = True
     return capabilities
 
 
@@ -10768,7 +10790,43 @@ def _require_caption_animation_client(
     older build re-sends cues and the guided caption meta without the key, which would
     silently wipe the creator's animation.
     """
+    from app.services.client_protocol import (
+        CAPTION_STYLE_SCOPE_PROTOCOL,
+        caption_style_scope_supported,
+    )
     from app.services.phone_rollout import caption_animation_client_supported  # noqa: PLC0415
+
+    submitted = payload.caption_meta.appearance if payload.caption_meta is not None else None
+    stored = variant.get("caption_editor_style") or {}
+    guided_meta = (_guided_v2_revision(job, variant) or {}).get("caption_meta") or {}
+    stored_own = stored.get("line_overrides") or (guided_meta.get("appearance") or {}).get(
+        "line_overrides"
+    )
+    edits_caption_state = (
+        payload.caption_meta is not None
+        or payload.caption_cues is not None
+        or payload.text_elements is not None
+    )
+    if not caption_style_scope_supported() and (
+        submitted is not None and submitted.line_overrides or stored_own and edits_caption_state
+    ):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "caption_style_scope",
+                "minimum_client_protocol": CAPTION_STYLE_SCOPE_PROTOCOL,
+            },
+        )
+
+    if stored_own and payload.caption_cues is not None:
+        ids = [row.get("id") for row in payload.caption_cues]
+        if any(not isinstance(value, str) or not value for value in ids) or len(set(ids)) != len(
+            ids
+        ):
+            raise HTTPException(
+                422, detail="Caption line IDs must be preserved when editing scoped captions."
+            )
 
     if caption_animation_client_supported():
         return

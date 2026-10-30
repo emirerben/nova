@@ -2520,6 +2520,8 @@ def _model_strategy_hygiene(strategy: CreativeStrategy) -> CreativeStrategy:
     update: dict[str, Any] = {
         "resolved_clip_intents": None,
         "resolved_song_takes": None,
+        "selection_reconciliation": None,
+        "confirmed_order_replacement": None,
         # Both duration fields are server-owned.  The Main Creator stamps
         # them from the latest creator message; a route-level fallback does
         # the same in `_apply_explicit_render_intent`.

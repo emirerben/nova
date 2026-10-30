@@ -1443,8 +1443,8 @@ Tesseract reads the actual text pixels in the approved region and window. It
 does not call a model or upload originals. The existing format/duration, creator
 contract, source-generation and row/attempt fences still apply.
 
-Enrollment requires `PHONE_ACTUAL_EXPORT_VERIFICATION_ENABLED=true` and an explicit
-`PHONE_ACTUAL_EXPORT_VERIFICATION_USER_IDS` account list (empty enrolls nobody).
+Enrollment requires `PHONE_ACTUAL_EXPORT_VERIFICATION_ENABLED=true` (every account;
+there is no per-account list).
 Keep it off until the full API/worker fleet contains the verifier and a protocol-12
 client has passed its canary. A read-time `output_verification_required` hint makes
 that client withhold the local candidate from playback/Save/Share until publication;

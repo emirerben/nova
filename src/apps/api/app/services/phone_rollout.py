@@ -517,6 +517,24 @@ def freeze_frame_planned_for(client_protocol: int | None) -> bool:
     )
 
 
+def text_bend_planned_for(client_protocol: int | None) -> bool:
+    """May a phone montage plan bend the text the creator asked curved (KRI-1029)?
+
+    The planner's twin of `text_bend_supported` (KRI-646), read like
+    `freeze_frame_planned_for`: ``client_protocol`` is the app build the creator acted from
+    (the drafting message, then ``creator_client_protocol`` on the Job). True iff the kill
+    switch is on, ``textBend`` is in ``phone_render_verified_features`` and that build
+    declares at least ``text_bend_min_client_protocol``. No stamp plans straight text: the
+    receipt says so, instead of a bent recipe the approving phone would be told to update for.
+    """
+    return bool(
+        settings.text_bend_enabled
+        and "textBend" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= settings.text_bend_min_client_protocol
+    )
+
+
 def clip_speed_planned_for() -> bool:
     """May a phone montage plan retime a cut for the creator's speed ask (KRI-689)?
 

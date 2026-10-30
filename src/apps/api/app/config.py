@@ -31,8 +31,6 @@ class Settings(BaseSettings):
     # Enroll supported NEW phone requests in measured actual-output verification.
     # The per-request stamp survives flag changes and exact retries.
     phone_actual_export_verification_enabled: bool = False
-    # Explicit pilot enrollment only; empty means no new requests are enrolled.
-    phone_actual_export_verification_user_ids: list[UUID] = Field(default_factory=list)
     # New editor imports require device qualification; saved receipts remain readable.
     phone_editor_media_enabled: bool = False
     phone_render_verified_features: list[str] = Field(default_factory=list)
@@ -584,6 +582,22 @@ class Settings(BaseSettings):
     # migration can land before enforcement. Production enables it only after
     # split-project API keys and alert budgets have been verified.
     ai_cost_control_enabled: bool = False
+    credit_quality_review_enabled: bool = False
+    credit_quality_review_billing_verified: bool = False
+    credit_quality_review_approved_run_id: str = ""
+    credit_quality_review_max_run_usd: float = Field(default=0, ge=0, le=2)
+    generated_images_enabled: bool = False
+    generated_narration_enabled: bool = False
+    generated_media_live_approved: bool = False
+    generated_media_billing_organization: str = ""
+    generated_media_price_verified_at: str = ""
+    generated_media_max_request_usd: float = Field(default=0, ge=0, le=2.0)
+    ai_openai_monthly_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_anthropic_monthly_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_openai_evaluation_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_openai_image_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_openai_narration_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_anthropic_evaluation_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_usage_environment: Literal["production", "development", "lab", "test"] = "development"
     # Optional operator-approved envelope for a local development manual-QA
     # session. It fills attribution for background Celery work that cannot
@@ -623,7 +637,6 @@ class Settings(BaseSettings):
     # after their API and physical-device evidence is complete.
     media_library_enabled: bool = False
     media_collection_proposals_enabled: bool = False
-    media_collection_proposal_user_ids: list[UUID] = Field(default_factory=list)
     media_collection_cache_only: bool = False
     # Per-account allowlist; ["*"] admits everyone (the ENABLED kill switch still applies).
     # Admission alone personalizes nothing: a creator must confirm a profile first.
@@ -639,11 +652,6 @@ class Settings(BaseSettings):
             return False
         allowed = {value.strip() for value in self.creator_editorial_taste_user_ids}
         return "*" in allowed or str(user_id) in allowed
-
-    def media_collection_proposals_for(self, user_id: object) -> bool:
-        return self.media_collection_proposals_enabled and str(user_id) in {
-            str(value) for value in self.media_collection_proposal_user_ids
-        }
 
     # Daily comparison of delayed Standard Usage Cost export with Nova's
     # settled reservation ledger. Targets and project attribution stay JSON so

@@ -43,6 +43,38 @@ silently upgraded. Camera effects change the footage, not a floating visual.
 
 ## Additive wire fields
 
+Protocol 25 adds `editor_capabilities.caption_style_scope` for device captions.
+Style offers a scope choice for font size and position. The project default stays
+in `caption_meta.size_px` and `caption_meta.appearance`. Per-line overrides stay
+in `appearance.line_overrides`, keyed by the persisted caption or text-row ID.
+An override contains `size_px`, `position_x_frac`, or `position_y_frac`.
+All captions replaces existing overrides for the changed property. Unrelated
+per-line properties remain. Text-lane lines apply a line choice to each word row
+in their existing group.
+
+Caption drag and resize ask for scope once after release. Choosing all captions
+updates the project default and clears that property from every line override.
+Other per-line properties remain. The gesture and choice form one undo
+transaction. These changes never write account text preferences.
+
+Position buttons measure caption blocks against `NativePreviewDangerZones`.
+If a caption is too large for the safe area, the inspector asks for a smaller
+size and leaves its position unchanged. Size uses output pixels, with the canvas
+dimensions shown beside the control. Font size describes the font's em size,
+not the visible height of every letter.
+
+New generation already resolves unspecified outline to zero and shadow to off
+in `phone_text_styling`. Existing authored appearance, including legacy missing
+effect fields, keeps its original render defaults. No migration resets saved
+account choices or project styling. Protocols below 25 cannot replace caption
+state that contains line overrides. The shared locked captions PATCH also rejects
+replacement cues without stable IDs when scoped styling exists.
+
+Cue-specific font, color, size, outline, and shadow choices remain in their
+existing caption-cue fields and reach both native and phone recipe compilers.
+The native unset caption font uses the shared registry default, TikTok Sans
+Regular, matching the phone recipe compiler. Saved font choices are unchanged.
+
 - `caption_meta.appearance` commits alignment, outline/shadow colors, shadow
   opacity, and explicit spoken-word highlighting. It persists as
   `caption_editor_style` on the variant and returns through the public editor

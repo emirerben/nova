@@ -76,6 +76,14 @@ enum NativeEditorUITestFixtures {
             caps["caption_editor_style"] = .bool(true)
             value.serverSnapshot["editor_capabilities"] = .object(caps)
         }
+        if arguments.contains("-ui-testing-editor-caption-style-scope") {
+            var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+            caps["caption_style_scope"] = .bool(true)
+            caps["caption_editor_style"] = .bool(true)
+            caps["caption_meta"] = .object(["editable": .bool(true)])
+            caps["caption_cues"] = .object(["editable": .bool(true)])
+            value.serverSnapshot["editor_capabilities"] = .object(caps)
+        }
         if arguments.contains("-ui-testing-editor-caption-text-motion") {
             // An all-captions entrance stored by Style > Text motion before it folded into Animation (KRI-1007).
             var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]

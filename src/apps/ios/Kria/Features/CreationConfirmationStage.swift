@@ -155,15 +155,6 @@ func isNotRetryableNowFailureCode(_ code: String?) -> Bool {
     return notRetryableNowFailureCodes.contains(code)
 }
 
-/// Typed creator declines (`decline_reason`) whose next step is a reply in this
-/// chat: a choice only the creator can make, a confirmed detail the plan is
-/// missing, or a capability the edit has to drop. The server's copy asks that
-/// question (and may attach `choice_question` options to the same event), so a
-/// New chat would throw the conversation away (S4-h).
-let replyInChatDeclineReasons: Set<String> = [
-    "needs_choice", "requirement_conflict", "capability_unavailable", "evidence_missing",
-]
-
 /// True for `nonRetryablePhoneGateErrorCodes`. A runtime-v2 speech-cleanup
 /// dispatch refusal deliberately stays retryable: it arrives as an
 /// `assistant_render_failed` event (`code: render_dispatch_failed`,

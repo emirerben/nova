@@ -128,6 +128,7 @@ def montage_blockers(
         build_receipts,
         needs_creator_choice,
         plan_facts_from_unified_montage,
+        undrawable_phone_text,
     )
     from app.kria.duplicate_uploads import montage_record_fields  # noqa: PLC0415
     from app.services.creator_render_contract import CreatorRenderContractError  # noqa: PLC0415
@@ -136,6 +137,7 @@ def montage_blockers(
     if brief is None or not settings.brief_binding_for(creator_id):
         return None
     from app.kria.speed_ask import asks_clip_speed  # noqa: PLC0415
+    from app.kria.text_shape_ask import CURVED, text_shape  # noqa: PLC0415
 
     judged: dict[str, BriefRequirement] = {
         req.id: req for req in brief.live() if req.kind in PREFLIGHT_KINDS
@@ -143,13 +145,16 @@ def montage_blockers(
     # KRI-689: a clip-speed ask is settled by the same plan (which cuts, which rate, or why
     # not). Its receipt is returned whatever its status, so the draft says "Done: ... (clips 1
     # and 3 play at 2x)" or the honest "Couldn't" before the approval card.
-    speed_asks = {req.id for req in brief.live() if asks_clip_speed(req)}
+    # KRI-1029: so is a curved-text ask ("Done", or "it stays straight" for a build or a
+    # title entrance that can't bend), never the model's "your curved title".
+    speed_asks = {
+        req.id for req in brief.live() if asks_clip_speed(req) or text_shape(req) == CURVED
+    }
     # KRI-1024: creator literals no phone font draws; the plan below says whether the
     # worker's typography step would refuse them.
-    refused = undrawable_text_receipts(
-        # 29 Ekim: a text_sequence's words are drawn too, as the opening title's pieces.
-        [req for req in brief.live() if req.kind in {"text", "text_sequence"} and req.literal]
-    )
+    refused = [
+        receipt for req in brief.live() if (receipt := undrawable_phone_text(req)) is not None
+    ]
     if not judged and not speed_asks and not refused:
         return None
     try:
@@ -181,31 +186,6 @@ def montage_blockers(
         if (receipt.requirement_id in judged and needs_creator_choice(receipt))
         or (receipt.requirement_id in speed_asks and receipt.verification == "checked")
     ]
-
-
-def undrawable_text_receipts(requirements: Sequence[BriefRequirement]) -> list[RequirementReceipt]:
-    """KRI-1024: a checked "Couldn't" for each creator literal no phone font can draw.
-
-    Names the text and the characters (color emoji are the phone's own, never named), so
-    the draft asks before the approval card instead of failing one second after it.
-    """
-    from app.kria.brief_checks import _receipt  # noqa: PLC0415
-    from app.pipeline.phone_text_style import undrawable_message, undrawable_text  # noqa: PLC0415
-
-    receipts = []
-    for req in requirements:
-        found = undrawable_text([req.literal or ""])
-        if found is not None:
-            receipts.append(
-                _receipt(
-                    req,
-                    "not_possible",
-                    undrawable_message(*found),
-                    verification="checked",
-                    stage="checked",
-                )
-            )
-    return receipts
 
 
 def preflight_montage_plan(

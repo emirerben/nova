@@ -86,6 +86,9 @@ from app.kria.clip_exclusions import (
     earlier_exclusions,
     exclusion_question,
     exclusions_to_ask,
+    length_exclusion_notice,
+    still_played_exclusions,
+    still_played_notice,
     with_exclusion_categories,
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope, apply_subject_scope
@@ -100,6 +103,7 @@ from app.kria.narration_notes import (
     spoken_plan,
     with_note,
 )
+from app.kria.order_replacement import OrderReplacementProof
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
@@ -129,6 +133,11 @@ from app.schemas.clip_intents import ClipIntent, ResolvedClipIntent
 from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     PinnedText,
+)
+from app.schemas.story_intents import (
+    RejectedClipSelection,
+    SelectionReconciliation,
+    StoryIntentRefs,
 )
 from app.schemas.user_song import (
     SONG_ALIGNMENT_VERSION,
@@ -191,6 +200,7 @@ from app.services.kria_editor_ops import (
     EDITOR_STATE_STALE_REPLY,
     MAX_EDITOR_OPS,
     SPEECH_CUT_NEEDS_SAVE_REPLY,
+    EditorDraftBasis,
     EditorStateStaleError,
     build_editor_snapshot,
     clip_facts_by_media_id,
@@ -198,7 +208,9 @@ from app.services.kria_editor_ops import (
     clip_visible_text_by_media_id,
     coalesce_text_style_ops,
     editor_state_has_lanes,
+    failed_editor_draft_basis,
     resolve_editor_base,
+    unknown_editor_render_query,
 )
 from app.services.music_genre import (
     GENRE_FIT,
@@ -236,6 +248,7 @@ from app.services.spoken_quotes import (
     transcribe_stored_quote,
 )
 from app.services.spoken_roles import SpokenSeats
+from app.services.story_intent_reconciliation import reconcile_story_intents
 
 log = structlog.get_logger()
 
@@ -1007,6 +1020,10 @@ def adapt_creator_action(
     server_resolved_song_takes: list[dict[str, Any]] | None = None,
     server_song_captions: str | None = None,
     ordering_choice: str | None = None,
+    server_rejected_selections: Sequence[RejectedClipSelection] = (),
+    server_checked_intents: Sequence[ClipIntent] = (),
+    server_story_refs: StoryIntentRefs | None = None,
+    server_order_replacement: OrderReplacementProof | None = None,
 ) -> KriaTurnPlan:
     """``server_resolved_song_takes`` (KRI-374) is the ONLY way ``resolved_song_takes``
     survives into the draft: it is server-owned (the song-order gate writes it after the
@@ -1081,7 +1098,38 @@ def adapt_creator_action(
             if intent.label_source == "transcript"
         ]
     )
+    reconciled_story = list(action.strategy.story_structure)
+    selection_reconciliation = None
+    if server_rejected_selections:
+        result = reconcile_story_intents(
+            reconciled_story,
+            refs=server_story_refs,
+            checked_intents=server_checked_intents,
+            rejected_intents=[selection.intent for selection in server_rejected_selections],
+        )
+        unresolved = result.status == "unresolved"
+        selection_reconciliation = SelectionReconciliation(
+            rejected_selections=tuple(server_rejected_selections),
+            status="unresolved" if unresolved else "reconciled",
+            unresolved_story_rows=tuple(reconciled_story) if unresolved else (),
+            story_refs=result.refs,
+        )
+        reconciled_story = [] if unresolved else list(result.rows)
+        omitted = ", ".join(selection.intent.attribute for selection in server_rejected_selections)
+        summary = say(
+            en=f"I left out {omitted} based on your clip answer.",
+            tr=f"Klip yanıtına göre {omitted} bölümünü çıkardım.",
+        )
+        if unresolved:
+            summary += " " + say(
+                en="The earlier story outline is saved for review and is not part of this plan.",
+                tr="Önceki hikâye taslağı inceleme için saklandı ve bu planın parçası değil.",
+            )
     strategy_update = {
+        "story_structure": reconciled_story,
+        "selection_reconciliation": selection_reconciliation,
+        "confirmed_order_replacement": server_order_replacement,
+        **({"rationale": summary} if selection_reconciliation else {}),
         "clip_intents": requested_intents or None,
         "resolved_clip_intents": server_resolved_clip_intents or None,
         "resolved_song_takes": server_resolved_song_takes or None,
@@ -1830,6 +1878,7 @@ class _EditorTarget:
     # The projected variant the snapshot was built from (plain JSON copy). Only
     # the dev harness (`app.cli.kria_ask`) reads it, to dry-run the compiler.
     variant: dict | None = None
+    recovery_basis: EditorDraftBasis | None = None
 
 
 async def _copilot_clip_context(
@@ -1957,6 +2006,8 @@ _GUARDED_MISSES = frozenset(
         "no_ready_variant",
         "no_allowed_families",
         "editor_state_stale",
+        "failed_draft_unavailable",
+        "render_outcome_unknown",
     }
 )
 
@@ -2061,7 +2112,58 @@ async def _load_editor_target(
         (row for row in variants if row.get("variant_id") == session.target_variant_id),
         None,
     )
-    variant = target_row if target_row and target_row.get("render_status") == "ready" else None
+    head = (
+        (
+            await db.execute(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.item_id == item_id,
+                    CreatorEditDraft.variant_key == session.target_variant_id,
+                    CreatorEditDraft.base_job_id == job.id,
+                    CreatorEditDraft.is_head.is_(True),
+                )
+            )
+        ).scalar_one_or_none()
+        if target_row is not None
+        else None
+    )
+    recovery_basis = None
+    if (
+        compose_unmet_with_ops()
+        and target_row
+        and target_row.get("render_status") in {"failed", "needs_attention"}
+    ):
+        if (
+            await db.execute(unknown_editor_render_query(session, job, target_row))
+        ).scalar_one_or_none() is not None:
+            _miss("render_outcome_unknown", session_id=str(session.id))
+            return None
+        recovery_basis = failed_editor_draft_basis(
+            head,
+            job,
+            target_row,
+            thread_id=thread_id,
+            creator_id=getattr(thread, "creator_id", None),
+            item_id=item_id,
+        )
+        if recovery_basis is None:
+            _miss(
+                "failed_draft_unavailable",
+                session_id=str(session.id),
+                target_variant_id=session.target_variant_id,
+                variants_seen=[
+                    {"variant_id": row.get("variant_id"), "render_status": row.get("render_status")}
+                    for row in variants
+                ],
+            )
+            return None
+        if session.creator_id != thread.creator_id or session.plan_item_id != item_id:
+            _miss("session_job_mismatch", session_id=str(session.id))
+            return None
+    variant = (
+        target_row
+        if target_row and (target_row.get("render_status") == "ready" or recovery_basis is not None)
+        else None
+    )
     # The editor snapshot reads only editable lanes (never rendered artifacts), so a
     # creator's CURRENT editor state may be answered while a render is in flight; a
     # state built on an older render is caught as stale just below.
@@ -2097,16 +2199,6 @@ async def _load_editor_target(
             ],
         )
         return None
-    head = (
-        await db.execute(
-            select(CreatorEditDraft).where(
-                CreatorEditDraft.item_id == session.plan_item_id,
-                CreatorEditDraft.variant_key == session.target_variant_id,
-                CreatorEditDraft.base_job_id == job.id,
-                CreatorEditDraft.is_head.is_(True),
-            )
-        )
-    ).scalar_one_or_none()
     # ONE resolver (client state > fresh head > saved variant) shared with the draft
     # compile in tasks/kria_runtime so the snapshot and the compile base cannot diverge.
     try:
@@ -2159,7 +2251,11 @@ async def _load_editor_target(
         if row.content
     ]
     return _EditorTarget(
-        job_id=job.id, snapshot=snapshot, conversation=conversation, variant=variant
+        job_id=job.id,
+        snapshot=snapshot,
+        conversation=conversation,
+        variant=variant,
+        recovery_basis=recovery_basis,
     )
 
 
@@ -2263,6 +2359,32 @@ async def _plan_editor_revision(
             turn_value="recovery",
             response=localized_editor_state_reply(SPEECH_CUT_NEEDS_SAVE_REPLY),
         )
+    if target.recovery_basis is not None:
+        draft_plan = adapt_editor_action(
+            reply=_phone_editor_reply(response.reply), ops=response.ops or []
+        )
+        if getattr(response, "unmet_requests", None) or (
+            response.ops and not _is_fast_path_plan(draft_plan)
+        ):
+            return KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=_failed_correction_alternative(),
+            )
+        if response.ops:
+            plan = adapt_editor_action(
+                reply=_phone_editor_reply(response.reply),
+                ops=response.ops,
+                notes=getattr(response, "reply_notes", None) or None,
+            )
+            return plan.model_copy(
+                update={
+                    "diagnostics": {
+                        **(plan.diagnostics or {}),
+                        "editor_recovery_basis": target.recovery_basis._asdict(),
+                    }
+                }
+            )
     if response.ops:
         return adapt_editor_action(
             reply=_phone_editor_reply(response.reply),
@@ -3912,6 +4034,32 @@ async def _plan_creator_action(
                         update={"summary": " ".join([action.summary.strip(), notice]).strip()}
                     )
                     policy_notices = (*policy_notices, notice)
+            media_ids = [media.media_id for media in manifest.media]
+            still_played = still_played_exclusions(
+                planned.resolution.intents, action.strategy, media_ids
+            )
+            if still_played:
+                # KRI-1026: a skip that matched clips but could not take them out (another
+                # settled ask or the strategy uses them, or nothing would be left) is said.
+                log.info(
+                    "kria_clip_exclusions_kept",
+                    thread_id=str(thread_id),
+                    kept=len(still_played),
+                )
+                notice = still_played_notice([media_ids.index(m) + 1 for m in still_played])
+                if notice not in policy_notices:
+                    action = action.model_copy(
+                        update={"summary": " ".join([action.summary.strip(), notice]).strip()}
+                    )
+                    policy_notices = (*policy_notices, notice)
+            # KRI-1031: "skip anything too short to use" names the clips it left out (or says
+            # none is too short), so the creator sees what the measured rule did.
+            measured = length_exclusion_notice(planned.resolution.intents, still_played, media_ids)
+            if measured is not None and measured not in policy_notices:
+                action = action.model_copy(
+                    update={"summary": " ".join([action.summary.strip(), measured]).strip()}
+                )
+                policy_notices = (*policy_notices, measured)
         tie_asked = tie_question(ties, intent_clips, excluded=skipped)
         if tie_asked is not None:
             log.info(
@@ -4092,7 +4240,11 @@ def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:
     unmatched = sum(
         1
         for intent in planned.resolution.intents
-        if intent.op == "exclude" and intent.status == "resolved" and not intent.assignments
+        if intent.op == "exclude"
+        and intent.status == "resolved"
+        and not intent.assignments
+        # KRI-1031: a measured length ask that matched nothing kept every clip on purpose.
+        and intent.by_length is None
     )
     return planned.dropped_exclusions + unmatched
 
@@ -4572,10 +4724,61 @@ def _editor_target_miss_guarded() -> bool:
     return _editor_target_miss.get() in _GUARDED_MISSES
 
 
+def _failed_correction_alternative() -> str:
+    return say(
+        en=(
+            "I can't apply this whole correction with the saved draft's supported editor tools. "
+            "Nothing was changed. Ask for a single text or style change, or ask for a new "
+            "version using your saved request."
+        ),
+        tr=(
+            "Bu düzeltmenin tamamını kayıtlı taslağın desteklediği düzenleme araçlarıyla "
+            "uygulayamıyorum. Hiçbir şey değişmedi. Tek bir yazı veya stil değişikliği iste "
+            "ya da kayıtlı isteğinden yeni bir sürüm iste."
+        ),
+    )
+
+
 def _editor_target_recovery(manifest: object) -> PlannedKriaTurn:
     """An editor-eligible ask on a rendered item whose editor target could not be
     loaded must not silently become a re-plan that replaces the draft with a render."""
     miss = _editor_target_miss.get()
+    if miss in {"failed_draft_unavailable", "render_outcome_unknown"}:
+        return PlannedKriaTurn(
+            plan=KriaTurnPlan(
+                mode="respond",
+                turn_value="recovery",
+                response=(
+                    say(
+                        en=(
+                            "The previous render's outcome is still unknown. Refresh the project "
+                            "to check it before starting another render. "
+                            "Your saved draft is unchanged."
+                        ),
+                        tr=(
+                            "Önceki videonun sonucu hâlâ bilinmiyor. Başka bir video başlatmadan "
+                            "önce sonucu kontrol etmek için projeyi yenile. "
+                            "Kayıtlı taslağın değişmedi."
+                        ),
+                    )
+                    if miss == "render_outcome_unknown"
+                    else say(
+                        en=(
+                            "There isn't a current editable draft for this failed render. "
+                            "Your saved request is unchanged. No new render was started. "
+                            "Ask for a new version using your saved request."
+                        ),
+                        tr=(
+                            "Bu başarısız video için güncel, düzenlenebilir bir taslak yok. "
+                            "Kayıtlı isteğin değişmedi. Yeni bir video başlatılmadı. "
+                            "Kayıtlı isteğinden yeni bir sürüm iste."
+                        ),
+                    )
+                ),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
     return PlannedKriaTurn(
         plan=KriaTurnPlan(
             mode="respond",
@@ -4769,6 +4972,18 @@ async def _gate_unresolved_choices(
     if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
         return planned
     events = await _load_thread_events(db, thread_id)
+    from app.services.clip_none_answers import NoneAnswers, none_answer_choices  # noqa: PLC0415
+
+    # KRI-1025: a pin or text whose clip the creator answered None to on the picker is
+    # recorded as their answer, so nothing below (or the contract) waits on it.
+    none_answers = (
+        none_answer_choices(brief, strategy, events)
+        if settings.kria_choice_questions_enabled
+        else NoneAnswers()
+    )
+    typed_brief = brief
+    if none_answers.answers:
+        brief = answered_brief(brief, {"choice_answers": list(none_answers.answers)})
     music_inputs = {
         "media": (planned.media_snapshot or {}).get("clip_assignments"),
         "selected": strategy.get("selected_media_ids"),
@@ -4847,6 +5062,11 @@ async def _gate_unresolved_choices(
         events,
         can_ask=answers_moment_questions and settings.clip_intents_enabled,
     )
+    if moments.recovery is not None:
+        return replace(
+            planned,
+            plan=KriaTurnPlan(mode="respond", turn_value="question", response=moments.recovery),
+        )
     if moments.question is not None:
         from app.services.named_moments import question_text  # noqa: PLC0415
 
@@ -4990,7 +5210,7 @@ async def _gate_unresolved_choices(
                 response=waiting,
             ),
         )
-    if not resolution.answers:
+    if not resolution.answers and not none_answers.answers:
         return _with_narration_note(
             planned,
             strategy,
@@ -4999,29 +5219,43 @@ async def _gate_unresolved_choices(
             camera_sound=camera_sound,
             closing_quote=closing_quote,
         )
-    summary = _summary_with_notices(model_summary, [*plan_notices, *resolution.notices])
-    rewritten = apply_intent.model_copy(
-        update={"arguments": {**arguments, "strategy": resolution.strategy, "summary": summary}}
+    if none_answers.answers and resolution.answers:
+        # What the video ends on instead follows the creator's other answers (their upload
+        # order, say), so the notices are worded against the brief those answers give.
+        none_answers = none_answer_choices(
+            answered_brief(typed_brief, resolution.strategy), strategy, events
+        )
+    chosen = resolution.strategy
+    if none_answers.answers:
+        chosen = {**chosen, "choice_answers": [*resolution.answers, *none_answers.answers]}
+    summary = _summary_with_notices(
+        model_summary, [*plan_notices, *resolution.notices, *none_answers.notices]
     )
-    final_brief = answered_brief(brief, resolution.strategy)
+    rewritten = apply_intent.model_copy(
+        update={"arguments": {**arguments, "strategy": chosen, "summary": summary}}
+    )
+    final_brief = answered_brief(brief, chosen)
     final_snapshot = _enrich_best_parts_snapshot(
-        resolution.strategy,
+        chosen,
         enriched_snapshot,
         final_brief,
         closing_quote=closing_quote,
         named_lines=named_lines,
         camera_sound=camera_sound,
-        visual_photo_ids=_held_visual_pool(planned.brief_manifest, resolution.strategy),
+        visual_photo_ids=_held_visual_pool(planned.brief_manifest, chosen),
         attached_visual_ids=_attached_visual_ids(planned.brief_manifest),
         moment_pins=moments,
     )
+    # The receipts reply keeps only the policy notices when it replaces the summary.
+    kept_notices = [n for n in none_answers.notices if n not in planned.policy_notices]
     return _with_narration_note(
         replace(
             planned,
             plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]}),
             media_snapshot=final_snapshot,
+            policy_notices=(*planned.policy_notices, *kept_notices),
         ),
-        resolution.strategy,
+        chosen,
         final_snapshot,
         final_brief,
         camera_sound=camera_sound,
@@ -5039,14 +5273,24 @@ def _moment_decision(
 ) -> Any:
     """KRI-723: the named moments' pins, or the question that gets them (no model call)."""
     from app.services.length_planning import DEFAULT_MOMENT_S  # noqa: PLC0415
-    from app.services.named_moments import decide, named_moments  # noqa: PLC0415
+    from app.services.named_moments import (  # noqa: PLC0415
+        MomentDecision,
+        MomentOrderError,
+        decide,
+        named_moments,
+    )
 
     if not settings.clip_intents_enabled:
         return decide(None, (), can_ask=False, default_window_s=DEFAULT_MOMENT_S)
     ask = brief_moment_ask(brief)
-    moment_set = named_moments(
-        strategy, media_snapshot, moment_count=ask.count if ask is not None else None
-    )
+    try:
+        moment_set = named_moments(
+            strategy, media_snapshot, moment_count=ask.count if ask is not None else None
+        )
+    except MomentOrderError as exc:
+        if can_ask:
+            return MomentDecision(recovery=str(exc))
+        moment_set = None
     return decide(
         moment_set,
         events,
@@ -5419,20 +5663,67 @@ async def _plan_live_turn(
     creative_copy_pending = bool(creative_copy_states)
     brief_on = settings.creative_brief_for(creator_id)
     binding_on = settings.brief_binding_for(creator_id)
-    # KRI-188: with a render present and the brief on, the requirement router
-    # decides between the editor-op tool and a re-plan, so the Main Creator
-    # (which extracts the requirements) runs FIRST. Everything else keeps the
-    # original order: editor copilot first, planner only when no op survives.
-    # A FAILED latest job has no ready variant to follow up on: the turn is a fresh plan
-    # (the editor target is unavailable and the follow-up route has nothing to route to).
     latest_job_failed = False
+    latest_job = None
     if item.current_job_id is not None:
         latest_job = await db.get(Job, item.current_job_id)
         latest_job_failed = str(getattr(latest_job, "status", "") or "").endswith("failed")
+    latest_variants = [
+        row
+        for row in (getattr(latest_job, "assembly_plan", None) or {}).get("variants") or []
+        if isinstance(row, dict)
+    ]
+    failed_render = bool(
+        latest_job is not None
+        and (
+            latest_job_failed
+            or any(row.get("render_status") == "needs_attention" for row in latest_variants)
+        )
+    )
+    correction_candidate = (
+        compose_unmet_with_ops()
+        and failed_render
+        and not answers_clip_question
+        and _fast_path_eligible(user_message)
+    )
+    failed_editor_correction = correction_candidate and _is_text_edit_ask(user_message)
+    if (
+        correction_candidate
+        and not failed_editor_correction
+        and any(
+            row.get("render_status") in {"failed", "needs_attention"} for row in latest_variants
+        )
+    ):
+        saved_heads = (
+            (
+                await db.execute(
+                    select(CreatorEditDraft).where(
+                        CreatorEditDraft.item_id == item.id,
+                        CreatorEditDraft.thread_id == thread_id,
+                        CreatorEditDraft.creator_id == creator_id,
+                        CreatorEditDraft.base_job_id == latest_job.id,
+                        CreatorEditDraft.is_head.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        failed_editor_correction = any(
+            failed_editor_draft_basis(
+                head, latest_job, row, thread_id=thread_id, creator_id=creator_id, item_id=item.id
+            )
+            is not None
+            for head in saved_heads
+            if isinstance(head, CreatorEditDraft)
+            for row in latest_variants
+            if row.get("variant_id") == head.variant_key
+            and row.get("render_status") in {"failed", "needs_attention"}
+        )
     extract_first = (
         brief_on
         and item.current_job_id is not None
-        and not latest_job_failed
+        and (not latest_job_failed or failed_editor_correction)
         and not creative_copy_pending
         and manifest.capabilities["dispatch_render"].available
     )
@@ -5605,6 +5896,8 @@ async def _plan_live_turn(
                     db, thread_id=thread_id, item=item, **_state_kw(editor_state)
                 )
                 if target is None:
+                    if failed_editor_correction and _editor_target_miss.get() == "no_render":
+                        _editor_target_miss.set("failed_draft_unavailable")
                     recovery = _editor_target_recovery(manifest)
                     return replace(
                         recovery,
@@ -5653,6 +5946,18 @@ async def _plan_live_turn(
                         },
                         brief_expected_version=prior_brief.version if prior_brief else 0,
                     )
+            if failed_editor_correction:
+                return PlannedKriaTurn(
+                    plan=KriaTurnPlan(
+                        mode="respond",
+                        turn_value="recovery",
+                        response=_failed_correction_alternative(),
+                    ),
+                    manifest_hash=manifest.manifest_hash,
+                    context_hash=manifest.context_hash,
+                    brief_updates=pre_extracted_updates,
+                    brief_expected_version=prior_brief.version if prior_brief else 0,
+                )
             # Reuse the normal full planning pipeline below, including batching,
             # clip-intent resolution and brief binding. The extractor already owns
             # this turn's ledger update; Main Creator now only proposes the plan.

@@ -300,6 +300,31 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   the KRI-689 groups in `tests/tasks/test_unified_montage_dispatch.py` and
   `tests/pipeline/test_phone_guided_speed.py`; failure modes:
   `docs/reviews/kri-689-chat-speed-failure-modes.md`; contract: `plans/playback-speed.md`.
+- **Curved text (KRI-1029).** "Curved title X on the palms" / "kavisli başlık" becomes the
+  brief fact `text_shape` (`curved` / `straight`), stamped by `brief.apply_updates` from the
+  requirement's own description (`kria/text_shape_ask.py`: folded tokens, the shape word must
+  touch a text noun, so "label on the curved bridge" is not one; never the literal) and kept
+  across rewrites (`STICKY_FACTS`), so "make the title just X" no longer drops it. A phone
+  Montage bends the matching title / label (`CURVED_TEXT_BEND`, `ClipLabel.bend` /
+  `EditProposalSnapshot.title_bend` -> `TextElement.bend` -> `PortableTextLayer.bend`) only when
+  `phone_rollout.text_bend_planned_for` holds (kill switch, `textBend` verified, the drafting /
+  approving build >= `text_bend_min_client_protocol`); otherwise it stays straight and the
+  record's `text_shapes` row says why. The draft (pre-approval check) and the review say "Done
+  (curved)" or "it stays straight" (`brief_checks.check_text_shape`), never the model's promise;
+  the creation-text composer's "nothing to compose" gate judges the words only
+  (`text_shape_ask.words_only`: it can't curve text, so a straight title never calls it).
+  No prompt change: a model-written `text_shape` is honoured first. Guard:
+  `tests/kria/test_kri1029_1030_plaza_title_replay.py`.
+- **One title per opening clip (KRI-1030).** A confirmed `opening_title` with the same words as
+  the first cut's own creator label (a re-draft's title beside the brief's "title on the palm
+  trees") is not drawn again: `plan_unified_montage` keeps the label, at the creator's spot, and
+  records `title_shown_as_label` (receipts read that label as the title). The label covers
+  the opening from 0 s, so the contract's `opening` role and `phone_plan_repair._shows` accept
+  it. Not folded when the title has a typed hold or an entrance animation. Done where the
+  snapshot is built: `guided_story` recompiles stored plans for equality
+  (`validate_execution_plan`), so old approvals stay byte-identical. Likewise a global brief
+  literal that is one of the creator's own labels ('label "Casa Rosada" on the pink building')
+  is never also the opening title (`_title`'s `creator_label_texts`).
 - **Freeze frame (KRI-777).** No edit can hold a frame (no strategy field; neither the
   phone recipe nor the cloud renderer freezes a creator-chosen frame). Café M2 filed
   "freeze the frame for one second on Atakan's bite" as `timing/global {"duration_s": 1,
@@ -532,6 +557,25 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   own judgment instead (`visual_quality`, with `props` / `actions`; see
   `docs/pipelines/clip-understanding.md`). Guard:
   `tests/kria/test_kri807_unmatched_exclusion_picker.py`.
+  *Filming order and taps (KRI-1026, Plaza de Mayo M1)*: a whole-set order (`order_by`
+  capture_time / route) assigns every clip and names none, so it never protects a clip
+  from an exclude (`clip_scope.excluded_clips`; before, "in the order we filmed it" kept
+  every clip, and a title-only re-draft with an empty pick played both clips the creator
+  had tapped out). A tapped (or file-named) exclusion also beats a resolver guess for
+  another ask on the same clip; only another tap, or media the strategy places, keeps it.
+  Any resolved exclusion whose clips the drafted pick still plays is said in the draft
+  ("I couldn't leave out clip 2, so it is still in the video": `still_played_exclusions`).
+  Guard: `tests/kria/test_kri1026_plaza_exclusions.py`.
+  *Too short to use (KRI-1031)*: a length-only skip ("anything too short to use", "the
+  mis-taps", "nothing under a second") is an `exclude` with `by_length: "too_short"` (and
+  the creator's own seconds in `under_s`), clip-intent planner v2026-10-28. The server
+  settles it from clip lengths, after the creator's taps and before the resolver
+  (`app/services/too_short_clips.py`): with `under_s`, shorter than that; otherwise under
+  1.5 s and under a quarter of the median own-video length (so a set of quick ~1 s clips
+  stays whole). Photos and Visuals are never judged; an unknown length sends the ask to the
+  resolver as before. Evidence `clip length`; never a picker. The draft names the clips
+  ("I left out clips 2 and 4 because they are too short to use.") or says none is too
+  short. Guard: `tests/kria/test_kri1031_too_short_clips.py`.
   *Voiceover ties (KRI-962, Don Julio walk-in N1)*: `app/kria/clip_ties.py`. In a
   Voiceover edit (`_is_voiceover_strategy`) each named shot sits on one moment of the
   voice, so a resolved `include` whose top-confidence footage matches are 2+ videos no

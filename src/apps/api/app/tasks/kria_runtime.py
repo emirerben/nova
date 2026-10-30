@@ -47,6 +47,7 @@ from app.kria.brief_checks import (
     build_receipts,
     clip_speed_notice,
     defers_caption_words_to_phone_render,
+    defers_text_to_phone,
     defers_to_narrated_render,
     defers_to_unified_montage,
     describe_text_look,
@@ -74,6 +75,7 @@ from app.kria.editor_receipts import (
     reply_from_editor_receipts,
 )
 from app.kria.language import is_paraphrase_only
+from app.kria.order_replacement_receipts import compiled_order_preflight_sync
 from app.kria.planner import (
     PlannedKriaTurn,
     answering_through_sequence,
@@ -152,9 +154,11 @@ from app.services.kria_editor_ops import (
     _clip_label_links,
     compile_editor_ops,
     editor_state_has_lanes,
+    failed_editor_draft_basis,
     merge_editor_draft,
     parse_editor_state,
     resolve_editor_base,
+    unknown_editor_render_query,
 )
 from app.services.kria_editor_ops_diff import describe_diff
 from app.services.phone_rollout import stamped_client_protocol
@@ -867,10 +871,17 @@ def _unresolved_choice_plan(
                 ),
                 "label_text_unusable",
             )
-        question = _worker_copy(contract.unresolved[0]) or say(
-            en=contract.unresolved[0],
-            tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
-        )
+        quoted = _quoted_unresolved(contract.unresolved[0])
+        if quoted is not None:
+            # KRI-1025: a clip the contract names ("which clip "X" means") comes with the
+            # way forward, never as a reply with nothing to do next.
+            reason, step = quoted
+            question = f"{reason} {say(en=step[0], tr=step[1])}"
+        else:
+            question = _worker_copy(contract.unresolved[0]) or say(
+                en=contract.unresolved[0],
+                tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
+            )
         return (
             KriaTurnPlan(
                 mode="respond",
@@ -1490,6 +1501,35 @@ def _complete_draft_turn(
                 or variant.get("variant_id") != session.target_variant_id
             ):
                 raise RuntimeError("The exact editor target is no longer available")
+            if (plan.diagnostics or {}).get("editor_recovery_basis") is not None or variant.get(
+                "render_status"
+            ) in {"failed", "needs_attention"}:
+                basis = failed_editor_draft_basis(
+                    head,
+                    job,
+                    variant,
+                    thread_id=thread.id,
+                    creator_id=thread.creator_id,
+                    item_id=item.id,
+                )
+                if (
+                    basis is None
+                    or (plan.diagnostics or {}).get("editor_recovery_basis") != basis._asdict()
+                ):
+                    raise KriaEditorOpError(
+                        "The saved draft changed. Your correction was not applied; "
+                        "review the current draft first."
+                    )
+                if (
+                    db.execute(
+                        unknown_editor_render_query(session, job, variant)
+                    ).scalar_one_or_none()
+                    is not None
+                ):
+                    raise KriaEditorOpError(
+                        "The previous render's outcome is still unknown. "
+                        "Check its status before starting another render."
+                    )
             # The SAME resolver the planner used for the snapshot the model saw, re-run
             # here under the row locks so a state that went stale during the model
             # call is refused instead of silently rebased.
@@ -1689,6 +1729,11 @@ def _complete_draft_turn(
                         facts,
                         phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # KRI-1024: any phone writer draws text with the phone's fonts, so a
+                        # literal none of them draws is a "Couldn't" before approval.
+                        phone_text=defers_text_to_phone(
+                            creator_id=thread.creator_id, clip_paths=item.clip_gcs_paths or ()
+                        ),
                         # KRI-842: one clip's own sound is judged on the draft that the phone
                         # Voiceover compiler will render, against the footage it will play.
                         phone_narrated=defers_to_narrated_render(
@@ -1989,6 +2034,20 @@ def _complete_draft_turn(
                 prepared_collection_story=document.prepared_collection_story,
                 creator_id=thread.creator_id,
                 prepared_research=_readiness_research,
+                order_execution=compiled_order_preflight_sync(
+                    db,
+                    item=item,
+                    creator_id=thread.creator_id,
+                    brief=brief,
+                    strategy=document.strategy or {},
+                    media_snapshot=planned.media_snapshot
+                    if planned.media_snapshot is not None
+                    else _readiness_media(item),
+                    client_protocol=client_protocol,
+                ),
+                order_source_context=_order_source_context_sync(
+                    db, brief=brief, item_id=item.id, creator_id=thread.creator_id
+                ),
             )
             policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
             readiness_report["requirements"] = [
@@ -2194,6 +2253,20 @@ def _complete_draft_turn(
                     prepared_collection_story=document.prepared_collection_story,
                     creator_id=thread.creator_id,
                     prepared_research=_readiness_research,
+                    order_execution=compiled_order_preflight_sync(
+                        db,
+                        item=item,
+                        creator_id=thread.creator_id,
+                        brief=brief,
+                        strategy=document.strategy or {},
+                        media_snapshot=planned.media_snapshot
+                        if planned.media_snapshot is not None
+                        else _readiness_media(item),
+                        client_protocol=client_protocol,
+                    ),
+                    order_source_context=_order_source_context_sync(
+                        db, brief=brief, item_id=item.id, creator_id=thread.creator_id
+                    ),
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
@@ -4677,10 +4750,41 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 )
             except ValueError:
                 target_valid = False
+        unknown_outcome = False
+        if (
+            target_valid
+            and document is not None
+            and document.kind == "editor"
+            and current_job is not None
+            and execution.status == "awaiting_approval"
+        ):
+            current_variant = next(
+                (
+                    row
+                    for row in (current_job.assembly_plan or {}).get("variants") or []
+                    if isinstance(row, dict)
+                    and row.get("variant_id") == execution.target_variant_id
+                ),
+                None,
+            )
+            if current_variant and current_variant.get("render_status") in {
+                "failed",
+                "needs_attention",
+            }:
+                unknown_outcome = (
+                    db.execute(
+                        unknown_editor_render_query(session, current_job, current_variant)
+                    ).scalar_one_or_none()
+                    is not None
+                )
+                if unknown_outcome:
+                    target_valid = False
         now = datetime.now(UTC)
         if not target_valid:
             stale_code = (
-                CREATIVE_COPY_PENDING
+                "render_outcome_unknown"
+                if unknown_outcome
+                else CREATIVE_COPY_PENDING
                 if copy_problem
                 else prepared_failure.code
                 if prepared_failure is not None
@@ -4704,7 +4808,22 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                 thread,
                 role="assistant",
                 event_type="assistant_error",
-                content=copy_problem
+                content=(
+                    say(
+                        en=(
+                            "The previous render's outcome is still unknown. "
+                            "I kept your corrected draft and did not start another render. "
+                            "Refresh the project to check its status."
+                        ),
+                        tr=(
+                            "Önceki videonun sonucu hâlâ bilinmiyor. "
+                            "Düzeltilmiş taslağını sakladım ve başka bir video başlatmadım. "
+                            "Sonucu kontrol etmek için projeyi yenile."
+                        ),
+                    )
+                    if unknown_outcome
+                    else copy_problem
+                )
                 or say(
                     en=(
                         "The project changed before I could start that render. "
@@ -6755,6 +6874,14 @@ def _with_clip_sound_toggles(job: Job, variant: dict, facts: Any, *, brief_bindi
     return dataclasses.replace(facts, clip_sound_toggles=receipt) if receipt is not None else facts
 
 
+def _order_source_context_sync(db, *, brief, item_id, creator_id):
+    from app.kria.order_replacement_sources import load_brief_order_source_context_sync
+
+    return load_brief_order_source_context_sync(
+        db, brief=brief, item_id=item_id, creator_id=creator_id
+    )
+
+
 def _approved_generation_requirements_review(
     db: Any,
     thread: CreationThread,
@@ -6843,6 +6970,30 @@ def _approved_generation_requirements_review(
         )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
+    if any(req.order_replacement is not None for req in live.values()):
+        from app.kria.order_replacement_receipts import with_verified_order_execution
+
+        facts = with_verified_order_execution(
+            facts,
+            brief=brief,
+            strategy=(job.all_candidates or {}).get("creator_strategy"),
+            execution=variant,
+            source_context=_order_source_context_sync(
+                db,
+                brief=brief,
+                item_id=job.content_plan_item_id,
+                creator_id=thread.creator_id,
+            ),
+            creator_id=thread.creator_id,
+        )
+        receipts = [
+            receipt
+            for receipt in receipts
+            if not (
+                live.get(receipt.requirement_id)
+                and live[receipt.requirement_id].order_replacement is not None
+            )
+        ]
     known = {receipt.requirement_id for receipt in receipts}
     receipts.extend(
         build_receipts(

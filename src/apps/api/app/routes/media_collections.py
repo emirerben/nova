@@ -35,7 +35,7 @@ from app.services import media_moments
 
 
 def require_collections(native_client: NativeClient, user: CurrentUser):
-    if not settings.media_library_enabled or not settings.media_collection_proposals_for(user.id):
+    if not (settings.media_library_enabled and settings.media_collection_proposals_enabled):
         raise HTTPException(404, "Collection discovery is not enabled")
     if not native_client:
         raise HTTPException(403, "Collections are available in the iOS app")

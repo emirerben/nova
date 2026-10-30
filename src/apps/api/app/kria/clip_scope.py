@@ -43,7 +43,11 @@ from typing import Literal, Protocol
 from app.agents._schemas.creator_agent import CreativeStrategy, ResolvedCreatorManifest
 from app.agents._schemas.creator_policy import MAX_MAIN_CREATOR_SELECTED_MEDIA
 from app.kria.brief_route import loose_text
-from app.schemas.clip_intents import MEMBERSHIP_MIN_CONFIDENCE, ResolvedClipIntent
+from app.schemas.clip_intents import (
+    CREATOR_EVIDENCE,
+    MEMBERSHIP_MIN_CONFIDENCE,
+    ResolvedClipIntent,
+)
 
 Group = Literal["long", "short", "longest", "shortest", "all"]
 # "only" keeps just this group, "also" adds it back, "skip" leaves it out; "reset" (group
@@ -397,18 +401,40 @@ def excluded_clips(
     label) stays: two asks about one clip contradict, and keeping footage is the safe
     side. So does media the strategy itself places (a reaction beat, the closing media,
     a montage audio or cadence source).
+
+    KRI-1026: two kinds of "naming" are not a contradiction. A whole-set order ("in the
+    order we filmed it") assigns EVERY clip and says nothing about any one of them, so it
+    protects none. And a clip the creator tapped out (or named by file) stays out unless
+    the creator also settled another ask onto it: a resolver match for a label or an
+    include is a guess, the tap is their word.
     """
 
     intents = [i for i in resolved_intents or [] if i.status == "resolved"]
     excluded = {a.media_id for i in intents if i.op == "exclude" for a in i.assignments}
     if not excluded:
         return set()
+    tapped = {
+        a.media_id
+        for i in intents
+        if i.op == "exclude"
+        for a in i.assignments
+        if a.evidence in CREATOR_EVIDENCE
+    }
     # KRI-993: a subject scope ("only about the steak") never protects a clip the creator
     # excluded: a skip beats a scope match.
     named = {
-        a.media_id for i in intents if i.op != "exclude" and not i.exclusive for a in i.assignments
+        a.media_id
+        for i in intents
+        if i.op != "exclude" and not i.exclusive and not _orders_every_clip(i)
+        for a in i.assignments
+        if a.media_id not in tapped or a.evidence in CREATOR_EVIDENCE
     }
     return excluded - named - placed_media(strategy)
+
+
+def _orders_every_clip(intent: ResolvedClipIntent) -> bool:
+    """A filming-time or route order: it sorts the whole set, whatever the set is."""
+    return intent.op == "order" and intent.order_by is not None
 
 
 def apply_clip_exclusions(
@@ -513,8 +539,12 @@ def apply_subject_scope(
     if not matched:
         return unchanged
     skipped = excluded_clips(intents, strategy)
+    # KRI-1026: a filming-time order names every clip, so it keeps none outside the scope.
     named = {
-        a.media_id for i in intents if i.op != "exclude" and not i.exclusive for a in i.assignments
+        a.media_id
+        for i in intents
+        if i.op != "exclude" and not i.exclusive and not _orders_every_clip(i)
+        for a in i.assignments
     }
     protected = named | placed_media(strategy)
     takes_everything = strategy.media_scope == "all" or not strategy.selected_media_ids

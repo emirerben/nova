@@ -9452,6 +9452,7 @@ async def _delete_verified_pool_upload(
 
 
 class PoolAssetOut(BaseModel):
+    generation: str | None = None
     library_asset_id: uuid.UUID | None = None
     library_source_id: uuid.UUID | None = None
     # Original source for native composition; display_url may be a JPEG derivative.
@@ -9631,6 +9632,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         else "failed"
     )
     return PoolAssetOut(
+        generation=str(asset.gcs_generation) if asset.gcs_generation else None,
         library_asset_id=getattr(asset, "library_asset_id", None),
         library_source_id=getattr(asset, "library_source_id", None),
         id=str(asset.id),

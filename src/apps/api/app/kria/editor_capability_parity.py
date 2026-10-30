@@ -71,6 +71,13 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
             "patch_text_appearance",
         ),
     ),
+    "caption_style_scope": _g(
+        "agent_unsupported",
+        "setCaptionGesturePosition setCaptionGestureSize finishCaptionGesture "
+        "setCaptionStyleSize placeCaptions",
+        reason="Scope-aware caption size and placement are native-only; agent caption ops "
+        "do not select or clear per-line placement overrides.",
+    ),
     # --------------------------------------------------------------- timeline
     "clip_trim_and_move": _g(
         "agent_ops",
@@ -218,7 +225,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
-        "textElement textAnchor",
+        "textElement textAnchor captionPosition captionStyleSize",
         reason="Read-only queries the UI uses to decide what to offer.",
     ),
 }

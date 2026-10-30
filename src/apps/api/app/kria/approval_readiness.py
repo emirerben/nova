@@ -23,9 +23,12 @@ from app.kria.brief_checks import (
     _has_checker,
     _wants_source_sound_kept,
     build_receipts,
+    defers_text_to_phone,
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
 )
+from app.kria.order_replacement_receipts import with_verified_order_execution
+from app.kria.order_replacement_sources import OrderReplacementSourceContext
 from app.kria.reply_language import say
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
@@ -33,6 +36,7 @@ from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
     FIELD_MATRIX,
     build_render_contract,
+    field_matrix_for_strategy,
 )
 from app.services.creator_sessions import resolve_item_creator_context
 from app.services.length_planning import read_length_plan
@@ -264,6 +268,8 @@ def assess_readiness(
     prepared_collection_story: dict | None = None,
     creator_id: object = None,
     prepared_research: Mapping[str, Any] | None = None,
+    order_execution: Mapping[str, Any] | None = None,
+    order_source_context: OrderReplacementSourceContext | None = None,
 ) -> dict[str, Any]:
     """Account for every live ID using existing policy, checkers and contract.
 
@@ -360,6 +366,10 @@ def assess_readiness(
             ),
             research=dict(prepared_research) if prepared_research is not None else None,
             user_song_attached=bool(media.get("song_path")),
+            # KRI-1024: a literal no phone font draws is never executable on the phone.
+            phone_text=defers_text_to_phone(
+                creator_id=creator_id, clip_paths=media.get("clip_paths") or ()
+            ),
         )
     )
     if editor_payload is None and facts.ordering_basis is None:
@@ -396,6 +406,14 @@ def assess_readiness(
                 facts = dataclasses.replace(facts, duration_s=sum(p.duration_s for p in parts))
         except ValueError:
             pass  # Missing/invalid execution evidence stays unknown, never a pass.
+    facts = with_verified_order_execution(
+        facts,
+        brief=brief,
+        strategy=strategy,
+        execution=order_execution,
+        source_context=order_source_context,
+        creator_id=creator_id,
+    )
     receipts = {
         r.requirement_id: r
         for r in build_receipts(
@@ -537,7 +555,7 @@ def assess_readiness(
             {
                 "capabilities": manifest.capabilities if manifest else None,
                 "verified_phone_features": sorted(settings.phone_render_verified_features),
-                "field_matrix": FIELD_MATRIX,
+                "field_matrix": field_matrix_for_strategy(strategy),
                 "adapters": ADAPTER_DECLARATIONS,
             }
         ),

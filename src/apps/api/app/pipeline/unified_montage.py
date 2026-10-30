@@ -73,6 +73,7 @@ from app.kria.freeze_ask import (
 )
 from app.kria.speed_ask import SpeedSpec, live_speeds
 from app.kria.text_sequence import is_text_sequence
+from app.kria.text_shape_ask import CURVED, CURVED_TEXT_BEND, text_shape
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.font_coverage import drop_color_emoji
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
@@ -115,6 +116,7 @@ from app.services.clip_order_sequence import (
     sequence_rows,
     unconfirmed_order_groups,
 )
+from app.services.creator_omissions import creator_omission_outcomes
 from app.services.length_policy import natural_length_owner
 from app.services.order_mode import order_mode, seeded_permutation
 from app.services.order_mode import random_order_seed as order_seed_of
@@ -249,6 +251,12 @@ class BriefView:
     # KRI-824: live ``timing`` / ``clip:<id>`` requirements, resolved against the plan's
     # own photos by ``holds_from_requirements``; only server-stamped ones apply.
     hold_requirements: tuple[Any, ...] = ()
+    # KRI-1029: the texts the creator asked curved (`text_shape_ask`): a title-scope ask,
+    # a per-clip rule, and the folded words of every curved literal (whichever text draws
+    # them: "curved title on the palms" is the palms clip's label).
+    curved_title: bool = False
+    curved_labels: bool = False
+    curved_texts: frozenset[str] = frozenset()
 
 
 def brief_view(brief: Any) -> BriefView:
@@ -270,6 +278,8 @@ def brief_view(brief: Any) -> BriefView:
     title_animation: str | None = None
     label_position: str | None = None
     placeholder_labels = False
+    curved_title = curved_labels = False
+    curved_texts: set[str] = set()
     live = brief.live()
     freezes = live_freezes(live)
     speeds = live_speeds(live)
@@ -278,6 +288,11 @@ def brief_view(brief: Any) -> BriefView:
             if value not in (None, "") and key not in facts:
                 facts[str(key)] = value
         if req.kind == "text":
+            if text_shape(req) == CURVED:
+                curved_title = curved_title or req.scope == "title"
+                curved_labels = curved_labels or req.scope == "per_clip"
+                if req.literal:
+                    curved_texts.add(fold_text(_nfc(req.literal)))
             if wants_filming_time_text(
                 req.kind, req.scope, req.literal, req.description, req.facts
             ):
@@ -350,6 +365,9 @@ def brief_view(brief: Any) -> BriefView:
         freezes=freezes,
         speeds=speeds,
         hold_requirements=hold_requirements(brief),
+        curved_title=curved_title,
+        curved_labels=curved_labels,
+        curved_texts=frozenset(curved_texts),
     )
 
 
@@ -555,6 +573,13 @@ class UnifiedMontagePlan:
     # record is unchanged; `brief_checks` reads a record WITHOUT the key as a plan that could
     # not retime (KRI-689's original "Couldn't").
     clip_speeds: list[dict[str, Any]] = field(default_factory=list)
+    # KRI-1030: the first clip whose own label carries the opening title's words, so the
+    # title is not drawn twice. None (every plan without the duplicate) is not recorded.
+    title_shown_as_label: str | None = None
+    # KRI-1029: one row per drawn text the creator asked curved: {text, role ("title" /
+    # "label"), media_id, bend (None = straight), reason (None / "phone" / "animation")}.
+    # Empty without a curve ask, so every earlier record is unchanged.
+    text_shapes: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -630,6 +655,12 @@ class UnifiedMontagePlan:
             if self.snapshot.pinned_texts
             else {}
         )
+        shown = (
+            {"title_shown_as_label": self.title_shown_as_label} if self.title_shown_as_label else {}
+        )
+        shapes = (
+            {"text_shapes": [dict(row) for row in self.text_shapes]} if self.text_shapes else {}
+        )
         record = {
             "version": 1,
             "brief_version": self.brief_version,
@@ -676,6 +707,8 @@ class UnifiedMontagePlan:
             **best_parts_conflicts,
             **captions,
             **spoken,
+            **shown,
+            **shapes,
         }
 
         if self.snapshot.text_composition is not None:
@@ -1386,7 +1419,8 @@ def _moment_outcomes(
     "couldn't find it", never met. A Visual's row is met when every Visual it names plays
     right after its moment (as many cuts of the take before it as the moment's number) AND
     that moment is met. Never read off the seating itself, so a layout that misses the spot
-    says so.
+    says so. Explicit first/last rows must additionally occupy the absolute boundary block,
+    with multiple boundary groups in their listed order.
     """
     take_spans = [(start, end) for ref, start, end in spans if ref == seats.take]
     if not spans:
@@ -1413,6 +1447,30 @@ def _moment_outcomes(
         misplaced = [v for v in missed if v[1] == "misplaced"]
         return (misplaced or missed or [("met", "landed", None)])[0]
 
+    def boundary_seated(position: str) -> bool:
+        groups: list[set[str]] = []
+        claimed: set[str] = set()
+        for index, (_moment, members) in seats.placed.items():
+            if seats.positions.get(index) != position:
+                continue
+            fresh = set(members) - claimed
+            if fresh:
+                groups.append(fresh)
+                claimed.update(fresh)
+        if not claimed:
+            return False
+        refs = [ref for ref, _start in cuts]
+        edge = refs[: len(claimed)] if position == "first" else refs[-len(claimed) :]
+        if set(edge) != claimed:
+            return False
+        previous = -1
+        for members in groups:
+            spots = [i for i, ref in enumerate(refs) if ref in members]
+            if not spots or min(spots) <= previous:
+                return False
+            previous = max(spots)
+        return True
+
     out: dict[int, dict[str, Any]] = {}
     for index, moment in seats.named.items():
         out[index] = row(moment, verdicts[moment])
@@ -1420,6 +1478,10 @@ def _moment_outcomes(
         out[index] = row(None, worst(moments))
     for index in seats.skipped:
         out[index] = row(None, ("partial", "skipped", MOMENT_SKIPPED))
+    for index in seats.conflicted:
+        out[index] = row(
+            None, ("partial", "misplaced", "the clip's position conflicts with its named moment")
+        )
     for index, (moment, members) in seats.placed.items():
         spots = [next((i for i, (ref, _s) in enumerate(cuts) if ref == m), None) for m in members]
         if None in spots:
@@ -1433,8 +1495,11 @@ def _moment_outcomes(
         seated = in_order and all(
             sum(ref == seats.take for ref, _s in cuts[:spot]) == moment for spot in spots
         )
+        if index in seats.positions:
+            seated = seated and boundary_seated(seats.positions[index])
         verdict = (
-            verdicts[moment]
+            # An explicit opening Visual has no preceding moment; verify the adjacent first window.
+            verdicts[max(1, moment)]
             if seated
             else ("partial", "misplaced", "the clips did not end up there")
         )
@@ -1449,18 +1514,36 @@ def _seat_among_moments(slots: list[_Slot], seats: MomentSeats) -> list[_Slot]:
     """KRI-796: a seated Visual's cut plays right after its moment, the take's n-th window.
 
     ``slots`` are the cuts to emit as (index into ``ordered``, clip, frames, window), in
-    the order the clips were laid out; every other cut keeps its place.
+    the order the clips were laid out. Explicit first/last groups surround all remaining
+    slots; non-boundary cuts keep their relative order.
     """
-    moved = [slot for slot in slots if slot[1].ref_id in seats.after]
-    out: list[_Slot] = []
+    claimed: set[str] = set()
+
+    def boundary_slots(position: str) -> list[_Slot]:
+        placed: list[_Slot] = []
+        for index, (_moment, members) in seats.placed.items():
+            if seats.positions.get(index) != position:
+                continue
+            fresh = set(members) - claimed
+            placed.extend(slot for slot in slots if slot[1].ref_id in fresh)
+            claimed.update(fresh)
+        return placed
+
+    leading = boundary_slots("first")
+    trailing = boundary_slots("last")
+    moved = [
+        slot for slot in slots if slot[1].ref_id in seats.after and slot[1].ref_id not in claimed
+    ]
+    out: list[_Slot] = list(leading)
     played = 0
     for slot in slots:
-        if slot[1].ref_id in seats.after:
+        if slot[1].ref_id in claimed or slot[1].ref_id in seats.after:
             continue
         out.append(slot)
         if slot[1].ref_id == seats.take:
             played += 1
             out.extend(m for m in moved if seats.after[m[1].ref_id] == played)
+    out.extend(trailing)
     return out if len(out) == len(slots) else slots
 
 
@@ -1603,6 +1686,7 @@ def plan_unified_montage(
     speech_order: bool = False,
     freeze_frames: bool = False,
     clip_speed: bool = False,
+    text_bend: bool = False,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -1655,9 +1739,19 @@ def plan_unified_montage(
     window keeps its exact source edges and its output length follows the rate. Off, the asks
     are recorded as locked so the receipt says why. With no speed ask, the plan is
     byte-identical.
+
+    ``text_bend`` (KRI-1029) says the phone that approved can draw bent text
+    (``phone_rollout.text_bend_planned_for``). Then every text the creator asked curved
+    (``view.curved_*``) carries ``CURVED_TEXT_BEND``; off, it stays straight and the record's
+    ``text_shapes`` says why. With no curve ask the plan is byte-identical.
+
+    KRI-1030: the opening title is never drawn on top of the first clip's own label with the
+    same creator words (a re-draft's ``opening_title`` beside the brief's "title on the palm
+    trees"); the clip's label stays, where the creator put it, and covers the opening.
     """
     view = view or BriefView()
     strategy = strategy or {}
+    creator_omissions = creator_omission_outcomes(strategy)
     if (
         view.version is not None
         and view.title_literal
@@ -1908,7 +2002,12 @@ def plan_unified_montage(
         )
 
     # ── title and typography ─────────────────────────────────────────────────
-    title, title_source = _title(strategy, view, [label.text for label in labels.values()])
+    title, title_source = _title(
+        strategy,
+        view,
+        [label.text for label in labels.values()],
+        [label.text for label in labels.values() if label.provenance == "creator"],
+    )
     closing = _nfc(strategy.get("closing_title")) or None
     pins = _pinned_texts(strategy)
     requested_font = strategy.get("font_family")
@@ -2410,6 +2509,19 @@ def plan_unified_montage(
     total_s = sum(cut.output_duration_s for cut in cuts)
     ref_of = {clip.media_id: clip.ref_id for clip in ordered}
     pins = drawable_pins(pins, total_s, [cut.output_duration_s for cut in cuts])
+    # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
+    # strategy omits it; the strategy's own typed value is the fallback.
+    title_animation = view.title_animation or normalize_title_animation(
+        strategy.get("title_animation")
+    )
+    title_shown_as_label = _title_shown_as_label(
+        title, labels.get(cuts[0].media_id) if cuts else None, strategy, title_animation
+    )
+    if title_shown_as_label is not None:
+        title, title_source = None, "none"
+    labels, title_bend, text_shapes = _curved_texts(
+        view, title, labels, title_animation, phone_bends=text_bend
+    )
 
     snapshot_kwargs: dict[str, Any] = {}
     if closing:
@@ -2438,13 +2550,10 @@ def plan_unified_montage(
             for media_id, hold in holds.items()
             if any(cut.media_id == media_id for cut in cuts)
         ]
-    # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
-    # strategy omits it; the strategy's own typed value is the fallback.
-    title_animation = view.title_animation or normalize_title_animation(
-        strategy.get("title_animation")
-    )
     if title_animation is not None and title:
         snapshot_kwargs["title_animation"] = title_animation
+    if title_bend is not None:
+        snapshot_kwargs["title_bend"] = title_bend
     label_position = view.label_position or normalize_label_position(strategy.get("label_position"))
     if label_position is not None and labels:
         snapshot_kwargs["label_position"] = label_position
@@ -2502,7 +2611,8 @@ def plan_unified_montage(
             cuts=[(ref_of[cut.media_id], cut.source_start_s) for cut in cuts],
             spans=[(ref_of[cut.media_id], cut.source_start_s, cut.source_end_s) for cut in cuts],
             moment_record=moment_record,
-        ),
+        )
+        + creator_omissions,
         ordering_choice=choice,
         random_order_seed=view.random_order_seed if basis == "random" else None,
         random_order_source_ids=[clip.media_id for clip in clips] if basis == "random" else [],
@@ -2545,7 +2655,90 @@ def plan_unified_montage(
                 if any(cut.media_id == media_id for cut in cuts)
             },
         ),
+        title_shown_as_label=title_shown_as_label,
+        text_shapes=text_shapes,
     )
+
+
+def _title_shown_as_label(
+    title: str | None,
+    first_label: ClipLabel | None,
+    strategy: Mapping[str, Any],
+    title_animation: str | None,
+) -> str | None:
+    """The first clip whose own label already says the opening title (KRI-1030), else None.
+
+    Plaza de Mayo M1: the re-draft confirmed ``opening_title: "Plaza de Mayo"`` while the
+    brief kept "title on the palm trees" ("Plaza de Mayo", ``clip:<palms>``), so the palms
+    clip opened with the words twice (centred at the top 0-2.2 s, and its label at the
+    bottom 0-2.7 s). The label is the creator's own placement and spans the whole first
+    cut from 0 s, so it is also the opening text: the contract's ``opening`` role and the
+    phone repair (`phone_plan_repair._shows`) accept it.
+
+    The title stays when it promises something the label can't keep: a typed hold
+    (``opening_title_duration_s``, longer than the cut may be) or an entrance animation.
+    A guessed label (place facts) is never what the title is folded into.
+    """
+    if (
+        not title
+        or first_label is None
+        or first_label.provenance != "creator"
+        or fold_text(first_label.text) != fold_text(title)
+        or title_animation is not None
+        or strategy.get("opening_title_duration_s") is not None
+    ):
+        return None
+    return first_label.media_id
+
+
+def _curved_texts(
+    view: BriefView,
+    title: str | None,
+    labels: dict[str, ClipLabel],
+    title_animation: str | None,
+    *,
+    phone_bends: bool,
+) -> tuple[dict[str, ClipLabel], float | None, list[dict[str, Any]]]:
+    """Bend the texts the creator asked curved (KRI-1029): ``(labels, title_bend, rows)``.
+
+    A text is curved when its words are a curved literal of the brief, or when it is the
+    title / a label and the brief asks every title / label curved. ``phone_bends`` False
+    (the approving build or the server can't draw ``bend``) keeps it straight; so does a
+    title entrance that can't be bent (typewriter, `portable_text_layout._bend_supported`),
+    which the phone would otherwise straighten silently. ``rows`` records each outcome for
+    the receipt; it is empty when nothing drawn was asked curved.
+    """
+    from app.pipeline.portable_text_layout import _bend_supported  # noqa: PLC0415
+
+    def wanted(text: str, everywhere: bool) -> bool:
+        return everywhere or fold_text(text) in view.curved_texts
+
+    rows: list[dict[str, Any]] = []
+    title_bend: float | None = None
+    if title and wanted(title, view.curved_title):
+        bendable = _bend_supported("static", {"entrance": title_animation, "exit": None})
+        reason = None if phone_bends and bendable else "phone" if not phone_bends else "animation"
+        title_bend = CURVED_TEXT_BEND if reason is None else None
+        rows.append(
+            {"text": title, "role": "title", "media_id": None, "bend": title_bend, "reason": reason}
+        )
+    bent: dict[str, ClipLabel] = {}
+    for media_id, label in labels.items():
+        if not wanted(label.text, view.curved_labels):
+            bent[media_id] = label
+            continue
+        bend = CURVED_TEXT_BEND if phone_bends else None
+        bent[media_id] = label.model_copy(update={"bend": bend}) if bend is not None else label
+        rows.append(
+            {
+                "text": label.text,
+                "role": "label",
+                "media_id": media_id,
+                "bend": bend,
+                "reason": None if bend is not None else "phone",
+            }
+        )
+    return bent, title_bend, rows
 
 
 def _reserve_freeze_hold(
@@ -3687,13 +3880,21 @@ def _intent_outcomes(
 
 
 def _title(
-    strategy: Mapping[str, Any], view: BriefView, label_texts: Sequence[str] = ()
+    strategy: Mapping[str, Any],
+    view: BriefView,
+    label_texts: Sequence[str] = (),
+    creator_label_texts: Sequence[str] = (),
 ) -> tuple[str | None, str]:
     """The opening title and where it came from.
 
     ``label_texts`` are the per-clip labels the montage prints. A brief literal that only
     lists them ("Bölüm başlıkları: Sabah, Üniversite, Öğle arası, Spor, Akşam") asked for
     chapter titles, which the labels already are: it is never also an opening title (KRI-545).
+
+    ``creator_label_texts`` are the labels written in the creator's own words. A global
+    literal that IS one of them ('label "Casa Rosada" on the pink building', filed as global
+    text and placed by its clip intent) is that label, never also the opening title (KRI-1030,
+    Plaza de Mayo M1 first draft: "Casa Rosada" over the palm trees, then on its own clip).
     """
     if "opening_title" in (strategy.get("omitted_copy_targets") or []):
         return None, "none"
@@ -3719,7 +3920,8 @@ def _title(
         return _nfc(view.title_literal), "creator"
     start = _first(view.facts, _START_KEYS)
     end = _first(view.facts, _END_KEYS)
-    if titles(view.global_literal):
+    labelled = {fold_text(text) for text in creator_label_texts}
+    if titles(view.global_literal) and fold_text(_nfc(view.global_literal)) not in labelled:
         route = f"{start} → {end}" if start and end else ""
         headline = _nfc(view.global_literal)
         if route and route.casefold() not in headline.casefold():
@@ -3744,13 +3946,15 @@ def title_source_exists(strategy: Mapping[str, Any], brief: Any) -> bool:
     phone path's production setting).
     """
     view = brief_view(brief)
-    labels = [
+    intents = _intent_labels(strategy, True).values()
+    creator_labels = [
         *view.clip_literals.values(),
         *(_nfc(text) for text in strategy.get("shot_labels") or []),
-        *(text for text, _creator in _intent_labels(strategy, True).values()),
+        *(text for text, creator in intents if creator),
         *_described_shot_labels(strategy, True).values(),
     ]
-    return _title(strategy, view, labels)[0] is not None
+    labels = [*creator_labels, *(text for text, creator in intents if not creator)]
+    return _title(strategy, view, labels, creator_labels)[0] is not None
 
 
 __all__ = [
