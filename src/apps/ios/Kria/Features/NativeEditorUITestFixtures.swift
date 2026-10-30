@@ -766,7 +766,19 @@ enum NativeEditorUITestCommitTransport {
         func delete() throws {}
     }
 
+    private final class FailOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var failed = false
+        func takeFailure() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if failed { return false }
+            failed = true
+            return true
+        }
+    }
+
     private final class CommitURLProtocol: URLProtocol, @unchecked Sendable {
+        static let capabilityFailures = FailOnce()
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -775,6 +787,11 @@ enum NativeEditorUITestCommitTransport {
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
             if url.path.hasSuffix("/capabilities"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                // KRIA_OVERLAY_CAPABILITY_FAIL_ONCE: the first account check of this launch fails, the retry succeeds.
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_CAPABILITY_FAIL_ONCE"] == "1", Self.capabilityFailures.takeFailure() {
+                    client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+                    return
+                }
                 status = 200; body = Data(#"{"formats":[],"generated_images":true}"#.utf8)
             } else if url.path.contains("/generated-media"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
                 if ProcessInfo.processInfo.environment["KRIA_OVERLAY_REGISTRATION_RECOVERY"] == "1",
@@ -810,7 +827,9 @@ enum NativeEditorUITestCommitTransport {
                 let response: [String: JSONValue] = [
                     "document_fingerprint": fields["document_fingerprint"] ?? .string(""),
                     "base_generation": fields["base_generation"] ?? .string(""),
-                    "message": .string("Synthetic offline overlay plan."),
+                    "message": .string(ProcessInfo.processInfo.environment["KRIA_OVERLAY_MIXED"] == "1"
+                        ? "Synthetic offline overlay plan. Upload the real logo or choose it from your visual library."
+                        : "Synthetic offline overlay plan."),
                     "overlays": .array([.object([
                         "id": .string("DCC14763-5702-4AE3-8510-8C72845E6B15"), "kind": .string(ProcessInfo.processInfo.environment["KRIA_OVERLAY_IMAGE"] == "1" ? "image" : "text"),
                         "title": .string("Synthetic graphic"), "prompt": .string("A synthetic image for native UI testing"), "text": .string("10"),

@@ -16,6 +16,51 @@ import XCTest
         XCTAssertTrue(submit.isEnabled)
         submit.tap()
     }
+    func testMixedPlanShowsTheLogoNoticeNextToTheKeptOverlay() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-overlays"]
+        app.launchEnvironment = ["KRIA_OVERLAY_MIXED": "1", "KRIA_OVERLAY_RESET": "1", "UI_TEST_REDUCE_MOTION": "1"]
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-visuals"].waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-visuals"].tap()
+        app.buttons["native-editor-generate-media"].tap()
+        app.segmentedControls["overlay-generation-mode"].buttons["Let Kria choose"].tap()
+        waitUntilEnabled(app.buttons["overlay-generation-plan"])
+        app.buttons["overlay-generation-plan"].tap()
+        let notice = app.staticTexts["overlay-generation-message"]
+        let scroll = app.scrollViews["native-editor-visuals-scroll"]
+        for _ in 0..<4 where !notice.exists { scroll.swipeUp() }
+        XCTAssertTrue(notice.waitForExistence(timeout: 10))
+        XCTAssertTrue(notice.label.contains("Upload the real logo"), "The refused-logo notice is shown with the kept overlay")
+        XCTAssertTrue(app.buttons["overlay-generation-use-DCC14763-5702-4AE3-8510-8C72845E6B15"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "mixed-plan-logo-notice"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    func testAvailabilityCheckFailureCanBeRetriedWithoutLeavingThePanel() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-overlays"]
+        app.launchEnvironment = ["KRIA_OVERLAY_CAPABILITY_FAIL_ONCE": "1", "KRIA_OVERLAY_RESET": "1", "UI_TEST_REDUCE_MOTION": "1"]
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-visuals"].waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-visuals"].tap()
+        app.buttons["native-editor-generate-media"].tap()
+        let retry = app.buttons["overlay-generation-availability-retry"]
+        let scroll = app.scrollViews["native-editor-visuals-scroll"]
+        for _ in 0..<4 where !retry.exists { scroll.swipeUp() }
+        XCTAssertTrue(retry.waitForExistence(timeout: 10), "A failed account check offers Try again")
+        XCTAssertFalse(app.buttons["overlay-generation-plan"].isEnabled, "Planning stays closed while the gate is unproven")
+        let failed = XCTAttachment(screenshot: app.screenshot())
+        failed.name = "availability-check-failed"
+        failed.lifetime = .keepAlways
+        add(failed)
+        retry.tap()
+        waitUntilEnabled(app.buttons["overlay-generation-plan"])
+        XCTAssertFalse(retry.exists)
+    }
+
     func testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-source-text", "-ui-testing-editor-overlays"]
