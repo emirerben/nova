@@ -70,6 +70,19 @@ import XCTest
         XCTAssertNil(auth.localStorageIdentity)
     }
 
+    func testFailedSignInWriteKeepsTheCurrentAccountsOwner() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SwitchableTokenStore()
+        let auth = AuthStore(tokenStore: store, defaults: defaults)
+        try auth.signIn(with: session("account-a"), displayName: nil)
+        let proved = try XCTUnwrap(auth.localStorageIdentity)
+        store.unreadable = true
+        store.failsWrites = true
+        XCTAssertThrowsError(try auth.signIn(with: session("account-b"), displayName: nil))
+        XCTAssertEqual(auth.localStorageIdentity, proved, "A sign-in that never reached the store changes nothing")
+    }
+
     private func makeDefaults() throws -> (UserDefaults, String) {
         let suite = "kria.local-identity.\(UUID().uuidString)"
         return (try XCTUnwrap(UserDefaults(suiteName: suite)), suite)
@@ -92,7 +105,8 @@ private final class SwitchableTokenStore: TokenStore, @unchecked Sendable {
         set { lock.withLock { locked = newValue } }
     }
     func read() throws -> MobileSession? { try lock.withLock { if locked { throw Locked() }; return session } }
-    func write(_ session: MobileSession) throws { lock.withLock { self.session = session } }
+    var failsWrites = false
+    func write(_ session: MobileSession) throws { try lock.withLock { if failsWrites { throw Locked() }; self.session = session } }
     func delete() throws { lock.withLock { session = nil } }
     func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
         try lock.withLock {

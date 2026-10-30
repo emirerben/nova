@@ -104,8 +104,8 @@ enum ProfileFetchState: Equatable, Sendable {
         hasAIConsent = true
     }
     func signIn(with session: MobileSession, displayName: String?) throws {
-        lastKnownLocalIdentity = nil
         try tokenStore.write(session)
+        lastKnownLocalIdentity = nil
         defaults.set(false, forKey: Self.invalidatedSessionKey)
         self.displayName = displayName
         isSignedIn = true
