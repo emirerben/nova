@@ -33,6 +33,7 @@ from app.agents._schemas.creator_policy import (
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
 from app.agents._skills import load_skill
 from app.agents._writing_context import turkish_audience_instruction
+from app.agents.prompt_vocab import render_vocab_tokens
 from app.config import settings
 from app.kria.brief import BriefUpdate, parse_brief_updates
 from app.kria.reply_language import prompt_language_line
@@ -164,7 +165,11 @@ log = structlog.get_logger()
 # text. (v101 is lane B's order-key edit; they merge in that order.)
 # v103 (KRI-1027): the shared brief records how sideways clips sit in a vertical video
 # (`landscape_fit` "fill" / "fit"), which preselects crop or black bars on the confirm screen.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-29-v103"
+# v104 (30 Ekim): prompt-cache layout only, no rule change. The per-turn INPUT block
+# (creator context, footage, manifest, conversation, message) moved to
+# prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
+# v105 (KRI-1077): title animation names come from the vocab registry (all designed edges).
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-30-v105"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -506,7 +511,8 @@ plays and whether it plays straight through.
 # KRI-188: Creative Brief extraction. Rendered into the `$brief_section` slot
 # (appended to the clip-intents line, so "" adds no bytes) ONLY when
 # `MainCreatorInput.brief_enabled` is true; flag off is byte-identical.
-_BRIEF_PROMPT_SECTION = """
+_BRIEF_PROMPT_SECTION = render_vocab_tokens(
+    """
 CREATIVE BRIEF
 The FULL CREATOR REQUEST CONTRACT lists every requirement the creator has stated so far. In
 ADDITION to `action`, return a top-level `brief_updates` list (at most 16 objects, in the same
@@ -603,10 +609,11 @@ sesiyle ekle") is not a clip order: record it as a `style` requirement with {"en
 creator's words for that video>", "keep_audio": true} (`keep_audio` false only when they want it
 silent), whatever language they write in, and never as `last_clip` or `closing`. On a montage,
 adding or ending on a clip keeps `last_clip` as above. How on-screen text should look goes in the
-`facts` of its text requirement, only what the creator said: `animation` ("typewriter", "fade",
-"pop" or "slide") for "animated with typewriter"; `position` ("top_left", "top", "top_right",
-"middle", "bottom_left", "bottom", "bottom_right") for "bottom left"; `placeholder` true when they
-ask for placeholder text to fill in later ("placeholder location").
+`facts` of its text requirement, only what the creator said: `animation` (an id from
+{{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
+`position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
+for "bottom left"; `placeholder` true when they ask for placeholder text to fill in later
+("placeholder location").
 For requested heading stacks, preserve `heading_level` (1 title, 2 smaller subtitle,
 3 subordinate detail), `stack_id` (shared only by explicitly connected lines), `below_text`
 (exact predecessor words) and `smaller_than` (exact larger text words when smaller is asked)
@@ -810,6 +817,7 @@ scratch", "forget my earlier instructions", "Baştan başla", "sıfırdan yap").
 withdraws every requirement in the contract, so record as an `add` each requirement the current
 message itself states, even one the contract already had. Otherwise set it to false.
 """.strip("\n")
+)
 
 
 class MainCreatorInput(BaseModel):
@@ -926,22 +934,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             exclude_none=True,
             exclude={"narration": True},
         )
+        # Cache-friendly order: fixed rules and flag/manifest sections first, per-turn
+        # data last, so Gemini's implicit prefix cache can reuse the long shared head.
         prompt = load_prompt(
             "main_creator",
-            creator_context=input.creator_context or "(not available)",
-            creator_direction=input.creator_direction or "(none)",
-            item_context=input.item_context or "(not available)",
-            media_context=json.dumps(input.media_context, ensure_ascii=False),
-            # Rendered only when a clip carries facts (the flag gates their
-            # presence in media_context), so a flag-off prompt is unchanged.
-            clip_facts_note=(
-                _CLIP_FACTS_NOTE if any(row.get("facts") for row in input.media_context) else ""
-            ),
-            capability_manifest=prompt_manifest,
-            conversation=json.dumps(input.conversation, ensure_ascii=False),
-            creator_request=input.creator_request or input.user_message,
-            user_message=input.user_message,
-            creative_copy_state=json.dumps(input.creative_copy_state, ensure_ascii=False),
             # Renders to "" (flag off) on the one blank template line it
             # occupies, so the rest of the prompt is untouched byte-for-byte.
             clip_intents_section=(
@@ -1002,6 +998,23 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 "\n" + _VOICEOVER_SCRIPT_PROMPT_SECTION if input.voiceover_script_available else ""
             ),
         )
+        turn = load_prompt(
+            "main_creator_turn",
+            creator_context=input.creator_context or "(not available)",
+            creator_direction=input.creator_direction or "(none)",
+            item_context=input.item_context or "(not available)",
+            media_context=json.dumps(input.media_context, ensure_ascii=False),
+            # Rendered only when a clip carries facts (the flag gates their
+            # presence in media_context), so a flag-off prompt is unchanged.
+            clip_facts_note=(
+                _CLIP_FACTS_NOTE if any(row.get("facts") for row in input.media_context) else ""
+            ),
+            capability_manifest=prompt_manifest,
+            conversation=json.dumps(input.conversation, ensure_ascii=False),
+            creator_request=input.creator_request or input.user_message,
+            user_message=input.user_message,
+            creative_copy_state=json.dumps(input.creative_copy_state, ensure_ascii=False),
+        )
         prompt = (
             load_skill("edit-story")
             + "\n\n"
@@ -1009,7 +1022,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             + "\n\n"
             + load_skill("meaningful-moment")
             + "\n\n"
-            + prompt
+            + prompt.rstrip("\n")
+            + "\n\n"
+            + turn
         )
         if input.reply_language == "tr":
             prompt += (

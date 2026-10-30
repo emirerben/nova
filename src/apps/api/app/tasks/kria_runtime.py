@@ -142,7 +142,11 @@ from app.services.choice_questions import (
     simpler_version_question,
     tag_event,
 )
-from app.services.client_protocol import APPROVAL_CLIENT_PROTOCOL_FIELD
+from app.services.client_protocol import (
+    APPROVAL_CLIENT_PROTOCOL_FIELD,
+    bind_sending_build,
+    unbind_sending_build,
+)
 from app.services.creation_thread_titles import conversation_revision_matches_sync
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.creator_label_reply import LabelTextReply, label_text_reply
@@ -164,6 +168,7 @@ from app.services.kria_editor_ops import (
 )
 from app.services.kria_editor_ops_diff import describe_diff
 from app.services.phone_rollout import stamped_client_protocol
+from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
@@ -962,6 +967,30 @@ def _unresolved_choice_plan(
             "unresolved_requirement",
         )
     return None
+
+
+def _unstuck_recovery(
+    db: Any,
+    thread_id: uuid.UUID,
+    plan: KriaTurnPlan,
+    brief: Any,
+    notices: tuple[str, ...],
+) -> KriaTurnPlan:
+    """KRI-1068: the backstop's reply, never word for word the last message Kria showed
+    (a reply, a draft or a render note), and saying first what this turn's "skip that"
+    dropped (``notices``)."""
+    previous = db.execute(
+        select(CreationThreadEvent.content)
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role == "assistant",
+            CreationThreadEvent.content.is_not(None),
+        )
+        .order_by(CreationThreadEvent.sequence.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    response = " ".join([*notices, unrepeated_reply(plan.response or "", previous, brief)])
+    return plan if response == plan.response else plan.model_copy(update={"response": response})
 
 
 def _label_text_unresolved(unresolved: str, brief: Any) -> LabelTextReply | None:
@@ -2658,6 +2687,12 @@ def _complete_draft_turn(
             )
             if blocked is not None:
                 blocked_plan, blocked_reason = blocked
+                # KRI-1068: record the clip a reply is stuck on, so "skip that" next turn
+                # drops it; never send the same stuck reply twice in a row.
+                stuck_on = pin_block_coverage(gate_brief, blocked_plan.response)
+                blocked_plan = _unstuck_recovery(
+                    db, thread.id, blocked_plan, gate_brief, planned.pin_notices
+                )
                 # Same rollback-then-respond pattern as the receipts gate above: the
                 # speculative draft/brief work is undone and the reply is persisted in
                 # the normal response transaction (the old draft stays the head).
@@ -2680,6 +2715,7 @@ def _complete_draft_turn(
                         **(planned.brief_coverage or {}),
                         "stage": "draft",
                         "reason": blocked_reason,
+                        **stuck_on,
                         **(
                             {
                                 "accepted_omission_ids": unmet_ids,
@@ -3161,6 +3197,7 @@ async def _plan_with_live_agent(
     # KRI-1037: "Try again" after a provider deadline starts the Main Creator on its lighter
     # rung (the claim stamped the snapshot from the thread's last finished turn).
     degraded_token = start_degraded_retry.set(bool(snapshot.get("start_degraded")))
+    sender = bind_sending_build(stamped_client_protocol(snapshot.get("client_protocol")))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             parsed_state = parse_editor_state(editor_state)
@@ -3296,6 +3333,7 @@ async def _plan_with_live_agent(
     finally:
         turn_deadline.reset(deadline)
         start_degraded_retry.reset(degraded_token)
+        unbind_sending_build(sender)
         stop.set()
         try:
             await heartbeat

@@ -28,7 +28,9 @@ What it decides, and only this:
   evenly between the clips (the montage always opens on a clip) and keep their
   upload order. A photo holds for a fast-cut length, never longer than a beat of
   attention. Runtime v2 has no guided proposal to place them, so without this
-  every phone montage with a photo was refused at dispatch.
+  every phone montage with a photo was refused at dispatch. Under a filming-order
+  ask a dated Visual joins the chronology by its own capture time instead
+  (KRI-1069), the order the render contract pins.
 
 The output is an ordinary ``EditProposalSnapshot`` (direction ``fast_montage``
 with exact ``fast_cuts`` and ``clip_labels``), so the strict guided compiler,
@@ -1209,6 +1211,7 @@ def _sequence_outcomes(
     spans: Sequence[tuple[str, float, float]] = (),
     moment_record: Sequence[Mapping[str, Any]] | None = None,
     unconfirmed_groups: frozenset[SequenceGroupKey] = frozenset(),
+    seated_visuals: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Did each described group land where the creator said? Read off the finished order.
 
@@ -1233,9 +1236,14 @@ def _sequence_outcomes(
     ``seats`` (KRI-796) are the rows read as moments of one take (``moment_seats``) and
     ``cuts`` the finished cut order as (clip ref, source start): those rows are judged off
     the cuts by ``_moment_outcomes`` and carry the ``moment`` they name or follow.
+
+    ``seated_visuals`` (KRI-1069) are the refs of the dated Visuals a filming-order montage
+    seats in the chronology like clips ("open on the lineup sheet" names a photo): they are
+    judged like clips. Empty (the default), every Visual is left out as before.
     """
-    spot = {clip.ref_id: i for i, clip in enumerate(c for c in ordered if c.lane == "clip")}
-    visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"}
+    seated = [c for c in ordered if c.lane == "clip" or c.ref_id in seated_visuals]
+    spot = {clip.ref_id: i for i, clip in enumerate(seated)}
+    visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"} - seated_visuals
     # The row that seats each clip: the first one naming it (``apply_sequence``'s own rule).
     owner: dict[str, int] = {}
     for at, (_p, _n, members, status) in enumerate(rows):
@@ -1712,7 +1720,8 @@ def plan_unified_montage(
     ``font_covers(family, text)`` says whether a bundled font has a glyph for
     every character of ``text`` (see ``skia_font_covers``); without it the
     default typography is used as is. ``visuals`` are the item's ready
-    Visuals-pool items (``lane="asset"``) in upload order; see ``_scatter``.
+    Visuals-pool items (``lane="asset"``) in upload order; see ``_scatter``. Under a
+    filming-order ask, dated ones are ordered with the clips by capture time (KRI-1069).
     ``output_orientation`` (KRI-306) is the creator's explicit finished-video
     shape: ``"portrait"``/``"landscape"`` pins the canvas with the reason "The
     creator selected this output format"; ``None`` keeps the snapshot's own
@@ -1783,7 +1792,22 @@ def plan_unified_montage(
         raise ValueError("montage visuals must come from the Visuals pool")
     if len({clip.media_id for clip in (*clips, *visuals)}) != len(clips) + len(visuals):
         raise ValueError("montage clips must have unique media identities")
-    ordered, basis, fallback_ids = _order(clips, view, creator_order)
+    # KRI-1069: under a filming-order ask a dated Visual is footage like any clip: it joins
+    # the chronology by its own capture time, before the creator's sequence ("open on the
+    # lineup sheet") seats anything, exactly as the render contract pins it. Undated
+    # Visuals keep their spread slot below.
+    timed_visuals = (
+        [visual for visual in visuals if visual.capture_time is not None]
+        if view.order_by_capture
+        else []
+    )
+    ordered, basis, fallback_ids = _order([*clips, *timed_visuals], view, creator_order)
+    if timed_visuals and basis != "capture_time":
+        # Fewer than two dated items: nothing to sort, so the Visuals spread as before.
+        timed_visuals = []
+        ordered, basis, fallback_ids = _order(clips, view, creator_order)
+    timed_ids = {visual.media_id for visual in timed_visuals}
+    spread_visuals = [visual for visual in visuals if visual.media_id not in timed_ids]
     choice = _ordering_choice(strategy, clip_intents_enabled)
     if choice == "group_first":
         # The creator chose grouping over strict filming order (KRI-282). Blocks are
@@ -1817,7 +1841,7 @@ def plan_unified_montage(
         ordered = speech_ordered(ordered, seats.roles, key=lambda clip: clip.ref_id)
     if sequence:
         ordered = _apply_sequence(ordered, sequence)
-    ordered = _scatter(ordered, visuals)
+    ordered = _scatter(ordered, spread_visuals)
     editorial = strategy.get("editorial_plan")
     if editorial is not None:
         from app.services.editorial_plan import editorial_order
@@ -1834,9 +1858,9 @@ def plan_unified_montage(
         basis = "approved_editorial_plan"
 
     if view.order_by_capture:
-        # Visuals carry no capture time: they keep their spread slot, and the
+        # Visuals that did not join the chronology keep their spread slot, and the
         # receipt says their place is not the filmed order.
-        fallback_ids = [*fallback_ids, *(v.media_id for v in visuals if v.capture_time is None)]
+        fallback_ids = [*fallback_ids, *(v.media_id for v in spread_visuals)]
 
     # KRI-496: only footage-owned, unnamed timing gets its length and source
     # windows from analysis. Song, voiceover, original-audio takes and a proven
@@ -2611,6 +2635,7 @@ def plan_unified_montage(
             cuts=[(ref_of[cut.media_id], cut.source_start_s) for cut in cuts],
             spans=[(ref_of[cut.media_id], cut.source_start_s, cut.source_end_s) for cut in cuts],
             moment_record=moment_record,
+            seated_visuals=frozenset(v.ref_id for v in timed_visuals),
         )
         + creator_omissions,
         ordering_choice=choice,
@@ -3785,6 +3810,7 @@ def _intent_outcomes(
     cuts: Sequence[tuple[str, float]] = (),
     spans: Sequence[tuple[str, float, float]] = (),
     moment_record: Sequence[Mapping[str, Any]] | None = None,
+    seated_visuals: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """What each requested group / sport label / chapter text did in this plan (KRI-282).
 
@@ -3802,6 +3828,7 @@ def _intent_outcomes(
         spans=spans,
         moment_record=moment_record,
         unconfirmed_groups=unconfirmed_order_groups(strategy.get("resolved_clip_intents")),
+        seated_visuals=seated_visuals,
     )
     position = {clip.ref_id: i for i, clip in enumerate(ordered)}
     printed = {

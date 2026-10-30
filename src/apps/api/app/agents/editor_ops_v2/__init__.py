@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.agents.prompt_vocab import render_vocab_tokens
+
 EDITOR_OPS_VERSION = 2
 LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides", "overlays")
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
@@ -38,8 +40,14 @@ SURFACE_ONLY_LANES: dict[str, str] = {"slides": "slide_post"}
 # Lanes whose prompt fragment (`<name>.txt` under prompts/edit_copilot_ops/) is appended only when
 # the snapshot actually offers the lane's op family, so every other prompt stays byte-identical
 # (KRI-661). Keyed by the family in `snapshot["allowed_op_families"]`.
-FAMILY_FRAGMENTS: dict[str, str] = {"overlay": "overlay_cards.txt"}
+FAMILY_FRAGMENTS: dict[str, str] = {"overlay": "overlay_cards.txt", "caption": "captions.txt"}
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
+
+
+def read_fragment(name: str) -> str:
+    """A lane prompt fragment, stripped, with its ``{{TOKEN}}`` vocabularies rendered."""
+    return render_vocab_tokens((_FRAGMENT_DIR / name).read_text(encoding="utf-8").strip())
+
 
 # coerce(name, payload, snapshot, state) -> cleaned payload | None. Returning
 # None drops the op; call ``state.invalid_value()`` / ``state.reject(...)``
@@ -141,7 +149,7 @@ def family_fragments(snapshot: object) -> str:
         if family not in allowed:
             continue
         try:
-            text = (_FRAGMENT_DIR / name).read_text(encoding="utf-8").strip()
+            text = read_fragment(name)
         except OSError:
             continue
         if text:
@@ -161,7 +169,7 @@ def prompt_fragments(surface: str | None = None) -> str:
     parts: list[str] = []
     for name in names:
         try:
-            text = (_FRAGMENT_DIR / name).read_text(encoding="utf-8").strip()
+            text = read_fragment(name)
         except OSError:
             continue
         if text:
@@ -183,6 +191,7 @@ __all__ = [
     "lane_specs",
     "merge_into_parser",
     "prompt_fragments",
+    "read_fragment",
     "register_all_handlers",
     "surface_of",
 ]

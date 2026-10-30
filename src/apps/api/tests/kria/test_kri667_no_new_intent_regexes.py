@@ -162,7 +162,7 @@ BASELINE: dict[str, int] = {
     "kria/reply_language.py": 8,
     "kria/speaker_framing_ask.py": 29,
     "kria/strategy_policy.py": 4,
-    "kria/style_asks.py": 25,
+    "kria/style_asks.py": 22,
     "kria/voiceover_clips.py": 12,
     "pipeline/narration_labels.py": 2,
     "routes/_copilot.py": 8,

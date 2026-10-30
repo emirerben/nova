@@ -25,6 +25,16 @@ Caption motion applies to complete caption lines under sentence display: the lin
 
 Still-photo slide posts export images. Their text panel continues to hide animation controls. Read-only text retains its existing editing restrictions. These options animate content inside a video, rather than application labels or buttons.
 
+## AI support
+
+The chat editor, brief extractor and main planner name animations from one registry, `TEXT_ANIMATION_VOCAB` in `text_animation_phases.py`. Each edge has its picker label, a Turkish receipt label and the phrases creators use for it ("word relay"). Prompts write `{{TEXT_ANIMATION_EDGES}}` and `app/agents/prompt_vocab.py` renders it, so "add word relay animation to all text" becomes `patch_text` with `entrance: "wordRelay"`. Brief checks, style asks, edit receipts and the "remove the effect" pass take their words from the same table.
+
+Chat animates captions too. "Add word relay animation to all captions" becomes `set_caption_meta` with `animation_phases: {"entrance": "wordRelay"}`. Only the phases the creator names change, merged over the current all-captions animation. Like the phone's All captions choice, it removes the phases set on single lines, so every line plays the new animation. Chat has no op for one line's animation, so the prompt (`prompts/edit_copilot_ops/captions.txt`, appended when the caption family is offered) tells the creator to set that line in the editor. The receipt names the animation ("Captions now enter with Word Relay").
+
+Chat offers caption animation only where the editor would. `build_editor_snapshot` copies `editor_capabilities.caption_animation` into the copilot snapshot (`COPILOT_EDITOR_CAPABILITIES`), and the parser keeps `animation_phases` only when the snapshot carries it (`_CAPTION_META_FIELD_GATES` in `edit_copilot.py`). The capability needs `CAPTION_ANIMATION_ENABLED`, a verified `authoredText` feature and an app build at `caption_animation_min_client_protocol` (24) or later. The Kria worker plans each turn for the app build that sent the message (`bind_sending_build`), so an older build or the web never gets the op. Instead the reply says "Captions on this video can't animate yet." `tests/kria/test_caption_animation_chat.py` drives the snapshot, parser, compiler and editor Save to the device recipe. `editor_capability_parity.py` maps `setCaptionPhase` and `setCaptionAnimationSpeed` to that field. Its test fails when a mapped field is not one the op's parser accepts, or when the field's capability never reaches the snapshot.
+
+To add an animation, add it to `TextAnimationEdge` and give it a `TEXT_ANIMATION_VOCAB` entry. The import fails until the entry exists. `tests/agents/test_prompt_vocab_drift.py` fails when a prompt or AI-layer literal hand-lists three or more animations but not all of them. It also checks that the rendered chat-editor text lane offers every edge. Bump the prompt version of each agent whose rendered prompt changed.
+
 ## Renderers
 
 The native compositor, Pillow renderer and Skia renderer recognize all six edge values. The backend renderers share `designed_text_motion.py` and retain their existing font shaping. They do not silently replace an unsupported edge with static text.

@@ -10,27 +10,37 @@ Unknown values normalise to None (the default look); nothing here ever raises.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Literal, get_args
 
-TitleAnimation = Literal["typewriter", "fade", "pop", "slide"]
+from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, TextAnimationEdge
+
+_TITLE_ANIMATIONS = tuple(edge for edge in get_args(TextAnimationEdge) if edge != "none")
+TitleAnimation = Literal[_TITLE_ANIMATIONS]  # type: ignore[valid-type]
 LabelPosition = Literal[
     "top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right"
 ]
 
+_SEPARATORS = re.compile(r"[\s_\-]+")
+
+
+def _fold(value: object) -> str:
+    return _SEPARATORS.sub(" ", str(value).strip().casefold()) if value is not None else ""
+
+
 _TITLE_ANIMATION_ALIASES: dict[str, TitleAnimation] = {
-    "typewriter": "typewriter",
-    "type writer": "typewriter",
+    phrase: edge
+    for edge in _TITLE_ANIMATIONS
+    for phrase in (
+        _fold(edge),
+        _fold(TEXT_ANIMATION_VOCAB[edge].label),
+        *TEXT_ANIMATION_VOCAB[edge].aliases,
+    )
+} | {
+    # A `facts.animation` value, not free text, so the loose verb forms are safe here.
     "typewriting": "typewriter",
     "typing": "typewriter",
     "typed": "typewriter",
     "type": "typewriter",
-    "fade": "fade",
-    "fade in": "fade",
-    "pop": "pop",
-    "pop in": "pop",
-    "slide": "slide",
-    "slide in": "slide",
-    "slide up": "slide",
 }
 
 _LABEL_POSITION_ALIASES: dict[str, LabelPosition] = {
@@ -51,12 +61,6 @@ _LABEL_POSITION_ALIASES: dict[str, LabelPosition] = {
     "bottom right": "bottom_right",
     "lower right": "bottom_right",
 }
-
-_SEPARATORS = re.compile(r"[\s_\-]+")
-
-
-def _fold(value: object) -> str:
-    return _SEPARATORS.sub(" ", str(value).strip().casefold()) if value is not None else ""
 
 
 def normalize_title_animation(value: object) -> TitleAnimation | None:
@@ -91,8 +95,6 @@ LABEL_ANCHORS: dict[LabelPosition, tuple[float, float, Literal["left", "center",
 # (pipeline/text_animation_phases.py). At speed 1 a whole sentence would appear in 0.4s,
 # which reads as a pop, so typing is slowed until the title hold caps it.
 TITLE_ANIMATION_SPEED: dict[TitleAnimation, float] = {
+    **dict.fromkeys(_TITLE_ANIMATIONS, 1.0),
     "typewriter": 0.3,
-    "fade": 1.0,
-    "pop": 1.0,
-    "slide": 1.0,
 }

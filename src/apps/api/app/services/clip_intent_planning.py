@@ -48,6 +48,7 @@ from app.schemas.clip_intents import (
     ground_placeholder_label,
     is_clip_description_label,
 )
+from app.services.clip_facts import order_by_capture_time
 from app.services.clip_file_names import ClipNameIndex, NameReference, names_only
 from app.services.clip_intent_resolution import (
     IntentClip,
@@ -768,6 +769,100 @@ def with_brief_labels(
     return [*intents, *added] if added else intents
 
 
+def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) -> list[ClipIntent]:
+    """Add the first / last clip a filming-order brief names that no planned row places (KRI-1067).
+
+    Leverkusen M1 (2026-10-29): "chronological order from arrival to the final whistle" kept
+    ``last_clip: "the final whistle"`` on the brief, but the planner wrote no ``last`` pin for
+    it. Nothing asked which clip that is, and the render contract refuses a stated first / last
+    clip no sequence row seats (``stated_anchors``), so the turn ended on a reply with nothing
+    to tap. Like a dictated label (``with_brief_labels``), the clip joins the inventory and is
+    resolved, or asked with the picker; a tap or a None answer settles it the usual way
+    (KRI-282, KRI-1025). Its id and attribute come from the brief's words alone, so the answer
+    still binds on the next turn, when the planner may leave it out again.
+
+    A spot the planner already pinned (in any words), or words it already wrote as an order
+    row (a second row for them would argue with it), are left as they are.
+    """
+    rows = [i for i in intents if i.op == "order" and not i.order_by]
+    pinned = {i.position for i in rows if i.position}
+    have = {label_key(i.attribute) for i in rows}
+    taken = {intent.intent_id for intent in intents}
+    added: list[ClipIntent] = []
+    for position in ("first", "last"):
+        words = " ".join(str(anchors.get(position) or "").split())
+        key = label_key(words)
+        if (
+            not key
+            or position in pinned
+            or key in have
+            or len(intents) + len(added) >= MAX_CLIP_INTENTS
+        ):
+            continue
+        intent_id, n = fit_intent_id(f"order-{position}-{key.replace(' ', '-')}"), 2
+        while intent_id in taken:
+            intent_id, n = fit_intent_id(f"order-{position}-{key.replace(' ', '-')}-{n}"), n + 1
+        try:
+            added.append(
+                ClipIntent(intent_id=intent_id, op="order", position=position, attribute=words)
+            )
+        except ValidationError:
+            continue
+        have.add(key)
+        taken.add(intent_id)
+    return [*intents, *added] if added else intents
+
+
+def with_filming_end_ticks(
+    resolution: IntentResolution, positions: Mapping[str, str], clips: Sequence[IntentClip]
+) -> IntentResolution:
+    """Pre-tick the end of filming order on the picker row of a brief's first / last clip.
+
+    ``positions`` maps the ids ``with_brief_anchors`` added to their spot. On a filming-order
+    edit the clip a creator most likely means by "to the final whistle" is the last one they
+    filmed, so that row ticks it (the first filmed for a first clip) and the reply says so. A
+    tick is a suggestion: nothing is placed until the creator taps. A row the resolver already
+    ticked keeps its own suggestion, and a clip with no filming time is never ticked. The ends
+    come from the sort the montage uses (``order_by_capture_time``), so with fewer than two
+    dated clips there is no filming order and nothing is ticked.
+    """
+    question = resolution.clip_question
+    if not question or not positions:
+        return resolution
+    filmed = {c.media_id: c.capture_time for c in clips if c.capture_time is not None}
+    categories: list[Any] = []
+    notes: list[str] = []
+    for category in question.get("categories") or []:
+        position = positions.get(str(category.get("intent_id") or ""))
+        dated = [m for m in category.get("candidate_media_ids") or [] if m in filmed]
+        ordering = order_by_capture_time(dated, filmed)
+        if (
+            position is None
+            or category.get("suggested_media_ids")
+            or ordering.basis != "capture_time"
+        ):
+            categories.append(category)
+            continue
+        end = ordering.ordered_ids[-1 if position == "last" else 0]
+        categories.append({**category, "suggested_media_ids": [end]})
+        last = position == "last"
+        notes.append(
+            say(
+                en=f"I ticked the {'last' if last else 'first'} clip you filmed for "
+                f'"{category.get("label")}".',
+                tr=f'"{category.get("label")}" için çektiğin {"son" if last else "ilk"} klibi '
+                "işaretledim.",
+            )
+        )
+    if not notes:
+        return resolution
+    return replace(
+        resolution,
+        clip_question={**question, "categories": categories},
+        question=" ".join([(resolution.question or "").strip(), *notes]).strip(),
+    )
+
+
 # Words that mean "the text on a clip" in the chats we serve (folded: no case, no accents).
 _LABEL_NOUNS = ("label", "etiket", "yazi", "caption")
 _LONGER_WORD = 4
@@ -1058,6 +1153,7 @@ async def plan_and_resolve_clip_intents(
     whole_video_texts: Sequence[str] = (),
     sequence_texts: Sequence[str] = (),
     checked_inventory: Any = None,
+    brief_anchors: Mapping[str, str] | None = None,
 ) -> PlannedIntentResolution:
     """``describe_clips`` (KRI-612): the Creative Brief asks for a line on each clip saying
     what it shows, so the inventory always carries one description label for it.
@@ -1082,7 +1178,11 @@ async def plan_and_resolve_clip_intents(
     ``checked_inventory`` (KRI-950): the ``inventory`` of the turn that asked the clip picker
     this turn only answers. Reused instead of a new planner call when it was read from the same
     words (``_reused_inventory``): a re-plan is a fresh model answer, and one row it gets wrong
-    asked the creator to restate an instruction they never touched."""
+    asked the creator to restate an instruction they never touched.
+
+    ``brief_anchors`` (KRI-1067, ``stated_anchors``): a filming-order brief's first / last
+    clip, by the creator's words. One the inventory leaves unplaced joins it
+    (``with_brief_anchors``), and its picker row ticks the end of filming order."""
     if len(creator_request) > CREATOR_REQUEST_MAX_CHARS:
         return PlannedIntentResolution(
             [],
@@ -1236,6 +1336,14 @@ async def plan_and_resolve_clip_intents(
         intents = with_clip_descriptions(intents)
     if brief_labels:
         intents = with_brief_labels(intents, brief_labels, shot_captions=shot_captions)
+    planned_ids = {intent.intent_id for intent in intents}
+    if brief_anchors:
+        intents = with_brief_anchors(intents, brief_anchors)
+    anchor_spots = {
+        intent.intent_id: str(intent.position)
+        for intent in intents
+        if intent.intent_id not in planned_ids
+    }
     if shot_captions:
         # KRI-804: the creator's "keep it exactly as written" answer to the question below.
         intents = with_labels_kept_as_written(
@@ -1438,6 +1546,7 @@ async def plan_and_resolve_clip_intents(
         resolution = replace(
             resolution, intents=_as_listed([*resolution.intents, *resolved_orders], intents)
         )
+    resolution = with_filming_end_ticks(resolution, anchor_spots, clips)
     return selected_result(
         intents,
         resolution,

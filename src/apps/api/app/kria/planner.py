@@ -176,6 +176,7 @@ from app.services.clip_intent_planning import (
     whole_video_text_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
+from app.services.clip_order_sequence import stated_anchors
 from app.services.clip_selection import answered_rows, fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
@@ -286,6 +287,29 @@ def _attached_visual_ids(manifest: Any) -> tuple[str, ...]:
         for media in getattr(manifest, "media", None) or ()
         if str(media.media_id).startswith("asset-")
     )
+
+
+async def _snapshot_visual_rows(db: AsyncSession, item: PlanItem) -> list:
+    """KRI-1069: the item's Visuals the turn's media snapshot keeps (``snapshot_visual``).
+
+    Every creator-visible pool row, as the manifest lists them, so a photo still being
+    analyzed keeps its capture time; the dispatch gate waits for it to be ready.
+    """
+    from app.models import PlanItemAsset  # noqa: PLC0415
+    from app.services.creator_sessions import CREATOR_VISIBLE_ASSET_STATES  # noqa: PLC0415
+
+    owner = select(ContentPlan.user_id).where(ContentPlan.id == item.content_plan_id)
+    rows = await db.execute(
+        select(PlanItemAsset)
+        .where(
+            PlanItemAsset.plan_item_id == item.id,
+            PlanItemAsset.user_id == owner.scalar_subquery(),
+            PlanItemAsset.status.in_(CREATOR_VISIBLE_ASSET_STATES),
+            PlanItemAsset.deduplicated_to_asset_id.is_(None),
+        )
+        .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
+    )
+    return list(rows.scalars())
 
 
 def _timing_profile(strategy: Mapping[str, Any]) -> MixedMediaTimingProfile | None:
@@ -907,6 +931,34 @@ class PlannedKriaTurn:
     prepared_research: dict | None = None
     # The basis inputs research read that the persisted draft does not hold.
     prepared_research_terms: dict | None = None
+    # KRI-1068: what the turn just withdrew ("skip that" about the clip the last reply was
+    # stuck on), said by the draft or by whatever reply holds it back.
+    pin_notices: tuple[str, ...] = ()
+
+
+async def _withdraw_stuck_pins(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    prior: CreativeBrief | None,
+    updates: tuple[BriefUpdate, ...],
+    user_message: str,
+) -> tuple[tuple[BriefUpdate, ...], tuple[str, ...]]:
+    """KRI-1068: right after a reply stuck on a first / last clip, "skip that" drops it.
+
+    The events are read only when the brief names such a clip at all.
+    """
+    from app.services.clip_order_sequence import stated_anchors  # noqa: PLC0415
+    from app.services.pin_withdrawal import withdraw_stuck_pins  # noqa: PLC0415
+
+    if prior is None or not stated_anchors(prior):
+        return updates, ()
+    withdrawal = withdraw_stuck_pins(
+        prior, updates, await _load_thread_events(db, thread_id), user_message
+    )
+    if withdrawal.notices:
+        log.info("kria_stuck_pin_withdrawn", thread_id=str(thread_id))
+    return withdrawal.updates, withdrawal.notices
 
 
 def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202
@@ -3725,6 +3777,8 @@ async def _plan_creator_action(
         kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
         whole_video_texts = whole_video_text_asks(effective_brief)
         sequence_texts = sequence_text_literals(effective_brief)
+        # KRI-1067: a filming-order brief's first / last clip the inventory may leave out.
+        brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
         )
@@ -3769,6 +3823,7 @@ async def _plan_creator_action(
                 # 29 Ekim: the brief's word-by-word text is the text lane's, never a caption.
                 **({"sequence_texts": sequence_texts} if sequence_texts else {}),
                 **({"checked_inventory": checked_inventory} if checked_inventory else {}),
+                **({"brief_anchors": brief_anchors} if brief_anchors else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
@@ -4812,7 +4867,13 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     if planned.plan.mode != "act":
         return planned
     current = await db.get(PlanItem, kwargs["item_id"], populate_existing=True)
-    after = snapshot_media(current) if current is not None else {}
+    if current is None:
+        after = {}
+    elif _attached_visual_ids(planned.brief_manifest):
+        # KRI-1069: each Visual's own capture time, so a filming order can date a photo.
+        after = snapshot_media(current, visuals=await _snapshot_visual_rows(db, current))
+    else:
+        after = snapshot_media(current)
     if media_identity(before) != media_identity(after):
         return replace(
             planned,
@@ -5134,6 +5195,10 @@ async def _gate_unresolved_choices(
     song_notice = music_genre_notice(frozen_music)
     if song_notice and song_notice not in planned.policy_notices:
         planned = replace(planned, policy_notices=(*planned.policy_notices, song_notice))
+    # KRI-1068: the clip the creator just dropped is said like the song, on both replies.
+    pin_notices = [n for n in planned.pin_notices if n not in planned.policy_notices]
+    if pin_notices:
+        planned = replace(planned, policy_notices=(*planned.policy_notices, *pin_notices))
     model_summary = str(arguments.get("summary") or "")
     plan_notices = [
         notice
@@ -5143,6 +5208,7 @@ async def _gate_unresolved_choices(
             ),
             _moment_count_notice(strategy, brief, length_plan, summary=model_summary),
             song_notice,
+            *planned.pin_notices,
         )
         if notice
     ]
@@ -6145,6 +6211,9 @@ async def _plan_live_turn(
         updates=updates,
         states=inputs.creative_copy_state or {},
     )
+    updates, pin_notices = await _withdraw_stuck_pins(
+        db, thread_id=thread_id, prior=prior_brief, updates=updates, user_message=user_message
+    )
     if answers_clip_question and updates:
         # KRI-966: a tapped length answer is the server's own option label, already applied by
         # the gate; the model's restatement of it is never the creator's length ask.
@@ -6319,6 +6388,7 @@ async def _plan_live_turn(
     return replace(
         planned,
         brief_updates=updates,
+        pin_notices=pin_notices,
         # A re-plan that ended up asking a question or failing safe is not an
         # editor plan; only an act plan is held to the router's verdict.
         brief_route=route,
