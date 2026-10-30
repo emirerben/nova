@@ -584,6 +584,22 @@ class Settings(BaseSettings):
     # migration can land before enforcement. Production enables it only after
     # split-project API keys and alert budgets have been verified.
     ai_cost_control_enabled: bool = False
+    credit_quality_review_enabled: bool = False
+    credit_quality_review_billing_verified: bool = False
+    credit_quality_review_approved_run_id: str = ""
+    credit_quality_review_max_run_usd: float = Field(default=0, ge=0, le=2)
+    generated_images_enabled: bool = False
+    generated_narration_enabled: bool = False
+    generated_media_live_approved: bool = False
+    generated_media_billing_organization: str = ""
+    generated_media_price_verified_at: str = ""
+    generated_media_max_request_usd: float = Field(default=0, ge=0, le=2.0)
+    ai_openai_monthly_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_anthropic_monthly_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_openai_evaluation_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_openai_image_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_openai_narration_budget_usd: float = Field(default=0, ge=0, le=1000)
+    ai_anthropic_evaluation_budget_usd: float = Field(default=0, ge=0, le=1000)
     ai_usage_environment: Literal["production", "development", "lab", "test"] = "development"
     # Optional operator-approved envelope for a local development manual-QA
     # session. It fills attribution for background Celery work that cannot

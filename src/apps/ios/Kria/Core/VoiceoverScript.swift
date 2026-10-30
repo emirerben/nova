@@ -85,7 +85,8 @@ enum VoiceoverScriptCardMode {
     /// The newest script for this project: Record / Import open the voiceover step seeded with it. `voiceoverAttached`
     /// switches the primary action to sending the recorded-voiceover message.
     case active(voiceoverAttached: Bool, isSending: Bool, record: (VoiceoverScript) -> Void,
-                importVoiceover: (VoiceoverScript) -> Void, planWithVoiceover: (VoiceoverScript) -> Void)
+                importVoiceover: (VoiceoverScript) -> Void, planWithVoiceover: (VoiceoverScript) -> Void,
+                generateNarration: ((VoiceoverScript) -> Void)? = nil)
     /// An earlier revision, another project's card, or a failed draft: read-only.
     case readOnly
 }
