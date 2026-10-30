@@ -64,10 +64,11 @@ def undrawable_text(texts, fonts=CURATED_PHONE_FONTS, covers=None) -> tuple[str,
 def undrawable_message(text: str, characters: str) -> str:
     from app.kria.reply_language import say
 
+    # The characters lead: a draft's reply line shortens the reason after ~60 characters.
     return say(
-        en=f'No phone font can draw "{characters}" in "{text}". Remove it or change the wording.',
-        tr=f'"{text}" içindeki "{characters}" hiçbir telefon yazı tipiyle yazılamıyor. '
-        "Onu çıkar ya da metni değiştir.",
+        en=f'No phone font can draw "{characters}". Remove it or change "{text}".',
+        tr=f'"{characters}" hiçbir telefon yazı tipiyle yazılamıyor. '
+        f'Onu çıkar ya da "{text}" metnini değiştir.',
     )
 
 

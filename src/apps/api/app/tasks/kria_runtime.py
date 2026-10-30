@@ -47,6 +47,7 @@ from app.kria.brief_checks import (
     build_receipts,
     clip_speed_notice,
     defers_caption_words_to_phone_render,
+    defers_text_to_phone,
     defers_to_narrated_render,
     defers_to_unified_montage,
     describe_text_look,
@@ -1696,6 +1697,11 @@ def _complete_draft_turn(
                         facts,
                         phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # KRI-1024: any phone writer draws text with the phone's fonts, so a
+                        # literal none of them draws is a "Couldn't" before approval.
+                        phone_text=defers_text_to_phone(
+                            creator_id=thread.creator_id, clip_paths=item.clip_gcs_paths or ()
+                        ),
                         # KRI-842: one clip's own sound is judged on the draft that the phone
                         # Voiceover compiler will render, against the footage it will play.
                         phone_narrated=defers_to_narrated_render(
