@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.0.0] - 2026-10-30
+
+### Added
+- feat(kria): add gated credit capabilities and metered evaluation (#1940) <!-- release-pr: 1940 -->
+
 ## [0.82.36.0] - 2026-10-30
 
 ### Changed
