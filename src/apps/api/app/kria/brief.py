@@ -581,6 +581,10 @@ def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[s
             k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts
         }
         facts = {**kept, **update.facts} if kept else update.facts
+    if any(facts[k] is None for k in STICKY_FACTS & facts.keys()):
+        # KRI-1068: a change that sets a sticky fact to null withdraws it ("skip that"
+        # about the clip a reply was stuck on), so the fact is gone rather than kept as null.
+        facts = {k: v for k, v in facts.items() if not (k in STICKY_FACTS and v is None)}
     mark = facts.get(APPROVED_COPY_FACT)
     if mark is not None and not (isinstance(mark, Mapping) and mark.get("text") == update.literal):
         # KRI-945: the mark belongs to the words it copied; other words are someone else's.
