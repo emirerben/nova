@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.22.0] - 2026-10-30
+
+### Changed
+- fix(kria): a filming-order montage with a "starting with" group reaches approval (KRI-1080) (#1975) <!-- release-pr: 1975 -->
+
 ## [0.83.21.0] - 2026-10-30
 
 ### Fixed
