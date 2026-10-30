@@ -789,11 +789,13 @@ final class NativeEditorInspectorUITests: XCTestCase {
         textTool.tap()
         let input = app.descendants(matching: .any)["native-editor-new-text-input"].firstMatch
         XCTAssertTrue(input.waitForExistence(timeout: 3))
-        input.tap(); input.typeText("Live text")
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        input.typeText("Live text")
         // typeText can return before the last keystroke reaches the text view
         // on a busy simulator, so wait for the value instead of sampling it.
         expectation(for: NSPredicate(format: "value == %@", "Live text"), evaluatedWith: input)
-        waitForExpectations(timeout: 5)
+        waitForExpectations(timeout: 15)
         XCTAssertGreaterThan(preview.frame.height, 100)
         XCTAssertLessThan(preview.frame.maxY, app.keyboards.firstMatch.frame.minY)
         app.buttons["native-editor-text-done"].tap()

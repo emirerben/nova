@@ -322,6 +322,14 @@ class ClipLabel(BaseModel):
         max_length=100,
         exclude_if=lambda value: value is None,
     )
+    # KRI-1029: the creator asked this text curved and the phone can draw it (the text
+    # element's ``bend``, KRI-646). None is omitted, so stored snapshots keep their hash.
+    bend: float | None = Field(
+        default=None,
+        ge=-100,
+        le=100,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class MontageAudioPlan(BaseModel):
@@ -1973,6 +1981,14 @@ class EditProposalSnapshot(BaseModel):
     )
     label_position: LabelPosition | None = Field(
         default=None,
+        exclude_if=lambda value: value is None,
+    )
+    # KRI-1029: the opening title's bend when the creator asked it curved (KRI-646 ``bend``).
+    # None is omitted so every earlier snapshot keeps its hash.
+    title_bend: float | None = Field(
+        default=None,
+        ge=-100,
+        le=100,
         exclude_if=lambda value: value is None,
     )
     image_layout: BeatLayout | None = Field(

@@ -7063,8 +7063,10 @@ def _plan_phone_unified_montage(
         clip_speed_planned_for,
         freeze_frame_planned_for,
         stamped_client_protocol,
+        text_bend_planned_for,
     )
 
+    client_protocol = stamped_client_protocol(all_candidates.get("creator_client_protocol"))
     return plan_unified_montage(
         clips,
         view,
@@ -7087,12 +7089,13 @@ def _plan_phone_unified_montage(
         # KRI-898: and only for the app build that approved (stamped on the Job at dispatch;
         # the pre-approval check stamps the drafting build). Unstamped => no hold, the
         # receipt says "Couldn't", the rest of the video renders.
-        freeze_frames=freeze_frame_planned_for(
-            stamped_client_protocol(all_candidates.get("creator_client_protocol"))
-        ),
+        freeze_frames=freeze_frame_planned_for(client_protocol),
         # KRI-689: a chat speed ask is planned only where the phone retimes (`variableSpeed`
         # verified); otherwise the plan records it as locked and the receipt says so.
         clip_speed=clip_speed_planned_for(),
+        # KRI-1029: "curved title" bends only for a build that draws `bend` (same stamp as
+        # the freeze); otherwise the text stays straight and the receipt says so.
+        text_bend=text_bend_planned_for(client_protocol),
     )
 
 

@@ -47,6 +47,7 @@ from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.duplicate_send import is_duplicate_answer
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
+from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
 from app.models import CreationThreadEvent, CreativeBriefVersion, CreatorAgentTurn
 from app.schemas.clip_intents import asks_clip_description
 from app.schemas.text_style_intent import normalize_title_animation
@@ -537,6 +538,8 @@ def merge_requirements(
 # creator never withdrew them, so a same-kind, same-scope change keeps them unless it sets them.
 # KRI-841: so is the video a Talking edit ends on (`ending_clip`) and whether it keeps its sound.
 # KRI-945: and the server's mark on a title literal it copied from an approved wording.
+# KRI-1029: and the text's shape ("curved title"), which "make the title just X" restates
+# without.
 STICKY_FACTS = frozenset(
     {
         "first_clip",
@@ -547,6 +550,7 @@ STICKY_FACTS = frozenset(
         "ending_clip",
         "keep_audio",
         APPROVED_COPY_FACT,
+        TEXT_SHAPE_FACT,
     }
 )
 
@@ -611,13 +615,18 @@ def apply_updates(
                     "scope": update.scope,
                     "literal": update.literal,
                     "description": update.description,
-                    "facts": stamp_order_facts(
+                    # KRI-1029: this turn's own shape words win over a carried shape.
+                    "facts": with_text_shape(
                         update.kind,
                         update.description,
-                        update.literal,
-                        _carry_sticky_facts(target, update),
-                        req_id=target.id,
-                        turn_id=source_turn_id,
+                        stamp_order_facts(
+                            update.kind,
+                            update.description,
+                            update.literal,
+                            _carry_sticky_facts(target, update),
+                            req_id=target.id,
+                            turn_id=source_turn_id,
+                        ),
                     ),
                     "source_turn_id": source_turn_id,
                     "status": "open",
@@ -633,13 +642,17 @@ def apply_updates(
             scope=update.scope,
             literal=update.literal,
             description=update.description,
-            facts=stamp_order_facts(
+            facts=with_text_shape(
                 update.kind,
                 update.description,
-                update.literal,
-                update.facts,
-                req_id=f"r{counter}",
-                turn_id=source_turn_id,
+                stamp_order_facts(
+                    update.kind,
+                    update.description,
+                    update.literal,
+                    update.facts,
+                    req_id=f"r{counter}",
+                    turn_id=source_turn_id,
+                ),
             ),
             source_turn_id=source_turn_id,
         )

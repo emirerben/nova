@@ -892,6 +892,16 @@
       ]
     },
     {
+      "id": "kri-1029-1030-plaza-title",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1029_1030_plaza_title_replay.py tests/kria/test_text_bend.py",
+      "paths": [
+        "src/apps/api/app/kria/text_shape_ask.py",
+        "src/apps/api/tests/fixtures/kri1029_plaza_m1_title.json",
+        "src/apps/api/tests/kria/test_kri1029_1030_plaza_title_replay.py"
+      ]
+    },
+    {
       "id": "kri-628-opening-cut",
       "needs_native": false,
       "api_tests": "tests/pipeline/test_phone_opening_cut.py tests/pipeline/test_phone_take_window.py tests/kria/test_kri837_one_word_end_line.py tests/kria/test_kri844_take_line_ask.py tests/kria/test_kri844_dj_t2_cross_language_replay.py tests/kria/test_kri967_unheard_quote_head.py",
