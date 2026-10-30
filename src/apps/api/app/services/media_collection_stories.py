@@ -440,7 +440,12 @@ async def generate_stories(db, owner, identifier, body):
     elif claim.status == "claimed":
         try:
             ideas = await run_agent(input, f"collection-stories:{digest}:{claim.attempt_token}")
-            if not await asyncio.to_thread(complete_media_asset_fact, claim, ideas.model_dump()):
+            if body.exclude_story_ids and not ideas.stories:
+                # An empty "another idea" answer is not cached: the digest hashes only the
+                # exclude set, so a cached [] would replay for every later tap until that set
+                # changes, with no model call. Releasing the claim lets the next tap ask again.
+                await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
+            elif not await asyncio.to_thread(complete_media_asset_fact, claim, ideas.model_dump()):
                 raise HTTPException(409, "Story evidence changed; retry")
         except (TerminalError, ResearchUnavailable) as exc:
             await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
@@ -553,7 +558,12 @@ async def generate_stories(db, owner, identifier, body):
             update={"already_offered": [*input.already_offered[: 20 - len(offered)], *offered]}
         )
         try:
-            ideas = await run_agent(retry_input, f"collection-stories:{story_digest}")
+            # A fresh token per retry: the cost ledger keys a call on request id + prompt, and an
+            # identical retry prompt (same exclude set, same dropped ideas) would otherwise hit
+            # the earlier reservation and fail as an unknown provider outcome.
+            ideas = await run_agent(
+                retry_input, f"collection-stories:{story_digest}:{uuid.uuid4().hex}"
+            )
         except Exception:
             log.warning("collection_stories_retry_failed", exc_info=True)
             ideas = CameraRollStoriesOutput()

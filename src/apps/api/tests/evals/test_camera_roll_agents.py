@@ -97,8 +97,26 @@ def test_story_replay_separates_review_reasoning_from_proposed_creative_copy():
     assert output.stories[0].content_plan.opening_text == "What is waiting across the water?"
     assert output.stories[0].rationale == story["content_plan"]["why_it_works"]
     assert client.invocations == 1
+    # One bad idea costs only itself: a mismatched beat count, a repeated reference, an
+    # unknown moment or a schema miss is dropped, not the whole batch of up to ten.
+    mismatched = {
+        **story,
+        "content_plan": {**story["content_plan"], "beat_reasons": ["one", "two"]},
+    }
+    repeated = {**story, "moment_ids": ["m1", "m1"]}
+    unknown = {**story, "moment_ids": ["nope"]}
+    schema_miss = {**story, "title": ""}
+    mixed = json.dumps({"stories": [mismatched, story, repeated, unknown, schema_miss]})
+    assert len(agent.parse(mixed, value).stories) == 1
+    # Output cut off at the token cap keeps the ideas that finished.
+    cut = json.dumps({"stories": [story, story]})[:-40]
+    assert len(agent.parse(cut, value).stories) == 1
+    # More than the cap keeps the first ten; nothing usable at all still fails.
+    assert len(agent.parse(json.dumps({"stories": [story] * 11}), value).stories) == 10
     with pytest.raises(SchemaError):
-        agent.parse(json.dumps({"stories": [story] * 11}), value)
+        agent.parse(json.dumps({"stories": [mismatched, repeated]}), value)
+    with pytest.raises(SchemaError):
+        agent.parse("not json", value)
 
 
 def test_candidate_budget_cannot_grow_with_collection_size():

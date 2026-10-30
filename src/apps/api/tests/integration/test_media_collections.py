@@ -2319,10 +2319,15 @@ def _stub_ideas(monkeypatch, make):
         StoryIdea,
     )
 
-    calls = []
+    class Calls(list):
+        pass
+
+    calls = Calls()
+    calls.request_ids = []
 
     def run(self, input, *, ctx):
         calls.append(input)
+        calls.request_ids.append(ctx.request_id)
         return CameraRollStoriesOutput(
             stories=[
                 StoryIdea(
@@ -2608,6 +2613,43 @@ async def test_another_idea_adds_a_batch_and_never_repeats_or_replaces(
         f"{path}/stories", json={**body, "exclude_story_ids": [str(uuid.uuid4())]}
     )
     assert gone.status_code == 404
+
+
+async def test_an_empty_another_idea_answer_is_not_cached_and_retries_use_fresh_ids(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: a model answer of "no ideas" cached under the exclude-set digest so
+    every later tap replays [] with no model call; the filter-emptied retry reusing the first
+    pass's request id, which the cost ledger treats as an already-settled call."""
+    client, _, _, owner, _ = collection_world
+    path, _, _, _ = await _two_events(client, owner, per_event=3)
+    body = {**EVENT_QUERY, "group": "Ferry"}
+    repeat = ("Reworded", "Yet another point", "Opening one", [2])
+    script = {
+        "first": lambda input: [("First", "Point one", "Opening one", [0])],
+        "empty": lambda input: [],
+        "fresh": lambda input: [("Fresh", "A new point", "A new opening", [1, 2])],
+        "repeats": lambda input: [repeat],
+    }
+    state = {"step": "first"}
+    calls = _stub_ideas(monkeypatch, lambda input: script[state["step"]](input))
+    first = (await client.post(f"{path}/stories", json=body)).json()["stories"]
+    exclude = {**body, "exclude_story_ids": [first[0]["id"]]}
+
+    state["step"] = "empty"
+    assert (await client.post(f"{path}/stories", json=exclude)).json()["stories"] == []
+    state["step"] = "fresh"
+    again = await client.post(f"{path}/stories", json=exclude)
+    assert [s["title"] for s in again.json()["stories"]] == ["Fresh"], (
+        "the earlier empty answer must not replay from the cache"
+    )
+
+    state["step"] = "repeats"
+    before = len(calls)
+    exclude = {**body, "exclude_story_ids": [first[0]["id"], again.json()["stories"][0]["id"]]}
+    await client.post(f"{path}/stories", json=exclude)
+    ids = calls.request_ids[before:]
+    assert len(ids) == 2 and len(set(ids)) == 2, "the retry is a distinct call"
 
 
 async def test_deleting_an_event_keeps_other_events_and_bumps_the_revision(

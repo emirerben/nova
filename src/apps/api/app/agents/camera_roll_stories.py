@@ -59,18 +59,8 @@ class _StoryProposal(BaseModel):
     research_fact_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
-class _StoryProposals(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    stories: list[_StoryProposal] = Field(default_factory=list, max_length=MAX_IDEAS)
-
-
 class _LegacyStoryProposal(_StoryProposal):
     content_plan: StoryContentPlan
-
-
-class _LegacyStoryProposals(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    stories: list[_LegacyStoryProposal] = Field(default_factory=list, max_length=MAX_IDEAS)
 
 
 class OfferedIdea(BaseModel):
@@ -112,6 +102,42 @@ def _meets_form_evidence(story, source_stops):
     need = FORM_EVIDENCE[story.content_plan.form]
     facts = len(story.research.evidence.facts) if story.research else 0
     return facts >= need.research_facts and source_stops >= need.source_stops
+
+
+def _proposal_items(raw_text):
+    """The raw idea objects, so each is validated on its own. A response cut off at the token
+    cap still yields the ideas that finished before the cut."""
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        payload = _salvage_stories(raw_text)
+    if not isinstance(payload, dict) or set(payload) - {"stories"}:
+        raise ValueError("Unexpected story response shape")
+    items = payload.get("stories") or []
+    if not isinstance(items, list):
+        raise ValueError("Unexpected story response shape")
+    return items[:MAX_IDEAS]
+
+
+def _salvage_stories(raw_text):
+    key = raw_text.find('"stories"')
+    start = raw_text.find("[", key) if key >= 0 else -1
+    if start < 0:
+        raise ValueError("Story response is not JSON")
+    decoder = json.JSONDecoder()
+    items = []
+    pos = start + 1
+    while True:
+        while pos < len(raw_text) and raw_text[pos] in " \t\r\n,":
+            pos += 1
+        try:
+            item, pos = decoder.raw_decode(raw_text, pos)
+        except json.JSONDecodeError:
+            break
+        items.append(item)
+    if not items:
+        raise ValueError("Story response is not JSON")
+    return {"stories": items}
 
 
 class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutput]):
@@ -407,53 +433,70 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             + json.dumps(data, ensure_ascii=False)
         )
 
+    @staticmethod
+    def _ground(story, proposal, input, known, references):  # noqa: A002
+        story.moment_ids = [references.get(value, value) for value in story.moment_ids]
+        if (
+            len(set(story.moment_ids)) != len(story.moment_ids)
+            or not set(story.moment_ids) <= known
+        ):
+            raise ValueError("Story references unknown or repeated evidence")
+        if len(story.content_plan.beat_reasons) != len(story.moment_ids):
+            raise ValueError("Each selected moment needs its own reason")
+        ids = proposal.research_fact_ids
+        if input.public_research:
+            from app.services.story_idea_research import story_content_digest
+
+            facts = {fact.id: fact for fact in input.public_research.facts}
+            if not ids or len(set(ids)) != len(ids) or any(key not in facts for key in ids):
+                raise ValueError("Story needs known, unique research facts")
+            story.research = StoryResearch(
+                topic=input.research_topic,
+                evidence=input.public_research.model_copy(
+                    update={"facts": [facts[key] for key in ids]}
+                ),
+                reviewed_content_sha256=story_content_digest(
+                    story.title, story.content_plan.model_dump(), story.moment_ids
+                ),
+            )
+        elif ids:
+            raise ValueError("Story has no researched evidence")
+
     def parse(self, raw_text, input):  # noqa: A002
         try:
             input = self.Input.model_validate(input.model_dump())
             forms_on = settings.story_idea_forms_enabled
-            proposals = (
-                _StoryProposals if forms_on else _LegacyStoryProposals
-            ).model_validate_json(raw_text)
-            result = self.Output(
-                stories=[
-                    StoryIdea(
+            proposal_model = _StoryProposal if forms_on else _LegacyStoryProposal
+            items = _proposal_items(raw_text)
+            known = {candidate.id for candidate in input.candidates}
+            references = {f"m{i + 1}": candidate.id for i, candidate in enumerate(input.candidates)}
+            # One bad idea (schema miss, wrong beat count, repeated or unknown footage) is
+            # dropped on its own: with up to ten ideas per call, failing the batch for it
+            # would throw away the good ones. Only a response with no usable idea fails.
+            result = self.Output(stories=[])
+            invalid = 0
+            for item in items:
+                try:
+                    proposal = proposal_model.model_validate(item)
+                    story = StoryIdea(
                         **proposal.model_dump(exclude={"research_fact_ids"}),
                         hook=proposal.content_plan.opening_text,
                         payoff=proposal.content_plan.closing_text or proposal.content_plan.angle,
                         rationale=proposal.content_plan.why_it_works,
                     )
-                    for proposal in proposals.stories
-                ]
-            )
-            known = {candidate.id for candidate in input.candidates}
-            references = {f"m{i + 1}": candidate.id for i, candidate in enumerate(input.candidates)}
-            for story, proposal in zip(result.stories, proposals.stories, strict=True):
-                story.moment_ids = [references.get(value, value) for value in story.moment_ids]
-                if (
-                    len(set(story.moment_ids)) != len(story.moment_ids)
-                    or not set(story.moment_ids) <= known
-                ):
-                    raise ValueError("Story references unknown or repeated evidence")
-                if len(story.content_plan.beat_reasons) != len(story.moment_ids):
-                    raise ValueError("Each selected moment needs its own reason")
-                ids = proposal.research_fact_ids
-                if input.public_research:
-                    from app.services.story_idea_research import story_content_digest
-
-                    facts = {fact.id: fact for fact in input.public_research.facts}
-                    if not ids or len(set(ids)) != len(ids) or any(key not in facts for key in ids):
-                        raise ValueError("Story needs known, unique research facts")
-                    story.research = StoryResearch(
-                        topic=input.research_topic,
-                        evidence=input.public_research.model_copy(
-                            update={"facts": [facts[key] for key in ids]}
-                        ),
-                        reviewed_content_sha256=story_content_digest(
-                            story.title, story.content_plan.model_dump(), story.moment_ids
-                        ),
-                    )
-                elif ids:
-                    raise ValueError("Story has no researched evidence")
+                    self._ground(story, proposal, input, known, references)
+                except ValueError:
+                    invalid += 1
+                    continue
+                result.stories.append(story)
+            if invalid:
+                log.info(
+                    "camera_roll_stories_invalid_drops",
+                    dropped=invalid,
+                    kept=len(result.stories),
+                )
+            if items and not result.stories:
+                raise ValueError("No proposed idea was usable")
             if not forms_on:
                 for story in result.stories:
                     story.content_plan.form = None
