@@ -127,6 +127,23 @@ _TEXT_STYLE_FIELDS = {
     "bend",
 }
 
+# Editor capabilities the copilot snapshot carries (`editor_capabilities`), so a field
+# only some app builds keep (`edit_copilot._CAPTION_META_FIELD_GATES`) is offered
+# exactly where the editor would offer it.
+COPILOT_EDITOR_CAPABILITIES = ("caption_animation",)
+
+
+def caption_default_phases(variant: dict[str, Any]) -> dict[str, Any] | None:
+    """The all-captions animation the editor shows (KRI-1007), else the older Style one."""
+    style = variant.get("caption_editor_style")
+    for value in (
+        variant.get("caption_animation_phases"),
+        style.get("animation_phases") if isinstance(style, dict) else None,
+    ):
+        if isinstance(value, dict):
+            return value
+    return None
+
 
 log = structlog.get_logger(__name__)
 
@@ -1158,6 +1175,11 @@ def build_editor_snapshot(
             "total_cues": len(cues),
             "truncated": False,
         }
+        advertised = {key: True for key in COPILOT_EDITOR_CAPABILITIES if caps.get(key) is True}
+        if advertised:
+            # Present only when ON, so every other snapshot stays byte-identical.
+            snapshot["editor_capabilities"] = advertised
+            snapshot["captions"]["meta"]["animation_phases"] = caption_default_phases(variant)
     if "visual_media" in snapshot["allowed_op_families"]:
         snapshot["visual_media"] = [
             {
@@ -2348,7 +2370,26 @@ def _op_set_caption_timing(state: _DraftState, op: dict[str, Any]) -> None:
 
 
 def _op_set_caption_meta(state: _DraftState, op: dict[str, Any]) -> None:
-    state.caption_patch.update(dict(op.get("patch") or {}))
+    patch = dict(op.get("patch") or {})
+    if "animation_phases" in patch:
+        from app.services.kria_editor_ops_text import merge_animation_phases  # noqa: PLC0415
+
+        current = state.caption_patch.get("animation_phases") or caption_default_phases(
+            state.variant
+        )
+        patch["animation_phases"] = merge_animation_phases(
+            {"animation_phases": current}, patch["animation_phases"]
+        )
+        # All captions means every line, as on the phone (`writeCaptionPhases(.all)`):
+        # a line's own phases would otherwise win over the new default.
+        for lane, rows in (
+            ("captions", state.captions),
+            ("text", [row for row in state.text if is_caption_text_bar(row)]),
+        ):
+            for row in rows:
+                if row.pop("animation_phases", None) is not None:
+                    state.changed.add(lane)
+    state.caption_patch.update(patch)
     state.changed.add("caption_meta")
 
 

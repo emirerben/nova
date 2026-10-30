@@ -1,0 +1,111 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-10-30-v96",
+  "input": {
+    "utterance": "add word relay animation to all captions",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "editor_ops_version": 2,
+      "allowed_op_families": [
+        "caption",
+        "text"
+      ],
+      "base_generation": "gen-1",
+      "has_narrated_captions": true,
+      "spoken_edit": true,
+      "render_destination": "device",
+      "text_bars": [],
+      "slots": [
+        {
+          "index": 0,
+          "media_id": "m0",
+          "media_kind": "video",
+          "output_start_s": 0.0,
+          "output_end_s": 9.0,
+          "duration_s": 9.0,
+          "in_s": 0,
+          "source_duration_s": 9.0
+        }
+      ],
+      "total_duration_s": 9.0,
+      "captions": {
+        "cues": [
+          {
+            "index": 0,
+            "id": "cue-0",
+            "text": "Morning run by the water",
+            "start_s": 0.0,
+            "end_s": 3.0
+          },
+          {
+            "index": 1,
+            "id": "cue-1",
+            "text": "the city is still asleep",
+            "start_s": 3.0,
+            "end_s": 6.0
+          },
+          {
+            "index": 2,
+            "id": "cue-2",
+            "text": "best part of my day",
+            "start_s": 6.0,
+            "end_s": 9.0
+          }
+        ],
+        "cues_editable": true,
+        "meta": {
+          "enabled": true,
+          "style": "sentence",
+          "font": "Inter",
+          "y_frac": 0.78,
+          "size_px": 64,
+          "color": "#FFFFFF",
+          "highlight_color": "#FFD60A",
+          "stroke_width": 4,
+          "shadow_enabled": true,
+          "appearance": null
+        },
+        "total_cues": 3,
+        "truncated": false
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_caption_meta\", \"patch\": {\"animation_phases\": {\"entrance\": \"wordRelay\"}}}], \"confidence\": 0.9, \"reply\": \"Every caption line now enters with Word Relay.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [],
+    "confidence": 0.9,
+    "reply": "Captions on this video can't animate yet.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "unsupported",
+    "rejection_reasons": [
+      {
+        "op": "set_caption_meta",
+        "reason": "capability_unavailable",
+        "detail": "Captions on this video can't animate yet."
+      }
+    ],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "Captions on this video can't animate yet.",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "caption_animation_unavailable",
+    "lane": "kria_v2_caption",
+    "notes": "KRI-1077: without editor_capabilities.caption_animation the op is refused and the reply says captions can't animate yet, even when the model emits it.",
+    "capability_contract": {
+      "intent": "edit",
+      "needs_clarification": false,
+      "reply_contains": [
+        "can't animate yet"
+      ],
+      "reply_excludes": [
+        "now enters"
+      ]
+    }
+  }
+}
