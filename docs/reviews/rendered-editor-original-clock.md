@@ -1,5 +1,36 @@
 # Native editor source clock recovery
 
+## Current compatibility phase
+
+This PR now prepares readers without activating a new clock for existing projects.
+The following historical repair evidence does not establish deployment or original
+phone acceptance. The user reports that the opening error is gone; its causal build
+is unknown.
+
+Protocol25 already belongs to caption style scope. The app keeps that protocol.
+The backend reserves protocol26 for rendered-clock reads and writes. Native clock
+reader support can ship first, but a later app must advertise26 before activation.
+
+An original receipt or private phone plan alone never upgrades a project. Initial
+rendered-clock projection requires the server-owned private variant marker
+`_guided_editor_clock: rendered-v1`. No production writer or migration in this PR
+stamps that marker. Valid saved revisions remain authoritative, including legacy
+revisions when a marker is present. An invalid saved rendered-clock revision fails
+closed rather than silently replacing edits with the immutable approval.
+
+The marker is stripped from public assembly projections. The reader resolves it
+from the stored variant when processing a public copy. Unknown markers refuse
+projection. Timeline, Save, retry and legacy orientation mutation boundaries require
+a compatible rendered-clock reader. Source bounds and ownership remain enforced.
+
+Activation is a separate dependency. API and every worker need this schema and
+reader support, the app needs protocol26, and any new-job opt-in or existing-project
+migration needs an explicit durable admission boundary. Rollback after activation
+must retain compatible readers. This phase changes no production flag or project.
+It does not claim to fix reopening on the user's current phone by itself.
+
+## Historical local repair evidence
+
 ## Request and scope
 
 The creator's 29 October 2026 retest produced a playable native output and a saved
@@ -21,10 +52,9 @@ The fix admits an explicit server-owned rendered clock from identity-matched
 original or Visuals-pool receipts, preserves it through Save, and uses the same
 clock for native projection, speed changes and transition reflow. Source bounds,
 approval identity, stale revision and ownership checks remain enforced. Existing
-legacy revisions keep their prior normalization and frozen hashes. Protocol 25
-marks compatible native readers; older HTTP readers receive update-required
-instead of interpreting a new clock incorrectly. API and worker must be deployed
-with the new schema before protocol-25 Save is enabled in a released app.
+legacy revisions keep their prior normalization and frozen hashes. The original draft used protocol25 for the new reader. That collision is
+superseded by the reader-first phase above; protocol25 remains caption-owned
+and26 is reserved for future rendered-clock activation.
 
 PR1890's microsecond endpoint/cache fix is included from main. This repair makes
 no further change to NativeEditorRenderCompiler's range guard.
@@ -66,7 +96,8 @@ HEAD-bound local-fix evidence checks passed. Remote CI remains to be run.
 
 No production project repair, regeneration, paid provider call, feature activation
 or deployment was performed. Original physical-phone reopen and local binding
-inspection require a coordinated API/worker/protocol25 app release. The original
+inspection require a future coordinated API/worker/protocol26 app release.
+The original protocol25 rollout proposal is superseded by the compatibility phase. The original
 word/order measurement, exact original exported picture content and duplicate
 creative-direction sections remain separate, unverified follow-ups.
 
@@ -88,9 +119,7 @@ receipts are permanent regression tests. CI-unit125 and manifest127 tests passed
 Independent review found no blocking admission or compatibility defect. Fresh
 remote CI remains required.
 
-Tracking is not resolved: KRI1039 is the completed compose antecedent and KRI934
-is the broader failure-screen parent. Neither is claimed as the dedicated owner
-of this source-clock defect. The implementation is tracked by draftPR1946, whose
-Linear-bound request-evidence gate remains blocked pending authorized tracking.
-No new ticket was created, and no merge, rollout or original-phone acceptance is
-claimed.
+Tracking is KRI-1060. PR1946 remains a compatibility prerequisite until its
+current-head checks pass. The earlier publication/ticket blockers are historical;
+the dedicated ticket exists. No original-project migration or phone acceptance is
+claimed by this reader-first phase.

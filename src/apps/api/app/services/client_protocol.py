@@ -20,6 +20,7 @@ from contextvars import ContextVar
 # (read back by `_claim_approval_dispatch`, stamped on the Job as `creator_client_protocol`).
 APPROVAL_CLIENT_PROTOCOL_FIELD = "approval_client_protocol"
 CAPTION_STYLE_SCOPE_PROTOCOL = 25
+RENDERED_TIMELINE_CLOCK_PROTOCOL = 26
 
 
 def caption_style_scope_supported() -> bool:

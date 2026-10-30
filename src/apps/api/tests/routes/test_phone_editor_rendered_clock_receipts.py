@@ -58,6 +58,7 @@ def mixed_job(monkeypatch):
         ],
     }
     variant = job.assembly_plan["variants"][0]
+    variant["_guided_editor_clock"] = "rendered-v1"
     variant[PHONE_EDITOR_PLAN_FIELD] = plan.model_dump(mode="json")
     return job, variant
 

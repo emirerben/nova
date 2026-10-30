@@ -88,7 +88,12 @@ def rendered_clock_job(monkeypatch):
     raw = plan.model_dump(mode="json")
     job.assembly_plan.update(guided_edit=guided, guided_story_execution_plan=copy.deepcopy(raw))
     variant = job.assembly_plan["variants"][0]
-    variant.update(duration_s=3.42, text_elements=[], **{PHONE_EDITOR_PLAN_FIELD: raw})
+    variant.update(
+        duration_s=3.42,
+        text_elements=[],
+        _guided_editor_clock="rendered-v1",
+        **{PHONE_EDITOR_PLAN_FIELD: raw},
+    )
     pin_device_request(
         job,
         make_device_request(
@@ -177,9 +182,136 @@ def test_legacy_private_plan_without_native_state_keeps_legacy_clock(monkeypatch
     job.assembly_plan.pop(PHONE_SOURCES_FIELD)
     job.assembly_plan.pop(DEVICE_RENDER_FIELD)
     variant = job.assembly_plan["variants"][0]
+    variant.pop("_guided_editor_clock")
     revision = gj._guided_v2_revision(job, variant)
     assert "timing_mode" not in revision
     assert revision["segments"][0]["duration_s"] == 1.933333
+
+
+@pytest.mark.parametrize("protocol", [None, 24, 25, 26])
+def test_modern_receipts_do_not_upgrade_existing_project_clock(monkeypatch, protocol):
+    from app.services.client_protocol import set_client_protocol
+
+    job = rendered_clock_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    variant.pop("_guided_editor_clock")
+    before = copy.deepcopy(job.assembly_plan)
+    set_client_protocol(protocol)
+    timeline = gj.dispatch_get_timeline(job, "guided_story", sign_url=lambda *_: "inert")
+    assert timeline["slots"][0]["duration_s"] == 1.933333
+    assert "timing_mode" not in timeline["slots"][0]
+    assert job.assembly_plan == before
+
+
+@pytest.mark.parametrize("corruption", ["source", "approval", "unknown_clock"])
+def test_saved_rendered_clock_never_falls_back_to_approval(monkeypatch, corruption):
+    job = rendered_clock_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    saved = gj._guided_v2_revision(job, variant)
+    if corruption == "source":
+        saved["segments"][0]["source_end_s"] = 1.933333
+    elif corruption == "approval":
+        saved["approval_proposal_version"] += 1
+    else:
+        saved["timing_mode"] = "future-unknown-clock"
+    saved["state_hash"] = ""
+    variant["guided_edit_revision"] = saved
+    before = copy.deepcopy(job.assembly_plan)
+    assert gj._guided_v2_revision(job, variant) is None
+    assert job.assembly_plan == before
+
+
+def test_legacy_saved_revision_remains_authoritative_after_opt_in_marker(monkeypatch):
+    job = rendered_clock_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    marker = variant.pop("_guided_editor_clock")
+    saved = gj._guided_v2_revision(job, variant)
+    variant["guided_edit_revision"] = copy.deepcopy(saved)
+    variant["_guided_editor_clock"] = marker
+    assert gj._guided_v2_revision(job, variant) == saved
+
+
+def test_public_copy_hides_opt_in_and_uses_stored_clock(monkeypatch):
+    from app.services.public_assembly_plan import project_public_assembly_plan
+
+    job = rendered_clock_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    expected = gj._guided_v2_revision(job, variant)
+    public = project_public_assembly_plan(job.assembly_plan)["variants"][0]
+    assert "_guided_editor_clock" not in public
+    assert "_phone_editor_plan_v1" not in public
+    assert gj._guided_v2_revision(job, public) == expected
+
+
+@pytest.mark.parametrize("protocol", [None, 25])
+def test_old_client_cannot_rearm_saved_rendered_revision(monkeypatch, protocol):
+    from fastapi import HTTPException
+
+    from app.services.client_protocol import set_client_protocol
+
+    job = rendered_clock_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    revision = gj._guided_v2_revision(job, variant)
+    variant["guided_edit_revision"] = revision
+    before = copy.deepcopy(job.assembly_plan)
+    set_client_protocol(protocol)
+    with pytest.raises(HTTPException) as error:
+        gj.prepare_editor_commit(
+            job,
+            "guided_story",
+            gj.EditorCommitRequest(
+                base_generation=gj.variant_render_baseline(variant),
+                guided_revision_number=revision["revision_number"],
+                retry_guided_revision=True,
+            ),
+        )
+    assert error.value.status_code == 426
+    assert job.assembly_plan == before
+
+
+@pytest.mark.parametrize("marker", ["future-clock", True, {}])
+def test_unknown_clock_marker_refuses_instead_of_projecting_legacy(monkeypatch, marker):
+    job = rendered_clock_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    variant["_guided_editor_clock"] = marker
+    before = copy.deepcopy(job.assembly_plan)
+    assert gj._guided_v2_revision(job, variant) is None
+    assert job.assembly_plan == before
+
+
+async def test_old_client_cannot_change_orientation_of_saved_rendered_revision(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from app.services.client_protocol import set_client_protocol
+
+    job = rendered_clock_job(monkeypatch)
+    variant = job.assembly_plan["variants"][0]
+    variant["guided_edit_revision"] = gj._guided_v2_revision(job, variant)
+    # Exercise the legacy orientation endpoint without entering its cloud renderer.
+    job.assembly_plan.pop(PHONE_SOURCES_FIELD)
+    job.assembly_plan.pop(DEVICE_RENDER_FIELD)
+    variant.update(render_destination="cloud", render_status="ready")
+    job.status = "variants_ready"
+    monkeypatch.setattr(gj, "_LANDSCAPE_OUTPUT_ENABLED", True)
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: job)
+    before = copy.deepcopy(job.assembly_plan)
+    set_client_protocol(25)
+    with pytest.raises(HTTPException) as error:
+        await gj.dispatch_set_orientation(
+            db,
+            job,
+            "guided_story",
+            orientation="landscape",
+            revision_number=1,
+            base_generation=gj.variant_render_baseline(variant),
+        )
+    assert error.value.status_code == 426
+    assert job.assembly_plan == before
+    db.commit.assert_not_awaited()
 
 
 @pytest.mark.parametrize("empty_record", [False, True])
@@ -191,7 +323,7 @@ def test_modern_device_state_without_original_receipts_refuses(monkeypatch, empt
     assert gj._guided_v2_revision(job, job.assembly_plan["variants"][0]) is None
 
 
-@pytest.mark.parametrize("protocol", [None, 24, 25])
+@pytest.mark.parametrize("protocol", [None, 24, 25, 26])
 def test_rendered_clock_requires_compatible_http_reader(monkeypatch, protocol):
     from fastapi import HTTPException
 
@@ -201,7 +333,7 @@ def test_rendered_clock_requires_compatible_http_reader(monkeypatch, protocol):
     before = copy.deepcopy(job.assembly_plan)
     set_client_protocol(protocol)
     try:
-        if protocol == 25:
+        if protocol == 26:
             assert (
                 gj.dispatch_get_timeline(
                     job, "guided_story", sign_url=lambda *_: "https://inert.invalid"

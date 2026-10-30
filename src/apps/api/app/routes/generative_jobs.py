@@ -5476,6 +5476,7 @@ async def dispatch_set_orientation(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="guided_story_revision_unavailable",
             )
+        _require_rendered_clock_reader(current_revision)
         if revision_number is None or base_generation is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -9014,6 +9015,9 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
                 )
             )
         except ValueError:
+            if persisted.get("timing_mode") is not None:
+                log.warning("guided_editor_clock_revision_invalid", job_id=str(job.id))
+                return None
             # A corrupt/stale revision must not make the read endpoint 500. The
             # immutable approval remains the safe projection until the client
             # refreshes and saves a new revision.
@@ -9038,12 +9042,21 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
             PhoneVisualBinding,
         )
 
-        # Private editor plans predate original receipts; they alone do not opt into a new clock.
+        # Reader-first rollout: an existing plan or receipt never upgrades a saved clock.
+        # No production writer stamps this marker until every reader is compatible.
+        clock_marker = _stored_variant_field(job, variant, "_guided_editor_clock")
+        if clock_marker not in (None, "rendered-v1"):
+            raise ValueError("unsupported guided editor clock")
+        rendered_clock_requested = clock_marker == "rendered-v1"
         has_native_state = any(
             key in assembly
             for key in (PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, DEVICE_RENDER_FIELD)
         )
-        if has_native_state and _stored_variant_field(job, variant, PHONE_EDITOR_PLAN_FIELD):
+        if rendered_clock_requested:
+            if not has_native_state or not _stored_variant_field(
+                job, variant, PHONE_EDITOR_PLAN_FIELD
+            ):
+                raise ValueError("rendered editor clock requires native source receipts")
             bindings = [
                 PhoneSourceBinding.model_validate(row)
                 for row in assembly.get(PHONE_SOURCES_FIELD) or []
@@ -9266,19 +9279,23 @@ def _guided_v2_slot_rows(
 
 
 def _require_rendered_clock_reader(revision: dict) -> None:
-    from app.services.client_protocol import current_client_protocol, in_http_request
+    from app.services.client_protocol import (
+        RENDERED_TIMELINE_CLOCK_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
 
     if (
         revision.get("timing_mode") == "rendered"
         and in_http_request()
-        and (current_client_protocol() or 0) < 25
+        and (current_client_protocol() or 0) < RENDERED_TIMELINE_CLOCK_PROTOCOL
     ):
         raise HTTPException(
             status_code=426,
             detail={
                 "code": "client_update_required",
                 "feature": "rendered_timeline_clock",
-                "minimum_client_protocol": 25,
+                "minimum_client_protocol": RENDERED_TIMELINE_CLOCK_PROTOCOL,
             },
         )
 
@@ -11016,6 +11033,7 @@ def _prepare_editor_commit(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="guided_story_revision_unavailable",
             )
+        _require_rendered_clock_reader(current)
         if payload.guided_revision_number is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="GUIDED_REVISION_TOKEN_REQUIRED"
