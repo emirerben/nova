@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.22.0] - 2026-10-30
+
+### Changed
+- fix(kria): a filming-order montage with a "starting with" group reaches approval (KRI-1080) (#1975) <!-- release-pr: 1975 -->
+
+## [0.83.21.0] - 2026-10-30
+
+### Fixed
+- fix(kria): keep the finished plan when the chat is renamed mid-turn (KRI-1075) (#1969) <!-- release-pr: 1969 -->
+
+## [0.83.20.0] - 2026-10-30
+
+### Fixed
+- fix(kria): a shot's "for N seconds" is never the video's length (KRI-1071) (#1966) <!-- release-pr: 1966 -->
+
+## [0.83.19.0] - 2026-10-30
+
+### Changed
+- perf(ci): narrow audited test-only suite selection (#1959) <!-- release-pr: 1959 -->
+
 ## [0.83.18.0] - 2026-10-30
 
 ### Fixed

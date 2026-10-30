@@ -903,6 +903,27 @@ parsers, clip-intent planning, the planner's order fields, `assess_readiness` an
 plus a variant of the planner answer without `order_by`. On main it reproduces prod's dispositions
 exactly (r1 unverified, r2 needs_choice, r3 evidence_missing).
 
+### Filming order with a first / last group (Leverkusen M1 run 2)
+
+"In the order I filmed it, starting with the train ride" hit both gates above with a filming-order
+key instead of a random one (prod thread 1a2189cc, 2026-10-30):
+
+- `needs_choice`: "the train ride" was a `first` group of three with `ordered_members` unset, so
+  `_check_order` asked how to order it. Under a filming-order ask (`CAPTURE_ORDER_KEYS`) the planner
+  seats a group's members in filming order and the contract pins it, so
+  `confirm_unordered_groups` now marks first / last / positionless groups `ordered_members: false`
+  there too (random / any order still marks positionless groups only).
+- `evidence_missing` ("I can't confirm the order this draft uses"): every filming-order draft on
+  the phone hit it once the gate was on. `_planned_order_basis` now also returns `capture_time`
+  when the render contract pins a capture-time order (every clip and Visual shown is dated) and
+  the phone unified montage writes it; the phone verifier refuses any other order after render.
+- The leftover ask (a group with no basis order, e.g. a pin-only "start with X") names the group
+  in plain words; "saved group" no longer reaches a creator.
+
+Proof: `tests/kria/test_lev_m1_filming_order_group.py` replays the run's brief and approved media
+snapshot (both proven exact against the turns' `brief_digest` / `media_digest`) through the
+planner's order fields, `assess_readiness` and the worker's own phone montage plan.
+
 ## After approval: the words need a bar to split
 
 With the gate fixed, the approved job failed every render as `creation_text_failed` ("The text
