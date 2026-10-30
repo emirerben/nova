@@ -212,8 +212,26 @@ def _planned_order_basis(
     permutation (`unified_montage._order`), recording seed and source for the
     render's own receipt. That is an executable commitment, like a pinned title the writer
     draws. Any other writer, or no stamp, commits to nothing here.
+
+    Leverkusen M1 run 2: a filming-order ask is the same commitment when the render contract
+    pins it, i.e. every clip and Visual the edit shows has a capture time and the contract
+    holds that exact order (the creator's first / last groups seated on it). The planner
+    lays out that order (`unified_montage._order`, KRI-1069) and the phone verifier refuses a
+    render that plays any other (`verify_phone_recipe`). Without this every filming-order
+    draft read "I can't confirm the order this draft uses" and approval was held. A
+    "group first" answer is not that order (the planner regroups it; the contract does not).
     """
-    if strategy.get("ordering_choice") != "random":
+    if strategy.get("ordering_choice") == "random":
+        planned = "random"
+    elif (
+        strategy.get("ordering_choice") != "group_first"
+        and contract is not None
+        and contract.order_required
+        and contract.order_basis == "capture_time"
+        and contract.order_ids
+    ):
+        planned = "capture_time"
+    else:
         return None
     try:
         route = _phone_route(
@@ -225,7 +243,7 @@ def _planned_order_basis(
         )
     except ValueError:
         return None
-    return "random" if route == "unified_montage" else None
+    return planned if route == "unified_montage" else None
 
 
 def _no_pre_render_checker(req: Any) -> bool:

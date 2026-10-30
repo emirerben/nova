@@ -80,7 +80,7 @@ class ClassificationTests(unittest.TestCase):
             ".github/workflows/ci.yml": ALL,
             ".github/workflows/ci-changes.yml": ALL,
             "scripts/ci/select-tests.py": ALL,
-            "scripts/ci/test_select_tests.py": ALL,
+            "scripts/ci/test_select_tests.py": set(),
             "Dockerfile": ALL,
             "Makefile": ALL,
             "assets/fonts/font.ttf": ALL,
@@ -473,6 +473,127 @@ class GitDiffTests(unittest.TestCase):
 
     def selected(self):
         return ci.selection("pull_request", self.base, self.commit())[0]
+
+    def test_selector_contract_test_changes_stay_on_unconditional_linux_gate(self):
+        self.write("scripts/ci/test_select_tests.py", "changed selector assertions")
+        head = self.commit()
+        suites, _, groups = ci.selection_details("pull_request", self.base, head)
+        self.assertEqual(suites, set())
+        self.assertEqual(groups, "none")
+        self.assertEqual(
+            ci.journey_details("pull_request", self.base, head),
+            (False, "not_applicable", ""),
+        )
+        self.assertFalse(ci.native_validation("pull_request", suites, False))
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ci-changes.yml").read_text()
+        self.assertIn(
+            "python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v", workflow
+        )
+        self.assertLess(
+            workflow.index("Test CI selection"),
+            workflow.index("Select affected suites"),
+        )
+
+    def test_audited_chat_workspace_tests_keep_full_native_units_without_exports(self):
+        path = "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift"
+        self.write(path, "changed unit assertions")
+        head = self.commit()
+        suites, _, groups = ci.selection_details("pull_request", self.base, head)
+        self.assertEqual(suites, {"ios"})
+        self.assertEqual(groups, "none")
+        self.assertEqual(
+            ci.journey_details("pull_request", self.base, head),
+            (False, "not_applicable", ""),
+        )
+        self.assertTrue(ci.native_validation("pull_request", suites, False))
+        self.assertEqual(ci.native_legs([]), ["unit"])
+        named = {test for row in ci.JOURNEYS for test in row.get("xctests", [])}
+        self.assertFalse(
+            any(test.startswith("KriaTests/ChatWorkspaceTests/") for test in named)
+        )
+
+    def test_isolated_tests_never_override_runtime_or_policy_dependencies(self):
+        isolated = (
+            "scripts/ci/test_select_tests.py",
+            "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift",
+        )
+        for path in isolated:
+            self.write(path, "changed unit assertions")
+        base = self.base
+        all_journeys = {row["id"] for row in ci.JOURNEYS}
+        cases = {
+            "scripts/ci/select-tests.py": (ALL, all_journeys),
+            ".github/workflows/ci.yml": (ALL, all_journeys),
+            "scripts/ci/journey-manifest.json": (ALL, all_journeys),
+            "src/apps/api/app/routes/generative_jobs.py": (
+                {"api", "ios"},
+                {"kri-648-phone-text", "kri-852-speech-editor"},
+            ),
+            "src/apps/api/app/schemas/guided_edit_revision.py": (
+                {"api", "ios"},
+                {
+                    "kri-1032-montage-copy-parity",
+                    "kri-561-song-order",
+                    "kri-689-clip-speed",
+                },
+            ),
+            "src/apps/ios/Kria/Features/NativeEditorSession.swift": (
+                {"ios", "ios_ui"},
+                {"kri-648-phone-text", "kri-669-gameday", "kri-852-speech-editor"},
+            ),
+            "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift": (
+                {"ios"},
+                {"kri-492-length-ownership", "kri-524-creation"},
+            ),
+            "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift": (
+                {"ios"},
+                set(),
+            ),
+            "scripts/ios/kri-492-length-e2e.py": (
+                {"ios", "ios_ui"},
+                {"kri-492-length-ownership"},
+            ),
+            "new-runtime/unknown.py": (ALL, set()),
+        }
+        for path, (required_suites, required_journeys) in cases.items():
+            with self.subTest(path=path):
+                self.write(path, "changed dependency")
+                head = self.commit()
+                actual = set(
+                    ci.journey_details("pull_request", base, head)[2].split(",")
+                ) - {""}
+                self.assertTrue(required_journeys <= actual)
+                suites = ci.selection("pull_request", base, head)[0]
+                self.assertTrue(required_suites <= suites)
+                self.assertTrue(
+                    ci.native_validation(
+                        "pull_request", suites, bool(required_journeys)
+                    )
+                )
+                legs = ci.native_legs(actual)
+                if required_journeys & {
+                    "kri-492-length-ownership",
+                    "kri-689-clip-speed",
+                    "kri-669-gameday",
+                    "kri-524-creation",
+                }:
+                    self.assertIn("creation", legs)
+                if "kri-648-phone-text" in required_journeys:
+                    self.assertIn("screens", legs)
+                Path(path).unlink()
+
+    def test_full_regression_cadences_ignore_isolated_test_exemptions(self):
+        for event in ("push", "schedule", "workflow_dispatch"):
+            with self.subTest(event=event):
+                self.assertEqual(ci.selection(event, self.base, self.base)[0], ALL)
+                selected, coverage, ids = ci.journey_details(
+                    event, self.base, self.base
+                )
+                self.assertTrue(selected)
+                self.assertEqual(coverage, "covered")
+                self.assertEqual(
+                    set(ids.split(",")), {row["id"] for row in ci.JOURNEYS}
+                )
 
     def test_focused_and_unit_only_group_outputs(self):
         self.write("src/apps/ios/Kria/Features/CreationAttachments.swift", "changed")

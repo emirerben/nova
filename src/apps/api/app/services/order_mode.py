@@ -196,29 +196,54 @@ def brief_order_mode(brief: Any) -> OrderMode | None:
     return None
 
 
+def brief_orders_by_filming_time(brief: Any) -> bool:
+    """True when the brief's live order ask is filming time (`CAPTURE_ORDER_KEYS`), read
+    from ``facts.key`` / ``facts.by`` exactly as the montage planner reads it (`brief_view`)."""
+    from app.services.clip_facts import CAPTURE_ORDER_KEYS  # noqa: PLC0415
+
+    live = getattr(brief, "live", None)
+    for req in live() if callable(live) else ():
+        if getattr(req, "kind", None) != "order":
+            continue
+        facts = getattr(req, "facts", None) or {}
+        if str(facts.get("key") or facts.get("by") or "").casefold() in CAPTURE_ORDER_KEYS:
+            return True
+    return False
+
+
 def confirm_unordered_groups(resolved_intents: Sequence[Any], brief: Any) -> list[Any]:
-    """Under a random / any-order ask, a described group's inner order is that ask.
+    """Under a random / any-order or filming-order ask, a described group's inner order is
+    that ask.
 
     29 Ekim (prod thread 64bb9853): "show all content in random order" also reached the
     clip-intent planner as a positionless ``order`` intent over every clip. With
-    ``ordered_members`` unset it read as a saved group whose inner order "wasn't recorded", and
+    ``ordered_members`` unset it read as a group whose inner order "wasn't recorded", and
     the creator was asked to choose an order they had already given. A positionless order
     group that never said how its members are ordered (``ordered_members`` None, no
     ``order_by``) is marked ``ordered_members=False`` ("no internal sequence was requested")
     when the brief's live order requirement is ``random`` / ``any_order``: the seeded shuffle
-    (or any order) IS its inner order. Where the group sits is unchanged, and a group the
-    creator ordered (``ordered_members`` true/false, first/last) is never touched. Reads the
-    brief's structured key and the intents' fields only, never the creator's words.
+    (or any order) IS its inner order.
+
+    Leverkusen M1 run 2 (prod thread 1a2189cc): "in the order I filmed it, starting with the
+    train ride" made "the train ride" a ``first`` group of three with the marker unset, and
+    approval was held on the same question. Under a filming-order ask the planner seats a
+    described group's members in filming order (`clip_order_sequence.apply_sequence` keeps
+    the basis order) and the render contract pins that order, so a first / last group is
+    marked too. Where a group sits is unchanged, and a group the creator ordered
+    (``ordered_members`` true/false) is never touched. Reads the brief's structured key and
+    the intents' fields only, never the creator's words.
     """
     intents = list(resolved_intents)
-    if brief_order_mode(brief) is None:
+    filmed = brief_orders_by_filming_time(brief)
+    if not filmed and brief_order_mode(brief) is None:
         return intents
+    positions = (None, "first", "last") if filmed else (None,)
     out = []
     for intent in intents:
         members = {getattr(a, "media_id", None) for a in getattr(intent, "assignments", None) or ()}
         if (
             getattr(intent, "op", None) == "order"
-            and getattr(intent, "position", None) is None
+            and getattr(intent, "position", None) in positions
             and getattr(intent, "order_by", None) is None
             and getattr(intent, "ordered_members", None) is None
             and str(getattr(intent, "status", None) or "resolved") == "resolved"
