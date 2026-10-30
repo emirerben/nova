@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.11.0] - 2026-10-30
+
+### Fixed
+- fix(media-library): accept iPhone HDR JPEGs (MPO) as image/jpeg (KRI-1074) (#1962) <!-- release-pr: 1962 -->
+
 ## [0.83.10.0] - 2026-10-30
 
 ### Fixed
