@@ -1494,18 +1494,19 @@ def test_deploy_workflow_reads_the_filtered_inventory_from_the_checked_out_repo(
 
 
 def _backfill_gate_step() -> dict:
-    import yaml  # noqa: PLC0415 - test-only dependency
-
-    workflow = yaml.safe_load(
-        (REPO_ROOT / ".github" / "workflows" / "video-poster-backfill.yml").read_text()
+    """The gate step's `run:` script, read as text (no YAML dependency)."""
+    lines = (
+        (REPO_ROOT / ".github" / "workflows" / "video-poster-backfill.yml").read_text().splitlines()
     )
-    steps = (
-        workflow["jobs"]["backfill"]["steps"]
-        if "backfill" in workflow["jobs"]
-        else next(iter(workflow["jobs"].values()))["steps"]
-    )
-    (step,) = [s for s in steps if s.get("name") == "Prove the requested revision is live"]
-    return step
+    start = lines.index("      - name: Prove the requested revision is live")
+    run = lines.index("        run: |", start)
+    body: list[str] = []
+    for line in lines[run + 1 :]:
+        if line.startswith("      - name:"):
+            break
+        assert line == "" or line.startswith("          "), line
+        body.append(line[10:])
+    return {"run": "\n".join(body).rstrip() + "\n"}
 
 
 def test_backfill_gate_runs_before_any_checkout_and_inlines_the_filter() -> None:
