@@ -60,6 +60,7 @@ from app.schemas.edit_proposal import (
     clean_creator_shot_labels,
 )
 from app.schemas.editorial_plan import EditorialPlan
+from app.schemas.order_replacement import OrderReplacementProof
 from app.schemas.story_intents import SelectionReconciliation
 from app.schemas.text_style_intent import (
     LabelPosition,
@@ -373,6 +374,9 @@ class CreativeStrategy(_CreatorModel):
     media_scope: MediaScope | None = None
     story_structure: list[str] = Field(default_factory=list, max_length=8)
     selection_reconciliation: SkipJsonSchema[SelectionReconciliation | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    confirmed_order_replacement: SkipJsonSchema[OrderReplacementProof | None] = Field(
         default=None, exclude_if=lambda value: value is None
     )
     editorial_plan: EditorialPlan | None = Field(

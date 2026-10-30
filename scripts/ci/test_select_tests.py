@@ -960,7 +960,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/ios/Kria/Features/ActivityView.swift",
-                (True, "covered", "native-activity-inbox,native-notification-runtime"),
+                (True, "covered", "native-activity-inbox,native-activity-account-boundary,native-notification-runtime"),
             ),
             # This has journey impact but no incident-corpus repro mapping.
             (
@@ -986,7 +986,7 @@ class GitDiffTests(unittest.TestCase):
             (
                 True,
                 "covered",
-                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes,native-notification-runtime",
+                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes,native-activity-account-boundary,native-notification-runtime",
             ),
         )
 

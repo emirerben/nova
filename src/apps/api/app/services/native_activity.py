@@ -16,9 +16,50 @@ from app.services.device_render import (
     device_paused,
     device_record,
     device_status,
-    has_accepted_artifact,
     variant_delivery_phase,
 )
+
+
+def _published_artifact_proven(job, variant_id, record, identity):
+    attempt_id = str(record.get("published_attempt") or "")
+    attempt = (record.get("attempts") or {}).get(attempt_id) or {}
+    proof = attempt.get("publication_proof")
+    if proof is None:
+        # Historical reports qualify only with their full measured-byte evidence.
+        if "actual_export_policy" not in record or not checked_export_report(
+            record, device_status(job, variant_id), attempt_id
+        ):
+            return False
+        proof = attempt.get("actual_export_verification") or {}
+    elif not isinstance(proof, dict) or proof.get("version") != 1:
+        return False
+    policy = record.get("actual_export_policy")
+    if policy is not None and (
+        not isinstance(policy, dict)
+        or policy.get("version") != 1
+        or not policy.get("source_receipts_digest")
+    ):
+        return False
+    return bool(
+        attempt.get("path")
+        and isinstance(attempt.get("size"), int)
+        and attempt["size"] > 0
+        and isinstance(attempt.get("sha256"), str)
+        and len(attempt["sha256"]) == 64
+        and proof.get("artifact_path") == attempt["path"]
+        and proof.get("file_size_bytes") == attempt["size"]
+        and proof.get("sha256") == attempt["sha256"]
+        and proof.get("storage_generation")
+        and proof.get("identity") == identity
+        and proof.get("source_receipts_digest") == (policy or {}).get("source_receipts_digest")
+        and any(
+            row.get("variant_id") == variant_id
+            and row.get("video_path") == attempt["path"]
+            and str(row.get("render_generation_id")) == attempt_id
+            for row in (job.assembly_plan or {}).get("variants") or []
+            if isinstance(row, dict)
+        )
+    )
 
 
 def terminal_snapshot(job, variant_id):
@@ -43,10 +84,7 @@ def terminal_snapshot(job, variant_id):
             return None
         if phase == "published" and (
             str(record.get("published_attempt") or "") != str(record.get("base_generation"))
-            or not has_accepted_artifact(job, variant_id)
-            or not checked_export_report(
-                record, device_status(job, variant_id), str(record["published_attempt"])
-            )
+            or not _published_artifact_proven(job, variant_id, record, identity)
         ):
             return None
     except (KeyError, TypeError, ValueError, ValidationError):

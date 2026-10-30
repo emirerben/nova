@@ -45,3 +45,27 @@ Current main `9ec04c50c` already owns migration 0127 for generated media admissi
 Run `bash scripts/check-api.sh test tests/routes/test_native_activity_postgres.py tests/routes/test_device_render.py tests/tasks/test_device_render_reaper.py tests/routes/test_background_export_verification.py tests/integration/test_actual_export_verification.py tests/routes/test_actual_export_publication.py tests/test_content_plan_schema.py tests/services/test_generated_media_admission_postgres.py -q` against a worktree-only scratch database to reproduce the focused backend integration checks.
 
 The single-job hosted retry did not execute tests. Its attempt-scoped fixture artifact was missing because the producer had run only in the original attempt. That failure is retained. The next source publication requires a complete workflow with its fixture producer. No artifacts were renamed or provenance checks relaxed.
+
+
+## Account-boundary follow-up
+
+A later local notification integration review found two existing client races relevant to the Activity inbox. A delayed refresh could overwrite or restore an account after sign-in or logout. An Activity acknowledgement could also refresh and retry with a different account before the view's final owner check. These fixes are isolated from push and continued-background preparation.
+
+Keychain reads and mutations now share one process-wide lock, including conditional replacement and deletion of an exact session snapshot. Delayed expiry events preserve a newer account and fail closed if storage cannot be read. Activity opening binds the fresh Activity fetch, project fetch, and successful read acknowledgement to one captured owner before selecting the project. The shared refresh key remains the failed access token, preserving single-use refresh deduplication. This does not claim cross-process Keychain atomicity.
+
+Controlled negative tests reproduced old-session restoration, account overwrite, and acknowledgement replay as the wrong account before the fixes. Independent source review found no remaining blocker in the extracted first-release patch. The isolated `.dev/account-boundary.xcresult` reports 71 passed, zero failed, and one existing unsigned-Keychain entitlement skip across 72 tests, including all eight new regression cases and all three Activity UI journeys. Both original scrub-playback and generation-rebase tests passed separately in `.dev/account-preview-regression.xcresult`. The selector contract passed 41 tests and 183 subtests. Recorded core source hashes matched after execution. The broader local runtime review passed 105 tests, with one existing unsigned-Keychain entitlement skip. That skipped test does not establish physical-device Keychain behavior.
+
+No APNs client, notification permission prompt, background capability, backend delivery model, or live sender is added by this follow-up. DEBUG Activity fixtures use synthetic identities and an injected fake profile API.
+
+
+## Export availability policy integration
+
+Current-main integration includes `e07172d071f20de2ed7eca4814a240be50bfb163` and its completed-export advisory policy from #1954. The founder explicitly chose the inbox title “Export available” without a warning. Quality findings remain in verification reports and audit events. They do not withhold a completed export's Activity entry.
+
+Availability still requires measured byte size and SHA-256 for the reserved storage generation, current owner and generation, unchanged source policy and upload reservation, and the current published artifact pointer. Publication now persists a separate versioned proof only after these checks. The unmeasured-quality fallback also checks actual bytes. Unreadable bytes remain pending; wrong size or checksum is refused. Historical records qualify only through a complete measured verification report, not the no-policy exemption.
+
+The retained `.dev/activity-proof-green.log` reports 220 passed and zero skipped. Red controls reproduced quality-advisory false negatives, absent or mutated publication proof, mismatched or missing stored bytes, and policy/reservation races. Independent read-only review inspected the four backend source hashes and retained evidence and returned PASS with no blocking finding. These are local PostgreSQL and synthetic-storage results, not production or physical-phone delivery proof.
+
+The updated native build passed all 41 selected simulator tests, with zero failures and zero skips, in `.dev/export-available.xcresult`. The independently extracted summary is `.dev/export-available-summary.json`. This includes DeviceRenderSessionTests, account-boundary regression tests, and all three Activity UI journeys using “Export available”. It does not establish APNs or physical-device background execution.
+
+Additional export integration checks produced 89 passes, one sandbox-blocked loopback security test, and one sandbox-skipped PostgreSQL case. Both blocked cases passed separately with local access in `.dev/export-available-playlist.log` and `.dev/export-available-background.log`. The initial result remains in `.dev/export-available-integration.log`; it is not represented as an uninterrupted green run. No assertion or security boundary was changed to obtain these results.

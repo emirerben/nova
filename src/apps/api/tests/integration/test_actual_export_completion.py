@@ -24,7 +24,6 @@ from app.services.device_render import (
     device_status,
     export_source_digest,
     pin_device_request,
-    retry_device_render,
     save_device_record,
 )
 from tests.integration.test_actual_export_verification import encode, exports  # noqa: F401
@@ -41,7 +40,7 @@ pytestmark = pytest.mark.timeout(240)  # two real candidate decodes plus codec f
 
 
 @pytest.mark.parametrize("options", [{}, {"order": ("b", "a")}, {"title": False}, {"gain": 2}])
-def test_actual_bytes_are_checked_before_publication_and_retry(
+def test_actual_bytes_are_measured_and_published_whatever_the_verdict(
     fixture, exports, monkeypatch, options
 ):
     root, sources, recipe = exports
@@ -135,21 +134,18 @@ def test_actual_bytes_are_checked_before_publication_and_retry(
         return response, report
 
     response, report = complete(encode(root, sources, **options))
-    if options:
-        assert response.status_code == 422, response.text
-        assert report["status"] == "rejected"
-        assert fixture.job.assembly_plan["variants"][0] == previous
-        recipe_digest = fixture.request.identity.recipe_digest
-        monkeypatch.setattr(settings, "phone_actual_export_verification_enabled", False)
-        fixture.request = retry_device_render(fixture.job, "first").request
-        assert fixture.request.identity.recipe_digest == recipe_digest
-        assert "actual_export_policy" in device_record(fixture.job, "first")
-        response, report = complete(encode(root, sources))
     assert response.status_code == 200, (response.text, report)
-    assert report["status"] == "checked"
     assert device_status(fixture.job, "first").phase == "published"
-    assert fixture.job.assembly_plan["variants"][0]["actual_export_verification"] == report
-    assert fixture.job.assembly_plan["variants"][0]["poster_path"] == "new-poster.jpg"
+    variant = fixture.job.assembly_plan["variants"][0]
+    assert variant["actual_export_verification"] == report
+    assert variant["poster_path"] == "new-poster.jpg"
+    assert variant["output_url"] and variant["output_url"] != previous["output_url"]
+    if options:
+        # A wrong export is measured and recorded, and it still replaces the video.
+        assert report["status"] == "rejected"
+        assert any(check["status"] != "passed" for check in report["checks"])
+    else:
+        assert report["status"] == "checked"
 
 
 def test_prepared_story_cannot_drop_actual_output_checks_when_enrollment_is_withdrawn(

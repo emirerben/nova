@@ -472,8 +472,10 @@ enum DeviceRenderGate: Equatable {
             // It is still the creator's own pause: Resume, never "needs attention".
             let paused = reasonCode == Self.pausedReason && !keptHere
             presentations[key] = DeviceRenderPresentation(
-                phase: paused ? .cancelled : (!keptHere || unchecked) ? .needsAttention : .localReady,
-                localFile: !unchecked && saved?.request == request ? saved?.outputURL : nil,
+                // Server checks are advisory: a finished export stays watchable even when
+                // the server did not publish it.
+                phase: paused ? .cancelled : !keptHere ? .needsAttention : .localReady,
+                localFile: saved?.request == request ? saved?.outputURL : nil,
                 message: message, reasonCode: reasonCode, requiresServerRetry: true
             )
             return
@@ -999,7 +1001,7 @@ enum DeviceRenderGate: Equatable {
             value.localFile = nil
             value.outputVerificationPending = [.localReady, .syncing].contains(receipt.phase)
             if receipt.error != nil {
-                value.message = "This export hasn't passed its checks yet. Your approved edit is saved."
+                value.message = "Your video is ready on this iPhone. Kria is still checking it."
             }
         }
         return value

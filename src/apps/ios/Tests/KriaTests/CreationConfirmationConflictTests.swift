@@ -185,7 +185,7 @@ import XCTest
     /// Failure modes for the failed card, from the events the server really sends:
     /// a spend cap offered as Retry/Refresh (it answers the same), a typed creator
     /// decline offered only "New chat" (S4-h, the conversation is the way forward),
-    /// and an untyped structural refusal losing its New chat.
+    /// and an untyped structural refusal losing the saved conversation.
     func testFailedCardOffersReplyForTypedDeclinesAndNothingForAnExhaustedQuota() throws {
         func thread(_ events: String) throws -> CreationThread {
             let decoder = JSONDecoder()
@@ -224,8 +224,10 @@ import XCTest
           "created_at":"2026-09-07T11:00:00Z"}]
         """#)
         XCTAssertNil(untyped.lastAssistantDeclineReason)
-        XCTAssertEqual(FailedStage.affordance(code: untyped.lastAssistantErrorCode, declineReason: nil, canReply: true, canRetry: true), .newChat)
+        XCTAssertEqual(FailedStage.affordance(code: untyped.lastAssistantErrorCode, declineReason: nil, canReply: true, canRetry: true), .reply)
         XCTAssertEqual(FailedStage.affordance(code: "plan_ai_timeout", declineReason: nil, canReply: true, canRetry: true), .retry)
+        XCTAssertEqual(FailedStage.affordance(code: "phone_plan_unsupported", declineReason: "future_reason", canReply: true, canRetry: true), .reply)
+        XCTAssertEqual(FailedStage.affordance(code: "phone_plan_unsupported", declineReason: nil, canReply: false, canRetry: true), .newChat)
     }
 
     /// KRI-118 item 4: `strategy_invalid` (`app.services.creator_errors

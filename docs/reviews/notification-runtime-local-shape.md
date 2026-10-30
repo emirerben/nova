@@ -178,3 +178,12 @@ The native configuration adapter also now reads a missing-default-false build de
 | Physical acceptance | Available connected/unlocked phone and a verified signed build/backend. | Latest paired iPhone13Pro inventory is unavailable. |
 
 APNs environment must come from the chosen signed build. Do not treat a Debug token as a TestFlight production token or silently try both environments. Apple documents the [token authentication requirements](https://developer.apple.com/documentation/usernotifications/establishing-a-token-based-connection-to-apns). The installed iOS26.5 SDK states that GPU submission requires the entitlement and does not guarantee runtime under device contention. No silent push or force-quit workaround is proposed.
+
+
+## Provisional integration with Activity head
+
+An isolated integration combines the reviewed local runtime commit `40357e33b42451e2cb147a5bae114cce4ad10af0` with published Activity head `258eec1f89b20089d31ef861799805a44ff2f4ac`. This is local preparation while #1939 remains unmerged, not dependency completion or rollout. The three merge conflicts were limited to the journey registry, selector expectations and one atomic-session test. The registry preserves all 116 Activity/main entries unchanged and appends the three existing notification entries. The atomic-session test keeps the Activity endpoint control; separate notification account tests retain registration coverage.
+
+The merged production publication route, Activity proof service and both proof/publication test files are byte-identical to #1939. The earlier notification fixture correctly failed because a bare published status lacked the required server proof. It now uses the existing authoritative synthetic publication fixture. Additional controls remove the proof, alter its checksum and replace the artifact pointer after discovery; all suppress dispatch without transport calls. No production proof requirement was weakened.
+
+The combined affected backend run passed 415 tests without skips. Selector checks passed 41 tests and 183 subtests. These logs are retained in the provisional integration worktree under `.dev/provisional-integration-api.log` and `.dev/provisional-selectors.log`; the initial expected fixture failure remains in `.dev/integration-proof-fixture-red.log`. Native and final background integration checks remain a separate subsequent gate.

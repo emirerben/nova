@@ -328,27 +328,35 @@ def test_server_checks_probe_measurement_before_publication(monkeypatch, actual,
         routes.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout=json.dumps(probe))
     )
     measured = {}
+    advisories = []
 
-    def verify():
-        return routes._verify_export(
-            "local/path",
-            "42",
-            len(data),
-            hashlib.sha256(data).hexdigest(),
-            status,
-            "standard",
-            export_measurements=measured,
-            max_export_duration_s=40,
-        )
+    routes._verify_export(
+        "local/path",
+        "42",
+        len(data),
+        hashlib.sha256(data).hexdigest(),
+        status,
+        "standard",
+        export_measurements=measured,
+        max_export_duration_s=40,
+        advisories=advisories,
+    )
 
+    # The probe is always measured; an over-cap file is advisory at publication
+    # (a slightly long video beats no video). The pin-time cap still refuses.
+    assert measured["measured_export_duration_s"] == actual
     if passes:
-        verify()
-        assert measured["measured_export_duration_s"] == actual
+        assert advisories == []
     else:
-        with pytest.raises(CreatorRenderContractError, match="under 40") as error:
-            verify()
-        assert error.value.decline_reason == "requirement_conflict"
-        assert measured == {}
+        assert advisories == [
+            {
+                "kind": "duration_cap",
+                "status": "failed",
+                "reason": "over_maximum",
+                "actual_s": round(actual, 3),
+                "expected_s": 40,
+            }
+        ]
 
 
 def test_real_native_t1_files_pass_the_server_probe_when_available(monkeypatch):

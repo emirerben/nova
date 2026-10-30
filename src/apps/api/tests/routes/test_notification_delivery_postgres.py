@@ -34,7 +34,7 @@ from app.models import (
 )
 from app.routes import auth, native_activity, notification_installations
 from app.services.apns import Accepted, APNsTransport, Rejected, TransportUncertain
-from app.services.device_render import device_record, pin_device_request, save_device_record
+from app.services.device_render import device_record, pin_device_request
 from app.services.mobile_auth import issue_access_token, refresh_token_hash
 from app.services.native_activity import activity_statement
 from app.services.notification_delivery import (
@@ -86,21 +86,11 @@ class Journey:
         )
 
     def activity(self):
+        from tests.routes.test_native_activity_postgres import settle
+
         with sync_session() as db:
             job = db.get(Job, self.job_id)
-            record = copy.deepcopy(device_record(job, "first"))
-            record["status"]["phase"] = "published"
-            attempt = str(uuid.uuid4())
-            record.update(published_attempt=attempt, base_generation=attempt)
-            assembly = copy.deepcopy(job.assembly_plan)
-            assembly["variants"][0].update(
-                render_generation_id=attempt,
-                ok=True,
-                video_path="private/output.mp4",
-                render_destination="device",
-            )
-            job.assembly_plan = assembly
-            save_device_record(job, "first", record)
+            settle(job, "published")
             db.execute(activity_statement(job, "first"))
             db.commit()
             return db.scalar(select(NativeActivity.id).where(NativeActivity.job_id == self.job_id))
@@ -374,6 +364,9 @@ def test_installation_and_active_token_cannot_be_stolen(journey):
         "cancel",
         "generation",
         "proof",
+        "publication_proof",
+        "checksum",
+        "artifact_pointer",
         "owner",
         "epoch",
         "quarantine",
@@ -397,12 +390,21 @@ def test_dispatch_rechecks_current_eligibility(journey, change):
             db.get(NativeActivity, activity_id).read_at = datetime.now(UTC)
         elif change == "cancel":
             job.status = "cancelled"
-        elif change in {"generation", "proof"}:
+        elif change in {"generation", "proof", "publication_proof", "checksum", "artifact_pointer"}:
             assembly = copy.deepcopy(job.assembly_plan)
             if change == "generation":
                 assembly["variants"][0]["render_generation_id"] = "replacement"
-            else:
+            elif change == "proof":
                 assembly["_device_render_v1"]["first"]["actual_export_policy"] = {"version": 1}
+            elif change == "artifact_pointer":
+                assembly["variants"][0]["video_path"] = "private/replaced.mp4"
+            else:
+                record = assembly["_device_render_v1"]["first"]
+                attempt = record["attempts"][record["published_attempt"]]
+                if change == "publication_proof":
+                    attempt.pop("publication_proof")
+                else:
+                    attempt["publication_proof"]["sha256"] = "b" * 64
             job.assembly_plan = assembly
         elif change == "owner":
             db.get(CreationThread, journey.thread_id).active_job_id = None

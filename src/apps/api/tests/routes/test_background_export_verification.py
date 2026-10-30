@@ -14,7 +14,7 @@ from app.services.device_render import device_record, save_device_record
 from tests.routes.test_device_render import body, fixture, mock_storage, prepared  # noqa: F401
 
 
-def checked_completion(fixture, payload):
+def checked_completion(fixture, payload, *, unverified=False):
     """HTTP ack followed by a worker delivery; DB/storage transports may be doubles."""
     from app.tasks import export_verification
 
@@ -44,6 +44,7 @@ def checked_completion(fixture, payload):
                 fixture.user.id,
                 fixture.db,
                 verification_token="worker-token",
+                unverified=unverified,
             )
             return SimpleNamespace(status_code=200, text=result.model_dump_json())
         except HTTPException as exc:

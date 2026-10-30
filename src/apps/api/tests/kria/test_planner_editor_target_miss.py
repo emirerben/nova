@@ -80,7 +80,9 @@ async def test_session_job_mismatch_logs_both_ids() -> None:
     assert logs[0]["session_target_job_id"] == str(other)
 
 
-async def test_no_ready_variant_logs_variants_seen() -> None:
+@pytest.mark.parametrize("compose", [False, True])
+async def test_no_ready_variant_logs_variants_seen(monkeypatch, compose) -> None:
+    monkeypatch.setattr(planner.settings, "kria_compose_unmet_with_ops_enabled", compose)
     job_id = uuid.uuid4()
     item = SimpleNamespace(id=uuid.uuid4(), current_job_id=job_id)
     thread = SimpleNamespace(active_creator_agent_session_id=uuid.uuid4())
@@ -91,7 +93,9 @@ async def test_no_ready_variant_logs_variants_seen() -> None:
     )
     target, logs = await _load(_db(thread, session, job), item)
     assert target is None
-    assert [e["reason"] for e in logs] == ["no_ready_variant"]
+    assert [e["reason"] for e in logs] == [
+        "failed_draft_unavailable" if compose else "no_ready_variant"
+    ]
     assert logs[0]["variants_seen"] == [{"variant_id": "v1", "render_status": "failed"}]
     assert logs[0]["target_variant_id"] == "v1"
 
@@ -495,10 +499,13 @@ async def test_rendering_variant_still_gets_the_in_flight_reply(
     assert runs == []
 
 
+@pytest.mark.parametrize("compose", [False, True])
 async def test_failed_job_with_a_ready_variant_is_not_a_first_render(
     monkeypatch: pytest.MonkeyPatch,
+    compose: bool,
 ) -> None:
     """A re-render that failed after a ready variant exists keeps the guarded path."""
+    monkeypatch.setattr(planner.settings, "kria_compose_unmet_with_ops_enabled", compose)
     db, item, creator_id, runs, copilot = _wire_real(
         monkeypatch, render_status="failed", job_status="processing_failed"
     )
@@ -506,7 +513,9 @@ async def test_failed_job_with_a_ready_variant_is_not_a_first_render(
     job["variants"].append({"variant_id": "v0", "render_status": "ready"})
     # The session still points at the failed variant: nothing editable is ready for it.
     await planner._load_editor_target(db, thread_id=uuid.uuid4(), item=item)
-    assert planner._editor_target_miss.get() == "no_ready_variant"
+    assert planner._editor_target_miss.get() == (
+        "failed_draft_unavailable" if compose else "no_ready_variant"
+    )
     assert planner._editor_target_miss_guarded()
 
 
@@ -851,3 +860,18 @@ async def test_same_short_message_without_selection_still_takes_the_copilot(
     )
     await _ask(db, item, creator_id, "Dodgeball: clip 21")
     copilot.assert_awaited()
+
+
+@pytest.mark.parametrize("compose", [False, True])
+async def test_missing_variant_never_looks_up_an_editor_head(monkeypatch, compose):
+    monkeypatch.setattr(planner.settings, "kria_compose_unmet_with_ops_enabled", compose)
+    job_id = uuid.uuid4()
+    item = SimpleNamespace(id=uuid.uuid4(), current_job_id=job_id)
+    thread = SimpleNamespace(active_creator_agent_session_id=uuid.uuid4())
+    session = SimpleNamespace(id=uuid.uuid4(), target_job_id=job_id, target_variant_id="v1")
+    job = SimpleNamespace(id=job_id, status="processing_failed", assembly_plan={"variants": []})
+    db = _db(thread, session, job)
+    target, logs = await _load(db, item)
+    assert target is None
+    assert [row["reason"] for row in logs] == ["no_render"]
+    db.execute.assert_not_awaited()

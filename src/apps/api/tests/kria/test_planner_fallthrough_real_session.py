@@ -95,7 +95,7 @@ async def test_extract_first_routes_without_missing_greenlet(
     monkeypatch.setattr(
         planner, "resolve_item_creator_context", AsyncMock(return_value=(manifest, []))
     )
-    target = SimpleNamespace(
+    target = planner._EditorTarget(
         job_id=uuid.uuid4(),
         snapshot={"text_bars": [], "allowed_op_families": ["text", "clip"]},
         conversation=[],
@@ -150,7 +150,7 @@ async def test_deferred_brief_extraction_runs_on_a_real_session(
     monkeypatch.setattr(
         planner, "resolve_item_creator_context", AsyncMock(return_value=(manifest, []))
     )
-    target = SimpleNamespace(
+    target = planner._EditorTarget(
         job_id=uuid.uuid4(),
         snapshot={"text_bars": [], "allowed_op_families": ["text"]},
         conversation=[],
