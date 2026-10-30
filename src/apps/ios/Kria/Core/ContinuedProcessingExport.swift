@@ -23,9 +23,24 @@ extension ContinuedProcessingExportTask {
     func cancel(identifier: String)
 }
 
+struct ContinuedProcessingExportConfiguration: Sendable {
+    private let enabled: Bool
+    private let permittedIdentifiers: Set<String>
+
+    init(infoDictionary: [String: Any]?) {
+        enabled = infoDictionary?["KriaContinuedProcessingExportEnabled"] as? Bool ?? false
+        permittedIdentifiers = Set(infoDictionary?["BGTaskSchedulerPermittedIdentifiers"] as? [String] ?? [])
+    }
+
+    func permits(bundleIdentifier: String) -> Bool {
+        enabled && !bundleIdentifier.isEmpty
+            && permittedIdentifiers.contains("\(bundleIdentifier).continued-export.*")
+    }
+}
+
 @MainActor final class ContinuedProcessingExport {
     enum Origin { case save, share, automaticRecovery }
-    typealias ReportProgress = @MainActor (Int64, Int64) -> Void
+    typealias ReportProgress = @MainActor @Sendable (Int64, Int64) -> Void
     typealias Finish = @MainActor (Bool) -> Void
 
     struct Work: Sendable {
@@ -119,6 +134,33 @@ extension ContinuedProcessingExportTask {
         task?.complete(success: false)
     }
 
+    func run<Value: Sendable>(origin: Origin, title: String, subtitle: String,
+                              operation: @escaping @MainActor (@escaping ReportProgress) async throws -> Value,
+                              discard: @escaping @MainActor (Value) -> Void) async throws -> Value {
+        let pending = ContinuedExportOperation<Value>(discard: discard)
+        let value = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                pending.continuation = continuation
+                start(origin: origin, title: title, subtitle: subtitle, work: .init(start: { progress, finish in
+                    pending.start(operation: operation, progress: progress, finish: finish)
+                }, interrupt: {
+                    pending.cancel()
+                }), fallback: {
+                    pending.start(operation: operation, progress: { _, _ in }, finish: { _ in })
+                })
+            }
+        } onCancel: {
+            Task { @MainActor in
+                self.cancel()
+                pending.cancel()
+            }
+        }
+        do { try Task.checkCancellation() }
+        catch { discard(value); throw error }
+        return value
+    }
+
     private func launched(_ task: any ContinuedProcessingExportTask) {
         guard deliveredTask != task.identity else { return }
         guard case let .awaitingLaunch(work) = state else {
@@ -150,17 +192,69 @@ extension ContinuedProcessingExportTask {
     }
 }
 
+@MainActor private final class ContinuedExportOperation<Value: Sendable> {
+    var continuation: CheckedContinuation<Value, any Error>?
+    private var task: Task<Void, Never>?
+    private var cancelled = false
+    private let discard: @MainActor (Value) -> Void
+
+    init(discard: @escaping @MainActor (Value) -> Void) { self.discard = discard }
+
+    func start(operation: @escaping @MainActor (@escaping ContinuedProcessingExport.ReportProgress) async throws -> Value,
+               progress: @escaping ContinuedProcessingExport.ReportProgress,
+               finish: @escaping ContinuedProcessingExport.Finish) {
+        guard !cancelled, task == nil else { return }
+        task = Task {
+            defer { task = nil }
+            do {
+                try Task.checkCancellation()
+                let value = try await operation(progress)
+                if cancelled || Task.isCancelled {
+                    discard(value)
+                    finish(false)
+                    resolve(.failure(CancellationError()))
+                    return
+                }
+                finish(true)
+                if cancelled {
+                    discard(value)
+                    return
+                }
+                resolve(.success(value))
+            } catch {
+                finish(false)
+                resolve(.failure(error))
+            }
+        }
+    }
+
+    func cancel() {
+        cancelled = true
+        task?.cancel()
+        resolve(.failure(CancellationError()))
+    }
+
+    private func resolve(_ result: Result<Value, any Error>) {
+        let waiting = continuation
+        continuation = nil
+        waiting?.resume(with: result)
+    }
+}
+
 #if os(iOS) && !targetEnvironment(macCatalyst)
 @MainActor final class AppleContinuedProcessingExportScheduler: ContinuedProcessingExportScheduling {
-    private let gpuEntitlementAvailable: Bool
+    private let configuration: ContinuedProcessingExportConfiguration
+    private let bundleIdentifier: String
     private static var registeredIdentifiers: Set<String> = []
 
-    init(gpuEntitlementAvailable: Bool = false) {
-        self.gpuEntitlementAvailable = gpuEntitlementAvailable
+    init(configuration: ContinuedProcessingExportConfiguration = .init(infoDictionary: Bundle.main.infoDictionary),
+         bundleIdentifier: String = Bundle.main.bundleIdentifier ?? "") {
+        self.configuration = configuration
+        self.bundleIdentifier = bundleIdentifier
     }
 
     var supportsGPUExport: Bool {
-        guard #available(iOS 26.0, *), gpuEntitlementAvailable else { return false }
+        guard #available(iOS 26.0, *), configuration.permits(bundleIdentifier: bundleIdentifier) else { return false }
         return BGTaskScheduler.supportedResources.contains(.gpu)
     }
 

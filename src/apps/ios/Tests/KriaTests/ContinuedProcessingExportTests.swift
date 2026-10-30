@@ -2,6 +2,33 @@ import XCTest
 @testable import Kria
 
 @MainActor final class ContinuedProcessingExportTests: XCTestCase {
+    func testMissingOrIncompleteBuildConfigurationKeepsContinuedProcessingDisabled() {
+        let cases: [[String: Any]?] = [
+            nil,
+            [:],
+            ["KriaContinuedProcessingExportEnabled": true],
+            ["BGTaskSchedulerPermittedIdentifiers": ["com.example.kria.continued-export.*"]],
+            ["KriaContinuedProcessingExportEnabled": false,
+             "BGTaskSchedulerPermittedIdentifiers": ["com.example.kria.continued-export.*"]],
+            ["KriaContinuedProcessingExportEnabled": true,
+             "BGTaskSchedulerPermittedIdentifiers": ["com.other.kria.continued-export.*"]]
+        ]
+        for dictionary in cases {
+            XCTAssertFalse(ContinuedProcessingExportConfiguration(infoDictionary: dictionary).permits(bundleIdentifier: "com.example.kria"))
+        }
+        XCTAssertFalse(AppleContinuedProcessingExportScheduler(configuration: .init(infoDictionary: nil)).supportsGPUExport)
+    }
+
+    func testBuildConfigurationAdmitsOnlyTheExactBundleWildcard() {
+        let configuration = ContinuedProcessingExportConfiguration(infoDictionary: [
+            "KriaContinuedProcessingExportEnabled": true,
+            "BGTaskSchedulerPermittedIdentifiers": ["com.example.kria.continued-export.*"]
+        ])
+        XCTAssertTrue(configuration.permits(bundleIdentifier: "com.example.kria"))
+        XCTAssertFalse(configuration.permits(bundleIdentifier: "com.other.kria"))
+        XCTAssertFalse(configuration.permits(bundleIdentifier: ""))
+    }
+
     func testAutomaticRecoveryAndBackgroundCallersNeverSubmit() {
         for origin in [ContinuedProcessingExport.Origin.automaticRecovery, .save, .share] {
             let h = Harness()

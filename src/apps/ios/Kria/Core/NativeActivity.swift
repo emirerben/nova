@@ -37,12 +37,24 @@ struct NativeActivityPage: Decodable, Sendable {
 }
 
 extension KriaAPIClient {
+    func nativeActivity(id: UUID, owner: String) async throws -> NativeActivity { throw APIError.unsupported }
+    func nativeActivityProject(threadID: UUID, owner: String) async throws -> CreationThread { throw APIError.unsupported }
+    func readNativeActivity(id: UUID, owner: String) async throws -> NativeActivity { throw APIError.unsupported }
     func nativeActivities(before: String? = nil) async throws -> NativeActivityPage { throw APIError.unsupported }
     func nativeActivity(id: UUID) async throws -> NativeActivity { throw APIError.unsupported }
     func readNativeActivity(id: UUID) async throws -> NativeActivity { throw APIError.unsupported }
 }
 
 extension KriaAPI {
+    func nativeActivity(id: UUID, owner: String) async throws -> NativeActivity {
+        try await request(path: "me/activities/\(id.uuidString)", method: "GET", bodyData: nil, decode: NativeActivity.self, expectedOwner: owner)
+    }
+    func nativeActivityProject(threadID: UUID, owner: String) async throws -> CreationThread {
+        try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self, expectedOwner: owner)
+    }
+    func readNativeActivity(id: UUID, owner: String) async throws -> NativeActivity {
+        try await request(path: "me/activities/\(id.uuidString)/read", method: "POST", bodyData: nil, decode: NativeActivity.self, expectedOwner: owner)
+    }
     func nativeActivities(before: String? = nil) async throws -> NativeActivityPage {
         let query = before.map { [URLQueryItem(name: "before", value: $0)] } ?? []
         return try await request(path: "me/activities", method: "GET", query: query, bodyData: nil, decode: NativeActivityPage.self)

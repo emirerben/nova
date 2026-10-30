@@ -1,10 +1,12 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 @main struct KriaApp: App {
     @UIApplicationDelegateAdaptor(KriaAppDelegate.self) private var appDelegate
     @StateObject private var auth: AuthStore
     @StateObject private var model: AppModel
+    @StateObject private var notifications = NativeNotificationCoordinator()
     private let container: ModelContainer
     init() {
         // Launch ends when the first transcript row is visible (`ChatWorkspaceView`); `launch.init` is the
@@ -77,7 +79,7 @@ import SwiftData
             PerfFixture.installHashObserver()
             let api = ChatUITestTransport.api()
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
-            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil))
+            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken || ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil ? api : nil))
             let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext))
             if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
             _model = StateObject(wrappedValue: model)
@@ -96,6 +98,17 @@ import SwiftData
             RootView()
                 .environmentObject(auth)
                 .environmentObject(model)
+                .environmentObject(notifications)
+                .task(id: auth.localStorageIdentity) {
+                    notifications.configure(api: model.api)
+                    notifications.openActivity = { [weak model] id, owner in
+                        guard let model else { return false }
+                        return try await model.openNativeActivity(id: id, expectedOwner: owner)
+                    }
+                    appDelegate.notifications = notifications
+                    await notifications.bind(owner: auth.isSignedIn ? model.api.mediaLibraryOwner : nil)
+                    await appDelegate.deliverPendingTap()
+                }
                 .preferredColorScheme(.light)
         }
             .modelContainer(container)
@@ -105,7 +118,41 @@ import SwiftData
     }
 }
 
-@MainActor final class KriaAppDelegate: NSObject, UIApplicationDelegate {
+@MainActor final class KriaAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    weak var notifications: NativeNotificationCoordinator?
+    private var pendingActivityID: String?
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Task { await notifications?.registered(token: deviceToken) }
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        notifications?.registrationFailed()
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let activityID = response.actionIdentifier == UNNotificationDefaultActionIdentifier
+            ? response.notification.request.content.userInfo["activity_id"] as? String : nil
+        Task { @MainActor in
+            if let activityID, UUID(uuidString: activityID) != nil {
+                pendingActivityID = activityID
+                await deliverPendingTap()
+            }
+        }
+        completionHandler()
+    }
+
+    func deliverPendingTap() async {
+        guard let notifications, let id = pendingActivityID else { return }
+        pendingActivityID = nil
+        await notifications.receiveTap(["activity_id": id])
+    }
+
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
         guard identifier == BackgroundUploadCoordinator.sessionIdentifier else {
             completionHandler()

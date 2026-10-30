@@ -42,7 +42,18 @@ private final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked 
 /// UI fixtures must never read or rotate a developer's Keychain session.
 struct ChatUITestTokenStore: TokenStore {
     // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
-    func read() throws -> MobileSession? { PerfFixture.expiredToken ? PerfTokenState.shared.current : nil }
+    func read() throws -> MobileSession? {
+        if PerfFixture.expiredToken { return PerfTokenState.shared.current }
+        if ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil {
+            let payload = Data("{\"sub\":\"activity-ui-fixture\"}".utf8).base64EncodedString()
+            return MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "activity-fixture", expiresIn: 3600)
+        }
+        return nil
+    }
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        guard PerfFixture.expiredToken else { throw APIError.unsupported }
+        return PerfTokenState.shared.updateSession(replacement, ifCurrent: expected)
+    }
     func write(_ session: MobileSession) throws { if PerfFixture.expiredToken { PerfTokenState.shared.store(session) } }
     func delete() throws {}
 }

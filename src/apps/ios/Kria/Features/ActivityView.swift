@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ActivityView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var notifications: NativeNotificationCoordinator
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var items: [NativeActivity] = []
@@ -12,6 +13,16 @@ struct ActivityView: View {
 
     var body: some View {
         List {
+            if notifications.available {
+                Button(notifications.needsRevocation ? "Retry notification cleanup" : notifications.optedIn ? "Turn off notifications" : "Notify me about my videos") {
+                    Task {
+                        if notifications.optedIn || notifications.needsRevocation { await notifications.disable() }
+                        else { await notifications.enable() }
+                    }
+                }.disabled(notifications.isRequestingPermission)
+            }
+            if let status = notifications.message { Text(status).foregroundStyle(KriaColor.zinc) }
+
             if let message { Text(message).foregroundStyle(KriaColor.zinc).accessibilityIdentifier("activity-error") }
             if items.isEmpty && !isLoading && message == nil {
                 ContentUnavailableView("No activity yet", systemImage: "bell", description: Text("Finished videos and projects that need your attention appear here."))
@@ -70,11 +81,7 @@ struct ActivityView: View {
         opening = item.id
         defer { opening = nil }
         do {
-            let current = try await model.api.nativeActivity(id: item.id)
-            let project = try await model.api.project(threadID: current.threadID)
-            guard owner == model.api.mediaLibraryOwner, !Task.isCancelled else { return }
-            _ = try await model.api.readNativeActivity(id: item.id)
-            guard owner == model.api.mediaLibraryOwner, model.selectProject(project.summary) else { return }
+            guard try await model.openNativeActivity(id: item.id, expectedOwner: owner) else { return }
             dismiss()
         } catch {
             guard owner == model.api.mediaLibraryOwner else { return }

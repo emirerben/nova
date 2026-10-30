@@ -85,7 +85,7 @@ enum NativeEditorVideoDownloadRoute: Equatable {
     case server(NativeEditorVideoDownloadTarget)
 }
 
-struct NativeEditorTemporaryVideo {
+struct NativeEditorTemporaryVideo: Sendable {
     let fileURL: URL
     let cleanupURL: URL
 }
@@ -1305,7 +1305,7 @@ struct NativeEditorTemporaryVideo {
     /// failure — unsupported source, storage, cancellation — which still
     /// throws through to the caller rather than falling back to the last
     /// cloud render. The user must always get what the preview shows.
-    func exportDisplayedSourcePreview() async throws -> NativeEditorTemporaryVideo {
+    func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)? = nil) async throws -> NativeEditorTemporaryVideo {
         guard sourcePreviewState == .ready, sourcePreviewSettled,
               let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else {
@@ -1315,25 +1315,27 @@ struct NativeEditorTemporaryVideo {
         let exportRecipe = recipeWithLiveSongVolume(snapshot.recipe)
         let wasPlaying = isPlaying
         pausePlayback()
-        defer { if wasPlaying { togglePlayback() } }
+        defer { if wasPlaying && !Task.isCancelled { togglePlayback() } }
         do {
-            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs)
+            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs, progress: progress)
         } catch {
+            if error is CancellationError { throw error }
+            try Task.checkCancellation()
             #if DEBUG
             NativePreviewDiagnostics.failure("editor-export-first-attempt", error: error)
             #endif
-            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs)
+            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs, progress: progress)
         }
     }
 
-    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL]) async throws -> NativeEditorTemporaryVideo {
+    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "kria-editor-download-\(UUID().uuidString)", directoryHint: .isDirectory)
         let output = directory.appending(path: "current-preview.mp4")
         do {
             let checkpoint = try await AVFoundationLocalExporter(
                 stateStore: FileExportStateStore(directory: directory.appending(path: "state", directoryHint: .isDirectory))
-            ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output)
+            ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output, progress: progress)
             guard checkpoint.status == .completed, checkpoint.outputURL == output else {
                 throw NativeEditorVideoDownloadError.unavailable
             }
