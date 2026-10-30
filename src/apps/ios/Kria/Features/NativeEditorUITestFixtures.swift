@@ -771,7 +771,28 @@ enum NativeEditorUITestCommitTransport {
             guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
-            if url.path.hasSuffix("/device-render"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayRecipeKey) {
+            if url.path.hasSuffix("/overlay-plan") {
+                var data = request.httpBody ?? Data()
+                if data.isEmpty, let stream = request.httpBodyStream {
+                    stream.open(); defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
+                }
+                let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                let response: [String: JSONValue] = [
+                    "document_fingerprint": fields["document_fingerprint"] ?? .string(""),
+                    "base_generation": fields["base_generation"] ?? .string(""),
+                    "message": .string("Synthetic offline overlay plan."),
+                    "overlays": .array([.object([
+                        "id": .string("DCC14763-5702-4AE3-8510-8C72845E6B15"), "kind": .string("text"),
+                        "title": .string("Number 10"), "prompt": .string(""), "text": .string("10"),
+                        "start_s": .number(0.5), "end_s": .number(1.5),
+                        "x_frac": .number(0.2), "y_frac": .number(0.3), "scale": .number(0.2),
+                        "reason": .string("Synthetic placement at 0.5 seconds.")
+                    ])])
+                ]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/device-render"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayRecipeKey) {
                 status = 200; body = data
             } else if url.path.hasSuffix("/timeline"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayPoolKey) {
                 status = 200; body = data

@@ -1423,6 +1423,17 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-legacy-visuals") {
             itemID = "fixture-visual-item"
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-overlay-item"
+            jobID = draft.projectID
+            variantKey = "initial"
+            rendersOnDevice = true
+            guidedRevisionNumber = 3
+            previewVariant = ["editor_capabilities": .object(["phone_editor_media": .object([
+                "enabled": .bool(true), "source_registration": .bool(true), "visual_kinds": .array([.string("image")])
+            ])])]
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing") {
             // KRI-589: Save goes through the real request encoder to a stub transport (no account, no server).
             api = NativeEditorUITestCommitTransport.api()
@@ -4974,6 +4985,98 @@ struct NativeEditorTemporaryVideo {
             if let importID { uploads.failEditorPlacement(importID, error: "This media couldn’t be added. Try again.") }
             addClipError = "This media couldn’t be added. Your edit is unchanged. " + error.localizedDescription
         }
+    }
+
+    var overlayPlanScope: String? {
+        guard let itemID, let jobID, let variantKey else { return nil }
+        return [itemID, jobID.uuidString, variantKey].joined(separator: ".")
+    }
+
+    var canGenerateOverlayPlan: Bool { rendersOnDevice && canImportVisuals }
+
+    var overlayBaseDuration: Double { timelineProjection.baseClipWindows.last?.end ?? 0 }
+
+    func overlayOutputTime(_ baseTime: Double) -> Double { timelineProjection.projectBaseTime(baseTime) }
+
+    func overlayBaseTime(_ outputTime: Double) -> Double? {
+        let base = timelineProjection.unprojectOutputTime(outputTime)
+        return abs(timelineProjection.projectBaseTime(base) - outputTime) <= 0.002 ? base : nil
+    }
+
+    func overlayDocumentFingerprint() throws -> String {
+        try OverlayPlanFingerprint.make(document.encodeSnapshot())
+    }
+
+    func requestOverlayPlan(mode: OverlayGenerationMode, prompt: String, tasteNotes: String) async throws -> OverlayPlan {
+        guard loadState == .loaded, !isSaving, let api, let itemID, let jobID, let variantKey,
+              canGenerateOverlayPlan else { throw APIError.unsupported }
+        endTransaction()
+        let fingerprint = try overlayDocumentFingerprint()
+        let value = try await api.overlayPlan(itemID: itemID, body: OverlayPlanRequest(
+            jobID: jobID.uuidString, variantID: variantKey, baseGeneration: document.revision.baseGeneration,
+            documentFingerprint: fingerprint, mode: mode, prompt: prompt, tasteNotes: tasteNotes,
+            editorSnapshot: document.encodeSnapshot()))
+        guard !Task.isCancelled, value.documentFingerprint == fingerprint,
+              value.baseGeneration == document.revision.baseGeneration,
+              try overlayDocumentFingerprint() == fingerprint,
+              value.overlays.count <= 6, Set(value.overlays.map(\.id)).count == value.overlays.count,
+              value.overlays.allSatisfy({ $0.isValid(duration: overlayBaseDuration) }) else { throw APIError.invalidResponse }
+        return value
+    }
+
+    func containsOverlayProposal(_ id: String) -> Bool {
+        document.visualBlocks.contains { $0.id == id } || document.textElements.contains { $0.id == id }
+    }
+
+    func applyOverlayProposal(_ proposal: OverlayProposal, assetID: String?, plan: OverlayPlan) async throws {
+        guard !containsOverlayProposal(proposal.id) else { return }
+        guard !isAddingVisual, !isSaving, proposal.isValid(duration: overlayBaseDuration),
+              plan.baseGeneration == document.revision.baseGeneration,
+              try overlayDocumentFingerprint() == plan.documentFingerprint else { throw APIError.invalidResponse }
+        if proposal.kind == .text {
+            guard canEdit(.text) else { throw APIError.unsupported }
+            let element = EditorTextElement(id: proposal.id, text: proposal.text, startS: proposal.startS, endS: proposal.endS,
+                raw: ["font_family": .string("Inter"), "size_px": .number(540 * proposal.scale), "color": .string("#FFFFFF"),
+                      "x_frac": .number(proposal.xFrac), "y_frac": .number(proposal.yFrac), "position": .string("custom"),
+                      "max_width_frac": .number(proposal.scale), "wrap_lines": .bool(false), "stroke_width": .number(3), "effect": .string("none")])
+            transactDocument(section: .text) { $0.textElements.append(element) }
+            return
+        }
+        guard canImportVisuals, document.visualBlocks.count < 20, let api, let itemID, let assetID,
+              let sourceResolver else { throw APIError.unsupported }
+        isAddingVisual = true
+        defer { isAddingVisual = false }
+        let library = try await api.visuals(itemID: itemID)
+        guard let asset = library.assets.first(where: { $0.id == assetID && $0.status == "ready" && $0.kind == "image" }),
+              let originalURL = asset.originalMediaURL else { throw APIError.invalidResponse }
+        var admittedPath = asset.gcsPath
+        if rendersOnDevice {
+            guard let originalTarget = editorSourceTarget(kind: .visual), let stableID = UUID(uuidString: proposal.id) else { throw APIError.unsupported }
+            let target = EditorSourceRegistrationTarget(itemID: originalTarget.itemID, variantID: originalTarget.variantID,
+                clientImportID: stableID, baseGeneration: originalTarget.baseGeneration,
+                guidedRevisionNumber: originalTarget.guidedRevisionNumber, sourceKind: .visual)
+            var response = try await api.registerEditorSource(target, sourceID: asset.id)
+            for _ in 0..<120 where response.status == "preparing" {
+                try Task.checkCancellation()
+                try await Task.sleep(for: .seconds(1))
+                response = try await api.editorSource(itemID: target.itemID, variantID: target.variantID, importID: stableID)
+            }
+            guard response.status == "ready" else { throw APIError.invalidResponse }
+            admittedPath = response.source?["gcs_path"]?.stringValue ?? asset.gcsPath
+        }
+        guard let admittedPath, !admittedPath.isEmpty else { throw APIError.invalidResponse }
+        let source = try await sourceResolver.resolveMedia(id: asset.id, url: originalURL, generation: plan.baseGeneration)
+        try Task.checkCancellation()
+        guard plan.baseGeneration == document.revision.baseGeneration,
+              try overlayDocumentFingerprint() == plan.documentFingerprint, canImportVisuals,
+              document.visualBlocks.count < 20 else { throw APIError.invalidResponse }
+        guard !containsOverlayProposal(proposal.id) else { return }
+        guard var block = NativeVisualAuthoring.plannedOverlay(asset: asset, proposal: proposal,
+            z: Int(document.visualBlocks.compactMap { $0.raw["z"]?.numberValue }.max() ?? 0) + 1) else { throw APIError.invalidResponse }
+        block.raw["src_gcs_path"] = .string(admittedPath)
+        authoredVisualSources["visual:" + proposal.id + ":" + proposal.id] = source
+        transactDocument(section: .visualBlocks) { $0.visualBlocks.append(block) }
+        await prepareSourcePreview()
     }
 
     func addLibraryVisual(_ asset: CreationVisual) async {

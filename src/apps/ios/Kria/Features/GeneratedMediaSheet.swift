@@ -8,14 +8,15 @@ import AVKit
     var script: GeneratedNarrationScript? = nil
     @Published var prompt = ""
     @Published var title = ""
+    var transparentBackground = false
     @Published var operation: GeneratedMediaOperation?
     @Published var submittedRequest: GeneratedMediaRequest?
     @Published var recovery: GeneratedMediaRecovery?
     @Published var submissionRejection: String?
     private var recoveryKey: String?
 
-    func configureRecovery(accountID: String, itemID: String) {
-        let parts = [accountID, itemID, capability.rawValue, source?.id ?? ""]
+    func configureRecovery(accountID: String, itemID: String, placementID: String? = nil) {
+        let parts = [accountID, itemID, capability.rawValue, source?.id ?? ""] + (placementID.map { [$0] } ?? [])
         guard let data = try? JSONEncoder().encode(parts) else { return }
         recoveryKey = "generated-media-recovery." + data.base64EncodedString()
         if let recoveryKey, let saved = UserDefaults.standard.data(forKey: recoveryKey) {
@@ -67,6 +68,9 @@ struct GeneratedMediaSheet: View {
     let itemID: String
     @ObservedObject var draft: GeneratedMediaDraft
     let accepted: () async -> Void
+    var useImage: ((GeneratedMediaOperation) async throws -> Void)? = nil
+    var allowsNewGeneration = true
+    var allowsUse = true
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
@@ -95,7 +99,7 @@ struct GeneratedMediaSheet: View {
                     if draft.recovery == nil, draft.submissionRejection == nil {
                         Button(narration ? "Approve script and generate AI voice" : "Generate preview") { submit() }
                             .buttonStyle(KriaPrimaryButtonStyle())
-                            .disabled(busy || (!narration && draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                            .disabled(busy || !allowsNewGeneration || (!narration && draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                             .accessibilityIdentifier("generated-media-submit")
                     }
                     if let rejection = draft.submissionRejection {
@@ -165,7 +169,7 @@ struct GeneratedMediaSheet: View {
             }
             Button(narration ? "Use AI voice" : "Use image") { accept(value) }
                 .buttonStyle(KriaPrimaryButtonStyle())
-                .disabled(busy || !value.canAccept || !matchesApproval(value) || !previewLoaded || (narration && !previewPlayed))
+                .disabled(busy || !allowsUse || !value.canAccept || !matchesApproval(value) || !previewLoaded || (narration && !previewPlayed))
                 .accessibilityIdentifier("generated-media-use")
         } else {
             Text(statusText(value))
@@ -213,12 +217,12 @@ struct GeneratedMediaSheet: View {
     }
 
     private func submit() {
-        guard !busy, draft.recovery == nil, draft.submissionRejection == nil else { return }
+        guard !busy, allowsNewGeneration, draft.recovery == nil, draft.submissionRejection == nil else { return }
         draft.rememberRequest()
         guard let recovery = draft.recovery else { return }
         let request = draft.submittedRequest ?? GeneratedMediaRequest(
             clientEventID: recovery.clientEventID, capability: draft.capability,
-            prompt: draft.script?.text ?? draft.prompt, editableTitle: draft.title,
+            prompt: draft.script?.text ?? draft.prompt, transparentBackground: draft.transparentBackground, editableTitle: draft.title,
             sourceAssetID: draft.source?.id, sourceGeneration: draft.source?.sourceGeneration,
             scriptID: draft.script?.scriptID, scriptVersion: draft.script?.scriptVersion,
             approvedScriptSHA256: draft.script?.approvedScriptSHA256
@@ -303,7 +307,7 @@ struct GeneratedMediaSheet: View {
     }
 
     private func accept(_ value: GeneratedMediaOperation) {
-        guard !busy, value.canAccept, matchesApproval(value), previewLoaded, !narration || previewPlayed else { return }
+        guard !busy, allowsUse, value.canAccept, matchesApproval(value), previewLoaded, !narration || previewPlayed else { return }
         busy = true
         pollTask?.cancel()
         pollTask = Task {
@@ -312,10 +316,15 @@ struct GeneratedMediaSheet: View {
                 _ = try await model.api.acceptGeneratedMedia(itemID: itemID, operationID: value.id,
                     body: GeneratedMediaAcceptance(scriptID: draft.script?.scriptID, scriptVersion: draft.script?.scriptVersion,
                                                    approvedScriptSHA256: draft.script?.approvedScriptSHA256))
+                if let useImage { try await useImage(value) }
                 draft.clearRecovery()
                 await accepted()
                 dismiss()
-            } catch { self.error = "Couldn’t use this preview. If the script changed, approve its latest version first." }
+            } catch {
+                self.error = useImage == nil
+                    ? "Couldn’t use this preview. If the script changed, approve its latest version first."
+                    : "Couldn’t place this overlay. The generated preview is preserved. If your edit changed, close and plan again."
+            }
         }
     }
 }

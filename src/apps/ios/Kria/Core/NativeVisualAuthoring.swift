@@ -44,6 +44,16 @@ enum NativeVisualAuthoring {
         return .init(id: id, kind: "media", startS: start, endS: end, raw: raw)
     }
 
+    static func plannedOverlay(asset: CreationVisual, proposal: OverlayProposal, z: Int) -> EditorVisualBlock? {
+        guard var block = media(asset: asset, start: proposal.startS, end: proposal.endS, z: z) else { return nil }
+        block.id = proposal.id
+        block.raw["x_frac"] = .number(proposal.xFrac)
+        block.raw["y_frac"] = .number(proposal.yFrac)
+        block.raw["scale"] = .number(proposal.scale)
+        block.raw["transform"] = .object(["fit_mode": .string("contain"), "focal_x": .number(0.5), "focal_y": .number(0.5), "zoom": .number(1)])
+        return block
+    }
+
     static func card(text: String, bold: Bool, start: Double, end: Double) -> (EditorVisualBlock, EditorTextElement)? {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.count <= 500, end > start else { return nil }
