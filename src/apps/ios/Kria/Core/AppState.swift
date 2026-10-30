@@ -63,7 +63,14 @@ enum ProfileFetchState: Equatable, Sendable {
         if isSignedIn, let session { hasAIConsent = defaults.bool(forKey: Self.aiConsentKey(for: session)) }
         sessionExpiredSubscription = NotificationCenter.default.publisher(for: .kriaSessionExpired)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.expireSession() }
+            .sink { [weak self] notification in
+                guard let self else { return }
+                if notification.object is MobileSession {
+                    do { guard try self.tokenStore.read() == nil else { return } }
+                    catch { return }
+                }
+                self.expireSession()
+            }
         projectDeletedSubscription = NotificationCenter.default.publisher(for: .kriaProjectDeleted)
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
@@ -544,6 +551,17 @@ enum WorkspaceDestination: Equatable, Sendable {
         destination = .chat(project.id)
         errorMessage = nil
         return true
+    }
+
+    @discardableResult func openNativeActivity(id: UUID, expectedOwner: String?) async throws -> Bool {
+        guard let expectedOwner, expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        let activity = try await api.nativeActivity(id: id, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        let project = try await api.nativeActivityProject(threadID: activity.threadID, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        _ = try await api.readNativeActivity(id: id, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        return selectProject(project.summary)
     }
 
     /// Shows the camera roll in the workspace. The selected project stays selected underneath, so closing the

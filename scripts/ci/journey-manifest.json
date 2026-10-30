@@ -2341,6 +2341,62 @@
         "src/apps/api/tests/kria/test_editor_repair_planner_postgres.py",
         "src/apps/api/tests/services/test_editor_repair_reviewer.py"
       ]
+    },
+    {
+      "id": "native-activity-inbox",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_native_activity_postgres.py tests/routes/test_device_render.py tests/tasks/test_device_render_reaper.py tests/routes/test_background_export_verification.py",
+      "xctests": [
+        "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
+        "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
+        "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
+      ],
+      "paths": [
+        "src/apps/api/app/routes/native_activity.py",
+        "src/apps/api/app/services/native_activity.py",
+        "src/apps/api/app/migrations/versions/0128_native_activities.py",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/tasks/device_render_reaper.py",
+        "src/apps/api/app/tasks/export_verification.py",
+        "src/apps/api/tests/routes/test_native_activity_postgres.py",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Tests/KriaUITests/ActivityUITests.swift"
+      ]
+    },
+    {
+      "id": "native-activity-account-boundary",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/NotificationAtomicSessionTests/testSignOutInsideOldReadWriteGapCannotResurrectSession",
+        "KriaTests/NotificationAtomicSessionTests/testAccountBWriteInsideOldReadWriteGapCannotBeOverwritten",
+        "KriaTests/NotificationAtomicSessionTests/testConditionalExpiryCannotDeleteCompetingAccount",
+        "KriaTests/NotificationAtomicSessionTests/testUnreadableStoreDoesNotLetDelayedExpirySignOutNewAccount",
+        "KriaTests/NotificationAtomicSessionTests/testDelayedExpiryEventDoesNotSignOutNewAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testReadAcknowledgement401NeverReplaysUnderSwitchedAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject",
+        "KriaTests/SessionRefreshRaceTests/testTwoClientInstancesShareOneRefresh",
+        "KriaTests/SessionRefreshRaceTests/testRotationCompletedElsewhereIsAcceptedInsteadOfSigningOut",
+        "KriaTests/SessionRefreshRaceTests/testRefusedRefreshWithUnchangedStoreStillExpiresTheSession",
+        "KriaTests/KriaTests/testUnauthorizedRequestRefreshesOnceAndStoresRotation",
+        "KriaTests/KriaTests/testConcurrentUnauthorizedRequestsShareOneRefreshRotation"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
+        "src/apps/ios/Kria/Features/PerfFixtures.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/AIConsentTests.swift",
+        "src/apps/ios/Tests/KriaTests/KriaTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorTestSupport.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationAtomicSessionTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift"
+      ]
     }
   ]
 }

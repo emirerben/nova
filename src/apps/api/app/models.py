@@ -4603,3 +4603,42 @@ class GeneratedMediaOperation(Base):
     expires_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, nullable=False, server_default=text("now() + interval '24 hours'")
     )
+
+
+class NativeActivity(Base):
+    __tablename__ = "native_activities"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    variant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    identity: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    generation: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    semantic_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=func.now()
+    )
+    read_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('video_ready', 'action_required')", name="ck_native_activity_kind"
+        ),
+        CheckConstraint(
+            "ownership_epoch >= 0 AND length(variant_id) > 0 AND length(generation) > 0",
+            name="ck_native_activity_target",
+        ),
+        Index("idx_native_activity_owner_created", "owner_id", "created_at", "id"),
+    )
