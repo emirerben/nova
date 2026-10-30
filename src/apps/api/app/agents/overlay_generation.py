@@ -37,9 +37,10 @@ class OverlayProposal(BaseModel):
 class AgentOverlay(OverlayProposal):
     """A model-authored row. The typed `depicts` declaration, not a word list, decides whether
     a generated picture may stand in for an official mark; it never reaches the client. A missing
-    declaration is not a schema error: materialize_overlays refuses that one row (fail safe)."""
+    or unrecognised declaration is not a schema error: materialize_overlays refuses that one row
+    unless it is exactly "generic_subject" (fail safe, no lost plan or extra paid retry)."""
 
-    depicts: Literal["generic_subject", "brand_or_logo"] | None = None
+    depicts: str | None = Field(default=None, max_length=40)
 
 
 class OverlayPlanOutput(BaseModel):

@@ -154,6 +154,32 @@ def test_a_missing_declaration_refuses_only_that_row_not_the_whole_plan():
     assert notices == [LOGO_NOTICE]
 
 
+@pytest.mark.parametrize("declared", ["generic", "Generic_Subject", "other", ""])
+def test_an_unrecognised_declaration_refuses_only_that_row_without_a_paid_retry(declared):
+    import json
+
+    from app.agents.overlay_generation import OverlayGenerationAgent, OverlayPlanInput
+
+    wire = json.loads(proposal().model_dump_json())
+    wire["overlays"][0]["depicts"] = declared
+    agent = OverlayGenerationAgent.__new__(OverlayGenerationAgent)
+    raw = agent.parse(
+        json.dumps(wire),
+        OverlayPlanInput(
+            language="en",
+            mode="automatic",
+            prompt="",
+            taste_notes="",
+            duration_s=8,
+            evidence=[],
+            assets=[],
+        ),
+    )
+    notices = []
+    rows = materialize_overlays(raw, evidence(), [], duration_s=8, prompt="", notices=notices)
+    assert rows == [] and notices == [LOGO_NOTICE]
+
+
 def test_declaration_never_reaches_the_client():
     row = materialize_overlays(proposal(), evidence(), [], duration_s=8, prompt="")[0]
     assert "depicts" not in row.model_dump_json()
