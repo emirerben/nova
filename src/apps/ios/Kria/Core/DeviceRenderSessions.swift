@@ -267,6 +267,7 @@ enum DeviceRenderGate: Equatable {
     /// The last capability set the server actually enabled, kept so a failed
     /// capability fetch (handed in as `.disabled`) never reads as "not available".
     private(set) var lastEnabledCapabilities: PhoneRenderingCapabilities?
+    @ObservationIgnored private let initiation: DeviceRenderUserInitiation
     @ObservationIgnored private let fetch: Fetch
     @ObservationIgnored private let factory: Factory
     @ObservationIgnored private let retryFailure: RetryFailure
@@ -279,6 +280,8 @@ enum DeviceRenderGate: Equatable {
     @ObservationIgnored private var requests: [DeviceRenderKey: DeviceRenderRequest] = [:]
     @ObservationIgnored private var observations: [DeviceRenderKey: Task<Void, Never>] = [:]
     @ObservationIgnored private var tickets: [DeviceRenderKey: UUID] = [:]
+    @ObservationIgnored private var keyOperations: [DeviceRenderKey: UUID] = [:]
+    @ObservationIgnored private var resetOperation: UUID?
     /// KRI-935: the superseded request each key already followed once, so a server that keeps
     /// pointing at the same request cannot loop the refresh.
     @ObservationIgnored private var followedSuperseded: [DeviceRenderKey: DeviceRenderIdentity] = [:]
@@ -334,12 +337,14 @@ enum DeviceRenderGate: Equatable {
     }
 
     init(fetch: @escaping Fetch, factory: @escaping Factory,
+         initiation: DeviceRenderUserInitiation = .shared,
          retryFailure: @escaping RetryFailure = { _, _, _ in throw APIError.unsupported },
          reportPreparationFailure: @escaping ReportPreparationFailure = { _, _ in },
          reportDecline: @escaping ReportDecline = { _, _, _, _ in },
          environment: DeviceRenderEnvironment = .live,
          sleep: @escaping Sleep = { try await Task.sleep(for: $0) },
          projectDirectory: @escaping @MainActor (UUID) -> ProjectDirectory = { BackgroundUploadCoordinator.projectDirectory($0) }) {
+        self.initiation = initiation
         self.fetch = fetch; self.factory = factory; self.retryFailure = retryFailure
         self.reportPreparationFailure = reportPreparationFailure; self.reportDecline = reportDecline
         self.environment = environment; self.sleep = sleep; self.projectDirectory = projectDirectory
@@ -360,7 +365,8 @@ enum DeviceRenderGate: Equatable {
         }
     }
 
-    func reconcile(_ key: DeviceRenderKey, capabilities offered: PhoneRenderingCapabilities, retry: Bool = false) async {
+    func reconcile(_ key: DeviceRenderKey, capabilities offered: PhoneRenderingCapabilities, retry: Bool = false, origin: DeviceRenderExecutionOrigin = .automaticRecovery) async {
+        guard resetOperation == nil else { return }
         // `.disabled` is also what a failed capability fetch turns into. The
         // server masks a real rollout pause on the status read itself, so
         // keep rendering against the last set it actually enabled.
@@ -404,7 +410,7 @@ enum DeviceRenderGate: Equatable {
             return
         }
         do {
-            try await apply(status, for: key, ticket: ticket, capabilities: capabilities, retry: retry)
+            try await apply(status, for: key, ticket: ticket, capabilities: capabilities, retry: retry, origin: origin)
         } catch {
             guard tickets[key] == ticket else { return }
             await preparationFailed(key, error: error, ticket: ticket)
@@ -412,13 +418,17 @@ enum DeviceRenderGate: Equatable {
     }
 
     private func apply(_ status: DeviceRenderStatusResponse, for key: DeviceRenderKey, ticket: UUID,
-                       capabilities: PhoneRenderingCapabilities, retry: Bool) async throws {
+                       capabilities: PhoneRenderingCapabilities, retry: Bool, origin: DeviceRenderExecutionOrigin) async throws {
         let request = status.request
         if status.outputVerificationRequired { verificationKeys.insert(key) }
         else { verificationKeys.remove(key) }
         if status.retryRequiresApproval { retryApprovalKeys.insert(key) }
         else { retryApprovalKeys.remove(key) }
         if requests[key] != request {
+            if let previousIdentity = requests[key]?.identity {
+                keyOperations[key] = UUID()
+                initiation.invalidate(identity: previousIdentity)
+            }
             observations.removeValue(forKey: key)?.cancel()
             if let previous = entries[key] { try await previous.cancel() }
             guard tickets[key] == ticket else { return }
@@ -570,7 +580,7 @@ enum DeviceRenderGate: Equatable {
         let parkedWait = saved?.request == request && saved?.phase == .needsAttention && saved?.outputURL == nil
             && [.thermal, .insufficientStorage].contains(DeviceRenderFailureReasonCode.forRouteDecision(reason: saved?.error))
         if saved?.request != request || retry || parkedWait {
-            try await coordinator.start(request, decision: decision)
+            try await coordinator.start(request, decision: decision, origin: origin)
         } else if !(await coordinator.isBusy()) {
             // A parked render (suspension, outage, pending check) resumes on
             // every reconcile, not only when nothing is observing it.
@@ -758,26 +768,51 @@ enum DeviceRenderGate: Equatable {
     /// coordinator/receipt so the next `reconcile()` starts clean against it.
     @discardableResult
     func retryNeedsAttention(_ key: DeviceRenderKey) async -> Bool {
-        guard let request = requests[key] else { return false }
+        await retryNeedsAttention(key, userInitiated: false)
+    }
+
+    @discardableResult
+    func retryNeedsAttentionFromUser(_ key: DeviceRenderKey) async -> Bool {
+        await retryNeedsAttention(key, userInitiated: true)
+    }
+
+    private func retryNeedsAttention(_ key: DeviceRenderKey, userInitiated: Bool) async -> Bool {
+        guard resetOperation == nil, let request = requests[key] else { return false }
+        let operation = UUID()
+        keyOperations[key] = operation
         do {
-            _ = try await retryFailure(key.jobID, request.identity, rendersLocally(request, for: key))
+            let ack: DeviceRenderRetryAck
+            if userInitiated {
+                ack = try await initiation.retry(identity: request.identity) {
+                    try await retryFailure(key.jobID, request.identity, rendersLocally(request, for: key))
+                }
+            } else {
+                ack = try await retryFailure(key.jobID, request.identity, rendersLocally(request, for: key))
+            }
             // A reconcile/save may have installed a newer request while the
             // retry was in flight. Its coordinator and receipt now own this
             // key; a stale retry completion must not tear them down.
-            guard requests[key] == request else { return false }
+            guard keyOperations[key] == operation, requests[key] == request, !Task.isCancelled else { return false }
             settle(key)
             observations.removeValue(forKey: key)?.cancel()
-            let previous = entries.removeValue(forKey: key)
-            requests.removeValue(forKey: key)
+            let previous = entries[key]
             // Invalidate a fetch that was already in flight before the retry
             // completed. Otherwise its stale status can reinstall the old
             // request after this method clears the maps.
             tickets[key] = nil
             presentations[key] = DeviceRenderPresentation(phase: .preparing)
             if let previous { try? await previous.cancel() }
+            guard keyOperations[key] == operation, resetOperation == nil,
+                  requests[key] == request, entries[key] === previous, !Task.isCancelled else { return false }
+            entries[key] = nil
+            requests[key] = nil
+            if userInitiated, let capabilities = capabilities[key] {
+                await reconcile(key, capabilities: capabilities, retry: true,
+                                origin: initiation.origin(for: ack.identity))
+            }
             return true
         } catch {
-            guard requests[key] == request else { return false }
+            guard keyOperations[key] == operation, requests[key] == request else { return false }
             var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
             if case let APIError.conflict(detail) = error, detail.code == "requires_change" {
                 // The same recipe would be refused again: the edit needs a change in
@@ -906,18 +941,26 @@ enum DeviceRenderGate: Equatable {
     /// `cancelByUser()`. Every other cancel in this file is housekeeping and
     /// must keep calling the coordinator's plain `cancel()`.
     func cancel(_ key: DeviceRenderKey) async {
+        let operation = UUID()
+        keyOperations[key] = operation
+        initiation.invalidate(jobID: key.jobID, variantID: key.variantID)
+        let coordinator = entries[key]
         tickets[key] = nil
         rereads[key] = nil
         settle(key)
         observations.removeValue(forKey: key)?.cancel()
-        try? await entries[key]?.cancelByUser()
-        if let saved = await entries[key]?.snapshot() { presentations[key] = presentation(saved, for: key) }
+        try? await coordinator?.cancelByUser()
+        guard keyOperations[key] == operation, entries[key] === coordinator else { return }
+        if let saved = await coordinator?.snapshot(), keyOperations[key] == operation {
+            presentations[key] = presentation(saved, for: key)
+        }
     }
 
     /// Resumes every render that parked while idle (a background suspension, a long
     /// outage, a check still running). Called when the app returns to the foreground,
     /// so a parked render continues on its own instead of sitting on "Preparing".
     func resumeParked() async {
+        guard resetOperation == nil else { return }
         for (key, coordinator) in entries {
             guard !(await coordinator.isBusy()), requests[key] != nil else { continue }
             try? await coordinator.recover()
@@ -927,6 +970,11 @@ enum DeviceRenderGate: Equatable {
     }
 
     func stopAll() async {
+        let operation = UUID()
+        resetOperation = operation
+        defer { if resetOperation == operation { resetOperation = nil } }
+        keyOperations.removeAll()
+        initiation.invalidate()
         tickets.removeAll()
         rereads.removeAll()
         for observer in observations.values { observer.cancel() }

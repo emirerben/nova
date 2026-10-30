@@ -33,7 +33,7 @@ struct DeviceRenderPanel: View {
             retryNeedsAttention: {
                 if let retryApproved { await retryApproved() }
                 else {
-                    let ok = await sessions.retryNeedsAttention(key)
+                    let ok = await sessions.retryNeedsAttentionFromUser(key)
                     if ok { await retry() }
                 }
             },

@@ -278,7 +278,21 @@ extension APIError: DeviceRenderTransientFailure {
 /// Keeps a phone render running for the short window iOS grants after the creator
 /// leaves Kria. When the window expires the coordinator stops the encode and keeps
 /// the receipt resumable, so coming back continues it instead of "export failed".
-struct UIKitDeviceRenderBackgroundExecution: DeviceRenderBackgroundExecution {
+@MainActor struct UIKitDeviceRenderBackgroundExecution: DeviceRenderBackgroundExecution {
+    private let scheduler: any ContinuedProcessingExportScheduling
+    private let initiation: DeviceRenderUserInitiation
+    private let isForeground: @MainActor @Sendable () -> Bool
+    private let fallback: @MainActor @Sendable (@escaping @Sendable () -> Void) -> DeviceRenderExecutionWindow
+
+    init(scheduler: any ContinuedProcessingExportScheduling = AppleContinuedProcessingExportScheduler(),
+         initiation: DeviceRenderUserInitiation = .shared,
+         isForeground: @escaping @MainActor @Sendable () -> Bool = { UIApplication.shared.applicationState == .active },
+         fallback: @escaping @MainActor @Sendable (@escaping @Sendable () -> Void) -> DeviceRenderExecutionWindow = UIKitDeviceRenderBackgroundExecution.beginShortWindow) {
+        self.fallback = fallback
+        self.scheduler = scheduler
+        self.initiation = initiation
+        self.isForeground = isForeground
+    }
     @MainActor private final class Window {
         var identifier: UIBackgroundTaskIdentifier = .invalid
         func end() {
@@ -290,17 +304,29 @@ struct UIKitDeviceRenderBackgroundExecution: DeviceRenderBackgroundExecution {
 
     static func install() { DeviceRenderBackground.install(Self()) }
 
-    func begin(name: String, expiring: @escaping @Sendable () -> Void) async -> @Sendable () async -> Void {
-        let window = await MainActor.run { () -> Window in
-            let window = Window()
-            window.identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
-                expiring()
-                // iOS terminates an app that keeps an expired task open.
-                MainActor.assumeIsolated { window.end() }
-            }
-            return window
+    @MainActor func begin(context: DeviceRenderExecutionContext, expiring: @escaping @Sendable () -> Void) async throws -> DeviceRenderExecutionWindow {
+        let authorized = initiation.consume(context.origin, identity: context.identity)
+        let continued = DurableDeviceRenderWindow(scheduler: scheduler, isForeground: isForeground, expiring: expiring)
+        if try await continued.acquire(authorized: authorized) {
+            do { try Task.checkCancellation() }
+            catch { continued.finish(.cancelled); throw error }
+            return DeviceRenderExecutionWindow(reportProgress: { await continued.reportProgress($0) },
+                                               finish: { await continued.finish($0) })
         }
-        return { await window.end() }
+        try Task.checkCancellation()
+        return fallback(expiring)
+    }
+
+    private static func beginShortWindow(expiring: @escaping @Sendable () -> Void) -> DeviceRenderExecutionWindow {
+        let window = Window()
+        window.identifier = UIApplication.shared.beginBackgroundTask(withName: "Kria render") {
+            MainActor.assumeIsolated {
+                guard window.identifier != .invalid else { return }
+                window.end()
+                expiring()
+            }
+        }
+        return DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in await window.end() })
     }
 }
 
