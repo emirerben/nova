@@ -33,9 +33,16 @@ from app.kria.render_assets import (
 )
 from app.kria.reply_language import say
 from app.kria.spoken_text_ask import requirement_spoken_text
+from app.pipeline.hidden_parts import (
+    HiddenPart,
+    hidden_parts_from_strategy,
+    shows_hidden,
+    unsettled_hidden_parts,
+)
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import voice_tail_slack_s
 from app.pipeline.sequence_text_evidence import text_matches
+from app.schemas.clip_intents import MAX_HIDDEN_PART_S
 from app.services.choice_questions import (
     ATTACHMENT_ORDER_KEY,
     CAPTURE_ORDER_KEYS,
@@ -334,6 +341,9 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[].intent.op",
         "selection_reconciliation.rejected_selections[].intent.order_by",
         "selection_reconciliation.rejected_selections[].intent.ordered_members",
+        "selection_reconciliation.rejected_selections[].intent.part_attribute",
+        "selection_reconciliation.rejected_selections[].intent.part_edge",
+        "selection_reconciliation.rejected_selections[].intent.part_s",
         "selection_reconciliation.rejected_selections[].intent.placeholder",
         "selection_reconciliation.rejected_selections[].intent.position",
         "selection_reconciliation.rejected_selections[].intent.requirement_id",
@@ -571,12 +581,26 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         note="enforced while planning; the contract does not re-verify cadence or reuse",
     ),
     **_rules(
+        "supported",
+        "creator_render_contract.hidden_parts",
+        "resolved_clip_intents[].part_edge",
+        "resolved_clip_intents[].part_s",
+        note="Leverkusen M2: pinned as hidden_parts; the phone recipe check refuses any clip "
+        "window inside the part and every cloud adapter declines it.",
+    ),
+    **_rules(
         "upstream_resolved",
         "clip_intent_resolver",
         "clip_intents[]",
         *(f"clip_intents[].{leaf}" for leaf in _CLIP_INTENT_LEAVES),
+        # Leverkusen M2: the planner's raw hidden part, settled by the resolver and the turn.
+        "clip_intents[].part_edge",
+        "clip_intents[].part_s",
+        "clip_intents[].part_attribute",
         "resolved_clip_intents[]",
         *(f"resolved_clip_intents[].{leaf}" for leaf in _CLIP_INTENT_LEAVES),
+        # Only worded into the question asking for the seconds; never pinned.
+        "resolved_clip_intents[].part_attribute",
         "resolved_clip_intents[].status",
         "resolved_clip_intents[].assignments[]",
         "resolved_clip_intents[].assignments[].media_id",
@@ -735,6 +759,8 @@ CONTRACT_REQUIREMENTS: tuple[str, ...] = (
     "original_audio",
     "exact_texts",
     "order_required",
+    # Leverkusen M2: the parts of clips the creator asked never to show.
+    "hidden_parts",
     "unresolved",
 )
 
@@ -748,6 +774,7 @@ REQUIREMENT_FIELD_PATHS: dict[str, str | None] = {
     "original_audio": "montage_audio.preserve_source_audio",
     "exact_texts": None,
     "order_required": "ordering_choice",
+    "hidden_parts": "resolved_clip_intents[].part_s",
     "unresolved": None,
 }
 
@@ -805,6 +832,11 @@ PHONE_VERIFIER_DECLINES: dict[str, Decline] = {
     "original_audio": Decline("evidence_missing", _PHONE_REPAIR),
     "exact_texts": Decline("evidence_missing", _PHONE_REPAIR),
     "order_required": Decline("evidence_missing", _PHONE_REPAIR),
+    # Never relaxed into showing the part: rebuilt without it, or the clip is left out.
+    "hidden_parts": Decline(
+        "evidence_missing",
+        "I can rebuild the edit without that part of the clip, or leave the clip out.",
+    ),
 }
 _UNRESOLVED_DECLINE = Decline("needs_choice", _ASK_FOR_CHOICE)
 # The mix would play one source twice (a track clip and the separate music bed).
@@ -850,7 +882,8 @@ ADAPTER_DECLARATIONS: dict[str, AdapterDeclaration] = {
         # _run_phone_unified_montage_job -> _run_phone_guided_job.
         # Keep the exact source-id requirement. The shared phone verifier
         # refuses a compiled recipe that cannot prove the required sources.
-        _phone("phone_guided_unified_montage", set()),
+        # Leverkusen M2: its planner keeps every window out of a hidden part.
+        _phone("phone_guided_unified_montage", {"hidden_parts"}),
         # _run_phone_voiceover_montage_job: routed to when the contract needs the voice.
         _phone(
             "phone_voiceover_montage",
@@ -877,6 +910,17 @@ class TextRequirement(BaseModel):
     duration_s: float | None = Field(default=None, gt=0)
 
 
+class HiddenPartRequirement(BaseModel):
+    """Leverkusen M2: ``seconds`` at the ``edge`` of clip ``media_id`` never play.
+
+    ``media_id`` is the manifest id: an original's ``media_id`` or ``asset-<visual id>``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    media_id: str = Field(min_length=1, max_length=200)
+    edge: Literal["start", "end"]
+    seconds: float = Field(gt=0, le=MAX_HIDDEN_PART_S)
+
+
 class CreatorRenderContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     version: Literal[1] = 1
@@ -892,6 +936,12 @@ class CreatorRenderContract(BaseModel):
     order_required: bool = False
     order_basis: str | None = None
     unresolved: tuple[str, ...] = ()
+    # Leverkusen M2. Omitted from dumps when empty, so every other contract (and its digest)
+    # stays byte-identical and an older worker, which forbids unknown keys, keeps reading
+    # it; one that carries a part is refused by that older worker (fails closed).
+    hidden_parts: tuple[HiddenPartRequirement, ...] = Field(
+        default=(), exclude_if=lambda value: not value
+    )
     digest: str = ""
 
     def rebind(self, **changes: object) -> CreatorRenderContract:
@@ -987,7 +1037,7 @@ def _hash(value: object) -> str:
 # stored contract readable (``read_render_contract`` would otherwise reject
 # in-flight jobs with "requirements changed").  A field is added here in the
 # same change that adds it to the model, and never removed.
-_POST_V1_FIELD_DEFAULTS: dict[str, Any] = {}
+_POST_V1_FIELD_DEFAULTS: dict[str, Any] = {"hidden_parts": []}
 
 
 def _digest(data: Mapping[str, Any]) -> str:
@@ -1424,6 +1474,20 @@ def build_render_contract(
     )
     order_basis = "confirmed" if order_ids else None
     unresolved: list[str] = []
+    # Leverkusen M2: parts of clips the creator asked never to show. `strategy` is already
+    # collapsed onto the kept copy of a byte-identical upload. One nobody settled (no clip,
+    # edge or seconds) is never rendered around.
+    hidden_parts = tuple(
+        HiddenPartRequirement(media_id=part.media_id, edge=part.edge, seconds=part.seconds)
+        for part in hidden_parts_from_strategy(raw)
+    )
+    unresolved.extend(
+        say(
+            en=f"I still need to know which part of {name} to leave out.",
+            tr=f"{name} içinde hangi bölümü göstermeyeceğimi hâlâ bilmem gerekiyor.",
+        )
+        for name in unsettled_hidden_parts(raw)
+    )
     song_time_owns_order = bool(
         typed
         and typed.audio_strategy == "user_song"
@@ -1828,6 +1892,8 @@ def build_render_contract(
         order_basis=order_basis,
         unresolved=tuple(unresolved),
     )
+    if hidden_parts:
+        data["hidden_parts"] = hidden_parts
     return CreatorRenderContract(**data).rebind()
 
 
@@ -2368,6 +2434,49 @@ def creator_length_note(
     return f"The video runs about {actual} seconds; you asked for {requested:g}"
 
 
+def _verify_hidden_parts(
+    contract: CreatorRenderContract, recipe: EditRecipeV2, manifest: Mapping[str, Any]
+) -> None:
+    """Leverkusen M2: no clip of the recipe reads a second of a part the creator hid.
+
+    Every track (picture, sound, overlay) of every original or Visuals video is checked by
+    its own source window: a crossfade overlaps two clips on the timeline, never reads
+    outside either window (`KriaMediaEngine` ClipTransitionTiming), and a held frame is the
+    window's last one. An end part needs the file's length; a clip without one is refused.
+    """
+    by_media: dict[str, list[HiddenPart]] = {}
+    for row in contract.hidden_parts:
+        part = HiddenPart(row.media_id, row.edge, row.seconds)
+        by_media.setdefault(row.media_id, []).append(part)
+    lengths = {asset.id: asset.duration for asset in recipe.assets}
+    for track in recipe.tracks:
+        for clip in track.clips:
+            asset = manifest.get(clip.source_asset_id)
+            if isinstance(asset, OriginalRenderAsset):
+                media_id = asset.media_id
+            elif isinstance(asset, VisualRenderAsset):
+                media_id = f"asset-{asset.visual_id}"
+            else:
+                continue
+            parts = by_media.get(media_id)
+            if not parts:
+                continue
+            length = lengths.get(clip.source_asset_id)
+            if length is None and any(part.edge == "end" for part in parts):
+                raise _phone_decline(
+                    "hidden_parts", "I couldn't check that this edit leaves out the part you hid."
+                )
+            if shows_hidden(
+                clip.source_start,
+                clip.source_start + clip.source_duration,
+                float(length) if length is not None else float("inf"),
+                parts,
+            ):
+                raise _phone_decline(
+                    "hidden_parts", "This edit would show a part of a clip you asked me to hide."
+                )
+
+
 def verify_phone_recipe(
     contract: CreatorRenderContract,
     recipe: EditRecipeV2,
@@ -2388,6 +2497,8 @@ def verify_phone_recipe(
     if contract.unresolved:
         raise unresolved_decline(contract.unresolved[0])
     manifest = {asset.id: asset for asset in recipe.asset_manifest.assets}
+    if contract.hidden_parts:
+        _verify_hidden_parts(contract, recipe, manifest)
     receipts: list[dict[str, Any]] = []
     observation = check_recipe_duration(
         contract,

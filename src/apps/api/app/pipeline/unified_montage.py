@@ -78,6 +78,17 @@ from app.kria.text_sequence import is_text_sequence
 from app.kria.text_shape_ask import CURVED, CURVED_TEXT_BEND, text_shape
 from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
 from app.pipeline.font_coverage import drop_color_emoji
+from app.pipeline.hidden_parts import (
+    HiddenPart,
+    HiddenPartShown,
+    check_windows,
+    hidden_parts_from_strategy,
+    keep_out,
+    parts_by_media,
+    shows_hidden,
+    unsettled_hidden_parts,
+    usable_s,
+)
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
@@ -582,6 +593,11 @@ class UnifiedMontagePlan:
     # "label"), media_id, bend (None = straight), reason (None / "phone" / "animation")}.
     # Empty without a curve ask, so every earlier record is unchanged.
     text_shapes: list[dict[str, Any]] = field(default_factory=list)
+    # Leverkusen M2: each part of a clip the creator asked never to show, as planned:
+    # {media_id, edge, seconds, shown_from_s, shown_to_s} (the earliest and latest source
+    # second any cut of that clip plays). Empty without such an ask, so every earlier record
+    # is unchanged.
+    hidden_parts: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -663,6 +679,9 @@ class UnifiedMontagePlan:
         shapes = (
             {"text_shapes": [dict(row) for row in self.text_shapes]} if self.text_shapes else {}
         )
+        hidden = (
+            {"hidden_parts": [dict(row) for row in self.hidden_parts]} if self.hidden_parts else {}
+        )
         record = {
             "version": 1,
             "brief_version": self.brief_version,
@@ -711,6 +730,7 @@ class UnifiedMontagePlan:
             **spoken,
             **shown,
             **shapes,
+            **hidden,
         }
 
         if self.snapshot.text_composition is not None:
@@ -862,10 +882,54 @@ def unheld_still_frames(mixed_media_timing: MixedMediaTimingProfile | None) -> i
     return int(math.ceil(want_s * FPS - 1e-9))
 
 
-def _capacity_frames(clip: UnifiedClip) -> int:
+def _capacity_frames(clip: UnifiedClip, hidden: Sequence[HiddenPart] = ()) -> int:
     if clip.kind == "image":
         return int(round(STILL_MAX_S * FPS))
+    if hidden:
+        # Leverkusen M2: a clip with a part the creator hid can only grow into what it may
+        # still show, or the keep-out step would find no room for the cut.
+        return max(1, int(math.floor(usable_s(float(clip.duration_s), hidden) * FPS + 1e-6)))
     return max(1, int(math.floor((float(clip.duration_s) + 0.001) * FPS + 1e-6)))
+
+
+def _hidden_by_media(
+    ordered: Sequence[UnifiedClip], parts: Sequence[HiddenPart]
+) -> dict[str, tuple[HiddenPart, ...]]:
+    """Each clip's hidden parts, keyed by the id its cuts carry (``media_id``).
+
+    The resolved intents name clips by manifest id (``ref_id``); a part names a video, so a
+    photo never gets one."""
+    by_ref = parts_by_media(parts)
+    return {
+        clip.media_id: tuple(replace(part, media_id=clip.media_id) for part in by_ref[clip.ref_id])
+        for clip in ordered
+        if clip.kind == "video" and clip.ref_id in by_ref
+    }
+
+
+def _kept_out(
+    spans: list[tuple[str, float, float, bool]],
+    hidden: Mapping[str, Sequence[HiddenPart]],
+    durations: Mapping[str, float],
+    *,
+    movable: Callable[[int], bool],
+) -> list[tuple[str, float, float, bool]]:
+    """``spans`` with every movable window slid out of its clip's hidden parts (same length).
+
+    A window that may not move (an approved or a frozen one) or has no room left raises
+    ``HiddenPartShown``: the plan is refused, never rendered with the part."""
+    out = list(spans)
+    for index, (media_id, start, end, approved) in enumerate(spans):
+        parts = hidden.get(media_id)
+        if not parts or not shows_hidden(start, end, durations[media_id], parts):
+            continue
+        moved = keep_out(start, end, durations[media_id], parts) if movable(index) else None
+        if moved is None:
+            raise HiddenPartShown(
+                f"cut {index + 1} of {media_id} cannot leave out the part the creator hid"
+            )
+        out[index] = (media_id, moved[0], moved[1], approved)
+    return out
 
 
 def _window_start_s(clip: UnifiedClip, duration_s: float) -> float:
@@ -1862,6 +1926,15 @@ def plan_unified_montage(
         # receipt says their place is not the filmed order.
         fallback_ids = [*fallback_ids, *(v.media_id for v in spread_visuals)]
 
+    # Leverkusen M2: parts of a clip the creator asked never to show. Every window below is
+    # kept out of them, and a privacy ask nobody settled (no clip, edge or seconds) is never
+    # rendered around: the plan is refused.
+    unsettled = unsettled_hidden_parts(strategy)
+    if unsettled:
+        raise HiddenPartShown(f"which part of {unsettled[0]} to leave out is not settled")
+    hidden = _hidden_by_media(ordered, hidden_parts_from_strategy(strategy))
+    clip_durations = {clip.media_id: float(clip.duration_s) for clip in ordered}
+
     # KRI-496: only footage-owned, unnamed timing gets its length and source
     # windows from analysis. Song, voiceover, original-audio takes and a proven
     # creator duration keep their dedicated policies below. Images retain the
@@ -2069,6 +2142,10 @@ def plan_unified_montage(
         minimums = {media_id: label.min_display_s for media_id, label in labels.items()}
         for media_id, floor in seat_minimums.items():
             minimums[media_id] = max(floor, minimums.get(media_id, 0.0))
+        for media_id, parts in hidden.items():
+            # A hidden part's clip offers only what it may still show.
+            room = usable_s(clip_durations[media_id], parts)
+            seat_maximums[media_id] = min(seat_maximums.get(media_id, room), room)
         candidate = select_best_parts(
             sources,
             minimum_total_duration_s=MIN_TOTAL_S,
@@ -2179,7 +2256,7 @@ def plan_unified_montage(
             image_bounds = mixed_media_hold_bounds("image", mixed_media_timing)
             cap = min(_capacity_frames(clip), int(math.floor(image_bounds.maximum_s * FPS)))
         else:
-            cap = _capacity_frames(clip)
+            cap = _capacity_frames(clip, hidden.get(clip.media_id, ()))
         if label is not None and cap < want:
             short.append(clip.media_id)
         wanted.append(min(want, cap))
@@ -2420,6 +2497,9 @@ def plan_unified_montage(
                 start = round(max(0.0, clip.duration_s - duration), 3)
                 end = round(start + duration, 3)
         spans.append((clip.media_id, start, end, selected_window is not None))
+    # Leverkusen M2: a selector's or a default window slides out of a hidden part (same
+    # length); a creator-approved window never moves, so one that shows a part is refused.
+    spans = _kept_out(spans, hidden, clip_durations, movable=lambda _index: not approved_windows)
     for clip in ordered:
         aspect = clip.aspect
         if clip.width and clip.height:
@@ -2489,6 +2569,15 @@ def plan_unified_montage(
                 # planned cut whose output length matters more than its exact footage.
                 creator_windows=approved_windows,
             )
+    if hidden:
+        # A freeze ends on its creator's frame and a retimed cut shows more or less footage:
+        # both can reach a hidden part again. A held frame never moves.
+        spans = _kept_out(
+            spans,
+            hidden,
+            clip_durations,
+            movable=lambda index: not approved_windows and index not in freeze_holds,
+        )
     cuts = [
         FastMontageCut(
             cut_id=f"unified-cut-{index + 1}",
@@ -2511,6 +2600,12 @@ def plan_unified_montage(
         )
         for index, (media_id, start, end, approved) in enumerate(spans)
     ]
+    # The last word before any compiler sees the plan: no cut shows a hidden part.
+    check_windows(
+        [(cut.media_id, cut.source_start_s, cut.source_end_s) for cut in cuts],
+        clip_durations,
+        [part for parts in hidden.values() for part in parts],
+    )
     for row in freeze_records:
         if row.get("status") == "held":
             row["cut_id"] = cuts[row.pop("cut_index")].cut_id
@@ -2682,6 +2777,16 @@ def plan_unified_montage(
         ),
         title_shown_as_label=title_shown_as_label,
         text_shapes=text_shapes,
+        hidden_parts=[
+            {
+                **part.json(),
+                "shown_from_s": min(c.source_start_s for c in cuts if c.media_id == media_id),
+                "shown_to_s": max(c.source_end_s for c in cuts if c.media_id == media_id),
+            }
+            for media_id, parts in hidden.items()
+            for part in parts
+            if any(cut.media_id == media_id for cut in cuts)
+        ],
     )
 
 
