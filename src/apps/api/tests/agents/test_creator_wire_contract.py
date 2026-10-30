@@ -111,3 +111,74 @@ def test_anthropic_projection_has_no_reference_cycles_and_declares_depth_bound()
     audit = schema_audit(recursive, "claude-sonnet-5-5")
     assert not audit["compatible"]
     assert any("circular_reference" in v for v in audit["blockers"])
+
+
+@pytest.mark.parametrize("gap_policy", [None, "scale", "close", "fixed"])
+@pytest.mark.parametrize("fit_to_video", [None, False, True])
+def test_sequence_timing_wire_retains_optional_flags_and_gap_policy(gap_policy, fit_to_video):
+    operation = {
+        "op": "retime_text_sequence",
+        "selector": {"ids": ["title::sequence-1", "title::sequence-2"]},
+        "start_s": 0,
+        "end_s": 12,
+    }
+    if gap_policy is not None:
+        operation["gap_policy"] = gap_policy
+    if fit_to_video is not None:
+        operation["fit_to_video"] = fit_to_video
+    value = {"intent": "edit", "reply": "Prepared", "ops": [operation]}
+    contract = WireContract(copilot_schema())
+    assert contract.decode(contract.encode(value)) == value
+
+
+@pytest.mark.parametrize("preserve_text", [None, False, True])
+@pytest.mark.parametrize(
+    "operation",
+    [
+        {"op": "set_total_duration", "target_s": 12},
+        {"op": "patch_slots", "selector": {"all": True}, "patch": {"duration_s": 2}},
+    ],
+)
+def test_duration_wire_preservation_is_optional_and_boolean(operation, preserve_text):
+    operation = dict(operation)
+    if preserve_text is not None:
+        operation["preserve_text"] = preserve_text
+    value = {"intent": "edit", "reply": "Prepared", "ops": [operation]}
+    contract = WireContract(copilot_schema())
+    assert contract.decode(contract.encode(value)) == value
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("fit_to_video", "true"),
+        ("fit_to_video", 1),
+        ("gap_policy", "random"),
+        ("gap_policy", False),
+        ("preserve_text", True),
+    ],
+)
+def test_sequence_timing_wire_rejects_wrong_types_policy_and_unrelated_fields(field, value):
+    operation = {
+        "op": "retime_text_sequence",
+        "selector": {"group": "title"},
+        "start_s": 0,
+        "end_s": 12,
+        field: value,
+    }
+    contract = WireContract(copilot_schema())
+    with pytest.raises(ValueError):
+        contract.encode({"intent": "edit", "reply": "Prepared", "ops": [operation]})
+
+
+@pytest.mark.parametrize("value", ["true", 1, None])
+def test_duration_wire_rejects_non_boolean_preservation(value):
+    contract = WireContract(copilot_schema())
+    with pytest.raises(ValueError):
+        contract.encode(
+            {
+                "intent": "edit",
+                "reply": "Prepared",
+                "ops": [{"op": "set_total_duration", "target_s": 12, "preserve_text": value}],
+            }
+        )

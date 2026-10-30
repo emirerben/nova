@@ -1604,6 +1604,50 @@ def plan_facts_from_narrated_alignment(record: Mapping[str, Any] | None) -> Plan
     )
 
 
+def _phone_output_duration(payload: Mapping[str, Any]) -> float | None:
+    from app.services.authored_text_fit import _segments
+
+    slots = payload.get("timeline_slots")
+    if not isinstance(slots, list) or not slots:
+        timeline = payload.get("user_timeline") or payload.get("ai_timeline") or {}
+        slots = timeline.get("slots") if isinstance(timeline, Mapping) else None
+    if not isinstance(slots, list) or not slots:
+        revision = payload.get("guided_edit_revision") or {}
+        slots = revision.get("segments") if isinstance(revision, Mapping) else None
+    if not isinstance(slots, list) or not slots:
+        story = payload.get("story_timeline")
+        if not isinstance(story, list):
+            return None
+        ends = []
+        for row in story:
+            if not isinstance(row, Mapping) or row.get("lane", "clip") != "clip":
+                continue
+            start, end = (
+                _finite_number(row.get("output_start_s")),
+                _finite_number(row.get("output_end_s")),
+            )
+            if start is None or end is None or end <= start or start < 0:
+                return None
+            ends.append(end)
+        return max(ends) if ends else None
+    for slot in slots:
+        if not isinstance(slot, Mapping):
+            return None
+        if slot.get("removed"):
+            continue
+        duration = _finite_number(slot.get("duration_s"))
+        if duration is None or duration <= 0:
+            return None
+        for key in ("playback_rate", "transition_duration_s"):
+            if slot.get(key) is not None:
+                value = _finite_number(slot[key])
+                if value is None or value < 0 or (key == "playback_rate" and value == 0):
+                    return None
+    segments = _segments(slots)
+    total = max((row["output_end_s"] for row in segments), default=0.0)
+    return total if math.isfinite(total) and total > 0 else None
+
+
 def _editor_payload_duration(payload: Mapping[str, Any]) -> float | None:
     """Output length implied by the payload's timeline slots, or None when unprovable.
 
@@ -1761,6 +1805,8 @@ def plan_facts_from_editor_payload(
     payload: Mapping[str, Any] | None,
     text_diff: Iterable[Mapping[str, Any]] | None = None,
     changes: Iterable[str] | None = None,
+    *,
+    canonical_duration_s: float | None = None,
 ) -> PlanFacts:
     """Editor drafts expose literal on-screen text, plus (KRI-218) the turn's text diff.
 
@@ -1770,6 +1816,15 @@ def plan_facts_from_editor_payload(
     """
     if not payload:
         return PlanFacts()
+    timing_rows = payload.get("text_elements")
+    timing_rows = timing_rows if isinstance(timing_rows, list) else ()
+    if canonical_duration_s is None and any(
+        isinstance(row, Mapping)
+        and isinstance(row.get("source_params"), Mapping)
+        and "sequence_timing" in row["source_params"]
+        for row in timing_rows
+    ):
+        canonical_duration_s = _phone_output_duration(payload)
     # Do not walk every payload value: source requests, paths, operation names,
     # and arbitrary metadata may repeat the creator's literal without placing it
     # on screen. Only explicit output text lanes count as visible evidence.
@@ -1796,7 +1851,7 @@ def plan_facts_from_editor_payload(
         if not isinstance(rows, list):
             continue
         for row in rows:
-            if not isinstance(row, Mapping):
+            if not isinstance(row, Mapping) or row.get("removed"):
                 continue
             text = take_text(row.get("text"))
             if text is None:
@@ -1856,7 +1911,11 @@ def plan_facts_from_editor_payload(
             if any(str(change).startswith("Shuffle clips") for change in changes or ())
             else None
         ),
-        duration_s=_editor_payload_duration(payload),
+        duration_s=(
+            canonical_duration_s
+            if canonical_duration_s is not None
+            else _editor_payload_duration(payload)
+        ),
         editor_text_edited=bool(
             isinstance(payload, Mapping)
             and isinstance(payload.get("text_elements"), list)
@@ -2091,7 +2150,9 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
     """
     if not isinstance(variant, Mapping):
         return PlanFacts()
-    base = plan_facts_from_editor_payload(_with_narrated_text_rows(variant))
+    base = plan_facts_from_editor_payload(
+        _with_narrated_text_rows(variant), canonical_duration_s=_phone_output_duration(variant)
+    )
     changes = _phone_receipt_facts(
         variant.get("phone_beat_receipt"), timed=variant.get("resolved_archetype") == "narrated"
     )
@@ -9724,6 +9785,8 @@ def _has_checker(req: BriefRequirement) -> bool:
         or asks_freeze_frame(req)
     ):
         return True
+    if req.kind == "timing" and isinstance(req.facts.get("sequence_timing"), dict):
+        return True
     if _ending_clip_fact(req):
         return True  # KRI-841: judged against the plan's / render's ending video
     if requirement_clip_sound(req) is not None:
@@ -10145,7 +10208,91 @@ def _with_unclear_word(
     return _receipt(req, "met" if met else "partial", line)
 
 
+def _check_sequence_timing(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    from app.kria.editor_sequence_timing import sequence_timing_digest
+
+    policy = req.facts["sequence_timing"]
+    ids = policy.get("target_ids")
+    if not facts.editor or not isinstance(ids, list) or not ids or len(set(ids)) != len(ids):
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    by_id = {}
+    for identifier, _role, start, end in facts.text_spans:
+        if identifier in ids:
+            if identifier in by_id:
+                return _receipt(req, "partial", _CANT_CHECK_TIMING)
+            by_id[identifier] = (start, end)
+    if any(identifier not in by_id for identifier in ids):
+        return _receipt(req, "partial", _CANT_CHECK_TIMING)
+    windows = [by_id[identifier] for identifier in ids]
+    if policy.get("mode") == "absolute":
+        digest = sequence_timing_digest((identifier, *by_id[identifier]) for identifier in ids)
+        return _receipt(
+            req,
+            "met" if digest == policy.get("timing_digest") else "partial",
+            None if digest == policy.get("timing_digest") else _CANT_CHECK_TIMING,
+        )
+    gaps = [right[0] - left[1] for left, right in zip(windows, windows[1:])]
+    gap_policy = policy.get("gap_policy", "scale")
+    gaps_valid = gap_policy in {"scale", "close", "fixed"}
+    if gap_policy == "close":
+        gaps_valid = all(abs(gap) <= 0.000002 for gap in gaps)
+    elif gap_policy == "fixed":
+        expected_gaps = policy.get("gaps_s")
+        gaps_valid = (
+            isinstance(expected_gaps, list)
+            and len(expected_gaps) == len(gaps)
+            and all(
+                isinstance(expected, (int, float))
+                and not isinstance(expected, bool)
+                and math.isfinite(expected)
+                and abs(gap - expected) <= 0.000002
+                for gap, expected in zip(gaps, expected_gaps)
+            )
+        )
+    total = facts.duration_s
+    bounded = policy.get("mode") == "range"
+    start = policy.get("start_s") if bounded else 0.0
+    end = policy.get("end_s") if bounded else total
+    bounds_valid = all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        for value in (start, end)
+    )
+    valid = (
+        gaps_valid
+        and policy.get("mode") in {"fill", "range"}
+        and total is not None
+        and bounds_valid
+        and 0 <= start < end <= total + 0.000002
+        and abs(windows[0][0] - start) <= 0.000002
+        and abs(windows[-1][1] - end) <= 0.000002
+        and all(right - left >= 0.25 - 0.000002 for left, right in windows)
+        and all(left[1] <= right[0] + 0.000002 for left, right in zip(windows, windows[1:]))
+    )
+    reason = (
+        say(
+            en=(
+                f"Retimed {len(ids)} words in sequence across {total:g}s, "
+                "keeping their wording and appearance."
+            ),
+            tr=(
+                f"{len(ids)} kelimeyi metin ve görünümünü koruyarak "
+                f"{total:g} saniyeye sırayla yaydım."
+            ),
+        )
+        if valid
+        else _CANT_CHECK_TIMING
+    )
+    if valid and bounded:
+        reason = say(
+            en=f"Retimed {len(ids)} words in sequence from {start:g}s to {end:g}s.",
+            tr=f"{len(ids)} kelimeyi {start:g} ile {end:g} saniye arasında sırayla yaydım.",
+        )
+    return _receipt(req, "met" if valid else "partial", reason)
+
+
 def check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    if req.kind == "timing" and isinstance(req.facts.get("sequence_timing"), dict):
+        return _check_sequence_timing(req, facts)
     if facts.phone_text and (undrawable := undrawable_phone_text(req)) is not None:
         # KRI-1024: no phone font draws it, whatever else the plan does with this text.
         return undrawable

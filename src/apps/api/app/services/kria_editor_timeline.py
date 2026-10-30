@@ -18,7 +18,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import math
-from typing import Any
+from typing import Any, Literal
 
 from app.agents._schemas.text_element import CAPTION_CUE_SOURCE
 from app.config import settings
@@ -32,6 +32,8 @@ from app.services.guided_timeline import (
     make_time_projector,
     project_lane_times,
 )
+
+TextTimingPolicy = Literal["follow", "preserve_absolute", "preserve_all"]
 
 _FRAME_S = 1.0 / GUIDED_FPS
 _EDGE_S = 0.05
@@ -416,6 +418,7 @@ def rebase_guided_text(
     *,
     old_segments_override: list[dict[str, Any]] | None = None,
     new_segments_override: list[dict[str, Any]] | None = None,
+    text_timing: TextTimingPolicy = "follow",
 ) -> None:
     """Re-window ``state.text`` (and any same-bundle lanes) onto the new timeline.
 
@@ -441,6 +444,16 @@ def rebase_guided_text(
     )
     new_total = max((float(s["output_end_s"]) for s in new_segments), default=0.0)
     explicit_text_ids = getattr(state, "explicit_text_ids", set()) or set()
+    if text_timing == "preserve_all":
+        protected = [bar for bar in state.text if not bar.get("removed") and "end_s" in bar]
+        overflowing = [bar for bar in protected if float(bar["end_s"]) > new_total + 1e-6]
+        if overflowing:
+            raise ops.TextTimingConflict(
+                new_total,
+                max(float(bar["end_s"]) for bar in overflowing),
+                tuple(str(bar.get("id") or "") for bar in overflowing),
+            )
+        explicit_text_ids = explicit_text_ids | {str(bar.get("id") or "") for bar in protected}
     links = ops._clip_label_links(state.job, state.variant)
     cut_media = _cut_media_by_id(state.job)
     project = make_time_projector(old_segments, new_segments)
@@ -461,6 +474,7 @@ def rebase_guided_text(
 
     notes: list[str] = []
     rebased: list[dict[str, Any]] = []
+    overflowing_text: list[dict[str, Any]] = []
 
     def drop(bar: dict[str, Any], old_segment: dict[str, Any] | None, label: bool) -> None:
         if label and old_segment is not None:
@@ -518,6 +532,18 @@ def rebase_guided_text(
                 and abs(end - float(candidate["output_end_s"])) <= _SEGMENT_FIT_TOLERANCE_S
             ):
                 old_segment, clip_bound = candidate, True
+        params = bar.get("source_params") or {}
+        sequential = bool(bar.get("sequence_source_id")) or (
+            isinstance(params, dict) and bool(params.get("sequence_source_id"))
+        )
+        opening = start <= _EDGE_S
+        closing = old_total > 0 and end >= old_total - _EDGE_S
+        anchored = (opening and closing) or ((opening or closing) and _is_edge_titled(bar_id))
+        if text_timing == "preserve_absolute" and (sequential or not (clip_bound or anchored)):
+            if end > new_total + 1e-6:
+                overflowing_text.append(bar)
+            rebased.append(bar)
+            continue
         if clip_bound:
             window = _follow_window(old_segment, media_id, new_segments)
             if window is None:
@@ -533,8 +559,6 @@ def rebase_guided_text(
             updated["segment_id"] = window[2]
             rebased.append(updated)
             continue
-        opening = start <= _EDGE_S
-        closing = old_total > 0 and end >= old_total - _EDGE_S
         # Edge anchoring ("keep the start / pin to the end") belongs to titles and pins.
         # Ordinary text that merely touches one edge (a group title over the first clips,
         # chat text over the last) follows its footage through source time instead;
@@ -586,6 +610,12 @@ def rebase_guided_text(
         updated["segment_id"] = start_point[1]
         rebased.append(updated)
 
+    if overflowing_text:
+        raise ops.TextTimingConflict(
+            new_total,
+            max(float(bar["end_s"]) for bar in overflowing_text),
+            tuple(str(bar.get("id") or "") for bar in overflowing_text),
+        )
     state.text = rebased
     state.changed.add("text")
 

@@ -58,7 +58,7 @@ from app.pipeline.prompt_loader import load_prompt
 # time as a `text_sequence` requirement, not `captions: word_by_word`. (v40 is lane B's.)
 # v42 (KRI-1027): the shared brief section records `landscape_fit` ("fill" / "fit") on a style
 # ask about how sideways clips sit in a vertical video.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-29-v42"
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-30-v43"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -194,6 +194,10 @@ class BriefExtractorAgent(Agent[BriefExtractionInput, BriefExtractionOutput]):
                 if scope != "clarify" and clarification is not None:
                     raise ValueError("only clarify scope may include clarification")
             updates = parse_brief_updates(data["brief_updates"])
+            for update in updates:
+                for field in ("preserve_editor_text", "editor_timing_only"):
+                    if field in update.facts and not isinstance(update.facts[field], bool):
+                        raise ValueError(f"{field} must be a boolean")
             starts_fresh = data.get("starts_fresh") is True
             # Keep old direct callers compatible: only planner-supplied context
             # enables ledger validation.  The planner always supplies the field,
