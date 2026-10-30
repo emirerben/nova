@@ -191,6 +191,7 @@ class PhoneCaptionLook:
     # It wins over ``animation_phases`` (the appearance default) and keeps the karaoke
     # sweep. None keeps today's pop-in / karaoke timing.
     default_animation_phases: dict | None = None
+    line_overrides: dict | None = None
 
 
 _DEFAULT_CAPTION_LOOK = PhoneCaptionLook()
@@ -393,6 +394,7 @@ def caption_look_from_variant(variant: dict) -> PhoneCaptionLook:
         shadow_enabled=shadow_enabled,
         single_word=_single_word_enabled(variant),
         default_animation_phases=_phases_or_none(variant.get("caption_animation_phases")),
+        line_overrides=editor_style.get("line_overrides"),
     )
 
 
@@ -1134,6 +1136,33 @@ def caption_font_assets(layers: list[PortableTextLayer]) -> dict[str, RenderAsse
 
 
 def _base_overlay(cue: dict, look: PhoneCaptionLook) -> dict[str, Any]:
+    from dataclasses import replace
+
+    cue_patch = {
+        target: cue[source]
+        for source, target in (
+            ("font_family", "font_family"),
+            ("text_color", "text_color"),
+            ("size_px", "text_size_px"),
+            ("stroke_width", "outline_px"),
+            ("shadow_enabled", "shadow_enabled"),
+        )
+        if cue.get(source) is not None
+    }
+    if cue_patch:
+        look = replace(look, **cue_patch)
+    own = (look.line_overrides or {}).get(cue.get("id"), {})
+    patch = {
+        target: own[source]
+        for source, target in (
+            ("size_px", "text_size_px"),
+            ("position_x_frac", "position_x_frac"),
+            ("position_y_frac", "position_y_frac"),
+        )
+        if own.get(source) is not None
+    }
+    if patch:
+        look = replace(look, **patch)
     overlay: dict[str, Any] = {
         "text": cue["text"],
         "start_s": cue["start_s"],
@@ -1182,6 +1211,11 @@ def _prepare_cues(cues: list[dict], *, timeline_duration_s: float | None) -> lis
         if end - start < _MIN_CUE_DURATION_S:
             continue
         entry: dict[str, Any] = {"text": text, "start_s": start, "end_s": end}
+        if isinstance(cue.get("id"), str):
+            entry["id"] = cue["id"]
+        for key in ("font_family", "text_color", "size_px", "stroke_width", "shadow_enabled"):
+            if cue.get(key) is not None:
+                entry[key] = cue[key]
         phases = _phases_or_none(cue.get("animation_phases"))
         if phases is not None:
             entry["animation_phases"] = phases

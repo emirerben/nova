@@ -144,7 +144,8 @@ struct NativeVideoPreview: View {
                 return NativeEditorPreviewObject(
                     item: item,
                     text: layer?.text,
-                    position: layer.map(nativeTextPosition) ?? CGPoint(x: 0.5, y: 0.5),
+                    position: layer?.isCaption == true && session.offersCaptionStyleScope
+                        ? session.captionPosition(id: item.id) : layer.map(nativeTextPosition) ?? CGPoint(x: 0.5, y: 0.5),
                     style: layer?.fontFamily,
                     title: "Text",
                     render: .text,
@@ -157,11 +158,12 @@ struct NativeVideoPreview: View {
                 return NativeEditorPreviewObject(
                     item: item,
                     text: document.captionCues.first(where: { $0.id == item.id })?.text,
-                    position: nil,
+                    position: session.offersCaptionStyleScope ? session.captionPosition(id: item.id) : nil,
                     style: nil,
                     title: "Caption",
                     render: .caption,
-                    detail: nil
+                    detail: nil,
+                    scale: CGFloat(session.captionStyleSize(.line(item.id)) / 78)
                 )
             case .soundEffect:
                 let effect = document.soundEffects.first { $0.id == item.id }
@@ -549,6 +551,8 @@ struct NativeVideoPreview: View {
     private func canDirectlyPosition(_ object: NativeEditorPreviewObject) -> Bool {
         guard session.sourcePreviewState == .idle || session.hasSourcePreview else { return false }
         switch object.item.kind {
+        case .captionCue:
+            return session.offersCaptionStyleScope && session.hasSourcePreview
         case .text:
             return session.canEdit(.text)
         case .mediaOverlay:
@@ -566,6 +570,8 @@ struct NativeVideoPreview: View {
     private func positionHandler(for object: NativeEditorPreviewObject) -> ((CGPoint) -> Void)? {
         guard canDirectlyPosition(object) else { return nil }
         switch object.item.kind {
+        case .captionCue:
+            return { point in session.setCaptionGesturePosition(id: object.item.id, position: point) }
         case .text:
             return { point in session.setTextPosition(id: object.item.id, x: point.x, y: point.y) }
         case .mediaOverlay:
@@ -580,6 +586,8 @@ struct NativeVideoPreview: View {
     private func scaleHandler(for object: NativeEditorPreviewObject) -> ((CGFloat) -> Void)? {
         guard canDirectlyPosition(object) else { return nil }
         switch object.item.kind {
+        case .captionCue:
+            return { scale in session.setCaptionGestureSize(id: object.item.id, size: Double(scale) * 78) }
         case .text:
             return { scale in session.setTextWidth(id: object.item.id, width: scale) }
         case .mediaOverlay:

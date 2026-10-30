@@ -1513,6 +1513,53 @@ def test_guided_v2_device_variant_closes_every_edit_the_phone_compiler_rejects(
     }
 
 
+def test_caption_style_scope_is_the_only_new_capability_at_protocol_25(monkeypatch):
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    _arm_every_editor_lane(monkeypatch)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: {"revision_number": 1})
+    job = _job(resolved_archetype="guided_story")
+    variant = job.assembly_plan["variants"][0]
+    device_variant = {**variant, "render_destination": "device"}
+    try:
+        set_client_protocol(24)
+        old = gj._editor_capabilities(job, device_variant)
+        cloud = gj._editor_capabilities(job, variant)
+        set_client_protocol(25)
+        new = gj._editor_capabilities(job, device_variant)
+        assert new["caption_style_scope"] is True
+        assert {key: value for key, value in new.items() if key != "caption_style_scope"} == old
+        assert gj._editor_capabilities(job, variant) == cloud
+        assert "caption_style_scope" not in old
+        set_client_protocol(None)
+        assert "caption_style_scope" not in gj._editor_capabilities(job, device_variant)
+    finally:
+        clear_request_context()
+
+
+def test_old_client_cannot_replace_scoped_caption_state(monkeypatch):
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: None)
+    job = _job()
+    variant = {"caption_editor_style": {"line_overrides": {"one": {"size_px": 150}}}}
+    payload = gj.EditorCommitRequest(caption_meta=gj.EditorCommitCaptionMeta(size_px=90))
+    try:
+        set_client_protocol(24)
+        with pytest.raises(HTTPException) as error:
+            gj._require_caption_animation_client(job, variant, payload)
+        assert error.value.status_code == 426
+        assert error.value.detail == {
+            "code": "client_update_required",
+            "feature": "caption_style_scope",
+            "minimum_client_protocol": 25,
+        }
+        set_client_protocol(25)
+        gj._require_caption_animation_client(job, variant, payload)
+    finally:
+        clear_request_context()
+
+
 def test_montage_device_variant_closes_legacy_lane_booleans_only(monkeypatch) -> None:
     _arm_every_editor_lane(monkeypatch)
     job = _job()

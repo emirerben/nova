@@ -3379,6 +3379,16 @@
             "title": "Highlight Spoken Word",
             "type": "boolean"
           },
+          "line_overrides": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EditorCaptionLinePlacement"
+            },
+            "default": null,
+            "maxProperties": 500,
+            "nullable": true,
+            "title": "Line Overrides",
+            "type": "object"
+          },
           "max_width_frac": {
             "default": null,
             "maximum": 1,
@@ -3425,6 +3435,37 @@
           }
         },
         "title": "EditorCaptionAppearance",
+        "type": "object"
+      },
+      "EditorCaptionLinePlacement": {
+        "additionalProperties": false,
+        "properties": {
+          "position_x_frac": {
+            "default": null,
+            "maximum": 0.95,
+            "minimum": 0.05,
+            "nullable": true,
+            "title": "Position X Frac",
+            "type": "number"
+          },
+          "position_y_frac": {
+            "default": null,
+            "maximum": 0.9,
+            "minimum": 0.1,
+            "nullable": true,
+            "title": "Position Y Frac",
+            "type": "number"
+          },
+          "size_px": {
+            "default": null,
+            "maximum": 160,
+            "minimum": 36,
+            "nullable": true,
+            "title": "Size Px",
+            "type": "integer"
+          }
+        },
+        "title": "EditorCaptionLinePlacement",
         "type": "object"
       },
       "EditorCommitBackgroundMusic": {
