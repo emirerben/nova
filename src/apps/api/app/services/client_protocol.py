@@ -14,7 +14,7 @@ fails the gate closed.
 
 from __future__ import annotations
 
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 
 # KRI-898: where `decide_approval` records the approving app build on the render execution
 # (read back by `_claim_approval_dispatch`, stamped on the Job as `creator_client_protocol`).
@@ -37,6 +37,20 @@ def set_client_protocol(value: int | None) -> None:
     """Record the declared protocol and mark the context as an HTTP request."""
     _client_protocol.set(value)
     _in_http_request.set(True)
+
+
+def bind_sending_build(value: int | None) -> Token[int | None]:
+    """A worker acting on a message reads the protocol of the app build that sent it.
+
+    Only the protocol is bound: ``in_http_request()`` stays False, so request-only gates
+    (the 426s on Save) still never fire in a worker, while capability maps that require
+    a qualifying build (``editor_capabilities.caption_animation``) see the sender.
+    """
+    return _client_protocol.set(value)
+
+
+def unbind_sending_build(token: Token[int | None]) -> None:
+    _client_protocol.reset(token)
 
 
 def clear_request_context() -> None:

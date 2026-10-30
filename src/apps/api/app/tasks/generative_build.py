@@ -6428,8 +6428,13 @@ def ready_visual_rows(
 
 
 def unified_visual(row: Any) -> Any:
-    """A ready Visuals row as the ``UnifiedClip`` the montage planner places (KRI-217)."""
+    """A ready Visuals row as the ``UnifiedClip`` the montage planner places (KRI-217).
+
+    KRI-1069: it carries its own capture time, so a filming-order montage seats a dated
+    photo by when it was taken (the render contract dates it the same way).
+    """
     from app.pipeline.unified_montage import UnifiedClip  # noqa: PLC0415
+    from app.services.clip_facts import visual_capture_time  # noqa: PLC0415
 
     kind = "image" if row.kind == "image" else "video"
     if kind == "video" and not (row.duration_s and row.duration_s > 0):
@@ -6440,6 +6445,7 @@ def unified_visual(row: Any) -> Any:
         generation=str(row.gcs_generation or ""),
         duration_s=float(row.duration_s or 0.0),
         analysis=dict(row.analysis or {}),
+        capture_time=visual_capture_time(getattr(row, "capture", None)),
         lane="asset",
         kind=kind,
         manifest_id=f"asset-{row.id}",

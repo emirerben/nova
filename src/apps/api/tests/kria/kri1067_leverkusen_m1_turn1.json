@@ -1,0 +1,139 @@
+{
+  "source": {
+    "issue": "KRI-1067 (parent KRI-1066)",
+    "run": "Leverkusen-Nuernberg DFB-Pokal M1 montage chat, iPhone, 2026-10-29 17:28:24Z (turn 1)",
+    "thread": "4144DA86-D93C-4EA8-BE9E-D27E4BA3CF78",
+    "server": "Fly 3c8d4dd82 (order logic unchanged on main d2fe95dc0)",
+    "client": "TestFlight 1801, protocol 24",
+    "recorded": [
+      "prompt (verbatim)",
+      "brief r2 facts (creative_brief_versions v1, unchanged through v3)",
+      "turn-1 reply (verbatim, turn_value recovery, no choice_question / reply_options / next_actions)",
+      "capture times of the clips listed in media (prod clip_assignments; the kit answer key, local CET converted to UTC)"
+    ],
+    "reconstructed": [
+      "inventory: Main Creator / clip-intent planner I/O is redacted at write time (sensitive_io). The reply proves no resolved order intent sat at 'last'; the first pin ('the lineup sheet') was seated, or the reply would have named it first. The two rows below are that shape.",
+      "media ids are stand-ins named after the files; 'shows' is the kit answer key's description, not the stored clip record.",
+      "the run had 9 videos and 4 photos; the ninth video and two photos (a selfie, a night photo) are not in the kit's answer key and are left out. The ends of filming order (IMG_1012 first, IMG_1043 last) are recorded and unchanged.",
+      "IMG_1012's duration is a stand-in (the kit answer key does not list that file); its filming time is recorded."
+    ],
+    "brief_scope": "Only r2 is replayed. r1 (45 s), r3 (closing title literal) and r4 (upbeat music) never reached a check: the turn-1 contract named only the order."
+  },
+  "prompt": "Make a 45-second vertical montage of my night at Leverkusen vs Nürnberg, DFB-Pokal round 2, final score 5–2. Keep it in chronological order from arrival to the final whistle. Open on the lineup sheet, end with a title card \"Leverkusen 5–2 Nürnberg · BayArena\". Upbeat music, cut on the beat.",
+  "turn1_reply": "I couldn't tell which clip \"the final whistle\" means, so I can't confirm the order.",
+  "brief_v1": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r2",
+        "kind": "order",
+        "scope": "global",
+        "status": "open",
+        "literal": null,
+        "facts": {
+          "key": "capture_time",
+          "first_clip": "the lineup sheet",
+          "last_clip": "the final whistle"
+        },
+        "description": "chronological order from arrival to the final whistle, opening on the lineup sheet",
+        "source_turn_id": "kri1067-turn-1"
+      }
+    ]
+  },
+  "inventory_turn1": [
+    {
+      "intent_id": "order_filmed",
+      "op": "order",
+      "attribute": "my night at Leverkusen vs Nürnberg",
+      "order_by": "capture_time",
+      "source_quote": "Keep it in chronological order from arrival to the final whistle."
+    },
+    {
+      "intent_id": "order_first_lineup",
+      "op": "order",
+      "position": "first",
+      "attribute": "the lineup sheet",
+      "source_quote": "Open on the lineup sheet"
+    }
+  ],
+  "media": [
+    {
+      "media_id": "analysis-proxy-ios-IMG_1043.mp4",
+      "file_name": "IMG_1043",
+      "kind": "video",
+      "duration_s": 7.5,
+      "capture_time": "2026-10-28T21:47:37Z",
+      "shows": "after the match: Nürnberg players in white kits at the away end thanking their fans, stewards in orange vests, confetti"
+    },
+    {
+      "media_id": "analysis-proxy-ios-IMG_1039.mp4",
+      "file_name": "IMG_1039",
+      "kind": "video",
+      "duration_s": 18.3,
+      "capture_time": "2026-10-28T21:35:40Z",
+      "shows": "a late goal: children waving scarves, TOR on the big screen, the stand celebrating, a man screaming with a scarf"
+    },
+    {
+      "media_id": "analysis-proxy-ios-IMG_1037.mp4",
+      "file_name": "IMG_1037",
+      "kind": "video",
+      "duration_s": 9.8,
+      "capture_time": "2026-10-28T20:25:46Z",
+      "shows": "a goal seen from the VIP box, then a man in round glasses celebrating"
+    },
+    {
+      "media_id": "analysis-proxy-ios-IMG_1036.mp4",
+      "file_name": "IMG_1036",
+      "kind": "video",
+      "duration_s": 8.5,
+      "capture_time": "2026-10-28T19:49:47Z",
+      "shows": "the away end with red-black flags, a banner and smoke, through the safety net"
+    },
+    {
+      "media_id": "analysis-proxy-ios-IMG_1028.mp4",
+      "file_name": "IMG_1028",
+      "kind": "video",
+      "duration_s": 11.0,
+      "capture_time": "2026-10-28T19:36:41Z",
+      "shows": "a stadium light show: floodlights off, spotlights on a dark pitch, the announcer reading the line-up"
+    },
+    {
+      "media_id": "analysis-proxy-ios-IMG_1027.mp4",
+      "file_name": "IMG_1027",
+      "kind": "video",
+      "duration_s": 8.0,
+      "capture_time": "2026-10-28T19:33:14Z",
+      "shows": "the big screen and the home end, a pan along the flags, stewards on the pitch before kick-off"
+    },
+    {
+      "media_id": "analysis-proxy-ios-IMG_1026.mp4",
+      "file_name": "IMG_1026",
+      "kind": "video",
+      "duration_s": 6.5,
+      "capture_time": "2026-10-28T19:16:50Z",
+      "shows": "players warming up on the pitch, seen from the VIP box"
+    },
+    {
+      "media_id": "analysis-proxy-ios-IMG_1012.mp4",
+      "file_name": "IMG_1012",
+      "kind": "video",
+      "duration_s": 9.0,
+      "capture_time": "2026-10-28T18:21:28Z",
+      "shows": "the team bus outside the stadium at night"
+    },
+    {
+      "media_id": "asset-IMG_1019",
+      "file_name": "IMG_1019",
+      "kind": "image",
+      "capture_time": "2026-10-28T18:52:22Z",
+      "shows": "view from the VIP box through the glass: red seats, the pitch, a sponsor sign"
+    },
+    {
+      "media_id": "asset-IMG_1038",
+      "file_name": "IMG_1038",
+      "kind": "image",
+      "capture_time": "2026-10-28T20:33:20Z",
+      "shows": "a printed line-up sheet (Mannschaftsaufstellung) on a table"
+    }
+  ]
+}

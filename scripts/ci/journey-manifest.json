@@ -189,6 +189,13 @@
         "src/apps/api/app/pipeline/authored_timeline.py",
         "src/apps/api/app/agents/edit_copilot.py",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_reverse_order_en.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_text_word_relay_all_text.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_text_word_relay_all_text_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_caption_word_relay_all_captions.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_caption_word_relay_all_captions_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_caption_animation_unavailable.json",
+        "src/apps/api/prompts/edit_copilot_ops/captions.txt",
+        "src/apps/api/app/schemas/text_style_intent.py",
         "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/editor_receipts.py",
         "src/apps/api/app/kria/registry.py",
@@ -544,6 +551,7 @@
       "api_tests": "tests/agents/test_main_creator_agent.py tests/agents/test_main_creator_user_song.py tests/agents/test_runtime.py tests/kria/test_creative_copy_planner.py tests/evals/test_main_creator_evals.py",
       "paths": [
         "src/apps/api/prompts/main_creator.txt",
+        "src/apps/api/prompts/main_creator_turn.txt",
         "src/apps/api/tests/fixtures/agent_evals/main_creator/"
       ]
     },
@@ -824,7 +832,8 @@
       "needs_native": false,
       "api_tests": "tests/kria/test_kri667_structured_ask_facts.py tests/kria/test_turkish_chat_guard.py tests/test_kri667_copilot_claims.py tests/kria/test_kri667_clip_exclusions.py tests/kria/test_kri667_no_new_intent_regexes.py",
       "paths": [
-        "src/apps/api/prompts/edit_copilot.txt"
+        "src/apps/api/prompts/edit_copilot.txt",
+        "src/apps/api/prompts/edit_copilot_turn.txt"
       ]
     },
     {
@@ -2350,6 +2359,25 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/plan_review_unscoped_same_prompt.json"
       ],
       "fixture_generator": "scripts/ios/duration-text-preservation-fixtures.py"
+    },
+    {
+      "id": "reference-style-save",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_authored_empty_caption_metadata.py tests/kria/test_reference_style_receipts.py tests/integration/test_reference_style_save_postgres.py",
+      "xctests": [
+        "KriaTests/ReferenceStyleSaveTests/testSavedReferenceStyleAndLocalUndoRecipesPreviewAndExport"
+      ],
+      "paths": [
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/api/app/services/authored_editor.py",
+        "src/apps/api/app/kria/editor_receipts.py",
+        "src/apps/api/tests/routes/test_authored_empty_caption_metadata.py",
+        "src/apps/api/tests/kria/test_reference_style_receipts.py",
+        "src/apps/api/tests/kria/test_kri558_editor_receipts.py",
+        "src/apps/api/tests/integration/test_reference_style_save_postgres.py",
+        "src/apps/ios/Tests/KriaTests/ReferenceStyleSaveTests.swift",
+        "src/apps/ios/Tests/Fixtures/ReferenceStyleSave.json"
+      ]
     }
   ]
 }

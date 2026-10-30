@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.22.0] - 2026-10-30
+
+### Changed
+- fix(kria): a filming-order montage with a "starting with" group reaches approval (KRI-1080) (#1975) <!-- release-pr: 1975 -->
+
+## [0.83.21.0] - 2026-10-30
+
+### Fixed
+- fix(kria): keep the finished plan when the chat is renamed mid-turn (KRI-1075) (#1969) <!-- release-pr: 1969 -->
+
+## [0.83.20.0] - 2026-10-30
+
+### Fixed
+- fix(kria): a shot's "for N seconds" is never the video's length (KRI-1071) (#1966) <!-- release-pr: 1966 -->
+
+## [0.83.19.0] - 2026-10-30
+
+### Changed
+- perf(ci): narrow audited test-only suite selection (#1959) <!-- release-pr: 1959 -->
+
+## [0.83.18.0] - 2026-10-30
+
+### Fixed
+- fix(kria): date selected Visuals photos in a filming-order montage (KRI-1069) (#1965) <!-- release-pr: 1965 -->
+
+## [0.83.17.0] - 2026-10-30
+
+### Added
+- feat(agents): chat can animate captions, gated on the build's capability (KRI-1077 part 2) (#1968) <!-- release-pr: 1968 -->
+
+## [0.83.16.0] - 2026-10-30
+
+### Fixed
+- fix(agents): chat AI can apply all six designed text animations; one registry feeds every AI list (KRI-1077) (#1967) <!-- release-pr: 1967 -->
+
+## [0.83.15.0] - 2026-10-30
+
+### Fixed
+- fix(kria): a filming-order ending the planner left out asks with the clip picker, not a dead end (KRI-1067) (#1964) <!-- release-pr: 1964 -->
+
+## [0.83.14.0] - 2026-10-30
+
+### Changed
+- fix(kria): "skip that" withdraws the clip a stuck reply named; never the same stuck reply twice (KRI-1068) (#1963) <!-- release-pr: 1963 -->
+
+## [0.83.13.0] - 2026-10-30
+
+### Changed
+- perf(agents): fixed prompt text first so Gemini prefix cache can hit (KRI-1065) (#1958) <!-- release-pr: 1958 -->
+
+## [0.83.12.0] - 2026-10-30
+
+### Changed
+- fix(kria): preserve silent-editor Saves and truthful style receipts (KRI-1060) (#1960) <!-- release-pr: 1960 -->
+
+## [0.83.11.0] - 2026-10-30
+
+### Fixed
+- fix(media-library): accept iPhone HDR JPEGs (MPO) as image/jpeg (KRI-1074) (#1962) <!-- release-pr: 1962 -->
+
 ## [0.83.10.0] - 2026-10-30
 
 ### Fixed

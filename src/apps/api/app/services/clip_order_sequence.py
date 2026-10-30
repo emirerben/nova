@@ -24,7 +24,9 @@ from app.kria.brief_route import loose_text
 SequenceRow = tuple[str | None, str, list[str], str]
 SequenceGroupKey = tuple[str | None, str, tuple[str, ...]]
 
-UNCONFIRMED_MEMBER_ORDER = "the order inside this saved group wasn't recorded"
+# What a group's render outcome says when nobody said how its clips are ordered inside, in
+# the creator's terms (Leverkusen M1 run 2: "this saved group" meant nothing to a creator).
+UNCONFIRMED_MEMBER_ORDER = "you didn't say what order its clips play in"
 
 T = TypeVar("T")
 
@@ -145,18 +147,24 @@ def unconfirmed_order_groups(resolved_intents: object) -> frozenset[SequenceGrou
     )
 
 
-def unconfirmed_order_reason() -> str:
+def unconfirmed_order_reason(names: Sequence[str] = ()) -> str:
+    """Asks the creator how the clips of the named groups play inside, in their own words."""
     from app.kria.reply_language import say  # noqa: PLC0415
 
+    quoted = ", ".join(f'"{name}"' for name in dict.fromkeys(_nfc(n) for n in names) if name)
     return say(
         en=(
-            "The order inside this saved group wasn't recorded. Choose the order, "
-            "or confirm that any order within the group is fine."
-        ),
+            f"You didn't say what order the clips in {quoted} should play in. "
+            if quoted
+            else "You didn't say what order these clips should play in. "
+        )
+        + "Tell me the order, or say any order is fine.",
         tr=(
-            "Kaydedilmiş bu grubun iç sırası belirtilmemiş. Sırayı seç ya da grup içindeki "
-            "herhangi bir sıranın uygun olduğunu onayla."
-        ),
+            f"{quoted} içindeki kliplerin hangi sırayla oynayacağını söylemedin. "
+            if quoted
+            else "Bu kliplerin hangi sırayla oynayacağını söylemedin. "
+        )
+        + "Sırayı yaz ya da herhangi bir sıranın olur olduğunu söyle.",
     )
 
 

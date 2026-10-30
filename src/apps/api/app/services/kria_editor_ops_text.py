@@ -881,20 +881,18 @@ def op_replace_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
     )
 
 
-def _merge_phases(row: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+def merge_animation_phases(row: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     """The row's phases (or the ones its legacy effect implies) with ``patch`` applied."""
+    from app.agents._schemas.text_animation_phases import (  # noqa: PLC0415
+        LEGACY_EFFECT_ENTRANCE,
+        TextAnimationPhases,
+    )
+
     current = row.get("animation_phases")
     if not isinstance(current, dict):
-        entrance = {
-            "fade-in": "fade",
-            "pop-in": "pop",
-            "slide-in": "slide",
-            "typewriter": "typewriter",
-        }.get(str(row.get("effect")), "none")
+        entrance = LEGACY_EFFECT_ENTRANCE.get(str(row.get("effect")), "none")
         current = {"entrance": entrance, "exit": "none", "loop": "none", "speed": 1}
     merged = {**current, **patch}
-    from app.agents._schemas.text_animation_phases import TextAnimationPhases  # noqa: PLC0415
-
     try:
         return TextAnimationPhases(**merged).model_dump()
     except Exception as exc:  # noqa: BLE001
@@ -937,7 +935,7 @@ def apply_patch(row: dict[str, Any], patch: dict[str, Any]) -> None:
         elif key == "animation_phases":
             if not isinstance(value, dict) or set(value) - PHASE_KEYS:
                 raise KriaEditorOpError("Those animation settings aren't valid")
-            row["animation_phases"] = _merge_phases(row, value)
+            row["animation_phases"] = merge_animation_phases(row, value)
         elif key == "background_color":
             if value is None:
                 row.pop("background_color", None)

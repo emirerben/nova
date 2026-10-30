@@ -4795,10 +4795,16 @@
                 "anyOf": [
                   {
                     "enum": [
-                      "typewriter",
                       "fade",
                       "pop",
-                      "slide"
+                      "slide",
+                      "typewriter",
+                      "silkReveal",
+                      "elasticCondensed",
+                      "focusPull",
+                      "wordRelay",
+                      "ribbonWipe",
+                      "echoStack"
                     ],
                     "type": "string"
                   },
@@ -4807,7 +4813,7 @@
                   }
                 ],
                 "default": null,
-                "description": "How the opening title enters, ONLY when the creator named it ('animated with typewriter'): typewriter | fade | pop | slide. Omit otherwise.",
+                "description": "How the opening title enters, ONLY when the creator named it ('animated with typewriter'): fade | pop | slide | typewriter | silkReveal | elasticCondensed | focusPull | wordRelay | ribbonWipe | echoStack. Omit otherwise.",
                 "title": "Title Animation"
               },
               "video_reuse_policy": {

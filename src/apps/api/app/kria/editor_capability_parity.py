@@ -8,14 +8,17 @@ it: ``NativeEditorRetiming.swift``, ``NativeTextEditing.swift``) belongs to exac
 and a group is one of
 
 * ``agent_ops``: the edit reaches the agent through these ops (names checked against the copilot's
-  op set), or
+  op set) and, when ``fields`` is set, through those fields of them (checked against what the
+  copilot's parser accepts), or
 * ``agent_unsupported``: a person can, the agent cannot yet, with the reason written down, or
 * ``not_an_edit``: playback, selection, loading, saving and read-only queries.
 
 ``tests/kria/test_editor_capability_parity.py`` fails when the Swift file gains a public function
 that no group names, when a group names one that is gone, and when an ``agent_ops`` group names an
-op the copilot does not have. Adding an editor action therefore forces the question "can the
-agent do this?" in the same change.
+op the copilot does not have or a field none of its ops accepts. Adding an editor action
+therefore forces the question "can the agent do this?" in the same change. Name ``fields``
+whenever the op is broader than the action: an op name alone once claimed caption animation
+while ``set_caption_meta`` refused ``animation_phases``.
 """
 
 from __future__ import annotations
@@ -29,10 +32,17 @@ class ParityGroup:
     actions: frozenset[str]
     ops: tuple[str, ...] = ()
     reason: str = ""
+    fields: tuple[str, ...] = ()
 
 
-def _g(kind: str, actions: str, ops: tuple[str, ...] = (), reason: str = "") -> ParityGroup:
-    return ParityGroup(kind, frozenset(actions.split()), ops, reason)
+def _g(
+    kind: str,
+    actions: str,
+    ops: tuple[str, ...] = (),
+    reason: str = "",
+    fields: tuple[str, ...] = (),
+) -> ParityGroup:
+    return ParityGroup(kind, frozenset(actions.split()), ops, reason, fields)
 
 
 PARITY_GROUPS: dict[str, ParityGroup] = {
@@ -61,7 +71,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "beginCaptionLineEdit endCaptionLineEdit updateCaptionCue setCaptionMeta setCaptionDisplay "
         "setCaptionEnabled toggleCaptions setCaptionStyle setCaptionFont setCaptionColor "
         "setCaptionHighlightColor setCaptionSize setCaptionPositionY setCaptionShadowEnabled "
-        "setCaptionStrokeWidth setCaptionAppearance setCaptionAnimationSpeed setCaptionPhase",
+        "setCaptionStrokeWidth setCaptionAppearance",
         (
             "edit_caption",
             "replace_caption_text",
@@ -70,6 +80,13 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
             "set_caption_emphasis",
             "patch_text_appearance",
         ),
+    ),
+    # All captions only: one line's animation (`CaptionAnimationScope.line`) has no agent op.
+    "caption_animation": _g(
+        "agent_ops",
+        "setCaptionAnimationSpeed setCaptionPhase",
+        ("set_caption_meta",),
+        fields=("animation_phases",),
     ),
     "caption_style_scope": _g(
         "agent_unsupported",
