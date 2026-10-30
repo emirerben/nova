@@ -822,6 +822,30 @@ def _build_question(work_items: list[_IntentWork], position_by_media: dict[str, 
     return f"{joined}{suffix}"
 
 
+# Leverkusen M2: the asks a confident match settles although checks on other clips were
+# unsure. An allowlist, so an ask added later (one that hides footage) never settles by default.
+_FOUND_SETTLES_OPS = frozenset({"group", "order", "include", "label", "caption"})
+
+
+def _found_rows_text(labels: list[str]) -> str:
+    """The question for picker rows that come with the clips already found ticked."""
+    shown = ", ".join(f'"{label}"' for label in labels[:4])
+    more = say(
+        en=f" and {len(labels) - 4} more" if len(labels) > 4 else "",
+        tr=f" ve {len(labels) - 4} tane daha" if len(labels) > 4 else "",
+    )
+    return say(
+        en=(
+            f"I ticked the clips I found for {shown}{more}. "
+            "Tap any others that show it too, or untick one that doesn't."
+        ),
+        tr=(
+            f"{shown}{more} için bulduğum klipleri işaretledim. "
+            "Bunu gösteren başka klip varsa ona da dokun, göstermeyenin işaretini kaldır."
+        ),
+    )
+
+
 def picker_eligible(intent: ClipIntent) -> bool:
     """True when the creator tapping clips fully answers this intent.
 
@@ -962,9 +986,13 @@ def _build_clip_question(
     skipped here and stay in the text part of the question (KRI-282: one such intent used
     to drop the picker for every other intent).
 
-    Candidates are every clip not already confirmed for the intent (the creator may know
-    a clip the analysis never named, so we do not narrow to what the model considered);
-    low-confidence matches the resolver could not settle are pre-ticked as suggestions.
+    Candidates are every clip the intent accepts (the creator may know a clip the analysis
+    never named, so we do not narrow to what the model considered). A tap replaces the
+    resolver's answer, so the clips already found come ticked (Leverkusen M2: the TOR clip
+    vision had found was left out of its own row). Low-confidence matches the resolver
+    could not settle are pre-ticked as suggestions only when nothing was found; beside a
+    found clip they are offered un-ticked, unless the intent is an "only about X" scope
+    (an un-ticked clip leaves the edit) or not one of ``_FOUND_SETTLES_OPS``.
     KRI-779: in a project with one video, a photo is offered only while it could still
     answer the intent (``_live_photo_ids``); with several videos nothing is narrowed.
     """
@@ -975,20 +1003,23 @@ def _build_clip_question(
     narrow_photos = records_by_id is not None and _only_video(clips) is not None
     categories: list[dict[str, Any]] = []
     for work in creator_work:
-        confirmed = {a.media_id for a in work.kept}
+        found = {a.media_id for a in work.kept}
         # KRI-991: the clips the resolver put forward below the bar, or a check could not
         # settle, are the picker's pre-ticks. A clip a check confidently ruled out is not.
         # Suggestions only: nothing is applied without the creator's tap.
         near_misses = (work.failed_media_ids | work.considered_media_ids) - (
             work.vision_no_media_ids - work.failed_media_ids
         )
+        if found and work.intent.op in _FOUND_SETTLES_OPS and not work.intent.exclusive:
+            near_misses = set()
         live = _live_photo_ids(work, clips, records_by_id) if narrow_photos else set()
         candidates = [
             c.media_id
             for c in clips
             if work.intent.accepts_source_kind(c.kind)
-            and c.media_id not in confirmed
-            and (not narrow_photos or c.kind != "image" or c.media_id in live)
+            and (
+                c.media_id in found or not narrow_photos or c.kind != "image" or c.media_id in live
+            )
         ]
         categories.append(
             {
@@ -1001,7 +1032,7 @@ def _build_clip_question(
                 "creator_text": work.intent.creator_text,
                 "candidate_media_ids": candidates[:MAX_QUESTION_CLIPS],
                 "suggested_media_ids": sorted(
-                    (m for m in near_misses if m in candidates),
+                    (m for m in found | near_misses if m in candidates),
                     key=order.__getitem__,
                 ),
             }
@@ -2160,6 +2191,7 @@ async def resolve_clip_intents_for_turn(
     creator_work: list[_IntentWork] = []
     only_video = _only_video(clips)
     single_take_settled = 0
+    found_settled = 0
     for intent in intents:
         work = work_by_id[intent.intent_id]
         # KRI-667: an exclude is settled by whatever the resolver confidently matched,
@@ -2187,6 +2219,20 @@ async def resolve_clip_intents_for_turn(
             )
         ):
             single_take_settled += 1
+        # Leverkusen M2: an ask a clip confidently matched is answered by that match. Unsure
+        # checks on OTHER clips beside it no longer hold it open: the picker asked "which
+        # clips show the TOR" with the TOR clip vision had found left out and the unsure
+        # ones pre-ticked. Only for asks that place, add or print on clips: an "only about X"
+        # scope still asks (settling it would cut those unsure clips from the edit), and so
+        # does any ask that hides footage (an unsure clip may show what must not be seen).
+        found_settles = (
+            bool(work.kept)
+            and bool(work.failed_media_ids)
+            and not work.intent_question
+            and not intent.exclusive
+            and intent.op in _FOUND_SETTLES_OPS
+            and picker_eligible(intent)
+        )
         # Technical/provider/media failures must not be turned into a creator
         # question. The caller can retry the preparation/resolution attempt;
         # only settled ambiguity or a genuinely empty result belongs in
@@ -2194,8 +2240,14 @@ async def resolve_clip_intents_for_turn(
         is_creator_unresolved = (
             not settles_itself
             and not has_non_creator_failure
-            and (bool(work.intent_question) or bool(work.failed_media_ids) or not work.kept)
+            and (
+                bool(work.intent_question)
+                or (bool(work.failed_media_ids) and not found_settles)
+                or not work.kept
+            )
         )
+        if found_settles and not settles_itself and not has_non_creator_failure:
+            found_settled += 1
         is_unresolved = is_creator_unresolved or has_non_creator_failure
         if is_unresolved:
             unresolved_work.append(work)
@@ -2256,6 +2308,7 @@ async def resolve_clip_intents_for_turn(
         "vision_multi_question_clips": sum(1 for q in questions_by_clip.values() if len(q) > 1),
         "named_guesses_settled": named_guesses_settled,
         "single_take_settled": single_take_settled,
+        "found_settled": found_settled,
         # Omitted when nothing failed, so every other turn's diagnostics are unchanged.
         **({"vision_error_types": vision_errors[:8]} if vision_errors else {}),
     }
@@ -2325,13 +2378,33 @@ async def resolve_clip_intents_for_turn(
             creator_work, clips, creator_words, records_by_id=records_by_id
         )
         if clip_question is not None:
+            # Leverkusen M2: a row that already has its clips ticked never says "I couldn't
+            # tell which of your clips show it".
+            found_keys = {intent_key(w.intent) for w in creator_work if w.kept}
+            found_rows = [
+                c
+                for c in clip_question["categories"]
+                if found_keys & {r["key"] for r in answered_rows(c)}
+            ]
+            open_rows = [c for c in clip_question["categories"] if c not in found_rows]
             # KRI-779: a picker whose only candidate is the one video asks whether the
             # moment is in it at all, in plain words, never "which of your clips".
-            in_the_video = only_video is not None and all(
-                c["candidate_media_ids"] == [only_video.media_id]
-                for c in clip_question["categories"]
+            in_the_video = (
+                not found_rows
+                and only_video is not None
+                and all(
+                    c["candidate_media_ids"] == [only_video.media_id]
+                    for c in clip_question["categories"]
+                )
             )
-            turn_question = clip_question_text(clip_question["categories"], only_video=in_the_video)
+            turn_question = " ".join(
+                part
+                for part in (
+                    _found_rows_text([c["label"] for c in found_rows]) if found_rows else "",
+                    clip_question_text(open_rows, only_video=in_the_video) if open_rows else "",
+                )
+                if part
+            )
             if in_the_video:
                 clip_question = None
             leftover = [w for w in creator_work if not picker_eligible(w.intent)]
