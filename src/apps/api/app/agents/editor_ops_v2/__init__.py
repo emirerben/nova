@@ -40,7 +40,7 @@ SURFACE_ONLY_LANES: dict[str, str] = {"slides": "slide_post"}
 # Lanes whose prompt fragment (`<name>.txt` under prompts/edit_copilot_ops/) is appended only when
 # the snapshot actually offers the lane's op family, so every other prompt stays byte-identical
 # (KRI-661). Keyed by the family in `snapshot["allowed_op_families"]`.
-FAMILY_FRAGMENTS: dict[str, str] = {"overlay": "overlay_cards.txt"}
+FAMILY_FRAGMENTS: dict[str, str] = {"overlay": "overlay_cards.txt", "caption": "captions.txt"}
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 

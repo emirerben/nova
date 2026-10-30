@@ -1282,6 +1282,32 @@ async def test_live_planner_knows_the_turn_soft_deadline(monkeypatch: pytest.Mon
     assert planner_turn_deadline.get() is None, "the deadline never leaks out of the turn"
 
 
+@pytest.mark.asyncio
+async def test_live_planner_acts_for_the_app_build_that_sent_the_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KRI-1077: editor capabilities that need a qualifying build (caption animation) read the
+    sender's protocol while planning, and nothing leaks into the next turn on this worker."""
+    from app.services.client_protocol import current_client_protocol, in_http_request
+
+    _record_lease_renewals(monkeypatch)
+    seen: list[tuple[int | None, bool]] = []
+
+    async def _plan(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen.append((current_client_protocol(), in_http_request()))
+        return _question_turn()
+
+    monkeypatch.setattr("app.tasks.kria_runtime.plan_live_turn", _plan)
+    ids = {"thread_id": uuid.uuid4(), "item_id": uuid.uuid4(), "creator_id": uuid.uuid4()}
+    for snapshot in ({**ids, "client_protocol": 24}, ids):
+        await _plan_with_live_agent(
+            snapshot, "Animate the captions", turn_id=uuid.uuid4(), lease_owner="w", lease_epoch=1
+        )
+
+    assert seen == [(24, False), (None, False)]
+    assert current_client_protocol() is None
+
+
 class _PlanningEngine:
     """Stands in for the per-call asyncpg engine and records its lifecycle."""
 

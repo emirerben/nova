@@ -16,14 +16,18 @@ import unicodedata
 from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, NamedTuple
 
 import structlog
 from pydantic import BaseModel, Field
 
 from app.agents import editor_ops_v2 as _v2
 from app.agents._runtime import Agent, AgentSpec, RefusalError, RunContext, SchemaError
-from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
+from app.agents._schemas.text_animation_phases import (
+    TEXT_ANIMATION_VOCAB,
+    edge_alias_pattern,
+    phases_patch,
+)
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.length_options import length_options
@@ -60,7 +64,9 @@ log = structlog.get_logger()
 # moved to prompts/edit_copilot_turn.txt at the end so the shared head is cacheable.
 # v95 (KRI-1077): animation ids come from {{TEXT_ANIMATION_EDGES}} (the vocab registry), so the
 # six designed animations are offered; the model writes the id, not the label.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v95"
+# v96 (KRI-1077): CAPTION ANIMATION: set_caption_meta animation_phases for all captions, only
+# where CAPTIONS shows `caption_animation: available`; otherwise an honest "can't animate yet".
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v96"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -714,8 +720,27 @@ _CAPTION_META_FIELDS = frozenset(
         "highlight_color",
         "stroke_width",
         "shadow_enabled",
+        "animation_phases",
     }
 )
+
+
+class _FieldGate(NamedTuple):
+    capability: str
+    unavailable_en: str
+    unavailable_tr: str
+
+
+# A caption meta field only some app builds keep is accepted only where the snapshot
+# advertises that editor capability (`kria_editor_ops.COPILOT_EDITOR_CAPABILITIES`);
+# elsewhere the creator is told it can't be done yet.
+_CAPTION_META_FIELD_GATES = {
+    "animation_phases": _FieldGate(
+        "caption_animation",
+        "Captions on this video can't animate yet.",
+        "Bu videodaki altyazılara henüz animasyon eklenemiyor.",
+    ),
+}
 _FONT_KIND_HINTS: dict[str, str] = {
     "playfair": "serif",
     "fraunces": "serif",
@@ -1956,6 +1981,23 @@ def _format_snapshot(snapshot: dict) -> str:
             f"stroke={_fmt_round3(_first_number(meta, ('stroke_width',)))} "
             f"shadow={meta.get('shadow_enabled')!r}"
         )
+        capabilities = snapshot.get("editor_capabilities")
+        if isinstance(capabilities, dict) and capabilities.get("caption_animation") is True:
+            phases = meta.get("animation_phases")
+            current = (
+                ",".join(
+                    f"{name}:{_field(phases.get(name, default), max_chars=20)}"
+                    for name, default in (
+                        ("entrance", "none"),
+                        ("exit", "none"),
+                        ("loop", "none"),
+                        ("speed", 1),
+                    )
+                )
+                if isinstance(phases, dict)
+                else "not set"
+            )
+            lines.append(f"caption_animation: available, current={current}")
         if not cues_editable:
             if component_context_enabled:
                 lines.append(
@@ -4054,8 +4096,11 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
 
     clarification_before = state.selector_clarification
     no_effect_count_before = len(state.no_effect_clarifications)
+    rejections_before = len(state.rejection_reasons)
     parsed = _coerce_payload(name, payload, snapshot, state)
     if parsed is None:
+        if len(state.rejection_reasons) > rejections_before:
+            return None  # the coercer already recorded why
         if state.selector_clarification not in (None, clarification_before):
             # A selector that matched nothing already asked the creator which
             # text they meant. It is a clarification, not a failed value: a
@@ -5132,7 +5177,7 @@ def _coerce_payload(
         patch = out.get("patch")
         if not isinstance(patch, dict):
             return None
-        clean_patch = _coerce_caption_meta_patch(patch, state)
+        clean_patch = _coerce_caption_meta_patch(patch, snapshot, state)
         if not clean_patch:
             return None
         out["patch"] = clean_patch
@@ -6081,12 +6126,27 @@ def _coerce_overlay_patch(patch: dict, state: _ParseState) -> dict:
     return out
 
 
-def _coerce_caption_meta_patch(patch: dict, state: _ParseState) -> dict:
+def _coerce_caption_meta_patch(patch: dict, snapshot: dict, state: _ParseState) -> dict:
     out: dict[str, Any] = {}
+    advertised = snapshot.get("editor_capabilities")
     for key, value in patch.items():
         if key not in _CAPTION_META_FIELDS:
             continue
-        if key == "enabled":
+        gate = _CAPTION_META_FIELD_GATES.get(key)
+        if gate is not None and not (
+            isinstance(advertised, dict) and advertised.get(gate.capability) is True
+        ):
+            unavailable = say(en=gate.unavailable_en, tr=gate.unavailable_tr)
+            state.reject(op="set_caption_meta", reason="capability_unavailable", detail=unavailable)
+            state.reply_notes.append(unavailable)
+            continue
+        if key == "animation_phases":
+            phases = phases_patch(value)
+            if phases is None:
+                state.invalid_value()
+                return {}
+            out[key] = phases
+        elif key == "enabled":
             if not isinstance(value, bool):
                 state.invalid_value()
                 return {}

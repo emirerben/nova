@@ -142,7 +142,11 @@ from app.services.choice_questions import (
     simpler_version_question,
     tag_event,
 )
-from app.services.client_protocol import APPROVAL_CLIENT_PROTOCOL_FIELD
+from app.services.client_protocol import (
+    APPROVAL_CLIENT_PROTOCOL_FIELD,
+    bind_sending_build,
+    unbind_sending_build,
+)
 from app.services.creation_thread_titles import conversation_revision_matches_sync
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.creator_label_reply import LabelTextReply, label_text_reply
@@ -3193,6 +3197,7 @@ async def _plan_with_live_agent(
     # KRI-1037: "Try again" after a provider deadline starts the Main Creator on its lighter
     # rung (the claim stamped the snapshot from the thread's last finished turn).
     degraded_token = start_degraded_retry.set(bool(snapshot.get("start_degraded")))
+    sender = bind_sending_build(stamped_client_protocol(snapshot.get("client_protocol")))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             parsed_state = parse_editor_state(editor_state)
@@ -3328,6 +3333,7 @@ async def _plan_with_live_agent(
     finally:
         turn_deadline.reset(deadline)
         start_degraded_retry.reset(degraded_token)
+        unbind_sending_build(sender)
         stop.set()
         try:
             await heartbeat
