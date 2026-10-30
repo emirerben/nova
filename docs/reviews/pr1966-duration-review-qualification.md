@@ -2,7 +2,7 @@
 
 The isolated branch starts at duration-review commit `6f1b98fa6463c249bbb7bda279c5eca5445c0ccd`. It incorporates Yasin's exact PR1966 commit `09026e996254d20603850a2079e39ed1be0f33c0`, with original author and commit message preserved in local commit `e69383725`. The upstream parser change removes the broad `for/lasting N seconds` recognizer. It is not our parser implementation.
 
-Our additional review guard requires clarification when the approved plan's total disagrees with the structured global authority. That disagreement cannot authorize a restore candidate. The original useful case remains supported: approved plan20, global brief20 and final settings3 produce the bounded restore20 proposal. No proposal applies itself or claims the exported video is fixed.
+Our additional review guard requires clarification when an exact approved total disagrees with the structured global authority. For an `at_most` ceiling, the existing draft sanitizer permits a shorter selected plan. The audit therefore allows an approved target at or below the ceiling, requires dispatch to retain that selected target, and checks the provenance stamp and contract against the ceiling. A valid selected15/stamp20/contract20/recipe15 is consistent; a downstream selected15→3 change is still flagged. That disagreement cannot authorize a restore candidate. The original useful case remains supported: approved plan20, global brief20 and final settings3 produce the bounded restore20 proposal. No proposal applies itself or claims the exported video is fixed.
 
 ## Actual factory qualification
 

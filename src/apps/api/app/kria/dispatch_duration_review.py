@@ -133,9 +133,12 @@ def review_dispatch_duration(
     contract = json.loads(snapshot.contract_json)
     approved = json.loads(snapshot.approved_plan_json)
     approved_target = approved.get("target_duration_s")
-    if not _positive_number(approved_target) or not math.isclose(
-        approved_target, target, abs_tol=0.001, rel_tol=0
-    ):
+    approved_matches = _positive_number(approved_target) and (
+        approved_target <= target
+        if authority.bound == "at_most"
+        else math.isclose(approved_target, target, abs_tol=0.001, rel_tol=0)
+    )
+    if not approved_matches:
         return DurationReview("clarification_needed", ("approved_plan.target_duration_s",))
     observed = {
         "strategy.target_duration_s": strategy.get("target_duration_s"),
@@ -145,7 +148,13 @@ def review_dispatch_duration(
     mismatches = [
         name
         for name, value in observed.items()
-        if not _positive_number(value) or not math.isclose(value, target, abs_tol=0.001, rel_tol=0)
+        if not _positive_number(value)
+        or not math.isclose(
+            value,
+            approved_target if name == "strategy.target_duration_s" else target,
+            abs_tol=0.001,
+            rel_tol=0,
+        )
     ]
     if strategy.get("target_duration_requested") is not True:
         mismatches.append("strategy.target_duration_requested")
