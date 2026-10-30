@@ -195,12 +195,19 @@ def exclusion_question(
     One picker category per contested exclude. The creator taps the clips to LEAVE OUT; a
     pinned clip is never offered, and the matches that are not pinned come pre-ticked. The
     answer rides the same ``clip_selection`` store as every other category, keyed by op
-    "exclude", so it holds on later turns.
+    "exclude", so it holds on later turns. KRI-1076: like every other picker row, an exclude
+    the planner marked photo-only (or video-only) offers and pre-ticks only that kind.
     """
     if not contested:
         return None
     protected = contested[0].protected
-    candidates = [c.media_id for c in clips if c.media_id not in protected][:MAX_QUESTION_CLIPS]
+    kinds = {c.media_id: c.kind for c in clips}
+
+    def offered(asked: ContestedExclusion) -> list[str]:
+        return [
+            m for m in kinds if m not in protected and asked.intent.accepts_source_kind(kinds[m])
+        ][:MAX_QUESTION_CLIPS]
+
     categories = [
         {
             "key": intent_key(asked.intent),
@@ -208,12 +215,14 @@ def exclusion_question(
             "op": "exclude",
             "intent_id": asked.intent.intent_id,
             "creator_text": None,
-            "candidate_media_ids": candidates,
-            "suggested_media_ids": asked.suggested,
+            "candidate_media_ids": offered(asked),
+            "suggested_media_ids": [
+                m for m in asked.suggested if asked.intent.accepts_source_kind(kinds.get(m, ""))
+            ],
         }
         for asked in contested
     ]
-    question = build_clip_question(categories, media_kinds={c.media_id: c.kind for c in clips})
+    question = build_clip_question(categories, media_kinds=kinds)
     if question is None:
         return None
     return _question_text([c["label"] for c in question["categories"]]), question

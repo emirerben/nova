@@ -3797,9 +3797,12 @@ async def _plan_creator_action(
                     if state.approved is not None
                 ],
                 clips=intent_clips,
+                # KRI-1076: the plan item makes the planner's and resolver's agent_run rows
+                # (their input and answer) land, so a missed match can be read afterwards.
                 run_context=RunContext(
                     request_id=str(thread_id),
                     creator_id=str(creator_id),
+                    plan_item_id=str(item_id),
                 ),
                 # KRI-282: chat clips have no background vision lane, so give the
                 # turn itself a larger (cached, converging) foreground budget.
