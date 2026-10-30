@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.16.0] - 2026-10-30
+
+### Fixed
+- fix(agents): chat AI can apply all six designed text animations; one registry feeds every AI list (KRI-1077) (#1967) <!-- release-pr: 1967 -->
+
 ## [0.83.15.0] - 2026-10-30
 
 ### Fixed
