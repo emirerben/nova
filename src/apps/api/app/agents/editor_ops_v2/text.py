@@ -325,6 +325,9 @@ def _coerce_set_texts_timing(name: str, payload: dict, snapshot: dict, state: An
                 return None
             out[key] = number
     absolute = {"start_s", "end_s"} & out.keys()
+    if name == "retime_text_sequence" and (absolute != {"start_s", "end_s"} or "shift_s" in out):
+        state.invalid_value()
+        return None
     if ("shift_s" in out) == bool(absolute):
         state.invalid_value()
         return None
@@ -514,6 +517,12 @@ SPECS: list[OpSpec] = [
         coerce=_coerce_set_texts_timing,
     ),
     OpSpec(
+        name="retime_text_sequence",
+        required=frozenset({"selector", "start_s", "end_s"}),
+        family=_FAMILY,
+        coerce=_coerce_set_texts_timing,
+    ),
+    OpSpec(
         name="realign_labels",
         fields=frozenset({"selector"}),
         family=_FAMILY,
@@ -534,4 +543,5 @@ def register_handlers() -> None:
     ops.register_handler("remove_texts", text.op_remove_texts)
     ops.register_handler("replace_text_sequence", text.op_replace_text_sequence)
     ops.register_handler("set_texts_timing", text.op_set_texts_timing)
+    ops.register_handler("retime_text_sequence", text.op_retime_text_sequence)
     ops.register_handler("realign_labels", text.op_realign_labels)

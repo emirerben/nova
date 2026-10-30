@@ -135,6 +135,22 @@ class KriaEditorOpError(ValueError):
     """A parsed operation cannot be represented by the portable Save contract."""
 
 
+class TextTimingConflict(KriaEditorOpError):
+    """An unchanged text clock cannot fit the proposed editable duration."""
+
+    def __init__(
+        self, requested_duration_s: float, required_duration_s: float, text_ids: tuple[str, ...]
+    ):
+        self.requested_duration_s = requested_duration_s
+        self.required_duration_s = required_duration_s
+        self.minimum_duration_s = math.ceil(required_duration_s * 10) / 10
+        self.conflicting_text_ids = text_ids
+        super().__init__(
+            f"Text ends at {required_duration_s:g}s, "
+            f"beyond the proposed {requested_duration_s:g}s video"
+        )
+
+
 @dataclass(frozen=True)
 class CompiledEditorDraft:
     payload: EditorCommitRequest | dict[str, Any]
@@ -1925,7 +1941,12 @@ def _text_ids(rows: list[dict[str, Any]]) -> set[str]:
 
 
 def _validate_timing_numbers(op: dict[str, Any]) -> None:
-    if op.get("op") not in {"set_text_timing", "set_texts_timing", "add_text"}:
+    if op.get("op") not in {
+        "set_text_timing",
+        "set_texts_timing",
+        "retime_text_sequence",
+        "add_text",
+    }:
         return
     for key in ("start_s", "end_s", "shift_s"):
         if key in op and not math.isfinite(float(op[key])):
@@ -2382,7 +2403,9 @@ def _load_lane_handlers() -> None:
     register_all_handlers()
 
 
-def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> CompiledEditorDraft:
+def compile_editor_ops(
+    job: Any, variant: dict[str, Any], ops: list[dict], *, preserve_text: bool = False
+) -> CompiledEditorDraft:
     """Compile one all-or-nothing portable operation bundle.
 
     The input is expected to have passed EditCopilot's schema parser.  This
@@ -2391,9 +2414,31 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
     """
 
     _load_lane_handlers()
+    if preserve_text:
+        from app.agents.editor_ops_v2 import lane_specs
+
+        text_ops = {
+            "edit_text",
+            "patch_text_style",
+            "set_text_timing",
+            "add_text",
+            "remove_text",
+            "label_each_clip",
+            "patch_text_appearance",
+        } | {spec.name for spec in lane_specs() if "text" in spec.family}
+        ops = [op for op in ops if op.get("op") not in text_ops]
     if not ops:
         raise KriaEditorOpError("No safe draft change was produced")
     ops = coalesce_text_style_ops(ops)
+    duration_only = bool(ops) and all(
+        op.get("op") == "set_total_duration"
+        or (
+            op.get("op") == "patch_slots"
+            and bool(op.get("patch"))
+            and set(op["patch"]) <= {"duration_s"}
+        )
+        for op in ops
+    )
     if len(ops) > MAX_EDITOR_OPS:
         raise KriaEditorOpError(f"A draft may contain at most {MAX_EDITOR_OPS} editor operations")
     if any(op.get("op") == "apply_speech_cut_candidate" for op in ops):
@@ -2476,7 +2521,7 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         before_ids = _text_ids(state.text)
         handler(state, op)
         state.explicit_text_ids.update(_text_ids(state.text) - before_ids)
-        if name == "set_texts_timing":
+        if name in {"set_texts_timing", "retime_text_sequence"}:
             state.explicit_text_ids.update(
                 value for value in op.get("target_ids", []) if isinstance(value, str)
             )
@@ -2498,6 +2543,11 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             row.update(narrated_storyboard_row_updates(row))
 
     changed = state.changed
+    if preserve_text and state.text != initial_text:
+        raise KriaEditorOpError("This request keeps the text unchanged; no text change was applied")
+    text_timing = (
+        "preserve_all" if preserve_text else "preserve_absolute" if duration_only else "follow"
+    )
     guided = _guided_v2_revision(job, variant)
     if "timeline" in changed and guided is not None and _is_guided_native(job, variant):
         from app.services.kria_editor_timeline import rebase_guided_text  # noqa: PLC0415
@@ -2506,14 +2556,17 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
         # rebased text_elements, so the server treats text as authored and skips
         # its (right-biased, non-label-aware) own projection.
         state.explicit_text_ids.update(_explicit_text_timing_ids(initial_text, state.text))
-        rebase_guided_text(state, guided)
+        rebase_guided_text(state, guided, text_timing=text_timing)
     elif (
         "timeline" in changed
         and _is_authored_phone_native(job, variant)
-        and any(
-            str(op.get("op") or "") == "patch_slots"
-            and "playback_rate" in dict(op.get("patch") or {})
-            for op in ops
+        and (
+            text_timing != "follow"
+            or any(
+                str(op.get("op") or "") == "patch_slots"
+                and "playback_rate" in dict(op.get("patch") or {})
+                for op in ops
+            )
         )
     ):
         from app.services.authored_text_fit import _segments  # noqa: PLC0415
@@ -2529,7 +2582,27 @@ def compile_editor_ops(job: Any, variant: dict[str, Any], ops: list[dict]) -> Co
             None,
             old_segments_override=_segments(state.initial_slots),
             new_segments_override=_segments(state.slots),
+            text_timing=text_timing,
         )
+    from app.services.kria_editor_ops_text import validate_sequence_collisions
+
+    if any(op.get("op") == "retime_text_sequence" for op in ops):
+        from app.services.authored_text_fit import _segments
+        from app.services.kria_editor_timeline import guided_segments_for_rows
+
+        final_segments = (
+            guided_segments_for_rows(guided, state.slots)
+            if guided is not None
+            else _segments(state.slots)
+        )
+        total = max((float(row["output_end_s"]) for row in final_segments), default=0.0)
+        for row in state.text:
+            if (
+                str(row.get("id") or "") in state.explicit_text_ids
+                and float(row.get("end_s") or 0) > total + 1e-6
+            ):
+                raise KriaEditorOpError("That sequence does not fit on the final video")
+    validate_sequence_collisions(state.text, initial_text)
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
         visual_blocks=state.visual_blocks,

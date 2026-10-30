@@ -2272,6 +2272,13 @@ async def _plan_editor_revision(
     # Release the read transaction before Copilot model I/O. The response is
     # derived only from the immutable snapshot and copied conversation rows.
     await db.rollback()
+    from app.kria.editor_sequence_timing import sequence_timing_plan
+
+    sequence_plan = sequence_timing_plan(user_message, target.snapshot)
+    if sequence_plan is not None:
+        return adapt_editor_action(
+            reply=_phone_editor_reply(sequence_plan.reply), ops=list(sequence_plan.operations)
+        )
     planner_deadline = turn_deadline.get()
     response = await run_copilot_turn(
         CopilotTurnBody(
@@ -4449,6 +4456,7 @@ _FAST_PATH_OPS = frozenset(
         "add_text",
         "set_text_timing",
         "set_texts_timing",
+        "retime_text_sequence",
         "realign_labels",
         "label_each_clip",
         "reorder_clips_by",

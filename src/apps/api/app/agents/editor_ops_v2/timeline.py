@@ -661,6 +661,9 @@ def _bounds(
 
 def _write_durations(state: Any, idx: list[int], durations: list[float]) -> None:
     ops = _ops()
+    source_clock = any(state.slots[i].get("source_end_s") is not None for i in idx)
+    cumulative = 0.0
+    written = 0.0
     for pos, i in enumerate(idx):
         row = state.slots[i]
         source = row.get("source_duration_s")
@@ -676,11 +679,15 @@ def _write_durations(state: Any, idx: list[int], durations: list[float]) -> None
             )
             if new_in != in_s:
                 row["in_s"] = round(new_in, 3)
+        cumulative += durations[pos]
+        edge = round(cumulative, 3)
+        persisted_duration = round(durations[pos], 6) if source_clock else round(edge - written, 3)
+        written = edge
         row["duration_beats"] = None
-        row["duration_s"] = round(durations[pos], 3)
+        row["duration_s"] = persisted_duration
         if row.get("source_end_s") is not None:
             row["source_end_s"] = round(
-                float(row.get("in_s") or 0.0) + durations[pos] * ops._slot_rate(row), 6
+                float(row.get("in_s") or 0.0) + persisted_duration * ops._slot_rate(row), 6
             )
     state.changed.add("timeline")
 
@@ -777,6 +784,13 @@ def _op_set_total_duration(state: Any, op: dict[str, Any]) -> None:
         room = [(highs[k] - d[k]) if gap > 0 else (d[k] - lows[k]) for k in range(len(d))]
         k = max(range(len(d)), key=lambda i: room[i])
         d[k] = _frame(min(highs[k], max(lows[k], d[k] + gap)))
+    residual = target - _plan_total(d, rows)
+    if 0 < abs(residual) <= len(d) * 0.000001:
+        for k in range(len(d) - 1, -1, -1):
+            corrected = round(d[k] + residual, 6)
+            if lows[k] <= corrected <= highs[k]:
+                d[k] = corrected
+                break
     if abs(target - _plan_total(d, rows)) > 0.15:
         raise _err("Cannot reach that length with the footage available")
     _write_durations(state, idx, d)

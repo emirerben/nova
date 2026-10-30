@@ -150,7 +150,9 @@ from app.services.kria_editor_ops import (
     EditorStateReplyError,
     EditorStateSpeechCutError,
     KriaEditorOpError,
+    TextTimingConflict,
     _clip_label_links,
+    build_editor_snapshot,
     compile_editor_ops,
     editor_state_has_lanes,
     merge_editor_draft,
@@ -1527,8 +1529,35 @@ def _complete_draft_turn(
                     raise EditorStateSpeechCutError(EditorStateSpeechCutError.reply)
             elif wants_speech_cut and prior_payload:
                 raise RuntimeError("Save the current draft before applying speech processing")
-            compiled = compile_editor_ops(job, editor_base.projected, arguments.operations)
-            scoped_fields = _scoped_turn_fields(db.get(CreationThreadEvent, turn.source_event_id))
+            from app.kria.creator_cues import preserves_editor_text
+
+            source_event = db.get(CreationThreadEvent, turn.source_event_id)
+            compiled = compile_editor_ops(
+                job,
+                editor_base.projected,
+                arguments.operations,
+                preserve_text=preserves_editor_text(source_event.content or "")
+                if source_event
+                else False,
+            )
+            from app.kria.editor_sequence_timing import sequence_timing_plan
+            from app.services.kria_editor_ops_text import validate_timing_only_text
+
+            if (
+                source_event
+                and sequence_timing_plan(
+                    source_event.content or "", build_editor_snapshot(job, editor_base.projected)
+                )
+                is not None
+            ):
+                validate_timing_only_text(
+                    editor_base.projected.get("text_elements") or [],
+                    compiled.payload.text_elements
+                    if isinstance(compiled.payload, EditorCommitRequest)
+                    and compiled.payload.text_elements is not None
+                    else editor_base.projected.get("text_elements") or [],
+                )
+            scoped_fields = _scoped_turn_fields(source_event)
             if scoped_fields is not None:
                 # KRI-441 layer 3: whatever the model or a manual edit slipped outside the
                 # flagged sections is stripped from the compiled draft, never failed.
@@ -4017,6 +4046,45 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         claimed_thread_revision=claimed_thread_revision,
                         planned=planned,
                         client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
+                    )
+                except TextTimingConflict as exc:
+                    planned = replace(
+                        planned,
+                        plan=KriaTurnPlan(
+                            mode="respond",
+                            turn_value="question",
+                            response=say(
+                                en=(
+                                    f"Your text ends at {exc.required_duration_s:g}s, "
+                                    f"beyond the requested {exc.requested_duration_s:g}s. "
+                                    f"Keep the video at least {exc.minimum_duration_s:g}s, "
+                                    "or allow me to adjust the text timing? Nothing was changed."
+                                ),
+                                tr=(
+                                    f"Yazıların {exc.required_duration_s:g}. saniyede bitiyor. "
+                                    f"Videoyu en az {exc.minimum_duration_s:g} saniye mi tutayım, "
+                                    "yoksa yazıların zamanlamasını "
+                                    "değiştirebilir miyim? Hiçbir şey değişmedi."
+                                ),
+                            ),
+                            reply_options=[
+                                say(
+                                    en=f"Keep the video at {exc.minimum_duration_s:g}s",
+                                    tr=f"Videoyu {exc.minimum_duration_s:g} saniye tut",
+                                ),
+                                say(
+                                    en=f"Retime text to {exc.requested_duration_s:g}s",
+                                    tr=f"Yazıları {exc.requested_duration_s:g} saniyeye yay",
+                                ),
+                            ],
+                        ),
+                    )
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
                     )
                 except EditorStateReplyError as exc:
                     # The creator's unsaved state is stale (video changed) or the op

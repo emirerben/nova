@@ -1007,6 +1007,119 @@ def op_set_texts_timing(state: _DraftState, op: dict[str, Any]) -> None:
     state.summary = f"Retime {_plural(len(rows), 'text')}"
 
 
+def sequence_source(row: dict[str, Any]) -> str | None:
+    params = row.get("source_params")
+    value = row.get("sequence_source_id") or (
+        params.get("sequence_source_id") if isinstance(params, dict) else None
+    )
+    return value if isinstance(value, str) and value else None
+
+
+def op_retime_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
+    rows = _targets(state, op)
+    sources = {sequence_source(row) for row in rows}
+    if len(sources) != 1 or None in sources:
+        raise KriaEditorOpError("Choose one complete word sequence to retime")
+    source = next(iter(sources))
+    siblings = [
+        row for row in state.text if not row.get("removed") and sequence_source(row) == source
+    ]
+    if {row["id"] for row in siblings} != {row["id"] for row in rows}:
+        raise KriaEditorOpError("Choose the complete word sequence, including every word")
+
+    def order(row):
+        suffix = str(row.get("id") or "").removeprefix(source)
+        parts = suffix.split("::sequence-")
+        if parts[0] or len(parts) < 2 or any(not part.isdigit() for part in parts[1:]):
+            raise KriaEditorOpError(
+                "The original word order is unavailable; "
+                "choose a sequence with intact word identities"
+            )
+        return tuple(int(part) for part in parts[1:])
+
+    siblings = sorted(siblings, key=order)
+    start, end = _number(op.get("start_s")), _number(op.get("end_s"))
+    if (
+        start is None
+        or end is None
+        or not math.isfinite(start)
+        or not math.isfinite(end)
+        or start < 0
+        or end <= start
+    ):
+        raise KriaEditorOpError("That sequence needs a valid start and end")
+    windows = _sequence_windows(
+        [str(row.get("text") or "") for row in siblings],
+        start,
+        end,
+        weighted=False,
+        cumulative=False,
+    )
+    if min(b - a for a, b in windows) < _MIN_PIECE_S - _PIECE_TOLERANCE_S:
+        raise KriaEditorOpError(
+            f"These {len(rows)} words need at least "
+            f"{len(rows) * _MIN_PIECE_S:g}s to remain readable"
+        )
+    for row, (start, end) in zip(siblings, windows, strict=True):
+        row["start_s"], row["end_s"] = start, end
+    state.changed.add("text")
+    state.summary = f"Retime {len(rows)} words in sequence"
+
+
+def validate_sequence_collisions(rows: list[dict[str, Any]], before: list[dict[str, Any]]) -> None:
+    def collisions(items):
+        groups: dict[tuple, list[dict[str, Any]]] = {}
+        for row in items:
+            source = sequence_source(row)
+            if source is None or row.get("removed"):
+                continue
+            position = row.get("position") or "middle"
+            x = row.get("x_frac") if position == "custom" else None
+            y = row.get("y_frac") if position == "custom" else _NAMED_Y.get(position, 0.5)
+            groups.setdefault(
+                (source, 0.5 if x is None else x, 0.5 if y is None else y), []
+            ).append(row)
+        overlaps = {}
+        for (source, *_anchor), siblings in groups.items():
+            for i, left in enumerate(siblings):
+                for right in siblings[i + 1 :]:
+                    overlap = min(
+                        float(left.get("end_s") or 0), float(right.get("end_s") or 0)
+                    ) - max(float(left.get("start_s") or 0), float(right.get("start_s") or 0))
+                    if overlap > _PIECE_TOLERANCE_S:
+                        key = (source, *sorted((str(left.get("id")), str(right.get("id")))))
+                        overlaps[key] = overlap
+        return overlaps
+
+    original = collisions(before)
+    if any(
+        value > original.get(key, 0) + _PIECE_TOLERANCE_S for key, value in collisions(rows).items()
+    ):
+        raise KriaEditorOpError(
+            "Those sequential words would overlap in the same "
+            "position. Retime the complete sequence instead"
+        )
+
+
+def validate_timing_only_text(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> None:
+    def identity(rows):
+        return [
+            {
+                k: v
+                for k, v in row.items()
+                if k not in {"start_s", "end_s", "segment_id"} and v is not None
+            }
+            for row in rows
+            if not row.get("removed")
+        ]
+
+    if identity(before) != identity(after):
+        raise KriaEditorOpError(
+            "Retiming must keep every word and its appearance. "
+            "Retime the existing sequence instead of replacing it"
+        )
+
+
 # ------------------------------------------------------------- realign_labels
 
 LABEL_ALIGN_TOLERANCE_S = 0.05

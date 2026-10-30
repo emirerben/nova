@@ -2223,6 +2223,36 @@
         "scripts/kria/score_29_ekim.py",
         "scripts/kria/capture_29_ekim_post_approval.py"
       ]
+    },
+    {
+      "id": "duration-text-preservation",
+      "needs_native": true,
+      "api_tests": "tests/services/test_duration_text_preservation.py tests/kria/test_editor_sequence_timing.py tests/kria/test_duration_text_preservation_postgres.py",
+      "xctests": [
+        "KriaTests/DurationTextPreservationTests/testTwentySecondDurationPreservesEveryRenderedWord",
+        "KriaTests/DurationTextPreservationTests/testTwelveSecondDurationPreservesEveryRenderedWord",
+        "KriaTests/DurationTextPreservationTests/testExplicitRetimePreservesEveryRenderedWord",
+        "KriaTests/DurationTextPreservationTests/testOverlappingSequenceFailsTheSameConcurrencyAndContentOracle"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/editor_ops_v2/text.py",
+        "src/apps/api/app/agents/editor_ops_v2/timeline.py",
+        "src/apps/api/app/kria/creator_cues.py",
+        "src/apps/api/app/kria/editor_sequence_timing.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/kria_editor_ops.py",
+        "src/apps/api/app/services/kria_editor_ops_text.py",
+        "src/apps/api/app/services/kria_editor_timeline.py",
+        "src/apps/api/app/tasks/kria_runtime.py",
+        "src/apps/api/tests/services/test_duration_text_preservation.py",
+        "src/apps/api/tests/kria/test_editor_sequence_timing.py",
+        "src/apps/api/tests/kria/test_duration_text_preservation_postgres.py",
+        "src/apps/ios/Tests/KriaTests/DurationTextPreservationTests.swift",
+        "src/apps/ios/Tests/Fixtures/DurationTextPreservation.json",
+        "scripts/ios/duration-text-preservation-fixtures.py",
+        "src/apps/api/app/kria/plan_review.py"
+      ],
+      "fixture_generator": "scripts/ios/duration-text-preservation-fixtures.py"
     }
   ]
 }
