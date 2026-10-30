@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.19.0] - 2026-10-30
+
+### Changed
+- perf(ci): narrow audited test-only suite selection (#1959) <!-- release-pr: 1959 -->
+
 ## [0.83.18.0] - 2026-10-30
 
 ### Fixed
