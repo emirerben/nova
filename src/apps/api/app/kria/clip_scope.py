@@ -407,6 +407,10 @@ def excluded_clips(
     protects none. And a clip the creator tapped out (or named by file) stays out unless
     the creator also settled another ask onto it: a resolver match for a label or an
     include is a guess, the tap is their word.
+
+    Leverkusen M1 run 2 #5: a first/last ask that matched several clips ("starting with
+    the train ride": the train video and two photos) gives up the ones a skip names ("the
+    photo of the empty train seat") while one of its clips is left to open the edit.
     """
 
     intents = [i for i in resolved_intents or [] if i.status == "resolved"]
@@ -425,7 +429,10 @@ def excluded_clips(
     named = {
         a.media_id
         for i in intents
-        if i.op != "exclude" and not i.exclusive and not _orders_every_clip(i)
+        if i.op != "exclude"
+        and not i.exclusive
+        and not _orders_every_clip(i)
+        and not (places_a_group(i) and any(m.media_id not in excluded for m in i.assignments))
         for a in i.assignments
         if a.media_id not in tapped or a.evidence in CREATOR_EVIDENCE
     }
@@ -435,6 +442,20 @@ def excluded_clips(
 def _orders_every_clip(intent: ResolvedClipIntent) -> bool:
     """A filming-time or route order: it sorts the whole set, whatever the set is."""
     return intent.op == "order" and intent.order_by is not None
+
+
+def places_a_group(intent: ResolvedClipIntent) -> bool:
+    """A first/last ask the resolver matched to several clips ("starting with the train ride").
+
+    It seats the group and says nothing about any one clip in it, so a skip naming one of
+    them is the narrower ask. A first/last ask matched to ONE clip ("open on the tray
+    clip", KRI-761) is the creator pinning that clip.
+    """
+    return (
+        intent.op == "order"
+        and intent.position is not None
+        and len({a.media_id for a in intent.assignments}) > 1
+    )
 
 
 def apply_clip_exclusions(
@@ -592,5 +613,6 @@ __all__ = [
     "length_asks",
     "length_groups",
     "placed_media",
+    "places_a_group",
     "ruled_out_clips",
 ]
