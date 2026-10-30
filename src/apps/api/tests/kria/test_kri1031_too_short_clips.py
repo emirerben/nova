@@ -163,6 +163,26 @@ def test_a_measured_exclusion_is_resolved_with_its_own_evidence() -> None:
     assert resolve_too_short(blurry, _intent_clips()) is None
 
 
+@pytest.mark.parametrize("source_kind", [None, "video", "image"])
+def test_measured_exclusion_respects_source_kind_on_mixed_media(source_kind: str | None) -> None:
+    ask = ClipIntent(
+        intent_id="exclude_short_clips",
+        op="exclude",
+        attribute="anything too short to use",
+        by_length="too_short",
+        source_kind=source_kind,
+    )
+    clips = [*_lengths(10, 0.2), IntentClip(media_id="photo-1", kind="image", analysis=None)]
+    resolved = resolve_too_short(ask, clips)
+    if source_kind == "image":
+        assert resolved is None
+    else:
+        assert resolved is not None
+        assert [(a.media_id, a.evidence) for a in resolved.assignments] == [
+            ("clip-2", LENGTH_EVIDENCE)
+        ]
+
+
 # -- the planner records the length ask (9, 10) -------------------------------
 
 _PLANNER_INTENTS: list[dict[str, Any]] = [
@@ -404,8 +424,10 @@ async def test_no_short_clips_notice_does_not_claim_another_exclusion_was_kept(
     assert "kept them all" not in reply
 
 
-async def test_a_tap_answer_beats_the_length_rule(monkeypatch) -> None:
+@pytest.mark.parametrize("source_kind", [None, "video"])
+async def test_a_tap_answer_beats_the_length_rule(monkeypatch, source_kind) -> None:
     # 5: the creator already tapped only the 0.2 s clip for this ask: that answer stands.
+    monkeypatch.setitem(_PLANNER_INTENTS[1], "source_kind", source_kind)
     _provider(monkeypatch, _CATHEDRAL_LAST)
     selections = ClipSelections(
         by_key={"exclude:anything-too-short-to-use": SelectionEntry(media_ids=(J2,))}
@@ -420,6 +442,61 @@ async def test_a_tap_answer_beats_the_length_rule(monkeypatch) -> None:
     )
     skip = next(i for i in planned.resolution.intents if i.op == "exclude")
     assert [(a.media_id, a.evidence) for a in skip.assignments] == [(J2, "creator selected")]
+
+
+@pytest.mark.parametrize("source_kind", [None, "video", "image"])
+async def test_source_kind_keeps_length_measurement_or_resolver_path(
+    monkeypatch, source_kind
+) -> None:
+    monkeypatch.setitem(_PLANNER_INTENTS[1], "source_kind", source_kind)
+    provider = _provider(monkeypatch, _CATHEDRAL_LAST)
+    clips = [
+        *_intent_clips(),
+        IntentClip(media_id="photo-1", kind="image", analysis={"subject": "the plaza"}),
+    ]
+    planned = await plan_and_resolve_clip_intents(
+        creator_request=RESEND,
+        latest_user_message=RESEND,
+        candidate_intents=None,
+        clips=clips,
+        run_context=RunContext(),
+    )
+    skip = next(i for i in planned.resolution.intents if i.op == "exclude")
+    assert skip.source_kind == source_kind
+    if source_kind == "image":
+        assert "exclude_short_clips" in provider.resolver_intents
+        assert not any(a.evidence == LENGTH_EVIDENCE for a in skip.assignments)
+        assert all(a.media_id == "photo-1" for a in skip.assignments)
+    else:
+        assert "exclude_short_clips" not in provider.resolver_intents
+        assert {a.media_id for a in skip.assignments} == JUNK
+
+
+async def test_wrong_kind_creator_choice_still_stops_before_length_or_resolver(monkeypatch) -> None:
+    monkeypatch.setitem(_PLANNER_INTENTS[1], "source_kind", "video")
+    provider = _provider(monkeypatch, _CATHEDRAL_LAST)
+    selections = ClipSelections(
+        by_key={"exclude:anything-too-short-to-use": SelectionEntry(media_ids=("photo-1",), seq=2)}
+    )
+    planned = await plan_and_resolve_clip_intents(
+        creator_request=RESEND,
+        latest_user_message=RESEND,
+        candidate_intents=None,
+        clips=[
+            *_intent_clips(),
+            IntentClip(media_id="photo-1", kind="image", analysis={"subject": "the plaza"}),
+        ],
+        run_context=RunContext(),
+        clip_selections=selections,
+    )
+    assert planned.resolution.needs_creator
+    assert planned.resolution.error_code == "source_kind_conflict"
+    assert provider.calls == ["planner"]
+    skip = next(i for i in planned.resolution.intents if i.op == "exclude")
+    assert skip.assignments == []
+    checked = next(i for i in planned.checked_intents if i.op == "exclude")
+    assert checked.source_kind == "video"
+    assert selections.by_key["exclude:anything-too-short-to-use"].media_ids == ("photo-1",)
 
 
 async def test_an_unknown_length_goes_to_the_resolver_as_before(monkeypatch) -> None:

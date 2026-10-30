@@ -8,6 +8,9 @@ import UIKit
 /// changes its URL. The existing UI-only fallback supplies projects and drafts.
 enum ChatUITestTransport {
     static func api() -> KriaAPI {
+        if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA"] == "1" {
+            URLProtocol.registerClass(GeneratedMediaImageFixtureProtocol.self)
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ChatUITestURLProtocol.self]
         return KriaAPI(
@@ -16,6 +19,24 @@ enum ChatUITestTransport {
             session: URLSession(configuration: configuration)
         )
     }
+}
+
+private final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "generated-media-image.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let url = request.url,
+              let resource = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg"),
+              let data = try? Data(contentsOf: resource),
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/jpeg"]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
 
 /// UI fixtures must never read or rotate a developer's Keychain session.
@@ -111,6 +132,35 @@ final class CreationChatFixture: @unchecked Sendable {
     private var sendRefused = false
     private var slideDrafts: [String: [String: Any]] = [:]
     private var slideRendered: Set<String> = []
+    private var generatedMediaOperations: [String: [String: Any]] = [:]
+    private var generatedMediaAssets: [String: [[String: Any]]] = [:]
+    private var generatedMediaPostCount = 0
+    private var generatedMediaLookupCount = 0
+    private var rejectedGeneratedMediaEvent: String?
+    private var loadedGeneratedMediaFixture = false
+
+    private var generatedFixtureStorageKey: String? {
+        ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_PERSIST"].map { "kria.generated-media-fixture." + $0 }
+    }
+
+    private func loadGeneratedFixture() {
+        guard !loadedGeneratedMediaFixture else { return }
+        loadedGeneratedMediaFixture = true
+        guard let key = generatedFixtureStorageKey, let data = UserDefaults.standard.data(forKey: key),
+              let value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        threads = value["threads"] as? [String: [String: Any]] ?? [:]
+        generatedMediaOperations = value["operations"] as? [String: [String: Any]] ?? [:]
+        generatedMediaAssets = value["assets"] as? [String: [[String: Any]]] ?? [:]
+        generatedMediaPostCount = value["posts"] as? Int ?? 0
+        generatedMediaLookupCount = value["lookups"] as? Int ?? 0
+    }
+
+    private func saveGeneratedFixture() {
+        guard let key = generatedFixtureStorageKey else { return }
+        let value: [String: Any] = ["threads": threads, "operations": generatedMediaOperations,
+            "assets": generatedMediaAssets, "posts": generatedMediaPostCount, "lookups": generatedMediaLookupCount]
+        if let data = try? JSONSerialization.data(withJSONObject: value) { UserDefaults.standard.set(data, forKey: key) }
+    }
     private var chatEditFailed = false
     /// `KRIA_SLIDE_POST_LATE_ASSET=1`: a fourth photo that is still processing for the first two reads
     /// after a draft exists and then turns ready, like an upload that finishes while the editor is open.
@@ -240,6 +290,8 @@ final class CreationChatFixture: @unchecked Sendable {
     /// Returns nil when the request should fail without any HTTP response.
     func respond(_ request: URLRequest) -> (Int, Data)? {
         lock.lock(); defer { lock.unlock() }
+        loadGeneratedFixture()
+        defer { saveGeneratedFixture() }
         let path = request.url?.path ?? ""
         let body = (try? JSONSerialization.jsonObject(with: bodyData(request))) as? [String: Any] ?? [:]
         func response(_ object: Any, status: Int = 200) -> (Int, Data) { (status, (try? JSONSerialization.data(withJSONObject: object)) ?? Data()) }
@@ -327,6 +379,11 @@ final class CreationChatFixture: @unchecked Sendable {
             // KRIA_CHAT_VOICEOVER_SCRIPT (KRI-815): "1" = server advertises voiceover_script_cards; "legacy" = it still
             // sends the voiceover_script payload but does not advertise the capability (old-client text fallback).
             if ProcessInfo.processInfo.environment["KRIA_CHAT_VOICEOVER_SCRIPT"] == "1" { capabilities["voiceover_script_cards"] = true }
+            if let generated = ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA"] {
+                for key in ["generated_images", "generated_image_editing", "generated_narration"] {
+                    capabilities[key] = generated == "1"
+                }
+            }
             // KRIA_CHAT_QUESTION_BATCH (KRI-802): the first reply asks the title wording AND the clip picker.
             if ProcessInfo.processInfo.environment["KRIA_CHAT_QUESTION_BATCH"] == "1" {
                 capabilities["choice_questions"] = true
@@ -435,6 +492,81 @@ final class CreationChatFixture: @unchecked Sendable {
             let photo = Bundle.main.url(forResource: "trulli-street", withExtension: "jpg")?.absoluteString ?? ""
             return response(["assets": [["id": Self.poolPhotoAssetID, "kind": "image", "status": "ready", "media_status": "available",
                                          "source_filename": "N1_09_visual.jpg", "display_url": photo]], "max_assets": 10])
+        }
+        if parts.first == "plan-items", parts.count >= 3, parts[2] == "generated-media",
+           ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA"] == "1" {
+            let itemID = parts[1]
+            let script: [String: Any] = ["script_id": "vos-fixture", "script_version": 1,
+                "text": VoiceoverScriptUITestFixture.text, "approved_script_sha256": "fixture-approved-script"]
+            if parts.last == "narration-script" { return response(script) }
+            if parts.count == 3, request.httpMethod == "POST" {
+                generatedMediaPostCount += 1
+                if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_REJECT_ONCE"] == "1" {
+                    if generatedMediaPostCount == 1 {
+                        rejectedGeneratedMediaEvent = body["client_event_id"] as? String
+                        return response(["detail": "Source changed before submission"], status: 409)
+                    }
+                    guard body["client_event_id"] as? String != rejectedGeneratedMediaEvent else {
+                        return response(["detail": "An explicitly edited request requires a new event"], status: 409)
+                    }
+                }
+                if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1" {
+                    return response(["detail": "Recovery must not POST generation again"], status: 409)
+                }
+                if body["capability"] as? String == "image", let eventID = body["client_event_id"] as? String {
+                    let imageURL = "https://generated-media-image.invalid/cover.jpg"
+                    let operation: [String: Any] = ["id": eventID, "state": "ready", "capability": "image",
+                        "asset_id": "generated-" + eventID, "preview_url": imageURL, "source_url": imageURL,
+                        "retryable": false, "fixture_title": body["editable_title"] ?? ""]
+                    generatedMediaOperations[eventID] = operation
+                    return response(operation)
+                }
+                guard body["capability"] as? String == "narration",
+                      body["prompt"] as? String == VoiceoverScriptUITestFixture.text,
+                      body["script_id"] as? String == "vos-fixture", body["script_version"] as? Int == 1,
+                      body["approved_script_sha256"] as? String == "fixture-approved-script",
+                      let eventID = body["client_event_id"] as? String else {
+                    return response(["detail": "Fixture rejected unapproved narration"], status: 409)
+                }
+                do {
+                    let voiceURL = try Self.generatedNarrationFixtureURL()
+                    let operation: [String: Any] = ["id": eventID, "state": "ready", "capability": "narration",
+                        "asset_id": NSNull(), "preview_url": voiceURL.absoluteString, "source_url": voiceURL.absoluteString,
+                        "retryable": false, "script_id": "vos-fixture", "script_version": 1,
+                        "approved_script_sha256": "fixture-approved-script"]
+                    generatedMediaOperations[eventID] = operation
+                    return response(operation)
+                } catch { return response(["detail": "Fixture audio unavailable"], status: 500) }
+            }
+            let operationID = parts.count > 3 ? (parts[3] == "by-event" ? parts.last! : parts[3]) : ""
+            guard let operation = generatedMediaOperations[operationID] else { return response(["detail": "Unknown fixture request"], status: 404) }
+            if request.httpMethod == "GET" { generatedMediaLookupCount += 1 }
+            if parts.last == "accept", request.httpMethod == "POST" {
+                if operation["capability"] as? String == "image" {
+                    if ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA_RECOVERED"] == "1",
+                       generatedMediaPostCount != 1 || generatedMediaLookupCount < 1 {
+                        return response(["detail": "Recovery counters did not prove one POST and a status lookup"], status: 409)
+                    }
+                    generatedMediaAssets[itemID] = [["id": operation["asset_id"]!, "kind": "image", "status": "ready",
+                        "source_filename": operation["fixture_title"] ?? "", "preview_url": operation["preview_url"]!,
+                        "source_url": operation["source_url"]!, "generation": "1"]]
+                    return response(operation)
+                }
+                guard body["script_id"] as? String == "vos-fixture", body["script_version"] as? Int == 1,
+                      body["approved_script_sha256"] as? String == "fixture-approved-script",
+                      var thread = threads[itemID] else { return response(["detail": "Stale fixture approval"], status: 409) }
+                var state = thread["state"] as? [String: Any] ?? [:]
+                var media = state["media"] as? [[String: Any]] ?? []
+                media.append(["media_id": operationID, "kind": "audio", "filename": "Generated narration.wav", "duration_s": 1])
+                state["media"] = media
+                thread["state"] = state
+                threads[itemID] = thread
+            }
+            return response(operation)
+        }
+        if parts.first == "plan-items", parts.count > 1, parts.last == "assets",
+           ProcessInfo.processInfo.environment["KRIA_GENERATED_MEDIA"] == "1" {
+            return response(["assets": generatedMediaAssets[parts[1]] ?? [], "max_assets": 10])
         }
         if parts.first == "plan-items" { return response(["assets": [], "max_assets": 10]) }
         // `KRIA_CHAT_SEED_THREADS` (perf): an account that already has chats, each built the first time it is asked for.
@@ -1200,6 +1332,20 @@ final class CreationChatFixture: @unchecked Sendable {
          "inferred": ["Old Lighthouse"]],
         ["requirement_id": "req-drone", "status": "not_possible", "reason": "None of your clips is aerial footage."],
     ] }
+
+    private static func generatedNarrationFixtureURL() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("generated-narration-fixture.wav")
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        let format = AVAudioFormat(standardFormatWithSampleRate: 22_050, channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 22_050)!
+        buffer.frameLength = buffer.frameCapacity
+        for index in 0..<Int(buffer.frameLength) {
+            buffer.floatChannelData![0][index] = Float(sin(Double(index) * 2 * .pi * 440 / 22_050) * 0.1)
+        }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+        return url
+    }
 
     /// KRI-282: a thread shaped like the production Olympics thread -- 48 phone analysis-proxy clips
     /// (`analysis-proxy-ios-<UUID>.mp4` media ids), a long history, and the NEWEST event a clip question with

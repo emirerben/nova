@@ -61,7 +61,6 @@ async def collection_world(monkeypatch, request):
     monkeypatch.setattr(storage, "download_to_file", no_download)
     monkeypatch.setattr(facts, "_analyze_source", no_download)
     owner = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@collection.test")
-    monkeypatch.setattr(settings, "media_collection_proposal_user_ids", [owner.id])
     monkeypatch.setattr(settings, "media_collection_cache_only", False)
     other = User(id=uuid.uuid4(), email=f"{uuid.uuid4()}@collection.test")
     asset_ids, source_ids = [], []
@@ -221,11 +220,6 @@ async def test_collection_capability_and_routes_share_account_and_rollback_gates
     response = await client.get("/creation-threads/capabilities")
     assert response.status_code == 200, response.text
     assert response.json()["media_collections"] is True
-    monkeypatch.setattr(settings, "media_collection_proposal_user_ids", [])
-    assert (await client.get("/creation-threads/capabilities")).json()["media_collections"] is False
-    assert (await client.get(f"/me/media-collections/{uuid.uuid4()}")).status_code == 404
-
-    monkeypatch.setattr(settings, "media_collection_proposal_user_ids", [owner.id])
     monkeypatch.setattr(settings, "media_collection_proposals_enabled", False)
     assert (await client.get("/creation-threads/capabilities")).json()["media_collections"] is False
     assert (await client.get(f"/me/media-collections/{uuid.uuid4()}")).status_code == 404

@@ -605,6 +605,8 @@ def _describe_clips(
     used: set[str] = set()
     kept: list[ClipAssignment] = []
     for clip in clips:
+        if not intent.accepts_source_kind(clip.kind):
+            continue
         record = records_by_id[clip.media_id]
         proposed = by_alias.get(media_to_alias.get(clip.media_id, ""))
         options = [(proposed.value, proposed.confidence, proposed.evidence)] if proposed else []
@@ -862,6 +864,8 @@ def _live_photo_ids(
     photo in rounds 1 and 3, nothing in rounds 4 and 6), its silence about a photo rules
     nothing out, so every photo stays a real answer.
     """
+    if not work.intent.accepts_source_kind("image"):
+        return set()
     if not work.considered_media_ids:
         return {c.media_id for c in clips if c.kind == "image"}
     return {
@@ -894,6 +898,7 @@ def _settle_on_only_video(
     intent = work.intent
     if (
         work.kept
+        or not intent.accepts_source_kind(take.kind)
         or intent.op == "exclude"
         or not picker_eligible(intent)
         or take.media_id not in work.considered_media_ids
@@ -981,7 +986,8 @@ def _build_clip_question(
         candidates = [
             c.media_id
             for c in clips
-            if c.media_id not in confirmed
+            if work.intent.accepts_source_kind(c.kind)
+            and c.media_id not in confirmed
             and (not narrow_photos or c.kind != "image" or c.media_id in live)
         ]
         categories.append(
@@ -995,7 +1001,7 @@ def _build_clip_question(
                 "creator_text": work.intent.creator_text,
                 "candidate_media_ids": candidates[:MAX_QUESTION_CLIPS],
                 "suggested_media_ids": sorted(
-                    (m for m in near_misses if m in order and m not in confirmed),
+                    (m for m in near_misses if m in candidates),
                     key=order.__getitem__,
                 ),
             }
@@ -1327,6 +1333,7 @@ async def resolve_clip_intents_for_turn(
                         intent_id=i.intent_id,
                         op=i.op,
                         attribute=i.attribute,
+                        source_kind=i.source_kind,
                         requirement_id=i.requirement_id,
                         status="resolved",
                         assignments=[],
@@ -1344,6 +1351,7 @@ async def resolve_clip_intents_for_turn(
                     intent_id=i.intent_id,
                     op=i.op,
                     attribute=i.attribute,
+                    source_kind=i.source_kind,
                     creator_text=i.creator_text,
                     placeholder=i.placeholder,
                     position=i.position,
@@ -1441,7 +1449,7 @@ async def resolve_clip_intents_for_turn(
         soft_low: list[tuple[float, str]] = []
         for alias in candidate_media:
             media_id = alias_to_media.get(alias)
-            if media_id is None:
+            if media_id is None or not intent.accepts_source_kind(clip_by_id[media_id].kind):
                 continue
             work.considered_media_ids.add(media_id)
             assignment = assignment_by_media.get(alias)
@@ -1747,6 +1755,11 @@ async def resolve_clip_intents_for_turn(
         # foreground budget, then collapse identical media/generation/question work.
         by_intent: dict[str, list[_VisionCandidate]] = {i.intent_id: [] for i in intents}
         for candidate in candidates:
+            clip = clip_by_id.get(candidate.media_id)
+            if clip is not None and not works[candidate.intent_id].intent.accepts_source_kind(
+                clip.kind
+            ):
+                continue
             by_intent.setdefault(candidate.intent_id, []).append(candidate)
         ordered_candidates: list[_VisionCandidate] = []
         while any(by_intent.values()):
@@ -2193,6 +2206,7 @@ async def resolve_clip_intents_for_turn(
                     intent_id=intent.intent_id,
                     op=intent.op,
                     attribute=intent.attribute,
+                    source_kind=intent.source_kind,
                     creator_text=intent.creator_text,
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,
@@ -2213,6 +2227,7 @@ async def resolve_clip_intents_for_turn(
                     intent_id=intent.intent_id,
                     op=intent.op,
                     attribute=intent.attribute,
+                    source_kind=intent.source_kind,
                     creator_text=intent.creator_text,
                     placeholder=intent.placeholder,
                     caption_attribute=intent.caption_attribute,

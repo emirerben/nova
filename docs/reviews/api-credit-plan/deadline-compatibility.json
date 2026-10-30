@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-29T13:42:37.879090+00:00",
+  "evidence_level": "offline_mocked_transport_real_postgresql",
+  "pr_url": "https://github.com/emirerben/nova/pull/1934",
+  "pr_head": "05ea27c29a918973ba20a4c58006fcc56a5e8749",
+  "current_branch_head": "26b6f2a497bb872915d40c833f7993eaa99a9ad7",
+  "checkout_method": "git archive of exact PR commit; no merge or primary runtime edits",
+  "pr_source_sha256": {
+    "src/apps/api/app/agents/_runtime.py": "c5e4ad44d5d34232acba5b968fe3da6cb2219aa683ee20cc8164075b47738ad6",
+    "src/apps/api/app/agents/main_creator.py": "8cc791f65ccd2c28c07fc67ede80d8471ecc4582c36fdd94ed80331e397d9332",
+    "src/apps/api/app/agents/edit_copilot.py": "3ea72fa0696776726c9190588d609dd1cf2c5496bc4b5d3130f655e67571927e",
+    "src/apps/api/tests/agents/test_deadline_ladder.py": "0f87e2f48d97d37b5e0df3cb02d5964a5985ede60a4361c6dea073109b57b6e1"
+  },
+  "overlays": {
+    "ai_cost_control": {
+      "path": "src/apps/api/app/services/ai_cost_control.py",
+      "sha256": "2e250ad4772c9b6200115a35454c2f45aeed48845483b7e48f93c7d8a08d4df8",
+      "matches_current": true
+    },
+    "config": {
+      "path": "src/apps/api/app/config.py",
+      "sha256": "f1e716e98d921f220ce282419f76449253b99835e1dd4d2b26a78d0f33417643",
+      "method": "Exact PR config plus current credit configuration fields; preserves PR deadline flag."
+    },
+    "test": {
+      "path": "src/apps/api/tests/services/test_credit_deadline_compatibility.py",
+      "sha256": "a79a4706267da8e8686cc014821defd693a4857b30f9ed3e5adb704070816cfa"
+    }
+  },
+  "database": "task-owned nova_deadline_test on localhost:55479; migrations through 0126",
+  "runs": [
+    {
+      "cwd": "/Users/emirerben/Documents/Codex/2026-10-29/task-7/deadline-compat/src/apps/api",
+      "environment": {
+        "DATABASE_URL": "postgresql://postgres@127.0.0.1:55479/nova_deadline_test",
+        "OPENAI_API_KEY": "test",
+        "GEMINI_API_KEY": "test",
+        "NOVA_DEADLINE_PR_HEAD": "05ea27c29a918973ba20a4c58006fcc56a5e8749"
+      },
+      "command": "/Users/emirerben/Projects/nova/src/apps/api/.venv/bin/python -m pytest tests/services/test_credit_deadline_compatibility.py -q --junitxml=/Users/emirerben/Documents/Codex/2026-10-29/task-7/credit-evidence/deadline-pr.xml",
+      "passed": 6,
+      "skipped": 0,
+      "failed": 0,
+      "junit": "/Users/emirerben/Documents/Codex/2026-10-29/task-7/credit-evidence/deadline-pr.xml"
+    },
+    {
+      "cwd": "/Users/emirerben/Documents/Codex/2026-10-29/task-7/nova/src/apps/api",
+      "environment": {
+        "DATABASE_URL": "postgresql://postgres@127.0.0.1:55479/nova_deadline_test",
+        "OPENAI_API_KEY": "test",
+        "GEMINI_API_KEY": "test"
+      },
+      "command": "/Users/emirerben/Projects/nova/src/apps/api/.venv/bin/python -m pytest tests/services/test_credit_deadline_compatibility.py -q --junitxml=/Users/emirerben/Documents/Codex/2026-10-29/task-7/credit-evidence/deadline-current.xml",
+      "passed": 4,
+      "skipped": 2,
+      "failed": 0,
+      "skip_reason": "PR-only runtime absent from current branch",
+      "junit": "/Users/emirerben/Documents/Codex/2026-10-29/task-7/credit-evidence/deadline-current.xml"
+    }
+  ],
+  "assertions": {
+    "distinct_ladder_reservations": 3,
+    "statuses": [
+      "unknown",
+      "unknown",
+      "settled"
+    ],
+    "mocked_provider_timeout_caps_s": [
+      105,
+      50,
+      25
+    ],
+    "mocked_success_elapsed_s": 167,
+    "budget_exhaustion_provider_contacts": 1,
+    "concurrent_turns_admitted": 1,
+    "concurrent_turns_requested": 2,
+    "copilot_output_tokens": 16384,
+    "previous_output_tokens": 8192,
+    "output_estimate_increase_usd": 0.196608,
+    "unknown_liability_counted": true
+  },
+  "checks": [
+    "ruff check passed",
+    "ruff format --check passed"
+  ],
+  "limitations": [
+    "No paid provider calls or measured provider latency.",
+    "No claim that turns finish in under 60 seconds.",
+    "No native render/export or production verification.",
+    "PR runtime tested with current credit ledger/config overlays, not an unmodified PR checkout.",
+    "JUnit and logs are private local evidence, not durable remote artifacts.",
+    "Current branch dirty implementation is bound by overlay/test hashes, not HEAD alone."
+  ]
+}

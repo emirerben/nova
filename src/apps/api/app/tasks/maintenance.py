@@ -1131,3 +1131,11 @@ def manage_render_worker_lifecycle(self) -> str:
             log.info("render_worker_lifecycle_backstop_start", ok=ok, prior_state=machine_state)
 
     return action
+
+
+@celery_app.task(name="tasks.reconcile_generated_media")
+def reconcile_generated_media_task():
+    from app.services.generated_media import reconcile_generated_media
+
+    with sync_session() as db:
+        return reconcile_generated_media(db)

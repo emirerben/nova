@@ -202,7 +202,12 @@
       "KriaUITests/FeaturedEditPreviewUITests/testSignupPlaysAllFiveEditsTogether",
       "KriaUITests/FeaturedEditPreviewUITests/testSliderAdvancesWhenLeadingAndPauses",
       "KriaUITests/ProductionSignInUITests/testBuildControlsDevelopmentSignIn",
-      "KriaUITests/CreationUITests/testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries"
+      "KriaUITests/CreationUITests/testFinishedPhoneVideoKeepsPlaybackAndEditorWhileSyncRetries",
+      "KriaUITests/GeneratedMediaUITests/testApprovedNarrationPreviewThenUseAttachesAudioWithoutImageAsset",
+      "KriaUITests/GeneratedMediaUITests/testDisabledCapabilitiesPreserveRecordImportAndHideGeneration",
+      "KriaUITests/GeneratedMediaUITests/testValidationRejectionRequiresEditAndExplicitNewSubmission",
+      "KriaUITests/GeneratedMediaUITests/testGeneratedImagePreviewUseRefreshesVisualPool",
+      "KriaUITests/GeneratedMediaUITests/testImageRecoveryAfterProcessRelaunchNeverPostsAgain"
     ],
     "projects": [
       "KriaUITests/ProjectsUITests/testGalleryPosterStatesNeverSubstituteSamplePhotos",
@@ -276,6 +281,7 @@
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingTextBlockToRightEdgeAutoScrollsPastVisibleWindow",
       "KriaUITests/NativeCaptionVisualUITests/testAnalyzingGalleryCanScrollInBothDirections",
       "KriaUITests/NativeCaptionVisualUITests/testCaptionAndVisualPaperScreens",
+      "KriaUITests/NativeCaptionVisualUITests/testCaptionSizePositionScopesAndGestureChoice",
       "KriaUITests/NativeCaptionVisualUITests/testCaptionSwitchesAndDisplayAtLargestTextSize",
       "KriaUITests/NativeCaptionVisualUITests/testLegacyServerAllowsOpeningVisualImporterAndAddingCard",
       "KriaUITests/NativeCaptionVisualUITests/testVisualControlsEditAndPlaybackRemainAvailable",
@@ -470,6 +476,9 @@
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollIdeaViews.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollTasteView.swift": "creation",
     "src/apps/ios/Kria/Features/CameraRoll/CameraRollSurfaceFixture.swift": "creation",
-    "src/apps/ios/Kria/Features/NativeAnimationPhasePicker.swift": "editor"
+    "src/apps/ios/Kria/Features/NativeAnimationPhasePicker.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "creation",
+    "src/apps/ios/Kria/Core/GeneratedMedia.swift": "creation",
+    "src/apps/ios/Kria/Features/GeneratedMediaSheet.swift": "creation"
   }
 }

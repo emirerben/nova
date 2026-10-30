@@ -65,7 +65,11 @@ def too_short_clips(clips: Sequence[_Clip], *, under_s: float | None = None) -> 
 def resolve_too_short(intent: ClipIntent, clips: Sequence[_Clip]) -> ResolvedClipIntent | None:
     """The ``by_length`` exclusion settled from clip lengths, or None to leave it to the
     resolver. An empty match is a real answer (no clip is too short), never a question."""
-    if intent.op != "exclude" or intent.by_length != "too_short":
+    if (
+        intent.op != "exclude"
+        or intent.by_length != "too_short"
+        or not intent.accepts_source_kind("video")
+    ):
         return None
     short = too_short_clips(clips, under_s=intent.under_s)
     if short is None:

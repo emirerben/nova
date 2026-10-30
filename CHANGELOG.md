@@ -2,6 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.2.0] - 2026-10-30
+
+### Changed
+- feat(kria): preserve source and selection evidence with compatible readers (#1948) <!-- release-pr: 1948 -->
+
+## [0.83.1.0] - 2026-10-30
+
+### Changed
+- feat(rollout): open founder-only cohorts to every account, add cohort_parity check (KRI-1059) (#1949) <!-- release-pr: 1949 -->
+
+## [0.83.0.0] - 2026-10-30
+
+### Added
+- feat(kria): add gated credit capabilities and metered evaluation (#1940) <!-- release-pr: 1940 -->
+
+## [0.82.36.0] - 2026-10-30
+
+### Changed
+- fix(phone-text): every phone format names undrawable creator text before approval (KRI-1024 follow-up) (#1933) <!-- release-pr: 1933 -->
+
+## [0.82.35.0] - 2026-10-30
+
+### Changed
+- fix(kria): a clip-picker "None" voids the pin instead of dead-ending the draft (KRI-1025) (#1931) <!-- release-pr: 1931 -->
+
+## [0.82.34.0] - 2026-10-30
+
+### Changed
+- feat(captions): add scoped size and position controls (#1924) <!-- release-pr: 1924 -->
+
+## [0.82.33.0] - 2026-10-29
+
+### Changed
+- fix(kria): localize named moments with first/last photos before approval (#1947) <!-- release-pr: 1947 -->
+
+## [0.82.32.0] - 2026-10-29
+
+### Changed
+- ci: start PR simulator boot during setup (KRI-1055) (#1945) <!-- release-pr: 1945 -->
+
+## [0.82.31.0] - 2026-10-29
+
+### Changed
+- fix(ios): reopen saved drafts at valid source endpoints (KRI-984) (#1890) <!-- release-pr: 1890 -->
+
 ## [0.82.30.0] - 2026-10-29
 
 ### Changed

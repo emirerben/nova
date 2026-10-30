@@ -1,0 +1,21 @@
+{
+  "mode": "offline_credit_preflight",
+  "packet_sha256": "9045ec3e3fb50eb6e7b25a4ed37d65302a221ebf8d51261e017de28354cae7cd",
+  "provider_estimated_max_usd": {
+    "anthropic": 0.192074,
+    "openai": 0.192074
+  },
+  "estimated_max_usd": 0.384148,
+  "allocation_status": "within_planning_ceiling",
+  "unfunded_providers": [],
+  "live_authorized": false,
+  "quality_verdict": "unassessed",
+  "actual_export": "unassessed",
+  "required_before_live": [
+    "verified billing organization and available credits",
+    "exact model and current price verification",
+    "explicit manifest-bound bounded spend authorization",
+    "existing enforced ledger and source eligibility checks",
+    "separate funding for any Google baseline calls"
+  ]
+}

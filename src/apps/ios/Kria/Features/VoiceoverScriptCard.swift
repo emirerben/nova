@@ -55,7 +55,7 @@ struct VoiceoverScriptCard: View {
         switch mode {
         case .readOnly:
             EmptyView()
-        case .active(let voiceoverAttached, let isSending, let record, let importVoiceover, let planWithVoiceover):
+        case .active(let voiceoverAttached, let isSending, let record, let importVoiceover, let planWithVoiceover, let generateNarration):
             VStack(alignment: .leading, spacing: 8) {
                 if voiceoverAttached {
                     Button { planWithVoiceover(script) } label: {
@@ -74,6 +74,11 @@ struct VoiceoverScriptCard: View {
                     .buttonStyle(KriaPrimaryButtonStyle())
                     .disabled(isSending)
                     .accessibilityIdentifier("voiceover-script-record")
+                }
+                if !voiceoverAttached, script.isDraft, let generateNarration {
+                    Button("AI voice options") { generateNarration(script) }
+                        .buttonStyle(KriaSecondaryButtonStyle()).disabled(isSending)
+                        .accessibilityIdentifier("voiceover-script-ai-voice")
                 }
                 if !voiceoverAttached {
                     Button { importVoiceover(script) } label: {

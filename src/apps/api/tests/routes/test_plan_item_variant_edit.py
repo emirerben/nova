@@ -1857,6 +1857,39 @@ NARRATED_VARIANT = {
 REBURN = "app.tasks.generative_build.reburn_narrated_captions"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("protocol,expected", [(24, 426), (25, 422)])
+async def test_legacy_caption_patch_cannot_orphan_scoped_line_identity(
+    protocol, expected, monkeypatch
+):
+    import copy
+
+    from app.routes import generative_jobs as gj
+    from app.services.client_protocol import clear_request_context, set_client_protocol
+
+    variant = {
+        **NARRATED_VARIANT,
+        "caption_cues": [{"id": "stable", "text": "Hi", "start_s": 0, "end_s": 1}],
+        "caption_editor_style": {"line_overrides": {"stable": {"size_px": 150}}},
+    }
+    job = _job([variant])
+    before = copy.deepcopy(job.assembly_plan)
+    db = AsyncMock()
+    db.execute.return_value = _result(job)
+    monkeypatch.setattr(gj, "_guided_v2_revision", lambda *_args: None)
+    try:
+        set_client_protocol(protocol)
+        with pytest.raises(HTTPException) as error:
+            await gj.persist_variant_captions(
+                job.id, "narrated", [gj.CaptionCue(text="Changed", start_s=0, end_s=1)], db
+            )
+        assert error.value.status_code == expected
+        assert job.assembly_plan == before
+        db.commit.assert_not_awaited()
+    finally:
+        clear_request_context()
+
+
 def test_is_editable_caption_variant_guard() -> None:
     from app.routes.generative_jobs import (
         _CAPTION_EDIT_ARCHETYPES,

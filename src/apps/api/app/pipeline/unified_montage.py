@@ -115,6 +115,7 @@ from app.services.clip_order_sequence import (
     sequence_rows,
     unconfirmed_order_groups,
 )
+from app.services.creator_omissions import creator_omission_outcomes
 from app.services.length_policy import natural_length_owner
 from app.services.order_mode import order_mode, seeded_permutation
 from app.services.order_mode import random_order_seed as order_seed_of
@@ -1386,7 +1387,8 @@ def _moment_outcomes(
     "couldn't find it", never met. A Visual's row is met when every Visual it names plays
     right after its moment (as many cuts of the take before it as the moment's number) AND
     that moment is met. Never read off the seating itself, so a layout that misses the spot
-    says so.
+    says so. Explicit first/last rows must additionally occupy the absolute boundary block,
+    with multiple boundary groups in their listed order.
     """
     take_spans = [(start, end) for ref, start, end in spans if ref == seats.take]
     if not spans:
@@ -1413,6 +1415,30 @@ def _moment_outcomes(
         misplaced = [v for v in missed if v[1] == "misplaced"]
         return (misplaced or missed or [("met", "landed", None)])[0]
 
+    def boundary_seated(position: str) -> bool:
+        groups: list[set[str]] = []
+        claimed: set[str] = set()
+        for index, (_moment, members) in seats.placed.items():
+            if seats.positions.get(index) != position:
+                continue
+            fresh = set(members) - claimed
+            if fresh:
+                groups.append(fresh)
+                claimed.update(fresh)
+        if not claimed:
+            return False
+        refs = [ref for ref, _start in cuts]
+        edge = refs[: len(claimed)] if position == "first" else refs[-len(claimed) :]
+        if set(edge) != claimed:
+            return False
+        previous = -1
+        for members in groups:
+            spots = [i for i, ref in enumerate(refs) if ref in members]
+            if not spots or min(spots) <= previous:
+                return False
+            previous = max(spots)
+        return True
+
     out: dict[int, dict[str, Any]] = {}
     for index, moment in seats.named.items():
         out[index] = row(moment, verdicts[moment])
@@ -1420,6 +1446,10 @@ def _moment_outcomes(
         out[index] = row(None, worst(moments))
     for index in seats.skipped:
         out[index] = row(None, ("partial", "skipped", MOMENT_SKIPPED))
+    for index in seats.conflicted:
+        out[index] = row(
+            None, ("partial", "misplaced", "the clip's position conflicts with its named moment")
+        )
     for index, (moment, members) in seats.placed.items():
         spots = [next((i for i, (ref, _s) in enumerate(cuts) if ref == m), None) for m in members]
         if None in spots:
@@ -1433,8 +1463,11 @@ def _moment_outcomes(
         seated = in_order and all(
             sum(ref == seats.take for ref, _s in cuts[:spot]) == moment for spot in spots
         )
+        if index in seats.positions:
+            seated = seated and boundary_seated(seats.positions[index])
         verdict = (
-            verdicts[moment]
+            # An explicit opening Visual has no preceding moment; verify the adjacent first window.
+            verdicts[max(1, moment)]
             if seated
             else ("partial", "misplaced", "the clips did not end up there")
         )
@@ -1449,18 +1482,36 @@ def _seat_among_moments(slots: list[_Slot], seats: MomentSeats) -> list[_Slot]:
     """KRI-796: a seated Visual's cut plays right after its moment, the take's n-th window.
 
     ``slots`` are the cuts to emit as (index into ``ordered``, clip, frames, window), in
-    the order the clips were laid out; every other cut keeps its place.
+    the order the clips were laid out. Explicit first/last groups surround all remaining
+    slots; non-boundary cuts keep their relative order.
     """
-    moved = [slot for slot in slots if slot[1].ref_id in seats.after]
-    out: list[_Slot] = []
+    claimed: set[str] = set()
+
+    def boundary_slots(position: str) -> list[_Slot]:
+        placed: list[_Slot] = []
+        for index, (_moment, members) in seats.placed.items():
+            if seats.positions.get(index) != position:
+                continue
+            fresh = set(members) - claimed
+            placed.extend(slot for slot in slots if slot[1].ref_id in fresh)
+            claimed.update(fresh)
+        return placed
+
+    leading = boundary_slots("first")
+    trailing = boundary_slots("last")
+    moved = [
+        slot for slot in slots if slot[1].ref_id in seats.after and slot[1].ref_id not in claimed
+    ]
+    out: list[_Slot] = list(leading)
     played = 0
     for slot in slots:
-        if slot[1].ref_id in seats.after:
+        if slot[1].ref_id in claimed or slot[1].ref_id in seats.after:
             continue
         out.append(slot)
         if slot[1].ref_id == seats.take:
             played += 1
             out.extend(m for m in moved if seats.after[m[1].ref_id] == played)
+    out.extend(trailing)
     return out if len(out) == len(slots) else slots
 
 
@@ -1658,6 +1709,7 @@ def plan_unified_montage(
     """
     view = view or BriefView()
     strategy = strategy or {}
+    creator_omissions = creator_omission_outcomes(strategy)
     if (
         view.version is not None
         and view.title_literal
@@ -2502,7 +2554,8 @@ def plan_unified_montage(
             cuts=[(ref_of[cut.media_id], cut.source_start_s) for cut in cuts],
             spans=[(ref_of[cut.media_id], cut.source_start_s, cut.source_end_s) for cut in cuts],
             moment_record=moment_record,
-        ),
+        )
+        + creator_omissions,
         ordering_choice=choice,
         random_order_seed=view.random_order_seed if basis == "random" else None,
         random_order_source_ids=[clip.media_id for clip in clips] if basis == "random" else [],

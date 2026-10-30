@@ -2,6 +2,52 @@ import XCTest
 
 @MainActor
 final class NativeCaptionVisualUITests: XCTestCase {
+    func testCaptionSizePositionScopesAndGestureChoice() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-talking-captions", "-ui-testing-editor-live-preview", "-ui-testing-editor-caption-style-scope"]
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-captions"].waitForExistence(timeout: 20))
+        app.buttons["native-editor-tool-captions"].tap()
+        let row = app.buttons["native-editor-caption-row-native-caption-0"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.tap()
+        app.buttons["native-editor-caption-edit-done"].tap()
+        app.buttons["native-editor-captions-tab-Style"].tap()
+        let scope = app.segmentedControls["native-editor-caption-style-scope"]
+        let scroll = app.scrollViews["native-editor-captions-scroll"]
+        for _ in 0..<5 where !scope.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(scope.isHittable)
+        scope.buttons["Line 1"].tap()
+        XCTAssertTrue(scope.buttons["Line 1"].isSelected)
+        let size = app.sliders["Caption font size in output pixels"]
+        XCTAssertTrue(size.isHittable)
+        size.adjust(toNormalizedSliderPosition: 0.2)
+        let top = app.buttons["native-editor-caption-position-top"]
+        for _ in 0..<3 where !top.isHittable { scroll.swipeUp() }
+        XCTAssertTrue(top.isHittable)
+        top.tap()
+        let lineShot = XCTAttachment(screenshot: app.screenshot())
+        lineShot.name = "caption-style-line-size-position"; lineShot.lifetime = .keepAlways; add(lineShot)
+        for _ in 0..<3 where !scope.isHittable { scroll.swipeDown() }
+        scope.buttons["All captions"].tap()
+        size.adjust(toNormalizedSliderPosition: 0.15)
+        for _ in 0..<3 where !top.isHittable { scroll.swipeUp() }
+        app.buttons["native-editor-caption-position-middle"].tap()
+        let allShot = XCTAttachment(screenshot: app.screenshot())
+        allShot.name = "caption-style-all-size-position"; allShot.lifetime = .keepAlways; add(allShot)
+        app.buttons["native-editor-captions-done"].tap()
+        let caption = app.descendants(matching: .any)["native-editor-preview-caption_cue-native-caption-0"].firstMatch
+        XCTAssertTrue(caption.waitForExistence(timeout: 10))
+        let start = caption.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 20, dy: -30)))
+        let choice = app.buttons["All captions in this video"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        let choiceShot = XCTAttachment(screenshot: app.screenshot())
+        choiceShot.name = "caption-gesture-scope-choice"; choiceShot.lifetime = .keepAlways; add(choiceShot)
+        choice.tap()
+        XCTAssertFalse(choice.exists)
+    }
+
     func testLegacyServerAllowsOpeningVisualImporterAndAddingCard() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-legacy-visuals", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]

@@ -1,0 +1,297 @@
+{
+  "pr": 1890,
+  "integrated_main": "1692d1751cb78d0695f16b4170362e9e4ae4f615",
+  "validated_source_revision": "fed9d47952cde4411e6b535b7b453591fe3d7e69",
+  "recorded_at_utc": "2026-10-29T16:29:54.179437+00:00",
+  "source_sha256": {
+    "scripts/ci/journey-manifest.json": "939068dbb5130627945eb6ff06236c300c62b9c6a6a95d652d7ce933663b28e9",
+    "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift": "d93c6f0a65ded49e036c5b43bd1579c474eac5ce481aa3b9ec43aea382259ca4",
+    "src/apps/ios/Tests/KriaTests/SavedDraftPreviewRangeTests.swift": "6822e51d45328b9336f5369e7344f2159137edbd0e25ef3313bd26c6f3f45967"
+  },
+  "deployment_authorization": "pending; no merge or release performed",
+  "validation": [
+    {
+      "tests": 67,
+      "status": "passed",
+      "result_bundle": "/tmp/unattended1890-main1692.xcresult",
+      "log": "/tmp/unattended1890-main1692.log",
+      "tests_detail": [
+        {
+          "name": "NativeEditorRenderCompilerTests/testAuthoredMotionNormalizesServerDefaultsAndBounds()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testBehindSubjectCompilesToTheLayerFlagAndCapability()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testCaptionAlignmentMatchesFinalASSMargins()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testCaptionMetaDisabledSkipsOnlyCaptionTaggedTextElements()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testCaptionTaggedTextElementIsSkippedWhenCaptionCuesAlsoCoverIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testClipAudioLaneCompilesExcerptOverOtherClipsVisuals()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testClipTrimAndAuthoredTextCompileFromPublicDocument()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testCloudRenderedCardsStayAboveCaptionsInZOrderWithoutClamp()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testCreatorSongEmitsSongTrackAndMutesCameraAudio()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testDeviceNarratedCaptionsPreviewInTheTalkingFrame()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testDeviceRenderedCardsDrawBelowCaptionsFullscreenUnderPipAndClampedOutOfTheCaptionBand()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testEditedSongBedIsPlayedAndRemovedSongRestoresCameraAudio()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testExplicitWordDisplaySeparatesWordsAndClampsEditedTiming()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testFadeTokensFadeTheCardWithoutChangingItsPlacement()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testFeasibleSourceOverrunKeepsThreeSecondClockAndAuthoredWindow()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testFootageRateAndCropCompileAsAdditiveRecipeFields()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testGuidedStoryCaptionDisplayStyleProjectsOntoTheEntranceEffect()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testGuidedStoryCaptionFontChoiceResolvesToTheRegistryFile()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testGuidedStoryCaptionTaggedTextElementHonorsCaptionMetaStyling()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testGuidedStorySentenceCaptionProjectionKeepsSourceItemsAndLeavesTitlesAlone()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testImageOverlayAndPointSfxCompileOntoTheOverlayAndAudioTracks()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testLeavingAndReleasingEditorStopsRetainedPlayer()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testLivePreviewStillDecodesAfterTrimAndUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testLongCutTimelineReusesTracksAndCrossfadesKeepTwoSources()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testLyricRowsOutsideTheNewWindowAreHiddenWithoutFailingTheCompile()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testLyricShiftFollowsSentenceProjection()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testLyricShiftNeverMovesNonSongRowsOrBringsBackDeletedWords()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testMediaOverlayWithoutVideoClipsDoesNotCompile()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testMoreCuesThanTheEngineCapIsANamedPermanentFailure()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testMovingTheSongStartLaterShiftsLyricRowsEarlierAndLeavesTheDocumentAlone()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testNarratedSelectedSourceAudioUsesPerSlotGainOnceAndKeepsLegacySilent()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testNarrationCanEndBeforeAnExtendedVisualTimeline()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testNarrationKeepsVoiceTrackAndSlowsShortOriginalFootage()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testNarrationTailHoldsUntouchedFinalClipInsteadOfSlowingIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testNilLyricShiftRendersExactlyWhatTheDocumentHolds()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testOverlappingCaptionCuesAreClampedToNonOverlappingWindows()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testPhotoAndVideoOverlayPlaybackAdvancesAfterScrubbing()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testReadOnlyTitleCompilesLikeTheExportedPhoneTitle()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testRemovingTheSongHidesEveryLyricRowButNotOtherText()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testReplacingPreviewStopsOldPlayerBeforeNewPlayerCanPlay()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testRetimingPreservesAdjacentClipWindows()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testRoundedContainerEndDoesNotRejectTextAtFinalCut()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testSelectingSubframeStartDisplaysTheSelectedItemsFrame()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testSentenceCaptionProjectionBreaksLyricLinesAtLineEnd()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testSentenceDisplayStaysOneCaptionPopLayerPerCue()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testSongLengthFollowsTheVideoNotTheStaleBedDuration()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testSourceFixtureUsesLiveCompositorAndUpdatesText()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testStillVisualKeepsItsWindowWhenFootageRateIsStored()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testStyledLegacyOverlayCompilesZeroAndPositiveFrozenTail()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testTalkingDocumentCompilesAgainstTheSessionTimeline()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testTalkingFootageCutawaysDrawMutedFullFrameUnderEveryCard()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testTalkingHeadWithoutSlotsCompilesFromTextFreeBaseAndKeepsTextLive()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testTransitionClampsToProjectedOverlapAtSubFrameSlotBoundary()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testTransitionShortensToOverlapWhenRequestedDurationExceedsIt()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testTrimKeepsPlayerStableUntilReleaseThenRefreshes()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testTrimPastTextAndCaptionBoundariesPreservesUndo()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testUnreadableClipAudioRowRefusesInsteadOfDroppingSpeech()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testVisualCardCompilesFillAndBaseAudioWindow()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testWhitespaceOnlyTextElementIsSkippedNotFatal()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testWithoutSongSourceCameraAudioFollowsTheUsualRules()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testWordCaptionsTrackSpeechAcrossSpeechCleanupCuts()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testWordCaptionsUseStoredTimingsUntilTheirTextIsEdited()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testWordDisplayIsOneSingleWordLayerPerCueForLongTalks()",
+          "status": "Success"
+        },
+        {
+          "name": "NativeEditorRenderCompilerTests/testWordStyleWithoutAnExplicitHighlightKeepsTheFullLineKaraoke()",
+          "status": "Success"
+        },
+        {
+          "name": "SavedDraftPreviewRangeTests/testARealOneMillisecondVideoOverrunIsStillRejected()",
+          "status": "Success"
+        },
+        {
+          "name": "SavedDraftPreviewRangeTests/testSavedPhotoWindowBuildsTheSamePreviewAfterHydration()",
+          "status": "Success"
+        },
+        {
+          "name": "SavedDraftPreviewRangeTests/testSavedVideoWindowBuildsTheSamePreviewAfterHydration()",
+          "status": "Success"
+        }
+      ]
+    },
+    {
+      "tests": 164,
+      "subtests": 448,
+      "status": "passed",
+      "scope": "CI policy and iOS tooling",
+      "log": "/tmp/unattended-main1692-policies.log"
+    }
+  ]
+}

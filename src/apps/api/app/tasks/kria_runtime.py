@@ -47,6 +47,7 @@ from app.kria.brief_checks import (
     build_receipts,
     clip_speed_notice,
     defers_caption_words_to_phone_render,
+    defers_text_to_phone,
     defers_to_narrated_render,
     defers_to_unified_montage,
     describe_text_look,
@@ -867,10 +868,17 @@ def _unresolved_choice_plan(
                 ),
                 "label_text_unusable",
             )
-        question = _worker_copy(contract.unresolved[0]) or say(
-            en=contract.unresolved[0],
-            tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
-        )
+        quoted = _quoted_unresolved(contract.unresolved[0])
+        if quoted is not None:
+            # KRI-1025: a clip the contract names ("which clip "X" means") comes with the
+            # way forward, never as a reply with nothing to do next.
+            reason, step = quoted
+            question = f"{reason} {say(en=step[0], tr=step[1])}"
+        else:
+            question = _worker_copy(contract.unresolved[0]) or say(
+                en=contract.unresolved[0],
+                tr="Onayladığın isteklerden birini bu düzenlemede doğrulayamıyorum.",
+            )
         return (
             KriaTurnPlan(
                 mode="respond",
@@ -1689,6 +1697,11 @@ def _complete_draft_turn(
                         facts,
                         phone_talking=phone_talking,
                         caption_words_at_render=talking_writer,
+                        # KRI-1024: any phone writer draws text with the phone's fonts, so a
+                        # literal none of them draws is a "Couldn't" before approval.
+                        phone_text=defers_text_to_phone(
+                            creator_id=thread.creator_id, clip_paths=item.clip_gcs_paths or ()
+                        ),
                         # KRI-842: one clip's own sound is judged on the draft that the phone
                         # Voiceover compiler will render, against the footage it will play.
                         phone_narrated=defers_to_narrated_render(

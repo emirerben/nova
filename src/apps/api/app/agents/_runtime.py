@@ -1430,6 +1430,7 @@ class Agent(ABC, Generic[InputT, OutputT]):
                 agent_name=self.spec.name,
                 input_dict=input_dict or {},
                 output_dict=output_dict,
+                ctx=ctx,
             )
 
 
