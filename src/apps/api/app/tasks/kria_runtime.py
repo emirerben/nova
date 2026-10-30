@@ -5265,17 +5265,9 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
         if isinstance(minimum, int) and status.request.identity.recipe_revision < minimum:
             states.append("pending")
         elif status.phase == "published":
-            from app.services.device_render import (  # noqa: PLC0415
-                checked_export_report,
-                device_record,
-            )
-
-            record = device_record(job, record_variant)
-            states.append(
-                "ready"
-                if checked_export_report(record, status, str(record.get("published_attempt") or ""))
-                else "failed"
-            )
+            # Output checks are advisory: a published export is a finished video,
+            # whatever its saved verification report says.
+            states.append("ready")
         elif status.phase == "needs_attention":
             states.append("failed")
         else:
@@ -7497,7 +7489,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             if device_failed
             else None
         )
-        output_check_failed = bool(
+        export_not_intact = bool(
             device_decline and device_decline.get("field_path") == "export_verification"
         )
         typed_decline = (
@@ -7532,7 +7524,7 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             recovery, retryable = "retry", True
         elif native_without_program:
             recovery, retryable = "ask_user", False
-        if device_decline is not None and not output_check_failed:
+        if device_decline is not None and not export_not_intact:
             # The contract refused this edit, so the phone's own Retry (which re-pins the
             # same refused recipe) is a dead end, and nothing re-runs it automatically.
             # The creator's real next step is a new message, never a retry button.
@@ -7631,19 +7623,16 @@ def _observe_dispatched_execution(execution_id: uuid.UUID) -> tuple[str, str | N
             from app.services.device_render import has_accepted_artifact  # noqa: PLC0415
 
             last_good = has_accepted_artifact(job, str(execution.target_variant_id or "") or None)
-            if output_check_failed:
+            if export_not_intact:
                 failure_content = (
                     say(
                         en=(
-                            "The exported video hasn't passed its checks against "
-                            "your approved edit. "
-                            "Your approved edit is saved. Retry the same edit after reviewing "
-                            "its approval."
+                            "The exported video didn't arrive intact, so it wasn't published. "
+                            "Your approved edit is saved. Retry the same edit."
                         ),
                         tr=(
-                            "Dışa aktarılan video, onayladığın düzenlemeye göre yapılan "
-                            "kontrolleri geçemedi. Onayladığın düzenleme kayıtlı. "
-                            "Onayını gözden geçirip aynı düzenlemeyi yeniden dene."
+                            "Dışa aktarılan video eksiksiz ulaşmadığı için yayınlanmadı. "
+                            "Onayladığın düzenleme kayıtlı. Aynı düzenlemeyi yeniden dene."
                         ),
                     )
                     + " "

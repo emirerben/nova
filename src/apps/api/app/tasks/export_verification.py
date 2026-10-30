@@ -40,9 +40,11 @@ LEASE_SECONDS = 360  # strictly longer than the task's hard limit
 MAX_CHECK_RUNS = 3  # infrastructure retries of the SAME bytes, not repair renders
 MAX_QUEUE_SECONDS = 20 * 60
 # A check that could not run (worker/queue/storage trouble) is requeued for the SAME
-# uploaded bytes, and the phone keeps showing "Checking your video". Only after this
-# long without one finished check does the creator see a failure, with honest copy.
-RECHECK_WINDOW_SECONDS = 24 * 60 * 60
+# uploaded bytes, and the phone keeps showing "Checking your video". After this long
+# without one finished check the finished export publishes UNVERIFIED (checks are
+# advisory; a finished video is never withheld because the checker is down). Only when
+# even that publish cannot run does the creator see a failure, with honest copy.
+RECHECK_WINDOW_SECONDS = 30 * 60
 _UNAVAILABLE_DETAIL = "Kria couldn't check this video. Your approved edit is saved; try again."
 PENDING_PATH = (
     '$._device_render_v1.* ? (@.status.phase == "syncing")'
@@ -91,17 +93,20 @@ def _close_if_superseded(job, variant_id: str, record: dict, task: dict) -> bool
 
 
 def _requeue_or_give_up(job, variant_id: str, record: dict, task: dict, now: datetime) -> bool:
-    """Requeue a check that could not run; give up only after the recheck window.
+    """Requeue a check that could not run; after the recheck window, publish unverified.
 
     Never re-renders and never asks the phone for anything: the reserved upload is
-    the outbox, so the next delivery checks exactly the same bytes. Returns True
-    when it requeued, False when it recorded the (honest) failure instead.
+    the outbox, so the next delivery checks (or, past the window, publishes without
+    checking) exactly the same bytes. Returns True when it requeued, False when it
+    recorded the (honest) failure instead -- which happens only if the unverified
+    publish itself already failed to run.
     """
     if _close_if_superseded(job, variant_id, record, task):
         # A newer approved attempt owns the variant: never fail it for a stale check.
         return False
     first = task.get("first_queued_at") or task.get("queued_at") or now.isoformat()
-    if (now - datetime.fromisoformat(first)).total_seconds() < RECHECK_WINDOW_SECONDS:
+    spent = (now - datetime.fromisoformat(first)).total_seconds() >= RECHECK_WINDOW_SECONDS
+    if not spent or not task.get("publish_unverified"):
         task.pop("token", None)
         task.pop("lease_until", None)
         task.update(
@@ -110,6 +115,9 @@ def _requeue_or_give_up(job, variant_id: str, record: dict, task: dict, now: dat
             queued_at=now.isoformat(),
             first_queued_at=first,
             requeues=int(task.get("requeues") or 0) + 1,
+            # Past the window the next delivery publishes the finished export without
+            # the checks that could not run.
+            **({"publish_unverified": True} if spent else {}),
         )
         save_device_record(job, variant_id, record)
         return True
@@ -235,11 +243,17 @@ async def _run(job_id: str, user_id: str, payload: dict) -> str:
                 save_device_record(job, body.identity.variant_id, record)
                 await db.commit()
                 result = await _complete_device_export(
-                    uuid.UUID(job_id), body, uuid.UUID(user_id), db, verification_token=token
+                    uuid.UUID(job_id),
+                    body,
+                    uuid.UUID(user_id),
+                    db,
+                    verification_token=token,
+                    unverified=bool(task.get("publish_unverified")),
                 )
                 return result.status
             except HTTPException as exc:
-                # Rejected output commits needs_attention in the publication
+                # Failed quality checks publish with a warning (advisory); only bytes that
+                # differ from the reserved upload commit needs_attention in the publication
                 # service. Missing upload / transient storage is retried under
                 # this same finite lease, never by rendering another candidate.
                 return f"refused:{exc.status_code}"

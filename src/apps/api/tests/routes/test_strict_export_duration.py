@@ -8,7 +8,6 @@ import pytest
 
 from app.kria.device_render import DeviceRenderStatus, make_device_request
 from app.routes import device_render as routes
-from app.services.creator_render_contract import CreatorRenderContractError
 from app.services.device_render import device_record, pin_device_request
 from app.services.phone_sources import PHONE_SOURCES_FIELD
 from tests.pipeline.test_phone_subtitled_plan import _binding
@@ -92,28 +91,41 @@ def test_strict_completion_persists_the_measured_valid_file_duration(
     assert variant["measured_export_generation_id"] == attempt
 
 
-def test_strict_completion_refusal_does_not_publish_a_video(device_render_fixture, monkeypatch):
+def test_strict_completion_over_the_cap_still_publishes_with_an_advisory(
+    device_render_fixture, monkeypatch
+):
+    """A slightly-too-long finished export beats no video: the cap is advisory."""
     fixture = device_render_fixture
     _install_strict_device_export(fixture)
     attempt, _ = prepared(fixture)
     mock_storage(fixture, monkeypatch)
     _live_upload_reservation(fixture)
+    advisory_traces = []
     monkeypatch.setattr(
-        routes,
-        "_verify_export",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            CreatorRenderContractError("The export must stay under 40 seconds.")
-        ),
+        routes, "_record_export_advisory", lambda *args: advisory_traces.append(args[-1])
     )
+
+    def verify(*_args, export_measurements, max_export_duration_s, advisories, **_kwargs):
+        assert max_export_duration_s == 40
+        advisories.append({"kind": "duration_cap", "status": "failed", "reason": "over_maximum"})
+        export_measurements["measured_export_duration_s"] = 40.6
+        return None
+
+    monkeypatch.setattr(routes, "_verify_export", verify)
 
     response = fixture.client.post(
         f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 200, response.text
     variant = fixture.job.assembly_plan["variants"][0]
-    assert "video_path" not in variant
-    assert device_record(fixture.job, "first")["contract_decline"]["stage"] == "actual_export"
+    assert variant["ok"] is True
+    assert variant["video_path"]
+    assert variant["duration_s"] == 40.6
+    record = device_record(fixture.job, "first")
+    assert record["status"]["phase"] == "published"
+    assert "contract_decline" not in record
+    assert advisory_traces == [{"status": "rejected", "failed_checks": ["duration_cap"]}]
 
 
 def test_later_edit_during_strict_measurement_cannot_publish_stale_output(
