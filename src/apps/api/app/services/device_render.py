@@ -655,9 +655,7 @@ def pin_device_request(
     if prepared_initial and contract_receipt is None:
         raise CreatorRenderContractError("Prepared stories require verified render obligations")
     if prepared_initial or (
-        settings.phone_actual_export_verification_enabled
-        and contract_receipt is not None
-        and getattr(job, "user_id", None) in settings.phone_actual_export_verification_user_ids
+        settings.phone_actual_export_verification_enabled and contract_receipt is not None
     ):
         from app.services.actual_export_verification import (  # noqa: PLC0415
             POLICY_FIELD,

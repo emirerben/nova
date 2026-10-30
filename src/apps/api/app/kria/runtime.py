@@ -3071,12 +3071,7 @@ async def read_approval(
         if isinstance(result, dict) and isinstance(result.get("render_retry"), dict):
             retry_of_execution_id = result["render_retry"].get("source_execution_id")
     return ApprovalSnapshotOut(
-        automatic_repair_limit=(
-            2
-            if settings.phone_actual_export_verification_enabled
-            and creator_id in settings.phone_actual_export_verification_user_ids
-            else 0
-        ),
+        automatic_repair_limit=(2 if settings.phone_actual_export_verification_enabled else 0),
         approval_id=str(approval.id),
         turn_id=str(approval.turn_id),
         draft_id=str(approval.draft_id) if approval.draft_id else None,

@@ -3856,7 +3856,7 @@ async def capabilities(
         "media_collections": bool(
             native_client
             and settings.media_library_enabled
-            and settings.media_collection_proposals_for(user.id)
+            and settings.media_collection_proposals_enabled
         ),
         "media_collection_cache_only": settings.media_collection_cache_only,
         "wrong_fact_feedback": bool(
