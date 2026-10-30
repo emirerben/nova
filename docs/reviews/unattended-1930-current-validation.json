@@ -25,12 +25,24 @@
     "tests_passed": 562,
     "scope": "All four Yasin changes together; one test-expectation interaction found and corrected without a product/test guard waiver."
   },
-  "closing_test_repair": {
+  "superseded_closing_repair": {
     "source_commit": "3ec4f08469f0c1dc3050f6b550957851f21d6a0e",
     "test_source_sha256": "9c6d03e98a1bb0b77d2839290c63726ae3d84326f25831d4dd4d87e8fd18c7c8",
     "scope": "Closing uses interior SDK setup and captures consistent actual rate/duration; exact Reset/Undo retained. Separate endpoint method unchanged.",
     "evidence": "docs/reviews/native-speed-setup-validation.md",
     "results": "Closing10/10 positives; collective transaction control fails intended Undo; restored positive passes. Unchanged endpoint9/10, separate setup flake remains unresolved.",
     "required": "Fresh exact-head CI; no failed-check waiver"
+  },
+  "native_speed_final_repair": {
+    "source_commit": "3811611c77c5d0b1e6696478047388b31b34d253",
+    "test_sha256": "029faa7a2a3a72fed0916587ffc618e52e78a8192be6b7f2cba8c98948c9156d",
+    "scope": "Test-only: direct interior Closing capture; held real endpoint drag inside window. Exact endpoint, duration, Reset and Undo assertions retained.",
+    "results": "Final source six paired successes, intended transaction/Undo negative, restored positive. Unchanged endpoint helper separately14positive plus failing-targetcontrol/restored.",
+    "reviews": "Independent code and evidence review clean; root independently verified result bundles.",
+    "validation": [
+      "docs/reviews/native-speed-setup-validation.md",
+      "docs/reviews/native-speed-endpoint-validation.md"
+    ],
+    "limitations": "Local simulator evidence; fresh exact-head hostedCI required. No product changes or failed-check waiver."
   }
 }
