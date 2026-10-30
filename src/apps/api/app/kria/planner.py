@@ -38,6 +38,7 @@ from app.agents._runtime import (
 from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import (
     AskUser,
+    CreativeStrategy,
     DraftVoiceoverScript,
     ProposeStrategy,
     ResolvedCreatorManifest,
@@ -97,6 +98,16 @@ from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import KriaTurnPlan
 from app.kria.draft_sound_carry import sound_asks_unchanged
 from app.kria.duplicate_send import is_duplicate_answer
+from app.kria.missing_media import (
+    CHECKED,
+    FOUND,
+    FOUND_REASON,
+    after_looking,
+    answers_found_card,
+    asks_for_missing_media,
+    found_question,
+    unplaced_reply,
+)
 from app.kria.narration_notes import (
     keeps_camera_sound,
     narration_note_parts,
@@ -3355,6 +3366,302 @@ async def _simpler_version_accepted(
     return simpler_version_accepted(await _load_thread_events(db, thread_id), fields)
 
 
+async def _plan_turn_clip_intents(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+    inputs: _CreatorInputs,
+    brief_request: str | None,
+    effective_brief: CreativeBrief | None,
+    wants_capture_order: bool,
+    describe_clips: bool,
+    spoken_text: Sequence[str],
+    strategy: CreativeStrategy | None,
+) -> tuple[PlannedIntentResolution, list[tuple[str, Any]]]:
+    """The clip-intent planner, resolver and vision checks over the creator's words.
+
+    ``strategy`` is the Main Creator's draft (its clip intents are the planner's candidates),
+    or None for a "missing" ask (Leverkusen M2), checked against the creator's words alone.
+    Returns the result and the thread's events. Raises whatever the planning raises: no
+    provider failure may mint a draft, and each caller answers it (`_clip_planning_failed`).
+    """
+    intent_clips = inputs.intent_clips
+    creator_request = brief_request or inputs.creator_request
+    shot_labels = getattr(strategy, "shot_labels", None) or ()
+    clip_selections = None
+    thread_events: list[tuple[str, Any]] = []
+    if settings.kria_clip_selection_questions_enabled or settings.kria_choice_questions_enabled:
+        thread_events = await _load_thread_events(db, thread_id)
+    checked_inventory = None
+    if settings.kria_clip_selection_questions_enabled:
+        clip_selections = fold_clip_selections(thread_events)
+        # KRI-950: a tap is an answer, not a new request: reuse the list the picker's turn
+        # checked rather than ask the planner model again for the same words.
+        asking_turn = _picker_answer_turn_id(thread_events)
+        if asking_turn is not None:
+            checked_inventory = await _load_checked_inventory(db, asking_turn)
+    # KRI-766: the texts the creator dictated for a described shot, which this turn's
+    # inventory may not repeat, and the labels the draft already placed.
+    brief_labels = brief_label_asks(effective_brief, shot_labels, spoken_text)
+    # KRI-804: a creator text a label can't print may become the shot's caption only
+    # when that turns off no other text (positional shot labels, every-clip texts).
+    shot_captions = shot_captions_safe(effective_brief, shot_labels)
+    kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
+    whole_video_texts = whole_video_text_asks(effective_brief)
+    sequence_texts = sequence_text_literals(effective_brief)
+    # KRI-1067: a filming-order brief's first / last clip the inventory may leave out.
+    brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
+    await _kick_clip_understanding(item_id, intent_clips)
+    planned = await plan_and_resolve_clip_intents(
+        # KRI-522: the creator's own words (verified quote source), never
+        # only the brief paraphrase; the brief rides along as recall aid.
+        creator_request=inputs.raw_creator_request or creator_request or user_message,
+        latest_user_message=user_message,
+        generated_brief=brief_request,
+        candidate_intents=strategy.clip_intents if strategy is not None else None,
+        confirmed_titles=[
+            ConfirmedTitleCopy(target=target, text=state.approved)
+            for target, state in (inputs.creative_copy_state or {}).items()
+            if state.approved is not None
+        ],
+        clips=intent_clips,
+        run_context=RunContext(
+            request_id=str(thread_id),
+            creator_id=str(creator_id),
+        ),
+        # KRI-282: chat clips have no background vision lane, so give the
+        # turn itself a larger (cached, converging) foreground budget.
+        max_vision_requeries=settings.kria_clip_intents_max_vision_requeries,
+        vision_deadline_s=settings.kria_clip_intents_vision_deadline_s,
+        # KRI-282 L2: hold the turn while background clip analysis is incomplete,
+        # re-reading it (bounded) instead of trusting the pre-Main-Creator snapshot.
+        require_clip_understanding=settings.kria_clip_understanding_enabled,
+        refresh_clips=lambda: _reload_intent_clips(db, item_id=item_id, creator_id=creator_id),
+        understanding_wait_until=_clip_understanding_wait_until(),
+        **({"clip_selections": clip_selections} if clip_selections else {}),
+        # KRI-612: "explain the footages" puts a line from the footage on each clip.
+        **({"describe_clips": True} if describe_clips else {}),
+        **({"brief_labels": brief_labels} if brief_labels else {}),
+        **({"kept_labels": kept_labels} if kept_labels else {}),
+        **({} if shot_captions else {"shot_captions": False}),
+        # KRI-945: a caption for the brief's researched text or title is never asked.
+        **({"whole_video_texts": whole_video_texts} if whole_video_texts else {}),
+        # 29 Ekim: the brief's word-by-word text is the text lane's, never a caption.
+        **({"sequence_texts": sequence_texts} if sequence_texts else {}),
+        **({"checked_inventory": checked_inventory} if checked_inventory else {}),
+        **({"brief_anchors": brief_anchors} if brief_anchors else {}),
+        # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
+        # never a clip question; its receipt tells the creator.
+        **(
+            {"spoken_text": spoken_text} if spoken_text and _is_voiceover_strategy(strategy) else {}
+        ),
+    )
+    return planned, thread_events
+
+
+def _clip_planning_failed(
+    manifest: Any, exc: BaseException, *, clips: Sequence[IntentClip], thread_id: uuid.UUID
+) -> PlannedKriaTurn:
+    log.warning(
+        "kria_clip_intent_planning_failed",
+        thread_id=str(thread_id),
+        error_type=type(exc).__name__,
+        clips=len(clips),
+    )
+    return PlannedKriaTurn(
+        plan=_clip_intent_resolution_plan(
+            question=None,
+            status="provider_unavailable",
+            diagnostics={
+                "stage": "planning",
+                "reason": "planner_exception",
+                "error_type": type(exc).__name__,
+                "clips": len(clips),
+            },
+        ),
+        manifest_hash=manifest.manifest_hash,
+        context_hash=manifest.context_hash,
+    )
+
+
+async def _persist_turn_vision_answers(
+    db: AsyncSession,
+    *,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    thread_id: uuid.UUID,
+    manifest: Any,
+    planned: PlannedIntentResolution,
+) -> PlannedKriaTurn | None:
+    """Cache this turn's vision answers on the clips; the turn's reply when that fails."""
+    if not planned.resolution.vision_answers:
+        return None
+    try:
+        # `rollback()` before provider I/O expires ORM instances. Reload
+        # the item before the cache writer reads its id, and fail closed
+        # if the target disappeared while the provider was running.
+        current_item = await db.get(PlanItem, item_id, populate_existing=True)
+        if current_item is None:
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(
+                    question=None,
+                    status="provider_unavailable",
+                    diagnostics={"stage": "persist", "reason": "item_unavailable"},
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
+            )
+        await persist_clip_intent_vision_answers(
+            db,
+            current_item,
+            planned.resolution.vision_answers,
+            creator_id=creator_id,
+            strict=True,
+            # KRI-433: keep iPhone clip answers so a follow-up finishes the
+            # checks. Safe here: this session holds no row lock (rolled back
+            # before provider I/O), so locking the PlanItem keeps lock order.
+            cache_clip_assignments=True,
+        )
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 - cache failure must not mint a draft
+        await db.rollback()
+        log.warning(
+            "kria_clip_intent_answer_persist_failed",
+            thread_id=str(thread_id),
+            error_type=type(exc).__name__,
+        )
+        return PlannedKriaTurn(
+            plan=_clip_intent_resolution_plan(
+                question=None,
+                status="provider_unavailable",
+                diagnostics={
+                    "stage": "persist",
+                    "reason": "answer_persist_failed",
+                    "error_type": type(exc).__name__,
+                },
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+        )
+    return None
+
+
+async def _look_inside_clips_first(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    item_id: uuid.UUID,
+    creator_id: uuid.UUID,
+    user_message: str,
+    manifest: Any,
+    inputs: _CreatorInputs,
+    brief_request: str | None,
+    effective_brief: CreativeBrief | None,
+    wants_capture_order: bool,
+    describe_clips: bool,
+    spoken_text: Sequence[str],
+) -> PlannedKriaTurn | None:
+    """Leverkusen M2: a "that shot is missing" ask on an item with clips waits for a look.
+
+    The Main Creator reads two moments per clip, so a shot 1.5 s inside a long take was
+    "missing" or not by its coin flip. Here the creator's words go through the same planner,
+    resolver and vision checks a strategy turn runs, and the reply follows what they found
+    (`app.kria.missing_media`): the clip picker or a still-checking reply while a clip is
+    unsure or unchecked, the clips each shot was found in, or a question naming the clips.
+    None keeps the Main Creator's ask: nothing to look inside, or every clip was checked (the
+    creator said the shot is in none of them, or already answered the found-it card).
+    """
+    clips = inputs.intent_clips
+    if (
+        not settings.clip_intents_enabled
+        or not clips
+        # A Talking / Subtitled edit plans no clip intents (see the strategy path).
+        or getattr(manifest, "edit_format", None) in CLIP_INTENT_FREE_EDIT_FORMATS
+    ):
+        return None
+    try:
+        planned, thread_events = await _plan_turn_clip_intents(
+            db,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            user_message=user_message,
+            inputs=inputs,
+            brief_request=brief_request,
+            effective_brief=effective_brief,
+            wants_capture_order=wants_capture_order,
+            describe_clips=describe_clips,
+            spoken_text=spoken_text,
+            strategy=None,
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed look is never "upload it"
+        return _clip_planning_failed(manifest, exc, clips=clips, thread_id=thread_id)
+    unsaved = await _persist_turn_vision_answers(
+        db,
+        item_id=item_id,
+        creator_id=creator_id,
+        thread_id=thread_id,
+        manifest=manifest,
+        planned=planned,
+    )
+    if unsaved is not None:
+        return unsaved
+    resolution = planned.resolution
+    if resolution.status != "resolved" or resolution.needs_creator or resolution.deferred_queries:
+        log.info(
+            "kria_missing_media_checked",
+            thread_id=str(thread_id),
+            outcome=resolution.status,
+            clips=len(clips),
+        )
+        return PlannedKriaTurn(
+            plan=_clip_intent_resolution_plan(
+                question=resolution.question,
+                status="needs_creator" if resolution.needs_creator else resolution.status,
+                diagnostics=_resolution_diagnostics(resolution),
+                clip_question=resolution.clip_question if resolution.needs_creator else None,
+                clip_intent_inventory=planned.inventory,
+                reply_options=resolution.reply_options if resolution.needs_creator else (),
+            ),
+            manifest_hash=manifest.manifest_hash,
+            context_hash=manifest.context_hash,
+            # KRI-709: only a budget/deadline stop continues.
+            continuable=resolution.status == "pending" and not resolution.needs_creator,
+        )
+    looked = after_looking(resolution.intents, planned.rejected_selections)
+    if looked.outcome == FOUND and answers_found_card(thread_events):
+        looked = replace(looked, outcome=CHECKED)
+    log.info(
+        "kria_missing_media_checked",
+        thread_id=str(thread_id),
+        outcome=looked.outcome,
+        clips=len(clips),
+    )
+    if looked.outcome == CHECKED:
+        return None
+    if looked.outcome == FOUND:
+        question, options = found_question(looked.shots, clips)
+        asked = (
+            ask_user_choice(question, FOUND_REASON, options)
+            if settings.kria_choice_questions_enabled
+            else None
+        )
+        plan = KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=asked[0] if asked is not None else question,
+            choice_question=asked[1] if asked is not None else None,
+        )
+    else:
+        plan = KriaTurnPlan(mode="respond", turn_value="question", response=unplaced_reply(clips))
+    return PlannedKriaTurn(
+        plan=plan, manifest_hash=manifest.manifest_hash, context_hash=manifest.context_hash
+    )
+
+
 async def _plan_creator_action(
     db: AsyncSession,
     *,
@@ -3750,109 +4057,26 @@ async def _plan_creator_action(
         # any footage intents with a notice.
         and action.strategy.edit_format not in CLIP_INTENT_FREE_EDIT_FORMATS
     ):
-        clip_selections = None
-        thread_events: list[tuple[str, dict[str, Any] | None]] = []
-        if settings.kria_clip_selection_questions_enabled or settings.kria_choice_questions_enabled:
-            thread_events = await _load_thread_events(db, thread_id)
-        checked_inventory = None
-        if settings.kria_clip_selection_questions_enabled:
-            clip_selections = fold_clip_selections(thread_events)
-            # KRI-950: a tap is an answer, not a new request: reuse the list the picker's turn
-            # checked rather than ask the planner model again for the same words.
-            asking_turn = _picker_answer_turn_id(thread_events)
-            if asking_turn is not None:
-                checked_inventory = await _load_checked_inventory(db, asking_turn)
-        # KRI-766: the texts the creator dictated for a described shot, which this turn's
-        # inventory may not repeat, and the labels the draft already placed.
-        brief_labels = brief_label_asks(
-            effective_brief,
-            getattr(action.strategy, "shot_labels", None) or (),
-            spoken_text,
-        )
-        # KRI-804: a creator text a label can't print may become the shot's caption only
-        # when that turns off no other text (positional shot labels, every-clip texts).
-        shot_captions = shot_captions_safe(
-            effective_brief, getattr(action.strategy, "shot_labels", None) or ()
-        )
-        kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
-        whole_video_texts = whole_video_text_asks(effective_brief)
-        sequence_texts = sequence_text_literals(effective_brief)
-        # KRI-1067: a filming-order brief's first / last clip the inventory may leave out.
-        brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
         )
-        await _kick_clip_understanding(item_id, intent_clips)
         try:
-            planned = await plan_and_resolve_clip_intents(
-                # KRI-522: the creator's own words (verified quote source), never
-                # only the brief paraphrase; the brief rides along as recall aid.
-                creator_request=inputs.raw_creator_request or creator_request or user_message,
-                latest_user_message=user_message,
-                generated_brief=brief_request,
-                candidate_intents=action.strategy.clip_intents,
-                confirmed_titles=[
-                    ConfirmedTitleCopy(target=target, text=state.approved)
-                    for target, state in (inputs.creative_copy_state or {}).items()
-                    if state.approved is not None
-                ],
-                clips=intent_clips,
-                run_context=RunContext(
-                    request_id=str(thread_id),
-                    creator_id=str(creator_id),
-                ),
-                # KRI-282: chat clips have no background vision lane, so give the
-                # turn itself a larger (cached, converging) foreground budget.
-                max_vision_requeries=settings.kria_clip_intents_max_vision_requeries,
-                vision_deadline_s=settings.kria_clip_intents_vision_deadline_s,
-                # KRI-282 L2: hold the turn while background clip analysis is incomplete,
-                # re-reading it (bounded) instead of trusting the pre-Main-Creator snapshot.
-                require_clip_understanding=settings.kria_clip_understanding_enabled,
-                refresh_clips=lambda: _reload_intent_clips(
-                    db, item_id=item_id, creator_id=creator_id
-                ),
-                understanding_wait_until=_clip_understanding_wait_until(),
-                **({"clip_selections": clip_selections} if clip_selections else {}),
-                # KRI-612: "explain the footages" puts a line from the footage on each clip.
-                **({"describe_clips": True} if describe_clips else {}),
-                **({"brief_labels": brief_labels} if brief_labels else {}),
-                **({"kept_labels": kept_labels} if kept_labels else {}),
-                **({} if shot_captions else {"shot_captions": False}),
-                # KRI-945: a caption for the brief's researched text or title is never asked.
-                **({"whole_video_texts": whole_video_texts} if whole_video_texts else {}),
-                # 29 Ekim: the brief's word-by-word text is the text lane's, never a caption.
-                **({"sequence_texts": sequence_texts} if sequence_texts else {}),
-                **({"checked_inventory": checked_inventory} if checked_inventory else {}),
-                **({"brief_anchors": brief_anchors} if brief_anchors else {}),
-                # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
-                # never a clip question; its receipt tells the creator.
-                **(
-                    {"spoken_text": spoken_text}
-                    if spoken_text and _is_voiceover_strategy(action.strategy)
-                    else {}
-                ),
+            planned, thread_events = await _plan_turn_clip_intents(
+                db,
+                thread_id=thread_id,
+                item_id=item_id,
+                creator_id=creator_id,
+                user_message=user_message,
+                inputs=inputs,
+                brief_request=brief_request,
+                effective_brief=effective_brief,
+                wants_capture_order=wants_capture_order,
+                describe_clips=describe_clips,
+                spoken_text=spoken_text,
+                strategy=action.strategy,
             )
         except Exception as exc:  # noqa: BLE001 - no provider failure may mint a draft
-            log.warning(
-                "kria_clip_intent_planning_failed",
-                thread_id=str(thread_id),
-                error_type=type(exc).__name__,
-                clips=len(intent_clips),
-            )
-            return PlannedKriaTurn(
-                plan=_clip_intent_resolution_plan(
-                    question=None,
-                    status="provider_unavailable",
-                    diagnostics={
-                        "stage": "planning",
-                        "reason": "planner_exception",
-                        "error_type": type(exc).__name__,
-                        "clips": len(intent_clips),
-                    },
-                ),
-                manifest_hash=manifest.manifest_hash,
-                context_hash=manifest.context_hash,
-            )
+            return _clip_planning_failed(manifest, exc, clips=intent_clips, thread_id=thread_id)
         if any(intent.label_source == "transcript" for intent in planned.requested_intents) and (
             manifest.narration is None
             or action.strategy.execution_contract != "guided_voiceover_v1"
@@ -3893,54 +4117,16 @@ async def _plan_creator_action(
                 thread_id=str(thread_id),
                 kept=len(kept_intents),
             )
-        if planned.resolution.vision_answers:
-            try:
-                # `rollback()` before provider I/O expires ORM instances. Reload
-                # the item before the cache writer reads its id, and fail closed
-                # if the target disappeared while the provider was running.
-                current_item = await db.get(PlanItem, item_id, populate_existing=True)
-                if current_item is None:
-                    return PlannedKriaTurn(
-                        plan=_clip_intent_resolution_plan(
-                            question=None,
-                            status="provider_unavailable",
-                            diagnostics={"stage": "persist", "reason": "item_unavailable"},
-                        ),
-                        manifest_hash=manifest.manifest_hash,
-                        context_hash=manifest.context_hash,
-                    )
-                await persist_clip_intent_vision_answers(
-                    db,
-                    current_item,
-                    planned.resolution.vision_answers,
-                    creator_id=creator_id,
-                    strict=True,
-                    # KRI-433: keep iPhone clip answers so a follow-up finishes the
-                    # checks. Safe here: this session holds no row lock (rolled back
-                    # before provider I/O), so locking the PlanItem keeps lock order.
-                    cache_clip_assignments=True,
-                )
-                await db.commit()
-            except Exception as exc:  # noqa: BLE001 - cache failure must not mint a draft
-                await db.rollback()
-                log.warning(
-                    "kria_clip_intent_answer_persist_failed",
-                    thread_id=str(thread_id),
-                    error_type=type(exc).__name__,
-                )
-                return PlannedKriaTurn(
-                    plan=_clip_intent_resolution_plan(
-                        question=None,
-                        status="provider_unavailable",
-                        diagnostics={
-                            "stage": "persist",
-                            "reason": "answer_persist_failed",
-                            "error_type": type(exc).__name__,
-                        },
-                    ),
-                    manifest_hash=manifest.manifest_hash,
-                    context_hash=manifest.context_hash,
-                )
+        unsaved = await _persist_turn_vision_answers(
+            db,
+            item_id=item_id,
+            creator_id=creator_id,
+            thread_id=thread_id,
+            manifest=manifest,
+            planned=planned,
+        )
+        if unsaved is not None:
+            return unsaved
 
         if settings.clip_intent_exclude_enabled:
             # KRI-761: the resolver is not deterministic and the whole request is re-planned
@@ -4169,6 +4355,25 @@ async def _plan_creator_action(
             policy_notices=policy_notices,
             policy_omitted_texts=policy_omitted_texts,
         )
+    if isinstance(action, AskUser) and asks_for_missing_media(action.reason_code):
+        # Leverkusen M2: "I couldn't find the shot ..., upload it?" is never said before the
+        # clips were looked inside for it.
+        looked = await _look_inside_clips_first(
+            db,
+            thread_id=thread_id,
+            item_id=item_id,
+            creator_id=creator_id,
+            user_message=user_message,
+            manifest=manifest,
+            inputs=inputs,
+            brief_request=brief_request,
+            effective_brief=effective_brief,
+            wants_capture_order=wants_capture_order,
+            describe_clips=describe_clips,
+            spoken_text=spoken_text,
+        )
+        if looked is not None:
+            return looked
     if (
         isinstance(action, ProposeStrategy)
         and any(
