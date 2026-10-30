@@ -1047,7 +1047,7 @@ async def test_overlay_display_ask_defers_to_replan_instead_of_copilot_refusal(
     """KRI-297: "Use all overlays as full screen" is not an editor op; the copilot's
     refusal must not be the answer -- `_plan_editor_revision` returns None so the
     planner re-plans it (strategy.overlay_display). Other refusals still stand."""
-    target = SimpleNamespace(conversation=[], snapshot={}, job_id=uuid.uuid4())
+    target = planner._EditorTarget(conversation=[], snapshot={}, job_id=uuid.uuid4())
     monkeypatch.setattr(planner, "_load_editor_target", AsyncMock(return_value=target))
     copilot = AsyncMock(
         return_value=SimpleNamespace(

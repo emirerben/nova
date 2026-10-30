@@ -2150,6 +2150,41 @@
       ]
     },
     {
+      "id": "kri-1039-failed-editor-recovery",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_failed_draft_correction_postgres.py tests/kria/test_render_retry_postgres.py tests/routes/test_phone_text_sequence_followup.py",
+      "xctests": [
+        "KriaTests/CreationConfirmationConflictTests/testConflictCarriesServerDetailAndStillMatchesExistingConflictChecks",
+        "KriaTests/CreationConfirmationConflictTests/testConflictDetailIsNilWithoutAStringDetail",
+        "KriaTests/CreationConfirmationConflictTests/testKnownConflictDetailsKeepTheirDedicatedErrors",
+        "KriaTests/CreationConfirmationConflictTests/testStaleDirectionReasonsOfferARefresh",
+        "KriaTests/CreationConfirmationConflictTests/testRetryableReasonsKeepCreateAsTheOnlyAction",
+        "KriaTests/CreationConfirmationConflictTests/testPlanIdentityChangesWhenKriaPlansAgain",
+        "KriaTests/CreationConfirmationConflictTests/testLastAssistantErrorCodeReadsTheMostRecentEvent",
+        "KriaTests/CreationConfirmationConflictTests/testFailedCardOffersReplyForTypedDeclinesAndNothingForAnExhaustedQuota",
+        "KriaTests/CreationConfirmationConflictTests/testNonRetryableErrorCodesCoverKRI118StructuralFailuresAlongsidePhoneGate",
+        "KriaTests/CreationConfirmationConflictTests/testStoryShapeSubtitleMapsKnownShapesAndHidesEverythingElse",
+        "KriaTests/CreationConfirmationConflictTests/testWhatKriaChangedMergesAdjustmentsBeforeNoticesAndDedups",
+        "KriaTests/CreationConfirmationConflictTests/testWhatKriaChangedIsEmptyWhenBothListsAreAbsentOrEmpty",
+        "KriaTests/CreationConfirmationConflictTests/testSelectFormatConflictSurfacesTheRealServerDetail",
+        "KriaTests/CreationConfirmationConflictTests/testSelectFormatConflictFallsBackWhenTheServerSentNoDetail",
+        "KriaTests/CreationConfirmationConflictTests/testOtherNonConfirmationActionsKeepTheGenericChangedMessage",
+        "KriaTests/ApprovalDecisionRequestTests/testApproveWithNoCleanupChoiceOmitsTheOptionalFieldsButAlwaysSendsAware",
+        "KriaTests/ApprovalDecisionRequestTests/testApproveWithACleanupChoiceEncodesTheAnalysisIDAndChoice",
+        "KriaTests/ApprovalDecisionRequestTests/testCleanAfterRestartDisclosureSerializesRetakesAwareness",
+        "KriaTests/ApprovalDecisionRequestTests/testDenyAlsoAlwaysSendsSpeechCleanupAwareTrue",
+        "KriaTests/ApprovalDecisionRequestTests/testConflictSurfacesTheKriaProblemCodeAndMessage",
+        "KriaTests/ApprovalDecisionRequestTests/testSubmitTurnConflictMessagePrefersServerDetail",
+        "KriaTests/ApprovalDecisionRequestTests/testSubmitTurnConflictMessageFallbackAndExpiredApproval",
+        "KriaTests/ApprovalDecisionRequestTests/testAllSpeechCleanupConflictCodesAreRecognized",
+        "KriaTests/ApprovalDecisionRequestTests/testConflictCodeIsNilForTheLegacyDetailStringShape",
+        "KriaTests/ApprovalDecisionRequestTests/testSpeechCleanupDispatchRefusalKeepsTheFreshDraftRetry"
+      ],
+      "paths": [
+        "src/apps/api/tests/kria/test_failed_draft_correction_postgres.py"
+      ]
+    },
+    {
       "id": "api-credit-capabilities",
       "needs_native": true,
       "api_tests": "tests/services/test_generated_media_service.py tests/services/test_generated_media_transport.py tests/services/test_generated_media_admission.py tests/services/test_credit_cap_budgets.py tests/services/test_text_provider_ledger.py tests/evals/test_online_judge_acceptance.py tests/routes/test_generated_media.py tests/routes/test_content_plan_lock_mode.py tests/routes/test_lock_order.py tests/test_content_plan_schema.py tests/services/test_credit_deadline_compatibility.py tests/agents/test_deadline_ladder.py tests/tasks/test_kria_turn_failure_code.py",

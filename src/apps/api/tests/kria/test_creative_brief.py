@@ -1101,7 +1101,7 @@ def _wire_planner(monkeypatch, *, output, editor_plan, snapshot):  # noqa: ANN00
     target = (
         None
         if snapshot is None
-        else SimpleNamespace(job_id=item.current_job_id, snapshot=snapshot, conversation=[])
+        else planner._EditorTarget(job_id=item.current_job_id, snapshot=snapshot, conversation=[])
     )
 
     async def load_target(_db, *, thread_id, item):  # noqa: ANN001, ANN202
@@ -1870,3 +1870,31 @@ def test_kri677_rendered_facts_keep_quoted_spoken_lines_verbatim() -> None:
     ) in rendered
     # The bounded batches use the same line, so a quoted ask reads identically everywhere.
     assert batch_brief_requests(brief)[0].text == rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compose", [False, True])
+async def test_failed_job_without_an_assembly_plan_preserves_the_replan(monkeypatch, compose):
+    output = SimpleNamespace(action=AskUser(**_ASK), brief_updates=[])
+    db, item, creator_id, _, runs = _wire_planner(
+        monkeypatch, output=output, editor_plan=None, snapshot=None
+    )
+    monkeypatch.setattr(settings, "kria_compose_unmet_with_ops_enabled", compose)
+    inner_get = db.get
+
+    async def get(model, identifier, **kwargs):
+        if model is Job:
+            return SimpleNamespace(status="processing_failed")
+        return await inner_get(model, identifier, **kwargs)
+
+    db.get = AsyncMock(side_effect=get)
+    result = await planner.plan_live_turn(
+        db,
+        thread_id=item.id,
+        item_id=item.id,
+        creator_id=creator_id,
+        user_message="Make it red",
+    )
+    assert len(runs) == 1
+    assert result.plan.mode == "respond" and not result.plan.intents
+    assert result.plan.response
