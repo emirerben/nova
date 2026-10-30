@@ -23,6 +23,7 @@ SUITES = (
     "tests/incidents/",
     "tests/evals/request_following/",
     "tests/integration/test_request_following_queue.py",
+    "tests/services/test_render_review_evidence.py",
 )
 CLAIM = (
     "Deterministic regression execution and recorded-evidence checks only. "
