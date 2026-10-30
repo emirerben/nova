@@ -1,4 +1,4 @@
-"""Read-only native review plans. Never generates images or edits video."""
+"""Native review plans: a paid Gemini planning call that never generates images or edits video."""
 
 import uuid
 

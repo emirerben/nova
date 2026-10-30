@@ -21,6 +21,7 @@ struct NativeOverlayGenerationPanel: View {
     @State private var generatedDraft: GeneratedMediaDraft?
     @State private var generationRowID: String?
     @State private var work: Task<Void, Never>?
+    @State private var availabilityTask: Task<Void, Never>?
 
     private var generationAvailable: Bool { availability == .available }
 
@@ -128,7 +129,7 @@ struct NativeOverlayGenerationPanel: View {
                     Button("Stop waiting") { work?.cancel(); persist() }
                 }
                 if let plan {
-                    if !plan.message.isEmpty && plan.overlays.isEmpty { Text(plan.message).font(KriaFont.body(13)) }
+                    if !plan.message.isEmpty { Text(plan.message).font(KriaFont.body(13)).accessibilityIdentifier("overlay-generation-message") }
                     ForEach(plan.overlays) { row in
                         proposalView(row)
                     }
@@ -144,7 +145,7 @@ struct NativeOverlayGenerationPanel: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-overlay-generator")
-        .onDisappear { work?.cancel(); persist() }
+        .onDisappear { work?.cancel(); availabilityTask?.cancel(); persist() }
         .onChange(of: prompt) { _, _ in persist() }
         .onChange(of: tasteNotes) { _, _ in persist() }
         .onChange(of: mode) { _, _ in persist() }
@@ -162,7 +163,7 @@ struct NativeOverlayGenerationPanel: View {
             HStack {
                 Text("Couldn’t check availability. Try again when connected.")
                     .font(KriaFont.body(12)).foregroundStyle(KriaColor.failureText)
-                Button("Try again") { Task { await checkAvailability() } }
+                Button("Try again") { availabilityTask?.cancel(); availabilityTask = Task { await checkAvailability() } }
                     .frame(minHeight: 44).font(KriaFont.body(12))
                     .accessibilityIdentifier("overlay-generation-availability-retry")
             }
@@ -179,9 +180,14 @@ struct NativeOverlayGenerationPanel: View {
         availability = .checking
         do {
             let capabilities = try await (session.overlayGenerationAPI ?? model.api).creationCapabilities()
+            guard !Task.isCancelled else { return }
             availability = capabilities.generatedImages == true ? .available : .unavailable
         } catch is CancellationError {
-        } catch { availability = .failed }
+        } catch let error as URLError where error.code == .cancelled {
+        } catch {
+            guard !Task.isCancelled else { return }
+            availability = .failed
+        }
     }
 
     private func timing(_ row: OverlayProposal) -> String {

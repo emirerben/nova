@@ -108,10 +108,11 @@ def test_generic_pictures_are_never_refused_for_their_wording(prompt):
     assert len(rows) == 1 and notices == []
 
 
-def test_unclear_subject_fails_safe_instead_of_generating():
+@pytest.mark.parametrize("declaration", ["brand_or_logo", None])
+def test_unclear_or_missing_subject_fails_safe_instead_of_generating(declaration):
     notices = []
     rows = materialize_overlays(
-        proposal(depicts="brand_or_logo", prompt="Starbucks cup"),
+        proposal(depicts=declaration, prompt="Starbucks cup"),
         evidence(),
         [],
         duration_s=8,
@@ -121,18 +122,41 @@ def test_unclear_subject_fails_safe_instead_of_generating():
     assert rows == [] and notices == [LOGO_NOTICE]
 
 
-def test_image_row_must_declare_its_subject():
-    from pydantic import ValidationError
+def test_a_missing_declaration_refuses_only_that_row_not_the_whole_plan():
+    import json
 
-    with pytest.raises(ValidationError):
-        proposal(depicts=None)
-    # Text and owned-library rows carry no declaration and are unaffected.
-    assert proposal(kind="text", text="10", prompt="", depicts=None).overlays[0].depicts is None
+    from app.agents.overlay_generation import OverlayGenerationAgent, OverlayPlanInput
+
+    wire = json.loads(proposal().model_dump_json(exclude={"overlays": {"__all__": {"depicts"}}}))
+    wire["overlays"].append({**wire["overlays"][0], "kind": "text", "text": "10", "prompt": ""})
+    wire["overlays"][1]["start_s"], wire["overlays"][1]["end_s"] = 3.0, 4.0
+    wire["overlays"][1]["evidence"] = [dict(kind="speech", reference_id="speech-1", quote="kahve")]
+    agent = OverlayGenerationAgent.__new__(OverlayGenerationAgent)
+    raw = agent.parse(
+        json.dumps(wire),
+        OverlayPlanInput(
+            language="en",
+            mode="automatic",
+            prompt="",
+            taste_notes="",
+            duration_s=8,
+            evidence=[],
+            assets=[],
+        ),
+    )
+    assert [row.depicts for row in raw.overlays] == [None, None]
+    facts = evidence() + [
+        dict(kind="speech", reference_id="speech-1", quote="kahve", start_s=3.25, end_s=3.7)
+    ]
+    notices = []
+    rows = materialize_overlays(raw, facts, [], duration_s=8, prompt="", notices=notices)
+    assert [row.kind for row in rows] == ["text"]
+    assert notices == [LOGO_NOTICE]
 
 
 def test_declaration_never_reaches_the_client():
     row = materialize_overlays(proposal(), evidence(), [], duration_s=8, prompt="")[0]
-    assert "depicts" not in row.model_dump()
+    assert "depicts" not in row.model_dump_json()
 
 
 def test_refused_brand_row_does_not_reserve_its_window():
