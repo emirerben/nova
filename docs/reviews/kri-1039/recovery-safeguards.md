@@ -91,3 +91,31 @@ repeated. No original-project operations are part of the accepted matrix.
 This refresh still needs exact-head remote CI. The previously disclosed native
 Save HTTP late-unknown gap, original-phone acceptance and production rollout are
 not closed by this integration check.
+
+## Native CI follow-up, October 30
+
+Head `7e617ac7c` completed hosted unit and screens successfully. Creation failed
+on an exact text-entry deadline and the Closing test's 4x setup assertion;
+no recovery product failure was reported. The CI recording eventually shows
+Live text in the field and preview. The text test now waits for the keyboard
+and keeps its exact value assertion with a 15-second synchronization deadline.
+
+The Closing repair is reused byte-for-byte from owner commit
+733cc0fbcee83c81e3906cbe4f424d92d36a73e5, with its validation record in
+`docs/reviews/native-speed-setup-validation.md`. Its speed-test source SHA256
+is `9c6d03e98a1bb0b77d2839290c63726ae3d84326f25831d4dd4d87e8fd18c7c8`.
+No experimental endpoint driver or product edit is included.
+
+A fresh local build on the task-only iOS 26.5 simulator ran each of the three
+selected tests three times: text creation 3/3 passed, Closing 3/3 passed,
+unchanged strict endpoint 2/3 passed. The endpoint failure reported 3.70x
+and 00:01.6 instead of 4.00x and 00:01.5. The combined batch therefore failed;
+it is not readiness proof and is not waived. The shared endpoint owner retains
+that repair. Private evidence is `/tmp/task4-recovery-ui-repair-repeated.xcresult`
+and `.audit/recovery-ui-repair-repeated.log`. The simulator was shut down.
+
+Main e486e5271f merged without conflicts. A disposable combined checkout passed
+160 permitted offline recovery/named-moment tests with zero skips. Independent
+review found no blocking interaction; the new strategy-only named-moment gate
+does not intercept failed-draft editor operations. Original-phone acceptance
+and the previously disclosed Save HTTP late-unknown gap remain unverified.
