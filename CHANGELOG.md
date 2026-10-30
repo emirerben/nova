@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.13.0] - 2026-10-30
+
+### Changed
+- perf(agents): fixed prompt text first so Gemini prefix cache can hit (KRI-1065) (#1958) <!-- release-pr: 1958 -->
+
 ## [0.83.12.0] - 2026-10-30
 
 ### Changed
