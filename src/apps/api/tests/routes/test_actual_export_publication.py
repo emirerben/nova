@@ -1,8 +1,7 @@
-"""KRI-734 publication fence: rejection never replaces a playable artifact."""
+"""Publication fence: output checks are advisory; only mismatched authority withholds."""
 
 # ruff: noqa: F811 -- pytest registers the imported shared HTTP fixture
 
-import copy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -27,9 +26,7 @@ from tests.routes.test_device_render import (  # noqa: F401
 
 @pytest.mark.parametrize("outcome", ["rejected", "partial", "unsupported"])
 @pytest.mark.parametrize("replacement", [False, True])
-def test_unchecked_export_cannot_publish_or_replace_last_good(
-    fixture, monkeypatch, outcome, replacement
-):
+def test_failed_checks_never_withhold_a_finished_export(fixture, monkeypatch, outcome, replacement):
     mock_storage(fixture, monkeypatch)
     fixture.db.execute.return_value = scalar(
         SimpleNamespace(
@@ -47,7 +44,6 @@ def test_unchecked_export_cannot_publish_or_replace_last_good(
             poster_path="last-good.jpg",
             output_url="last-good-url",
         )
-    last_good = copy.deepcopy(fixture.job.assembly_plan["variants"][0])
     record = device_record(fixture.job, "first")
     reservation = record["attempts"][attempt]
     record["actual_export_policy"] = {
@@ -61,8 +57,13 @@ def test_unchecked_export_cannot_publish_or_replace_last_good(
     def verify(*args, **kwargs):
         if "verification_report" in kwargs:
             kwargs["verification_report"].update(
-                status=outcome, checks=[{"kind": "picture", "status": "failed"}]
+                status=outcome,
+                checks=[
+                    {"kind": "picture", "status": "passed"},
+                    {"kind": "text", "status": "failed", "reason": "copy_not_read"},
+                ],
             )
+        return "new-poster.jpg"
 
     monkeypatch.setattr(routes, "_verify_export", verify)
     monkeypatch.setattr(
@@ -73,21 +74,108 @@ def test_unchecked_export_cannot_publish_or_replace_last_good(
         )(),
     )
     response = checked_completion(fixture, body(fixture, attempt))
-    assert response.status_code == 422, response.text
+    assert response.status_code == 200, response.text
     record = device_record(fixture.job, "first")
-    assert record["status"]["phase"] == "needs_attention"
-    assert record["attempts"][attempt]["actual_export_verification"]["status"] == outcome
-    if replacement:
-        assert fixture.job.assembly_plan["variants"][0] == last_good
+    assert record["status"]["phase"] == "published"
+    assert record["published_attempt"] == attempt
+    stored = record["attempts"][attempt]["actual_export_verification"]
+    assert stored["status"] == outcome, "the verdict is still recorded"
+    assert any(c["kind"] == "text" and c["status"] == "failed" for c in stored["checks"])
+    variant = fixture.job.assembly_plan["variants"][0]
+    assert variant["ok"] is True and variant["render_status"] == "ready"
+    assert variant["video_path"] == reservation["path"]
+    assert variant["poster_path"] == "new-poster.jpg"
+    assert variant["output_url"], "the signed playback URL is minted"
+    assert variant["actual_export_verification"]["status"] == outcome
+    # A redelivered completion is idempotent and never needs a passing report.
     assert (
         fixture.client.post(
             f"/me/jobs/{fixture.job.id}/device-render/complete", json=body(fixture, attempt)
         ).status_code
-        == 409
+        == 200
     )
 
 
-def test_published_fast_path_requires_its_own_successful_report(fixture, monkeypatch):
+def test_checks_that_could_not_run_publish_the_finished_export_unverified(fixture, monkeypatch):
+    """The checker being down for the whole recheck window never withholds the video."""
+    mock_storage(fixture, monkeypatch)
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    attempt, _ = prepared(fixture)
+    record = device_record(fixture.job, "first")
+    reservation = record["attempts"][attempt]
+    record["actual_export_policy"] = {
+        "version": 1,
+        "source_receipts_digest": export_source_digest(
+            approved_export_sources(fixture.job, fixture.request)
+        ),
+    }
+    save_device_record(fixture.job, "first", record)
+
+    def never_measured(*args, **kwargs):
+        raise AssertionError("an unverified publish must not run the checks")
+
+    monkeypatch.setattr(routes, "_verify_export", never_measured)
+    monkeypatch.setattr(routes, "_poster_of_unmeasured_export", lambda *a: "unmeasured.jpg")
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda _: type(
+            "M", (), dict(size=reservation["size"], content_type="video/mp4", generation="g")
+        )(),
+    )
+    response = checked_completion(fixture, body(fixture, attempt), unverified=True)
+    assert response.status_code == 200, response.text
+    record = device_record(fixture.job, "first")
+    assert record["status"]["phase"] == "published"
+    stored = record["attempts"][attempt]["actual_export_verification"]
+    assert stored["status"] == "partial"
+    assert any(c["kind"] == "verification" for c in stored["checks"])
+    variant = fixture.job.assembly_plan["variants"][0]
+    assert variant["ok"] is True and variant["video_path"] == reservation["path"]
+    assert variant["poster_path"] == "unmeasured.jpg"
+
+
+def test_bytes_that_are_not_the_reserved_upload_are_still_withheld(fixture, monkeypatch):
+    mock_storage(fixture, monkeypatch)
+    attempt, _ = prepared(fixture)
+    record = device_record(fixture.job, "first")
+    record["actual_export_policy"] = {
+        "version": 1,
+        "source_receipts_digest": export_source_digest(
+            approved_export_sources(fixture.job, fixture.request)
+        ),
+    }
+    save_device_record(fixture.job, "first", record)
+
+    def verify(*args, **kwargs):
+        raise routes._ExportIntegrityError("export checksum mismatch")
+
+    monkeypatch.setattr(routes, "_verify_export", verify)
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda _: type(
+            "M",
+            (),
+            dict(
+                size=record["attempts"][attempt]["size"], content_type="video/mp4", generation="g"
+            ),
+        )(),
+    )
+    response = checked_completion(fixture, body(fixture, attempt))
+    assert response.status_code == 422, response.text
+    stored = device_record(fixture.job, "first")
+    assert stored["status"]["phase"] == "needs_attention"
+    assert stored["attempts"][attempt]["actual_export_verification"]["status"] == "rejected"
+
+
+def test_published_fast_path_does_not_need_a_passing_report(fixture, monkeypatch):
     mock_storage(fixture, monkeypatch)
     record = device_record(fixture.job, "first")
     record.update(
@@ -103,7 +191,12 @@ def test_published_fast_path_requires_its_own_successful_report(fixture, monkeyp
         f"/me/jobs/{fixture.job.id}/device-render/complete",
         json=body(fixture, record["published_attempt"]),
     )
-    assert response.status_code == 409, response.text
+    assert response.status_code == 200, response.text
+    other = fixture.client.post(
+        f"/me/jobs/{fixture.job.id}/device-render/complete",
+        json=body(fixture, "00000000-0000-0000-0000-000000000735"),
+    )
+    assert other.status_code == 409, "another attempt never rides on the published one"
 
 
 @pytest.mark.parametrize("protocol,expected", [(11, 426), (12, 426), (13, 200)])
@@ -128,6 +221,13 @@ def test_measured_output_with_stale_authority_never_keeps_a_checked_receipt(
     fixture, monkeypatch, stale
 ):
     mock_storage(fixture, monkeypatch)
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
     attempt, _ = prepared(fixture)
     record = device_record(fixture.job, "first")
     digest = export_source_digest(approved_export_sources(fixture.job, fixture.request))
@@ -152,43 +252,52 @@ def test_measured_output_with_stale_authority_never_keeps_a_checked_receipt(
         )
 
     monkeypatch.setattr(routes, "_verify_export", verify)
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda _: SimpleNamespace(
+            size=reservation["size"], content_type="video/mp4", generation="g"
+        ),
+    )
     response = checked_completion(fixture, body(fixture, attempt))
-    assert response.status_code == 422, response.text
     stored = device_record(fixture.job, "first")
     assert stored["attempts"][attempt]["actual_export_verification"]["status"] == "rejected"
     if stale == "source_receipts":
-        # An authority drift is not "this iPhone can't render it" (S3-j): it is its
-        # own code, and that code still asks for a change, never an exact retry loop.
-        assert stored["status"]["reason_code"] == "contract_changed", (
-            "Changed authority needs re-approval, not an exact retry loop"
-        )
+        # A source/policy digest mismatch is the one authority drift that still withholds:
+        # it needs re-approval, never an exact retry loop.
+        assert response.status_code == 422, response.text
+        assert stored["status"]["reason_code"] == "contract_changed"
+    else:
+        # A mislabeled receipt is advisory: the video publishes, never as a checked receipt.
+        assert response.status_code == 200, response.text
+        assert stored["status"]["phase"] == "published"
 
 
 @pytest.mark.parametrize(
-    "pinned,reported,expected",
+    "pinned,reported,verified",
     [
         # KRI-810: a request pinned before the verifier repair (Troya job
         # 57602026 was pinned to v2) publishes bytes the repaired verifier checks.
-        ("phone-simple-cut-v2", "phone-simple-cut-v3", 200),
-        ("phone-simple-cut-v3", "phone-simple-cut-v3", 200),
+        ("phone-simple-cut-v2", "phone-simple-cut-v3", True),
+        ("phone-simple-cut-v3", "phone-simple-cut-v3", True),
         # KRI-1042: a request pinned to v3 (Lisbon job 3daccc8c) publishes bytes
         # the v4 text proof checks.
-        ("phone-simple-cut-v3", "phone-simple-cut-v4", 200),
-        ("phone-simple-cut-v4", "phone-simple-cut-v4", 200),
+        ("phone-simple-cut-v3", "phone-simple-cut-v4", True),
+        ("phone-simple-cut-v4", "phone-simple-cut-v4", True),
         # KRI-1042 frame profile: the Lisbon request (pinned to v3) and v4 pins
         # publish bytes the v5 picture rule checks.
-        ("phone-simple-cut-v3", "phone-simple-cut-v5", 200),
-        ("phone-simple-cut-v4", "phone-simple-cut-v5", 200),
-        ("phone-simple-cut-v5", "phone-simple-cut-v5", 200),
-        # An older verifier never satisfies a pin, nor a newer pin.
-        ("phone-simple-cut-v2", "phone-simple-cut-v1", 422),
-        ("phone-simple-cut-v3", "phone-simple-cut-v2", 422),
-        ("phone-simple-cut-v4", "phone-simple-cut-v3", 422),
-        ("phone-simple-cut-v5", "phone-simple-cut-v4", 422),
+        ("phone-simple-cut-v3", "phone-simple-cut-v5", True),
+        ("phone-simple-cut-v4", "phone-simple-cut-v5", True),
+        ("phone-simple-cut-v5", "phone-simple-cut-v5", True),
+        # An older verifier never satisfies a pin: the video still publishes, unverified.
+        ("phone-simple-cut-v2", "phone-simple-cut-v1", False),
+        ("phone-simple-cut-v3", "phone-simple-cut-v2", False),
+        ("phone-simple-cut-v4", "phone-simple-cut-v3", False),
+        ("phone-simple-cut-v5", "phone-simple-cut-v4", False),
     ],
 )
-def test_pinned_verifier_accepts_its_own_or_the_current_verifier_only(
-    fixture, monkeypatch, pinned, reported, expected
+def test_pinned_verifier_counts_as_verified_only_for_its_own_or_a_later_verifier(
+    fixture, monkeypatch, pinned, reported, verified
 ):
     mock_storage(fixture, monkeypatch)
     fixture.db.execute.return_value = scalar(
@@ -229,7 +338,7 @@ def test_pinned_verifier_accepts_its_own_or_the_current_verifier_only(
         ),
     )
     response = checked_completion(fixture, body(fixture, attempt))
-    assert response.status_code == expected, response.text
+    assert response.status_code == 200, response.text
     from app.services.request_following_outcomes import delivery_counts
 
     capture = {
@@ -242,10 +351,7 @@ def test_pinned_verifier_accepts_its_own_or_the_current_verifier_only(
         }
     }
     counts = delivery_counts(capture)
-    assert counts["verified_device_exports"] == int(expected == 200)
+    assert counts["verified_device_exports"] == int(verified)
     stored = device_record(fixture.job, "first")
-    if expected == 200:
-        assert stored["status"]["phase"] == "published"
-        assert stored["published_attempt"] == attempt
-    else:
-        assert stored["status"]["phase"] != "published"
+    assert stored["status"]["phase"] == "published"
+    assert stored["published_attempt"] == attempt

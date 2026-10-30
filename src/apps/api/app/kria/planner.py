@@ -4562,6 +4562,7 @@ _FAST_PATH_OPS = frozenset(
         "add_text",
         "set_text_timing",
         "set_texts_timing",
+        "retime_text_sequence",
         "realign_labels",
         "label_each_clip",
         "reorder_clips_by",

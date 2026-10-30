@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.9.0] - 2026-10-30
+
+### Changed
+- fix(kria): preserve or retime complete text sequences (KRI-1060) (#1952) <!-- release-pr: 1952 -->
+
+## [0.83.8.0] - 2026-10-30
+
+### Fixed
+- fix(export): a finished phone export always publishes; output checks are advisory (KRI-1061) (#1954) <!-- release-pr: 1954 -->
+
 ## [0.83.7.0] - 2026-10-30
 
 ### Changed
