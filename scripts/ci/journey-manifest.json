@@ -2,6 +2,23 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-1052-source-selection-readers",
+      "needs_native": false,
+      "api_tests": "tests/services/test_clip_intent_source_kind.py tests/services/test_clip_selection_provenance.py tests/services/test_story_intent_reconciliation.py tests/pipeline/test_unified_montage_creator_omissions.py tests/kria/test_brief_any_order_moment_limits.py tests/kria/test_selection_reader_compatibility.py tests/kria/test_selection_reader_postgres.py",
+      "paths": [
+        "src/apps/api/app/schemas/story_intents.py",
+        "src/apps/api/app/services/creator_omissions.py",
+        "src/apps/api/app/services/story_intent_reconciliation.py",
+        "src/apps/api/tests/services/test_clip_intent_source_kind.py",
+        "src/apps/api/tests/services/test_clip_selection_provenance.py",
+        "src/apps/api/tests/services/test_story_intent_reconciliation.py",
+        "src/apps/api/tests/pipeline/test_unified_montage_creator_omissions.py",
+        "src/apps/api/tests/kria/test_brief_any_order_moment_limits.py",
+        "src/apps/api/tests/kria/test_selection_reader_compatibility.py",
+        "src/apps/api/tests/kria/test_selection_reader_postgres.py"
+      ]
+    },
+    {
       "id": "kri-826-creator-text-literal-fit",
       "needs_native": true,
       "api_tests": "tests/kria/test_kri826_creator_text_literal.py tests/kria/test_kri804_label_text_reply.py tests/pipeline/test_authored_newlines.py tests/pipeline/test_text_overlay_skia.py tests/pipeline/test_overlay_verify.py",
