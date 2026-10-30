@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.34.0] - 2026-10-30
+
+### Changed
+- feat(captions): add scoped size and position controls (#1924) <!-- release-pr: 1924 -->
+
+## [0.82.33.0] - 2026-10-29
+
+### Changed
+- fix(kria): localize named moments with first/last photos before approval (#1947) <!-- release-pr: 1947 -->
+
+## [0.82.32.0] - 2026-10-29
+
+### Changed
+- ci: start PR simulator boot during setup (KRI-1055) (#1945) <!-- release-pr: 1945 -->
+
+## [0.82.31.0] - 2026-10-29
+
+### Changed
+- fix(ios): reopen saved drafts at valid source endpoints (KRI-984) (#1890) <!-- release-pr: 1890 -->
+
+## [0.82.30.0] - 2026-10-29
+
+### Changed
+- fix(ios): finish inspector edits on close and verify native journeys (#1892) <!-- release-pr: 1892 -->
+
 ## [0.82.29.0] - 2026-10-29
 
 ### Fixed

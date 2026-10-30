@@ -1,0 +1,103 @@
+{
+  "expected": [
+    "blue",
+    "red",
+    "green"
+  ],
+  "rgb": [
+    [
+      0,
+      15,
+      255
+    ],
+    [
+      255,
+      23,
+      0
+    ],
+    [
+      1,
+      109,
+      0
+    ]
+  ],
+  "passed": true,
+  "observed": [
+    "blue",
+    "red",
+    "green"
+  ],
+  "wrong_order_control": {
+    "expected": [
+      "red",
+      "green",
+      "blue"
+    ],
+    "accepted": false
+  },
+  "evidence_level": "Mac AVFoundation native export with generated media",
+  "source_intervals": [
+    [
+      8,
+      9
+    ],
+    [
+      0,
+      1
+    ],
+    [
+      4,
+      5
+    ]
+  ],
+  "limits": [
+    "not physical iPhone acceptance",
+    "not original Cabildo media",
+    "source fingerprint in test binding is synthetic"
+  ],
+  "native_wrong_content_control": {
+    "source_intervals": [
+      [
+        0,
+        1
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        8,
+        9
+      ]
+    ],
+    "observed": [
+      "red",
+      "green",
+      "blue"
+    ],
+    "rgb": [
+      [
+        255,
+        23,
+        1
+      ],
+      [
+        1,
+        109,
+        0
+      ],
+      [
+        0,
+        15,
+        255
+      ]
+    ],
+    "expected_original": [
+      "blue",
+      "red",
+      "green"
+    ],
+    "accepted": false,
+    "same_asset_ids_cut_ids_count_timing": true
+  }
+}

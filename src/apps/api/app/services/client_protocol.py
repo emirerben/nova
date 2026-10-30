@@ -19,6 +19,15 @@ from contextvars import ContextVar
 # KRI-898: where `decide_approval` records the approving app build on the render execution
 # (read back by `_claim_approval_dispatch`, stamped on the Job as `creator_client_protocol`).
 APPROVAL_CLIENT_PROTOCOL_FIELD = "approval_client_protocol"
+CAPTION_STYLE_SCOPE_PROTOCOL = 25
+
+
+def caption_style_scope_supported() -> bool:
+    protocol = current_client_protocol()
+    return (
+        not in_http_request() or protocol is not None and protocol >= CAPTION_STYLE_SCOPE_PROTOCOL
+    )
+
 
 _client_protocol: ContextVar[int | None] = ContextVar("kria_client_protocol", default=None)
 _in_http_request: ContextVar[bool] = ContextVar("kria_in_http_request", default=False)

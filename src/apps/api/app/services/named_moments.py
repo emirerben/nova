@@ -228,14 +228,14 @@ def named_moments(
     is all resolved ``then`` rows, the footage they name is ONE video, which is the only video
     in the edit, and the rows name at least two moments of it: one row listing them ("A, B,
     C") or one row per moment. Rows naming only other media (a Visual photo) ride along. A
-    moment count that disagrees with the named moments is not guessed at: None.
+    moment count that disagrees with the named moments raises a bounded recovery error.
     """
     if not isinstance(media_snapshot, Mapping):
         return None
     if strategy.get("edit_format") != "montage":
         return None
     rows = sequence_rows(strategy.get("resolved_clip_intents"))
-    if not rows or any(pos is not None or status != "resolved" for pos, _n, _m, status in rows):
+    if not rows or any(status != "resolved" for _pos, _n, _m, status in rows):
         return None
     videos = {
         str(row.get("media_id")): row
@@ -257,8 +257,10 @@ def named_moments(
     moments: list[NamedMoment] = []
     visual_rows: list[int] = []
     generation = str(row.get("storage_generation") or row.get("generation") or "")
-    for index, (_pos, name, members, _status) in enumerate(rows):
+    for index, (position, name, members, _status) in enumerate(rows):
         if set(members) == {take}:
+            if position is not None:
+                return None
             for words in _listed(name):
                 moments.append(NamedMoment(moment_key(words, take, generation), words, index))
         elif members and take not in members:
@@ -269,7 +271,23 @@ def named_moments(
     if len(moments) < 2 or len(set(keys)) != len(keys):
         return None
     if moment_count is not None and moment_count != len(moments):
-        return None
+        from app.kria.reply_language import say  # noqa: PLC0415
+
+        raise MomentOrderError(
+            "moment_order_count_mismatch",
+            say(
+                en=(
+                    f"You asked for {moment_count} moments from the video, but I matched "
+                    f"{len(moments)} to it. Please tell me which moments to keep or correct "
+                    "the clip choices before I prepare the edit."
+                ),
+                tr=(
+                    f"Videodan {moment_count} an istedin, ancak {len(moments)} tanesini "
+                    "videoyla eşleştirdim. Düzenlemeyi hazırlamadan önce hangi anları "
+                    "tutacağımı belirtir veya klip seçimlerini düzeltir misin?"
+                ),
+            ),
+        )
     duration = row.get("duration_s")
     if isinstance(duration, bool) or not isinstance(duration, (int, float)) or duration <= 0:
         return None
@@ -559,6 +577,7 @@ class MomentDecision:
     app that cannot answer: today's windows with an honest receipt)."""
 
     question: dict[str, Any] | None = None
+    recovery: str | None = None
     pins: tuple[Pin, ...] = ()
     skipped: tuple[Pin, ...] = ()
     found: int = 0

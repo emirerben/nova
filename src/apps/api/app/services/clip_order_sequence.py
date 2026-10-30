@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import unicodedata
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal, TypeVar
 
 from app.kria.brief_route import loose_text
 
@@ -238,11 +238,12 @@ class MomentSeats:
     creator named that many moments, so the i-th named moment is the i-th window. Which
     window shows which moment is the length plan's choice, not this rule's.
 
-    ``after``: Visual id -> the moment (1-based) it plays right after. ``named``: sequence
-    row index -> the moment that row names (one row per moment). ``placed``: sequence row
+    ``after``: Visual id -> the moment (1-based) it plays right after, or 0 for an explicit
+    first pin. ``named``: sequence row index -> the moment that row names. ``placed``: sequence row
     index -> (moment, its Visual ids) for each row that seated a Visual. ``listed`` (KRI-723):
     sequence row index -> the moments one row lists ("A, B, C"); ``skipped``: rows whose
-    every moment the creator said is not in their clips.
+    every moment the creator said is not in their clips. ``positions`` retains explicit
+    boundary groups, whose first/last placement also surrounds unrelated Visuals.
     """
 
     take: str
@@ -252,6 +253,8 @@ class MomentSeats:
     placed: dict[int, tuple[int, tuple[str, ...]]] = field(default_factory=dict)
     listed: dict[int, tuple[int, ...]] = field(default_factory=dict)
     skipped: tuple[int, ...] = ()
+    conflicted: tuple[int, ...] = ()
+    positions: dict[int, Literal["first", "last"]] = field(default_factory=dict)
 
 
 def _words(text: object) -> list[str]:
@@ -302,18 +305,18 @@ def moment_seats(
 
     ``windows``: clip id -> how many approved windows the length plan cut it into.
     ``visuals``: the ids of the Visuals in this edit. It applies only when every row is a
-    resolved ``then`` row naming either that one take or only Visuals, and the moments the
-    rows name are exactly the take's windows: one row listing them ("A, B, C"), or one row
+    resolved row naming either that one take or only Visuals, with positional pins only on
+    Visuals. The rows name exactly the take's windows: one listed row ("A, B, C"), or one row
     per moment. A Visual's row seats it after the moment its own words anchor ("the photo
     right after B"); with one row per moment, a row with no anchor seats it where it is
-    listed. A Visual before the first moment would open the video: it is not seated.
+    listed. A Visual before the first moment is seated only with an explicit first pin.
 
     ``pinned`` (KRI-723): the approved plan's named moments as (row index, the creator's words),
     in the order their windows play (the creator's final order, skipped ones left out). They
     replace the rows' listing, so the i-th window is the i-th pinned moment by construction,
     not by assumption. ``skipped_rows``: rows the creator said are not in their clips.
     """
-    if not rows or any(pos is not None or status != "resolved" for pos, _n, _m, status in rows):
+    if not rows or any(status != "resolved" for _pos, _n, _m, status in rows):
         return None
     footage = {m for _p, _n, members, _s in rows for m in members if m not in visuals}
     if len(footage) != 1:
@@ -327,6 +330,8 @@ def moment_seats(
         if members and set(members) <= set(visuals)
     ]
     if len(take_rows) + len(visual_rows) != len(rows):
+        return None
+    if any(rows[index][0] is not None for index in take_rows):
         return None
     listed: dict[int, tuple[int, ...]] = {}
     if pinned is not None:
@@ -352,17 +357,28 @@ def moment_seats(
         listed=listed,
         skipped=tuple(row for row in take_rows if row in set(skipped_rows)),
     )
+    conflicts: list[int] = []
     for index in visual_rows:
+        position = rows[index][0]
         anchored, seat = _anchored_seat(rows[index][1], moments)
-        if not anchored and named:
+        if position in {"first", "last"}:
+            explicit_seat = 0 if position == "first" else count
+            if anchored and seat != explicit_seat:
+                conflicts.append(index)
+                continue
+            seat = explicit_seat
+        elif not anchored and named:
             # One row per moment, the Visual listed among them: after the moment of the
             # nearest take row above it (the creator's final order may have moved it).
             above = [row for row in take_rows if row < index and row in named]
             seat = named[max(above)] if above else None
-        if seat is None or not 1 <= seat <= count:
+        if seat is None or not 0 <= seat <= count or (seat == 0 and position != "first"):
             continue
         members = tuple(rows[index][2])
         seats.placed[index] = (seat, members)
+        if position in {"first", "last"}:
+            seats.positions[index] = position
         for member in members:
             seats.after.setdefault(member, seat)
+    seats = replace(seats, conflicted=tuple(conflicts))
     return seats if seats.after or seats.named or seats.listed else None
