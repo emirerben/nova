@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.15.0] - 2026-10-30
+
+### Fixed
+- fix(kria): a filming-order ending the planner left out asks with the clip picker, not a dead end (KRI-1067) (#1964) <!-- release-pr: 1964 -->
+
 ## [0.83.14.0] - 2026-10-30
 
 ### Changed
