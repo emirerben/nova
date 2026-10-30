@@ -363,3 +363,36 @@ def test_proposal_cannot_stretch_across_a_middle_carousel():
             prompt="At 00:03 show a star for 2 seconds",
             insertion_base=4,
         )
+
+
+@pytest.mark.parametrize("kind", ["explicit_time", "visual", "speech"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_conflicting_references_cannot_move_an_overlay_outside_another_anchor(kind, reverse):
+    speech = dict(kind="speech", reference_id="speech-0", quote="kahve")
+    other = dict(kind=kind, reference_id="other", quote="other")
+    refs = [other, speech] if not reverse else [speech, other]
+    facts = evidence() + [dict(kind=kind, reference_id="other", quote="other", start_s=3, end_s=5)]
+    raw = proposal(start_s=3, end_s=4, evidence=refs)
+    with pytest.raises(ValueError):
+        materialize_overlays(raw, facts, [], duration_s=8, prompt="show coffee at 3 seconds")
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_matching_references_validate_the_final_speech_start(reverse):
+    refs = [
+        dict(kind="explicit_time", reference_id="time", quote="1.25"),
+        dict(kind="visual", reference_id="shot", quote="A cup"),
+        dict(kind="speech", reference_id="speech-0", quote="kahve"),
+    ]
+    facts = evidence() + [
+        dict(kind="explicit_time", reference_id="time", start_s=1.25, end_s=8),
+        dict(kind="visual", reference_id="shot", quote="A cup", start_s=1, end_s=4),
+    ]
+    rows = materialize_overlays(
+        proposal(start_s=0, evidence=list(reversed(refs)) if reverse else refs),
+        facts,
+        [],
+        duration_s=8,
+        prompt="",
+    )
+    assert rows[0].start_s == 1.25

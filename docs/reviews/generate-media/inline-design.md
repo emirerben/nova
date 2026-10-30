@@ -58,3 +58,9 @@ Independent current-main review found that source registration used the proposal
 The native recovery regression first reproduced this failure: the original preview stayed recoverable, but the replacement could not enter the timeline. Registration now uses a deterministic UUID per proposal/asset pair; the ordinary timeline block still uses the stable proposal ID. The fixture retains the accepted first registration before losing its response and rejects changed sources under reused IDs. It does not suppress the server contract. Independent review verified the repair.
 
 The complete focused native run then passed 38 tests, zero failed: 35 units including transparent-overlay export and all three real UI journeys. Result bundle: /Users/emirerben/Documents/Codex/2026-10-30/task/overlay-registration-green.xcresult; red control beside it as overlay-registration-red.xcresult. Remote CI must be verified again for the repair; the previous exact head had all Linux checks green with three native legs still queued.
+
+## Reference-order grounding control
+
+A second boundary review reproduced order-dependent grounding: an early explicit-time or visual-window check could pass before a later speech citation moved the start elsewhere. Six conflicting-reference permutation cases and two valid mixed-reference cases were added before repair; the original implementation failed five of them.
+
+Speech anchors now resolve first and must agree. Every visual window and explicit timestamp is then checked against the final start, followed by the existing bounds, Carousel and collision guards. Independent review ran the eight cases and original single-speech case: nine passed. The full selected overlay/language/parity/free replay run passed 2386 tests, with 27 skipped and seven expected failures. Native source remains the 38-pass recovery-repair source. No paid calls.

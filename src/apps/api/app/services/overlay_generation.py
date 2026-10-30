@@ -297,23 +297,29 @@ def materialize_overlays(
             re.I,
         ):
             raise ValueError("A shot description cannot time that action. Name an exact time.")
-        start = row.start_s
+        references = []
+        anchors = []
         for reference in row.evidence:
             fact = by_ref.get((reference.kind, reference.reference_id))
             if fact is None:
                 raise ValueError(
                     "The suggested timing has no source evidence. Try a more specific request."
                 )
+            references.append((reference, fact))
             if reference.kind == "speech":
-                start = _speech_start(fact, reference.quote)
-            elif reference.kind == "visual":
+                anchors.append(_speech_start(fact, reference.quote))
+        start = anchors[0] if anchors else row.start_s
+        if any(abs(anchor - start) > 0.001 for anchor in anchors):
+            raise ValueError("The spoken triggers name different moments. Choose one occurrence.")
+        for reference, fact in references:
+            if reference.kind == "visual":
                 if not (fact["start_s"] <= start < row.end_s <= fact["end_s"]):
                     raise ValueError("The suggestion extends beyond the pictured source moment.")
                 if reference.quote and _tokens(reference.quote) != _tokens(fact["quote"]):
                     raise ValueError(
                         "The suggestion names a visual moment not supported by the source."
                     )
-            elif abs(start - fact["start_s"]) > 0.001:
+            elif reference.kind == "explicit_time" and abs(start - fact["start_s"]) > 0.001:
                 raise ValueError("The suggestion does not match the requested time.")
         if not 0 <= start < row.end_s <= duration_s:
             raise ValueError("The suggestion is outside this video's timeline.")
