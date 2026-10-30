@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.14.0] - 2026-10-30
+
+### Changed
+- fix(kria): "skip that" withdraws the clip a stuck reply named; never the same stuck reply twice (KRI-1068) (#1963) <!-- release-pr: 1963 -->
+
 ## [0.83.13.0] - 2026-10-30
 
 ### Changed
