@@ -221,7 +221,7 @@ def _iter_test_cases(report):
             bundle = node["name"].removesuffix(".xctest")
         if node.get("nodeType") == "Test Case":
             identifier = node.get("nodeIdentifier", "").removesuffix("()")
-            if not identifier.startswith(bundle + "/"):
+            if identifier.count("/") == 1 or not identifier.startswith(bundle + "/"):
                 identifier = bundle + "/" + identifier
             yield identifier, node
         for child in node.get("children", []):
