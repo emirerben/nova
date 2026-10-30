@@ -907,6 +907,34 @@ class PlannedKriaTurn:
     prepared_research: dict | None = None
     # The basis inputs research read that the persisted draft does not hold.
     prepared_research_terms: dict | None = None
+    # KRI-1068: what the turn just withdrew ("skip that" about the clip the last reply was
+    # stuck on), said by the draft or by whatever reply holds it back.
+    pin_notices: tuple[str, ...] = ()
+
+
+async def _withdraw_stuck_pins(
+    db: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    prior: CreativeBrief | None,
+    updates: tuple[BriefUpdate, ...],
+    user_message: str,
+) -> tuple[tuple[BriefUpdate, ...], tuple[str, ...]]:
+    """KRI-1068: right after a reply stuck on a first / last clip, "skip that" drops it.
+
+    The events are read only when the brief names such a clip at all.
+    """
+    from app.services.clip_order_sequence import stated_anchors  # noqa: PLC0415
+    from app.services.pin_withdrawal import withdraw_stuck_pins  # noqa: PLC0415
+
+    if prior is None or not stated_anchors(prior):
+        return updates, ()
+    withdrawal = withdraw_stuck_pins(
+        prior, updates, await _load_thread_events(db, thread_id), user_message
+    )
+    if withdrawal.notices:
+        log.info("kria_stuck_pin_withdrawn", thread_id=str(thread_id))
+    return withdrawal.updates, withdrawal.notices
 
 
 def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202
@@ -5134,6 +5162,10 @@ async def _gate_unresolved_choices(
     song_notice = music_genre_notice(frozen_music)
     if song_notice and song_notice not in planned.policy_notices:
         planned = replace(planned, policy_notices=(*planned.policy_notices, song_notice))
+    # KRI-1068: the clip the creator just dropped is said like the song, on both replies.
+    pin_notices = [n for n in planned.pin_notices if n not in planned.policy_notices]
+    if pin_notices:
+        planned = replace(planned, policy_notices=(*planned.policy_notices, *pin_notices))
     model_summary = str(arguments.get("summary") or "")
     plan_notices = [
         notice
@@ -5143,6 +5175,7 @@ async def _gate_unresolved_choices(
             ),
             _moment_count_notice(strategy, brief, length_plan, summary=model_summary),
             song_notice,
+            *planned.pin_notices,
         )
         if notice
     ]
@@ -6145,6 +6178,9 @@ async def _plan_live_turn(
         updates=updates,
         states=inputs.creative_copy_state or {},
     )
+    updates, pin_notices = await _withdraw_stuck_pins(
+        db, thread_id=thread_id, prior=prior_brief, updates=updates, user_message=user_message
+    )
     if answers_clip_question and updates:
         # KRI-966: a tapped length answer is the server's own option label, already applied by
         # the gate; the model's restatement of it is never the creator's length ask.
@@ -6319,6 +6355,7 @@ async def _plan_live_turn(
     return replace(
         planned,
         brief_updates=updates,
+        pin_notices=pin_notices,
         # A re-plan that ended up asking a question or failing safe is not an
         # editor plan; only an act plan is held to the router's verdict.
         brief_route=route,

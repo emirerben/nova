@@ -3714,6 +3714,56 @@
         "80-character title cut on phone titles"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1068-stuck-pin-withdrawal",
+      "tickets": [
+        "KRI-1068",
+        "KRI-1066"
+      ],
+      "symptom": "Leverkusen M1 (thread 4144DA86, 2026-10-29): \"chronological order from arrival to the final whistle\" stored last_clip \"the final whistle\" on brief r2; nothing was seated last, so the draft backstop refused \"I couldn't tell which clip 'the final whistle' means, so I can't confirm the order.\" The creator's \"Okay make it simplier\" got the identical sentence back and \"Okay skip that part\" left the clip on brief v1-v3 (sticky first/last clips, KRI-522; \"simpler\" needs an earlier simpler-version offer). No video.",
+      "boundary": "brief",
+      "status": "open_pr",
+      "owner": "KRI-1068",
+      "paths": [
+        "src/apps/api/app/services/pin_withdrawal.py",
+        "src/apps/api/app/services/clip_none_answers.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1068_pin_withdrawal.py",
+        "tests/kria/test_kri1068_pin_withdrawal_postgres.py",
+        "tests/kria/test_kri1025_none_answer_pin.py",
+        "tests/services/test_request_following_kri522.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Real runtime turns over scratch Postgres (submit_turn + run_kria_turn): turn 1 stuck on the ending with blocked_pins stored, a non-withdrawing turn gets the ways forward (never the same reply), \"Okay skip that part\" / \"Okay make it simplier\" persist a brief version without last_clip and reach the approval card saying it was dropped. Planner step, gate, backstop and render contract real; the Main Creator returns the turn's reconstructed draft (its I/O is redacted in prod).",
+        "live_model": "Not run (no paid calls).",
+        "native_output": "Not applicable: chat and brief only; no render path changed.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "EN and TR withdrawals: skip that (part), skip it, drop it, never mind, forget it, forget the ending, make it simpler, leave it out, bo\u015fver, o k\u0131sm\u0131 atla, daha basit yap",
+        "only the stuck clip goes: the seated opening and the filming-order ask stay",
+        "pin-only ending (no basis order) is removed as a whole, no ordering-rule dead end",
+        "the model's own change of the same requirement cannot carry the clip back; its remove stands",
+        "KRI-522: a non-withdrawing reword keeps the clip; a clip named since the block is not withdrawn",
+        "not right after a stuck reply (a draft, a question, an older stuck reply): nothing withdrawn",
+        "a repeated recovery about something else also changes wording"
+      ],
+      "neighbours_gap": [
+        "A withdrawal inside a longer message (\"skip that and make it 30 seconds\") is left to the Main Creator.",
+        "A typed \"skip that\" after a clip picker (KRI-1067's possible fix) is not read here; the None tap is KRI-1025's path.",
+        "A clip-intent row the planner re-reads from the original wording on later turns may still ask about the dropped words (raw creator request is re-planned every turn).",
+        "The receipts-gate recovery (approval readiness / simpler-version offer) has no repeat guard."
+      ],
+      "follow_ups": [
+        "Leverkusen M1 iPhone re-send after deploy (needs KRI-1067 and KRI-1069 too for a video)"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

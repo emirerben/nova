@@ -170,15 +170,24 @@ def _order_basis(req: Any) -> str | None:
     return None
 
 
-def _pin_notice(position: str, words: str, basis: str | None, *, skipped: bool) -> str:
-    head = (
-        say(en=f'You didn\'t pick a clip for "{words}"', tr=f'"{words}" için bir klip seçmedin')
-        if skipped
-        else say(
+def _pin_notice(
+    position: str, words: str, basis: str | None, *, skipped: bool, withdrawn: bool = False
+) -> str:
+    if withdrawn:
+        # KRI-1068: the creator typed "skip that" after a reply stuck on this clip.
+        head = say(
+            en=f'As you asked, I dropped "{words}"',
+            tr=f'İstediğin gibi "{words}" kısmını çıkardım',
+        )
+    elif skipped:
+        head = say(
+            en=f'You didn\'t pick a clip for "{words}"', tr=f'"{words}" için bir klip seçmedin'
+        )
+    else:
+        head = say(
             en=f'None of your clips show "{words}"',
             tr=f'Kliplerinin hiçbirinde "{words}" yok',
         )
-    )
     last = position == "last"
     if basis is not None:
         filmed = basis == "filmed"
@@ -353,8 +362,12 @@ def none_answer_choices(
     return NoneAnswers(tuple(answers), tuple(dict.fromkeys(notices)))
 
 
-def _without_pins(req: Any, gone: dict[str, str]) -> Any:
-    """``req`` without the first / last clips in ``gone`` (``{position: words}``)."""
+def _without_pins(req: Any, gone: dict[str, str], *, withdrawn: bool = False) -> Any:
+    """``req`` without the first / last clips in ``gone`` (``{position: words}``).
+
+    ``withdrawn``: the creator took them back (KRI-1068), rather than answering that no clip
+    shows them, which is what a rule this module cannot re-word then says.
+    """
     facts = dict(req.facts or {})
     for position, words in gone.items():
         fact = _FACT_OF[position]
@@ -391,9 +404,16 @@ def _without_pins(req: Any, gone: dict[str, str]) -> Any:
     else:
         # A rule this module cannot re-word ("along my route"): keep it, say what is gone.
         missing = ", ".join(f'"{words}"' for words in gone.values())
-        description = say(
-            en=f"{req.description} (none of your clips show {missing})",
-            tr=f"{req.description} (kliplerinde {missing} yok)",
+        description = (
+            say(
+                en=f"{req.description} (without {missing})",
+                tr=f"{req.description} ({missing} olmadan)",
+            )
+            if withdrawn
+            else say(
+                en=f"{req.description} (none of your clips show {missing})",
+                tr=f"{req.description} (kliplerinde {missing} yok)",
+            )
         )
     return req.model_copy(update={"facts": facts, "description": description})
 

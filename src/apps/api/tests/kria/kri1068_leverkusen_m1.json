@@ -1,0 +1,133 @@
+{
+  "source": {
+    "issue": "KRI-1068 (parent KRI-1066)",
+    "thread": "4144DA86-D93C-4EA8-BE9E-D27E4BA3CF78",
+    "server": "Fly 3c8d4dd82; the order code is unchanged on main d2fe95dc0",
+    "recorded": [
+      "the three creator messages and the turn-1/turn-2 reply text (iPhone chat, 2026-10-29 17:28-17:30 UTC)",
+      "brief r2 facts: key capture_time, first_clip \"the lineup sheet\", last_clip \"the final whistle\" (creative_brief_versions v1, unchanged in v2 and v3)",
+      "the first and last video capture times (18:21:28Z, 21:47:37Z), IMG_1039 21:35:40Z and the lineup-sheet photo 20:33:20Z (read-only prod DB read, 2026-10-30)"
+    ],
+    "reconstructed": [
+      "media ids are the file names; the other video capture times are spread between the recorded ones",
+      "r2's description wording (the brief stores the model's paraphrase; only its facts were read)",
+      "the turn strategy: Main Creator I/O is redacted and the blocked drafts were rolled back. The recorded reply named only the ending, so the lineup sheet had a seated first-clip row and nothing was seated last."
+    ]
+  },
+  "events": [
+    {
+      "role": "user",
+      "content": "Make a 45-second vertical montage of my night at Leverkusen vs Nürnberg, DFB-Pokal round 2, final score 5–2. Keep it in chronological order from arrival to the final whistle. Open on the lineup sheet, end with a title card \"Leverkusen 5–2 Nürnberg · BayArena\". Upbeat music, cut on the beat."
+    },
+    {
+      "role": "assistant",
+      "content": "I couldn't tell which clip \"the final whistle\" means, so I can't confirm the order."
+    },
+    {"role": "user", "content": "Okay make it simplier"},
+    {
+      "role": "assistant",
+      "content": "I couldn't tell which clip \"the final whistle\" means, so I can't confirm the order."
+    },
+    {"role": "user", "content": "Okay skip that part"}
+  ],
+  "brief_v1": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "timing",
+        "scope": "global",
+        "literal": null,
+        "description": "45-second vertical montage",
+        "facts": {"duration_s": 45},
+        "status": "open"
+      },
+      {
+        "id": "r2",
+        "kind": "order",
+        "scope": "global",
+        "literal": null,
+        "description": "chronological order from arrival to the final whistle, opening on the lineup sheet",
+        "facts": {
+          "key": "capture_time",
+          "first_clip": "the lineup sheet",
+          "last_clip": "the final whistle"
+        },
+        "status": "open"
+      }
+    ]
+  },
+  "media": [
+    {"media_id": "IMG_1012.MOV", "kind": "video", "duration_s": 8.4, "capture_time": "2026-10-28T18:21:28Z"},
+    {"media_id": "IMG_1015.MOV", "kind": "video", "duration_s": 6.1, "capture_time": "2026-10-28T18:58:10Z"},
+    {"media_id": "IMG_1038.HEIC", "kind": "image", "duration_s": 3.0, "capture_time": "2026-10-28T20:33:20Z", "shows": "the printed DFB-Pokal lineup sheet"},
+    {"media_id": "IMG_1021.MOV", "kind": "video", "duration_s": 9.2, "capture_time": "2026-10-28T19:40:02Z"},
+    {"media_id": "IMG_1026.MOV", "kind": "video", "duration_s": 7.5, "capture_time": "2026-10-28T20:05:44Z"},
+    {"media_id": "IMG_1030.MOV", "kind": "video", "duration_s": 5.8, "capture_time": "2026-10-28T20:48:31Z"},
+    {"media_id": "IMG_1033.MOV", "kind": "video", "duration_s": 10.3, "capture_time": "2026-10-28T21:02:17Z"},
+    {"media_id": "IMG_1036.MOV", "kind": "video", "duration_s": 6.9, "capture_time": "2026-10-28T21:18:05Z"},
+    {"media_id": "IMG_1039.MOV", "kind": "video", "duration_s": 8.8, "capture_time": "2026-10-28T21:35:40Z"},
+    {"media_id": "IMG_1043.MOV", "kind": "video", "duration_s": 12.6, "capture_time": "2026-10-28T21:47:37Z"}
+  ],
+  "strategy": {
+    "pacing": "fast",
+    "direction": "native",
+    "rationale": "Your night at the BayArena in the order you filmed it, opening on the lineup sheet.",
+    "edit_format": "montage",
+    "media_scope": "selected",
+    "caption_style": "auto",
+    "audio_strategy": "original_audio",
+    "render_program": "guided",
+    "target_duration_s": 45,
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "selected_media_ids": [
+      "IMG_1012.MOV",
+      "IMG_1015.MOV",
+      "IMG_1038.HEIC",
+      "IMG_1021.MOV",
+      "IMG_1026.MOV",
+      "IMG_1030.MOV",
+      "IMG_1033.MOV",
+      "IMG_1036.MOV",
+      "IMG_1039.MOV",
+      "IMG_1043.MOV"
+    ],
+    "clip_intents": [
+      {"op": "order", "order_by": "capture_time", "attribute": "my night at Leverkusen vs Nürnberg", "intent_id": "order_filmed"},
+      {"op": "order", "position": "first", "attribute": "the lineup sheet", "intent_id": "order_first_lineup"}
+    ],
+    "resolved_clip_intents": [
+      {
+        "op": "order",
+        "status": "resolved",
+        "order_by": "capture_time",
+        "attribute": "my night at Leverkusen vs Nürnberg",
+        "intent_id": "order_filmed",
+        "assignments": [
+          {"evidence": "filming order", "media_id": "IMG_1012.MOV", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1015.MOV", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1021.MOV", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1026.MOV", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1038.HEIC", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1030.MOV", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1033.MOV", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1036.MOV", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1039.MOV", "confidence": 1.0},
+          {"evidence": "filming order", "media_id": "IMG_1043.MOV", "confidence": 1.0}
+        ]
+      },
+      {
+        "op": "order",
+        "status": "resolved",
+        "position": "first",
+        "attribute": "the lineup sheet",
+        "intent_id": "order_first_lineup",
+        "ordered_members": true,
+        "assignments": [
+          {"evidence": "shows the printed lineup sheet", "media_id": "IMG_1038.HEIC", "confidence": 0.95}
+        ]
+      }
+    ]
+  }
+}
