@@ -1640,6 +1640,22 @@ def _complete_draft_turn(
                 head if head is not None and head.base_job_id == job.id else None,
                 client_state,
             )
+            from app.kria.editor_repair import verify_editor_repair
+
+            if planned.editor_repair is not None and (
+                int(plan_row.ownership_epoch or 0) != int(session.ownership_epoch)
+                or int(job.content_plan_ownership_epoch or 0) != int(session.ownership_epoch)
+            ):
+                raise KriaEditorOpError("The project ownership changed during the timing review.")
+            verify_editor_repair(
+                planned,
+                job=job,
+                variant=variant,
+                head=head,
+                client_state=client_state,
+                projected=editor_base.projected,
+                brief=load_latest_brief_sync(db, thread.id),
+            )
             prior_payload = editor_base.prior_payload
             # The session pointer goes stale after an editor Save; stamp the draft
             # with the variant's real generation so it never self-perpetuates.
@@ -1741,6 +1757,9 @@ def _complete_draft_turn(
                         changes=[],
                     )
                     your_edits_snapshot, your_edits_hash = canonical_snapshot(baseline)
+            from app.kria.editor_repair import verify_compiled_repair
+
+            verify_compiled_repair(planned, compiled.payload)
             changes = compiled.changes
             editor_diff_trace = compiled.diff.to_json()
             state_id = (
@@ -2914,6 +2933,24 @@ def _complete_draft_turn(
             "draft_revision": draft.draft_revision,
         }
 
+        from app.kria.editor_repair import applied_repair_receipt
+
+        repair_receipt = applied_repair_receipt(planned)
+        if repair_receipt:
+            repair_note = say(
+                en="Prepared the timing-only draft with the original wording unchanged. "
+                "I removed unrequested copy changes from the proposed edit.",
+                tr="Özgün kelimeleri değiştirmeden yalnızca zamanlama taslağını hazırladım. "
+                "İstenmeyen metin değişikliklerini önerilen düzenlemeden çıkardım.",
+            )
+            if parent_draft is not None:
+                repair_note += " " + say(
+                    en="You can preview the draft or undo it.",
+                    tr="Taslağı önizleyebilir veya geri alabilirsin.",
+                )
+            reply_text = f"{reply_text}\n{repair_note}"
+            draft_execution.result = {**(draft_execution.result or {}), **repair_receipt}
+
         if render_intent is None:
             event = _append_sync_event(
                 db,
@@ -2930,6 +2967,7 @@ def _complete_draft_turn(
                     "can_undo": parent_draft is not None,
                     "receipt_ids": [str(draft_execution.id)],
                     "render_requested": False,
+                    **repair_receipt,
                     **(
                         {"creative_copy_resolution": planned.creative_copy_resolution}
                         if planned.creative_copy_resolution
@@ -3043,6 +3081,7 @@ def _complete_draft_turn(
             content=reply_text,
             payload={
                 "turn_id": str(turn.id),
+                **repair_receipt,
                 "draft_id": str(draft.id),
                 **(
                     {"creative_copy_resolution": planned.creative_copy_resolution}
@@ -4196,6 +4235,13 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                 planned = research_preview.with_research(
                     planned,
                     snapshot,
+                    turn_id=identifier,
+                    deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
+                )
+                from app.kria.editor_repair import with_editor_review
+
+                planned = with_editor_review(
+                    planned,
                     turn_id=identifier,
                     deadline=turn_started + float(run_kria_turn.soft_time_limit or 200),
                 )
