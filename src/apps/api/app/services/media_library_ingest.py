@@ -338,7 +338,9 @@ def verified_source_metadata(
                     image.load()
                     facts = {"width": image.width, "height": image.height, "format": image.format}
                     formats = {
-                        "image/jpeg": {"JPEG"},
+                        # iPhone HDR photos are JPEGs carrying a gain-map frame;
+                        # Pillow reads those as MPO, with the photo as frame 0.
+                        "image/jpeg": {"JPEG", "MPO"},
                         "image/png": {"PNG"},
                         "image/webp": {"WEBP"},
                         "image/heic": {"HEIF"},

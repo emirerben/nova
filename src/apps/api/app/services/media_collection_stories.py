@@ -7,12 +7,14 @@ import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import structlog
 from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.agents._model_client import default_client
 from app.agents._runtime import TerminalError
 from app.agents.camera_roll_stories import (
+    MAX_IDEAS,
     CameraRollStoriesAgent,
     CameraRollStoriesInput,
     CameraRollStoriesOutput,
@@ -44,6 +46,20 @@ from app.services.story_idea_research import (
 # event delete whose members the client re-saves before restoring its ideas.
 RESTORE_WINDOW = timedelta(minutes=10)
 MAX_STORY_EVENTS = 200
+# "Another idea" asks for a small batch; a first request is sized to the footage instead.
+ANOTHER_IDEAS = 3
+# Moments per idea when sizing a first request: each idea needs a few clips of its own.
+MOMENTS_PER_IDEA = 3
+
+log = structlog.get_logger()
+
+
+def target_idea_count(usable_moments, *, adding=False, researched=False):
+    """How many ideas to ask for. Scales with the footage and never pads: the model may
+    return fewer, and a researched request keeps its small batch (every idea is reviewed)."""
+    if adding or researched:
+        return ANOTHER_IDEAS
+    return max(1, min(MAX_IDEAS, usable_moments // MOMENTS_PER_IDEA))
 
 
 def event(kind, revision, **fields):
@@ -329,6 +345,11 @@ async def generate_stories(db, owner, identifier, body):
         event_about=event_about,
         capture_span=capture_span,
         editorial_taste_context=taste,
+        idea_count=target_idea_count(
+            len(candidates),
+            adding=bool(body.exclude_story_ids),
+            researched=bool(getattr(body, "research_topic", None)),
+        ),
         already_offered=[
             OfferedIdea(
                 angle=(row.story_json.get("content_plan") or {}).get("angle", "")[:280],
@@ -359,6 +380,9 @@ async def generate_stories(db, owner, identifier, body):
     spec = CameraRollStoriesAgent.spec
     research_topic = getattr(body, "research_topic", None)
     rejected = await creator_editorial_taste.rejected_research(db, owner, research_topic)
+    # A deleted idea is barred from coming back, so a request made after a delete is a
+    # different request: without this, the cached answer replays the deleted idea's own id.
+    deleted_ids = sorted(str(row.id) for row in deleted_rows)
     digest = hashlib.sha256(
         json.dumps(
             [
@@ -371,11 +395,35 @@ async def generate_stories(db, owner, identifier, body):
                 if research_topic
                 else None,
                 # Appended only for an event request, so whole-collection digests are unchanged.
-                *([[group, sorted(map(str, body.exclude_story_ids))]] if group else []),
+                *(
+                    [[group, sorted(map(str, body.exclude_story_ids)), deleted_ids]]
+                    if group
+                    else []
+                ),
+                *([["deleted", deleted_ids]] if deleted_ids and not group else []),
             ],
             sort_keys=True,
         ).encode()
     ).hexdigest()
+    # Room for the model to write the batch; the phone waits 90 s (130 s with research).
+    deadline_s = 115 if research_topic else 25 + 5 * input.idea_count
+
+    async def run_agent(agent_input, request_id):
+        return await asyncio.to_thread(
+            research_story_ideas
+            if research_topic
+            else CameraRollStoriesAgent(default_client()).run,
+            agent_input,
+            *([research_topic] if research_topic else []),
+            **({"rejected": rejected} if rejected else {}),
+            ctx=collection_run_context(
+                creator_id=str(owner),
+                request_id=request_id,
+                deadline_monotonic=time.monotonic() + deadline_s,
+                estimated_max_cost_usd=0.10,
+            ),
+        )
+
     first = candidates[0]
     claim = await asyncio.to_thread(
         claim_collection_analysis,
@@ -385,27 +433,19 @@ async def generate_stories(db, owner, identifier, body):
         cache_only=body.cache_only,
         canonical_asset_id=str(first.asset_id),
         canonical_source_id=str(first.source_id),
-        lease_seconds=150 if research_topic else 90,
+        lease_seconds=150 if research_topic else deadline_s + 45,
     )
     if claim.status == "ready":
         ideas = CameraRollStoriesOutput.model_validate(claim.result_json)
     elif claim.status == "claimed":
         try:
-            ideas = await asyncio.to_thread(
-                research_story_ideas
-                if research_topic
-                else CameraRollStoriesAgent(default_client()).run,
-                input,
-                *([research_topic] if research_topic else []),
-                **({"rejected": rejected} if rejected else {}),
-                ctx=collection_run_context(
-                    creator_id=str(owner),
-                    request_id=f"collection-stories:{digest}:{claim.attempt_token}",
-                    deadline_monotonic=time.monotonic() + (115 if research_topic else 25),
-                    estimated_max_cost_usd=0.05,
-                ),
-            )
-            if not await asyncio.to_thread(complete_media_asset_fact, claim, ideas.model_dump()):
+            ideas = await run_agent(input, f"collection-stories:{digest}:{claim.attempt_token}")
+            if body.exclude_story_ids and not ideas.stories:
+                # An empty "another idea" answer is not cached: the digest hashes only the
+                # exclude set, so a cached [] would replay for every later tap until that set
+                # changes, with no model call. Releasing the claim lets the next tap ask again.
+                await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
+            elif not await asyncio.to_thread(complete_media_asset_fact, claim, ideas.model_dump()):
                 raise HTTPException(409, "Story evidence changed; retry")
         except (TerminalError, ResearchUnavailable) as exc:
             await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
@@ -421,67 +461,114 @@ async def generate_stories(db, owner, identifier, body):
                 "message": "Stories are pending; retry shortly",
             },
         )
-    await media_collections.lock_library_owner(db, owner)
-    # Serialize the final check with pause, Forget, profile changes and feedback.
-    # Never hold this lock across a provider call.
-    await creator_editorial_taste.lock_owner(db, owner)
-    if taste != await creator_editorial_taste.generation_context(
-        db, owner, taste_query
-    ) or rejected != await creator_editorial_taste.rejected_research(db, owner, research_topic):
-        raise HTTPException(409, "Personalization changed; request ideas again")
-    fresh = await candidate_evidence(
-        db, owner, identifier, body.expected_revision, body.query, group=group
-    )
-    require_requested_coverage(fresh, body)
-    by_id = {str(value.id): value for value in fresh.moments}
-    refused = await creator_editorial_taste.rejected_ideas(db, owner, identifier)
-    # Generation outlives the first read: an idea deleted while the provider ran must still
-    # be barred, so the history is read again under the same locks as the evidence.
-    offered_rows, deleted_rows = await _event_history(
-        db, owner, identifier, group, body.exclude_story_ids
-    )
-    # Hard exclusions, unlike `refused` (which keeps the best idea rather than answer with
-    # nothing): a deleted idea is never re-offered, and "another idea" never repeats the
-    # wording or the exact footage of the ones the event already has.
-    barred = [_refusal(row) for row in [*offered_rows, *deleted_rows]]
-    offered_sets = [frozenset(value["id"] for value in row.moments_json) for row in offered_rows]
-    valid = []
-    seen = {_copy_identity(row.story_json.get("content_plan") or {}) for row in offered_rows}
-    seen |= {_copy_identity(row.story_json.get("content_plan") or {}) for row in deleted_rows}
-    for index, idea in enumerate(ideas.stories):
-        ids = idea.moment_ids
-        if len(set(ids)) != len(ids) or any(value not in by_id for value in ids):
-            continue
-        moments = [by_id[value] for value in ids]
-        duration = sum(value.end_s - value.start_s for value in moments)
-        # Multiple editorial ideas may reuse the same footage. Renaming a card
-        # or changing its rationale/source IDs does not make repeated copy new.
-        plan = idea.content_plan
-        identity = tuple(
-            " ".join(text.casefold().split())
-            for text in (plan.opening_text, plan.closing_text or "", plan.caption)
+    passes = []
+    story_digest = digest
+    while True:
+        await media_collections.lock_library_owner(db, owner)
+        # Serialize the final check with pause, Forget, profile changes and feedback.
+        # Never hold this lock across a provider call.
+        await creator_editorial_taste.lock_owner(db, owner)
+        if taste != await creator_editorial_taste.generation_context(
+            db, owner, taste_query
+        ) or rejected != await creator_editorial_taste.rejected_research(db, owner, research_topic):
+            raise HTTPException(409, "Personalization changed; request ideas again")
+        fresh = await candidate_evidence(
+            db, owner, identifier, body.expected_revision, body.query, group=group
         )
-        if (
-            not 1 <= duration <= 60
-            or identity in seen
-            or frozenset(ids) in offered_sets
-            or creator_editorial_taste.repeated_rejection(plan.angle, plan.opening_text, barred)
-        ):
-            continue
-        seen.add(identity)
-        repeat = creator_editorial_taste.repeated_rejection(plan.angle, plan.opening_text, refused)
-        valid.append((index, idea, moments, repeat))
-    # Never answer with nothing: when every idea repeats a refusal, the first
-    # (best-ranked) stays and records which judgment it resembles.
-    kept = [value for value in valid if value[3] is None] or valid[:1]
-    if body.exclude_story_ids:
-        kept = kept[:1]
+        require_requested_coverage(fresh, body)
+        by_id = {str(value.id): value for value in fresh.moments}
+        refused = await creator_editorial_taste.rejected_ideas(db, owner, identifier)
+        # Generation outlives the first read: an idea deleted while the provider ran must still
+        # be barred, so the history is read again under the same locks as the evidence.
+        offered_rows, deleted_rows = await _event_history(
+            db, owner, identifier, group, body.exclude_story_ids
+        )
+        # Hard exclusions, unlike `refused` (which keeps the best idea rather than answer with
+        # nothing): a deleted idea is never re-offered, and "another idea" never repeats the
+        # wording or the exact footage of the ones the event already has.
+        barred = [_refusal(row) for row in [*offered_rows, *deleted_rows]]
+        offered_sets = [
+            frozenset(value["id"] for value in row.moments_json) for row in offered_rows
+        ]
+        valid = []
+        dropped = []
+        drops = {}
+        seen = {_copy_identity(row.story_json.get("content_plan") or {}) for row in offered_rows}
+        seen |= {_copy_identity(row.story_json.get("content_plan") or {}) for row in deleted_rows}
+        for index, idea in enumerate(ideas.stories):
+            ids = idea.moment_ids
+            plan = idea.content_plan
+            if len(set(ids)) != len(ids) or any(value not in by_id for value in ids):
+                reason = "stale_moments"
+            else:
+                moments = [by_id[value] for value in ids]
+                duration = sum(value.end_s - value.start_s for value in moments)
+                # Multiple editorial ideas may reuse the same footage. Renaming a card
+                # or changing its rationale/source IDs does not make repeated copy new.
+                identity = tuple(
+                    " ".join(text.casefold().split())
+                    for text in (plan.opening_text, plan.closing_text or "", plan.caption)
+                )
+                if not 1 <= duration <= 60:
+                    reason = "duration"
+                elif identity in seen:
+                    reason = "repeated_copy"
+                elif frozenset(ids) in offered_sets:
+                    reason = "same_footage"
+                elif creator_editorial_taste.repeated_rejection(
+                    plan.angle, plan.opening_text, barred
+                ):
+                    reason = "near_repeat"
+                else:
+                    story_id = uuid.uuid5(identifier, f"{story_digest}:{index}")
+                    row = await db.get(MediaCollectionStory, story_id)
+                    if row is not None and is_deleted(row):
+                        reason = "deleted_row"
+                    else:
+                        seen.add(identity)
+                        repeat = creator_editorial_taste.repeated_rejection(
+                            plan.angle, plan.opening_text, refused
+                        )
+                        valid.append((idea, moments, repeat, story_id, row))
+                        continue
+            drops[reason] = drops.get(reason, 0) + 1
+            dropped.append(idea)
+        passes.append({"model_ideas": len(ideas.stories), "drops": drops})
+        # Never answer with nothing: when every idea repeats a refusal, the first
+        # (best-ranked) stays and records which judgment it resembles.
+        kept = [value for value in valid if value[2] is None] or valid[:1]
+        if body.exclude_story_ids:
+            kept = kept[:ANOTHER_IDEAS]
+        # An "another idea" that the filters emptied is retried once with the dropped angles
+        # named as already offered, so the model moves on instead of repeating itself. The
+        # locks are released first: nothing is written yet and a provider call must not hold them.
+        if kept or len(passes) > 1 or research_topic or not (body.exclude_story_ids and dropped):
+            break
+        await db.rollback()
+        story_digest = f"{digest}:retry"
+        offered = [
+            OfferedIdea(
+                angle=idea.content_plan.angle[:280],
+                opening_text=idea.content_plan.opening_text[:100],
+                moment_ids=idea.moment_ids[:8],
+            )
+            for idea in dropped
+        ]
+        retry_input = input.model_copy(
+            update={"already_offered": [*input.already_offered[: 20 - len(offered)], *offered]}
+        )
+        try:
+            # A fresh token per retry: the cost ledger keys a call on request id + prompt, and an
+            # identical retry prompt (same exclude set, same dropped ideas) would otherwise hit
+            # the earlier reservation and fail as an unknown provider outcome.
+            ideas = await run_agent(
+                retry_input, f"collection-stories:{story_digest}:{uuid.uuid4().hex}"
+            )
+        except Exception:
+            log.warning("collection_stories_retry_failed", exc_info=True)
+            ideas = CameraRollStoriesOutput()
     accepted = []
-    for index, idea, moments, repeat in kept:
-        story_id = uuid.uuid5(identifier, f"{digest}:{index}")
-        row = await db.get(MediaCollectionStory, story_id)
-        if row is not None and is_deleted(row):
-            continue
+    for idea, moments, repeat, story_id, row in kept:
         if row is None:
             row = MediaCollectionStory(
                 id=story_id,
@@ -506,6 +593,16 @@ async def generate_stories(db, owner, identifier, body):
             db.add(row)
         accepted.append(story_out(row))
     await db.commit()
+    # Counts only (the ideas are private): enough to tell which filter emptied a request.
+    log.info(
+        "collection_stories_generated",
+        candidate_moments=len(candidates),
+        target=input.idea_count,
+        adding=bool(body.exclude_story_ids),
+        cache=claim.status,
+        passes=passes,
+        accepted=len(accepted),
+    )
     return CollectionStoriesOut(
         revision=body.expected_revision,
         stories=accepted,

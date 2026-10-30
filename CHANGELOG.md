@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.12.0] - 2026-10-30
+
+### Changed
+- fix(kria): preserve silent-editor Saves and truthful style receipts (KRI-1060) (#1960) <!-- release-pr: 1960 -->
+
+## [0.83.11.0] - 2026-10-30
+
+### Fixed
+- fix(media-library): accept iPhone HDR JPEGs (MPO) as image/jpeg (KRI-1074) (#1962) <!-- release-pr: 1962 -->
+
+## [0.83.10.0] - 2026-10-30
+
+### Fixed
+- fix(camera-roll): 5-10 event ideas up front; another idea never silently empty (KRI-1062) (#1955) <!-- release-pr: 1955 -->
+
 ## [0.83.9.0] - 2026-10-30
 
 ### Changed

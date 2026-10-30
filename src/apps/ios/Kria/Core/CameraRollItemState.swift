@@ -219,7 +219,8 @@ struct CameraRollIdeaBoard: Sendable {
 
         case let .anotherIdea(group):
             guard generating.insert(group).inserted else { return [] }
-            return [.generate(group: group, excluding: (storiesByGroup[group] ?? []).map(\.id))]
+            // The server accepts at most 20 exclusions; the newest ideas are the ones a new batch must not repeat.
+            return [.generate(group: group, excluding: (storiesByGroup[group] ?? []).suffix(20).map(\.id))]
 
         case let .deleteEvent(group, members):
             let stories = storiesByGroup.removeValue(forKey: group) ?? []
