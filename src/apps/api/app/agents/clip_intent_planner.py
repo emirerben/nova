@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from hashlib import sha256
@@ -55,12 +56,22 @@ _EXCLUDE_BULLET = (
     "  Leave `creator_text`, `caption_attribute` and `position` null. When the generated\n"
     "  Creative Brief lists the ask this exclusion carries out as a `select` requirement\n"
     '  (`[r3] [select/global] ...`), set `requirement_id` to that id ("r3"); otherwise null.\n'
-    "  Never invent an id and never use one from another kind of requirement."
+    "  Never invent an id and never use one from another kind of requirement.\n"
+    '  When the clips to leave out are told apart only by their LENGTH ("skip anything too\n'
+    '  short to use", "drop the tiny clips", "the accidental mis-taps", "nothing under a\n'
+    '  second", "çok kısa klipleri kullanma"), set `by_length` to "too_short" and, only when\n'
+    '  the creator said a number of seconds, `under_s` to it ("under a second" -> 1, "less\n'
+    '  than 2 seconds" -> 2); otherwise both null. The server measures every clip, so a\n'
+    '  length exclusion is never a question. Anything about what a clip shows ("the blurry\n'
+    '  ones", "the dark hallway clip") keeps `by_length` null.'
 )
 _EXCLUDE_OP = "|exclude"
 # KRI-994: lets an `exclude` name the Creative Brief ask it carries out, so the finished
 # video's receipt can settle that ask. "" with exclusions off (byte-identical prompt).
 _REQUIREMENT_FIELD = ',"requirement_id":"r1|null"'
+# KRI-1031: a length exclusion ("too short to use") is settled from measured clip lengths.
+# Rendered in the same slot as `_REQUIREMENT_FIELD` ("" with exclusions off).
+_LENGTH_FIELD = ',"by_length":"too_short|null","under_s":null'
 _EXCLUSION_RULES_ON = (
     "Leaving clips OUT is `exclude`, never `include`: include FORCES those clips into\n"
     "the edit, the opposite of skipping them. Never ask about an exclusion: when no\n"
@@ -511,6 +522,29 @@ def _repair_order_by(data: dict[str, Any]) -> None:
             data["order_by"] = "route"
             return
     data["order_by"] = None
+
+
+def _repair_length(data: dict[str, Any]) -> None:
+    """Settle an exclusion's ``by_length`` / ``under_s`` onto the enum and seconds, in place.
+
+    KRI-1031. The template shows ``"too_short|null"``, so Flash may write the string
+    ``"null"``; any value but ``too_short`` is null, and the ask goes to the resolver as
+    before. ``under_s`` is kept only as a positive number of seconds; a number the creator
+    gave is a length ask even when Flash left ``by_length`` null.
+    """
+    value = data.get("by_length")
+    by_length = "too_short" if isinstance(value, str) and value.strip() == "too_short" else None
+    seconds = data.get("under_s")
+    under_s: float | None = None
+    if isinstance(seconds, (int, float, str)) and not isinstance(seconds, bool):
+        try:
+            under_s = float(seconds)
+        except ValueError:
+            under_s = None
+        if under_s is not None and not (0 < under_s <= 600 and math.isfinite(under_s)):
+            under_s = None
+    data["by_length"] = "too_short" if under_s is not None else by_length
+    data["under_s"] = under_s
 
 
 # KRI-511: leaving clips OUT is clip selection, which the Main Creator owns
@@ -1075,9 +1109,10 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         #
         # KRI-993: "only about X" is one `include` with `exclusive` true (same kill switch).
         # KRI-994: an `exclude` names the brief `select` requirement it carries out.
+        # KRI-1031: a length exclusion ("too short to use") carries `by_length` / `under_s`.
         # 29 Ekim (thread 64bb9853): a random / any order is no `order` intent (the brief owns
         # it), and words shown a piece at a time over the video are no `caption` intent.
-        prompt_version="2026-10-29-random-order-text-sequence",
+        prompt_version="2026-10-29-exclude-length-text-sequence",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -1155,7 +1190,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             exclude_op=_EXCLUDE_OP if input.clip_exclusions else "",
             exclusive_rules=f"\n\n{_EXCLUSIVE_RULES}" if input.clip_exclusions else "",
             exclusive_field=_EXCLUSIVE_FIELD if input.clip_exclusions else "",
-            requirement_field=_REQUIREMENT_FIELD if input.clip_exclusions else "",
+            requirement_field=(_REQUIREMENT_FIELD + _LENGTH_FIELD if input.clip_exclusions else ""),
         )
         # KRI-520: the reply-language instruction goes last. "" for English/unknown:
         # byte-identical prompt.
@@ -1357,6 +1392,11 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         if data.get("op") != "exclude" or not input.clip_exclusions:
             # KRI-994: only an exclusion links back to a brief requirement.
             data.pop("requirement_id", None)
+            # KRI-1031: and only an exclusion is settled from clip lengths.
+            data.pop("by_length", None)
+            data.pop("under_s", None)
+        else:
+            _repair_length(data)
         _repair_position(data)
         _repair_order_by(data)
         attribute = data.get("attribute")

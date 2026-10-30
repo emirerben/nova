@@ -222,6 +222,10 @@ _CLIP_INTENT_LEAVES = (
     "exclusive",
     # KRI-994: the brief `select` ask an exclusion carries out; read only by receipts.
     "requirement_id",
+    # KRI-1031: a length-only exclusion, settled from clip lengths while planning (the
+    # narrowed pick is what the contract sees).
+    "by_length",
+    "under_s",
 )
 
 
@@ -276,6 +280,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[].category_key",
         "selection_reconciliation.rejected_selections[].intent",
         "selection_reconciliation.rejected_selections[].intent.attribute",
+        "selection_reconciliation.rejected_selections[].intent.by_length",
         "selection_reconciliation.rejected_selections[].intent.caption_attribute",
         "selection_reconciliation.rejected_selections[].intent.creator_text",
         "selection_reconciliation.rejected_selections[].intent.exclusive",
@@ -289,6 +294,7 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "selection_reconciliation.rejected_selections[].intent.requirement_id",
         "selection_reconciliation.rejected_selections[].intent.source_kind",
         "selection_reconciliation.rejected_selections[].intent.transcript_kind",
+        "selection_reconciliation.rejected_selections[].intent.under_s",
         "selection_reconciliation.rejected_selections[].question_id",
         "selection_reconciliation.rejected_selections[].selection_sequence",
         "selection_reconciliation.status",

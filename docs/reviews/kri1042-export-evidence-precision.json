@@ -1,0 +1,50 @@
+{
+  "issue": "KRI-1042",
+  "claim": "local_fix",
+  "reviewed_implementation_sha": "726d61b7210f824abca92e9ab8d8c7824cf6906e",
+  "source_hashes": {
+    "src/apps/api/app/services/actual_export_verification.py": "8842d8d49b6f1c62b84655e8199125dc6fb787a6a99c72e410d82a83d4482aeb",
+    "src/apps/api/tests/integration/test_actual_export_verification.py": "229d28dbc783fc0c8f165052b7ddf03ec0050e85c85559de9f45d784f6253d44"
+  },
+  "trigger": {
+    "run": 41009662428,
+    "job": 123913108282,
+    "failure": "handheld_25 had profile_samples=4, while three serialized scores were below 0.95.",
+    "baseline": "Verifier and test blobs are identical at premerge204f803 and main9a9eec01c. The verifier did not reject the export."
+  },
+  "root_cause": "Production counts raw SSIM below 0.95. Rounding 0.94996 to 0.95 loses that classification in report evidence.",
+  "change": "Preserve Python float values in the existing per-sample SSIM/error fields. Report fields, thresholds, matching, aggregate counts and rejection predicates are unchanged.",
+  "deterministic_boundary_cases": [
+    {
+      "ssim": 0.94996,
+      "profile": true,
+      "expected": "A value below 0.95 survives JSON/admin validation and matches the profile count."
+    },
+    {
+      "ssim": 0.95004,
+      "profile": false,
+      "expected": "A value above 0.95 retains its precision through JSON/admin validation."
+    }
+  ],
+  "red_before": "Both new cases failed before the production edit. The below-threshold case counted seven profile matches, while rounded evidence counted zero.",
+  "verification": {
+    "implementation_full_module": "85 passed. One loopback test failed under sandbox restrictions and passed with listener access, without code changes.",
+    "independent": "20 existing focused cases, six boundary cases and three black/blank-white/frozen-frame rejection controls passed. An invalid synthetic scorer fixture was corrected to the real return contract; implementation was unchanged.",
+    "corrupted_count_control": "Both new boundary cases fail when report profile counts are deliberately incremented in process.",
+    "schema": "Existing PictureSample float fields are unchanged. Strict JSON roundtrip and API model validation passed.",
+    "lint": "Ruff check/format and git diff checks passed."
+  },
+  "commands": [
+    "cd src/apps/api && python -m pytest tests/integration/test_actual_export_verification.py tests/integration/test_admin_export_verification.py::test_every_verifier_version_has_pass_rules_and_the_current_rules_match_the_code -q",
+    "cd src/apps/api && ruff check app/services/actual_export_verification.py tests/integration/test_actual_export_verification.py",
+    "cd src/apps/api && ruff format --check app/services/actual_export_verification.py tests/integration/test_actual_export_verification.py"
+  ],
+  "private_evidence": "/Users/emirerben/Documents/Codex/2026-10-29/task-8/evidence/export-profile-triage/",
+  "limitations": [
+    "Generated media was verified offline. No physical-phone export or original incident fulfillment is claimed.",
+    "Exact raw CI scores are unavailable because the failed job uploaded no artifact.",
+    "Local macOS, Python3.14 and FFmpeg8.1.1 differ from Linux CI.",
+    "DB-backed admin routes, fresh hosted CI and deployment remain pending.",
+    "No paid provider calls, credential changes, renderer additions or production data changes occurred."
+  ]
+}

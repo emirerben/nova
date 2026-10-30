@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.5.0] - 2026-10-30
+
+### Changed
+- fix(kria): never play clips the creator left out; measure "too short to use" (KRI-1026, KRI-1031) (#1928) <!-- release-pr: 1928 -->
+
+## [0.83.4.0] - 2026-10-30
+
+### Changed
+- fix(export): preserve sample evidence precision (#1950) <!-- release-pr: 1950 -->
+
 ## [0.83.3.0] - 2026-10-30
 
 ### Changed

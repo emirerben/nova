@@ -702,9 +702,13 @@
     {
       "id": "kri-761-look-alike-exclusions",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py",
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py",
       "paths": [
         "src/apps/api/app/kria/clip_exclusions.py",
+        "src/apps/api/app/services/too_short_clips.py",
+        "src/apps/api/tests/fixtures/kri1026_plaza_m1_exclusions.json",
+        "src/apps/api/tests/kria/test_kri1026_plaza_exclusions.py",
+        "src/apps/api/tests/kria/test_kri1031_too_short_clips.py",
         "src/apps/api/tests/fixtures/kri807_don_julio_m1_clips.json",
         "src/apps/api/tests/fixtures/kri991_donjulio_lunch_m2_clips.json",
         "src/apps/api/tests/kria/test_kri807_unmatched_exclusion_picker.py",
