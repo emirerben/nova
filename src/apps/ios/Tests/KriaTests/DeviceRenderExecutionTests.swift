@@ -12,10 +12,24 @@ import UIKit
         try await assertStopDuringRetryCleanup(stoppingAll: true)
     }
 
-    private func assertStopDuringRetryCleanup(stoppingAll: Bool) async throws {
+    func testStopBeforeRetryAcknowledgementPausesReturnedIdentity() async throws {
+        try await assertStopDuringRetryCleanup(stoppingAll: false, stopBeforeAcknowledgement: true)
+    }
+
+    func testFailedStopReportStillBlocksAutomaticRetryInThisSession() async throws {
+        try await assertStopDuringRetryCleanup(stoppingAll: false, reportFails: true)
+    }
+
+    func testPublishedAcknowledgedRetryMayReplaceLocalPause() async throws {
+        try await assertStopDuringRetryCleanup(stoppingAll: false, publishAfterStop: true)
+    }
+
+    private func assertStopDuringRetryCleanup(stoppingAll: Bool, stopBeforeAcknowledgement: Bool = false, reportFails: Bool = false, publishAfterStop: Bool = false) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let first = renderRequest(revision: 1), gate = RetryCleanupGate(), exporter = RetryHeldExport()
+        let first = renderRequest(revision: 1), gate = RetryCleanupGate(), mutation = RetryCleanupGate(), exporter = RetryHeldExport()
+        let reported: XCTestExpectation? = stoppingAll ? nil : expectation(description: "Stop reports acknowledged retry identity")
+        reported?.assertForOverFulfill = false
         let second = renderRequest(job: first.identity.jobID, revision: 2)
         let remote = RetryRemote(first)
         await remote.replace(first)
@@ -31,20 +45,31 @@ import UIKit
             coordinators.append(coordinator)
             return coordinator
         }, initiation: initiation, retryFailure: { _, _, _ in
+            if stopBeforeAcknowledgement { await mutation.clean() }
             await remote.replace(second)
             return try Self.ack(second.identity)
+        }, reportDecline: { _, identity, reason, _ in
+            await remote.recordStop(identity, reason: reason, accepted: !reportFails)
+            reported?.fulfill()
+            if reportFails { throw URLError(.notConnectedToInternet) }
         }, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
         let key = DeviceRenderKey(projectID: UUID(), jobID: first.identity.jobID, variantID: "first")
         let capabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
         await sessions.reconcile(key, capabilities: capabilities)
         await exporter.waitStarted()
         let retry = Task { await sessions.retryNeedsAttentionFromUser(key) }
-        await gate.waitEntered()
+        if stopBeforeAcknowledgement { await mutation.waitEntered() }
+        else { await gate.waitEntered() }
         let stop = Task {
             if stoppingAll { await sessions.stopAll() } else { await sessions.cancel(key) }
             await gate.stopReturned()
         }
-        await gate.waitForStopRequestOrReturn()
+        if stopBeforeAcknowledgement {
+            await gate.waitEntered()
+            await mutation.release()
+        } else {
+            await gate.waitForStopRequestOrReturn()
+        }
         XCTAssertEqual(initiation.origin(for: second.identity), .automaticRecovery)
         await gate.release()
         await stop.value
@@ -56,6 +81,162 @@ import UIKit
         XCTAssertEqual(coordinators.count, 1)
         XCTAssertEqual(exports, 1)
         XCTAssertEqual(scheduler.submissions, 0)
+        if !stoppingAll {
+            await fulfillment(of: [try XCTUnwrap(reported)], timeout: 2)
+            let reports = await remote.stopReports
+            XCTAssertEqual(reports.first?.0, second.identity)
+            XCTAssertEqual(reports.first?.1, DeviceRenderSessions.pausedReason)
+            await sessions.reconcile(key, capabilities: capabilities)
+            await sessions.resumeParked()
+            for coordinator in coordinators { await coordinator.waitUntilIdle() }
+            let afterPoll = await exporter.calls
+            XCTAssertEqual(coordinators.count, 1, "A later automatic poll must not restart the acknowledged retry after Stop")
+            XCTAssertEqual(afterPoll, 1)
+            XCTAssertEqual(scheduler.submissions, 0)
+            await remote.replace(first)
+            await sessions.reconcile(key, capabilities: capabilities)
+            await remote.replace(second)
+            await sessions.reconcile(key, capabilities: capabilities)
+            for coordinator in coordinators { await coordinator.waitUntilIdle() }
+            let afterStaleReads = await exporter.calls
+            XCTAssertEqual(afterStaleReads, 1, "A stale r1 read must not erase the pause for r2")
+            if publishAfterStop {
+                await remote.publish()
+                await sessions.reconcile(key, capabilities: capabilities)
+                XCTAssertEqual(sessions.presentations[key]?.phase, .synced)
+            } else {
+                // Relink completion uses this generic retry flag; it is not creator consent.
+                await sessions.reconcile(key, capabilities: capabilities, retry: true)
+                for coordinator in coordinators { await coordinator.waitUntilIdle() }
+                let afterRelink = await exporter.calls
+                XCTAssertEqual(afterRelink, 1)
+                await sessions.resumeFromUser(key)
+                for coordinator in coordinators { await coordinator.waitUntilIdle() }
+                let resumed = await exporter.calls
+                XCTAssertEqual(resumed, 2, "Only typed explicit Resume may release this stopped generation")
+            }
+        }
+        await sessions.stopAll()
+    }
+
+    func testCreatorResumeQueuedBehindAutomaticReadKeepsTypedConsent() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let request = renderRequest(revision: 2), gate = RetryCleanupGate()
+        let journal = directory.appendingPathComponent("intents")
+        let store = DeviceRenderIntentStore(root: journal)
+        let key = DeviceRenderKey(projectID: UUID(), jobID: request.identity.jobID, variantID: "first")
+        let storageKey = DeviceRenderIntentKey(owner: "isolated-test-owner", projectID: key.projectID, jobID: key.jobID, variantID: key.variantID)
+        try store.save(.init(sourceIdentity: request.identity, baseGeneration: "a", state: .retryPending), for: storageKey)
+        let started = expectation(description: "Queued typed Resume reaches coordinator")
+        var coordinators: [DeviceRenderCoordinator] = []
+        let sessions = DeviceRenderSessions(fetch: { _, _ in
+            await gate.clean()
+            return .init(phase: "awaiting_device", request: request)
+        }, factory: { _, _ in
+            let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: RetryExport(), sources: RetrySources(), publisher: RetryPublisher())
+            coordinators.append(coordinator); started.fulfill(); return coordinator
+        }, intentStore: DeviceRenderIntentStore(root: journal), retryFailure: { _, _, _ in
+            XCTFail("Resume after uncertain POST must use GET, never issue a duplicate mutation")
+            throw APIError.unsupported
+        }, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+        let capabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+        let automatic = Task { await sessions.reconcile(key, capabilities: capabilities) }
+        await gate.waitEntered()
+        await sessions.resumeFromUser(key)
+        await gate.release()
+        await automatic.value
+        await fulfillment(of: [started], timeout: 2)
+        for coordinator in coordinators { await coordinator.waitUntilIdle() }
+        XCTAssertEqual(try store.load(storageKey)?.state, .released)
+        XCTAssertEqual(coordinators.count, 1)
+        await sessions.stopAll()
+    }
+
+    func testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume() async throws {
+        for hasCancelledReceipt in [false, true] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let request = renderRequest(revision: 1), exporter = RetryHeldExport(), store = DeviceRenderIntentStore()
+            if hasCancelledReceipt {
+                let receipt = DeviceRenderReceipt(request: request, attemptID: UUID(), phase: .cancelled)
+                try JSONEncoder().encode(receipt).write(to: directory.appendingPathComponent("device-render.json"))
+            }
+            let mutations = ExpirationCounter()
+            let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: RetrySources(), publisher: RetryPublisher(), backgroundExecution: nil)
+            let sessions = DeviceRenderSessions(fetch: { _, _ in
+                .init(phase: "awaiting_device", request: request, pausedByUser: true)
+            }, factory: { _, _ in coordinator }, intentStore: store, retryFailure: { _, identity, _ in
+                mutations.increment()
+                return try Self.ack(identity)
+            }, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+            let key = DeviceRenderKey(projectID: UUID(), jobID: request.identity.jobID, variantID: "first")
+            let capabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+            await sessions.reconcile(key, capabilities: capabilities, retry: true)
+            let automaticExports = await exporter.calls
+            XCTAssertEqual(automaticExports, 0)
+            XCTAssertEqual(mutations.count, 0, "Automatic relink must preserve a Stop written by an older client")
+            XCTAssertEqual(sessions.presentations[key]?.reasonCode, DeviceRenderSessions.pausedReason)
+            await sessions.resumeFromUser(key)
+            await exporter.waitStarted()
+            await exporter.release()
+            await coordinator.waitUntilIdle()
+            XCTAssertEqual(mutations.count, 1)
+            let resumedExports = await exporter.calls
+            XCTAssertEqual(resumedExports, 1)
+            await sessions.stopAll()
+        }
+    }
+
+    func testStopWithOnlyPersistedObservedTargetDoesNotInventAcknowledgement() async throws {
+        let request = renderRequest(revision: 2), store = DeviceRenderIntentStore()
+        let key = DeviceRenderKey(projectID: UUID(), jobID: request.identity.jobID, variantID: "first")
+        let storageKey = DeviceRenderIntentKey(owner: "isolated-test-owner", projectID: key.projectID, jobID: key.jobID, variantID: key.variantID)
+        var intent = DeviceRenderIntent(sourceIdentity: renderRequest(job: request.identity.jobID, revision: 1).identity, baseGeneration: "a", state: .stopped)
+        intent.observedIdentity = request.identity
+        try store.save(intent, for: storageKey)
+        let reported = expectation(description: "Observed exact target reported")
+        let sessions = DeviceRenderSessions(fetch: { _, _ in .init(phase: "awaiting_device", request: request) }, factory: { _, _ in
+            XCTFail("Stop must not create work"); throw APIError.unsupported
+        }, intentStore: store, reportDecline: { _, identity, _, _ in
+            XCTAssertEqual(identity, request.identity); reported.fulfill()
+        })
+        await sessions.cancel(key)
+        await fulfillment(of: [reported], timeout: 2)
+        XCTAssertNil(try store.load(storageKey)?.acknowledgement)
+        XCTAssertEqual(try store.load(storageKey)?.state, .stopped)
+        await sessions.stopAll()
+    }
+
+    func testFailedStopWriteDoesNotLetRelinkRestartAfterStorageRecovers() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let root = directory.appendingPathComponent("intents"), store = DeviceRenderIntentStore(root: directory.appendingPathComponent("intents"))
+        let request = renderRequest(revision: 1), exporter = RetryHeldExport()
+        var coordinators: [DeviceRenderCoordinator] = []
+        let sessions = DeviceRenderSessions(fetch: { _, _ in .init(phase: "awaiting_device", request: request) }, factory: { _, _ in
+            let coordinator = try DeviceRenderCoordinator(directory: directory.appendingPathComponent("render"), exporter: exporter, sources: RetrySources(), publisher: RetryPublisher())
+            coordinators.append(coordinator); return coordinator
+        }, intentStore: store, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+        let key = DeviceRenderKey(projectID: UUID(), jobID: request.identity.jobID, variantID: "first")
+        let capabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+        await sessions.reconcile(key, capabilities: capabilities)
+        await exporter.waitStarted()
+        // Deterministic ENOTDIR on journal write, without permissions or a real account.
+        try Data("blocked storage".utf8).write(to: root)
+        await sessions.cancel(key)
+        try FileManager.default.removeItem(at: root)
+        await exporter.release()
+        for coordinator in coordinators { await coordinator.waitUntilIdle() }
+        await sessions.reconcile(key, capabilities: capabilities, retry: true)
+        await sessions.resumeParked()
+        for coordinator in coordinators { await coordinator.waitUntilIdle() }
+        let calls = await exporter.calls
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(coordinators.count, 1)
+        XCTAssertEqual(sessions.presentations[key]?.reasonCode, DeviceRenderSessions.pausedReason)
         await sessions.stopAll()
     }
 
@@ -320,9 +501,16 @@ private actor LaunchDeadline {
 private actor RetryRemote {
     var request: DeviceRenderRequest
     var phase = "needs_attention"
+    private var paused = false
+    private(set) var stopReports: [(DeviceRenderIdentity, String)] = []
+    func recordStop(_ identity: DeviceRenderIdentity, reason: String, accepted: Bool) {
+        stopReports.append((identity, reason))
+        if accepted, identity == request.identity { paused = true }
+    }
+    func publish() { phase = "published" }
     init(_ request: DeviceRenderRequest) { self.request = request }
-    func replace(_ request: DeviceRenderRequest) { self.request = request; phase = "awaiting_device" }
-    func status() -> DeviceRenderStatusResponse { .init(phase: phase, request: request) }
+    func replace(_ request: DeviceRenderRequest) { self.request = request; phase = "awaiting_device"; paused = false }
+    func status() -> DeviceRenderStatusResponse { .init(phase: phase, request: request, pausedByUser: paused) }
 }
 
 private actor RetryExport: LocalExporting {

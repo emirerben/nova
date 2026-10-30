@@ -44,6 +44,7 @@ enum ProfileFetchState: Equatable, Sendable {
 
     func clearLocalAccountMedia() {
         guard let identity = localStorageIdentity else { return }
+        try? DeviceRenderIntentPersistence.store.removeAccount(owner: identity)
         try? TeleprompterStore.removeAccount(accountID: identity)
         try? MediaLibraryOriginals(owner: identity).removeAccount()
         Task { await TranscriptCache.shared.removeAccount(owner: identity) }
@@ -76,6 +77,7 @@ enum ProfileFetchState: Equatable, Sendable {
             .sink { [weak self] notification in
                 guard let projectID = notification.object as? UUID,
                       let identity = self?.localStorageIdentity else { return }
+                try? DeviceRenderIntentPersistence.store.removeProject(owner: identity, projectID: projectID)
                 try? TeleprompterStore.removeProject(accountID: identity, projectID: projectID)
                 Task { await TranscriptCache.shared.remove(owner: identity, threadID: projectID) }
             }
@@ -253,7 +255,8 @@ enum WorkspaceDestination: Equatable, Sendable {
         api: KriaAPIClient = KriaAPI(),
         editorOperations: EditorOperations = LocalEditorOperations(),
         cache: CacheRepository? = nil,
-        chatDrafts: ChatDraftStore = ChatDraftStore()
+        chatDrafts: ChatDraftStore = ChatDraftStore(),
+        renderOwner: @escaping @MainActor () -> String? = { nil }
     ) {
         Perf.begin("appmodel.init")
         defer { Perf.end("appmodel.init") }
@@ -261,7 +264,7 @@ enum WorkspaceDestination: Equatable, Sendable {
         self.api = api
         self.editorOperations = editorOperations
         self.uploads = BackgroundUploadCoordinator(api: api)
-        self.deviceRenders = DeviceRenderSessions(api: api)
+        self.deviceRenders = DeviceRenderSessions(api: api, ownerIdentity: renderOwner)
         self.cache = cache
         Perf.begin("cache.load")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {

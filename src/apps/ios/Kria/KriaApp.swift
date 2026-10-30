@@ -37,7 +37,7 @@ import UserNotifications
             try? auth.signIn(with: MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600), displayName: "Retry QA")
             auth.acceptAIConsent()
             _auth = StateObject(wrappedValue: auth)
-            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }))
             return
         }
         if let configuration = CameraRollLiveQA.configuration() {
@@ -50,7 +50,7 @@ import UserNotifications
             try? auth.signIn(with: configuration.session, displayName: "Emir · local QA")
             auth.acceptAIConsent()
             _auth = StateObject(wrappedValue: auth)
-            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }))
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
@@ -62,14 +62,15 @@ import UserNotifications
             let payload = Data("{\"sub\":\"\(UUID().uuidString)\"}".utf8).base64EncodedString()
             try? auth.signIn(with: MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600), displayName: "Test creator")
             _auth = StateObject(wrappedValue: auth)
-            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }))
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-camera-roll-original-link") || ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") || ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") || ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
             let container = Self.fallbackContainer()
             self.container = container
-            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
-            _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext)))
+            let auth = AuthStore(tokenStore: ChatUITestTokenStore())
+            _auth = StateObject(wrappedValue: auth)
+            _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }))
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
@@ -79,18 +80,20 @@ import UserNotifications
             PerfFixture.installHashObserver()
             let api = ChatUITestTransport.api()
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
-            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken || ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil ? api : nil))
-            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext))
+            let auth = AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken || ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil ? api : nil)
+            _auth = StateObject(wrappedValue: auth)
+            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity })
             if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
             _model = StateObject(wrappedValue: model)
             return
         }
         #endif
-        _auth = StateObject(wrappedValue: AuthStore())
+        let auth = AuthStore()
+        _auth = StateObject(wrappedValue: auth)
         let container = (try? ModelContainer(for: CachedProject.self, CachedAsset.self, CachedUploadJob.self, CachedReceipt.self)) ?? Self.fallbackContainer()
         self.container = container
         _model = StateObject(
-            wrappedValue: AppModel(cache: CacheRepository(context: container.mainContext))
+            wrappedValue: AppModel(cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity })
         )
     }
     var body: some Scene {
@@ -232,8 +235,8 @@ struct RootView: View {
             await NativeUpdateUITestTransport.triggerTypedUpdateRequirement()
         }
         #endif
-        .onChange(of: auth.isSignedIn) { _, signedIn in
-            if !signedIn { Task { await model.deviceRenders.stopAll() } }
+        .onChange(of: auth.localStorageIdentity) { previous, current in
+            if previous != nil, previous != current { Task { await model.deviceRenders.stopAll() } }
         }
     }
 
