@@ -17,9 +17,14 @@ def main() -> None:
 
     import pytest
 
-    from app.services.kria_editor_ops import compile_editor_ops
+    from app.services.kria_editor_ops import (
+        build_editor_snapshot,
+        compile_editor_ops,
+        project_editor_draft,
+    )
+    from app.kria.editor_sequence_timing import sequence_timing_plan
     from tests._prod_profile import apply_prod_profile
-    from tests.services.test_duration_text_preservation import retime, sequence
+    from tests.services.test_duration_text_preservation import sequence
 
     words = (
         "apple beach candle dawn eagle forest garden harbor island jungle kettle lemon meadow "
@@ -30,16 +35,48 @@ def main() -> None:
         ("duration20", 20, 10.8),
         ("duration12", 12, 10.8),
         ("retime12", 12, 12.876),
+        ("retimeUneven20", 20, 12.876),
+        ("retimeAfterResize20", 20, 12.876),
     ):
         with pytest.MonkeyPatch.context() as patch:
             apply_prod_profile(patch)
             job, variant = sequence(patch, end_s=end)
             for row, word in zip(variant["text_elements"], words, strict=True):
                 row["text"] = word
-            before = variant["text_elements"]
+            if name.startswith("retimeUneven") or name.startswith("retimeAfter"):
+                cursor = 0.0
+                for i, row in enumerate(variant["text_elements"]):
+                    row["start_s"] = round(cursor, 6)
+                    cursor += 0.2 + 0.05 * (i % 4)
+                    row["end_s"] = round(cursor, 6)
+                    cursor += 0.2
+            from copy import deepcopy
+
+            before = deepcopy(variant["text_elements"])
+            if name == "retimeAfterResize20":
+                initial_plan = sequence_timing_plan(
+                    "Make the video 12 seconds and fill the text across the whole video",
+                    build_editor_snapshot(job, variant),
+                )
+                initial = compile_editor_ops(
+                    job, variant, list(initial_plan.operations)
+                )
+                variant = project_editor_draft(
+                    variant,
+                    initial.payload.model_dump(mode="json", exclude_none=True),
+                    job,
+                )
             operations = [{"op": "set_total_duration", "target_s": target}]
-            if name == "retime12":
-                operations.append(retime(before, 12))
+            if name.startswith("retime"):
+                plan = sequence_timing_plan(
+                    f"Make the video {target} seconds and fill the text across the whole video",
+                    build_editor_snapshot(job, variant),
+                )
+                if plan is None or not plan.operations:
+                    raise AssertionError(
+                        "Synthetic natural-language route must produce a plan"
+                    )
+                operations = list(plan.operations)
             result = compile_editor_ops(job, variant, operations)
             cases.append(
                 dict(

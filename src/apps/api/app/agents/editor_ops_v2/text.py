@@ -324,6 +324,17 @@ def _coerce_set_texts_timing(name: str, payload: dict, snapshot: dict, state: An
                 state.invalid_value()
                 return None
             out[key] = number
+    if name == "retime_text_sequence":
+        if "fit_to_video" in payload:
+            if not isinstance(payload["fit_to_video"], bool):
+                state.invalid_value()
+                return None
+            out["fit_to_video"] = payload["fit_to_video"]
+        if "gap_policy" in payload:
+            if payload["gap_policy"] not in {"scale", "close", "fixed"}:
+                state.invalid_value()
+                return None
+            out["gap_policy"] = payload["gap_policy"]
     absolute = {"start_s", "end_s"} & out.keys()
     if name == "retime_text_sequence" and (absolute != {"start_s", "end_s"} or "shift_s" in out):
         state.invalid_value()
@@ -519,6 +530,7 @@ SPECS: list[OpSpec] = [
     OpSpec(
         name="retime_text_sequence",
         required=frozenset({"selector", "start_s", "end_s"}),
+        fields=frozenset({"fit_to_video", "gap_policy"}),
         family=_FAMILY,
         coerce=_coerce_set_texts_timing,
     ),

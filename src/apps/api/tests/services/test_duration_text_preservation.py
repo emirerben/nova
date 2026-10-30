@@ -12,6 +12,9 @@ from tests.services._guided_timeline_fixtures import arm_guided, guided_job, gui
 
 
 def sequence(monkeypatch, *, end_s=10.8):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "kria_guided_timeline_ops", True)
     job_id = str(uuid.uuid4())
     rows = [
         {
@@ -167,8 +170,10 @@ def test_one_operation_retimes_every_word_without_replacement(monkeypatch, rever
     after = result.payload.text_elements
     assert [r["id"] for r in after] == [r["id"] for r in before]
     for old, new in zip(before, after, strict=True):
-        assert {k: v for k, v in old.items() if k not in {"start_s", "end_s"}} == {
-            k: v for k, v in new.items() if k not in {"start_s", "end_s"}
+        for key, value in (old.get("source_params") or {}).items():
+            assert (new.get("source_params") or {})[key] == value
+        assert {k: v for k, v in old.items() if k not in {"start_s", "end_s", "source_params"}} == {
+            k: v for k, v in new.items() if k not in {"start_s", "end_s", "source_params"}
         }
     assert after[0]["start_s"] == 0
     assert after[-1]["end_s"] == 12
@@ -318,3 +323,53 @@ def test_source_capped_duration_edit_projects_without_invalid_source_window(monk
     assert sum(row["duration_s"] for row in projected["guided_draft_slots"]) == pytest.approx(
         1.3, abs=0.000002
     )
+
+
+def test_unreadable_sequence_returns_a_typed_minimum_instead_of_a_retry_loop(monkeypatch):
+    from app.services.kria_editor_ops import TextTimingConflict
+
+    job, variant = sequence(monkeypatch)
+    with pytest.raises(TextTimingConflict) as failure:
+        compile_editor_ops(job, variant, [retime(variant["text_elements"], 5)])
+    assert failure.value.constraint == "readability"
+    assert failure.value.required_duration_s == pytest.approx(6.75)
+    assert len(failure.value.conflicting_text_ids) == 27
+    from app.tasks.kria_runtime import _text_timing_conflict_plan
+
+    question = _text_timing_conflict_plan(failure.value)
+    assert question.turn_value == "question"
+    assert "6.8" in question.response
+    assert "longer video" in question.response
+    assert "shorten the text" in question.response
+    assert not question.intents
+    assert not question.reply_options
+
+
+def test_unreachable_numeric_length_does_not_silently_fill_a_shorter_video(monkeypatch):
+    from app.config import settings
+    from app.services.kria_editor_ops import TextTimingConflict
+
+    job_id = str(uuid.uuid4())
+    rows = [
+        {
+            "id": f"opening::sequence-{i + 1}",
+            "text": word,
+            "start_s": i * 0.5,
+            "end_s": (i + 1) * 0.5,
+            "source_params": {"sequence_source_id": "opening"},
+        }
+        for i, word in enumerate(("one", "two"))
+    ]
+    revision = guided_revision(
+        job_id, count=1, duration_s=1, source_duration_s=1.02, text_elements=rows
+    )
+    job, variant = guided_job(revision, rows, job_id)
+    arm_guided(monkeypatch, revision)
+    monkeypatch.setattr(settings, "kria_guided_timeline_ops", True)
+    op = {**retime(rows, 1.04), "fit_to_video": True}
+    before = copy.deepcopy(variant)
+    with pytest.raises(TextTimingConflict) as failure:
+        compile_editor_ops(job, variant, [{"op": "set_total_duration", "target_s": 1.04}, op])
+    assert failure.value.constraint == "duration"
+    assert failure.value.required_duration_s == pytest.approx(1)
+    assert variant == before

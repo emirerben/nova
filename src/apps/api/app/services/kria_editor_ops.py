@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import structlog
 
@@ -136,11 +136,17 @@ class KriaEditorOpError(ValueError):
 
 
 class TextTimingConflict(KriaEditorOpError):
-    """An unchanged text clock cannot fit the proposed editable duration."""
+    """Requested timing needs a creator decision before a draft can be staged."""
 
     def __init__(
-        self, requested_duration_s: float, required_duration_s: float, text_ids: tuple[str, ...]
+        self,
+        requested_duration_s: float,
+        required_duration_s: float,
+        text_ids: tuple[str, ...],
+        *,
+        constraint: Literal["preserve", "readability", "duration"] = "preserve",
     ):
+        self.constraint = constraint
         self.requested_duration_s = requested_duration_s
         self.required_duration_s = required_duration_s
         self.minimum_duration_s = math.ceil(required_duration_s * 10) / 10
@@ -164,6 +170,7 @@ class CompiledEditorDraft:
     # same shape `payload` carries), so a live-plan section Undo can put it back. Empty
     # for a speech cut. Never read by the draft/render path itself.
     before: dict[str, Any] = field(default_factory=dict)
+    canonical_duration_s: float | None = None
 
 
 def is_caption_text_bar(row: dict[str, Any]) -> bool:
@@ -2430,7 +2437,7 @@ def compile_editor_ops(
     if not ops:
         raise KriaEditorOpError("No safe draft change was produced")
     ops = coalesce_text_style_ops(ops)
-    duration_only = bool(ops) and all(
+    duration_edit = any(
         op.get("op") == "set_total_duration"
         or (
             op.get("op") == "patch_slots"
@@ -2512,12 +2519,17 @@ def compile_editor_ops(
     before_sfx = copy.deepcopy(state.sound_effects)
     before_overlays = copy.deepcopy(state.media_overlays)
 
+    canonical_duration_s = None
+    sequence_ops = []
     for op in ops:
         name = str(op.get("op") or "")
         handler = _OP_HANDLERS.get(name)
         if handler is None:
             raise KriaEditorOpError(f"{name or 'Unknown operation'} is not portable to Kria yet")
         _validate_timing_numbers(op)
+        if name == "retime_text_sequence":
+            sequence_ops.append(op)
+            continue
         before_ids = _text_ids(state.text)
         handler(state, op)
         state.explicit_text_ids.update(_text_ids(state.text) - before_ids)
@@ -2530,6 +2542,38 @@ def compile_editor_ops(
 
     if "timeline" in state.changed:
         _fit_slots_to_footage(state, state.initial_slots)
+
+    if sequence_ops:
+        from app.services.authored_text_fit import _segments
+        from app.services.kria_editor_timeline import guided_segments_for_rows
+
+        final_layout = _guided_v2_revision(job, variant)
+        segments = (
+            guided_segments_for_rows(final_layout, state.slots)
+            if final_layout is not None
+            else _segments(state.slots)
+        )
+        total = max((float(row["output_end_s"]) for row in segments), default=0.0)
+        canonical_duration_s = total
+        for op in sequence_ops:
+            effective_op = dict(op)
+            if op.get("fit_to_video"):
+                effective_op["start_s"], effective_op["end_s"] = 0.0, total
+            _validate_timing_numbers(effective_op)
+            _OP_HANDLERS["retime_text_sequence"](state, effective_op)
+            state.explicit_text_ids.update(op.get("target_ids", []))
+            state.changes.append(state.summary or _summary(op))
+            state.summary = None
+        targets = [float(op["target_s"]) for op in ops if op.get("op") == "set_total_duration"]
+        if targets and any(op.get("fit_to_video") for op in sequence_ops):
+            rounded_target = round(targets[-1] * 30) / 30
+            if abs(total - rounded_target) > 0.001:
+                raise TextTimingConflict(
+                    targets[-1],
+                    total,
+                    tuple(value for op in sequence_ops for value in op.get("target_ids", [])),
+                    constraint="duration",
+                )
 
     if "text" in state.changed:
         from app.services.kria_editor_ops_text import normalize_text_relations
@@ -2546,7 +2590,7 @@ def compile_editor_ops(
     if preserve_text and state.text != initial_text:
         raise KriaEditorOpError("This request keeps the text unchanged; no text change was applied")
     text_timing = (
-        "preserve_all" if preserve_text else "preserve_absolute" if duration_only else "follow"
+        "preserve_all" if preserve_text else "preserve_absolute" if duration_edit else "follow"
     )
     guided = _guided_v2_revision(job, variant)
     if "timeline" in changed and guided is not None and _is_guided_native(job, variant):
@@ -2661,6 +2705,7 @@ def compile_editor_ops(
         changes=list(dict.fromkeys(state.changes))[:3],
         text_diff=text_diff,
         diff=diff,
+        canonical_duration_s=canonical_duration_s,
         before=_before_lanes(
             state,
             variant,

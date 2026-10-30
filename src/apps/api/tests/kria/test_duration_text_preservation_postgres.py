@@ -51,6 +51,7 @@ async def project(monkeypatch):
     monkeypatch.setattr(settings, "kria_editor_state_turns_enabled", True)
     monkeypatch.setattr(settings, "main_creator_agent_enabled", True)
     monkeypatch.setattr(settings, "guided_story_editor_v2_enabled", True)
+    monkeypatch.setattr(settings, "kria_guided_timeline_ops", True)
     enqueue = Mock(side_effect=AssertionError("A staged edit must not enqueue rendering"))
     monkeypatch.setattr("app.tasks.kria_runtime.enqueue_editor_commit_render", enqueue)
     user_id, thread_id, session_id = _seed_runtime_project()
@@ -166,8 +167,10 @@ async def test_retime_submit_through_real_planner_persists_words_and_receipt(pro
     retimed = payload["text_elements"]
     assert len(retimed) == 27
     for old, new in zip(rows, retimed, strict=True):
-        assert {k: v for k, v in new.items() if k not in {"start_s", "end_s"}} == {
-            k: v for k, v in old.items() if k not in {"start_s", "end_s"}
+        for key, value in (old.get("source_params") or {}).items():
+            assert (new.get("source_params") or {})[key] == value
+        assert {k: v for k, v in new.items() if k not in {"start_s", "end_s", "source_params"}} == {
+            k: v for k, v in old.items() if k not in {"start_s", "end_s", "source_params"}
         }
         assert new["end_s"] - new["start_s"] >= 0.25
     assert retimed[0]["start_s"] == 0
@@ -325,8 +328,10 @@ async def test_explicit_retime_recovery_stages_gapless_existing_words(project, m
     retimed = payload["text_elements"]
     assert len(retimed) == 27
     for old, new in zip(rows, retimed, strict=True):
-        assert {k: v for k, v in new.items() if k not in {"start_s", "end_s"}} == {
-            k: v for k, v in old.items() if k not in {"start_s", "end_s"}
+        for key, value in (old.get("source_params") or {}).items():
+            assert (new.get("source_params") or {})[key] == value
+        assert {k: v for k, v in new.items() if k not in {"start_s", "end_s", "source_params"}} == {
+            k: v for k, v in old.items() if k not in {"start_s", "end_s", "source_params"}
         }
         assert new["end_s"] - new["start_s"] >= 0.25
     assert retimed[0]["start_s"] == 0

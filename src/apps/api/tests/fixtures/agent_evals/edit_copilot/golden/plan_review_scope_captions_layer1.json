@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-10-29-v91",
+  "prompt_version": "2026-10-30-v92",
   "input": {
     "utterance": "make the captions shorter",
     "prior_turns": [],
@@ -89,7 +89,7 @@
   "output": {},
   "meta": {
     "source": "hand_authored_golden",
-    "case": "scoped to captions: families caption+text; the leaky clip/mix ops are dropped by the parser; offline replay contract metadata repinned for v86, not live rerecorded",
+    "case": "scoped to captions: families caption+text; the leaky clip/mix ops are dropped by the parser; offline replay contract metadata repinned for v86, not live rerecorded; offline contract metadata repinned for v92, not live rerecorded",
     "plan_review_scope_eval": true
   }
 }

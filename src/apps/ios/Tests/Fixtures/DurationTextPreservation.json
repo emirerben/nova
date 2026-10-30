@@ -2451,12 +2451,45 @@
     "operations": [
       {
         "op": "set_total_duration",
-        "target_s": 12
+        "target_s": 12.0,
+        "strategy": "proportional"
       },
       {
         "op": "retime_text_sequence",
+        "start_s": 0.0,
+        "end_s": 12.0,
+        "fit_to_video": true,
+        "gap_policy": "scale",
         "selector": {
-          "group": "all"
+          "ids": [
+            "opening::sequence-1",
+            "opening::sequence-2",
+            "opening::sequence-3",
+            "opening::sequence-4",
+            "opening::sequence-5",
+            "opening::sequence-6",
+            "opening::sequence-7",
+            "opening::sequence-8",
+            "opening::sequence-9",
+            "opening::sequence-10",
+            "opening::sequence-11",
+            "opening::sequence-12",
+            "opening::sequence-13",
+            "opening::sequence-14",
+            "opening::sequence-15",
+            "opening::sequence-16",
+            "opening::sequence-17",
+            "opening::sequence-18",
+            "opening::sequence-19",
+            "opening::sequence-20",
+            "opening::sequence-21",
+            "opening::sequence-22",
+            "opening::sequence-23",
+            "opening::sequence-24",
+            "opening::sequence-25",
+            "opening::sequence-26",
+            "opening::sequence-27"
+          ]
         },
         "target_ids": [
           "opening::sequence-1",
@@ -2487,9 +2520,7 @@
           "opening::sequence-26",
           "opening::sequence-27"
         ],
-        "expected_count": 27,
-        "start_s": 0,
-        "end_s": 12
+        "expected_count": 27
       }
     ],
     "payload": {
@@ -2498,20 +2529,26 @@
           "id": "opening::sequence-1",
           "text": "apple",
           "start_s": 0.0,
-          "end_s": 0.444444,
+          "end_s": 0.444445,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.476889,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-2",
           "text": "beach",
-          "start_s": 0.444444,
+          "start_s": 0.444445,
           "end_s": 0.888889,
           "role": "generative_intro",
           "position": "middle",
@@ -2519,27 +2556,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.476889,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-3",
           "text": "candle",
           "start_s": 0.888889,
-          "end_s": 1.333333,
+          "end_s": 1.333334,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 111,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-4",
           "text": "dawn",
-          "start_s": 1.333333,
+          "start_s": 1.333334,
           "end_s": 1.777778,
           "role": "generative_intro",
           "position": "middle",
@@ -2547,7 +2596,13 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768890000000001,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
@@ -2561,27 +2616,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.47688799999999976,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-6",
           "text": "forest",
           "start_s": 2.222222,
-          "end_s": 2.666667,
+          "end_s": 2.666666,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.47688900000000034,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-7",
           "text": "garden",
-          "start_s": 2.666667,
+          "start_s": 2.666666,
           "end_s": 3.111111,
           "role": "generative_intro",
           "position": "middle",
@@ -2589,27 +2656,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-8",
           "text": "harbor",
           "start_s": 3.111111,
-          "end_s": 3.555556,
+          "end_s": 3.555555,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-9",
           "text": "island",
-          "start_s": 3.555556,
+          "start_s": 3.555555,
           "end_s": 4.0,
           "role": "generative_intro",
           "position": "middle",
@@ -2617,27 +2696,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-10",
           "text": "jungle",
           "start_s": 4.0,
-          "end_s": 4.444444,
+          "end_s": 4.444445,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-11",
           "text": "kettle",
-          "start_s": 4.444444,
+          "start_s": 4.444445,
           "end_s": 4.888889,
           "role": "generative_intro",
           "position": "middle",
@@ -2645,27 +2736,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-12",
           "text": "lemon",
           "start_s": 4.888889,
-          "end_s": 5.333333,
+          "end_s": 5.333334,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768890000000008,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-13",
           "text": "meadow",
-          "start_s": 5.333333,
+          "start_s": 5.333334,
           "end_s": 5.777778,
           "role": "generative_intro",
           "position": "middle",
@@ -2673,7 +2776,13 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
@@ -2687,27 +2796,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.47688799999999976,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-15",
           "text": "ocean",
           "start_s": 6.222222,
-          "end_s": 6.666667,
+          "end_s": 6.666666,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-16",
           "text": "paper",
-          "start_s": 6.666667,
+          "start_s": 6.666666,
           "end_s": 7.111111,
           "role": "generative_intro",
           "position": "middle",
@@ -2715,27 +2836,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-17",
           "text": "quartz",
           "start_s": 7.111111,
-          "end_s": 7.555556,
+          "end_s": 7.555555,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-18",
           "text": "river",
-          "start_s": 7.555556,
+          "start_s": 7.555555,
           "end_s": 8.0,
           "role": "generative_intro",
           "position": "middle",
@@ -2743,27 +2876,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-19",
           "text": "sunset",
           "start_s": 8.0,
-          "end_s": 8.444444,
+          "end_s": 8.444445,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-20",
           "text": "tulip",
-          "start_s": 8.444444,
+          "start_s": 8.444445,
           "end_s": 8.888889,
           "role": "generative_intro",
           "position": "middle",
@@ -2771,27 +2916,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-21",
           "text": "velvet",
           "start_s": 8.888889,
-          "end_s": 9.333333,
+          "end_s": 9.333334,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-22",
           "text": "willow",
-          "start_s": 9.333333,
+          "start_s": 9.333334,
           "end_s": 9.777778,
           "role": "generative_intro",
           "position": "middle",
@@ -2799,7 +2956,13 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
@@ -2813,27 +2976,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.47688800000000064,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-24",
           "text": "zebra",
           "start_s": 10.222222,
-          "end_s": 10.666667,
+          "end_s": 10.666666,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-25",
           "text": "amber",
-          "start_s": 10.666667,
+          "start_s": 10.666666,
           "end_s": 11.111111,
           "role": "generative_intro",
           "position": "middle",
@@ -2841,27 +3016,39 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-26",
           "text": "cloud",
           "start_s": 11.111111,
-          "end_s": 11.555556,
+          "end_s": 11.555555,
           "role": "generative_intro",
           "position": "middle",
           "font_family": "Playfair Display",
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444444,
+              "applied_gap_after_s": 0.0
+            }
           }
         },
         {
           "id": "opening::sequence-27",
           "text": "silver",
-          "start_s": 11.555556,
+          "start_s": 11.555555,
           "end_s": 12.0,
           "role": "generative_intro",
           "position": "middle",
@@ -2869,7 +3056,13 @@
           "size_px": 76,
           "max_width_frac": 0.68,
           "source_params": {
-            "sequence_source_id": "opening"
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.4768889999999999,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.444445,
+              "applied_gap_after_s": 0.0
+            }
           }
         }
       ],
@@ -3122,6 +3315,2534 @@
           "clip_index": 27,
           "in_s": 0.0,
           "duration_s": 0.433,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        }
+      ],
+      "remove_music": false,
+      "base_generation": "gen-1",
+      "copilot_receipt_ids": [],
+      "learning_temporary": false,
+      "guided_revision_number": 1,
+      "retry_guided_revision": false,
+      "deletions": []
+    }
+  },
+  {
+    "name": "retimeUneven20",
+    "duration": 20,
+    "before": [
+      {
+        "id": "opening::sequence-1",
+        "text": "apple",
+        "start_s": 0.0,
+        "end_s": 0.2,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-2",
+        "text": "beach",
+        "start_s": 0.4,
+        "end_s": 0.65,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-3",
+        "text": "candle",
+        "start_s": 0.85,
+        "end_s": 1.15,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 111,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-4",
+        "text": "dawn",
+        "start_s": 1.35,
+        "end_s": 1.7,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-5",
+        "text": "eagle",
+        "start_s": 1.9,
+        "end_s": 2.1,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-6",
+        "text": "forest",
+        "start_s": 2.3,
+        "end_s": 2.55,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-7",
+        "text": "garden",
+        "start_s": 2.75,
+        "end_s": 3.05,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-8",
+        "text": "harbor",
+        "start_s": 3.25,
+        "end_s": 3.6,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-9",
+        "text": "island",
+        "start_s": 3.8,
+        "end_s": 4.0,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-10",
+        "text": "jungle",
+        "start_s": 4.2,
+        "end_s": 4.45,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-11",
+        "text": "kettle",
+        "start_s": 4.65,
+        "end_s": 4.95,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-12",
+        "text": "lemon",
+        "start_s": 5.15,
+        "end_s": 5.5,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-13",
+        "text": "meadow",
+        "start_s": 5.7,
+        "end_s": 5.9,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-14",
+        "text": "nectar",
+        "start_s": 6.1,
+        "end_s": 6.35,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-15",
+        "text": "ocean",
+        "start_s": 6.55,
+        "end_s": 6.85,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-16",
+        "text": "paper",
+        "start_s": 7.05,
+        "end_s": 7.4,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-17",
+        "text": "quartz",
+        "start_s": 7.6,
+        "end_s": 7.8,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-18",
+        "text": "river",
+        "start_s": 8.0,
+        "end_s": 8.25,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-19",
+        "text": "sunset",
+        "start_s": 8.45,
+        "end_s": 8.75,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-20",
+        "text": "tulip",
+        "start_s": 8.95,
+        "end_s": 9.3,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-21",
+        "text": "velvet",
+        "start_s": 9.5,
+        "end_s": 9.7,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-22",
+        "text": "willow",
+        "start_s": 9.9,
+        "end_s": 10.15,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-23",
+        "text": "yellow",
+        "start_s": 10.35,
+        "end_s": 10.65,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-24",
+        "text": "zebra",
+        "start_s": 10.85,
+        "end_s": 11.2,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-25",
+        "text": "amber",
+        "start_s": 11.4,
+        "end_s": 11.6,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-26",
+        "text": "cloud",
+        "start_s": 11.8,
+        "end_s": 12.05,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-27",
+        "text": "silver",
+        "start_s": 12.25,
+        "end_s": 12.55,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      }
+    ],
+    "operations": [
+      {
+        "op": "set_total_duration",
+        "target_s": 20.0,
+        "strategy": "proportional"
+      },
+      {
+        "op": "retime_text_sequence",
+        "start_s": 0.0,
+        "end_s": 20.0,
+        "fit_to_video": true,
+        "gap_policy": "scale",
+        "selector": {
+          "ids": [
+            "opening::sequence-1",
+            "opening::sequence-2",
+            "opening::sequence-3",
+            "opening::sequence-4",
+            "opening::sequence-5",
+            "opening::sequence-6",
+            "opening::sequence-7",
+            "opening::sequence-8",
+            "opening::sequence-9",
+            "opening::sequence-10",
+            "opening::sequence-11",
+            "opening::sequence-12",
+            "opening::sequence-13",
+            "opening::sequence-14",
+            "opening::sequence-15",
+            "opening::sequence-16",
+            "opening::sequence-17",
+            "opening::sequence-18",
+            "opening::sequence-19",
+            "opening::sequence-20",
+            "opening::sequence-21",
+            "opening::sequence-22",
+            "opening::sequence-23",
+            "opening::sequence-24",
+            "opening::sequence-25",
+            "opening::sequence-26",
+            "opening::sequence-27"
+          ]
+        },
+        "target_ids": [
+          "opening::sequence-1",
+          "opening::sequence-2",
+          "opening::sequence-3",
+          "opening::sequence-4",
+          "opening::sequence-5",
+          "opening::sequence-6",
+          "opening::sequence-7",
+          "opening::sequence-8",
+          "opening::sequence-9",
+          "opening::sequence-10",
+          "opening::sequence-11",
+          "opening::sequence-12",
+          "opening::sequence-13",
+          "opening::sequence-14",
+          "opening::sequence-15",
+          "opening::sequence-16",
+          "opening::sequence-17",
+          "opening::sequence-18",
+          "opening::sequence-19",
+          "opening::sequence-20",
+          "opening::sequence-21",
+          "opening::sequence-22",
+          "opening::sequence-23",
+          "opening::sequence-24",
+          "opening::sequence-25",
+          "opening::sequence-26",
+          "opening::sequence-27"
+        ],
+        "expected_count": 27
+      }
+    ],
+    "payload": {
+      "text_elements": [
+        {
+          "id": "opening::sequence-1",
+          "text": "apple",
+          "start_s": 0.0,
+          "end_s": 0.318725,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.2,
+              "gap_after_s": 0.2,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-2",
+          "text": "beach",
+          "start_s": 0.63745,
+          "end_s": 1.035857,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.19999999999999996,
+              "applied_duration_s": 0.398407,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-3",
+          "text": "candle",
+          "start_s": 1.354582,
+          "end_s": 1.832669,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 111,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.29999999999999993,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.478087,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-4",
+          "text": "dawn",
+          "start_s": 2.151394,
+          "end_s": 2.709163,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.34999999999999987,
+              "gap_after_s": 0.19999999999999996,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-5",
+          "text": "eagle",
+          "start_s": 3.027888,
+          "end_s": 3.346614,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.20000000000000018,
+              "gap_after_s": 0.19999999999999973,
+              "applied_duration_s": 0.318726,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-6",
+          "text": "forest",
+          "start_s": 3.665339,
+          "end_s": 4.063745,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-7",
+          "text": "garden",
+          "start_s": 4.38247,
+          "end_s": 4.860558,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.2999999999999998,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-8",
+          "text": "harbor",
+          "start_s": 5.179283,
+          "end_s": 5.737052,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3500000000000001,
+              "gap_after_s": 0.19999999999999973,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-9",
+          "text": "island",
+          "start_s": 6.055777,
+          "end_s": 6.374502,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.20000000000000018,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-10",
+          "text": "jungle",
+          "start_s": 6.693227,
+          "end_s": 7.091633,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318726
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-11",
+          "text": "kettle",
+          "start_s": 7.410359,
+          "end_s": 7.888446,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.2999999999999998,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.478087,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-12",
+          "text": "lemon",
+          "start_s": 8.207171,
+          "end_s": 8.76494,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.34999999999999964,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-13",
+          "text": "meadow",
+          "start_s": 9.083665,
+          "end_s": 9.40239,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.20000000000000018,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318726
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-14",
+          "text": "nectar",
+          "start_s": 9.721116,
+          "end_s": 10.119522,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-15",
+          "text": "ocean",
+          "start_s": 10.438247,
+          "end_s": 10.916335,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.2999999999999998,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-16",
+          "text": "paper",
+          "start_s": 11.23506,
+          "end_s": 11.792829,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.35000000000000053,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-17",
+          "text": "quartz",
+          "start_s": 12.111554,
+          "end_s": 12.430279,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.20000000000000018,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-18",
+          "text": "river",
+          "start_s": 12.749004,
+          "end_s": 13.14741,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-19",
+          "text": "sunset",
+          "start_s": 13.466135,
+          "end_s": 13.944223,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3000000000000007,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-20",
+          "text": "tulip",
+          "start_s": 14.262948,
+          "end_s": 14.820717,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3500000000000014,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-21",
+          "text": "velvet",
+          "start_s": 15.139442,
+          "end_s": 15.458167,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.1999999999999993,
+              "gap_after_s": 0.20000000000000107,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-22",
+          "text": "willow",
+          "start_s": 15.776892,
+          "end_s": 16.175299,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.398407,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-23",
+          "text": "yellow",
+          "start_s": 16.494024,
+          "end_s": 16.972112,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3000000000000007,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-24",
+          "text": "zebra",
+          "start_s": 17.290837,
+          "end_s": 17.848606,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.34999999999999964,
+              "gap_after_s": 0.20000000000000107,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-25",
+          "text": "amber",
+          "start_s": 18.167331,
+          "end_s": 18.486056,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.1999999999999993,
+              "gap_after_s": 0.20000000000000107,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-26",
+          "text": "cloud",
+          "start_s": 18.804781,
+          "end_s": 19.203187,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-27",
+          "text": "silver",
+          "start_s": 19.521912,
+          "end_s": 20.0,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3000000000000007,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.0
+            }
+          }
+        }
+      ],
+      "timeline_slots": [
+        {
+          "slot_id": "s1",
+          "clip_index": 0,
+          "in_s": 0.0,
+          "duration_s": 1.1,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s2",
+          "clip_index": 1,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s3",
+          "clip_index": 2,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s4",
+          "clip_index": 3,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s5",
+          "clip_index": 4,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s6",
+          "clip_index": 5,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s7",
+          "clip_index": 6,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s8",
+          "clip_index": 7,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s9",
+          "clip_index": 8,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s10",
+          "clip_index": 9,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s11",
+          "clip_index": 10,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s12",
+          "clip_index": 11,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s13",
+          "clip_index": 12,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s14",
+          "clip_index": 13,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s15",
+          "clip_index": 14,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s16",
+          "clip_index": 15,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s17",
+          "clip_index": 16,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s18",
+          "clip_index": 17,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s19",
+          "clip_index": 18,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s20",
+          "clip_index": 19,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s21",
+          "clip_index": 20,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s22",
+          "clip_index": 21,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s23",
+          "clip_index": 22,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s24",
+          "clip_index": 23,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s25",
+          "clip_index": 24,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s26",
+          "clip_index": 25,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s27",
+          "clip_index": 26,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s28",
+          "clip_index": 27,
+          "in_s": 0.0,
+          "duration_s": 0.7,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        }
+      ],
+      "remove_music": false,
+      "base_generation": "gen-1",
+      "copilot_receipt_ids": [],
+      "learning_temporary": false,
+      "guided_revision_number": 1,
+      "retry_guided_revision": false,
+      "deletions": []
+    }
+  },
+  {
+    "name": "retimeAfterResize20",
+    "duration": 20,
+    "before": [
+      {
+        "id": "opening::sequence-1",
+        "text": "apple",
+        "start_s": 0.0,
+        "end_s": 0.2,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-2",
+        "text": "beach",
+        "start_s": 0.4,
+        "end_s": 0.65,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-3",
+        "text": "candle",
+        "start_s": 0.85,
+        "end_s": 1.15,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 111,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-4",
+        "text": "dawn",
+        "start_s": 1.35,
+        "end_s": 1.7,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-5",
+        "text": "eagle",
+        "start_s": 1.9,
+        "end_s": 2.1,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-6",
+        "text": "forest",
+        "start_s": 2.3,
+        "end_s": 2.55,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-7",
+        "text": "garden",
+        "start_s": 2.75,
+        "end_s": 3.05,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-8",
+        "text": "harbor",
+        "start_s": 3.25,
+        "end_s": 3.6,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-9",
+        "text": "island",
+        "start_s": 3.8,
+        "end_s": 4.0,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-10",
+        "text": "jungle",
+        "start_s": 4.2,
+        "end_s": 4.45,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-11",
+        "text": "kettle",
+        "start_s": 4.65,
+        "end_s": 4.95,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-12",
+        "text": "lemon",
+        "start_s": 5.15,
+        "end_s": 5.5,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-13",
+        "text": "meadow",
+        "start_s": 5.7,
+        "end_s": 5.9,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-14",
+        "text": "nectar",
+        "start_s": 6.1,
+        "end_s": 6.35,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-15",
+        "text": "ocean",
+        "start_s": 6.55,
+        "end_s": 6.85,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-16",
+        "text": "paper",
+        "start_s": 7.05,
+        "end_s": 7.4,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-17",
+        "text": "quartz",
+        "start_s": 7.6,
+        "end_s": 7.8,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-18",
+        "text": "river",
+        "start_s": 8.0,
+        "end_s": 8.25,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-19",
+        "text": "sunset",
+        "start_s": 8.45,
+        "end_s": 8.75,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-20",
+        "text": "tulip",
+        "start_s": 8.95,
+        "end_s": 9.3,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-21",
+        "text": "velvet",
+        "start_s": 9.5,
+        "end_s": 9.7,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-22",
+        "text": "willow",
+        "start_s": 9.9,
+        "end_s": 10.15,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-23",
+        "text": "yellow",
+        "start_s": 10.35,
+        "end_s": 10.65,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-24",
+        "text": "zebra",
+        "start_s": 10.85,
+        "end_s": 11.2,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-25",
+        "text": "amber",
+        "start_s": 11.4,
+        "end_s": 11.6,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-26",
+        "text": "cloud",
+        "start_s": 11.8,
+        "end_s": 12.05,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      },
+      {
+        "id": "opening::sequence-27",
+        "text": "silver",
+        "start_s": 12.25,
+        "end_s": 12.55,
+        "role": "generative_intro",
+        "position": "middle",
+        "font_family": "Playfair Display",
+        "size_px": 76,
+        "max_width_frac": 0.68,
+        "source_params": {
+          "sequence_source_id": "opening"
+        }
+      }
+    ],
+    "operations": [
+      {
+        "op": "set_total_duration",
+        "target_s": 20.0,
+        "strategy": "proportional"
+      },
+      {
+        "op": "retime_text_sequence",
+        "start_s": 0.0,
+        "end_s": 20.0,
+        "fit_to_video": true,
+        "gap_policy": "scale",
+        "selector": {
+          "ids": [
+            "opening::sequence-1",
+            "opening::sequence-2",
+            "opening::sequence-3",
+            "opening::sequence-4",
+            "opening::sequence-5",
+            "opening::sequence-6",
+            "opening::sequence-7",
+            "opening::sequence-8",
+            "opening::sequence-9",
+            "opening::sequence-10",
+            "opening::sequence-11",
+            "opening::sequence-12",
+            "opening::sequence-13",
+            "opening::sequence-14",
+            "opening::sequence-15",
+            "opening::sequence-16",
+            "opening::sequence-17",
+            "opening::sequence-18",
+            "opening::sequence-19",
+            "opening::sequence-20",
+            "opening::sequence-21",
+            "opening::sequence-22",
+            "opening::sequence-23",
+            "opening::sequence-24",
+            "opening::sequence-25",
+            "opening::sequence-26",
+            "opening::sequence-27"
+          ]
+        },
+        "target_ids": [
+          "opening::sequence-1",
+          "opening::sequence-2",
+          "opening::sequence-3",
+          "opening::sequence-4",
+          "opening::sequence-5",
+          "opening::sequence-6",
+          "opening::sequence-7",
+          "opening::sequence-8",
+          "opening::sequence-9",
+          "opening::sequence-10",
+          "opening::sequence-11",
+          "opening::sequence-12",
+          "opening::sequence-13",
+          "opening::sequence-14",
+          "opening::sequence-15",
+          "opening::sequence-16",
+          "opening::sequence-17",
+          "opening::sequence-18",
+          "opening::sequence-19",
+          "opening::sequence-20",
+          "opening::sequence-21",
+          "opening::sequence-22",
+          "opening::sequence-23",
+          "opening::sequence-24",
+          "opening::sequence-25",
+          "opening::sequence-26",
+          "opening::sequence-27"
+        ],
+        "expected_count": 27
+      }
+    ],
+    "payload": {
+      "text_elements": [
+        {
+          "id": "opening::sequence-1",
+          "text": "apple",
+          "start_s": 0.0,
+          "end_s": 0.318725,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.2,
+              "gap_after_s": 0.2,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-2",
+          "text": "beach",
+          "start_s": 0.63745,
+          "end_s": 1.035857,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.19999999999999996,
+              "applied_duration_s": 0.398407,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-3",
+          "text": "candle",
+          "start_s": 1.354582,
+          "end_s": 1.832669,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 111,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.29999999999999993,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.478087,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-4",
+          "text": "dawn",
+          "start_s": 2.151394,
+          "end_s": 2.709163,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.34999999999999987,
+              "gap_after_s": 0.19999999999999996,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-5",
+          "text": "eagle",
+          "start_s": 3.027888,
+          "end_s": 3.346614,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.20000000000000018,
+              "gap_after_s": 0.19999999999999973,
+              "applied_duration_s": 0.318726,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-6",
+          "text": "forest",
+          "start_s": 3.665339,
+          "end_s": 4.063745,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-7",
+          "text": "garden",
+          "start_s": 4.38247,
+          "end_s": 4.860558,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.2999999999999998,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-8",
+          "text": "harbor",
+          "start_s": 5.179283,
+          "end_s": 5.737052,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3500000000000001,
+              "gap_after_s": 0.19999999999999973,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-9",
+          "text": "island",
+          "start_s": 6.055777,
+          "end_s": 6.374502,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.20000000000000018,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-10",
+          "text": "jungle",
+          "start_s": 6.693227,
+          "end_s": 7.091633,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318726
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-11",
+          "text": "kettle",
+          "start_s": 7.410359,
+          "end_s": 7.888446,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.2999999999999998,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.478087,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-12",
+          "text": "lemon",
+          "start_s": 8.207171,
+          "end_s": 8.76494,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.34999999999999964,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-13",
+          "text": "meadow",
+          "start_s": 9.083665,
+          "end_s": 9.40239,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.20000000000000018,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318726
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-14",
+          "text": "nectar",
+          "start_s": 9.721116,
+          "end_s": 10.119522,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-15",
+          "text": "ocean",
+          "start_s": 10.438247,
+          "end_s": 10.916335,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.2999999999999998,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-16",
+          "text": "paper",
+          "start_s": 11.23506,
+          "end_s": 11.792829,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.35000000000000053,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-17",
+          "text": "quartz",
+          "start_s": 12.111554,
+          "end_s": 12.430279,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.20000000000000018,
+              "gap_after_s": 0.20000000000000018,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-18",
+          "text": "river",
+          "start_s": 12.749004,
+          "end_s": 13.14741,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-19",
+          "text": "sunset",
+          "start_s": 13.466135,
+          "end_s": 13.944223,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3000000000000007,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-20",
+          "text": "tulip",
+          "start_s": 14.262948,
+          "end_s": 14.820717,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3500000000000014,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-21",
+          "text": "velvet",
+          "start_s": 15.139442,
+          "end_s": 15.458167,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.1999999999999993,
+              "gap_after_s": 0.20000000000000107,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-22",
+          "text": "willow",
+          "start_s": 15.776892,
+          "end_s": 16.175299,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.398407,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-23",
+          "text": "yellow",
+          "start_s": 16.494024,
+          "end_s": 16.972112,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3000000000000007,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-24",
+          "text": "zebra",
+          "start_s": 17.290837,
+          "end_s": 17.848606,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.34999999999999964,
+              "gap_after_s": 0.20000000000000107,
+              "applied_duration_s": 0.557769,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-25",
+          "text": "amber",
+          "start_s": 18.167331,
+          "end_s": 18.486056,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.1999999999999993,
+              "gap_after_s": 0.20000000000000107,
+              "applied_duration_s": 0.318725,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-26",
+          "text": "cloud",
+          "start_s": 18.804781,
+          "end_s": 19.203187,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.25,
+              "gap_after_s": 0.1999999999999993,
+              "applied_duration_s": 0.398406,
+              "applied_gap_after_s": 0.318725
+            }
+          }
+        },
+        {
+          "id": "opening::sequence-27",
+          "text": "silver",
+          "start_s": 19.521912,
+          "end_s": 20.0,
+          "role": "generative_intro",
+          "position": "middle",
+          "font_family": "Playfair Display",
+          "size_px": 76,
+          "max_width_frac": 0.68,
+          "source_params": {
+            "sequence_source_id": "opening",
+            "sequence_timing": {
+              "duration_s": 0.3000000000000007,
+              "gap_after_s": 0.0,
+              "applied_duration_s": 0.478088,
+              "applied_gap_after_s": 0.0
+            }
+          }
+        }
+      ],
+      "timeline_slots": [
+        {
+          "slot_id": "s1",
+          "clip_index": 0,
+          "in_s": 0.0,
+          "duration_s": 0.5,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s2",
+          "clip_index": 1,
+          "in_s": 0.0,
+          "duration_s": 0.433,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s3",
+          "clip_index": 2,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s4",
+          "clip_index": 3,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s5",
+          "clip_index": 4,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s6",
+          "clip_index": 5,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s7",
+          "clip_index": 6,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s8",
+          "clip_index": 7,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s9",
+          "clip_index": 8,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s10",
+          "clip_index": 9,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s11",
+          "clip_index": 10,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s12",
+          "clip_index": 11,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s13",
+          "clip_index": 12,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s14",
+          "clip_index": 13,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s15",
+          "clip_index": 14,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s16",
+          "clip_index": 15,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s17",
+          "clip_index": 16,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s18",
+          "clip_index": 17,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s19",
+          "clip_index": 18,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s20",
+          "clip_index": 19,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s21",
+          "clip_index": 20,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s22",
+          "clip_index": 21,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s23",
+          "clip_index": 22,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s24",
+          "clip_index": 23,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s25",
+          "clip_index": 24,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s26",
+          "clip_index": 25,
+          "in_s": 0.0,
+          "duration_s": 0.733,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s27",
+          "clip_index": 26,
+          "in_s": 0.0,
+          "duration_s": 0.734,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none"
+        },
+        {
+          "slot_id": "s28",
+          "clip_index": 27,
+          "in_s": 0.0,
+          "duration_s": 0.733,
           "removed": false,
           "transition_after": "cut",
           "look_preset": "none"

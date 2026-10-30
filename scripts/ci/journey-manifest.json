@@ -2227,12 +2227,14 @@
     {
       "id": "duration-text-preservation",
       "needs_native": true,
-      "api_tests": "tests/services/test_duration_text_preservation.py tests/kria/test_editor_sequence_timing.py tests/kria/test_duration_text_preservation_postgres.py",
+      "api_tests": "tests/services/test_duration_text_preservation.py tests/kria/test_editor_sequence_timing.py tests/kria/test_duration_text_preservation_postgres.py tests/services/test_sequence_pacing.py tests/kria/test_sequence_timing_ledger.py tests/kria/test_sequence_natural_intent_postgres.py tests/agents/test_editor_ops_v2.py tests/evals/test_plan_review_scope_eval.py",
       "xctests": [
         "KriaTests/DurationTextPreservationTests/testTwentySecondDurationPreservesEveryRenderedWord",
         "KriaTests/DurationTextPreservationTests/testTwelveSecondDurationPreservesEveryRenderedWord",
         "KriaTests/DurationTextPreservationTests/testExplicitRetimePreservesEveryRenderedWord",
-        "KriaTests/DurationTextPreservationTests/testOverlappingSequenceFailsTheSameConcurrencyAndContentOracle"
+        "KriaTests/DurationTextPreservationTests/testOverlappingSequenceFailsTheSameConcurrencyAndContentOracle",
+        "KriaTests/DurationTextPreservationTests/testUnevenPacingAndGapsSurviveNaturalLanguageRetime",
+        "KriaTests/DurationTextPreservationTests/testCanonicalPacingReturnsAfterCompressionAndExpansion"
       ],
       "paths": [
         "src/apps/api/app/agents/editor_ops_v2/text.py",
@@ -2250,7 +2252,19 @@
         "src/apps/ios/Tests/KriaTests/DurationTextPreservationTests.swift",
         "src/apps/ios/Tests/Fixtures/DurationTextPreservation.json",
         "scripts/ios/duration-text-preservation-fixtures.py",
-        "src/apps/api/app/kria/plan_review.py"
+        "src/apps/api/app/kria/plan_review.py",
+        "src/apps/api/app/services/sequence_pacing.py",
+        "src/apps/api/app/kria/brief_checks.py",
+        "src/apps/api/app/kria/editor_receipts.py",
+        "src/apps/api/tests/services/test_sequence_pacing.py",
+        "src/apps/api/tests/kria/test_sequence_timing_ledger.py",
+        "src/apps/api/tests/kria/test_sequence_natural_intent_postgres.py",
+        "src/apps/api/app/agents/edit_copilot.py",
+        "src/apps/api/prompts/edit_copilot_ops/text.txt",
+        "src/apps/api/tests/agents/test_editor_ops_v2.py",
+        "src/apps/api/tests/evals/test_plan_review_scope_eval.py",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/plan_review_scope_captions_layer1.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/plan_review_unscoped_same_prompt.json"
       ],
       "fixture_generator": "scripts/ios/duration-text-preservation-fixtures.py"
     }

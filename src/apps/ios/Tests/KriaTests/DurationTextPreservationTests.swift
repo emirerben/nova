@@ -20,6 +20,8 @@ import KriaMediaEngine
     func testTwentySecondDurationPreservesEveryRenderedWord() async throws { try await verify("duration20") }
     func testTwelveSecondDurationPreservesEveryRenderedWord() async throws { try await verify("duration12") }
     func testExplicitRetimePreservesEveryRenderedWord() async throws { try await verify("retime12") }
+    func testUnevenPacingAndGapsSurviveNaturalLanguageRetime() async throws { try await verify("retimeUneven20") }
+    func testCanonicalPacingReturnsAfterCompressionAndExpansion() async throws { try await verify("retimeAfterResize20") }
 
     func testOverlappingSequenceFailsTheSameConcurrencyAndContentOracle() async throws {
         let fixture = try fixture("duration12")
@@ -53,7 +55,19 @@ import KriaMediaEngine
         let snapshot = DraftSnapshot(draftID: "synthetic-duration", itemID: "synthetic", variantKey: "guided_story",
             draftRevision: 0, snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
             snapshot: ["editor_payload": .object(["sections": .object(payload)])], canUndo: false, createdAt: .now)
-        let session = NativeEditorSession(draft: snapshot.editorDraft(projectID: UUID()))
+        let loaded = NativeEditorSession(draft: snapshot.editorDraft(projectID: UUID()))
+        let encoded = try JSONEncoder().encode(loaded.document.encodeSnapshot())
+        let decoded = try JSONDecoder().decode([String: JSONValue].self, from: encoded)
+        let reopened = DraftSnapshot(draftID: "synthetic-reopen", itemID: "synthetic", variantKey: "guided_story",
+            draftRevision: 1, snapshotHash: "", etag: "", baseJobID: nil, baseGenerationID: nil,
+            snapshot: decoded, canUndo: false, createdAt: .now)
+        let session = NativeEditorSession(draft: reopened.editorDraft(projectID: UUID()))
+        XCTAssertEqual(session.document.textElements, loaded.document.textElements,
+            "Local JSON serialization and reopening must retain IDs, wording, style, timing, and source metadata")
+        for (original, restored) in zip(loaded.document.textElements, session.document.textElements) {
+            XCTAssertEqual(restored.raw["source_params"]?.objectValue?["sequence_timing"],
+                original.raw["source_params"]?.objectValue?["sequence_timing"])
+        }
         XCTAssertEqual(session.document.textElements.count, 27)
         var sources: [Int: ResolvedEditorSource] = [:]
         for slot in session.document.clips {
@@ -71,11 +85,35 @@ import KriaMediaEngine
         XCTAssertEqual(document.textElements.map(\.text), "apple beach candle dawn eagle forest garden harbor island jungle kettle lemon meadow nectar ocean paper quartz river sunset tulip velvet willow yellow zebra amber cloud silver".split(separator: " ").map(String.init))
         for (before, after) in zip(fixture.before, document.textElements) {
             var expected = before; var actual = after.raw
-            if name == "retime12" {
+            if name.hasPrefix("retime") {
                 expected.removeValue(forKey: "start_s"); expected.removeValue(forKey: "end_s")
                 actual.removeValue(forKey: "start_s"); actual.removeValue(forKey: "end_s")
+                var params = try XCTUnwrap(actual["source_params"]?.objectValue)
+                XCTAssertNotNil(params.removeValue(forKey: "sequence_timing"))
+                actual["source_params"] = .object(params)
             }
             XCTAssertEqual(actual, expected)
+        }
+        if name.hasPrefix("retime") {
+            for (index, row) in document.textElements.enumerated() {
+                let timing = try XCTUnwrap(row.raw["source_params"]?.objectValue?["sequence_timing"]?.objectValue)
+                let before = fixture.before[index]
+                let originalStart = try XCTUnwrap(before["start_s"]?.numberValue)
+                let originalEnd = try XCTUnwrap(before["end_s"]?.numberValue)
+                XCTAssertEqual(try XCTUnwrap(timing["duration_s"]?.numberValue), originalEnd - originalStart, accuracy: 0.000001)
+                let nextStart = index + 1 < fixture.before.count
+                    ? try XCTUnwrap(fixture.before[index + 1]["start_s"]?.numberValue) : originalEnd
+                XCTAssertEqual(try XCTUnwrap(timing["gap_after_s"]?.numberValue), nextStart - originalEnd, accuracy: 0.000001)
+            }
+        }
+        if name == "retimeUneven20" || name == "retimeAfterResize20" {
+            let direct = try self.fixture("retimeUneven20")
+            let resized = try self.fixture("retimeAfterResize20")
+            XCTAssertEqual(direct.payload["text_elements"], resized.payload["text_elements"],
+                "Compression followed by expansion must recover the canonical pacing and styles")
+            for (left, right) in zip(document.textElements, document.textElements.dropFirst()) {
+                XCTAssertGreaterThan(right.startS - left.endS, 0)
+            }
         }
         let program = try compile(fixture.payload)
         XCTAssertEqual(program.recipe.textLayers.count, 27)
@@ -111,7 +149,23 @@ import KriaMediaEngine
             XCTAssertEqual(exportText, row.text, "export at \(time)")
             observations.append(["id": row.id, "time": time, "expected": row.text, "preview": previewText, "export": exportText])
         }
-        let report: [String: Any] = ["case": name, "duration": duration, "maximum_concurrency": maxConcurrency(program.recipe), "samples": observations]
+        var gapObservations: [[String: Any]] = []
+        for (index, pair) in zip(document.textElements, document.textElements.dropFirst()).enumerated() {
+            let (left, right) = pair
+            guard right.startS - left.endS >= 2.0 / 30 else { continue }
+            let time = (left.endS + right.startS) / 2
+            let previewImage = try await frame(live.preview.playerItem.asset, composition: live.preview.playerItem.videoComposition, at: time)
+            let exportImage = try await frame(exported, at: time)
+            let previewInk = try inkPixels(previewImage); let exportInk = try inkPixels(exportImage)
+            XCTAssertEqual(previewInk, 0, "Preview gap after \(left.text) must be blank")
+            XCTAssertEqual(exportInk, 0, "Export gap after \(left.text) must be blank")
+            try save(previewImage, name: "\(name)-preview-gap-\(index + 1)")
+            try save(exportImage, name: "\(name)-export-gap-\(index + 1)")
+            gapObservations.append(["after": left.id, "time": time, "preview_ink_pixels": previewInk, "export_ink_pixels": exportInk])
+        }
+        if name == "retimeUneven20" || name == "retimeAfterResize20" { XCTAssertEqual(gapObservations.count, 26) }
+        let report: [String: Any] = ["case": name, "duration": duration, "maximum_concurrency": maxConcurrency(program.recipe),
+            "samples": observations, "gaps": gapObservations, "local_serialization_reopen": true]
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             .write(to: evidence.appendingPathComponent("\(name)-report.json"))
     }

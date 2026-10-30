@@ -199,6 +199,75 @@ class ApprovedCreatorRequestTooLongError(ValueError):
     """The approval fence cannot retain every creator instruction safely."""
 
 
+def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
+    if exc.constraint == "duration":
+        closest = round(exc.required_duration_s, 3)
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=say(
+                en=(
+                    f"With these clips, the closest supported length is {closest:g}s. "
+                    "Use that length, or choose different clips? Nothing was changed."
+                ),
+                tr=(
+                    f"Bu kliplerle desteklenen en yakın süre {closest:g} saniye. "
+                    "Bu süreyi mi kullanayım, yoksa farklı klipler mi seçelim? "
+                    "Hiçbir şey değişmedi."
+                ),
+            ),
+            reply_options=[
+                say(en=f"Retime text to {closest:g}s", tr=f"Yazıları {closest:g} saniyeye yay"),
+                say(en="Choose different clips", tr="Farklı klipler seç"),
+            ],
+        )
+    if exc.constraint == "readability":
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=say(
+                en=(
+                    f"These words need at least {exc.minimum_duration_s:g}s of reading time. "
+                    "May I use a longer video, or would you like to shorten the text? "
+                    "Nothing was changed."
+                ),
+                tr=(
+                    f"Bu yazılar en az {exc.minimum_duration_s:g} saniye "
+                    "okuma süresi gerektiriyor. "
+                    "Daha uzun bir video kullanayım mı, yoksa metni kısaltmak ister misin? "
+                    "Hiçbir şey değişmedi."
+                ),
+            ),
+        )
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="question",
+        response=say(
+            en=(
+                f"Your text ends at {exc.required_duration_s:g}s, "
+                f"beyond the requested {exc.requested_duration_s:g}s. "
+                f"Keep the video at least {exc.minimum_duration_s:g}s, "
+                "or allow me to adjust the text timing? Nothing was changed."
+            ),
+            tr=(
+                f"Yazıların {exc.required_duration_s:g}. saniyede bitiyor. "
+                f"Videoyu en az {exc.minimum_duration_s:g} saniye mi tutayım, "
+                "yoksa yazıların zamanlamasını değiştirebilir miyim? Hiçbir şey değişmedi."
+            ),
+        ),
+        reply_options=[
+            say(
+                en=f"Keep the video at {exc.minimum_duration_s:g}s",
+                tr=f"Videoyu {exc.minimum_duration_s:g} saniye tut",
+            ),
+            say(
+                en=f"Retime text to {exc.requested_duration_s:g}s",
+                tr=f"Yazıları {exc.requested_duration_s:g} saniyeye yay",
+            ),
+        ],
+    )
+
+
 def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
     """Pin every creator instruction visible to the approved source turn."""
     messages = [
@@ -1685,16 +1754,62 @@ def _complete_draft_turn(
                     current_brief.version if current_brief else 0
                 ):
                     raise RuntimeError("The request changed during planning; please retry")
+            if (
+                apply_intent.tool_name == "draft.apply_editor_ops"
+                and compiled.canonical_duration_s is not None
+                and (planned.brief_coverage or {}).get("reason") == "deterministic_timing"
+            ):
+                from app.kria.editor_sequence_timing import (
+                    sequence_brief_updates,
+                    sequence_timing_plan,
+                )
+
+                authoritative_snapshot = build_editor_snapshot(job, editor_base.projected)
+                timing_plan = sequence_timing_plan(
+                    source_event.content or "", authoritative_snapshot
+                )
+                if (
+                    timing_plan is not None
+                    and timing_plan.intent is not None
+                    and timing_plan.intent.mode == "fill"
+                    and timing_plan.intent.target_s is None
+                ):
+                    timing_plan = replace(
+                        timing_plan,
+                        intent=replace(
+                            timing_plan.intent,
+                            target_s=compiled.canonical_duration_s,
+                        ),
+                    )
+                    effective_brief_updates = sequence_brief_updates(
+                        current_brief,
+                        timing_plan,
+                        authoritative_snapshot,
+                        source_event.content or "",
+                    )
             brief = persist_brief_version_sync(
                 db,
                 thread_id=thread.id,
                 turn_id=turn.id,
-                updates=planned.brief_updates,
+                updates=effective_brief_updates,
                 # KRI-814: a typed delegation is recorded, so readiness reads it as a
                 # delegated request instead of a missing extraction.
                 record_empty=planned.brief_delegated,
                 delegation_read_event_ids=planned.brief_delegation_read_ids,
             )
+            if brief is not None and effective_brief_updates != planned.brief_updates:
+                current_ids = [req.id for req in brief.live()]
+                planned = replace(
+                    planned,
+                    brief_updates=effective_brief_updates,
+                    brief_coverage={
+                        **(planned.brief_coverage or {}),
+                        "applicable_ids": current_ids,
+                        "retrieved_ids": current_ids,
+                        "enforced_ids": [],
+                        "unresolved_ids": current_ids,
+                    },
+                )
             if settings.kria_choice_questions_enabled and apply_intent.tool_name == (
                 "draft.apply_strategy"
             ):
@@ -1887,7 +2002,10 @@ def _complete_draft_turn(
                     # Editor operations verify only the requirements stated in
                     # this very turn, against what the ops changed (KRI-558).
                     facts = plan_facts_from_editor_payload(
-                        document.editor_payload, document.editor_text_diff, changes
+                        document.editor_payload,
+                        document.editor_text_diff,
+                        changes,
+                        canonical_duration_s=compiled.canonical_duration_s,
                     )
                     facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
@@ -4048,37 +4166,7 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
                     )
                 except TextTimingConflict as exc:
-                    planned = replace(
-                        planned,
-                        plan=KriaTurnPlan(
-                            mode="respond",
-                            turn_value="question",
-                            response=say(
-                                en=(
-                                    f"Your text ends at {exc.required_duration_s:g}s, "
-                                    f"beyond the requested {exc.requested_duration_s:g}s. "
-                                    f"Keep the video at least {exc.minimum_duration_s:g}s, "
-                                    "or allow me to adjust the text timing? Nothing was changed."
-                                ),
-                                tr=(
-                                    f"Yazıların {exc.required_duration_s:g}. saniyede bitiyor. "
-                                    f"Videoyu en az {exc.minimum_duration_s:g} saniye mi tutayım, "
-                                    "yoksa yazıların zamanlamasını "
-                                    "değiştirebilir miyim? Hiçbir şey değişmedi."
-                                ),
-                            ),
-                            reply_options=[
-                                say(
-                                    en=f"Keep the video at {exc.minimum_duration_s:g}s",
-                                    tr=f"Videoyu {exc.minimum_duration_s:g} saniye tut",
-                                ),
-                                say(
-                                    en=f"Retime text to {exc.requested_duration_s:g}s",
-                                    tr=f"Yazıları {exc.requested_duration_s:g} saniyeye yay",
-                                ),
-                            ],
-                        ),
-                    )
+                    planned = replace(planned, plan=_text_timing_conflict_plan(exc))
                     completion = _complete_response_turn(
                         identifier,
                         lease_owner=lease_owner,

@@ -956,7 +956,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/prompts/edit_copilot_ops/text.txt",
-                (True, "covered", "kri-669-gameday"),
+                (True, "covered", "kri-669-gameday,duration-text-preservation"),
             ),
             # This has journey impact but no incident-corpus repro mapping.
             (

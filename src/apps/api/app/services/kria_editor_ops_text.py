@@ -34,6 +34,7 @@ from app.services.kria_editor_ops import (
     _CLIP_LABEL_MEDIA_PREFIX,
     _LABEL_STYLE_KEYS,
     KriaEditorOpError,
+    TextTimingConflict,
     _clip_label_links,
     _DraftState,
     _slot_duration,
@@ -1048,20 +1049,22 @@ def op_retime_text_sequence(state: _DraftState, op: dict[str, Any]) -> None:
         or end <= start
     ):
         raise KriaEditorOpError("That sequence needs a valid start and end")
-    windows = _sequence_windows(
-        [str(row.get("text") or "") for row in siblings],
-        start,
-        end,
-        weighted=False,
-        cumulative=False,
-    )
-    if min(b - a for a, b in windows) < _MIN_PIECE_S - _PIECE_TOLERANCE_S:
-        raise KriaEditorOpError(
-            f"These {len(rows)} words need at least "
-            f"{len(rows) * _MIN_PIECE_S:g}s to remain readable"
-        )
-    for row, (start, end) in zip(siblings, windows, strict=True):
-        row["start_s"], row["end_s"] = start, end
+    from app.services.sequence_pacing import SequenceReadabilityError, retime_sequence
+
+    try:
+        updated = retime_sequence(siblings, start, end, gap_policy=op.get("gap_policy", "scale"))
+    except SequenceReadabilityError as exc:
+        raise TextTimingConflict(
+            end,
+            start + exc.minimum_span_s,
+            tuple(row["id"] for row in siblings),
+            constraint="readability",
+        ) from exc
+    except ValueError as exc:
+        raise KriaEditorOpError(str(exc)) from exc
+    by_id = {row["id"]: row for row in updated}
+    for row in siblings:
+        row.update(by_id[row["id"]])
     state.changed.add("text")
     state.summary = f"Retime {len(rows)} words in sequence"
 
@@ -1103,15 +1106,24 @@ def validate_sequence_collisions(rows: list[dict[str, Any]], before: list[dict[s
 
 def validate_timing_only_text(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> None:
     def identity(rows):
-        return [
-            {
+        values = []
+        for row in rows:
+            if row.get("removed"):
+                continue
+            value = {
                 k: v
                 for k, v in row.items()
                 if k not in {"start_s", "end_s", "segment_id"} and v is not None
             }
-            for row in rows
-            if not row.get("removed")
-        ]
+            params = value.get("source_params")
+            if isinstance(params, dict):
+                params = {k: v for k, v in params.items() if k != "sequence_timing"}
+                if params:
+                    value["source_params"] = params
+                else:
+                    value.pop("source_params", None)
+            values.append(value)
+        return values
 
     if identity(before) != identity(after):
         raise KriaEditorOpError(
