@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.35.0] - 2026-10-30
+
+### Changed
+- fix(kria): a clip-picker "None" voids the pin instead of dead-ending the draft (KRI-1025) (#1931) <!-- release-pr: 1931 -->
+
 ## [0.82.34.0] - 2026-10-30
 
 ### Changed
