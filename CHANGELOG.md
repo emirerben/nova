@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.20.0] - 2026-10-30
+
+### Fixed
+- fix(kria): a shot's "for N seconds" is never the video's length (KRI-1071) (#1966) <!-- release-pr: 1966 -->
+
 ## [0.83.19.0] - 2026-10-30
 
 ### Changed
