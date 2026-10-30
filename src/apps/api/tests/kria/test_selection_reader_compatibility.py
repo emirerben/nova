@@ -59,3 +59,8 @@ def test_schema_matrix_walks_dataclass_references():
     assert "selection_reconciliation.rejected_selections[].intent.source_kind" in paths
     assert "selection_reconciliation.story_refs.rows[].intent_ids[]" in paths
     assert paths == set(contracts.FIELD_MATRIX)
+
+
+def test_server_reconciliation_is_not_a_model_or_tool_schema_field():
+    assert "selection_reconciliation" not in CreativeStrategy.model_json_schema()["properties"]
+    assert "selection_reconciliation" not in CreativeStrategy().model_dump(mode="json")

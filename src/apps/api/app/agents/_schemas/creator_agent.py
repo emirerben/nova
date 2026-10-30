@@ -372,7 +372,7 @@ class CreativeStrategy(_CreatorModel):
     execution_contract: ExecutionContract | None = None
     media_scope: MediaScope | None = None
     story_structure: list[str] = Field(default_factory=list, max_length=8)
-    selection_reconciliation: SelectionReconciliation | None = Field(
+    selection_reconciliation: SkipJsonSchema[SelectionReconciliation | None] = Field(
         default=None, exclude_if=lambda value: value is None
     )
     editorial_plan: EditorialPlan | None = Field(
