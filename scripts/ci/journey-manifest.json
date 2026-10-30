@@ -2353,6 +2353,25 @@
         "src/apps/api/app/services/client_protocol.py",
         "src/apps/api/app/services/public_assembly_plan.py"
       ]
+    },
+    {
+      "id": "reference-style-save",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_authored_empty_caption_metadata.py tests/kria/test_reference_style_receipts.py tests/integration/test_reference_style_save_postgres.py",
+      "xctests": [
+        "KriaTests/ReferenceStyleSaveTests/testSavedReferenceStyleAndLocalUndoRecipesPreviewAndExport"
+      ],
+      "paths": [
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/api/app/services/authored_editor.py",
+        "src/apps/api/app/kria/editor_receipts.py",
+        "src/apps/api/tests/routes/test_authored_empty_caption_metadata.py",
+        "src/apps/api/tests/kria/test_reference_style_receipts.py",
+        "src/apps/api/tests/kria/test_kri558_editor_receipts.py",
+        "src/apps/api/tests/integration/test_reference_style_save_postgres.py",
+        "src/apps/ios/Tests/KriaTests/ReferenceStyleSaveTests.swift",
+        "src/apps/ios/Tests/Fixtures/ReferenceStyleSave.json"
+      ]
     }
   ]
 }

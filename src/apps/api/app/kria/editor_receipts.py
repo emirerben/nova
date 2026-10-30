@@ -253,6 +253,7 @@ class AskShape:
     literal: str = ""
     clip_scope: str = ""
     ordinal: int | None = None
+    quantified_named_scope: bool = False
 
 
 def _fact_cues(req: BriefRequirement) -> set[str]:
@@ -412,6 +413,10 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
         live_text=live_text,
         literal=words(req.literal) if req.kind == "text" and req.literal else "",
         clip_scope=scope_clip,
+        quantified_named_scope=bool(row_ids)
+        and req.scope == "global"
+        and bool(_QUANTIFIER.search(text))
+        and not _wanted(req),
         ordinal=(
             None
             if req.kind == "timing"
@@ -607,6 +612,14 @@ class _Verdict:
         return not self.matched or bool(self.wrong or self.short)
 
 
+def _uncertain_scope_changes(shape: AskShape, verdicts: Sequence[_Verdict]) -> list[DiffEntry]:
+    """A named row plus a quantity can name a reference rather than the destination."""
+    if not shape.quantified_named_scope or any(v.matched or v.wrong or v.short for v in verdicts):
+        return []
+    entries = {id(entry): entry for verdict in verdicts for entry in verdict.off_target}
+    return list(entries.values())
+
+
 def _fits(group: _Group, entry: DiffEntry) -> bool:
     return any(
         entry.lane == lane and (not fields or entry.field in fields) for lane, fields in group.alts
@@ -684,6 +697,8 @@ def bind_editor_receipts(
             verdicts = [_match_group(g, shape, pool) for g in shape.groups]
             verdicts_by_req[req.id] = verdicts
             sources = [e for v in verdicts for e in v.sources]
+            if _unmet_reason(req, unmet) is None:
+                sources.extend(_uncertain_scope_changes(shape, verdicts))
             if cued_pass:
                 claimed.update(id(e) for e in sources)
             else:
@@ -753,6 +768,16 @@ def _bind_by_diff(
     live: int,
 ) -> RequirementReceipt:
     nothing = say(en="Nothing changed for this", tr="Bunun için bir şey değişmedi")
+    uncertain_changes = _uncertain_scope_changes(shape, verdicts)
+    if uncertain_changes and declined is None:
+        return base.model_copy(
+            update={
+                "status": "partial",
+                "verification": "unchecked",
+                "stage": "applied",
+                "reason": "; ".join(_phrases(uncertain_changes, live, 3))[:300],
+            }
+        )
     if not shape.cued:
         # No word or fact named a dimension: say what the turn changed, never "Done".
         if matched and declined is None:
@@ -864,20 +889,26 @@ def receipt_lead(
         return ""
     total = len(receipts)
     failed = sum(r.status == "not_possible" for r in receipts)
+    completed = sum(r.status == "met" and r.verification == "checked" for r in receipts)
     if failed == total:
         lead = say(
             en="I couldn't do that." if total == 1 else "I couldn't do those.",
             tr="Bunu yapamadım." if total == 1 else "Bunları yapamadım.",
         )
+    elif failed and completed:
+        lead = say(
+            en=f"I did {completed} of your {total} asks.",
+            tr=f"{total} isteğinden {completed} tanesini yaptım.",
+        )
     elif failed:
         lead = say(
-            en=f"I did {total - failed} of your {total} asks.",
-            tr=f"{total} isteğinden {total - failed} tanesini yaptım.",
+            en="Here’s what changed and what I couldn’t do.",
+            tr="İşte değişenler ve yapamadıklarım.",
         )
     elif any(r.status == "partial" and r.verification == "checked" for r in receipts):
         lead = say(en="Partly done.", tr="Kısmen yapıldı.")
     elif any(r.verification == "unchecked" for r in receipts):
-        lead = say(en="Done — have a look.", tr="Yapıldı — bir göz at.")
+        lead = say(en="Here’s what changed.", tr="İşte değişiklikler.")
     else:
         lead = say(en="Done.", tr="Yapıldı.")
     parts = [lead, *notices, (notes or "").strip()]

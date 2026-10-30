@@ -264,9 +264,13 @@ source links; the research review gates are unchanged.
 
 Ideas are per event (KRI-944). `POST .../stories` takes `group`: evidence is limited to the
 members of that group, the story persists with `story_json.group`, and `GET .../stories?group=`
-lists one event's ideas. A non-empty `exclude_story_ids` means "another idea": it adds ONE idea
-beside the existing ones and drops anything with the same wording or the exact same moment set
-(the agent also receives them as `already_offered`). `DELETE .../stories/{id}` soft-deletes
+lists one event's ideas. A first request asks for `target_idea_count` ideas (usable moments / 3,
+clamped to 1..10; the model may return fewer, and researched requests stay at 3). A non-empty
+`exclude_story_ids` means "another idea": it adds up to 3 ideas beside the existing ones and drops
+anything with the same wording or the exact same moment set (the agent also receives them as
+`already_offered`). When those filters empty an "another" request it is retried once, uncached, with
+the dropped angles added to `already_offered`; deleted idea ids are part of the cache key. Each call
+logs `collection_stories_generated` (counts and per-filter drops, never idea text). `DELETE .../stories/{id}` soft-deletes
 (`story_json.deleted_at`, restorable for `RESTORE_WINDOW`) and writes a `not_for_me` judgment
 through `record_deleted_idea` when personalization is on; deleted ideas are never re-offered
 for their event even when it is off. `POST .../stories/{id}/restore` undoes it.
