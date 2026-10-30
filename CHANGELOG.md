@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.12.0] - 2026-10-30
+
+### Changed
+- fix(kria): preserve silent-editor Saves and truthful style receipts (KRI-1060) (#1960) <!-- release-pr: 1960 -->
+
 ## [0.83.11.0] - 2026-10-30
 
 ### Fixed
