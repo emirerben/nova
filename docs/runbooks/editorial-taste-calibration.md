@@ -182,7 +182,7 @@ Admission is not personalization. `generation_context` returns an empty string
 until the creator has confirmed a profile (`confirmed: true`, `enabled: true` in
 the latest revision), so no example or rule reaches a prompt for an account that
 has not opted in. Camera-roll idea generation keeps its own gate,
-`media_collection_proposals_for`; this flag does not widen it. Account Memory
+`MEDIA_COLLECTION_PROPOSALS_ENABLED`; this flag does not widen it. Account Memory
 pause still suppresses context.
 
 ```bash

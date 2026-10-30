@@ -301,8 +301,7 @@ no new renderer, captions, music or cloud/slides promotion. Initial output must 
 picture/timing/audio checks; retries and last-good artifacts use the shared guards.
 
 Admission requires `MEDIA_LIBRARY_ENABLED`, `MEDIA_COLLECTION_PROPOSALS_ENABLED`, native
-authentication and explicit membership in `MEDIA_COLLECTION_PROPOSAL_USER_IDS`. Empty means
-nobody. Turning the switch off hides discovery and refuses new collection requests without
+authentication; there is no per-account list. Turning the switch off hides discovery and refuses new collection requests without
 modifying historical posts. `MEDIA_COLLECTION_CACHE_ONLY=true` is the default: cache misses
 cannot acquire model work, even if a client requests it. The current authorized pilot is one
 creator account, with up to $2 total model spend authorized only for the real test. No cohort or production flags were changed.
