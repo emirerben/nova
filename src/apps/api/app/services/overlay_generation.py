@@ -394,9 +394,16 @@ def occupied_intervals(variant: dict) -> list[dict]:
 
 
 def plan_context(
-    job, variant: dict, item, body: OverlayPlanRequest, assets: list[dict]
+    job,
+    variant: dict,
+    item,
+    body: OverlayPlanRequest,
+    assets: list[dict],
+    *,
+    locale: str | None = None,
 ) -> OverlayPlanInput:
     from app.kria.api_schemas import EditorStateIn, EditorStateLanes
+    from app.kria.reply_language import resolve_reply_language
     from app.services.kria_editor_ops import (
         build_editor_snapshot,
         clip_seen_by_media_id,
@@ -496,6 +503,7 @@ def plan_context(
                 )
             )
     return OverlayPlanInput(
+        language=resolve_reply_language(body.prompt, locale=locale) or "en",
         insertion_base=clock.insertion_base if clock.shift > 0 else None,
         mode=body.mode,
         prompt=body.prompt,
@@ -512,7 +520,9 @@ def plan_context(
     )
 
 
-def generate_overlay_plan(db, *, owner_id, item_id, body: OverlayPlanRequest, ctx, agent=None):
+def generate_overlay_plan(
+    db, *, owner_id, item_id, body: OverlayPlanRequest, ctx, agent=None, locale: str | None = None
+):
     from app.agents._model_client import default_client
     from app.models import Job, PlanItemAsset
     from app.routes.generative_jobs import variant_render_baseline
@@ -557,7 +567,7 @@ def generate_overlay_plan(db, *, owner_id, item_id, body: OverlayPlanRequest, ct
         )
         for row in pool
     ]
-    context = plan_context(job, variant, item, body, assets)
+    context = plan_context(job, variant, item, body, assets, locale=locale)
     response = dict(
         document_fingerprint=body.document_fingerprint, base_generation=body.base_generation
     )

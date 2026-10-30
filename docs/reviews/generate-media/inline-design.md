@@ -42,3 +42,11 @@ Final app screenshots use offline image/provider fixtures, not generated-art qua
 Local PNGs are in /Users/emirerben/Documents/Codex/2026-10-30/task/overlay-inline-delivery/. The result bundle and log are in the task root. Independent review found a repeated-spend risk when reopening an applied proposal; the action now selects its existing timeline block before creating a generation request, and the reviewer verified the fix.
 
 Model the Domain shaped the ordinary-media-block representation. Prove It Works shaped the complete-source fixture and rejection of earlier missing-source screenshots as render evidence. Physical-device behavior, live-model taste and production server persistence remain outside this local acceptance run.
+
+## Authorized publication and CI follow-up
+
+After the earlier denials, Emir explicitly authorized publishing tested commit afc6fde084 to emirerben/nova on codex/generate-media-overlays, opening a draft PR and creating an implementation ticket in the existing Kria project. Readbacks confirmed PR #1956 and KRI-1064 in iOS editor polish. No new project was created. Current main merged without conflicts as fb6e0a8a48. All preship gates passed again.
+
+At fb6e0a8a48 the full focused native run passed 37 tests, zero failed: 35 units including actual transparent PNG compositor export and both inline UI journeys. Persistent Library evidence: summary libfile_be0456c75c1c8191b4f5163360ea6f43 and log libfile_0ffc83636e088191a793a6289fbb3c7d.
+
+CI API shard 1 identified two integration omissions: missing capability parity classifications for the new editor methods and absent creator-language input to OverlayGenerationAgent. The fix classifies explicit overlay approval as agent-unsupported (requires human native preview acceptance), classifies planning/clock/identity methods as read-only, and carries the prompt/device language into the agent with prompt_version 2026-10-30.3. Local failing guards plus overlay tests and all free replay evals then passed: 2378 passed, 27 skipped, 7 expected failures. No paid model requests. CI is still required at the new head; broader acceptance/rollout gaps remain on KRI-1064.

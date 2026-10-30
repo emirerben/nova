@@ -8,6 +8,7 @@ from typing import ClassVar, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.kria.reply_language import prompt_language_line
 
 
 class OverlayEvidence(BaseModel):
@@ -40,6 +41,7 @@ class OverlayPlanOutput(BaseModel):
 
 
 class OverlayPlanInput(BaseModel):
+    language: str
     mode: Literal["prompt", "automatic"]
     prompt: str
     taste_notes: str
@@ -54,7 +56,7 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.editor.overlay_generation",
         prompt_id="overlay_generation",
-        prompt_version="2026-10-30.2",
+        prompt_version="2026-10-30.3",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -108,6 +110,8 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
             "Prompt is only the image provider description, text only the actual native text. "
             "If safe fulfillment is impossible, return overlays=[] with the reason.\nINPUT\n"
             + input.model_dump_json()
+            + "\n"
+            + prompt_language_line(input.language)
         )
 
     def parse(self, raw_text: str, input: OverlayPlanInput) -> OverlayPlanOutput:  # noqa: A002, ARG002

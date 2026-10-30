@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from app.agents._runtime import RunContext
@@ -23,6 +23,7 @@ async def overlay_plan(
     item_id: uuid.UUID,
     body: OverlayPlanRequest,
     user: CurrentUser,
+    request: Request,
     native_client: NativeClient = False,
     client_protocol: KriaClientProtocol = None,
 ):
@@ -34,6 +35,7 @@ async def overlay_plan(
                 return generate_overlay_plan(
                     db,
                     owner_id=user.id,
+                    locale=request.headers.get("accept-language"),
                     item_id=item_id,
                     body=body,
                     ctx=RunContext(
