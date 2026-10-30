@@ -70,11 +70,7 @@ struct ActivityView: View {
         opening = item.id
         defer { opening = nil }
         do {
-            let current = try await model.api.nativeActivity(id: item.id)
-            let project = try await model.api.project(threadID: current.threadID)
-            guard owner == model.api.mediaLibraryOwner, !Task.isCancelled else { return }
-            _ = try await model.api.readNativeActivity(id: item.id)
-            guard owner == model.api.mediaLibraryOwner, model.selectProject(project.summary) else { return }
+            guard try await model.openNativeActivity(id: item.id, expectedOwner: owner) else { return }
             dismiss()
         } catch {
             guard owner == model.api.mediaLibraryOwner else { return }

@@ -2249,6 +2249,40 @@
         "src/apps/ios/Kria/Features/ActivityView.swift",
         "src/apps/ios/Tests/KriaUITests/ActivityUITests.swift"
       ]
+    },
+    {
+      "id": "native-activity-account-boundary",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/NotificationAtomicSessionTests/testSignOutInsideOldReadWriteGapCannotResurrectSession",
+        "KriaTests/NotificationAtomicSessionTests/testAccountBWriteInsideOldReadWriteGapCannotBeOverwritten",
+        "KriaTests/NotificationAtomicSessionTests/testConditionalExpiryCannotDeleteCompetingAccount",
+        "KriaTests/NotificationAtomicSessionTests/testUnreadableStoreDoesNotLetDelayedExpirySignOutNewAccount",
+        "KriaTests/NotificationAtomicSessionTests/testDelayedExpiryEventDoesNotSignOutNewAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testReadAcknowledgement401NeverReplaysUnderSwitchedAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject",
+        "KriaTests/SessionRefreshRaceTests/testTwoClientInstancesShareOneRefresh",
+        "KriaTests/SessionRefreshRaceTests/testRotationCompletedElsewhereIsAcceptedInsteadOfSigningOut",
+        "KriaTests/SessionRefreshRaceTests/testRefusedRefreshWithUnchangedStoreStillExpiresTheSession",
+        "KriaTests/KriaTests/testUnauthorizedRequestRefreshesOnceAndStoresRotation",
+        "KriaTests/KriaTests/testConcurrentUnauthorizedRequestsShareOneRefreshRotation"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
+        "src/apps/ios/Kria/Features/PerfFixtures.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/AIConsentTests.swift",
+        "src/apps/ios/Tests/KriaTests/KriaTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorTestSupport.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationAtomicSessionTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift"
+      ]
     }
   ]
 }

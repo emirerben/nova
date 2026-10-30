@@ -77,7 +77,7 @@ import SwiftData
             PerfFixture.installHashObserver()
             let api = ChatUITestTransport.api()
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
-            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil))
+            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken || ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil ? api : nil))
             let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext))
             if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
             _model = StateObject(wrappedValue: model)

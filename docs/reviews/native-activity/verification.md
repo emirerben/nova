@@ -45,3 +45,14 @@ Current main `9ec04c50c` already owns migration 0127 for generated media admissi
 Run `bash scripts/check-api.sh test tests/routes/test_native_activity_postgres.py tests/routes/test_device_render.py tests/tasks/test_device_render_reaper.py tests/routes/test_background_export_verification.py tests/integration/test_actual_export_verification.py tests/routes/test_actual_export_publication.py tests/test_content_plan_schema.py tests/services/test_generated_media_admission_postgres.py -q` against a worktree-only scratch database to reproduce the focused backend integration checks.
 
 The single-job hosted retry did not execute tests. Its attempt-scoped fixture artifact was missing because the producer had run only in the original attempt. That failure is retained. The next source publication requires a complete workflow with its fixture producer. No artifacts were renamed or provenance checks relaxed.
+
+
+## Account-boundary follow-up
+
+A later local notification integration review found two existing client races relevant to the Activity inbox. A delayed refresh could overwrite or restore an account after sign-in or logout. An Activity acknowledgement could also refresh and retry with a different account before the view's final owner check. These fixes are isolated from push and continued-background preparation.
+
+Keychain reads and mutations now share one process-wide lock, including conditional replacement and deletion of an exact session snapshot. Delayed expiry events preserve a newer account and fail closed if storage cannot be read. Activity opening binds the fresh Activity fetch, project fetch, and successful read acknowledgement to one captured owner before selecting the project. The shared refresh key remains the failed access token, preserving single-use refresh deduplication. This does not claim cross-process Keychain atomicity.
+
+Controlled negative tests reproduced old-session restoration, account overwrite, and acknowledgement replay as the wrong account before the fixes. Independent source review found no remaining blocker in the extracted first-release patch. The isolated `.dev/account-boundary.xcresult` reports 71 passed, zero failed, and one existing unsigned-Keychain entitlement skip across 72 tests, including all eight new regression cases and all three Activity UI journeys. Both original scrub-playback and generation-rebase tests passed separately in `.dev/account-preview-regression.xcresult`. The selector contract passed 41 tests and 183 subtests. Recorded core source hashes matched after execution. The broader local runtime review passed 105 tests, with one existing unsigned-Keychain entitlement skip. That skipped test does not establish physical-device Keychain behavior.
+
+No APNs client, notification permission prompt, background capability, backend delivery model, or live sender is added by this follow-up. DEBUG Activity fixtures use synthetic identities and an injected fake profile API.
