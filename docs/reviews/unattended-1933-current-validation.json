@@ -32,5 +32,13 @@
     "positive": "6 passes plus restored-product Closing pass",
     "negative": "Collective transaction-boundary suppression fails intended Undo assertions; hook-only suppression passes, not a necessity proof.",
     "exact_new_head_ci": "pending; no waiver"
+  },
+  "closing_test_repair": {
+    "source_commit": "3ec4f08469f0c1dc3050f6b550957851f21d6a0e",
+    "test_source_sha256": "9c6d03e98a1bb0b77d2839290c63726ae3d84326f25831d4dd4d87e8fd18c7c8",
+    "scope": "Closing uses interior SDK setup and captures consistent actual rate/duration; exact Reset/Undo retained. Separate endpoint method unchanged.",
+    "evidence": "docs/reviews/native-speed-setup-validation.md",
+    "results": "Closing10/10 positives; collective transaction control fails intended Undo; restored positive passes. Unchanged endpoint9/10, separate setup flake remains unresolved.",
+    "required": "Fresh exact-head CI; no failed-check waiver"
   }
 }
