@@ -326,9 +326,10 @@ def execute_generated_media(
             raise ValueError("Script changed; review the current script")
     else:
         image_payload(request)
-    digest = hashlib.sha256(
-        json.dumps(body.model_dump(mode="json"), sort_keys=True).encode()
-    ).hexdigest()
+    digest_payload = body.model_dump(mode="json")
+    if not body.transparent_background:
+        digest_payload.pop("transparent_background")
+    digest = hashlib.sha256(json.dumps(digest_payload, sort_keys=True).encode()).hexdigest()
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
         {"key": f"generated:{owner_id}:{item_id}:{body.client_event_id}"},
