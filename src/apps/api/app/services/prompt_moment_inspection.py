@@ -12,6 +12,7 @@ import uuid
 from typing import Any
 
 import structlog
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app import storage
@@ -245,6 +246,7 @@ async def inspect_named_moments(
     events,
     allow_provider: bool = False,
     max_window_s: float = 3.0,
+    budget_s: float | None = None,
 ) -> InspectedGroundings:
     answered = fold_moment_orders(events).answers
     grounded = ground_all(moment_set)
@@ -263,9 +265,13 @@ async def inspect_named_moments(
     ]
     if not pending:
         return empty
-    deadline = time.monotonic() + DEADLINE_S
+    budget = DEADLINE_S if budget_s is None else min(DEADLINE_S, budget_s)
+    if not math.isfinite(budget) or budget <= 0:
+        return empty
+    deadline = time.monotonic() + budget
+    provider_open = allow_provider
     try:
-        async with asyncio.timeout(DEADLINE_S):
+        async with asyncio.timeout(budget):
             target = await _target(db, creator_id, item_id, moment_set)
             if target is None:
                 return empty
@@ -293,18 +299,25 @@ async def inspect_named_moments(
                 for moment in candidates:
                     key = inspection_key(creator_id, source, moment, named.words, moment_set.digest)
                     result = await asyncio.to_thread(get_collection_analysis, key)
-                    if result is None and allow_provider and spent < MAX_INSPECTIONS:
+                    if result is None and provider_open and spent < MAX_INSPECTIONS:
                         spent += 1
-                        claim = await asyncio.to_thread(
-                            claim_collection_analysis,
-                            key,
-                            canonical_asset_id=str(source.asset_id),
-                            canonical_source_id=str(source.id),
-                            lease_seconds=90,
-                        )
-                        if claim.status == "ready":
+                        claim = None
+                        try:
+                            claim = await asyncio.to_thread(
+                                claim_collection_analysis,
+                                key,
+                                canonical_asset_id=str(source.asset_id),
+                                canonical_source_id=str(source.id),
+                                lease_seconds=90,
+                            )
+                        except HTTPException as exc:
+                            if exc.status_code != 409:
+                                raise
+                            provider_open = False
+                        status = claim.status if claim is not None else None
+                        if status == "ready":
                             result = claim.result_json
-                        elif claim.status == "claimed":
+                        elif status == "claimed":
                             ctx = collection_run_context(
                                 creator_id=str(creator_id),
                                 request_id=f"prompt-moment:{key.source_identity}",

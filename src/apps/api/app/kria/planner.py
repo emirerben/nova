@@ -5138,6 +5138,7 @@ async def _gate_unresolved_choices(
         except MomentOrderError:
             moment_set = None
         if moment_set is not None:
+            turn_end = turn_deadline.get()
             inspections = await inspect_named_moments(
                 db,
                 creator_id=creator_id,
@@ -5146,6 +5147,11 @@ async def _gate_unresolved_choices(
                 events=events,
                 allow_provider=settings.kria_prompt_moment_inspection_allow_provider,
                 max_window_s=ask.each_s if ask is not None and ask.each_s else DEFAULT_MOMENT_S,
+                budget_s=(
+                    turn_end - _POST_UNDERSTANDING_RESERVE_S - time.monotonic()
+                    if turn_end is not None
+                    else None
+                ),
             )
     moments = _moment_decision(
         strategy,

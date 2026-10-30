@@ -44,7 +44,7 @@ class SourceMomentLocationAgent(Agent[ClipQuestionInput, SourceMomentLocationOut
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.video.source_moment_location",
         prompt_id="source_moment_location",
-        prompt_version="2026-10-30-bounded-source-time-v1",
+        prompt_version="2026-10-30-bounded-source-time-v2",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -67,7 +67,9 @@ class SourceMomentLocationAgent(Agent[ClipQuestionInput, SourceMomentLocationOut
         return []
 
     def render_prompt(self, input: ClipQuestionInput) -> str:  # noqa: A002
-        return load_prompt("source_moment_location", question=json.dumps(input.question))
+        return load_prompt(
+            "source_moment_location", question=json.dumps(input.question, ensure_ascii=False)
+        )
 
     def parse(self, raw_text: str, input: ClipQuestionInput) -> SourceMomentLocationOutput:  # noqa: A002
         try:

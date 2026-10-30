@@ -242,3 +242,97 @@ async def test_inspection_evidence_never_replaces_turkish_creator_labels(monkeyp
     found = result.groundings["wave"].found
     assert found.description == "selam verme"
     assert found.evidence["answer_evidence"] == "A hand waves"
+
+
+def test_turkish_request_words_reach_the_model_unescaped():
+    from app.agents.clip_question import ClipQuestionInput
+    from app.agents.source_moment_location import SourceMomentLocationAgent
+
+    agent = SourceMomentLocationAgent.__new__(SourceMomentLocationAgent)
+    prompt = agent.render_prompt(
+        ClipQuestionInput(
+            file_uri="gs://bucket/sample", question=subject.inspection_question("Atakan'ın ısırığı")
+        )
+    )
+    assert "ısırığı" in prompt
+    assert "\\u0131" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_spent_turn_budget_starts_no_inspection(monkeypatch):
+    _source, _moment, named = fixture()
+
+    async def target(*args, **kwargs):
+        pytest.fail("a turn with no time left must not read the index")
+
+    monkeypatch.setattr(subject, "_target", target)
+    result = await subject.inspect_named_moments(
+        None,
+        creator_id=uuid.uuid4(),
+        item_id=uuid.uuid4(),
+        moment_set=named,
+        events=[],
+        allow_provider=True,
+        budget_s=0.0,
+    )
+    assert not result.groundings
+
+
+@pytest.mark.asyncio
+async def test_inspection_never_outlives_the_turn_budget(monkeypatch):
+    import asyncio
+    import time
+
+    _source, _moment, named = fixture()
+
+    async def slow_target(*args, **kwargs):
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(subject, "_target", slow_target)
+    started = time.monotonic()
+    result = await subject.inspect_named_moments(
+        None,
+        creator_id=uuid.uuid4(),
+        item_id=uuid.uuid4(),
+        moment_set=named,
+        events=[],
+        budget_s=0.2,
+    )
+    assert time.monotonic() - started < 5
+    assert not result.groundings
+
+
+@pytest.mark.asyncio
+async def test_cache_only_conflict_on_one_moment_keeps_other_cached_answers(monkeypatch):
+    from fastapi import HTTPException
+
+    source, moment, named = fixture()
+    creator = uuid.uuid4()
+    named = replace(
+        named,
+        moments=(NamedMoment("a", "uncached action", 0), NamedMoment("b", "cached action", 1)),
+    )
+    cached_key = subject.inspection_key(creator, source, moment, "cached action", named.digest)
+
+    async def target(*args, **kwargs):
+        return source, [moment]
+
+    def cached(key):
+        return positive() if key == cached_key else None
+
+    def conflict(*args, **kwargs):
+        raise HTTPException(409, {"code": "collection_analysis_unavailable"})
+
+    monkeypatch.setattr(subject, "_target", target)
+    monkeypatch.setattr(subject, "get_collection_analysis", cached)
+    monkeypatch.setattr(subject, "claim_collection_analysis", conflict)
+    result = await subject.inspect_named_moments(
+        None,
+        creator_id=creator,
+        item_id=uuid.uuid4(),
+        moment_set=named,
+        events=[],
+        allow_provider=True,
+    )
+    assert result.groundings["b"].status == "grounded"
+    assert "a" not in result.groundings or result.groundings["a"].status != "grounded"
