@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.82.36.0] - 2026-10-30
+
+### Changed
+- fix(phone-text): every phone format names undrawable creator text before approval (KRI-1024 follow-up) (#1933) <!-- release-pr: 1933 -->
+
 ## [0.82.35.0] - 2026-10-30
 
 ### Changed
