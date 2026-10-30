@@ -322,15 +322,20 @@ async def test_f1_the_incident_turn_looks_inside_the_clips_before_saying_missing
     # The shot went through the same planner -> resolver -> vision path a strategy turn takes.
     assert provider.calls[:2] == ["planner", "resolver"]
     assert GOAL_2 in provider.looked_at
-    # Vision kept goal 2 but was unsure about goal 1: the honest ask is the clip picker.
+    # Vision kept goal 2 and was unsure about goal 1 and the photo. Never "upload it": either
+    # the clip picker asks about the TOR, or (once the resolver settles an ask on its confident
+    # match, Leverkusen M2 bug 2) the reply says the TOR was found in IMG_1039.
     plan = result.plan
     assert (plan.mode, plan.turn_value) == ("respond", "question")
     assert not _offers_upload(result), plan.response
-    assert plan.choice_question is None
-    question = plan.clip_question
-    assert question is not None
-    assert TOR_KEY in [c["key"] for c in question["categories"]]
-    assert f'"{TOR}"' in plan.response
+    assert "couldn't find" not in plan.response
+    if plan.clip_question is not None:
+        assert plan.choice_question is None
+        assert TOR_KEY in [c["key"] for c in plan.clip_question["categories"]]
+        assert f'"{TOR}"' in plan.response
+    else:
+        assert plan.choice_question["conflict"] == FOUND_CONFLICT
+        assert f"“{TOR}” (IMG_1039)" in plan.response
     # F11: what vision saw is cached on the clip, so the next turn does not pay for it again.
     saved = planner._persist_turn_vision_answers.await_args.kwargs["planned"]
     assert GOAL_2 in saved.resolution.vision_answers
@@ -446,7 +451,10 @@ def _picker_answered_none(question: dict[str, Any]) -> list[tuple[str, dict[str,
 async def test_f6_the_creator_said_none_of_the_clips_so_the_upload_ask_stands(
     monkeypatch,
 ) -> None:
-    _provider(monkeypatch)
+    # Vision finds the TOR nowhere, so the turn asks with the picker; the creator taps "None".
+    _provider(
+        monkeypatch, vision={GOAL_1: NOT_THERE, GOAL_2: NOT_THERE}, tor_checks=(GOAL_1, GOAL_2)
+    )
     asked = await _turn(monkeypatch)
 
     result = await _turn(monkeypatch, events=_picker_answered_none(asked.plan.clip_question))
