@@ -75,6 +75,7 @@ from app.kria.editor_receipts import (
     reply_from_editor_receipts,
 )
 from app.kria.language import is_paraphrase_only
+from app.kria.order_replacement_receipts import compiled_order_preflight_sync
 from app.kria.planner import (
     PlannedKriaTurn,
     answering_through_sequence,
@@ -2033,6 +2034,20 @@ def _complete_draft_turn(
                 prepared_collection_story=document.prepared_collection_story,
                 creator_id=thread.creator_id,
                 prepared_research=_readiness_research,
+                order_execution=compiled_order_preflight_sync(
+                    db,
+                    item=item,
+                    creator_id=thread.creator_id,
+                    brief=brief,
+                    strategy=document.strategy or {},
+                    media_snapshot=planned.media_snapshot
+                    if planned.media_snapshot is not None
+                    else _readiness_media(item),
+                    client_protocol=client_protocol,
+                ),
+                order_source_context=_order_source_context_sync(
+                    db, brief=brief, item_id=item.id, creator_id=thread.creator_id
+                ),
             )
             policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
             readiness_report["requirements"] = [
@@ -2238,6 +2253,20 @@ def _complete_draft_turn(
                     prepared_collection_story=document.prepared_collection_story,
                     creator_id=thread.creator_id,
                     prepared_research=_readiness_research,
+                    order_execution=compiled_order_preflight_sync(
+                        db,
+                        item=item,
+                        creator_id=thread.creator_id,
+                        brief=brief,
+                        strategy=document.strategy or {},
+                        media_snapshot=planned.media_snapshot
+                        if planned.media_snapshot is not None
+                        else _readiness_media(item),
+                        client_protocol=client_protocol,
+                    ),
+                    order_source_context=_order_source_context_sync(
+                        db, brief=brief, item_id=item.id, creator_id=thread.creator_id
+                    ),
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts
@@ -6845,6 +6874,14 @@ def _with_clip_sound_toggles(job: Job, variant: dict, facts: Any, *, brief_bindi
     return dataclasses.replace(facts, clip_sound_toggles=receipt) if receipt is not None else facts
 
 
+def _order_source_context_sync(db, *, brief, item_id, creator_id):
+    from app.kria.order_replacement_sources import load_brief_order_source_context_sync
+
+    return load_brief_order_source_context_sync(
+        db, brief=brief, item_id=item_id, creator_id=creator_id
+    )
+
+
 def _approved_generation_requirements_review(
     db: Any,
     thread: CreationThread,
@@ -6933,6 +6970,30 @@ def _approved_generation_requirements_review(
         )
     # KRI-942: clip sound on/off asks are judged on the recipe the phone renders now.
     facts = _with_clip_sound_toggles(job, variant, facts, brief_binding=raw)
+    if any(req.order_replacement is not None for req in live.values()):
+        from app.kria.order_replacement_receipts import with_verified_order_execution
+
+        facts = with_verified_order_execution(
+            facts,
+            brief=brief,
+            strategy=(job.all_candidates or {}).get("creator_strategy"),
+            execution=variant,
+            source_context=_order_source_context_sync(
+                db,
+                brief=brief,
+                item_id=job.content_plan_item_id,
+                creator_id=thread.creator_id,
+            ),
+            creator_id=thread.creator_id,
+        )
+        receipts = [
+            receipt
+            for receipt in receipts
+            if not (
+                live.get(receipt.requirement_id)
+                and live[receipt.requirement_id].order_replacement is not None
+            )
+        ]
     known = {receipt.requirement_id for receipt in receipts}
     receipts.extend(
         build_receipts(
