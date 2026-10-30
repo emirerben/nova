@@ -97,6 +97,7 @@ from app.services.guided_speech_cleanup import (
     require_guided_cleanup_binding,
 )
 from app.services.job_storage_paths import project_media_reference_lock_key
+from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
@@ -274,6 +275,7 @@ async def _refuse_publication(
         )
     except (KeyError, ValueError):
         pass  # already terminal (published / needs_attention): the decline is enough
+    await record_native_activity(db, job, refusal.variant_id)
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job.id)
 
@@ -408,6 +410,7 @@ async def _expire_repair_permission(
             "review it in chat to continue."
         ),
     )
+    await record_native_activity(db, job, status.request.identity.variant_id)
     await db.commit()
     return True
 
@@ -1374,6 +1377,7 @@ async def report_device_failure(
         apply_device_failure_variant_update(
             job, body.identity.variant_id, reason_code=body.reason_code, detail=body.detail
         )
+    await record_native_activity(db, job, body.identity.variant_id)
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job_id)
     return DeviceRenderFailureOut(
@@ -1471,6 +1475,26 @@ class _ExportIntegrityError(ValueError):
     """The stored bytes are not the reserved upload: the only file defect that withholds."""
 
 
+class _ExportReadError(RuntimeError):
+    """Reserved bytes could not be read, so publication must wait."""
+
+
+def _download_reserved_export(
+    path: str, local: Path, generation: str, expected_size: int, expected_sha256: str
+) -> None:
+    try:
+        storage.download_generation_to_file(path, str(local), generation=generation)
+        size = local.stat().st_size
+        with local.open("rb") as source:
+            digest = hashlib.file_digest(source, "sha256").hexdigest()
+    except Exception as exc:
+        raise _ExportReadError("export bytes unavailable") from exc
+    if size != expected_size:
+        raise _ExportIntegrityError("export size mismatch")
+    if digest != expected_sha256:
+        raise _ExportIntegrityError("export checksum mismatch")
+
+
 def _verify_export(
     path: str,
     generation: str,
@@ -1497,12 +1521,7 @@ def _verify_export(
     """
     with tempfile.TemporaryDirectory(prefix="kria_device_export_") as directory:
         local = Path(directory) / "export.mp4"
-        storage.download_generation_to_file(path, str(local), generation=generation)
-        if local.stat().st_size != expected_size:
-            raise _ExportIntegrityError("export size mismatch")
-        with local.open("rb") as source:
-            if hashlib.file_digest(source, "sha256").hexdigest() != expected_sha256:
-                raise _ExportIntegrityError("export checksum mismatch")
+        _download_reserved_export(path, local, generation, expected_size, expected_sha256)
         result = subprocess.run(
             [
                 "ffprobe",
@@ -1642,14 +1661,13 @@ def _export_poster(local: Path, path: str, job_id: uuid.UUID) -> str | None:
         return None
 
 
-def _poster_of_unmeasured_export(path: str, generation: str, job_id: uuid.UUID) -> str | None:
-    """The poster of bytes whose measurement failed: the video still publishes."""
+def _poster_of_unmeasured_export(
+    path: str, generation: str, job_id: uuid.UUID, expected_size: int, expected_sha256: str
+) -> str | None:
+    """Check reserved bytes even when quality measurements are unavailable."""
     with tempfile.TemporaryDirectory(prefix="kria_device_poster_") as directory:
         local = Path(directory) / "export.mp4"
-        try:
-            storage.download_generation_to_file(path, str(local), generation=generation)
-        except Exception:  # noqa: BLE001 - poster is fail-open by contract
-            return None
+        _download_reserved_export(path, local, generation, expected_size, expected_sha256)
         return _export_poster(local, path, job_id)
 
 
@@ -1794,7 +1812,12 @@ async def _complete_device_export(
             )
             verification_report["status"] = "partial"
             poster_path = await asyncio.to_thread(
-                _poster_of_unmeasured_export, attempt["path"], str(metadata.generation), job_id
+                _poster_of_unmeasured_export,
+                attempt["path"],
+                str(metadata.generation),
+                job_id,
+                attempt["size"],
+                attempt["sha256"],
             )
         else:
             poster_path = await asyncio.to_thread(
@@ -1809,8 +1832,8 @@ async def _complete_device_export(
                 advisories=advisories,
                 **verify_kwargs,
             )
-    except FileNotFoundError as exc:
-        raise HTTPException(409, "Export upload has not finished") from exc
+    except (FileNotFoundError, _ExportReadError) as exc:
+        raise HTTPException(409, "Export upload bytes are unavailable") from exc
     except _ExportIntegrityError as exc:
         integrity_failure = exc
     except (ValueError, KeyError, subprocess.SubprocessError) as exc:
@@ -1827,9 +1850,19 @@ async def _complete_device_export(
                     else type(exc).__name__,
                 }
             )
-            poster_path = await asyncio.to_thread(
-                _poster_of_unmeasured_export, attempt["path"], str(metadata.generation), job_id
-            )
+            try:
+                poster_path = await asyncio.to_thread(
+                    _poster_of_unmeasured_export,
+                    attempt["path"],
+                    str(metadata.generation),
+                    job_id,
+                    attempt["size"],
+                    attempt["sha256"],
+                )
+            except _ExportReadError as read_error:
+                raise HTTPException(409, "Export upload bytes are unavailable") from read_error
+            except _ExportIntegrityError as byte_error:
+                integrity_failure = byte_error
     if integrity_failure is not None:
         if verification_report is not None:
             verification_report.update(
@@ -1860,6 +1893,14 @@ async def _complete_device_export(
         return DeviceExportCompleteOut(identity=body.identity)
     if status.phase != "syncing":
         raise HTTPException(409, "Render no longer accepts completion")
+    if record.get("actual_export_policy") != policy:
+        raise HTTPException(409, "Export verification authority changed")
+    current_attempt = record["attempts"].get(attempt_id)
+    if current_attempt is None or any(
+        current_attempt.get(key) != attempt.get(key)
+        for key in ("path", "size", "sha256", "brand_tail")
+    ):
+        raise HTTPException(409, "Upload reservation changed")
     if verification_token is not None:
         if await _expire_repair_permission(db, job, record, status):
             raise HTTPException(409, "Automatic repair permission expired")
@@ -1968,6 +2009,15 @@ async def _complete_device_export(
         or cleanup.retention_expires_at <= datetime.now(UTC)
     ):
         raise HTTPException(409, "Upload reservation expired")
+    record["attempts"][attempt_id]["publication_proof"] = {
+        "version": 1,
+        "artifact_path": attempt["path"],
+        "storage_generation": str(metadata.generation),
+        "file_size_bytes": attempt["size"],
+        "sha256": attempt["sha256"],
+        "identity": status.request.identity.model_dump(mode="json"),
+        "source_receipts_digest": sources_digest,
+    }
     status.phase = "published"
     record.update(
         status=status.model_dump(mode="json"),
@@ -2022,6 +2072,7 @@ async def _complete_device_export(
     from app.services.finished_style_learning import record_finished_style_edit
 
     await record_finished_style_edit(db, user_id, job, body.identity.variant_id, status)
+    await record_native_activity(db, job, body.identity.variant_id, kind="video_ready")
     await db.commit()
     if quality_warning is not None:
         # After the commit: the trace write opens its own connection to the Job row.

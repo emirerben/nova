@@ -230,13 +230,78 @@ public struct DeviceRenderRetryPolicy: Sendable {
     }
 }
 
-/// The app's way to keep an export alive for a short while after the creator leaves
-/// Kria (a `UIApplication` background task on iOS; the package cannot import UIKit).
-/// `expiring` runs when the system is about to suspend the app; the coordinator then
-/// stops the encode and keeps the receipt resumable instead of failing it.
+public enum DeviceRenderExecutionOrigin: Sendable, Equatable {
+    case automaticRecovery
+    case userInitiated(UUID)
+}
+
+public struct DeviceRenderExecutionContext: Sendable {
+    public let identity: DeviceRenderIdentity
+    public let attemptID: UUID
+    public let runID: UUID
+    public let origin: DeviceRenderExecutionOrigin
+}
+
+public enum DeviceRenderWindowOutcome: Sendable, Equatable {
+    case completed, suspended, cancelled, superseded, failed
+}
+
+public actor DeviceRenderExecutionWindow {
+    private let progressAction: @Sendable (Double) async -> Void
+    private let finishAction: @Sendable (DeviceRenderWindowOutcome) async -> Void
+    private let completionBarrier: (@Sendable (DeviceRenderWindowOutcome) async -> Void)?
+    private let finishRequested: (@Sendable () async -> Void)?
+    private var finished = false
+    private var cleanupCompleted = false
+    private var finishWaiters: [CheckedContinuation<Void, Never>] = []
+    private var progress = 0.0
+
+    public init(reportProgress: @escaping @Sendable (Double) async -> Void,
+                finish: @escaping @Sendable (DeviceRenderWindowOutcome) async -> Void) {
+        progressAction = reportProgress
+        finishAction = finish
+        completionBarrier = nil
+        finishRequested = nil
+    }
+
+    init(reportProgress: @escaping @Sendable (Double) async -> Void,
+         finish: @escaping @Sendable (DeviceRenderWindowOutcome) async -> Void,
+         completionBarrier: @escaping @Sendable (DeviceRenderWindowOutcome) async -> Void,
+         finishRequested: (@Sendable () async -> Void)? = nil) {
+        progressAction = reportProgress
+        finishAction = finish
+        self.completionBarrier = completionBarrier
+        self.finishRequested = finishRequested
+    }
+    public func reportProgress(_ fraction: Double) async {
+        guard !finished, fraction.isFinite else { return }
+        progress = max(progress, min(1, max(0, fraction)))
+        await progressAction(progress)
+    }
+
+    public func finish(_ outcome: DeviceRenderWindowOutcome) async {
+        await finishRequested?()
+        await finishOwnedWindow(outcome)
+        await completionBarrier?(outcome)
+    }
+
+    private func finishOwnedWindow(_ outcome: DeviceRenderWindowOutcome) async {
+        guard !finished else {
+            if !cleanupCompleted { await withCheckedContinuation { finishWaiters.append($0) } }
+            return
+        }
+        finished = true
+        await finishAction(outcome)
+        cleanupCompleted = true
+        let waiting = finishWaiters
+        finishWaiters.removeAll()
+        for continuation in waiting { continuation.resume() }
+    }
+
+}
+
 public protocol DeviceRenderBackgroundExecution: Sendable {
-    /// Begins a background window and returns the action that ends it.
-    func begin(name: String, expiring: @escaping @Sendable () -> Void) async -> @Sendable () async -> Void
+    func begin(context: DeviceRenderExecutionContext, expiring: @escaping @Sendable () -> Void) async throws -> DeviceRenderExecutionWindow
 }
 
 /// Process-wide installation point, so every coordinator the app creates gets the
@@ -310,6 +375,14 @@ public actor DeviceRenderCoordinator {
     private let backgroundExecution: (any DeviceRenderBackgroundExecution)?
     private var receipt: DeviceRenderReceipt?
     private var running: Task<Void, Never>?
+    private var runID: UUID?
+    private var executionWindow: DeviceRenderExecutionWindow?
+    private enum Command {
+        case starting(UUID), stopping(UUID)
+        var id: UUID { switch self { case let .starting(id), let .stopping(id): id } }
+    }
+    private var commandGeneration = UUID()
+    private var pendingCommand: Command?
     private var reporting: Task<Void, Never>?
     /// The attempt the system is suspending (background window expired). Its stop is
     /// parked as resumable, never reported as a failure.
@@ -396,18 +469,28 @@ public actor DeviceRenderCoordinator {
     }
     /// Export progress of the running attempt, or nil when no encode is running or the exporter reports none.
     public func exportProgress() -> Double? { running == nil ? nil : exportFraction }
-    private func recordExport(_ fraction: Double, attempt: UUID) {
-        guard receipt?.attemptID == attempt, fraction.isFinite else { return }
+    private func recordExport(_ fraction: Double, attempt: UUID, run: UUID) async {
+        guard runID == run, receipt?.attemptID == attempt, fraction.isFinite else { return }
         exportFraction = max(exportFraction ?? 0, min(1, max(0, fraction)))
+        await executionWindow?.reportProgress(exportFraction ?? 0)
     }
-    public func waitUntilIdle() async { await running?.value }
+    public func waitUntilIdle() async {
+        while let task = running { await task.value }
+    }
 
-    public func start(_ request: DeviceRenderRequest, decision: CapabilityDecision) throws {
-        if receipt?.request == request {
+    public func start(_ request: DeviceRenderRequest, decision: CapabilityDecision, origin: DeviceRenderExecutionOrigin = .automaticRecovery) async throws {
+        if case .stopping = pendingCommand, origin == .automaticRecovery { return }
+        if pendingCommand == nil, receipt?.request == request {
             if running != nil || receipt?.phase == .synced || receipt?.phase == .superseded { return }
             if receipt?.phase == .localReady { try retrySync(); return }
         }
+        let command = beginCommand()
+        defer { if pendingCommand?.id == command { pendingCommand = nil } }
         running?.cancel()
+        await executionWindow?.finish(.superseded)
+        guard commandGeneration == command else { return }
+        executionWindow = nil
+        runID = nil
         running = nil
         exportFraction = nil
         let attempt = UUID()
@@ -422,23 +505,25 @@ public actor DeviceRenderCoordinator {
             )
             return
         }
-        running = Task { await self.perform(attempt: attempt) }
+        pendingCommand = nil
+        launch(attempt: attempt, origin: origin)
     }
 
     /// An interrupted encoder restarts; an intact completed MP4 retries publication without encoding.
     /// Also the foreground hook after a suspension (`DeviceRenderBackgroundExecution`).
     public func recover() throws {
         deliverPendingReport()
-        guard let saved = receipt, running == nil,
+        guard pendingCommand == nil, let saved = receipt, running == nil,
               ![.cancelled, .superseded, .synced, .needsAttention].contains(saved.phase) else { return }
         if saved.outputURL != nil, try intactOutput(saved) == nil {
             try replaceAttempt(output: nil)
             return
         }
-        running = Task { await self.perform(attempt: saved.attemptID) }
+        launch(attempt: saved.attemptID)
     }
 
-    private func replaceAttempt(output: URL?) throws {
+    private func replaceAttempt(output: URL?, launchImmediately: Bool = true) throws {
+        guard pendingCommand == nil else { throw CancellationError() }
         guard let saved = receipt else { return }
         let attempt = UUID()
         var replacement: URL?
@@ -452,13 +537,13 @@ public actor DeviceRenderCoordinator {
                                        outputURL: replacement, outputFingerprint: replacement == nil ? nil : saved.outputFingerprint)
         try JSONEncoder().encode(next).write(to: receiptURL, options: .atomic)
         receipt = next
-        running = Task { await self.perform(attempt: attempt) }
+        if launchImmediately { launch(attempt: attempt) }
     }
 
     public func retrySync() throws {
-        guard let saved = receipt, saved.outputURL != nil, saved.phase == .localReady, running == nil else { return }
+        guard pendingCommand == nil, let saved = receipt, saved.outputURL != nil, saved.phase == .localReady, running == nil else { return }
         if try intactOutput(saved) == nil { try replaceAttempt(output: nil); return }
-        running = Task { await self.perform(attempt: saved.attemptID) }
+        launch(attempt: saved.attemptID)
     }
 
     /// Housekeeping cancel: used when a request is superseded, a stale
@@ -466,11 +551,30 @@ public actor DeviceRenderCoordinator {
     /// reports to the server — the identity is often still perfectly valid
     /// server-side (e.g. `stopAll()` on the workspace disappearing mid-render),
     /// so reporting here would wrongly flip a healthy job to `needsAttention`.
-    public func cancel() throws {
-        running?.cancel(); running = nil
-        guard receipt != nil else { return }
+    public func cancel() async throws {
+        _ = try await cancelOperation()
+    }
+
+    private func beginCommand(stopping: Bool = false) -> UUID {
+        let command = UUID()
+        commandGeneration = command
+        pendingCommand = stopping ? .stopping(command) : .starting(command)
+        return command
+    }
+
+    private func cancelOperation() async throws -> UUID? {
+        let command = beginCommand(stopping: true)
+        defer { if pendingCommand?.id == command { pendingCommand = nil } }
+        running?.cancel()
+        await executionWindow?.finish(.cancelled)
+        guard commandGeneration == command else { return nil }
+        executionWindow = nil
+        runID = nil
+        running = nil
+        guard receipt != nil else { return command }
         receipt?.phase = .cancelled
         try persist()
+        return command
     }
 
     /// Same effect as `cancel()`, but also tells the server the user explicitly
@@ -478,9 +582,9 @@ public actor DeviceRenderCoordinator {
     /// the report is retried until it lands so both sides agree the render stopped.
     /// Call this ONLY from a user-facing cancel affordance (e.g. a "Stop rendering"
     /// button) — never from housekeeping.
-    public func cancelByUser() throws {
+    public func cancelByUser() async throws {
         let saved = receipt
-        try cancel()
+        guard let command = try await cancelOperation(), commandGeneration == command else { return }
         guard let saved, ![.cancelled, .synced, .superseded, .needsAttention].contains(saved.phase) else { return }
         reportFailure(identity: saved.request.identity, reasonCode: .cancelledByUser, detail: "Cancelled by user")
     }
@@ -490,8 +594,8 @@ public actor DeviceRenderCoordinator {
     }
     /// The background window expired: stop the encode before the system suspends the
     /// app, and keep the receipt resumable (`recover()` continues it on foreground).
-    private func suspend(_ attempt: UUID) {
-        guard receipt?.attemptID == attempt, running != nil else { return }
+    private func suspend(_ attempt: UUID, run: UUID) {
+        guard runID == run, receipt?.attemptID == attempt, running != nil else { return }
         suspendedAttempt = attempt
         running?.cancel()
     }
@@ -578,17 +682,54 @@ public actor DeviceRenderCoordinator {
         throw MediaEngineError.avFoundationUnavailable
         #endif
     }
-    private func perform(attempt: UUID) async {
-        defer { if receipt?.attemptID == attempt { running = nil } }
-        guard current(attempt) else { return }
-        let endBackground = await backgroundExecution?.begin(name: "Kria render") { [weak self] in
-            Task { await self?.suspend(attempt) }
+    private func launch(attempt: UUID, origin: DeviceRenderExecutionOrigin = .automaticRecovery) {
+        guard pendingCommand == nil else { return }
+        let run = UUID()
+        runID = run
+        running = Task { await self.perform(attempt: attempt, run: run, origin: origin) }
+    }
+
+    private func perform(attempt: UUID, run: UUID, origin: DeviceRenderExecutionOrigin) async {
+        guard current(attempt), runID == run, let identity = receipt?.request.identity else { return }
+        var window: DeviceRenderExecutionWindow?
+        do {
+            try Task.checkCancellation()
+            window = try await backgroundExecution?.begin(context: .init(identity: identity, attemptID: attempt, runID: run, origin: origin)) { [weak self] in
+                Task { await self?.suspend(attempt, run: run) }
+            }
+            try Task.checkCancellation()
+            guard runID == run else { throw CancellationError() }
+            executionWindow = window
+            await performWork(attempt: attempt, run: run)
+        } catch {
+            if runID == run, current(attempt) { park(attempt, error: nil) }
         }
-        defer { if let endBackground { Task { await endBackground() } } }
+        let outcome: DeviceRenderWindowOutcome
+        if runID != run || receipt?.attemptID != attempt { outcome = .superseded }
+        else {
+            switch receipt?.phase {
+            case .synced: outcome = .completed
+            case .cancelled: outcome = .cancelled
+            case .superseded: outcome = .superseded
+            case .needsAttention: outcome = .failed
+            default: outcome = .suspended
+            }
+        }
+        await window?.finish(outcome)
+        if runID == run {
+            executionWindow = nil
+            runID = nil
+            running = nil
+            suspendedAttempt = nil
+            if let replacement = receipt, replacement.attemptID != attempt { launch(attempt: replacement.attemptID) }
+        }
+    }
+
+    private func performWork(attempt: UUID, run: UUID) async {
         var transientFailures = 0
         while true {
             do {
-                try await performOnce(attempt: attempt)
+                try await performOnce(attempt: attempt, run: run)
                 return
             } catch is CancellationError {
                 if suspendedAttempt == attempt {
@@ -600,7 +741,7 @@ public actor DeviceRenderCoordinator {
                 return
             } catch is DeviceExportAttemptReused {
                 guard current(attempt), let saved = receipt, let output = try? intactOutput(saved) else { return }
-                do { try replaceAttempt(output: output) }
+                do { try replaceAttempt(output: output, launchImmediately: false) }
                 catch { try? update(attempt, phase: .localReady, error: error.localizedDescription) }
                 return
             } catch {
@@ -655,7 +796,7 @@ public actor DeviceRenderCoordinator {
             }
         }
     }
-    private func performOnce(attempt: UUID) async throws {
+    private func performOnce(attempt: UUID, run: UUID) async throws {
         guard let saved = receipt, current(attempt) else { return }
         let serverCurrent = try await publisher.isCurrent(saved.request.identity)
         guard current(attempt) else { return }
@@ -669,7 +810,7 @@ public actor DeviceRenderCoordinator {
             guard current(attempt) else { return }
         } else {
             if saved.outputURL != nil {
-                try replaceAttempt(output: nil)
+                try replaceAttempt(output: nil, launchImmediately: false)
                 return
             }
             try update(attempt, phase: .preparing)
@@ -679,7 +820,7 @@ public actor DeviceRenderCoordinator {
             exportFraction = nil
             output = directory.appendingPathComponent("\(attempt.uuidString).mp4")
             _ = try await exporter.export(recipe: saved.request.recipe, assetURLs: assets, outputURL: output, exportID: attempt.uuidString,
-                                     progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt) } })
+                                     progress: { [weak self] fraction in Task { await self?.recordExport(fraction, attempt: attempt, run: run) } })
             guard current(attempt) else { return }
             try await validateOutputDuration(output, for: saved.request)
             guard current(attempt) else { return }

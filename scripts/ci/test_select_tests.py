@@ -940,7 +940,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/tasks/export_verification.py",
-                (True, "covered", "kri-726-background-recovery"),
+                (True, "covered", "kri-726-background-recovery,native-activity-inbox"),
             ),
             (
                 "src/apps/api/tests/integration/test_background_export_completion.py",
@@ -957,6 +957,14 @@ class GitDiffTests(unittest.TestCase):
             (
                 "src/apps/api/prompts/edit_copilot_ops/text.txt",
                 (True, "covered", "kri-669-gameday,duration-text-preservation"),
+            ),
+            (
+                "src/apps/api/app/services/native_activity.py",
+                (True, "covered", "native-activity-inbox"),
+            ),
+            (
+                "src/apps/ios/Kria/Features/ActivityView.swift",
+                (True, "covered", "native-activity-inbox,native-activity-account-boundary,native-notification-runtime"),
             ),
             # This has journey impact but no incident-corpus repro mapping.
             (
@@ -982,7 +990,7 @@ class GitDiffTests(unittest.TestCase):
             (
                 True,
                 "covered",
-                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes",
+                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes,native-activity-account-boundary,native-notification-runtime",
             ),
         )
 

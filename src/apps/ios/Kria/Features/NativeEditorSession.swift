@@ -85,7 +85,7 @@ enum NativeEditorVideoDownloadRoute: Equatable {
     case server(NativeEditorVideoDownloadTarget)
 }
 
-struct NativeEditorTemporaryVideo {
+struct NativeEditorTemporaryVideo: Sendable {
     let fileURL: URL
     let cleanupURL: URL
 }
@@ -206,10 +206,13 @@ struct NativeEditorTemporaryVideo {
         let rect: CGRect
     }
     @Published private(set) var mediaInteractionFrame: MediaInteractionFrame?
+    private let previewFrameRenderer: NativePreviewFrameRenderer
     private var textInteractionTask: Task<Void, Never>?
     private var textInteractionSequence = 0
 
     private func prepareInteractionLayers() {
+        textInteractionTask?.cancel()
+        textInteractionSequence += 1
         prepareTextInteraction()
         prepareMediaInteraction()
     }
@@ -219,10 +222,9 @@ struct NativeEditorTemporaryVideo {
               let element = document.textElements.first(where: { $0.id == selection.id }),
               let preview = sourcePreview, let item = player?.currentItem,
               sourcePreviewState == .ready else { return }
-        textInteractionTask?.cancel()
-        textInteractionSequence += 1
         let sequence = textInteractionSequence
         let time = min(currentTime, max(0, duration - 1.0 / 600))
+        let renderFrame = previewFrameRenderer
         textInteractionTask = Task { @MainActor [weak self] in
             do {
                 // Prepare after scrubbing settles, never for every scrub frame.
@@ -230,18 +232,14 @@ struct NativeEditorTemporaryVideo {
                 try Task.checkCancellation()
                 let layers = try preview.textInteractionLayers(id: element.id, time: time)
                 @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    try Task.checkCancellation()
                     let generator = AVAssetImageGenerator(asset: item.asset)
                     generator.videoComposition = composition
                     generator.maximumSize = CGSize(width: 1080, height: 1920)
                     generator.requestedTimeToleranceBefore = .zero
                     generator.requestedTimeToleranceAfter = .zero
-                    let cg: CGImage = try await withCheckedThrowingContinuation { continuation in
-                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: time, preferredTimescale: 600))]) { _, image, _, result, error in
-                            if result == .succeeded, let image { continuation.resume(returning: image) }
-                            else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
-                        }
-                    }
-                    return UIImage(cgImage: cg)
+                    let frame = try await renderFrame(generator, CMTime(seconds: time, preferredTimescale: 600))
+                    return UIImage(cgImage: frame.image)
                 }
                 let below = try await image(layers.below)
                 let above = try await image(layers.above)
@@ -269,28 +267,23 @@ struct NativeEditorTemporaryVideo {
         case .visualBlock: mediaID = "visual-\(selection.id)-\(selection.id)"
         default: return
         }
-        textInteractionTask?.cancel()
-        textInteractionSequence += 1
         let sequence = textInteractionSequence
         let time = min(currentTime, max(0, duration - 1.0 / 600))
+        let renderFrame = previewFrameRenderer
         textInteractionTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(100))
                 try Task.checkCancellation()
                 let layers = try preview.mediaInteractionLayers(id: mediaID, time: time)
                 @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    try Task.checkCancellation()
                     let generator = AVAssetImageGenerator(asset: item.asset)
                     generator.videoComposition = composition
                     generator.maximumSize = CGSize(width: 1080, height: 1920)
                     generator.requestedTimeToleranceBefore = .zero
                     generator.requestedTimeToleranceAfter = .zero
-                    let cg: CGImage = try await withCheckedThrowingContinuation { continuation in
-                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: time, preferredTimescale: 600))]) { _, image, _, result, error in
-                            if result == .succeeded, let image { continuation.resume(returning: image) }
-                            else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
-                        }
-                    }
-                    return UIImage(cgImage: cg)
+                    let frame = try await renderFrame(generator, CMTime(seconds: time, preferredTimescale: 600))
+                    return UIImage(cgImage: frame.image)
                 }
                 async let below = image(layers.below)
                 async let above = image(layers.above)
@@ -1312,7 +1305,7 @@ struct NativeEditorTemporaryVideo {
     /// failure — unsupported source, storage, cancellation — which still
     /// throws through to the caller rather than falling back to the last
     /// cloud render. The user must always get what the preview shows.
-    func exportDisplayedSourcePreview() async throws -> NativeEditorTemporaryVideo {
+    func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)? = nil) async throws -> NativeEditorTemporaryVideo {
         guard sourcePreviewState == .ready, sourcePreviewSettled,
               let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else {
@@ -1322,25 +1315,27 @@ struct NativeEditorTemporaryVideo {
         let exportRecipe = recipeWithLiveSongVolume(snapshot.recipe)
         let wasPlaying = isPlaying
         pausePlayback()
-        defer { if wasPlaying { togglePlayback() } }
+        defer { if wasPlaying && !Task.isCancelled { togglePlayback() } }
         do {
-            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs)
+            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs, progress: progress)
         } catch {
+            if error is CancellationError { throw error }
+            try Task.checkCancellation()
             #if DEBUG
             NativePreviewDiagnostics.failure("editor-export-first-attempt", error: error)
             #endif
-            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs)
+            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs, progress: progress)
         }
     }
 
-    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL]) async throws -> NativeEditorTemporaryVideo {
+    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "kria-editor-download-\(UUID().uuidString)", directoryHint: .isDirectory)
         let output = directory.appending(path: "current-preview.mp4")
         do {
             let checkpoint = try await AVFoundationLocalExporter(
                 stateStore: FileExportStateStore(directory: directory.appending(path: "state", directoryHint: .isDirectory))
-            ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output)
+            ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output, progress: progress)
             guard checkpoint.status == .completed, checkpoint.outputURL == output else {
                 throw NativeEditorVideoDownloadError.unavailable
             }
@@ -1386,7 +1381,8 @@ struct NativeEditorTemporaryVideo {
         draft: EditorDraft = EditorDraft(projectID: UUID(), clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0),
         operations: any EditorOperations = LocalEditorOperations(),
         initialPlaybackURL: URL? = nil,
-        trustsInitialPlaybackURL: Bool = true
+        trustsInitialPlaybackURL: Bool = true,
+        previewFrameRenderer: @escaping NativePreviewFrameRenderer = NativePreviewImageRequest.render
     ) {
         var initialDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
         initialDocument.revision.number = draft.revision
@@ -1395,6 +1391,7 @@ struct NativeEditorTemporaryVideo {
         self.compatibilitySnapshot = draft.serverSnapshot
         self.document = initialDocument
         self.cleanDocument = initialDocument
+        self.previewFrameRenderer = previewFrameRenderer
         self.operations = operations
         self.seedIsTrusted = trustsInitialPlaybackURL
         rememberClipIDs(from: draft, in: initialDocument)
@@ -1540,6 +1537,7 @@ struct NativeEditorTemporaryVideo {
         durationLoadTask?.cancel()
         seekRecoveryTask?.cancel()
         scrubFrameTask?.cancel()
+        textInteractionTask?.cancel()
         observingPlayer?.pause()
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
@@ -3695,16 +3693,10 @@ struct NativeEditorTemporaryVideo {
             while !Task.isCancelled, let target = self?.pendingScrubFrameTime {
                 self?.pendingScrubFrameTime = nil
                 do {
-                    let frame: (image: CGImage, actualTime: CMTime) = try await withCheckedThrowingContinuation { continuation in
-                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: target, preferredTimescale: 600))]) { _, image, actualTime, result, error in
-                            if result == .succeeded, let image {
-                                continuation.resume(returning: (image, actualTime))
-                            } else {
-                                continuation.resume(throwing: error ?? MediaEngineError.exportFailed)
-                            }
-                        }
-                    }
+                    guard let renderer = self?.previewFrameRenderer else { return }
+                    let frame = try await renderer(generator, CMTime(seconds: target, preferredTimescale: 600))
                     guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
+                    if self.pendingScrubFrameTime != nil { continue }
                     self.scrubPreviewTime = frame.actualTime.seconds
                     self.scrubPreviewFrame = UIImage(cgImage: frame.image)
                     self.prepareInteractionLayers()
@@ -3716,9 +3708,10 @@ struct NativeEditorTemporaryVideo {
                     #if DEBUG
                     NativePreviewDiagnostics.failure("scrub-frame-failure", error: error)
                     #endif
-                    self.scrubPreviewFrame = nil
-                    self.scrubPreviewTime = nil
-                    break
+                    if self.pendingScrubFrameTime == nil {
+                        self.scrubPreviewFrame = nil
+                        self.scrubPreviewTime = nil
+                    }
                 }
             }
             guard let self, self.scrubFrameGeneration == generation else { return }
@@ -3732,7 +3725,6 @@ struct NativeEditorTemporaryVideo {
         scrubFrameGeneration += 1
         scrubFrameTask?.cancel()
         scrubFrameTask = nil
-        scrubFrameGenerator?.cancelAllCGImageGeneration()
         scrubFrameGenerator = nil
         scrubFramePlayerItem = nil
         scrubFrameComposition = nil
