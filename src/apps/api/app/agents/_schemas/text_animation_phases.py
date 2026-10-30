@@ -3,9 +3,9 @@
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # Entrance and exit length at speed 1, for every edge. One value so a designed edge is never
 # slower than the pop or fade beside it; the native mirror is generated from this constant.
@@ -102,3 +102,18 @@ class TextAnimationPhases(BaseModel):
     exit: TextAnimationEdge = "none"
     loop: Literal["none", "pulse", "bounce", "float"] = "none"
     speed: float = Field(default=1, ge=0.25, le=3)
+
+
+def phases_patch(value: object) -> dict[str, Any] | None:
+    """``value`` as a partial phases patch (only the keys it sets), or None when invalid."""
+    if (
+        not isinstance(value, dict)
+        or not value
+        or set(value) - set(TextAnimationPhases.model_fields)
+    ):
+        return None
+    try:
+        TextAnimationPhases(**value)
+    except ValidationError:
+        return None
+    return dict(value)
