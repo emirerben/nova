@@ -2305,7 +2305,9 @@
         "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
         "src/apps/ios/Kria/Core/Services.swift",
         "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift",
-        "src/apps/api/tests/routes/test_phone_editor_rendered_clock_receipts.py"
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock_receipts.py",
+        "src/apps/api/app/services/client_protocol.py",
+        "src/apps/api/app/services/public_assembly_plan.py"
       ]
     }
   ]

@@ -3718,7 +3718,7 @@
     {
       "id": "rendered-editor-original-clock",
       "tickets": [
-        "KRI-934"
+        "KRI-1060"
       ],
       "symptom": "A successful native original window1.920s reopens as1.933333s after editor frame normalization and fails source bounds.",
       "boundary": "persistence",
@@ -3730,7 +3730,9 @@
         "src/apps/api/app/services/guided_timeline.py",
         "src/apps/api/app/routes/generative_jobs.py",
         "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
-        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift"
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
+        "src/apps/api/app/services/client_protocol.py",
+        "src/apps/api/app/services/public_assembly_plan.py"
       ],
       "regression_tests": [
         "tests/routes/test_phone_editor_rendered_clock.py",
@@ -3739,10 +3741,10 @@
       "harness": "real_compiler",
       "kill_switch": null,
       "evidence": {
-        "offline_replay": "180 focused backend tests passed,1known expected failure, including unchanged KRI1032 mute/crop golden projection and modern missing-receipt controls. Retained28moment clock replay is idempotent.",
+        "offline_replay": "514 current-main backend cases passed, including unchanged legacy/hash, source overrun, private-marker fallback, saved-state refusal and old-client mutation controls. No production opt-in is emitted.",
         "live_model": "Not run; no provider or prompt change.",
-        "native_output": "Final iOS26.5 simulator run117 passed0failures: measured25fps1.920s source, saved-draft hydration, compiler, preview and MP4 export; incorrect1.933333 window rejected. Export duration checked; blue pixel checked in preview only.",
-        "production": "Not deployed; original-phone reopen pending protocol25 API/worker/client release."
+        "native_output": "Current reader-first compatibility:118 iOS26.5 simulator tests passed, including protocol25 header, generated1.920s source preview/export and strict original-source overrun controls. Duration measured in export; pixels inspected in preview only. Native tree d25dfadf07e284362ae258f8e22bd5e2152986a2. No original-phone acceptance.",
+        "production": "Reader-first only; no activation, project migration or deployment. Future API/worker readers and protocol26 app admission are required."
       },
       "neighbours_covered": [
         "Legacy frozen hashes",
@@ -3760,13 +3762,13 @@
         "native manual rate setter with crossfade interaction"
       ],
       "follow_ups": [
-        "KRI-1039"
+        "KRI-1060"
       ],
       "red_control": "not_applicable",
       "fix_prs": [
         1946
       ],
-      "gap_reason": "Dedicated source-clock Linear tracking is not authorized yet. KRI-934 is related failure-screen ancestry, not the source-clock owner. The PR request-evidence gate remains blocked."
+      "gap_reason": "Reader deployment, future explicit admission and original-phone acceptance remain pending under KRI-1060."
     }
   ]
 }

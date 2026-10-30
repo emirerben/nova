@@ -29,6 +29,30 @@ migration needs an explicit durable admission boundary. Rollback after activatio
 must retain compatible readers. This phase changes no production flag or project.
 It does not claim to fix reopening on the user's current phone by itself.
 
+## Current executed checks
+
+The reader-first backend matrix passed514 cases without skips. Controls cover
+unmarked modern projects, legacy saved hashes, corrupt saved clocks, unknown
+markers, public-copy fallback, real source overruns and protocol25 refusal before
+Save, retry or orientation mutation. Independent source review found no blocking
+code issue after the privacy and mutation guards were corrected.
+
+The current native compatibility run passed118 tests with zero failures on an
+iOS26.5 simulator. The native source tree remained
+`d25dfadf07e284362ae258f8e22bd5e2152986a2`. It includes protocol25 header,
+generated1.920-second source preview/export and strict overrun controls. These
+are generated fixtures, not original-media or physical-phone acceptance. Export
+assertions measure duration; preview attachments inspect pixels. Exported temporary
+files were removed by existing test teardown; the result bundle retains assertions
+and preview attachments. The local bundle is
+`/tmp/task4-reader-compatibility-c74d783e.xcresult`.
+
+The required timeline gate passed209 web assertions,28 desktop browser cases,
+42 mobile browser cases and585 backend cases. Preship lint, metadata, mapping and
+HEAD-bound request-evidence checks passed. The preship incident selector currently
+excludes open-PR gates; the new incident cases were run directly above and remain
+mapped as a named CI journey. Hosted checks are required on the published head.
+
 ## Historical local repair evidence
 
 ## Request and scope
