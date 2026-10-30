@@ -54,7 +54,10 @@ log = structlog.get_logger()
 # v91 (29 Ekim lane E, KRI-1039): compose with the ops, refuse only when no sequence reaches the
 # end state and name what is missing; words the creator gives, shown a piece at a time, are
 # replace_text_sequence (weighted windows, mode cumulative), never captions.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-29-v91"
+# v92 (30 Ekim): prompt-cache layout only, no rule change. Rules, catalogs and lane
+# fragments come first; the per-turn data (user message, draft, prior turns, max ops)
+# moved to prompts/edit_copilot_turn.txt at the end so the shared head is cacheable.
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v92"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -3321,8 +3324,20 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
         return ["intent", "reply"]
 
     def render_prompt(self, input: EditCopilotInput) -> str:  # noqa: A002
+        # Cache-friendly order: everything stable across turns first (rules, catalogs,
+        # lane fragments), per-turn data last, so Gemini's implicit prefix cache
+        # can reuse the long shared head.
         prompt = load_prompt(
             "edit_copilot",
+            font_catalog=_font_catalog(),
+            effect_catalog=_effect_catalog(),
+            caption_font_catalog=_caption_font_catalog(),
+            custom_effect_catalog=_custom_effect_catalog(),
+        )
+        prompt = _with_v2_fragments(prompt, input.variant_snapshot)
+        prompt = _with_scope_fragment(prompt, input.variant_snapshot)
+        turn = load_prompt(
+            "edit_copilot_turn",
             utterance=(
                 _clean_component_data(input.utterance)
                 if _component_context_enabled(input.variant_snapshot)
@@ -3331,14 +3346,9 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             prior_turns=_format_prior_turns(input.prior_turns),
             original_request_block=_original_request_block(input.original_request),
             snapshot=_format_snapshot(input.variant_snapshot),
-            font_catalog=_font_catalog(),
-            effect_catalog=_effect_catalog(),
-            caption_font_catalog=_caption_font_catalog(),
-            custom_effect_catalog=_custom_effect_catalog(),
             max_ops=_operation_limit(input.variant_snapshot),
         )
-        prompt = _with_v2_fragments(prompt, input.variant_snapshot)
-        prompt = _with_scope_fragment(prompt, input.variant_snapshot)
+        prompt = f"{prompt.rstrip(chr(10))}\n\n{turn.rstrip(chr(10))}\n"
         # KRI-520: the reply-language instruction goes last, after every fragment.
         # "" for English/unknown: byte-identical prompt.
         language_line = prompt_language_line(input.reply_language)
