@@ -767,11 +767,13 @@
     {
       "id": "kri-968-simpler-version-names-drops",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py",
+      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py tests/kria/test_leverkusen_m1_simpler_keeps_filming_order.py",
       "paths": [
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/tests/fixtures/kri968_don_julio_walkin_t1_simpler.json",
-        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py"
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_simpler_order.json",
+        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py",
+        "src/apps/api/tests/kria/test_leverkusen_m1_simpler_keeps_filming_order.py"
       ]
     },
     {
