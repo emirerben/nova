@@ -132,8 +132,12 @@ def review_dispatch_duration(
     strategy = json.loads(snapshot.final_strategy_json)
     contract = json.loads(snapshot.contract_json)
     approved = json.loads(snapshot.approved_plan_json)
+    approved_target = approved.get("target_duration_s")
+    if not _positive_number(approved_target) or not math.isclose(
+        approved_target, target, abs_tol=0.001, rel_tol=0
+    ):
+        return DurationReview("clarification_needed", ("approved_plan.target_duration_s",))
     observed = {
-        "approved_plan.target_duration_s": approved.get("target_duration_s"),
         "strategy.target_duration_s": strategy.get("target_duration_s"),
         "strategy.creator_duration_s": strategy.get("creator_duration_s"),
         "contract.duration_s": contract.get("duration_s"),
