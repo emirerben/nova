@@ -5270,6 +5270,90 @@ final class NativeEditorSessionTests: XCTestCase {
         await renderSessions.stopAll()
     }
 
+    /// A persisted creator Stop and a server-recorded Stop at once: the editor's first Resume only releases the
+    /// persisted intent (the panel behaves the same), the second mints the one /retry, and repeated taps afterwards
+    /// never mint or export twice. The persisted release must survive a rebuilt session and intent store.
+    func testEditorResumeWithPersistedAndServerStopTakesTwoTapsAndSurvivesRestoration() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let intents = output.appendingPathComponent("intents")
+        let storageKey = DeviceRenderIntentKey(owner: "isolated-test-owner", projectID: threadID, jobID: jobID, variantID: "variant")
+        try DeviceRenderIntentStore(root: intents).save(.init(sourceIdentity: request.identity, baseGeneration: "generation-1", state: .stopped), for: storageKey)
+        let status = SessionTestStatus(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: DeviceRenderSessions.pausedReason, baseGeneration: "generation-1"))
+        let mints = SessionTestCounter(), exports = SessionTestCounter()
+
+        func launch() async -> (NativeEditorSession, DeviceRenderSessions) {
+            let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+            fake.phoneDestination = true
+            fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+            let sessions = DeviceRenderSessions(fetch: { _, _ in await status.response }, factory: { _, _ in
+                try DeviceRenderCoordinator(directory: output, exporter: SessionTestCountingExport(exports), sources: SessionTestSources(), publisher: SessionTestPublisher())
+            }, intentStore: DeviceRenderIntentStore(root: intents), retryFailure: { _, identity, _ in
+                await mints.increment()
+                await status.set(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, baseGeneration: "generation-1"))
+                let raw = try JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(identity))
+                let data = try JSONSerialization.data(withJSONObject: ["identity": raw, "phase": "awaiting_device"])
+                return try JSONDecoder().decode(DeviceRenderRetryAck.self, from: data)
+            })
+            let editor = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+            editor.useDeviceRendering(sessions)
+            await editor.load(api: fake, threadID: threadID)
+            editor.selectClip(editor.draft.clips[0].id)
+            editor.trimSelected(edge: .trailing, to: 1.5)
+            await editor.save()
+            return (editor, sessions)
+        }
+        func settle(_ counter: SessionTestCounter, to expected: Int) async -> Bool {
+            for _ in 0..<100 {
+                if await counter.value == expected { return true }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            return false
+        }
+
+        let (first, firstSessions) = await launch()
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        XCTAssertTrue(firstSessions.isPausedByCreator(key))
+        XCTAssertNotEqual(firstSessions.presentations[key]?.requiresServerRetry, true, "The persisted Stop holds the render before the server's own pause is read")
+        let startMints = await mints.value, startExports = await exports.value
+        XCTAssertEqual(startMints, 0)
+        XCTAssertEqual(startExports, 0)
+        XCTAssertEqual(try DeviceRenderIntentStore(root: intents).load(storageKey)?.state, .stopped)
+
+        await first.retryDeviceRender()
+        let afterFirst = await mints.value, exportsAfterFirst = await exports.value
+        XCTAssertEqual(afterFirst, 0, "The first tap only releases the persisted Stop")
+        XCTAssertEqual(exportsAfterFirst, 0)
+        XCTAssertEqual(try DeviceRenderIntentStore(root: intents).load(storageKey)?.state, .released)
+        XCTAssertTrue(firstSessions.isPausedByCreator(key), "The server still holds its own pause")
+        XCTAssertEqual(firstSessions.presentations[key]?.requiresServerRetry, true, "Now the server's pause is read, so the next tap mints")
+        await firstSessions.stopAll()
+
+        let (second, secondSessions) = await launch()
+        XCTAssertEqual(try DeviceRenderIntentStore(root: intents).load(storageKey)?.state, .released, "The release survives a rebuilt session and store")
+        XCTAssertTrue(secondSessions.isPausedByCreator(key))
+        let restoredMints = await mints.value, restoredExports = await exports.value
+        XCTAssertEqual(restoredMints, 0)
+        XCTAssertEqual(restoredExports, 0)
+
+        await second.retryDeviceRender()
+        let minted = await settle(mints, to: 1)
+        XCTAssertTrue(minted, "The second tap mints the one /retry")
+        let rendered = await settle(exports, to: 1)
+        XCTAssertTrue(rendered, "The acknowledged revision renders once")
+
+        await second.retryDeviceRender()
+        await second.retryDeviceRender()
+        try await Task.sleep(for: .milliseconds(300))
+        let finalMints = await mints.value, finalExports = await exports.value
+        XCTAssertEqual(finalMints, 1, "Repeated taps never mint again")
+        XCTAssertEqual(finalExports, 1, "Repeated taps never export again")
+        XCTAssertEqual(try DeviceRenderIntentStore(root: intents).load(storageKey)?.state, .released)
+        await secondSessions.stopAll()
+    }
+
     /// Failure modes: an edit this iPhone declined (`unsupported_recipe`) or an outdated app put up
     /// "Retry device render", and every retry re-pinned the same recipe into the same decline (a loop
     /// with no way out). The banner must offer the conversation (or Update Kria), and the retry entry
