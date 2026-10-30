@@ -350,3 +350,50 @@ def test_ceiling_recipe_does_not_propose_exact_repair(monkeypatch, clip_s, expec
     assert result.status == expected
     assert result.recipe_checked
     assert result.candidate is None
+
+
+@pytest.mark.parametrize(
+    "planned_s,final_s,expected",
+    [(15, 15, "consistent"), (20, 20, "consistent"), (15, 3, "clarification_needed")],
+)
+def test_ceiling_keeps_shorter_approved_plan_without_clarification(
+    monkeypatch, planned_s, final_s, expected
+):
+    from app.kria.drafts import _sanitize_strategy_duration_provenance
+    from app.services.creator_render_contract import CONTRACT_FIELD, build_render_contract
+    from app.services.device_render import device_status
+    from tests.routes._editor_save_matrix import guided_phone_job
+
+    job, binding, approved, _ = dispatch_case(monkeypatch, "At most 20 seconds", recognized=20)
+    brief = binding.brief.model_copy(deep=True)
+    brief.requirements[-1].facts["duration_bound"] = "at_most"
+    binding = BriefBinding.create(
+        binding.thread_id, brief, full_creator_request="At most 20 seconds"
+    )
+    approved = _sanitize_strategy_duration_provenance(
+        {**approved, "target_duration_s": planned_s},
+        brief_binding=binding,
+    )
+    assert approved["target_duration_s"] == planned_s
+    assert approved["creator_duration_s"] == 20
+    job.all_candidates = {
+        **job.all_candidates,
+        "creator_strategy": {**approved, "target_duration_s": final_s},
+    }
+    contract = build_render_contract(
+        approved, generation_id=job.assembly_plan["creator_generation_id"], brief=brief
+    )
+    assert contract.duration_s == 20
+    job.assembly_plan = {
+        **job.assembly_plan,
+        CONTRACT_FIELD: contract.model_dump(mode="json"),
+        "creator_brief_binding": binding.model_dump(mode="json"),
+    }
+    capture = capture_dispatch_duration(job, binding=binding, approved_plan=approved)
+    native_job, _, _ = guided_phone_job(monkeypatch, count=3, clip_s=5)
+    result = review_dispatch_duration(
+        capture, compiled_recipe=device_status(native_job, "guided_story").request.recipe
+    )
+    assert result.status == expected
+    assert result.candidate is None
+    assert result.recipe_checked
