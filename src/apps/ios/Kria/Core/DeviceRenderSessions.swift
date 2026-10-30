@@ -462,8 +462,8 @@ enum DeviceRenderGate: Equatable {
             switch intent.decision(identity: status.request.identity, baseGeneration: status.baseGeneration, published: status.phase == "published") {
             case .allow: return true
             case .published:
-                intent.state = .released
-                try intentStore.save(intent, for: storageKey)
+                // The finished video is shown (apply presents it as synced), but the Stop stays:
+                // a later revision is still held until the creator's typed Resume.
                 return true
             case .hold:
                 if let target = intent.reportTarget(identity: status.request.identity, baseGeneration: status.baseGeneration) {

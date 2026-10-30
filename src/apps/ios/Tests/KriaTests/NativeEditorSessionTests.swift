@@ -5235,6 +5235,41 @@ final class NativeEditorSessionTests: XCTestCase {
         await renderSessions.stopAll()
     }
 
+    /// A server from before Stop became a pause records it as a failure ("cancelled_by_user" needs_attention).
+    /// The editor's Resume must still mint the /retry that lifts it instead of looping on a read.
+    func testEditorResumeMintsTheRetryForAServerRecordedStop() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let retries = SessionTestCounter()
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: DeviceRenderSessions.pausedReason, baseGeneration: "generation-1")
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestExport(), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        }, retryFailure: { _, identity, _ in
+            await retries.increment()
+            throw APIError.conflict(detail: ConflictDetail("stop after the mint", code: "requires_change"))
+        })
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        XCTAssertTrue(renderSessions.isPausedByCreator(key), "setup: a server-recorded Stop reads as the creator's pause")
+        XCTAssertEqual(renderSessions.presentations[key]?.requiresServerRetry, true)
+
+        await session.retryDeviceRender()
+        let minted = await retries.value
+        XCTAssertEqual(minted, 1, "Resume must reach /retry for a pause only the server holds")
+        await renderSessions.stopAll()
+    }
+
     /// Failure modes: an edit this iPhone declined (`unsupported_recipe`) or an outdated app put up
     /// "Retry device render", and every retry re-pinned the same recipe into the same decline (a loop
     /// with no way out). The banner must offer the conversation (or Update Kria), and the retry entry

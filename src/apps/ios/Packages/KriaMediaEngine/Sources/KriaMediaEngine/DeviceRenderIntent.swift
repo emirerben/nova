@@ -40,8 +40,8 @@ public struct DeviceRenderIntent: Codable, Equatable, Sendable {
         guard state != .released else { return .allow }
         let floor = max(sourceIdentity.recipeRevision, acknowledgement?.recipeRevision ?? 0, observedIdentity?.recipeRevision ?? 0)
         let sameGeneration = baseGeneration?.isEmpty == false && baseGeneration == currentGeneration
-        // A newer revision or generation never releases a Stop by itself: only a typed creator
-        // Resume does, after it reads the current status.
+        // Nothing but a typed creator Resume releases a Stop. `.published` only lets the finished
+        // video be shown; the session keeps the Stop for every later revision.
         if published, identity.recipeRevision >= floor,
            identity == sourceIdentity || identity == acknowledgement || identity == observedIdentity || sameGeneration {
             return .published

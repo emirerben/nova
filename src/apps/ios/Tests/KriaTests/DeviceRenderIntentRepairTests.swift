@@ -45,6 +45,43 @@ import XCTest
         await sessions.stopAll()
     }
 
+    func testPublishedResultShowsWithoutReleasingTheStopAndALaterRevisionStaysHeld() async throws {
+        let directory = scratch(), job = UUID()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = request(job: job, revision: 1), newer = request(job: job, revision: 2)
+        let store = DeviceRenderIntentStore(root: directory.appendingPathComponent("intents"))
+        let key = DeviceRenderKey(projectID: UUID(), jobID: job, variantID: "first")
+        let storageKey = DeviceRenderIntentKey(owner: owner, projectID: key.projectID, jobID: job, variantID: "first")
+        try store.save(.init(sourceIdentity: first.identity, baseGeneration: "g1", state: .stopped), for: storageKey)
+        let remote = MovingRemote(first, phase: "published")
+        let exporter = CountingExport()
+        var coordinators: [DeviceRenderCoordinator] = []
+        let sessions = DeviceRenderSessions(fetch: { _, _ in await remote.status() }, factory: { _, _ in
+            let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: NoSources(), publisher: AlwaysPublisher())
+            coordinators.append(coordinator)
+            return coordinator
+        }, intentStore: store, environment: .init(thermalState: { .nominal }, freeStorageBytes: { Int64.max }))
+
+        await sessions.reconcile(key, capabilities: capabilities)
+        XCTAssertEqual(sessions.presentations[key]?.phase, .synced, "The finished video is shown")
+        XCTAssertEqual(try store.load(storageKey)?.state, .stopped, "Showing it must not release the creator's Stop")
+
+        await remote.move(to: newer)
+        await sessions.reconcile(key, capabilities: capabilities)
+        await sessions.reconcile(key, capabilities: capabilities, retry: true)
+        for coordinator in coordinators { await coordinator.waitUntilIdle() }
+        let automatic = await exporter.calls
+        XCTAssertEqual(automatic, 0, "A later revision stays held after a published result")
+        XCTAssertEqual(sessions.presentations[key]?.phase, .cancelled)
+
+        await sessions.resumeFromUser(key)
+        for coordinator in coordinators { await coordinator.waitUntilIdle() }
+        let resumed = await exporter.calls
+        XCTAssertEqual(resumed, 1)
+        XCTAssertEqual(try store.load(storageKey)?.state, .released)
+        await sessions.stopAll()
+    }
+
     func testRepeatedStopKeepsTheAcknowledgedRevisionFloor() async throws {
         let directory = scratch(), job = UUID()
         defer { try? FileManager.default.removeItem(at: directory) }

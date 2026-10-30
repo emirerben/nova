@@ -8437,8 +8437,11 @@ struct NativeEditorTemporaryVideo: Sendable {
         // this iPhone declines it again. The banner offers chat or Update Kria instead.
         guard [.retry, .resume, .renderNow].contains(deviceRenderNextStep) else { return }
         if deviceRenders.isPausedByCreator(key) {
-            // This tap is the creator's typed Resume; only it may release a durable Stop.
-            await deviceRenders.resumeFromUser(key)
+            // This tap is the creator's typed Resume; only it may release a durable Stop. A server that
+            // recorded Stop as a failure also needs the /retry that lifts its pause, which the typed
+            // retry mints (or turns into a plain Resume while a durable intent still holds the render).
+            if deviceRenders.presentations[key]?.requiresServerRetry == true { _ = await deviceRenders.retryNeedsAttentionFromUser(key) }
+            else { await deviceRenders.resumeFromUser(key) }
         } else if deviceRenders.presentations[key]?.requiresServerRetry == true {
             let retried = await deviceRenders.retryNeedsAttention(key)
             guard retried else { return }

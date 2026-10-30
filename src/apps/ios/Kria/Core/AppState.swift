@@ -37,10 +37,23 @@ enum ProfileFetchState: Equatable, Sendable {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") { return "teleprompter-ui-fixture" }
         #endif
-        guard isSignedIn, let session = try? tokenStore.read(),
-              let subject = Self.jwtSubject(in: session.accessToken) else { return nil }
-        return SHA256.hash(data: Data(subject.utf8)).map { String(format: "%02x", $0) }.joined()
+        guard isSignedIn else { lastKnownLocalIdentity = nil; return nil }
+        let session: MobileSession?
+        do { session = try tokenStore.read() }
+        catch {
+            // The Keychain could not be read (for example, the device is locked). That is an unknown
+            // owner, not a different one: keep the identity this signed-in session already proved so
+            // in-flight device renders are not torn down. Nothing here changes how the token is stored.
+            return lastKnownLocalIdentity
+        }
+        guard let session, let subject = Self.jwtSubject(in: session.accessToken) else { lastKnownLocalIdentity = nil; return nil }
+        let identity = SHA256.hash(data: Data(subject.utf8)).map { String(format: "%02x", $0) }.joined()
+        lastKnownLocalIdentity = identity
+        return identity
     }
+    /// The owner the last successful token read proved. Cleared on sign-in, sign-out, expiry and any
+    /// read that proves the session is gone or has no subject, so it can never outlive an account.
+    private var lastKnownLocalIdentity: String?
 
     func clearLocalAccountMedia() {
         guard let identity = localStorageIdentity else { return }
@@ -91,6 +104,7 @@ enum ProfileFetchState: Equatable, Sendable {
         hasAIConsent = true
     }
     func signIn(with session: MobileSession, displayName: String?) throws {
+        lastKnownLocalIdentity = nil
         try tokenStore.write(session)
         defaults.set(false, forKey: Self.invalidatedSessionKey)
         self.displayName = displayName
@@ -107,6 +121,7 @@ enum ProfileFetchState: Equatable, Sendable {
         // deletion fails, a process restart must not resurrect that session.
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
+        lastKnownLocalIdentity = nil
         displayName = nil
         email = nil
         linkedProviders = []
@@ -119,6 +134,7 @@ enum ProfileFetchState: Equatable, Sendable {
     private func expireSession() {
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
+        lastKnownLocalIdentity = nil
         displayName = nil
         email = nil
         linkedProviders = []
