@@ -48,6 +48,7 @@ from app.kria.freeze_ask import (
 )
 from app.kria.narrated_clip_sound_ask import AFTER_VOICE, ClipSoundAsk, requirement_clip_sound
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
+from app.kria.order_replacement_receipts import VerifiedOrderExecution
 from app.kria.reply_language import current_reply_language, say
 from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
@@ -370,6 +371,8 @@ class PlanFacts:
     # the outcome's ``code`` (``not_located`` / ``delegated`` / ``skipped``). Honest limits the
     # creator already knows about: noted (partial), never a failure.
     sequence_unlocated: tuple[str, ...] = ()
+    sequence_unlocated_intent_ids: tuple[str | None, ...] = ()
+    verified_order_execution: VerifiedOrderExecution | None = None
     # KRI-522: the spots ("first" / "last" / "then") whose stated sequence group landed,
     # read off the same outcomes. None = this plan cannot say (not a unified montage), so a
     # stated first/last clip stays unjudged there instead of failing a plan that seated it.
@@ -1011,6 +1014,9 @@ def plan_facts_from_strategy(
         ),
         sequence_conflicts=_strategy_sequence_conflicts(strategy),
         sequence_unlocated=tuple(row["code"] for row in creator_omission_outcomes(strategy)),
+        sequence_unlocated_intent_ids=tuple(
+            row["intent_id"] for row in creator_omission_outcomes(strategy)
+        ),
         sequence_unconfirmed=tuple(
             sorted(
                 name
@@ -1215,6 +1221,13 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
         sequence_conflicts=_sequence_problems(record, ("conflict",)),
         sequence_unlocated=tuple(
             str(row.get("code"))
+            for row in record.get("intent_outcomes") or []
+            if isinstance(row, Mapping)
+            and row.get("op") == "order"
+            and row.get("code") in _MOMENT_LIMIT_CODES
+        ),
+        sequence_unlocated_intent_ids=tuple(
+            str(row["intent_id"]) if row.get("intent_id") else None
             for row in record.get("intent_outcomes") or []
             if isinstance(row, Mapping)
             and row.get("op") == "order"
@@ -2304,6 +2317,7 @@ _MONTAGE_ORDER_FIELDS = (
     "sequence_absent",
     "sequence_conflicts",
     "sequence_unlocated",
+    "sequence_unlocated_intent_ids",
     "sequence_spots_met",
     "route_start",
     "route_end",
@@ -2961,6 +2975,26 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """A required order is met, partly met (an honest fallback), or FAILED. Neutral
     (unchecked) is only for an optional preference, and for a draft that has not been
     laid out yet (its order is judged when it renders)."""
+    if req.order_replacement is not None:
+        proof = req.order_replacement
+        evidence = facts.verified_order_execution
+        if type(evidence) is not VerifiedOrderExecution or not evidence.matches(proof):
+            return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
+        if (
+            facts.sequence_unconfirmed
+            or facts.sequence_conflicts
+            or facts.sequence_unmet
+            or facts.sequence_absent
+            or len(facts.sequence_unlocated) != len(facts.sequence_unlocated_intent_ids)
+            or any(
+                code != "skipped" or intent_id != proof.proposal.rejected_intent_id
+                for code, intent_id in zip(
+                    facts.sequence_unlocated, facts.sequence_unlocated_intent_ids, strict=True
+                )
+            )
+        ):
+            return _receipt(req, "partial", _CANT_CONFIRM_ORDER)
+        return _receipt(req, "met", None)
     if facts.narrated_steps is not None:
         return _check_narrated_order(req, facts)
     if facts.sequence_unconfirmed:

@@ -1,7 +1,7 @@
 """Inert, versioned contracts shared by the Kria planner and runtime.
 
-These models deliberately contain no executable callables, storage paths, or
-authorization decisions. The registry and policy layer add those server-side.
+These models contain no executable callables or authorization decisions.
+Private checkpoints retain source identity and are never copied into chat events.
 """
 
 from __future__ import annotations
@@ -9,7 +9,9 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
+from app.schemas.order_replacement import OrderReplacementProposal
 from app.schemas.user_song import SongOrderQuestion, SongRangeQuestion
 
 KRIA_SCHEMA_VERSION = 2
@@ -41,6 +43,15 @@ class KriaToolIntent(_KriaModel):
 
 
 class KriaTurnPlan(_KriaModel):
+    order_replacement_proposal: SkipJsonSchema[OrderReplacementProposal | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    order_replacement_strategy: SkipJsonSchema[dict[str, Any] | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    order_replacement_media_snapshot: SkipJsonSchema[dict[str, Any] | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     schema_version: Literal[2] = KRIA_SCHEMA_VERSION
     mode: Literal["respond", "act"]
     turn_value: Literal["decision", "question", "action", "progress", "review", "recovery"]

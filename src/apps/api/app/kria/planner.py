@@ -100,6 +100,7 @@ from app.kria.narration_notes import (
     spoken_plan,
     with_note,
 )
+from app.kria.order_replacement import OrderReplacementProof
 from app.kria.reply_language import current_reply_language, say
 from app.kria.strategy_policy import (
     RefusedStrategy,
@@ -1016,6 +1017,7 @@ def adapt_creator_action(
     server_rejected_selections: Sequence[RejectedClipSelection] = (),
     server_checked_intents: Sequence[ClipIntent] = (),
     server_story_refs: StoryIntentRefs | None = None,
+    server_order_replacement: OrderReplacementProof | None = None,
 ) -> KriaTurnPlan:
     """``server_resolved_song_takes`` (KRI-374) is the ONLY way ``resolved_song_takes``
     survives into the draft: it is server-owned (the song-order gate writes it after the
@@ -1120,6 +1122,7 @@ def adapt_creator_action(
     strategy_update = {
         "story_structure": reconciled_story,
         "selection_reconciliation": selection_reconciliation,
+        "confirmed_order_replacement": server_order_replacement,
         **({"rationale": summary} if selection_reconciliation else {}),
         "clip_intents": requested_intents or None,
         "resolved_clip_intents": server_resolved_clip_intents or None,
