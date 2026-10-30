@@ -4835,16 +4835,13 @@ async def plan_live_turn(db: AsyncSession, **kwargs) -> PlannedKriaTurn:
     if planned.plan.mode != "act":
         return planned
     current = await db.get(PlanItem, kwargs["item_id"], populate_existing=True)
-    after = (
-        snapshot_media(
-            current,
-            visuals=await _snapshot_visual_rows(db, current)
-            if _attached_visual_ids(planned.brief_manifest)
-            else None,
-        )
-        if current is not None
-        else {}
-    )
+    if current is None:
+        after = {}
+    elif _attached_visual_ids(planned.brief_manifest):
+        # KRI-1069: each Visual's own capture time, so a filming order can date a photo.
+        after = snapshot_media(current, visuals=await _snapshot_visual_rows(db, current))
+    else:
+        after = snapshot_media(current)
     if media_identity(before) != media_identity(after):
         return replace(
             planned,

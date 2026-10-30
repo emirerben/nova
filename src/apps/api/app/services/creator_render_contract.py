@@ -1055,24 +1055,21 @@ _NO_CAPTURE_TAILS = {
 }
 
 
-def capture_time_missing(
-    names: Sequence[tuple[str, str]], *, total: int = 0, photos: bool = False
-) -> str:
+def capture_time_missing(names: Sequence[tuple[str, str]], *, whole_edit: bool = False) -> str:
     """Media of a filming-order edit with no capture time, named, in the chat's language.
 
-    ``names`` are ``(en, tr)`` pairs (a file name is the same in both); ``total`` is how
-    many media the edit shows and ``photos`` whether Visuals are among them. When none of
-    several has a time, naming each is noise, so the line says "your clips". KRI-1069: the
-    contract once said "every selected clip" when one selected photo was not a clip at all.
+    ``names`` are ``(en, tr)`` pairs (a file name is the same in both). ``whole_edit``: no
+    clip or photo of the edit has a time, so naming each is noise and the line says so.
+    KRI-1069: the contract once said "every selected clip" when one selected photo was not
+    a clip at all.
     """
     shown = list(names[:3])
     more = len(names) - len(shown)
-    one = len(names) == 1
+    one = len(names) == 1 and not whole_edit
     en = ", ".join(name for name, _tr in shown) + (f" and {more} more" if more else "")
     tr = ", ".join(name for _en, name in shown) + (f" ve {more} tane daha" if more else "")
-    if len(names) == total > 1:
-        en = "Your clips and photos" if photos else "Your clips"
-        tr = f"{'Kliplerinin ve fotoğraflarının' if photos else 'Kliplerinin'} hiçbiri"
+    if whole_edit:
+        en, tr = "Your clips and photos", "Kliplerinin ve fotoğraflarının hiçbiri"
     return say(
         en=f"{en} {_NO_CAPTURE_TAILS['en'][0 if one else 1]}",
         tr=f"{tr} {_NO_CAPTURE_TAILS['tr'][0 if one else 1]}",
@@ -1708,13 +1705,19 @@ def build_render_contract(
             unresolved.append("I need to know which clips are in the edit to verify their order.")
         elif undated and not single_clip:
             order_ids = ()
-            unresolved.append(
-                capture_time_missing(
-                    [names[media_id] for media_id in undated],
-                    total=len(shown),
-                    photos=bool(visuals),
+            if len(undated) == len(shown) and not visuals:
+                # No clip has a time: this long-standing line is true, and its plain copy
+                # (`kria_runtime._UNRESOLVED_PLAIN`) offers the order choice.
+                unresolved.append(
+                    "I need capture times for every selected clip to verify chronological order."
                 )
-            )
+            else:
+                unresolved.append(
+                    capture_time_missing(
+                        [names[media_id] for media_id in undated],
+                        whole_edit=len(undated) == len(shown) > 1,
+                    )
+                )
         else:
             order_ids = (
                 tuple(ids)
