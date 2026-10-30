@@ -1,0 +1,18 @@
+{
+  "observed_at": "2026-10-29T13:20:28+00:00",
+  "evidence_level": "authorized_metadata_only_read",
+  "approved_eligible_holdouts": 0,
+  "approved_eligible_development": 0,
+  "further_pages": false,
+  "historical_creator_count": 1,
+  "historical_thread_count": 173,
+  "owner_map_complete": true,
+  "media_map_complete": false,
+  "enrollment_status": "blocked",
+  "blockers": [
+    "No approved eligible cases returned",
+    "Historical development media exposure map is incomplete"
+  ],
+  "sealed_bodies_read": false,
+  "provider_quality_verdict": "unassessed"
+}

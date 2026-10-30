@@ -108,6 +108,7 @@ celery_app = Celery(
 # machine that might be stopped) but is at least loud in effect: Beat
 # entries are rare and reviewed, unlike per-request dispatch call sites.
 MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
+    "tasks.reconcile_generated_media",
     "tasks.reconcile_export_verifications",
     "app.tasks.request_following.collect",
     "tasks.sweep_stale_jobs",
@@ -244,6 +245,10 @@ celery_app.conf.update(
     # embedded (`-B`) in the `light` process (see fly.toml). Other worker
     # processes ignore this dict, so it's safe to define unconditionally.
     beat_schedule={
+        "reconcile-generated-media-every-5-min": {
+            "task": "tasks.reconcile_generated_media",
+            "schedule": 300.0,
+        },
         "reconcile-export-verifications-every-minute": {
             "task": "tasks.reconcile_export_verifications",
             "schedule": 60.0,

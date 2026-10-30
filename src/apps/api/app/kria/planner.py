@@ -4897,6 +4897,18 @@ async def _gate_unresolved_choices(
     if not settings.kria_choice_questions_enabled and not strategy.get("editorial_plan"):
         return planned
     events = await _load_thread_events(db, thread_id)
+    from app.services.clip_none_answers import NoneAnswers, none_answer_choices  # noqa: PLC0415
+
+    # KRI-1025: a pin or text whose clip the creator answered None to on the picker is
+    # recorded as their answer, so nothing below (or the contract) waits on it.
+    none_answers = (
+        none_answer_choices(brief, strategy, events)
+        if settings.kria_choice_questions_enabled
+        else NoneAnswers()
+    )
+    typed_brief = brief
+    if none_answers.answers:
+        brief = answered_brief(brief, {"choice_answers": list(none_answers.answers)})
     music_inputs = {
         "media": (planned.media_snapshot or {}).get("clip_assignments"),
         "selected": strategy.get("selected_media_ids"),
@@ -5123,7 +5135,7 @@ async def _gate_unresolved_choices(
                 response=waiting,
             ),
         )
-    if not resolution.answers:
+    if not resolution.answers and not none_answers.answers:
         return _with_narration_note(
             planned,
             strategy,
@@ -5132,29 +5144,43 @@ async def _gate_unresolved_choices(
             camera_sound=camera_sound,
             closing_quote=closing_quote,
         )
-    summary = _summary_with_notices(model_summary, [*plan_notices, *resolution.notices])
-    rewritten = apply_intent.model_copy(
-        update={"arguments": {**arguments, "strategy": resolution.strategy, "summary": summary}}
+    if none_answers.answers and resolution.answers:
+        # What the video ends on instead follows the creator's other answers (their upload
+        # order, say), so the notices are worded against the brief those answers give.
+        none_answers = none_answer_choices(
+            answered_brief(typed_brief, resolution.strategy), strategy, events
+        )
+    chosen = resolution.strategy
+    if none_answers.answers:
+        chosen = {**chosen, "choice_answers": [*resolution.answers, *none_answers.answers]}
+    summary = _summary_with_notices(
+        model_summary, [*plan_notices, *resolution.notices, *none_answers.notices]
     )
-    final_brief = answered_brief(brief, resolution.strategy)
+    rewritten = apply_intent.model_copy(
+        update={"arguments": {**arguments, "strategy": chosen, "summary": summary}}
+    )
+    final_brief = answered_brief(brief, chosen)
     final_snapshot = _enrich_best_parts_snapshot(
-        resolution.strategy,
+        chosen,
         enriched_snapshot,
         final_brief,
         closing_quote=closing_quote,
         named_lines=named_lines,
         camera_sound=camera_sound,
-        visual_photo_ids=_held_visual_pool(planned.brief_manifest, resolution.strategy),
+        visual_photo_ids=_held_visual_pool(planned.brief_manifest, chosen),
         attached_visual_ids=_attached_visual_ids(planned.brief_manifest),
         moment_pins=moments,
     )
+    # The receipts reply keeps only the policy notices when it replaces the summary.
+    kept_notices = [n for n in none_answers.notices if n not in planned.policy_notices]
     return _with_narration_note(
         replace(
             planned,
             plan=plan.model_copy(update={"intents": [rewritten, *plan.intents[1:]]}),
             media_snapshot=final_snapshot,
+            policy_notices=(*planned.policy_notices, *kept_notices),
         ),
-        resolution.strategy,
+        chosen,
         final_snapshot,
         final_brief,
         camera_sound=camera_sound,

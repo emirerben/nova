@@ -83,6 +83,13 @@ class JourneyGateTests(unittest.TestCase):
         evidence = self.native_evidence()
         gate.validate(evidence, self.head)
 
+    def test_manifest_named_selectors_identify_individual_test_cases(self):
+        journeys = gate.load(SCRIPT.with_name("journey-manifest.json"))["journeys"]
+        for journey in journeys:
+            for selector in journey.get("xctests", []):
+                with self.subTest(journey=journey["id"], selector=selector):
+                    self.assertRegex(selector, r"^\w+/\w+/test\w+$")
+
     def test_omitted_stage_cannot_claim_full_verification(self):
         evidence = self.native_evidence()
         value = json.loads(evidence.read_text())

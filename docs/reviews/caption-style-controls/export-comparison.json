@@ -1,0 +1,14 @@
+[
+  {
+    "time" : 0.5,
+    "mean_pixel_difference" : 0.021526089891975308,
+    "colored_ink_pixels" : 8322,
+    "ink_center_x" : 0.29907051367637766
+  },
+  {
+    "mean_pixel_difference" : 0.015118634259259259,
+    "ink_center_x" : 0.70243064122597809,
+    "time" : 1.5,
+    "colored_ink_pixels" : 2702
+  }
+]

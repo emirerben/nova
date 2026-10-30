@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.0.0] - 2026-10-30
+
+### Added
+- feat(kria): add gated credit capabilities and metered evaluation (#1940) <!-- release-pr: 1940 -->
+
+## [0.82.36.0] - 2026-10-30
+
+### Changed
+- fix(phone-text): every phone format names undrawable creator text before approval (KRI-1024 follow-up) (#1933) <!-- release-pr: 1933 -->
+
+## [0.82.35.0] - 2026-10-30
+
+### Changed
+- fix(kria): a clip-picker "None" voids the pin instead of dead-ending the draft (KRI-1025) (#1931) <!-- release-pr: 1931 -->
+
+## [0.82.34.0] - 2026-10-30
+
+### Changed
+- feat(captions): add scoped size and position controls (#1924) <!-- release-pr: 1924 -->
+
 ## [0.82.33.0] - 2026-10-29
 
 ### Changed

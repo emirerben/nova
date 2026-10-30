@@ -114,6 +114,7 @@ struct NativeCaptionPanel: View {
     @State private var removal: CaptionRemovalNotice?
     /// KRI-1007: the Animation tab edits one line (the one last tapped in Edit captions) instead of all captions.
     @State private var animatesOneLine = false
+    @State private var stylesOneLine = false
     @StateObject private var animationPreviewClock = NativeTextAnimationPreviewClock()
     /// The line under the playhead (plan 026 D15). Set from the playback clock, which
     /// the session keeps off its own publisher, so the panel re-renders when the
@@ -123,6 +124,13 @@ struct NativeCaptionPanel: View {
     @State private var returnRowID: String?
     private var meta: [String: JSONValue] { session.document.captionMeta }
     private var appearance: [String: JSONValue] { meta["appearance"]?.objectValue ?? [:] }
+    private var captionBaseStyle: [String: JSONValue] {
+        session.document.isCueNative ? [:] : session.document.textElements.first(where: \.isCaption)?.raw ?? [:]
+    }
+    private var captionShadowOpacity: Double {
+        if (meta["shadow_enabled"] ?? captionBaseStyle["shadow_enabled"]) == .bool(false) { return 0 }
+        return captionBaseStyle["shadow_opacity"]?.numberValue ?? (session.document.isCueNative ? 0.5 : 160.0 / 255)
+    }
     private var units: [EditorCaptionCue] { session.document.captionUnits }
     /// Animation appears only where the server keeps caption phases (`editor_capabilities.caption_animation`),
     /// like the Text panel's own Animation tab and Bend.
@@ -495,13 +503,58 @@ struct NativeCaptionPanel: View {
                         .labelsHidden().frame(minWidth: 44, minHeight: 44)
                 }
             }
-            effectRow("Outline", key: "stroke_width", colorKey: "stroke_color", fallback: 4, range: 0...12)
-            effectRow("Shadow", key: "shadow_opacity", colorKey: "shadow_color", fallback: meta["shadow_enabled"] == .bool(false) ? 0 : 0.5, range: 0...1)
+            effectRow("Outline", key: "stroke_width", colorKey: "stroke_color", fallback: captionBaseStyle["stroke_width"]?.numberValue ?? (session.document.isCueNative ? 4 : 0), range: 0...12)
+            effectRow("Shadow", key: "shadow_opacity", colorKey: "shadow_color", fallback: captionShadowOpacity, range: 0...1)
+            captionSizeAndPosition
+        }
+    }
+
+    private var styleScope: NativeEditorSession.CaptionStyleScope {
+        if stylesOneLine, let line = animationLine { return .line(line.id) }
+        return .all
+    }
+
+    private var captionSizeAndPosition: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if session.offersCaptionStyleScope {
+                Picker("Size and position apply to", selection: $stylesOneLine) {
+                    Text("All captions").tag(false)
+                    Text(animationLine.map { "Line \($0.number)" } ?? "One line").tag(true)
+                        .disabled(animationLine == nil)
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("native-editor-caption-style-scope")
+                Text(stylesOneLine ? "Only this line changes." : "Replaces size or position for every caption in this video. Other styling stays unchanged.")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            }
             HStack {
                 Text("Size").frame(width: 66, alignment: .leading)
-                NativePaperSlider(session: session, value: number("size_px", fallback: 78), bounds: 36...160, step: 1, label: "Caption size")
-                Text(String(Int(meta["size_px"]?.numberValue ?? 78))).monospacedDigit().frame(width: 44)
+                NativePaperSlider(session: session, value: Binding(
+                    get: { session.captionStyleSize(styleScope) },
+                    set: { value in
+                        if session.offersCaptionStyleScope { session.setCaptionStyleSize(styleScope, size: value) }
+                        else { session.setCaptionSize(value) }
+                    }), bounds: 36...160, step: 1, label: "Caption font size in output pixels")
+                Text("\(Int(session.captionStyleSize(styleScope))) px").monospacedDigit().frame(width: 62)
             }.frame(minHeight: 44)
+            Text("Output pixels on a \(NativeEditorRenderCompiler.canvas(for: session.document).width) × \(NativeEditorRenderCompiler.canvas(for: session.document).height) canvas. The preview scales to fit; letter height varies by font.")
+                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+            if session.offersCaptionStyleScope {
+                Text("Position")
+                ForEach([[NativeTextBlockPlacement.left, .center, .right], [.top, .middle, .bottom]], id: \.self) { placements in
+                    HStack {
+                        ForEach(placements, id: \.self) { placement in
+                            Button(placement.rawValue.capitalized) { session.placeCaptions(styleScope, at: placement) }
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(KriaColor.softZinc, in: RoundedRectangle(cornerRadius: 10))
+                                .accessibilityIdentifier("native-editor-caption-position-" + placement.rawValue)
+                        }
+                    }
+                }
+                if let message = session.captionPlacementMessage {
+                    Text(message).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                }
+            }
         }
     }
 
@@ -906,5 +959,24 @@ struct NativePaperSlider: UIViewRepresentable {
             if single { parent.session.endTransaction() }
         }
         @objc func end() { editing = false; parent.session.endTransaction() }
+    }
+}
+
+
+struct NativeCaptionGestureScopeModifier: ViewModifier {
+    @ObservedObject var session: NativeEditorSession
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Apply this caption change", isPresented: $session.captionGestureChoicePresented, titleVisibility: .visible) {
+            Button("Only this caption") { session.finishCaptionGesture(applyToAll: false) }
+            Button("All captions in this video") { session.finishCaptionGesture(applyToAll: true) }
+            Button("Keep this caption only", role: .cancel) { session.finishCaptionGesture(applyToAll: false) }
+        } message: {
+            Text("Choose one caption or all. Only the changed size or position is applied. Other styling stays unchanged.")
+        }
+        .onChange(of: session.captionGestureChoicePresented) { _, presented in
+            if !presented { DispatchQueue.main.async { session.finishCaptionGesture(applyToAll: false) } }
+        }
+        .onDisappear { session.finishCaptionGesture(applyToAll: false) }
     }
 }

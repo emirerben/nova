@@ -547,6 +547,8 @@ def _execute(
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+    credits = sub.add_parser("credit-preflight")
+    credits.add_argument("--packet", required=True)
     imported = sub.add_parser("import-copilot")
     imported.add_argument("--source", required=True)
     imported.add_argument("--debug", required=True)
@@ -597,6 +599,11 @@ def main(argv=None):
             cmd.add_argument("--approval-sha256", required=True)
             cmd.add_argument("--envelope")
     args = parser.parse_args(argv)
+    if args.command == "credit-preflight":
+        from app.services.credit_plan import comparison_credit_preflight
+
+        print(json.dumps(comparison_credit_preflight(read(Path(args.packet))), indent=2))
+        return
     if args.command == "verify-persistence":
         import asyncio
 

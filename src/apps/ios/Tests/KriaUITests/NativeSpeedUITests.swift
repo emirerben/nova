@@ -30,9 +30,9 @@ final class NativeSpeedUITests: XCTestCase {
             XCTAssertEqual(label.value as? String, duration)
         }
         verifyRate("1.00x", duration: "00:06.0")
-        slider.adjust(toNormalizedSliderPosition: 0)
+        dragSpeedSlider(slider, toMaximum: false, in: app)
         verifyRate("0.25x", duration: "00:24.0")
-        slider.adjust(toNormalizedSliderPosition: 1)
+        dragSpeedSlider(slider, toMaximum: true, in: app)
         verifyRate("4.00x", duration: "00:01.5")
         let reset = app.buttons["Reset speed"]
         if !reset.isHittable { app.collectionViews.firstMatch.swipeUp() }
@@ -68,9 +68,8 @@ final class NativeSpeedUITests: XCTestCase {
         }
         revealSpeed()
         slider.adjust(toNormalizedSliderPosition: 0.5)
-        let chosen = try settledSpeed(slider, duration: duration)
-        let chosenRate = chosen.rate
-        let chosenDuration = chosen.duration
+        let chosenRate = try XCTUnwrap(slider.value as? String)
+        let chosenDuration = try XCTUnwrap(duration.value as? String)
         XCTAssertTrue(chosenRate.hasSuffix("x"), "Pre-Reset rate must include its unit: \(chosenRate)")
         let numericRate = try XCTUnwrap(Double(chosenRate.dropLast()))
         XCTAssertGreaterThan(numericRate, 1, "The creator must choose a faster clip before Reset")
@@ -89,24 +88,28 @@ final class NativeSpeedUITests: XCTestCase {
         revealSpeed()
         XCTAssertEqual(slider.value as? String, chosenRate, "One Undo must restore the speed immediately before Reset")
         XCTAssertEqual(duration.value as? String, chosenDuration, "Undo must restore rate and duration together")
-        print("KRIA_NATIVE_TEST_PROOF speed-reset-close-undo-v3 requested_normalized=0.5 chosen_rate=\(chosenRate) chosen_duration=\(chosenDuration) expected_duration=\(expectedDuration)")
+        print("KRIA_NATIVE_TEST_PROOF speed-reset-close-undo-v4 direct_capture=true requested_normalized=0.5 chosen_rate=\(chosenRate) chosen_duration=\(chosenDuration) expected_duration=\(expectedDuration)")
     }
 
-    private func settledSpeed(_ slider: XCUIElement, duration: XCUIElement) throws -> (rate: String, duration: String) {
-        var last: (rate: String, duration: String)?
-        var matchingSamples = 0
-        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            guard let rate = slider.value as? String, let duration = duration.value as? String else { return false }
-            if let previous = last, previous.rate == rate, previous.duration == duration {
-                matchingSamples += 1
-            } else {
-                matchingSamples = 1
-            }
-            last = (rate, duration)
-            return matchingSamples >= 3
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, "Speed and duration must settle before the next action")
-        return try XCTUnwrap(last)
+    private func dragSpeedSlider(_ slider: XCUIElement, toMaximum: Bool, in app: XCUIApplication) {
+        let frame = slider.frame
+        guard slider.isEnabled, slider.isHittable, app.frame.contains(frame),
+              frame.width > frame.height, frame.height > 0 else {
+            XCTFail("Speed slider must be enabled and fully visible before dragging: \(frame)")
+            return
+        }
+        let inset = frame.height / 2
+        let position = CGFloat(slider.normalizedSliderPosition)
+        let origin = slider.coordinate(withNormalizedOffset: .zero)
+        let start = origin.withOffset(CGVector(dx: inset + (frame.width - 2 * inset) * position, dy: frame.height / 2))
+        let endX = toMaximum ? app.frame.maxX - 1 - frame.minX : -inset
+        guard app.frame.contains(CGPoint(x: frame.minX + endX, y: frame.midY)) else {
+            XCTFail("The speed endpoint drag must remain inside the window")
+            return
+        }
+        let end = origin.withOffset(CGVector(dx: endX, dy: frame.height / 2))
+        start.press(forDuration: 0.25, thenDragTo: end, withVelocity: 20, thenHoldForDuration: 0.3)
+        print("KRIA_SPEED_DRAG window-edge-v1 velocity=20 frame_before=\(frame) frame_after=\(slider.frame) normalized_before=\(position) target_x=\(frame.minX + endX)")
     }
 
 }

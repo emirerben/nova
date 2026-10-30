@@ -85,6 +85,7 @@ class PaidCallRequest:
     provider: str = "google"
     cached_behavior_available: bool = False
     price_version: str = PRICE_VERSION
+    capability: str | None = None
 
 
 def _month_start(now: datetime) -> datetime:
@@ -564,6 +565,7 @@ def reconcile_unknown_liability(
     from app.database import sync_engine  # noqa: PLC0415
 
     with sync_engine.begin() as conn:
+        _lock_credit_provider(conn, reservation_id=reservation_id)
         conn.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:scope,0))"),
             {"scope": "envelope:" + envelope},
@@ -620,15 +622,97 @@ def _override_total(conn: Any, scope: str, now: datetime) -> Decimal:
     return Decimal(str(value or 0))
 
 
+_GENERATED_CAPABILITIES = {
+    "generated_image": "image",
+    "generated_image_edit": "image",
+    "generated_narration": "narration",
+}
+_CREDIT_PROVIDERS = frozenset({"openai", "anthropic"})
+
+
+def _credit_capability(request: PaidCallRequest) -> str | None:
+    inferred = _GENERATED_CAPABILITIES.get(request.feature)
+    if (
+        inferred is None
+        and (request.ctx.usage_purpose or "").strip().lower() in _TEST_PURPOSES
+        and (request.provider, request.model)
+        in {("openai", "gpt-6.1-sol"), ("anthropic", "claude-sonnet-5-5")}
+    ):
+        inferred = "evaluation"
+    capability = request.capability or inferred
+    if capability is not None and (
+        capability not in {"image", "narration", "evaluation"}
+        or (inferred is not None and capability != inferred)
+        or request.provider not in _CREDIT_PROVIDERS
+        or (capability in {"image", "narration"} and request.provider != "openai")
+    ):
+        raise AiCostControlPolicyError(scope="credit:capability", reason="invalid_capability")
+    if capability in {"image", "narration"}:
+        enabled = (
+            settings.generated_images_enabled
+            if capability == "image"
+            else settings.generated_narration_enabled
+        )
+        if not enabled:
+            raise AiCostControlPolicyError(
+                scope=f"capability:{capability}", reason="generated_capability_disabled"
+            )
+    return capability
+
+
+def _lock_credit_provider(
+    conn: Any, *, provider: str | None = None, reservation_id: uuid.UUID | None = None
+) -> None:
+    if reservation_id is not None:
+        provider = conn.execute(
+            text("SELECT provider FROM ai_cost_reservations WHERE id = :id"),
+            {"id": str(reservation_id)},
+        ).scalar_one_or_none()
+    if provider in _CREDIT_PROVIDERS:
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:scope, 0))"),
+            {"scope": f"credit-provider:{provider}"},
+        )
+
+
+def _credit_spend(
+    conn: Any, *, provider: str, capability: str | None, period_start: datetime
+) -> Decimal:
+    value = conn.execute(
+        text("""
+            SELECT COALESCE(SUM(CASE
+                WHEN status = 'settled' THEN COALESCE(settled_cost_usd, estimated_cost_usd)
+                WHEN status IN ('provider_started', 'unknown') THEN estimated_cost_usd
+                WHEN status = 'reserved' AND expires_at > now() THEN estimated_cost_usd
+                ELSE 0 END), 0)
+            FROM ai_cost_reservations
+            WHERE provider = :provider AND period_start = :period_start
+              AND (:capability IS NULL OR
+                   CASE WHEN feature IN ('generated_image', 'generated_image_edit') THEN 'image'
+                        WHEN feature = 'generated_narration' THEN 'narration'
+                        WHEN usage_purpose IN ('live_eval', 'provider_smoke') AND
+                             ((provider = 'openai' AND requested_model = 'gpt-6.1-sol') OR
+                              (provider = 'anthropic' AND requested_model = 'claude-sonnet-5-5'))
+                        THEN 'evaluation'
+                        ELSE usage_json->>'_budget_capability' END = :capability)
+        """),
+        {"provider": provider, "period_start": period_start, "capability": capability},
+    ).scalar_one()
+    return Decimal(str(value))
+
+
 def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
     """Reserve a paid call or raise before provider contact.
 
-    Returns ``None`` while the rollout flag is off. Once enabled, any database
-    failure is a hard stop: a missing ledger must never become unmetered spend.
+    Legacy callers return ``None`` while the rollout flag is off. Generated media
+    always enforces reservations; a missing ledger never becomes unmetered spend.
     """
 
-    if not settings.ai_cost_control_enabled:
+    capability = _credit_capability(request)
+    if not settings.ai_cost_control_enabled and capability not in {"image", "narration"}:
         return None
+    if not math.isfinite(request.estimated_cost_usd) or request.estimated_cost_usd < 0:
+        raise AiCostControlPolicyError(scope="credit:estimate", reason="invalid_cost_estimate")
     now = datetime.now(UTC)
     environment = settings.ai_usage_environment
     estimate = max(0.000001, float(request.estimated_cost_usd))
@@ -639,6 +723,7 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
         from app.database import sync_engine  # noqa: PLC0415
 
         with sync_engine.begin() as conn:
+            _lock_credit_provider(conn, provider=request.provider)
             creator_id, job_id, session_id = _resolve_creator(conn, request.ctx)
             internal = _is_internal(conn, creator_id)
             purpose = (request.ctx.usage_purpose or "").strip().lower()
@@ -824,6 +909,30 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                     f"paid call {request.idempotency_key[:12]} already {existing['status']}"
                 )
 
+            if request.provider in _CREDIT_PROVIDERS:
+                budgets = [(None, getattr(settings, f"ai_{request.provider}_monthly_budget_usd"))]
+                if capability:
+                    budgets.append(
+                        (
+                            capability,
+                            getattr(settings, f"ai_{request.provider}_{capability}_budget_usd"),
+                        )
+                    )
+                for budget_capability, budget_limit in budgets:
+                    credit_spend = _credit_spend(
+                        conn,
+                        provider=request.provider,
+                        capability=budget_capability,
+                        period_start=period_start,
+                    )
+                    if credit_spend + Decimal(str(estimate)) > Decimal(str(budget_limit)):
+                        _reject(
+                            scope=f"provider:{request.provider}"
+                            + (f":capability:{budget_capability}" if budget_capability else ""),
+                            reset_at=reset_at,
+                            cached_behavior_available=request.cached_behavior_available,
+                        )
+
             base_cap = Decimal(str(_environment_cap(environment)))
             env_scope = f"environment:{environment}"
             limit = base_cap + _override_total(conn, env_scope, now)
@@ -954,6 +1063,9 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                 "canary_id": request.ctx.release_canary_id,
                 "estimate": estimate,
                 "price_version": request.price_version,
+                "budget_metadata": json.dumps(
+                    {"_budget_capability": capability} if capability else {}
+                ),
                 "period_start": period_start,
                 "expires_at": now + timedelta(seconds=settings.ai_reservation_ttl_seconds),
             }
@@ -971,7 +1083,8 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                             test_run_id = :test_run_id, release_canary_id = :canary_id,
                             estimated_cost_usd = :estimate, settled_cost_usd = NULL,
                             price_version = :price_version, provider_request_id = NULL,
-                            usage_json = NULL, period_start = :period_start,
+                            usage_json = CAST(:budget_metadata AS JSONB),
+                            period_start = :period_start,
                             expires_at = :expires_at, settled_at = NULL,
                             created_at = now(), updated_at = now()
                         WHERE id = :id
@@ -989,12 +1102,12 @@ def reserve_paid_call(request: PaidCallRequest) -> ReservationReceipt | None:
                             creator_agent_session_id, principal_type, test_run_id,
                             release_canary_id,
                             status, estimated_cost_usd, price_version, period_start,
-                            expires_at
+                            expires_at, usage_json
                         ) VALUES (
                             :id, :key, :environment, :purpose, :feature, :provider,
                             :model, :creator_id, :job_id, :session_id, :principal_type,
                             :test_run_id, :canary_id, 'reserved', :estimate, :price_version,
-                            :period_start, :expires_at
+                            :period_start, :expires_at, CAST(:budget_metadata AS JSONB)
                         )
                         """
                     ),
@@ -1029,6 +1142,7 @@ def settle_paid_call(receipt: ReservationReceipt | None, usage: UsageMeter) -> f
         from app.database import sync_engine  # noqa: PLC0415
 
         with sync_engine.begin() as conn:
+            _lock_credit_provider(conn, reservation_id=receipt.id)
             conn.execute(
                 text(
                     """
@@ -1036,7 +1150,11 @@ def settle_paid_call(receipt: ReservationReceipt | None, usage: UsageMeter) -> f
                         status = 'settled', settled_cost_usd = :cost,
                         resolved_model = :resolved_model,
                         provider_request_id = :provider_request_id,
-                        usage_json = CAST(:usage_json AS JSONB), settled_at = now(),
+                        usage_json = CAST(:usage_json AS JSONB) ||
+                            CASE WHEN usage_json ? '_budget_capability'
+                                 THEN jsonb_build_object(
+                                     '_budget_capability', usage_json->'_budget_capability')
+                                 ELSE '{}'::jsonb END, settled_at = now(),
                         updated_at = now()
                     WHERE id = :id AND status IN ('provider_started', 'unknown')
                     """
@@ -1085,6 +1203,7 @@ def settle_paid_call_cost(
         from app.database import sync_engine  # noqa: PLC0415
 
         with sync_engine.begin() as conn:
+            _lock_credit_provider(conn, reservation_id=receipt.id)
             conn.execute(
                 text(
                     """
@@ -1092,7 +1211,11 @@ def settle_paid_call_cost(
                         status = 'settled', settled_cost_usd = :cost,
                         resolved_model = :resolved_model,
                         provider_request_id = :provider_request_id,
-                        usage_json = CAST(:usage_json AS JSONB), settled_at = now(),
+                        usage_json = CAST(:usage_json AS JSONB) ||
+                            CASE WHEN usage_json ? '_budget_capability'
+                                 THEN jsonb_build_object(
+                                     '_budget_capability', usage_json->'_budget_capability')
+                                 ELSE '{}'::jsonb END, settled_at = now(),
                         updated_at = now()
                     WHERE id = :id AND status IN ('provider_started', 'unknown')
                     """
@@ -1127,6 +1250,7 @@ def _transition_reservation(
         from app.database import sync_engine  # noqa: PLC0415
 
         with sync_engine.begin() as conn:
+            _lock_credit_provider(conn, reservation_id=receipt.id)
             conn.execute(
                 text(
                     "UPDATE ai_cost_reservations SET status = :status, "
@@ -1170,11 +1294,14 @@ def mark_paid_call_started(receipt: ReservationReceipt | None) -> None:
         from app.database import sync_engine  # noqa: PLC0415
 
         with sync_engine.begin() as conn:
+            _lock_credit_provider(conn, reservation_id=receipt.id)
             result = conn.execute(
                 text(
                     "UPDATE ai_cost_reservations SET status = 'provider_started', "
                     "provider_started_at = now(), updated_at = now() "
-                    "WHERE id = :id AND status = 'reserved'"
+                    "WHERE id = :id AND status = 'reserved' "
+                    "AND (provider NOT IN ('openai', 'anthropic') "
+                    "OR expires_at > clock_timestamp())"
                 ),
                 {"id": str(receipt.id)},
             )

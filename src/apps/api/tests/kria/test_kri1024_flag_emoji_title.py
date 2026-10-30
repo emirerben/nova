@@ -237,7 +237,7 @@ def test_worker_still_refuses_text_no_phone_font_draws_and_names_it(
     assert "another font" not in message.casefold(), "no font can draw it: don't send them looking"
 
 
-def _preflight(monkeypatch: pytest.MonkeyPatch, title: str):
+def _preflight(monkeypatch: pytest.MonkeyPatch, title: str, requirement_kind: str = "text"):
     """The KRI-775 pre-approval check on the draft the creator approved at 16:26:22."""
     from app.services import phone_montage_preflight  # noqa: PLC0415
 
@@ -245,6 +245,9 @@ def _preflight(monkeypatch: pytest.MonkeyPatch, title: str):
     plan, candidates = job_inputs(title)
     binding = plan["creator_brief_binding"]
     brief = CreativeBrief.model_validate(binding["brief"])
+    for req in brief.requirements:
+        if req.id == "r5":
+            req.kind = requirement_kind
     with contextlib.ExitStack() as stack:
         from app.kria.reply_language import reply_language_for  # noqa: PLC0415
 
@@ -260,16 +263,21 @@ def _preflight(monkeypatch: pytest.MonkeyPatch, title: str):
         )
 
 
-def test_preflight_passes_the_flag_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    _brief, blockers = _preflight(monkeypatch, FLAG_TITLE)
+@pytest.mark.parametrize("requirement_kind", ["text", "text_sequence"])
+def test_preflight_passes_the_flag_title(
+    monkeypatch: pytest.MonkeyPatch, requirement_kind: str
+) -> None:
+    _brief, blockers = _preflight(monkeypatch, FLAG_TITLE, requirement_kind)
     assert blockers is not None, "the draft renders on the unified phone montage"
     assert [r.requirement_id for r in blockers if r.requirement_id == "r5"] == []
 
 
+@pytest.mark.parametrize("requirement_kind", ["text", "text_sequence"])
 def test_preflight_names_undrawable_text_before_the_approval_card(
     monkeypatch: pytest.MonkeyPatch,
+    requirement_kind: str,
 ) -> None:
-    brief, blockers = _preflight(monkeypatch, UNDRAWABLE_TITLE)
+    brief, blockers = _preflight(monkeypatch, UNDRAWABLE_TITLE, requirement_kind)
     assert [req.literal for req in brief.live() if req.id == "r5"] == [UNDRAWABLE_TITLE]
     by_id = {receipt.requirement_id: receipt for receipt in blockers or []}
     receipt = by_id.get("r5")
