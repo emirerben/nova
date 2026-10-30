@@ -2025,13 +2025,11 @@
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/tasks/test_kri1028_kept_line_window.py tests/tasks/test_leverkusen_m1_announcement_quote.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",
       "paths": [
-        "src/apps/api/app/kria/brief.py",
         "src/apps/api/app/kria/clip_sound_toggle_ask.py",
         "src/apps/api/app/kria/draft_sound_carry.py",
         "src/apps/api/app/pipeline/clip_sound_toggle.py",
         "src/apps/api/app/services/phone_clip_sound_toggle.py",
         "src/apps/api/app/services/kept_sound_lines.py",
-        "src/apps/api/app/services/spoken_quotes.py",
         "src/apps/api/tests/fixtures/kri942_donjulio_walkin_m1.json",
         "src/apps/api/tests/fixtures/kri1028_plaza_m1_recoleta.json",
         "src/apps/api/tests/fixtures/leverkusen_m1_train_announcement.json",
