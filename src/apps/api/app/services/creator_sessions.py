@@ -1389,6 +1389,17 @@ async def reconcile_render_state(db: AsyncSession, session: CreatorAgentSession)
         quality_review_enabled = (
             review_enabled and settings.main_creator_agent_quality_review_enabled
         )
+        if quality_review_enabled and settings.kria_intent_review_enabled:
+            canonical_runtime = await db.scalar(
+                select(CreationThread.id)
+                .where(
+                    CreationThread.active_creator_agent_session_id == session.id,
+                    CreationThread.runtime_version == 2,
+                )
+                .limit(1)
+            )
+            if canonical_runtime is not None:
+                return True
         if quality_review_enabled and session.target_variant_id and session.target_generation_id:
             from app.tasks.creator_quality_review import (  # noqa: PLC0415
                 queue_creator_quality_review,

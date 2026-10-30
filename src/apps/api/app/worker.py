@@ -68,6 +68,7 @@ celery_app = Celery(
         "app.tasks.creator_quality_review",
         "app.tasks.creator_workspace",
         "app.tasks.kria_runtime",
+        "app.tasks.render_review",
         "app.tasks.kria_clip_understanding",
         "app.tasks.kria_suggester",
         "app.tasks.user_song",

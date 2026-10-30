@@ -51,3 +51,16 @@ Phone acceptance must separately prove the intended TestFlight binary, backend r
 ## First-unit evidence
 
 The read-only packet unit passes 20 tests, independently repeated, including real PostgreSQL runtime drafting, approval, prepared execution and native recipe preparation before capture. Capture leaves persisted state unchanged. Publication and byte-verifier receipts in that test are synthetic internal inputs, not an exported-file or direct visual-review claim. The canonical producer hook, #1939 verifier adapter, initial-render adapter, actual media extraction/provider transport and native result acceptance remain open.
+
+
+## Canonical evidence admission implementation
+
+The `codex/intent-review-runtime` follow-up implements steps 2 and 3 behind `KRIA_INTENT_REVIEW_ENABLED`, default off. It consumes #1939's existing generation-bound publication proof rather than duplicating its verifier. Both editor and initial strategy approvals resolve their exact prepared execution, approved binding, recipe, published attempt and final persisted dispatch settings. No current-state substitution is allowed.
+
+The successful observer transaction records a pending admission demand before its fallible admission savepoint. Bounded reconciliation recovers a lost outbox insert or broker publication. Ownership or generation changes make the work stale. Three attempts, expiring worker leases and unique generation identities bound recovery. Publish attempts rotate by a durable timestamp so an undrained or failing broker cannot starve newer entries behind the first batch. Missing native metadata reports advisory unavailability without blocking readiness. Evidence extraction runs without database locks; a final locked input-digest check rejects state changed during decoding. The finished video stays playable regardless of review availability.
+
+The artifact adapter reads the exact storage generation and checks actual streamed size and SHA-256 against publication proof. A nonroot Linux child applies hard memory, CPU, file, descriptor and process limits before FFmpeg/FFprobe. Parent output and wall time are bounded, external MOV references are disabled, and process groups are cleaned up. At most six JPEG frames retain artifact hashes and timestamps. Unsupported platforms fail closed before reading storage. This is headless analysis of an existing native export, not server final rendering.
+
+The durable result is `evidence_ready`, never `reviewed` or `fixed`. No provider receives these frames yet. Provider media transport, pricing/reservation, typed findings, instruction-preserving repair authority, native correction previews and phone acceptance remain open. Existing paid gates and budgets are unchanged.
+
+Portable author qualification passes 149 tests, including actual PostgreSQL observer, admission faults, reconciliation, ownership, duplicate, lease and dispatch-setting controls. Six frame integration cases were deliberately deselected on Darwin. Full decoder qualification, including actual Linux hard-limit controls, is pending the existing Ubuntu free-regression workflow. Historical Mac decoder results do not qualify this hardened version.

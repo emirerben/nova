@@ -162,6 +162,21 @@ ALLOWED: dict[str, tuple[str, str, frozenset[str] | None]] = {
     "services/slide_post_chat_edit.py": ("plan_time", "slide chat edit (own plan)", None),
     "tasks/edit_proposal_build.py": ("plan_time", "guided proposal drafting", None),
     # --- carry -----------------------------------------------------------------------------------
+    "kria/initial_render_review_authority.py": (
+        "carry",
+        "Checks pinned request identity without prose interpretation or output changes.",
+        frozenset({"resolve_initial_render_authority"}),
+    ),
+    "kria/render_review_context.py": (
+        "carry",
+        "Copies approved request into immutable review context; no render decisions.",
+        frozenset({"build_render_review_context"}),
+    ),
+    "services/render_review_admission.py": (
+        "carry",
+        "Copies request and dispatch settings into read-only admission; no prose routing.",
+        frozenset({"_inputs"}),
+    ),
     "services/generative_jobs.py": (
         "carry",
         "stores creator_request on the job; derives the caption LANGUAGE request from it "

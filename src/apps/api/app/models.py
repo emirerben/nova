@@ -2052,6 +2052,13 @@ class CreatorAgentExecution(Base):
         UniqueConstraint(
             "session_id", "idempotency_key", name="uq_creator_agent_executions_idempotency"
         ),
+        Index(
+            "idx_creator_executions_pending_review_admission",
+            "completed_at",
+            postgresql_where=text(
+                "status = 'completed' AND result->'intent_review_admission'->>'status' = 'pending'"
+            ),
+        ),
         Index("idx_creator_agent_executions_session_created", "session_id", "created_at"),
         Index(
             "idx_creator_agent_executions_turn_order",
@@ -4641,4 +4648,51 @@ class NativeActivity(Base):
             name="ck_native_activity_target",
         ),
         Index("idx_native_activity_owner_created", "owner_id", "created_at", "id"),
+    )
+
+
+class CreatorGenerationReview(Base):
+    """Durable advisory evidence outbox; never grants a model call or edit."""
+
+    __tablename__ = "creator_generation_reviews"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    execution_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("creator_agent_executions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    review_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    input_digest: Mapped[str] = mapped_column(Text, nullable=False)
+    inputs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_token: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    last_publish_attempt_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','running','evidence_ready','unavailable','stale','exhausted')",
+            name="ck_generation_review_status",
+        ),
+        CheckConstraint("attempts >= 0 AND attempts <= 3", name="ck_generation_review_attempts"),
+        CheckConstraint(
+            "octet_length(inputs::text) <= 2097152", name="ck_generation_review_inputs"
+        ),
+        CheckConstraint(
+            "result IS NULL OR octet_length(result::text) <= 4194304",
+            name="ck_generation_review_result",
+        ),
+        Index("ix_generation_review_pending", "status", "lease_until"),
+        Index("ix_generation_review_publish_order", "last_publish_attempt_at", "created_at"),
+        Index("ix_generation_review_execution", "execution_id"),
+        Index("ix_generation_review_owner", "owner_id"),
     )

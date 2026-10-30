@@ -2397,6 +2397,26 @@
         "src/apps/ios/Tests/KriaTests/NotificationAtomicSessionTests.swift",
         "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift"
       ]
+    },
+    {
+      "id": "canonical-generation-intent-review",
+      "needs_native": false,
+      "api_tests": "tests/services/test_render_review_evidence.py tests/kria/test_render_review_context.py tests/kria/test_render_review_context_postgres.py tests/kria/test_render_review_admission.py tests/kria/test_render_review_admission_postgres.py tests/kria/test_initial_render_review_authority_postgres.py tests/kria/test_initial_render_review_admission_postgres.py",
+      "paths": [
+        "src/apps/api/app/kria/render_review_context.py",
+        "src/apps/api/app/kria/initial_render_review_authority.py",
+        "src/apps/api/app/migrations/versions/0129_generation_reviews.py",
+        "src/apps/api/app/services/render_review_admission.py",
+        "src/apps/api/app/services/render_review_evidence.py",
+        "src/apps/api/app/tasks/render_review.py",
+        "src/apps/api/tests/services/test_render_review_evidence.py",
+        "src/apps/api/tests/kria/test_render_review_context.py",
+        "src/apps/api/tests/kria/test_render_review_context_postgres.py",
+        "src/apps/api/tests/kria/test_render_review_admission.py",
+        "src/apps/api/tests/kria/test_render_review_admission_postgres.py",
+        "src/apps/api/tests/kria/test_initial_render_review_authority_postgres.py",
+        "src/apps/api/tests/kria/test_initial_render_review_admission_postgres.py"
+      ]
     }
   ]
 }

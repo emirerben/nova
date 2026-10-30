@@ -729,6 +729,7 @@ class Settings(BaseSettings):
     # runtime_version=1 project remain available when this is false; the new
     # durable turn/approval endpoints deliberately fail closed as 404.
     kria_runtime_v2_enabled: bool = False
+    kria_intent_review_enabled: bool = False
     # KRI-520: Kria replies in the chat's language (Turkish or English). The chat's
     # language comes from the creator's own messages, then the device language; server
     # copy and the Main Creator/copilot prompts follow it. Default TRUE; kill switch =
