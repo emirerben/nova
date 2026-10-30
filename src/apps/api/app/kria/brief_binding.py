@@ -160,7 +160,23 @@ class BriefBinding(BaseModel):
         return self.brief.model_copy(deep=True) if self.brief is not None else None
 
 
-def snapshot_media(item: object) -> dict:
+# KRI-1069: the snapshot key listing the item's Visuals-pool media beside its clips.
+SNAPSHOT_VISUALS_KEY = "visuals"
+
+
+def snapshot_visual(asset: object) -> dict:
+    """One Visuals-pool row (``PlanItemAsset``) as the snapshot keeps it: its manifest id,
+    kind, capture context and the file name the app shows."""
+    capture = getattr(asset, "capture", None)
+    return {
+        "media_id": f"asset-{getattr(asset, 'id', '')}",
+        "kind": getattr(asset, "kind", None),
+        "capture": dict(capture) if isinstance(capture, dict) and capture else None,
+        "source_filename": getattr(asset, "source_filename", None),
+    }
+
+
+def snapshot_media(item: object, *, visuals: list | None = None) -> dict:
     """Keep the approved source identities AND analysis, in the existing draft/job.
 
     Analysis answers may be enriched later, but cannot replace evidence used by an
@@ -168,9 +184,18 @@ def snapshot_media(item: object) -> dict:
     from a client.  The scalar durations are the attach-time probes; song
     analysis supplies the same song duration plus authoritative lyric/section
     timing when the analysis is ready.  No output target is used as a fallback.
+
+    ``visuals`` (KRI-1069) are the item's Visuals-pool rows: each is kept with its own
+    capture time (``snapshot_visual``), so a filming-order promise can date a selected
+    photo like a clip. ``None`` (the default) leaves the key out, byte-identical.
     """
     voiceover_duration_s = getattr(item, "voiceover_duration_s", None)
     song_duration_s = getattr(item, "song_duration_s", None)
+    extra = (
+        {SNAPSHOT_VISUALS_KEY: [snapshot_visual(row) for row in visuals]}
+        if visuals is not None
+        else {}
+    )
     return copy.deepcopy(
         {
             "clip_paths": list(getattr(item, "clip_gcs_paths", None) or []),
@@ -192,6 +217,7 @@ def snapshot_media(item: object) -> dict:
             # SongAlignment records server-resolved per-take song positions.
             "song_analysis": getattr(item, "song_analysis", None),
             "song_alignment": getattr(item, "song_alignment", None),
+            **extra,
         }
     )
 

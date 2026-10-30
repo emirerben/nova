@@ -22,6 +22,7 @@ from __future__ import annotations
 import unicodedata
 from typing import Any
 
+from app.agents._schemas.text_animation_phases import phases_patch
 from app.agents.editor_ops_v2 import OpSpec, is_v2_snapshot
 from app.kria.reply_language import say
 
@@ -56,7 +57,7 @@ def coerce_text_patch(patch: object, state: Any) -> dict[str, Any] | None:
         _as_float,
         _coerce_patch,
     )
-    from app.services.kria_editor_ops_text import EXTRA_PATCH_FIELDS, PHASE_KEYS  # noqa: PLC0415
+    from app.services.kria_editor_ops_text import EXTRA_PATCH_FIELDS  # noqa: PLC0415
 
     if not isinstance(patch, dict) or not patch:
         state.invalid_value()
@@ -96,20 +97,11 @@ def coerce_text_patch(patch: object, state: Any) -> dict[str, Any] | None:
             return None
         clean["behind_subject"] = patch["behind_subject"]
     if "animation_phases" in patch:
-        phases = patch["animation_phases"]
-        if not isinstance(phases, dict) or not phases or set(phases) - PHASE_KEYS:
+        phases = phases_patch(patch["animation_phases"])
+        if phases is None:
             state.invalid_value()
             return None
-        from app.agents._schemas.text_animation_phases import (  # noqa: PLC0415
-            TextAnimationPhases,
-        )
-
-        try:
-            TextAnimationPhases(**phases)
-        except Exception:  # noqa: BLE001
-            state.invalid_value()
-            return None
-        clean["animation_phases"] = dict(phases)
+        clean["animation_phases"] = phases
     return clean or None
 
 

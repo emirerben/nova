@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-29-v103"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-30-v105"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -558,16 +558,7 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
     prompt_manifest = agent_input.capability_manifest.model_dump_json(
         exclude_none=True, exclude={"narration": True}
     )
-    expected = Template(raw_without_slot).safe_substitute(
-        creator_context=agent_input.creator_context or "(not available)",
-        creator_direction=agent_input.creator_direction or "(none)",
-        item_context=agent_input.item_context or "(not available)",
-        media_context=json_module.dumps(agent_input.media_context, ensure_ascii=False),
-        capability_manifest=prompt_manifest,
-        conversation=json_module.dumps(agent_input.conversation, ensure_ascii=False),
-        creator_request=agent_input.creator_request or agent_input.user_message,
-        user_message=agent_input.user_message,
-        creative_copy_state=json_module.dumps(agent_input.creative_copy_state, ensure_ascii=False),
+    rules = Template(raw_without_slot).safe_substitute(
         clip_intents_section=(
             main_creator_module._CLIP_INTENTS_PROMPT_SECTION
             if settings.clip_intents_enabled
@@ -581,9 +572,21 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
             if main_creator_module._story_shapes_available(agent_input.capability_manifest)
             else ""
         ),
+    )
+    turn = Template(_get_raw("main_creator_turn")).safe_substitute(
+        creator_context=agent_input.creator_context or "(not available)",
+        creator_direction=agent_input.creator_direction or "(none)",
+        item_context=agent_input.item_context or "(not available)",
+        media_context=json_module.dumps(agent_input.media_context, ensure_ascii=False),
+        capability_manifest=prompt_manifest,
+        conversation=json_module.dumps(agent_input.conversation, ensure_ascii=False),
+        creator_request=agent_input.creator_request or agent_input.user_message,
+        user_message=agent_input.user_message,
+        creative_copy_state=json_module.dumps(agent_input.creative_copy_state, ensure_ascii=False),
         # KRI-189: no clip carries facts, so the slot renders empty.
         clip_facts_note="",
     )
+    expected = rules.rstrip("\n") + "\n\n" + turn
     skills = (
         main_creator_module.load_skill("edit-story")
         + "\n\n"

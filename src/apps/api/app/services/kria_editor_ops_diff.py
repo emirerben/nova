@@ -23,6 +23,10 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+from app.agents._schemas.text_animation_phases import (
+    LEGACY_EFFECT_ENTRANCE,
+    TEXT_ANIMATION_VOCAB,
+)
 from app.kria.reply_language import say
 
 # --------------------------------------------------------------------------- vocabulary
@@ -30,14 +34,6 @@ from app.kria.reply_language import say
 _FACE_WORDS = re.compile(
     r"[\s\-_]+(regular|medium|semibold|bold|extrabold|black|light|italic)$", re.IGNORECASE
 )
-_LEGACY_EFFECT_ENTRANCE = {
-    "static": "none",
-    "none": "none",
-    "fade-in": "fade",
-    "pop-in": "pop",
-    "slide-in": "slide",
-    "typewriter": "typewriter",
-}
 # Style keys compared as-is (after rounding); each is its own diff field.
 _PLAIN_STYLE_KEYS = (
     "alignment",
@@ -176,7 +172,7 @@ def effective_entrance(row: Mapping[str, Any]) -> str | None:
         entrance = phases.get("entrance")
         return entrance if isinstance(entrance, str) else None
     effect = row.get("effect")
-    return _LEGACY_EFFECT_ENTRANCE.get(effect) if effect is not None else "none"
+    return LEGACY_EFFECT_ENTRANCE.get(effect) if effect is not None else "none"
 
 
 def _phase(row: Mapping[str, Any], key: str) -> Any:
@@ -530,13 +526,18 @@ def _slot_entries(before: BeforeState, state: Any) -> list[DiffEntry]:
     return entries
 
 
-def _by_id_entries(lane: str, label: str, old: list[dict], new: list[dict]) -> list[DiffEntry]:
+def _by_id_entries(
+    lane: str, label: str, old: list[dict], new: list[dict], *, ignore: frozenset[str] = frozenset()
+) -> list[DiffEntry]:
     def key(row: Mapping[str, Any], index: int) -> str:
         rid = row.get("id")
         return rid if isinstance(rid, str) and rid else f"#{index}"
 
-    before = {key(r, i): r for i, r in enumerate(old) if isinstance(r, dict)}
-    after = {key(r, i): r for i, r in enumerate(new) if isinstance(r, dict)}
+    def kept(row: dict) -> dict:
+        return {k: v for k, v in row.items() if k not in ignore}
+
+    before = {key(r, i): kept(r) for i, r in enumerate(old) if isinstance(r, dict)}
+    after = {key(r, i): kept(r) for i, r in enumerate(new) if isinstance(r, dict)}
     out: list[DiffEntry] = []
     for name, ids in (
         ("added", [k for k in after if k not in before]),
@@ -576,7 +577,15 @@ def diff_compiled_state(
         ("slots", lambda: _slot_entries(before, state)),
         (
             "captions",
-            lambda: _by_id_entries("captions", "caption", before.captions, state.captions),
+            # A line's own animation is cleared only by the all-captions animation, which
+            # the caption_meta entry already names.
+            lambda: _by_id_entries(
+                "captions",
+                "caption",
+                before.captions,
+                state.captions,
+                ignore=frozenset({"animation_phases"}),
+            ),
         ),
         (
             "camera",
@@ -643,11 +652,12 @@ def diff_compiled_state(
         if entry is not None:
             entries.append(entry)
     for key, value in (state.caption_patch or {}).items():
+        stored = variant.get("captions_enabled" if key == "enabled" else f"caption_{key}")
         entries.append(
             DiffEntry(
                 "caption_meta",
                 str(key),
-                (DiffTarget(str(key), "captions", None, "captions", None, value),),
+                (DiffTarget(str(key), "captions", None, "captions", stored, value),),
             )
         )
     if state.visual_blocks is not None and "visual_media" in state.changed:
@@ -722,13 +732,13 @@ def describe_targets(entry: DiffEntry, live_text_count: int) -> str:
     return _plural(count, "text", "yazı")
 
 
+# A legacy edge keeps the name of the `effect` it replaced ("a fade-in"); the rest use their label.
 _ENTRANCE_EN = {
-    "fade": "a fade-in",
-    "pop": "a pop-in",
-    "slide": "a slide-in",
-    "typewriter": "a typewriter",
+    edge: f"a {vocab.label}" for edge, vocab in TEXT_ANIMATION_VOCAB.items() if edge != "none"
+} | {edge: f"a {effect}" for effect, edge in LEGACY_EFFECT_ENTRANCE.items() if edge != "none"}
+_ENTRANCE_TR = {
+    edge: vocab.label_tr for edge, vocab in TEXT_ANIMATION_VOCAB.items() if edge != "none"
 }
-_ENTRANCE_TR = {"fade": "solma", "pop": "pop", "slide": "kayma", "typewriter": "daktilo"}
 _CASE_EN = {
     "upper": "UPPERCASE",
     "lower": "lowercase",
@@ -929,6 +939,18 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
         if after:
             return say(en="Added a shadow to the captions", tr="Altyazılara gölge eklendi")
         return say(en="Removed the caption shadow", tr="Altyazı gölgesi kaldırıldı")
+    if name == "animation_phases" and isinstance(after, dict):
+        before = entry.targets[0].before
+        entrance = str(after.get("entrance"))
+        if all(after.get(phase) in (None, "none") for phase in ("entrance", "exit", "loop")):
+            return say(en="Removed the caption animation", tr="Altyazı animasyonu kaldırıldı")
+        vocab = TEXT_ANIMATION_VOCAB.get(entrance) if entrance != "none" else None
+        prior = before.get("entrance") if isinstance(before, dict) else None
+        if vocab is not None and prior != entrance:
+            return say(
+                en=f"Captions now enter with {vocab.label}",
+                tr=f"Altyazılar artık {vocab.label_tr} ile giriyor",
+            )
     if name in _CAPTION_META_WORDS:
         en, tr = _CAPTION_META_WORDS[name]
         return say(en=en, tr=tr)

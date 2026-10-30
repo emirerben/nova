@@ -20,6 +20,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
 from app.agents._schemas.text_element import _HEX_COLOR_RE
 from app.kria.brief import (
     BriefRequirement,
@@ -80,11 +81,10 @@ _TRANSITION_WORD = re.compile(r"\b(transitions?|between|crossfade\w*|gecis\w*)\b
 _TEXT_CUE = re.compile(
     r"\b(texts?|fonts?|colou?rs?|captions?|titles?|labels?|yazi\w*|renk\w*|baslik\w*|etiket\w*)\b"
 )
-_ENTRANCE = (
-    ("typewriter", re.compile(r"\b(type ?writer|daktilo)\b")),
-    ("fade", re.compile(r"\b(fade|fades|fading|solma)\b")),
-    ("pop", re.compile(r"\bpop(?: ?in| animation| effect)\b|\bpop in\b")),
-    ("slide", re.compile(r"\bslide(?: ?in| ?up| ?down| animation)\b|\bkayma\b")),
+_ENTRANCE = tuple(
+    (edge, re.compile(rf"\b({edge_alias_pattern([edge])})\b"))
+    for edge, vocab in TEXT_ANIMATION_VOCAB.items()
+    if vocab.aliases
 )
 _CASE = (
     ("upper", re.compile(r"\b(upper ?case|all caps|capital letters|buyuk harf\w*)\b")),
