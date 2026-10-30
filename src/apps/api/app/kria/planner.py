@@ -130,6 +130,11 @@ from app.schemas.edit_proposal import (
     MixedMediaTimingProfile,
     PinnedText,
 )
+from app.schemas.story_intents import (
+    RejectedClipSelection,
+    SelectionReconciliation,
+    StoryIntentRefs,
+)
 from app.schemas.user_song import (
     SONG_ALIGNMENT_VERSION,
     SONG_ORDER_ANSWER_KEY,
@@ -239,6 +244,7 @@ from app.services.spoken_quotes import (
     transcribe_stored_quote,
 )
 from app.services.spoken_roles import SpokenSeats
+from app.services.story_intent_reconciliation import reconcile_story_intents
 
 log = structlog.get_logger()
 
@@ -1010,6 +1016,9 @@ def adapt_creator_action(
     server_resolved_song_takes: list[dict[str, Any]] | None = None,
     server_song_captions: str | None = None,
     ordering_choice: str | None = None,
+    server_rejected_selections: Sequence[RejectedClipSelection] = (),
+    server_checked_intents: Sequence[ClipIntent] = (),
+    server_story_refs: StoryIntentRefs | None = None,
 ) -> KriaTurnPlan:
     """``server_resolved_song_takes`` (KRI-374) is the ONLY way ``resolved_song_takes``
     survives into the draft: it is server-owned (the song-order gate writes it after the
@@ -1084,7 +1093,37 @@ def adapt_creator_action(
             if intent.label_source == "transcript"
         ]
     )
+    reconciled_story = list(action.strategy.story_structure)
+    selection_reconciliation = None
+    if server_rejected_selections:
+        result = reconcile_story_intents(
+            reconciled_story,
+            refs=server_story_refs,
+            checked_intents=server_checked_intents,
+            rejected_intents=[selection.intent for selection in server_rejected_selections],
+        )
+        unresolved = result.status == "unresolved"
+        selection_reconciliation = SelectionReconciliation(
+            rejected_selections=tuple(server_rejected_selections),
+            status="unresolved" if unresolved else "reconciled",
+            unresolved_story_rows=tuple(reconciled_story) if unresolved else (),
+            story_refs=result.refs,
+        )
+        reconciled_story = [] if unresolved else list(result.rows)
+        omitted = ", ".join(selection.intent.attribute for selection in server_rejected_selections)
+        summary = say(
+            en=f"I left out {omitted} based on your clip answer.",
+            tr=f"Klip yanıtına göre {omitted} bölümünü çıkardım.",
+        )
+        if unresolved:
+            summary += " " + say(
+                en="The earlier story outline is saved for review and is not part of this plan.",
+                tr="Önceki hikâye taslağı inceleme için saklandı ve bu planın parçası değil.",
+            )
     strategy_update = {
+        "story_structure": reconciled_story,
+        "selection_reconciliation": selection_reconciliation,
+        **({"rationale": summary} if selection_reconciliation else {}),
         "clip_intents": requested_intents or None,
         "resolved_clip_intents": server_resolved_clip_intents or None,
         "resolved_song_takes": server_resolved_song_takes or None,

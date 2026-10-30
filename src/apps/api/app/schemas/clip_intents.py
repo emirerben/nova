@@ -243,6 +243,13 @@ class ClipIntent(BaseModel):
     # Free text, the creator's own framing: "sport being played", "pub videos",
     # "people not playing sports", "me talking to the camera", "dish".
     attribute: str = Field(min_length=1, max_length=160)
+    source_kind: Literal["video", "image"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    def accepts_source_kind(self, kind: str) -> bool:
+        return self.source_kind is None or self.source_kind == kind
+
     # Transcript labels are resolved only against the pinned narration and final
     # timeline, never by the visual resolver. The kind selects an existing
     # deterministic narration grammar, not model-authored on-screen copy.

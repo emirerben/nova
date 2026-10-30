@@ -56,7 +56,7 @@ from app.services.clip_intent_resolution import (
     picker_eligible,
     resolve_clip_intents_for_turn,
 )
-from app.services.clip_selection import ClipSelections
+from app.services.clip_selection import ClipSelections, RejectedClipSelection
 from app.services.clip_understanding import clip_record, understanding_incomplete
 from app.services.creator_label_reply import (
     LabelTextReply,
@@ -85,6 +85,8 @@ class PlannedIntentResolution:
     # KRI-950: the planner's checked list (`_checked_inventory`), set when planning passed and
     # the resolver ran, so a turn that ends on a clip picker can keep it for the tap.
     inventory: dict[str, Any] | None = None
+    checked_intents: tuple[ClipIntent, ...] = ()
+    rejected_selections: tuple[RejectedClipSelection, ...] = ()
 
 
 # KRI-950: the record a picker turn keeps (`KriaTurnPlan.clip_intent_inventory`). A planner
@@ -212,6 +214,7 @@ def resolve_order_by_intent(intent: ClipIntent, clips: list[IntentClip]) -> Reso
                 confidence=1.0,
             )
             for clip in clips
+            if intent.accepts_source_kind(clip.kind)
         ],
     )
 
@@ -240,9 +243,23 @@ def with_clip_descriptions(intents: list[ClipIntent]) -> list[ClipIntent]:
     as context. Such a caption is replaced by the label and a missing label is added; a
     description label the planner already wrote is kept as it is.
     """
-    has_label = any(is_clip_description_label(intent) for intent in intents)
+    intents = [
+        intent.model_copy(
+            update={
+                "op": "label",
+                "attribute": CLIP_DESCRIPTION_ATTRIBUTE,
+                "caption_attribute": None,
+            }
+        )
+        if intent.source_kind is not None and _caption_asking_description(intent)
+        else intent
+        for intent in intents
+    ]
+    descriptions = [intent for intent in intents if is_clip_description_label(intent)]
+    has_global_label = any(intent.source_kind is None for intent in descriptions)
+    has_global_caption = any(_caption_asking_description(intent) for intent in intents)
     kept = [intent for intent in intents if not _caption_asking_description(intent)]
-    if has_label:
+    if has_global_label or (descriptions and not has_global_caption):
         return kept
     if len(kept) >= MAX_CLIP_INTENTS:
         return intents
@@ -438,6 +455,7 @@ def with_labels_kept_as_written(
                 intent_id=intent.intent_id,
                 op="caption",
                 attribute=intent.attribute,
+                source_kind=intent.source_kind,
                 creator_text=text,
             )
         kept.append(intent)
@@ -826,6 +844,22 @@ def _settle(
     evidence: str,
 ) -> ResolvedClipIntent | None:
     """``intent`` resolved on exactly these clips, or None when its text cannot be grounded."""
+    if any(not intent.accepts_source_kind(by_id[m].kind) for m in media_ids):
+        return ResolvedClipIntent(
+            **intent.model_dump(),
+            status="needs_creator",
+            assignments=[],
+            question=say(
+                en=(
+                    "Your chosen clip differs from the source type you requested. "
+                    "Please confirm the source type or change the clip choice."
+                ),
+                tr=(
+                    "Seçtiğin klip istediğin kaynak türünden farklı. "
+                    "Lütfen kaynak türünü onayla veya klip seçimini değiştir."
+                ),
+            ),
+        )
     assignments = _selected_assignments(
         intent, media_ids, by_id, creator_request, evidence=evidence
     )
@@ -932,6 +966,7 @@ def _inventory_with_matches(
             "op": intent.op,
             "attribute": intent.attribute,
             "position": intent.position,
+            **({"source_kind": intent.source_kind} if intent.source_kind is not None else {}),
             "assignments": [
                 {"media_id": a.media_id, "confidence": a.confidence, "evidence": a.evidence}
                 for a in intent.assignments
@@ -960,7 +995,7 @@ def carried_matches(
     rows = saved.get("matches") if isinstance(saved, Mapping) else None
     if not isinstance(rows, list):
         return []
-    attached = {clip.media_id for clip in clips}
+    attached = {clip.media_id: clip for clip in clips}
     out: list[ResolvedClipIntent] = []
     for intent in intents:
         row = next(
@@ -970,6 +1005,7 @@ def carried_matches(
         if (
             row is None
             or intent.op not in _CARRIED_OPS
+            or row.get("source_kind") != intent.source_kind
             or (row.get("op"), row.get("attribute"), row.get("position"))
             != (intent.op, intent.attribute, intent.position)
         ):
@@ -983,6 +1019,7 @@ def carried_matches(
                 )
                 for a in row.get("assignments") or []
                 if a.get("media_id") in attached
+                and intent.accepts_source_kind(attached[a["media_id"]].kind)
             ]
         except (KeyError, TypeError, ValidationError):
             continue
@@ -1223,6 +1260,17 @@ async def plan_and_resolve_clip_intents(
     resolved_orders = [resolve_order_by_intent(intent, clips) for intent in order_by_intents]
     # KRI-282: the creator's tapped clips are authoritative for the intents they answer.
     # Fact-ordered intents stay deterministic and are never matched to a selection.
+    checked_intents = tuple(intent.model_copy(deep=True) for intent in intents)
+    rejected_selections = clip_selections.rejected(visual_intents) if clip_selections else ()
+
+    def selected_result(*args, **kwargs) -> PlannedIntentResolution:
+        return PlannedIntentResolution(
+            *args,
+            **kwargs,
+            checked_intents=checked_intents,
+            rejected_selections=rejected_selections,
+        )
+
     selected, visual_intents, dropped_ids = apply_creator_selections(
         visual_intents, clips=clips, selections=clip_selections, creator_request=creator_request
     )
@@ -1257,18 +1305,30 @@ async def plan_and_resolve_clip_intents(
             for piece in split.get(intent.intent_id, [intent])
         ]
     resolved_orders = [*selected, *named, *kept, *resolved_orders]
+    conflicts = [intent for intent in resolved_orders if intent.status == "needs_creator"]
+    if conflicts:
+        return selected_result(
+            intents,
+            IntentResolution(
+                intents=_as_listed(resolved_orders, intents),
+                status="needs_creator",
+                question=conflicts[0].question,
+                error_code="source_kind_conflict",
+            ),
+            inventory=inventory,
+        )
     # Transcript labels are fulfilled later from the pinned narration and
     # final timeline. They remain in the complete requested inventory, but
     # must never enter the vision resolver.
     if not visual_intents:
         if resolved_orders:
-            return PlannedIntentResolution(
+            return selected_result(
                 intents,
                 IntentResolution(intents=_as_listed(resolved_orders, intents)),
                 dropped_exclusions=dropped_exclusions,
                 inventory=inventory,
             )
-        return PlannedIntentResolution(
+        return selected_result(
             intents, IntentResolution(), dropped_exclusions=dropped_exclusions, inventory=inventory
         )
     if require_clip_understanding:
@@ -1297,7 +1357,7 @@ async def plan_and_resolve_clip_intents(
             )
             unanalysed = _unanalysed(clips)
         if unanalysed:
-            return PlannedIntentResolution(
+            return selected_result(
                 intents,
                 IntentResolution(
                     status="pending",
@@ -1362,7 +1422,7 @@ async def plan_and_resolve_clip_intents(
         resolution = replace(
             resolution, intents=_as_listed([*resolution.intents, *resolved_orders], intents)
         )
-    return PlannedIntentResolution(
+    return selected_result(
         intents,
         resolution,
         dropped_exclusions=dropped_exclusions,

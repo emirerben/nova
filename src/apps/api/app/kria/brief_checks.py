@@ -88,6 +88,7 @@ from app.services.clip_order_sequence import (
     unconfirmed_order_groups,
     unconfirmed_order_reason,
 )
+from app.services.creator_omissions import creator_omission_outcomes
 from app.services.kria_editor_ops_diff import effective_entrance
 from app.services.length_policy import (
     creator_duration_satisfied,
@@ -1009,6 +1010,7 @@ def plan_facts_from_strategy(
             str(c) for c in (strategy.get("ordering_fallback_clip_ids") or [])
         ),
         sequence_conflicts=_strategy_sequence_conflicts(strategy),
+        sequence_unlocated=tuple(row["code"] for row in creator_omission_outcomes(strategy)),
         sequence_unconfirmed=tuple(
             sorted(
                 name
@@ -2982,6 +2984,13 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
         )
     mode = order_mode(req)
     if mode == "any":
+        if facts.sequence_unlocated:
+            reason = (
+                _MOMENTS_NOT_LOCATED
+                if "not_located" in facts.sequence_unlocated
+                else _MOMENTS_CREATOR_CALL
+            )
+            return _receipt(req, "partial", say(en=reason, tr=_REASON_TR[reason]))
         return _receipt(req, "met", None)  # any order is the order they asked for
     if mode == "random":
         return _check_random_order(req, facts)
