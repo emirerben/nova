@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.18.0] - 2026-10-30
+
+### Fixed
+- fix(kria): date selected Visuals photos in a filming-order montage (KRI-1069) (#1965) <!-- release-pr: 1965 -->
+
 ## [0.83.17.0] - 2026-10-30
 
 ### Added
