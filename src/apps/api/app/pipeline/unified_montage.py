@@ -115,6 +115,7 @@ from app.services.clip_order_sequence import (
     sequence_rows,
     unconfirmed_order_groups,
 )
+from app.services.creator_omissions import creator_omission_outcomes
 from app.services.length_policy import natural_length_owner
 from app.services.order_mode import order_mode, seeded_permutation
 from app.services.order_mode import random_order_seed as order_seed_of
@@ -1708,6 +1709,7 @@ def plan_unified_montage(
     """
     view = view or BriefView()
     strategy = strategy or {}
+    creator_omissions = creator_omission_outcomes(strategy)
     if (
         view.version is not None
         and view.title_literal
@@ -2552,7 +2554,8 @@ def plan_unified_montage(
             cuts=[(ref_of[cut.media_id], cut.source_start_s) for cut in cuts],
             spans=[(ref_of[cut.media_id], cut.source_start_s, cut.source_end_s) for cut in cuts],
             moment_record=moment_record,
-        ),
+        )
+        + creator_omissions,
         ordering_choice=choice,
         random_order_seed=view.random_order_seed if basis == "random" else None,
         random_order_source_ids=[clip.media_id for clip in clips] if basis == "random" else [],

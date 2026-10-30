@@ -34,6 +34,7 @@ from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
     FIELD_MATRIX,
     build_render_contract,
+    field_matrix_for_strategy,
 )
 from app.services.creator_sessions import resolve_item_creator_context
 from app.services.length_planning import read_length_plan
@@ -542,7 +543,7 @@ def assess_readiness(
             {
                 "capabilities": manifest.capabilities if manifest else None,
                 "verified_phone_features": sorted(settings.phone_render_verified_features),
-                "field_matrix": FIELD_MATRIX,
+                "field_matrix": field_matrix_for_strategy(strategy),
                 "adapters": ADAPTER_DECLARATIONS,
             }
         ),
