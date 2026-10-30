@@ -73,7 +73,8 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # "words to SHOW are on-screen text" rule in main_creator.txt (all four hashes re-pinned).
 # v103 (KRI-1027) teaches the `landscape_fit` fact ("fill" / "fit") for how sideways clips sit in
 # a vertical video: brief-on hashes re-pinned; brief-off unchanged.
-# v105 (KRI-1077): brief-on re-pinned for registry-rendered animation names. v104 (cache layout): all four re-pinned; content is the same lines in a new order
+# v105 (KRI-1077): brief-on re-pinned for registry-rendered animation names.
+# v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
     (True, True): "c2fae873a6b7a25983107ce6b0fd102c69dc2b8af3579c0d6b11d9136a425b2b",
