@@ -47,6 +47,8 @@ import XCTest
         XCTAssertTrue(app.buttons["native-editor-tool-visuals"].waitForExistence(timeout: 20))
         app.buttons["native-editor-tool-visuals"].tap()
         app.buttons["native-editor-generate-media"].tap()
+        // Automatic mode needs no prompt, so only the account gate can keep Plan disabled.
+        app.segmentedControls["overlay-generation-mode"].buttons["Let Kria choose"].tap()
         let retry = app.buttons["overlay-generation-availability-retry"]
         let scroll = app.scrollViews["native-editor-visuals-scroll"]
         for _ in 0..<4 where !retry.exists { scroll.swipeUp() }
@@ -59,6 +61,12 @@ import XCTest
         retry.tap()
         waitUntilEnabled(app.buttons["overlay-generation-plan"])
         XCTAssertFalse(retry.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'use your account’s allowance'")).firstMatch.exists,
+                      "The paid-use disclosure returns once the account check succeeds")
+        let recovered = XCTAttachment(screenshot: app.screenshot())
+        recovered.name = "availability-check-recovered"
+        recovered.lifetime = .keepAlways
+        add(recovered)
     }
 
     func testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost() {
