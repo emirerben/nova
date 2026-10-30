@@ -2327,6 +2327,24 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/plan_review_unscoped_same_prompt.json"
       ],
       "fixture_generator": "scripts/ios/duration-text-preservation-fixtures.py"
+    },
+    {
+      "id": "editor-capability-composition",
+      "needs_native": true,
+      "api_tests": "tests/services/test_editor_capability_composition.py tests/kria/test_sequence_natural_intent_postgres.py tests/services/test_duration_text_preservation.py",
+      "xctests": [
+        "KriaTests/EditorCapabilityCompositionTests/testTwelveSecondCompositionSaveReopenPreviewAndExport",
+        "KriaTests/EditorCapabilityCompositionTests/testTwentySecondCompositionSaveReopenPreviewAndExport",
+        "KriaTests/EditorCapabilityCompositionTests/testTwelveSecondSplitCompositionSaveReopenPreviewAndExport",
+        "KriaTests/EditorCapabilityCompositionTests/testTwentySecondSplitCompositionSaveReopenPreviewAndExport",
+        "KriaTests/EditorCapabilityCompositionTests/testWrongSourceAndSimultaneousTextControlsAreRejected"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/editor_ops_v2/capabilities.py",
+        "src/apps/api/tests/services/test_editor_capability_composition.py",
+        "src/apps/ios/Tests/Fixtures/EditorCapabilityComposition.json",
+        "src/apps/ios/Tests/KriaTests/EditorCapabilityCompositionTests.swift"
+      ]
     }
   ]
 }

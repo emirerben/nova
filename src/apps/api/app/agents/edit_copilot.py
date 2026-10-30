@@ -54,7 +54,7 @@ log = structlog.get_logger()
 # v91 (29 Ekim lane E, KRI-1039): compose with the ops, refuse only when no sequence reaches the
 # end state and name what is missing; words the creator gives, shown a piece at a time, are
 # replace_text_sequence (weighted windows, mode cumulative), never captions.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v93"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v94"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -2076,6 +2076,14 @@ def _format_snapshot(snapshot: dict) -> str:
     if _v2.surface_of(snapshot) == SLIDE_POST_SURFACE:
         lines.extend(_format_slide_post_block(snapshot, _field))
 
+    if _v2.is_v2_snapshot(snapshot):
+        from app.agents.editor_ops_v2.capabilities import serialize_editor_capabilities
+
+        lines.append(
+            "EDITOR CAPABILITY MANIFEST "
+            "(partial discovery; parser and compiler remain authoritative):"
+        )
+        lines.append(serialize_editor_capabilities(snapshot))
     return "\n".join(lines)
 
 

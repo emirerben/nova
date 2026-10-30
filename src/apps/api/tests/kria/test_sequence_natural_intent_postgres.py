@@ -57,6 +57,38 @@ class OfflineTimingReplies:
             "Don't touch text, make video 12": {"duration": 12, "preserve": True},
             "Fill the text the whole video and make all text red": {"fill": True, "style": True},
         }
+        for duration in (12, 20):
+            self.cases[
+                f"Make the video {duration} seconds, fill the exact text, "
+                "move it left and shuffle clips"
+            ] = {
+                "duration": duration,
+                "fill": True,
+                "style": True,
+                "spatial": True,
+                "shuffle": True,
+            }
+        for duration in (12, 20):
+            self.cases[
+                f"Keep all 27 words verbatim, spread them over {duration} seconds, "
+                "put them left in red DM Sans and mix up the clips"
+            ] = {
+                "duration": duration,
+                "fill": True,
+                "style": True,
+                "spatial": True,
+                "shuffle": True,
+            }
+        for duration in (12, 20):
+            self.cases[
+                f"Split the exact opening into words across {duration} seconds, "
+                "style left and shuffle"
+            ] = {
+                "duration": duration,
+                "split": True,
+                "style": True,
+                "shuffle": True,
+            }
         self.calls = []
         self.main = AsyncMock(side_effect=AssertionError("Main Creator must not replan this edit"))
 
@@ -142,6 +174,41 @@ class OfflineTimingReplies:
             ops.append(
                 {"op": "patch_text", "selector": {"ids": ids}, "patch": {"color": "#FF0000"}}
             )
+        if case.get("spatial"):
+            ops[-1]["patch"].update(
+                x_frac=0.3, y_frac=0.35, alignment="left", font_family="DM Sans"
+            )
+        if case.get("shuffle"):
+            ops.append({"op": "reorder_clips_by", "criterion": "random"})
+        if case.get("split"):
+            source = next(
+                row for row in input.variant_snapshot["text_bars"] if row["id"] == "opening"
+            )
+            selector = {"ids": ["opening"]}
+            ops = [
+                {"op": "set_total_duration", "target_s": case["duration"]},
+                {
+                    "op": "set_texts_timing",
+                    "selector": selector,
+                    "start_s": 0,
+                    "end_s": case["duration"],
+                },
+                {
+                    "op": "replace_text_sequence",
+                    "selector": selector,
+                    "segments": source["text"].split(),
+                    "mode": "replace",
+                    "weight": "equal",
+                    "patch": {
+                        "x_frac": 0.3,
+                        "y_frac": 0.35,
+                        "alignment": "left",
+                        "color": "#FF0000",
+                        "font_family": "DM Sans",
+                    },
+                },
+                {"op": "reorder_clips_by", "criterion": "random"},
+            ]
         if case.get("malicious"):
             ops = [
                 {"op": "remove_texts", "selector": {"ids": ids}},
@@ -568,4 +635,269 @@ async def test_fitting_preservation_keeps_the_existing_sequence_policy(brief_pro
         assert len(policies) == 1
         assert policies[0].id == policy_id
         assert policies[0].facts["sequence_timing"]["mode"] == "absolute"
+    _assert_job_unmodified(project)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duration", [12, 20])
+@pytest.mark.parametrize("phrasing", ["direct", "holdout"])
+async def test_four_operation_composition_stages_exact_words_and_spatial_style(
+    brief_project, duration, tmp_path, phrasing
+):
+    project, models, _ = brief_project
+    user_id, thread_id, _, _, original, *_ = project
+    message = (
+        f"Make the video {duration} seconds, fill the exact text, move it left and shuffle clips"
+    )
+    if phrasing == "holdout":
+        message = (
+            f"Keep all 27 words verbatim, spread them over {duration} seconds, "
+            "put them left in red DM Sans and mix up the clips"
+        )
+    accepted = await _submit(user_id, thread_id, message)
+    assert (await asyncio.to_thread(run_kria_turn.run, accepted.turn_id))["status"] == "completed"
+    models.assert_parsed(message)
+    head = next(draft for draft in _drafts(thread_id) if draft["head"])
+    payload = head["snap"]["editor_payload"]
+    rows = payload["text_elements"]
+    assert [(r["id"], r["text"]) for r in rows] == [(r["id"], r["text"]) for r in original]
+    assert len(rows) == 27
+    assert rows[0]["start_s"] == 0
+    assert rows[-1]["end_s"] == duration
+    assert all(r["x_frac"] == 0.3 and r["y_frac"] == 0.35 for r in rows)
+    assert all(r["alignment"] == "left" and r["color"] == "#FF0000" for r in rows)
+    slots = payload["timeline_slots"]
+    assert len({r["slot_id"] for r in slots}) == len(slots) == 28
+    assert sum(Decimal(str(r["duration_s"])) for r in slots) == duration
+    assert all(row["font_family"] == "DM Sans" for row in rows)
+    from hashlib import sha256
+
+    from app.agents.editor_ops_v2.capabilities import serialize_editor_capabilities
+    from app.models import Job
+    from app.services.kria_editor_ops import build_editor_snapshot
+
+    with sync_session() as db:
+        job = db.get(Job, project[3])
+        variant = job.assembly_plan["variants"][0]
+        catalog = serialize_editor_capabilities(build_editor_snapshot(job, variant))
+    evidence = {
+        "name": f"fit{duration}",
+        "before_text_elements": original,
+        "before_timeline_slots": project[5]["variants"][0]["guided_edit_revision"]["segments"],
+        "payload": payload,
+        "expected_source_order": [row["clip_index"] for row in slots],
+        "target_s": duration,
+        "catalog_digest": sha256(catalog.encode()).hexdigest(),
+    }
+    (tmp_path / f"fit{duration}.json").write_text(json.dumps(evidence, indent=2))
+    _assert_job_unmodified(project)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("duration", [12, 20])
+@pytest.mark.parametrize("sequence_action", ["retime", "split"])
+async def test_composed_phone_payload_survives_real_save_and_reopen(
+    brief_project, monkeypatch, duration, tmp_path, sequence_action
+):
+    import copy
+    from hashlib import sha256
+
+    from app.agents.editor_ops_v2.capabilities import serialize_editor_capabilities
+    from app.kria.device_render import make_device_request
+    from app.models import Job
+    from app.routes import generative_jobs as gj
+    from app.services.device_render import device_status, pin_device_request
+    from app.services.kria_editor_ops import build_editor_snapshot
+    from tests.routes._editor_save_matrix import guided_phone_job
+
+    project, models, _ = brief_project
+    user_id, thread_id, _, job_id, original, *_ = project
+    expected_words = [row["text"] for row in original]
+    if sequence_action == "split":
+        original = [dict(original[0], id="opening", text=" ".join(expected_words), end_s=12.876)]
+        monkeypatch.setattr(settings, "kria_compose_unmet_with_ops_enabled", False)
+    template, _, _ = guided_phone_job(monkeypatch, count=10, clip_s=2)
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        assembly = copy.deepcopy(template.assembly_plan)
+        variant = assembly["variants"][0]
+        variant.update(
+            variant_id="original_text",
+            render_generation_id="generation-1",
+            render_status="ready",
+            video_path="users/test/last-good.mp4",
+            text_elements=copy.deepcopy(original),
+        )
+        job.assembly_plan = assembly
+        if sequence_action == "split":
+            from app.kria.drafts import KriaDraftDocument, canonical_snapshot
+            from app.models import CreatorEditDraft
+
+            head = db.scalar(
+                select(CreatorEditDraft).where(
+                    CreatorEditDraft.thread_id == thread_id, CreatorEditDraft.is_head.is_(True)
+                )
+            )
+            head.snapshot_json, head.snapshot_hash = canonical_snapshot(
+                KriaDraftDocument(
+                    kind="editor",
+                    intent="Keep the original opening wording",
+                    editor_payload={"base_generation": "generation-1", "text_elements": original},
+                )
+            )
+        pin_device_request(
+            job,
+            make_device_request(
+                job_id=job.id,
+                variant_id="original_text",
+                revision=1,
+                recipe=device_status(template, "guided_story").request.recipe,
+            ),
+            base_generation="generation-1",
+        )
+        before_revision = gj._guided_v2_revision(job, variant)
+        before_slots = copy.deepcopy(before_revision["segments"])
+        catalog = serialize_editor_capabilities(build_editor_snapshot(job, variant))
+        db.commit()
+    message = (
+        f"Make the video {duration} seconds, fill the exact text, move it left and shuffle clips"
+    )
+    if sequence_action == "split":
+        message = (
+            f"Split the exact opening into words across {duration} seconds, style left and shuffle"
+        )
+    accepted = await _submit(user_id, thread_id, message)
+    assert (await asyncio.to_thread(run_kria_turn.run, accepted.turn_id))["status"] == "completed"
+    models.assert_parsed(message)
+    head = next(draft for draft in _drafts(thread_id) if draft["head"])
+    payload = head["snap"]["editor_payload"]
+    expected = copy.deepcopy(payload["text_elements"])
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        gj.prepare_editor_commit(
+            job, "original_text", gj.EditorCommitRequest.model_validate(payload)
+        )
+        db.commit()
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        variant = job.assembly_plan["variants"][0]
+        reopened = gj._guided_v2_revision(job, variant)
+        for before, after in zip(expected, reopened["text_elements"], strict=True):
+            for key in (
+                "id",
+                "text",
+                "start_s",
+                "end_s",
+                "font_family",
+                "x_frac",
+                "y_frac",
+                "alignment",
+                "color",
+                "size_px",
+                "source_params",
+            ):
+                assert after.get(key) == before.get(key), key
+        assert [r["media_id"] for r in reopened["segments"]] == [
+            reopened["sources"][r["clip_index"]]["media_id"] for r in payload["timeline_slots"]
+        ]
+        assert [r["text"] for r in expected] == expected_words
+        assert [r["id"] for r in expected] == [f"opening::sequence-{i + 1}" for i in range(27)]
+        assert all(r["source_params"]["sequence_source_id"] == "opening" for r in expected)
+        assert " ".join(r["text"] for r in expected) == " ".join(expected_words)
+        assert all(r["font_family"] == "DM Sans" for r in expected)
+        assert all(r["x_frac"] == 0.3 and r["y_frac"] == 0.35 for r in expected)
+        status = device_status(job, "original_text")
+        assert status.request is not None
+        recipe = status.request.recipe
+        assert len(recipe.text_layers) == 27
+        assert [" ".join(run.text for run in layer.runs) for layer in recipe.text_layers] == [
+            word for word in expected_words
+        ]
+        for layer, row in zip(recipe.text_layers, expected, strict=True):
+            assert layer.id == f"text-{row['id']}"
+            assert layer.start == pytest.approx(row["start_s"], abs=0.001)
+            assert layer.end == pytest.approx(row["end_s"], abs=0.001)
+            assert layer.anchor_x == pytest.approx(recipe.canvas.width * 0.3)
+            assert layer.anchor_y == pytest.approx(recipe.canvas.height * 0.35)
+            assert all(run.font_asset_id == "font-DMSans-Bold.ttf" for run in layer.runs)
+        assert [clip.source_asset_id for track in recipe.tracks for clip in track.clips] == [
+            row["media_id"] for row in reopened["segments"]
+        ]
+        name = f"saved-{'split-' if sequence_action == 'split' else ''}fit{duration}"
+        (tmp_path / f"{name}.json").write_text(
+            json.dumps(
+                {
+                    "name": name,
+                    "before_text_elements": original,
+                    "before_timeline_slots": before_slots,
+                    "payload": payload,
+                    "expected_source_order": [r["clip_index"] for r in payload["timeline_slots"]],
+                    "target_s": duration,
+                    "catalog_digest": sha256(catalog.encode()).hexdigest(),
+                    "provenance": (
+                        "real_parser_runtime_staged_payload_then_"
+                        "prepare_editor_commit_db_commit_and_reopen"
+                    ),
+                    "reopened": reopened,
+                    "recipe": status.request.recipe.model_dump(mode="json"),
+                },
+                indent=2,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_disabled_nondefault_sequence_does_not_stage_a_default_replacement(
+    brief_project, monkeypatch
+):
+    project, models, _ = brief_project
+    user_id, thread_id, _, _, rows, *_ = project
+    message = "Split the opening cumulatively with length weighting"
+    models.cases[message] = {"style": True}
+    monkeypatch.setattr(settings, "kria_compose_unmet_with_ops_enabled", False)
+    observed = []
+
+    def copilot(agent, input, **kwargs):
+        result = agent.parse(
+            json.dumps(
+                {
+                    "intent": "edit",
+                    "confidence": 0.99,
+                    "reply": "Prepared the requested cumulative sequence",
+                    "claimed_ops": ["replace_text_sequence"],
+                    "ops": [
+                        {
+                            "op": "replace_text_sequence",
+                            "selector": {"ids": [rows[0]["id"]]},
+                            "segments": [rows[0]["text"]],
+                            "mode": "cumulative",
+                            "weight": "length",
+                            "patch": {"color": "#FF0000"},
+                        }
+                    ],
+                }
+            ),
+            input,
+        )
+        observed.append(result)
+        return result
+
+    monkeypatch.setattr(EditCopilotAgent, "run", copilot)
+    before = _drafts(thread_id)
+    accepted = await _submit(user_id, thread_id, message)
+    assert (await asyncio.to_thread(run_kria_turn.run, accepted.turn_id))["status"] == "completed"
+    assert observed and not observed[0].ops
+    assert observed[0].needs_clarification
+    assert "Prepared the requested cumulative sequence" not in observed[0].reply
+    with sync_session() as db:
+        reply = db.scalars(
+            select(CreationThreadEvent).where(
+                CreationThreadEvent.thread_id == thread_id,
+                CreationThreadEvent.event_type == "assistant_response",
+            )
+        ).one()
+        assert reply.payload["turn_value"] == "recovery"
+        assert "Prepared the requested cumulative sequence" not in reply.content
+    assert any(r["reason"] == "capability_unavailable" for r in observed[0].rejection_reasons)
+    assert _drafts(thread_id) == before
     _assert_job_unmodified(project)

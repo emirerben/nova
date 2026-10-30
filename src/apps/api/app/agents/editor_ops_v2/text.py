@@ -290,6 +290,21 @@ def _coerce_replace_text_sequence(
     }
     from app.kria.compose_with_ops import compose_unmet_with_ops  # noqa: PLC0415
 
+    if not compose_unmet_with_ops() and any(
+        field in payload
+        and (not isinstance(payload[field], str) or payload[field].strip().casefold() != default)
+        for field, default in (("mode", "replace"), ("weight", "equal"))
+    ):
+        state.reject(
+            op=name,
+            reason="capability_unavailable",
+            detail="This editor supports only replacement sequences with equal timing weights.",
+        )
+        _clarify(
+            state,
+            "Cumulative or weighted sequences are unavailable. Use equal replacement windows?",
+        )
+        return None
     if compose_unmet_with_ops():
         # Resolved here, not at compile time, so a re-render of a saved draft keeps the timing
         # it was authored with whatever the flag says later. Weighting by length is the
