@@ -180,6 +180,73 @@ def test_an_unrecognised_declaration_refuses_only_that_row_without_a_paid_retry(
     assert rows == [] and notices == [LOGO_NOTICE]
 
 
+ODD_DECLARATIONS = [
+    "x" * 41,
+    "This picture shows a generic cup of coffee with no brand at all, so it is fine to use.",
+    " generic_subject",
+    "GENERIC_SUBJECT",
+    5,
+    True,
+    [],
+    {},
+    None,
+]
+
+
+@pytest.mark.parametrize("declared", ODD_DECLARATIONS, ids=repr)
+def test_odd_declaration_is_refused_alone_while_valid_neighbours_are_kept(declared):
+    """Length and type never fail the plan: parse() accepts, the one row is refused."""
+    import json
+
+    from app.agents.overlay_generation import OverlayGenerationAgent, OverlayPlanInput
+
+    wire = json.loads(proposal().model_dump_json())
+    odd = {**wire["overlays"][0], "depicts": declared, "start_s": 1.0, "end_s": 2.0}
+    valid = {
+        **wire["overlays"][0],
+        "prompt": "A cup of coffee",
+        "start_s": 3.0,
+        "end_s": 4.0,
+        "evidence": [dict(kind="speech", reference_id="speech-1", quote="kahve")],
+    }
+    text = {
+        **valid,
+        "kind": "text",
+        "text": "10",
+        "prompt": "",
+        "depicts": None,
+        "start_s": 5.0,
+        "end_s": 6.0,
+        "evidence": [dict(kind="speech", reference_id="speech-2", quote="kahve")],
+    }
+    wire["overlays"] = [odd, valid, text]
+    agent = OverlayGenerationAgent.__new__(OverlayGenerationAgent)
+    raw = agent.parse(
+        json.dumps(wire),
+        OverlayPlanInput(
+            language="en",
+            mode="automatic",
+            prompt="",
+            taste_notes="",
+            duration_s=8,
+            evidence=[],
+            assets=[],
+        ),
+    )
+    assert raw.overlays[0].depicts != "generic_subject"
+    facts = evidence() + [
+        dict(kind="speech", reference_id="speech-1", quote="kahve", start_s=3.25, end_s=3.7),
+        dict(kind="speech", reference_id="speech-2", quote="kahve", start_s=5.25, end_s=5.7),
+    ]
+    notices = []
+    rows = materialize_overlays(raw, facts, [], duration_s=8, prompt="", notices=notices)
+    assert [(row.kind, row.prompt or row.text) for row in rows] == [
+        ("image", "A cup of coffee"),
+        ("text", "10"),
+    ]
+    assert notices == [LOGO_NOTICE]
+
+
 def test_declaration_never_reaches_the_client():
     row = materialize_overlays(proposal(), evidence(), [], duration_s=8, prompt="")[0]
     assert "depicts" not in row.model_dump_json()

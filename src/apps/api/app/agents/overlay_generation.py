@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.kria.reply_language import prompt_language_line
@@ -38,9 +38,15 @@ class AgentOverlay(OverlayProposal):
     """A model-authored row. The typed `depicts` declaration, not a word list, decides whether
     a generated picture may stand in for an official mark; it never reaches the client. A missing
     or unrecognised declaration is not a schema error: materialize_overlays refuses that one row
-    unless it is exactly "generic_subject" (fail safe, no lost plan or extra paid retry)."""
+    unless it is exactly "generic_subject" (fail safe, no lost plan or extra paid retry). Any
+    length or non-string value is therefore accepted here and refused there, never raised."""
 
-    depicts: str | None = Field(default=None, max_length=40)
+    depicts: str | None = None
+
+    @field_validator("depicts", mode="before")
+    @classmethod
+    def non_text_declaration_is_missing(cls, value):
+        return value if isinstance(value, str) else None
 
 
 class OverlayPlanOutput(BaseModel):
