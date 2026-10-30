@@ -2524,6 +2524,30 @@
         "src/apps/api/tests/services/test_notification_runtime.py",
         "src/apps/api/app/config.py"
       ]
+    },
+    {
+      "id": "native-durable-render-intents",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/DeviceRenderExecutionTests/testStopDuringRetryCleanupPreventsGrantAndReplacement",
+        "KriaTests/DeviceRenderExecutionTests/testStopBeforeRetryAcknowledgementPausesReturnedIdentity",
+        "KriaTests/DeviceRenderExecutionTests/testFailedStopReportStillBlocksAutomaticRetryInThisSession",
+        "KriaTests/DeviceRenderExecutionTests/testCreatorResumeQueuedBehindAutomaticReadKeepsTypedConsent",
+        "KriaTests/DeviceRenderExecutionTests/testFailedStopWriteDoesNotLetRelinkRestartAfterStorageRecovers",
+        "KriaTests/DeviceRenderExecutionTests/testStopWithOnlyPersistedObservedTargetDoesNotInventAcknowledgement",
+        "KriaTests/DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/DeviceRenderIntentPersistence.swift",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderIntent.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DeviceRenderIntentTests.swift"
+      ]
     }
   ]
 }
