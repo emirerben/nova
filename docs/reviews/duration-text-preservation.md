@@ -13,7 +13,7 @@ The duration allocator quantizes to frames. Legacy native timeline projection co
 ## Local evidence
 
 - Two retained incident operation replays pass against immutable local copies. No original project was changed.
-- The focused compiler, planner, parser and neighboring timeline suite passes 94 tests.
+- The focused compiler, planner, parser and neighboring timeline suite passes 95 tests.
 - Five real PostgreSQL cases pass without skips. They cover refusal without mutation, Undo and retry, malicious paragraph replacement, explicit sequence recovery, and real submit/planner/compiler/persistence/receipt integration. Provider entrypoints are blocked in the complete integration case. The complete integration case does not establish brief-enabled routing.
 - The required `make verify-editor-timeline` gate passes 209 web assertions, 28 desktop browser cases, 42 mobile browser cases and 585 backend cases. Mobile browser viewports are not real-device tests.
 - Four native simulator cases pass. The real preview compositor and exporter preserve all 27 word identities, styles and intervals. All 162 exact OCR observations pass. Exported 1080×1920, 30-fps videos contain 600 frames for 20 seconds and 360 frames for each 12-second case.
@@ -28,6 +28,6 @@ src/apps/api/.venv/bin/python scripts/ios/duration-text-preservation-fixtures.py
 
 Run the three new backend test modules from `src/apps/api` using the documented disposable PostgreSQL setup. Run `KriaTests/DurationTextPreservationTests` through the repository's native test workflow. The journey manifest selects these checks for relevant changes.
 
-The broader mapped reliability run currently has one unresolved failure. Its diagnostic rerun is pending. No publication or readiness claim is made from the partial result.
+The initial broader reliability run exposed an unmapped section scope for the new opcode. Adding it to the existing text-operation scope cleared all 845 cases without skips. The patch was subsequently rebased onto newer main, so exact-head integration checks are being repeated before readiness.
 
 This evidence proves local behavior and synthetic simulator output. It does not prove app Save/relaunch, actual phone playback/export, the original media's visual fulfillment, production exposure or deployment. The user's report that the opening error is gone remains distinct from attribution to a particular build.
