@@ -66,3 +66,22 @@ pass the opt-in canonical write in the existing turn transaction, preserve proof
 through saved-editor operations, and verify the exact native publication artifact.
 Any changed or unmapped sequence must ask again. No paid call or entire-library
 reanalysis is needed for these deterministic invariants.
+
+## Native Visuals identity integration follow-up
+
+A new mixed video-plus-selected-photo test exposed a reader boundary defect before
+activation. The actual worker compiler emits a Visuals row's raw UUID with lane
+`asset`, while its canonical proof and current source fence use `asset-<UUID>` and
+`visual:<UUID>`. Component fixtures had put the canonical ID directly into their
+synthetic timeline and therefore missed the mismatch. This is a newly reproduced
+reader integration bug, not an attribution of the original Cabildo model failure.
+
+The verifier now maps only a checked canonical Visuals source slot to its native
+UUID and requires the asset lane. It preserves canonical proof and source fences,
+and never rewrites the compiled artifact. Existing path, generation, occurrence,
+window, output timing, rate and photo-hold checks remain exact.
+
+The real PostgreSQL/preflight/compiler mixed case failed before the fix and passes
+after it. Wrong native IDs, paths, generations, lanes, canonical aliases in native
+rows, and changed current source records remain rejected. Clip and video-only
+behavior remains unchanged. Activation stays off.

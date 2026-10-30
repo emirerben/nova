@@ -81,6 +81,9 @@ def verify(p, ctx):
     )
     compiled = execution(p)
     for checked, row in zip(p.moments, compiled["story_timeline"], strict=True):
+        if checked.source_slot.startswith("visual:"):
+            row["media_id"] = checked.source_slot.removeprefix("visual:")
+            row["lane"] = "asset"
         if checked.kind == "image":
             row["source_start_s"] = 0.0
             row["source_end_s"] = checked.hold_duration_s
@@ -246,3 +249,14 @@ async def test_async_orchestration_uses_same_current_queries(stored):
         AwaitableDB(), item_id=stored[2].id, creator_id=stored[1].id, proposal=proposal()
     )
     assert ctx == load(stored)
+
+
+@pytest.mark.parametrize("identity", ["native_uuid", "another_asset"])
+def test_visual_source_context_keeps_canonical_identity(stored, identity):
+    asset, p = visual(stored)
+    media_id = str(asset.id) if identity == "native_uuid" else f"asset-{uuid.uuid4()}"
+    bad = p.model_copy(
+        update={"moments": (p.moments[0].model_copy(update={"media_id": media_id}),)}
+    )
+    with pytest.raises(ValueError, match="not canonical"):
+        load(stored, bad)

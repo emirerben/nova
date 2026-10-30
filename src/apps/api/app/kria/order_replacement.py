@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -183,6 +184,19 @@ def validate_confirmation(
     )
 
 
+def _compiled_media_id(moment: CheckedOrderMoment, row: Mapping[str, Any]) -> str:
+    if not moment.source_slot.startswith("visual:"):
+        return moment.media_id
+    asset_id = uuid.UUID(moment.source_slot.removeprefix("visual:"))
+    if (
+        moment.source_slot != f"visual:{asset_id}"
+        or moment.media_id != f"asset-{asset_id}"
+        or row.get("lane") != "asset"
+    ):
+        raise ValueError("Compiled Visuals source does not match its canonical asset")
+    return str(asset_id)
+
+
 def verify_compiled_order(
     proof: OrderReplacementProof,
     execution: Mapping[str, Any],
@@ -212,7 +226,7 @@ def verify_compiled_order(
             raise ValueError("Compiled order row is invalid")
         expected = (
             moment.occurrence_id,
-            moment.media_id,
+            _compiled_media_id(moment, row),
             moment.kind,
             moment.gcs_path,
             moment.generation,
