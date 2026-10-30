@@ -9,5 +9,13 @@
   "cache_contract": "Shared reviewed cache qualification e9b8118a2; throughput16 and selector suite passed",
   "fresh_exact_head_CI": "required before merge",
   "limitations": "Physical original iPhone incident acceptance and installed TestFlight output remain unverified",
-  "fix": "Compound length notice no longer claims all clips kept. Regression red before fix;31 focused tests passed before main merge. Current prompt preserves both length exclusions and random-order/text-sequence instructions under unique version2026-10-29-exclude-length-text-sequence."
+  "fix": "Compound length notice no longer claims all clips kept. Regression red before fix;31 focused tests passed before main merge. Current prompt preserves both length exclusions and random-order/text-sequence instructions under unique version2026-10-29-exclude-length-text-sequence.",
+  "closing_test_repair": {
+    "source_commit": "3ec4f08469f0c1dc3050f6b550957851f21d6a0e",
+    "test_source_sha256": "9c6d03e98a1bb0b77d2839290c63726ae3d84326f25831d4dd4d87e8fd18c7c8",
+    "scope": "Closing uses interior SDK setup and captures consistent actual rate/duration; exact Reset/Undo retained. Separate endpoint method unchanged.",
+    "evidence": "docs/reviews/native-speed-setup-validation.md",
+    "results": "Closing10/10 positives; collective transaction control fails intended Undo; restored positive passes. Unchanged endpoint9/10, separate setup flake remains unresolved.",
+    "required": "Fresh exact-head CI; no failed-check waiver"
+  }
 }
