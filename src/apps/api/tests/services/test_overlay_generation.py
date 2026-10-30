@@ -9,6 +9,7 @@ from app.services.overlay_generation import materialize_overlays, speech_evidenc
 def proposal(**changes):
     row = dict(
         kind="image",
+        depicts="generic_subject",
         title="Coffee",
         prompt="A cup of coffee",
         start_s=1.0,
@@ -54,60 +55,139 @@ def _two_rows(first, second):
     )
 
 
-LOGO_PROMPTS = [
-    "Invent an Acme logo",
-    "Acme LOGOSU kahve fincanının yanında",
-    "markanın logoları",
-    "Şirket AMBLEMİ",
-    "MARKA İŞARETİ büyük",
-    "a wordmark for Acme",
-    "company emblem",
-    "Firmenlogo auf Tasse",
-]
+LOGO_NOTICE = "Upload the real logo or choose it from your visual library."
 
 
-@pytest.mark.parametrize("logo", LOGO_PROMPTS)
-def test_generated_logo_is_refused_without_losing_the_rest_of_a_mixed_request(logo):
-    notices = []
-    raw = _two_rows({"prompt": logo, "title": "Brand"}, {"prompt": "A cup of coffee"})
+def _coffee_second_row(raw):
     facts = evidence() + [
         dict(kind="speech", reference_id="speech-1", quote="kahve", start_s=3.25, end_s=3.7)
     ]
     raw.overlays[1].evidence[0].reference_id = "speech-1"
-    rows = materialize_overlays(raw, facts, [], duration_s=8, prompt="", notices=notices)
-    assert [row.prompt for row in rows] == ["A cup of coffee"]
-    assert notices == ["Upload the real logo or choose it from your visual library."]
+    return facts
 
 
-def test_refused_logo_row_does_not_reserve_its_window():
+# Wording is irrelevant: the model's typed declaration decides, in any language, and a
+# phrasing with no "logo" word at all is refused just the same (no synonym list to outgrow).
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "minimal circular coffee-brand icon, brand identity",
+        "markanın işareti kahve fincanının yanında",
+        "Markenzeichen auf der Tasse",
+        "Acme logo",
+    ],
+)
+def test_brand_marks_are_refused_without_losing_the_rest_of_a_mixed_request(prompt):
+    notices = []
     raw = _two_rows(
-        {"prompt": "Acme logo"}, {"prompt": "A cup of coffee", "start_s": 1.0, "end_s": 2.0}
+        {"prompt": prompt, "title": "Brand", "depicts": "brand_or_logo"},
+        {"prompt": "A cup of coffee"},
+    )
+    rows = materialize_overlays(
+        raw, _coffee_second_row(raw), [], duration_s=8, prompt="", notices=notices
+    )
+    assert [row.prompt for row in rows] == ["A cup of coffee"]
+    assert notices == [LOGO_NOTICE]
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "a hoodie with no logos",
+        "logout button icon",
+        "a monogrammed towel",
+        "emblematic landmark skyline",
+        "analogous colors palette",
+    ],
+)
+def test_generic_pictures_are_never_refused_for_their_wording(prompt):
+    notices = []
+    rows = materialize_overlays(
+        proposal(prompt=prompt), evidence(), [], duration_s=8, prompt="", notices=notices
+    )
+    assert len(rows) == 1 and notices == []
+
+
+def test_unclear_subject_fails_safe_instead_of_generating():
+    notices = []
+    rows = materialize_overlays(
+        proposal(depicts="brand_or_logo", prompt="Starbucks cup"),
+        evidence(),
+        [],
+        duration_s=8,
+        prompt="Show Starbucks when I say coffee",
+        notices=notices,
+    )
+    assert rows == [] and notices == [LOGO_NOTICE]
+
+
+def test_image_row_must_declare_its_subject():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        proposal(depicts=None)
+    # Text and owned-library rows carry no declaration and are unaffected.
+    assert proposal(kind="text", text="10", prompt="", depicts=None).overlays[0].depicts is None
+
+
+def test_declaration_never_reaches_the_client():
+    row = materialize_overlays(proposal(), evidence(), [], duration_s=8, prompt="")[0]
+    assert "depicts" not in row.model_dump()
+
+
+def test_refused_brand_row_does_not_reserve_its_window():
+    raw = _two_rows(
+        {"prompt": "Acme logo", "depicts": "brand_or_logo"},
+        {"prompt": "A cup of coffee", "start_s": 1.0, "end_s": 2.0},
     )
     assert len(materialize_overlays(raw, evidence(), [], duration_s=8, prompt="", notices=[])) == 1
 
 
-def test_only_logo_request_returns_no_overlays_and_a_notice():
-    notices = []
-    rows = materialize_overlays(
-        proposal(prompt="Invent an Acme logo"),
-        evidence(),
-        [],
-        duration_s=8,
-        prompt="",
-        notices=notices,
-    )
-    assert rows == [] and len(notices) == 1
+def test_brand_notice_survives_a_later_grounding_error(monkeypatch):
+    import uuid
+    from types import SimpleNamespace
+    from unittest.mock import Mock
 
+    from app.services import generated_media
+    from app.services import overlay_generation as service
 
-@pytest.mark.parametrize(
-    "fine", ["A cup of coffee", "analogous colors palette", "A catalogue page"]
-)
-def test_ordinary_pictures_are_not_mistaken_for_logos(fine):
-    notices = []
-    rows = materialize_overlays(
-        proposal(prompt=fine), evidence(), [], duration_s=8, prompt="", notices=notices
+    body = service.OverlayPlanRequest(
+        job_id=uuid.uuid4(),
+        variant_id="v",
+        base_generation="g",
+        document_fingerprint="f",
+        mode="automatic",
+        editor_snapshot={},
     )
-    assert len(rows) == 1 and notices == []
+    owner = uuid.uuid4()
+    monkeypatch.setattr(
+        generated_media, "owned_item", lambda *a: SimpleNamespace(current_job_id=body.job_id)
+    )
+    monkeypatch.setattr(
+        service,
+        "plan_context",
+        lambda *a, **k: SimpleNamespace(
+            evidence=evidence(), duration_s=8, existing_overlays=[], insertion_base=None
+        ),
+    )
+    db = Mock()
+    db.get.return_value = SimpleNamespace(
+        user_id=owner,
+        status="ready",
+        assembly_plan={"variants": [{"variant_id": "v", "render_generation_id": "g"}]},
+    )
+    db.scalars.return_value.all.return_value = []
+    raw = _two_rows(
+        {"prompt": "Acme logo", "depicts": "brand_or_logo"},
+        {"kind": "library_asset", "asset_id": "foreign", "prompt": ""},
+    )
+    agent = Mock()
+    agent.run.return_value = raw
+    reply = service.generate_overlay_plan(
+        db, owner_id=owner, item_id=uuid.uuid4(), body=body, ctx=None, agent=agent
+    )
+    assert reply.overlays == []
+    assert LOGO_NOTICE in reply.message and "available visual" in reply.message
 
 
 def test_silent_visual_window_cannot_escape_the_source_slot():

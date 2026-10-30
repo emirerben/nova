@@ -278,21 +278,6 @@ def _speech_start(fact: dict, quote: str) -> float:
 
 LOGO_NOTICE = "Upload the real logo or choose it from your visual library."
 
-# Folded text (accents stripped, casefolded) so Turkish İ/ı/ş and English forms match alike.
-_LOGO_TERMS = re.compile(
-    r"\b(?:\w*(?:firmen|marken|brand|company)logo\w*|logo\w*|wordmark\w*|monogram\w*"
-    r"|[ae]mblem\w*|brand\s?mark\w*|marka\s+(?:isaret|simge|sembol|damga)\w*)"
-)
-
-
-def _fold(value: str) -> str:
-    text = unicodedata.normalize("NFKD", value.replace("ı", "i").replace("İ", "I"))
-    return "".join(ch for ch in text if not unicodedata.combining(ch)).casefold()
-
-
-def _requests_logo(*parts: str) -> bool:
-    return bool(_LOGO_TERMS.search(_fold(" ".join(parts))))
-
 
 def materialize_overlays(
     raw: OverlayPlanOutput,
@@ -310,8 +295,9 @@ def materialize_overlays(
     result = []
     occupied = [(row["start_s"], row["end_s"]) for row in existing_overlays or []]
     for row in raw.overlays:
-        if row.kind == "image" and _requests_logo(row.prompt, row.title):
+        if row.kind == "image" and row.depicts != "generic_subject":
             # Only this row is refused; the rest of a mixed request still gets planned.
+            # Anything the model did not explicitly call generic fails safe.
             if notices is not None and LOGO_NOTICE not in notices:
                 notices.append(LOGO_NOTICE)
             continue
@@ -373,7 +359,7 @@ def materialize_overlays(
                 )
         if row.kind == "text" and not row.text.strip():
             raise ValueError("A text overlay needs readable text.")
-        result.append(PlannedOverlay(**{**row.model_dump(), "start_s": start}))
+        result.append(PlannedOverlay(**{**row.model_dump(exclude={"depicts"}), "start_s": start}))
     return result
 
 
@@ -617,7 +603,7 @@ def generate_overlay_plan(
             notices=notices,
         )
     except ValueError as exc:
-        return OverlayPlanResponse(**response, message=str(exc))
+        return OverlayPlanResponse(**response, message=" ".join((str(exc), *notices)))
     message = raw.message
     if overlays:
         message = (message + " Review placement over your footage.").strip()

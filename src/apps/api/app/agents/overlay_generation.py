@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.kria.reply_language import prompt_language_line
@@ -34,9 +34,22 @@ class OverlayProposal(BaseModel):
     evidence: list[OverlayEvidence] = Field(min_length=1, max_length=4)
 
 
+class AgentOverlay(OverlayProposal):
+    """A model-authored row. The typed `depicts` declaration, not a word list, decides whether
+    a generated picture may stand in for an official mark; it never reaches the client."""
+
+    depicts: Literal["generic_subject", "brand_or_logo"] | None = None
+
+    @model_validator(mode="after")
+    def generated_pictures_declare_their_subject(self):
+        if self.kind == "image" and self.depicts is None:
+            raise ValueError("image rows must declare depicts")
+        return self
+
+
 class OverlayPlanOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    overlays: list[OverlayProposal] = Field(default_factory=list, max_length=6)
+    overlays: list[AgentOverlay] = Field(default_factory=list, max_length=6)
     message: str = Field(default="", max_length=500)
 
 
@@ -56,7 +69,7 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.editor.overlay_generation",
         prompt_id="overlay_generation",
-        prompt_version="2026-10-30.3",
+        prompt_version="2026-10-30.4",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -99,7 +112,13 @@ class OverlayGenerationAgent(Agent[OverlayPlanInput, OverlayPlanOutput]):
             "numbers, prices, "
             "rank badges and any readable words. Never generate or reconstruct logos; select "
             "a matching "
-            "owned library asset or ask the creator to upload it. Prefer transparent supporting "
+            "owned library asset or ask the creator to upload it. Every image row must set "
+            "depicts: generic_subject only for a generic object, scene or icon that names no "
+            "brand, company, product line, team or organisation; brand_or_logo for any official "
+            "mark, logo, emblem, wordmark or imitation of one, in any language, and whenever it "
+            "is unclear whether a named entity's official mark is wanted. Negation such as 'no "
+            "logo' in a description does not make the picture brand_or_logo. Prefer transparent "
+            "supporting "
             "icons or objects, not replacement scenes. "
             "library_asset must name an ID in assets. All rows are proposals for review, not "
             "applied edits. "

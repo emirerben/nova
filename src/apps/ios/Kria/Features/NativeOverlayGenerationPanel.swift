@@ -16,10 +16,13 @@ struct NativeOverlayGenerationPanel: View {
     @State private var previousPlans: [OverlayPlan] = []
     @State private var busy = false
     @State private var error: String?
-    @State private var generationAvailable = false
+    private enum Availability { case checking, available, unavailable, failed }
+    @State private var availability: Availability = .checking
     @State private var generatedDraft: GeneratedMediaDraft?
     @State private var generationRowID: String?
     @State private var work: Task<Void, Never>?
+
+    private var generationAvailable: Bool { availability == .available }
 
     private struct SavedDraft: Codable {
         let mode: OverlayGenerationMode
@@ -130,8 +133,7 @@ struct NativeOverlayGenerationPanel: View {
                         proposalView(row)
                     }
                 }
-                Text(generationAvailable ? "Planning and image generation use your account’s allowance. Your footage stays as it is." : "Generate media is unavailable for this account.")
-                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                availabilityFooter
             }
             if stale {
                 Text("Your edit changed. Generate a new preview before adding. Earlier previews are preserved.")
@@ -148,9 +150,38 @@ struct NativeOverlayGenerationPanel: View {
         .onChange(of: mode) { _, _ in persist() }
         .task {
             restore()
-            do { generationAvailable = try await (session.overlayGenerationAPI ?? model.api).creationCapabilities().generatedImages == true }
-            catch { self.error = "Couldn’t check image availability. Try again when connected." }
+            await checkAvailability()
         }
+    }
+
+    @ViewBuilder private var availabilityFooter: some View {
+        switch availability {
+        case .checking:
+            Text("Checking availability…").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+        case .failed:
+            HStack {
+                Text("Couldn’t check availability. Try again when connected.")
+                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.failureText)
+                Button("Try again") { Task { await checkAvailability() } }
+                    .frame(minHeight: 44).font(KriaFont.body(12))
+                    .accessibilityIdentifier("overlay-generation-availability-retry")
+            }
+        case .available:
+            Text("Planning and image generation use your account’s allowance. Your footage stays as it is.")
+                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+        case .unavailable:
+            Text("Generate media is unavailable for this account.")
+                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+        }
+    }
+
+    private func checkAvailability() async {
+        availability = .checking
+        do {
+            let capabilities = try await (session.overlayGenerationAPI ?? model.api).creationCapabilities()
+            availability = capabilities.generatedImages == true ? .available : .unavailable
+        } catch is CancellationError {
+        } catch { availability = .failed }
     }
 
     private func timing(_ row: OverlayProposal) -> String {
