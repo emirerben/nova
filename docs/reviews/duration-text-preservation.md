@@ -31,3 +31,7 @@ src/apps/api/.venv/bin/python scripts/ios/duration-text-preservation-fixtures.py
 Run `KriaTests/DurationTextPreservationTests` using the repository native test workflow. Positive cases cover preservation, compression, uneven expansion, expansion after compression, JSON reopening, preview and export. A deliberately stacked visible-text control must fail the single-word content oracle. The generator uses the real intent helper, parser and compiler. Native fixtures contain synthetic media and words.
 
 The required `make verify-editor-timeline` gate covers browser and backend behavior. Mobile browser viewports and simulator exports do not establish real-device acceptance. Local evidence does not establish app Save/relaunch, original-media fulfillment, production rollout or the user's phone result. The user's report that the opening error is gone remains distinct from attribution to a particular build. KRI-1060 tracks remaining acceptance and the separate reopening repair.
+
+## Retained local native result
+
+The six-case simulator rerun passed 270 exact OCR observations and 104 blank-gap checks. Exports contain 600 frames for each 20-second case and 360 for each 12-second case at 30 fps. The stacked negative control remains effective. Input hashes, case details and limits are retained in [the synthetic native evidence](duration-text-native-evidence.json). The subsequent fixed-gap-only allocation correction is covered by pure regressions, not these default scaled-gap exports.
