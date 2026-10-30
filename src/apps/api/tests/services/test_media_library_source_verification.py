@@ -1,10 +1,12 @@
 import hashlib
+import io
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from PIL import Image
 
 from app.services import media_library_ingest as ingest
 
@@ -212,5 +214,85 @@ def test_upload_size_mime_and_contract_constraints_are_rejected(monkeypatch, cha
 
     with pytest.raises(HTTPException) as error:
         ingest.verified_source_metadata("proxy.mp4", "7", "video", payload)
+
+    assert error.value.status_code == 422
+
+
+def _hdr_jpeg_bytes() -> bytes:
+    """A JPEG shaped like an iPhone HDR photo: the photo plus a smaller gain-map frame (MPO)."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 48), (200, 120, 40)).save(
+        buffer, "MPO", save_all=True, append_images=[Image.new("L", (16, 12), 128)]
+    )
+    return buffer.getvalue()
+
+
+def _png_bytes() -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 48), (200, 120, 40)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def _image_payload(content_type: str, file_size: int) -> dict:
+    return {
+        "kind": "image",
+        "content_type": content_type,
+        "file_size_bytes": file_size,
+        "upload_contract": {"purpose": "cloud_render_source", "proxy": None},
+    }
+
+
+def _install_image(monkeypatch, body: bytes) -> None:
+    metadata = SimpleNamespace(generation="7", size=len(body))
+    monkeypatch.setattr(ingest.storage, "object_metadata", lambda path: metadata)
+    monkeypatch.setattr(
+        ingest.storage,
+        "download_generation_to_file",
+        lambda path, destination, *, generation: Path(destination).write_bytes(body),
+    )
+
+
+@pytest.mark.parametrize("legacy", [True, False], ids=["plan-visual", "library-upload"])
+# Value card: protects=iPhone HDR photos added as Visuals or library uploads; fails_when=a JPEG
+# carrying a gain-map frame (Pillow reads it as MPO) is refused as "not a JPEG", which left the
+# 2026-10-30 Leverkusen photos stuck "waiting to analyze" behind a 422; why_new=no image bytes
+# reached this check with more than one frame; seam=none (real Pillow decode of real MPO bytes);
+# no_claim=does not prove Gemini analysis or the phone render of the photo.
+def test_hdr_iphone_jpeg_with_gain_map_is_accepted_as_jpeg(monkeypatch, legacy):
+    body = _hdr_jpeg_bytes()
+    _install_image(monkeypatch, body)
+
+    proof = ingest.verified_source_metadata(
+        "users/u/plan/i/pool/IMG_1019.jpeg",
+        "7",
+        "image",
+        _image_payload("image/jpeg", len(body)),
+        legacy=legacy,
+    )
+
+    assert proof["uploaded_sha256"] == hashlib.sha256(body).hexdigest()
+    assert proof["role"] == "original"
+    # The photo's own size, never the gain map's.
+    assert (proof["metadata"]["width"], proof["metadata"]["height"]) == (64, 48)
+
+
+@pytest.mark.parametrize(
+    "body_factory,content_type",
+    [(_hdr_jpeg_bytes, "image/png"), (_hdr_jpeg_bytes, "image/heic"), (_png_bytes, "image/jpeg")],
+    ids=["hdr-jpeg-labelled-png", "hdr-jpeg-labelled-heic", "png-labelled-jpeg"],
+)
+# Value card: protects=uploaded bytes must match their declared media type; fails_when=accepting
+# HDR JPEGs widens the check so a mislabelled file passes; why_new=negative control for the MPO
+# admission above; seam=none; no_claim=does not cover formats Pillow cannot open.
+def test_image_bytes_that_do_not_match_their_label_are_still_rejected(
+    monkeypatch, body_factory, content_type
+):
+    body = body_factory()
+    _install_image(monkeypatch, body)
+
+    with pytest.raises(HTTPException) as error:
+        ingest.verified_source_metadata(
+            "photo", "7", "image", _image_payload(content_type, len(body)), legacy=True
+        )
 
     assert error.value.status_code == 422
