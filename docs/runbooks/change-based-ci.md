@@ -73,7 +73,11 @@ output starts only the legs whose journeys were selected (`LEG_JOURNEYS` in
 `scripts/ci/select-tests.py`; `test_ci_throughput.py` keeps that map and the
 workflow's step conditions in agreement). One serial Mac took 40-55 min per PR
 (2026-10-23); each leg targets about 20 min at roughly a third more Mac
-minutes. The stable `build-and-test` gate requires every leg and the contract
+minutes. The legs start as soon as selection finishes and compile while
+`journey-offline` runs; `scripts/ci/wait-for-jobs.py` blocks only before the
+fixture bundle is downloaded and fails the leg unless `journey-offline` (and
+`journey-library`, when selected) succeeded, so the Linux journeys are no
+longer in front of the Mac queue. The stable `build-and-test` gate requires every leg and the contract
 job to pass when iOS is selected. Main uses one iOS build/unit/smoke lane and dispatches TestFlight after those checks
 pass. Full iOS regression runs at 03:23 UTC nightly or on manual dispatch; full
 native journeys run at 02:23 UTC nightly or on manual CI dispatch. Neither

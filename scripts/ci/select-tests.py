@@ -59,6 +59,7 @@ JOURNEY_POLICY_PATHS = (
     "scripts/ci/journey-manifest.json",
     "scripts/ci/test_journey_gate.py",
     "scripts/ci/test_select_tests.py",
+    "scripts/ci/wait-for-jobs.py",
 )
 
 
