@@ -288,6 +288,7 @@ def regound_quoted_intents(
     records = {
         str(getattr(clip, "media_id", "")): getattr(clip, "analysis", None) for clip in clips
     }
+    kinds = {str(clip.media_id): clip.kind for clip in clips}
     out: list[ResolvedClipIntent] = []
     moved = 0
     for intent in intents:
@@ -297,7 +298,9 @@ def regound_quoted_intents(
             continue
         seat = intent.assignments[0]
         sayers = [
-            media_id for media_id, record in records.items() if transcript_says(record, quote)
+            media_id
+            for media_id, record in records.items()
+            if intent.accepts_source_kind(kinds[media_id]) and transcript_says(record, quote)
         ]
         if seat.media_id in sayers or len(sayers) != 1:
             out.append(intent)
