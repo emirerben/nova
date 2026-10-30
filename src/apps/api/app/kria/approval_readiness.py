@@ -254,6 +254,40 @@ def _no_pre_render_checker(req: Any) -> bool:
     return not _has_checker(req) or (req.kind != "text" and judged_at_render(req))
 
 
+def planned_length_s(media: Mapping[str, Any]) -> float | None:
+    """The edit length ``media``'s approved length plan plays; None when it has none to read.
+
+    Its source windows plus the Visuals beside them: since KRI-824/825 the plan sizes only
+    the footage and every placed Visual keeps its own seconds (``visual_budget_s``). The
+    windows alone read a 25 s montage with three photos as "about 21.4s" (Leverkusen M1
+    run 2), so no length the creator named could pass. Raises ``ValueError`` for an invalid
+    plan, like ``read_length_plan``.
+    """
+    envelope = media.get("length_plan")
+    if not isinstance(envelope, Mapping) or envelope.get("window_eligible") is not True:
+        return None
+    parts = read_length_plan(
+        envelope,
+        [
+            SimpleNamespace(
+                media_id=row.get("media_id"),
+                kind=row.get("kind", "video"),
+                duration_s=row.get("duration_s"),
+                proxy_path=row.get("gcs_path"),
+                storage_generation=row.get("storage_generation", row.get("generation")),
+            )
+            for row in media.get("clip_assignments") or []
+            if isinstance(row, Mapping)
+        ],
+    )
+    if not parts:
+        return None
+    visuals_s = envelope.get("visual_budget_s")
+    return sum(p.duration_s for p in parts) + (
+        float(visuals_s) if isinstance(visuals_s, (int, float)) and visuals_s > 0 else 0.0
+    )
+
+
 def assess_readiness(
     brief: CreativeBrief | None,
     strategy: Mapping[str, Any] | None,
@@ -382,28 +416,11 @@ def assess_readiness(
     # Use the existing source-bounded execution plan, never the model's duration
     # target as proof. The same validator is used by the render path.
     envelope = media.get("length_plan")
-    if (
-        editor_payload is None
-        and isinstance(envelope, Mapping)
-        and envelope.get("window_eligible") is True
-    ):
+    if editor_payload is None:
         try:
-            parts = read_length_plan(
-                envelope,
-                [
-                    SimpleNamespace(
-                        media_id=row.get("media_id"),
-                        kind=row.get("kind", "video"),
-                        duration_s=row.get("duration_s"),
-                        proxy_path=row.get("gcs_path"),
-                        storage_generation=row.get("storage_generation", row.get("generation")),
-                    )
-                    for row in media.get("clip_assignments") or []
-                    if isinstance(row, Mapping)
-                ],
-            )
-            if parts:
-                facts = dataclasses.replace(facts, duration_s=sum(p.duration_s for p in parts))
+            planned_s = planned_length_s(media)
+            if planned_s is not None:
+                facts = dataclasses.replace(facts, duration_s=planned_s)
         except ValueError:
             pass  # Missing/invalid execution evidence stays unknown, never a pass.
     facts = with_verified_order_execution(
