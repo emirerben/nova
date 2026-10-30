@@ -7,13 +7,14 @@ import math
 import re
 import unicodedata
 from hashlib import sha256
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._schemas.creator_agent import CREATOR_REQUEST_MAX_CHARS
 from app.kria.reply_language import current_reply_language, prompt_language_line
+from app.kria.speed_ask import says_clip_speed
 from app.kria.text_trim import trim_at_word
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.clip_intents import (
@@ -22,6 +23,7 @@ from app.schemas.clip_intents import (
     INTENT_ID_MAX_CHARS,
     MAX_CLIP_INTENTS,
     ClipIntent,
+    ClipIntentOp,
 )
 from app.services.order_mode import key_order_mode
 
@@ -153,12 +155,17 @@ _QUOTE_TABLE = str.maketrans(
 # passes up to the stored bound and the fence, not this cap, answers "too long".
 _CREATOR_TEXT_MAX = CREATOR_LABEL_STORAGE_MAX
 _LABEL_PREVIEW_CHARS = 40
+_ASK_PREVIEW_CHARS = 90
+_UNEXPRESSED_MAX = 8
 _QUESTION_MAX_CHARS = 400
 _KNOWN_OPS = {"label", "group", "order", "include", "caption"}
 # KRI-667: `exclude` is a real op only with CLIP_INTENT_EXCLUDE_ENABLED; `_KNOWN_OPS`
 # stays the flag-off vocabulary (invented-op detection must not drift), and a creator
 # question may still name an exclude it could not keep.
 _PREVIEW_OPS = _KNOWN_OPS | {"exclude"}
+# Leverkusen M2: every op the schema has (another session's new op included). Any other op
+# is one no wording can add, so it is never a "please restate" question.
+_CLIP_OPS = frozenset(get_args(ClipIntentOp))
 # KRI-282: "add a text placeholder so I can replace it with their real names".
 # Flash does not reliably set `placeholder: true` (it has mapped this to a
 # creator_text caption or a grounded "person's name" label), so a quote that
@@ -242,6 +249,10 @@ class _IntentRejected(Exception):  # noqa: N818 - internal control flow
         self.detail = detail
 
 
+class _IntentUnexpressible(Exception):  # noqa: N818 - internal control flow
+    """An op outside ``ClipIntentOp``: named on the draft, never asked about."""
+
+
 # KRI-520: operation names as the creator reads them in a Turkish question.
 _OP_NAMES_TR = {
     "label": "etiket",
@@ -271,6 +282,20 @@ def _preview(raw_intent: object, language: str | None = None) -> str:
     if isinstance(op, str) and op in _PREVIEW_OPS:
         return f"{_copy(language, en=op, tr=_OP_NAMES_TR[op])}: {text}"
     return text
+
+
+def _ask_preview(raw_intent: object, sources: tuple[str, ...], language: str | None) -> str:
+    """The creator's own words for an intent when its quote is theirs, else ``_preview``.
+
+    "the goal clip with the kids at the start" names the clip, not the ask; "Keep that clip,
+    just start it after the kids" is what the creator will recognise.
+    """
+    quote = raw_intent.get("source_quote") if isinstance(raw_intent, dict) else None
+    if isinstance(quote, str) and _norm(quote) and any(_norm(quote) in s for s in sources):
+        text = trim_at_word(" ".join(_sanitize_text(quote).split()), _ASK_PREVIEW_CHARS)
+        if text := text.strip().rstrip(".!;:,").strip():
+            return text
+    return _preview(raw_intent, language)
 
 
 def salvage_question(
@@ -318,6 +343,40 @@ def salvage_question(
     )
     # The ask to restate is the point of the question: shorten the list in front of it, never it.
     return trim_at_word(text, _QUESTION_MAX_CHARS - len(tail)) + tail
+
+
+def unexpressed_notice(
+    labels: list[str] | tuple[str, ...], *, language: str | None = None
+) -> str | None:
+    """One line for the draft naming asks no clip operation can carry (``unexpressed``).
+
+    Leverkusen M2: "Put Taha's scream in slow motion" and "start that clip after the kids"
+    came back with ops the schema doesn't have, and the creator was asked to restate them.
+    No wording adds an op, so the restate looped. This is said once, on the draft, with
+    what the clip steps can do, and never holds the turn.
+    """
+    unique = list(dict.fromkeys(label for label in labels if label))
+    if not unique:
+        return None
+    named = "; ".join(f'"{label}"' for label in unique[:3])
+    extra = len(unique) - 3
+    if extra > 0:
+        named += _copy(language, en=f" (and {extra} more)", tr=f" (ve {extra} tane daha)")
+    one = len(unique) == 1
+    return _copy(
+        language,
+        en=(
+            f"I can't do {named} with your clips yet, so this draft leaves "
+            f"{'it' if one else 'them'} out. I can use, skip, reorder, group, label or caption "
+            "clips: tell me which of those you meant and I'll add it."
+        ),
+        tr=(
+            f"{named} {'isteğini' if one else 'isteklerini'} kliplerinle henüz yapamıyorum, "
+            "bu yüzden bu taslakta yok. Klipleri kullanabilir, atlayabilir, sıralayabilir, "
+            "gruplayabilir, etiketleyebilir ya da üzerlerine yazı ekleyebilirim: hangisini "
+            "kastettiğini söylersen eklerim."
+        ),
+    )
 
 
 def _unique_intent_id(intent_id: str, taken: set[str]) -> str:
@@ -587,7 +646,24 @@ _NON_CLIP_OP_WORDS = frozenset(
 # A clip's own sound ("with her own voice") is an audio choice the edit planner
 # owns; placed first or last it is still a placement of that clip.
 _AUDIO_OP_WORDS = frozenset({"audio", "voice", "sound"})
+# Leverkusen M2: "Put Taha's scream in slow motion" came back as an op the schema doesn't
+# have ("slow_motion"-like, no "speed" in it) and the creator was asked to restate it. Speed
+# is the Creative Brief's: the montage planner writes ``playback_rate`` from its words
+# (`kria.speed_ask`, KRI-689) and its receipt says whether the speed landed.
+_SPEED_OP_WORDS = frozenset(
+    "speed slow slower faster slowmo slomo retime playback timelapse hyperlapse".split()
+)
 _OP_WORDS = re.compile(r"[a-z]+")
+
+
+def _is_speed_op(op: object, quote: str) -> bool:
+    """An op outside the schema (or none) whose name or quote asks footage to play faster or
+    slower."""
+    if isinstance(op, str) and op in _CLIP_OPS:
+        return False
+    name = op if isinstance(op, str) else ""
+    words = set(_OP_WORDS.findall(name.casefold()))
+    return bool(words & _SPEED_OP_WORDS) or says_clip_speed(name) or says_clip_speed(quote)
 
 
 def _invented_op_words(op: object) -> set[str]:
@@ -867,7 +943,8 @@ def _silent_non_clip_drop(data: dict[str, Any], *, exclusions: bool = False) -> 
 
     Closed vocabulary: ``exclusion_dropped`` (an invented exclude op, or an
     ``include`` whose quote asks to leave clips out), ``non_clip_op_dropped`` (an
-    invented timing, style, de-duplication or audio op, KRI-531),
+    invented timing, style, de-duplication or audio op, KRI-531), ``speed_op_dropped`` (an
+    invented op asking footage to play faster or slower, Leverkusen M2),
     ``spelling_dropped`` (how names are spelled), ``speech_caption_dropped`` (a
     non-caption op whose target is the spoken captions). The creator's words stay
     in the Creative Brief, which the Main Creator and the caption steps read.
@@ -890,6 +967,8 @@ def _silent_non_clip_drop(data: dict[str, Any], *, exclusions: bool = False) -> 
         return "exclusion_dropped"
     if not exclusions and op == "include" and _is_exclusion_ask(quote_text):
         return "exclusion_dropped"
+    if _is_speed_op(op, quote_text):
+        return "speed_op_dropped"
     if _invented_op_words(op) & (_NON_CLIP_OP_WORDS | _AUDIO_OP_WORDS):
         return "non_clip_op_dropped"
     attribute = data.get("attribute")
@@ -1089,6 +1168,12 @@ class ClipIntentPlannerOutput(BaseModel):
     # raises a creator question. KRI-667 also counts `exclusion_repaired` here: an
     # `include` repaired into the `exclude` it asked for (kept, not dropped).
     silent_drops: dict[str, int] = Field(default_factory=dict, exclude_if=lambda value: not value)
+    # Parser-authored previews (like the salvage question's) of asks whose op the schema
+    # doesn't have (``unexpressible_op_dropped``, Leverkusen M2). Never a question: the
+    # draft names them once (`unexpressed_notice`).
+    unexpressed: list[str] = Field(
+        default_factory=list, max_length=_UNEXPRESSED_MAX, exclude_if=lambda value: not value
+    )
 
 
 class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutput]):
@@ -1236,9 +1321,13 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         )
         seen_ids: set[str] = set()
         silent: list[str] = []
+        unexpressed: list[str] = []
         for index, raw_intent in enumerate(raw_intents):
             try:
                 intent = self._build_intent(raw_intent, sources, input, index=index, silent=silent)
+            except _IntentUnexpressible:
+                unexpressed.append(_ask_preview(raw_intent, sources, input.reply_language))
+                continue
             except _IntentRejected as rejected:
                 dropped.append(_preview(raw_intent, input.reply_language))
                 drop_classes.append(rejected.error_class)
@@ -1302,6 +1391,7 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
                 salvage_question=salvage,
                 salvage_reasons=reasons,
                 silent_drops={reason: silent.count(reason) for reason in sorted(set(silent))},
+                unexpressed=list(dict.fromkeys(unexpressed))[:_UNEXPRESSED_MAX],
             )
         except ValidationError as exc:
             raise ClipIntentSchemaError(
@@ -1352,7 +1442,14 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         if silent_reason is not None:
             notes.append(silent_reason)
             return None
-        if data.get("op") != "exclude":
+        op = data.get("op")
+        if not isinstance(op, str) or op not in _CLIP_OPS:
+            # Leverkusen M2: an op the schema doesn't have ("trim_start", "highlight", none
+            # at all) is one no restatement can add, so asking to restate looped. The turn
+            # goes on with the rest; the draft names it (`unexpressed_notice`).
+            notes.append("unexpressible_op_dropped")
+            raise _IntentUnexpressible
+        if op != "exclude":
             return ClipIntentPlannerAgent._validated_intent(data, sources, input)
         # Nothing is printed for a clip left out. An exclusion that fails the shape or
         # provenance fence is dropped silently, as before KRI-667: asking the creator to

@@ -48,7 +48,7 @@ from app.agents._schemas.edit_format import (
     NARRATED_EDIT_FORMATS,
 )
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
-from app.agents.clip_intent_planner import ConfirmedTitleCopy
+from app.agents.clip_intent_planner import ConfirmedTitleCopy, unexpressed_notice
 from app.agents.length_options import length_options
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
@@ -4115,6 +4115,15 @@ async def _plan_creator_action(
                     update={"summary": " ".join([action.summary.strip(), measured]).strip()}
                 )
                 policy_notices = (*policy_notices, measured)
+        # Leverkusen M2: an ask no clip operation can carry ("start that clip after the
+        # kids") was a "please restate" that looped. It never holds the turn; the draft says
+        # once what the clip steps couldn't do and what they can.
+        unexpressed = unexpressed_notice(planned.unexpressed_asks)
+        if unexpressed is not None and unexpressed not in policy_notices:
+            action = action.model_copy(
+                update={"summary": " ".join([action.summary.strip(), unexpressed]).strip()}
+            )
+            policy_notices = (*policy_notices, unexpressed)
         tie_asked = tie_question(ties, intent_clips, excluded=skipped)
         if tie_asked is not None:
             log.info(
