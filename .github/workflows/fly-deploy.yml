@@ -171,7 +171,7 @@ jobs:
           REQUESTED_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.creator_duration_check_mode || '' }}
         run: |
           set -euo pipefail
-          machines_json="$(flyctl machine list --app nova-video --json)"
+          machines_json="$(flyctl machine list --app nova-video --json | jq -c -f scripts/fly-production-inventory.jq)"
           resolver_args=(--machines-json "$machines_json")
           if [[ -n "$REQUESTED_MODE" ]]; then
             resolver_args+=(--requested-mode "$REQUESTED_MODE")
@@ -279,7 +279,7 @@ jobs:
             ' >/dev/null
           }
           for attempt in $(seq 1 20); do
-            machines_json="$(flyctl machine list --app nova-video --json)"
+            machines_json="$(flyctl machine list --app nova-video --json | jq -c -f scripts/fly-production-inventory.jq)"
             managed_count="$(jq '[.[] | select(((.config.metadata // .incomplete_config.metadata // {}) | has("fly_process_group")))] | length' <<<"$machines_json")"
             digest_count="$(jq '[.[] | select(((.config.metadata // .incomplete_config.metadata // {}) | has("fly_process_group"))) | .image_ref.digest] | unique | length' <<<"$machines_json")"
             [[ "$managed_count" -ge 1 && "$digest_count" == "1" ]] || {

@@ -1320,6 +1320,172 @@ def test_expired_deploy_guard_is_retained_when_managed_fleet_is_mixed(
     assert not (tmp_path / "create.args").exists()
 
 
+RELEASE_ORPHAN_DIGEST = f"sha256:{'e' * 64}"
+
+
+def _release_command_machine(
+    state: str = "stopped",
+    *,
+    digest: str = RELEASE_ORPHAN_DIGEST,
+    group: str = "fly_app_release_command",
+) -> dict:
+    """What `flyctl deploy` leaves behind when it aborts before destroying its alembic runner."""
+    machine = _managed_machine(group, digest=digest, state=state, machine_id="feedreleasecmd")
+    machine["name"] = "nova-release-command"
+    return machine
+
+
+def _acquire_with(tmp_path: Path, orphan: dict) -> subprocess.CompletedProcess[str]:
+    inventory = _inventory(orphan)
+    return _run(
+        tmp_path,
+        [_image(), _image(digest=orphan["image_ref"]["digest"])],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[
+            inventory,
+            inventory,
+            inventory,
+            _inventory(orphan, _deploy_guard()),
+            _inventory(orphan, _deploy_guard()),
+            _inventory(orphan, _deploy_guard()),
+        ],
+    )
+
+
+def test_stopped_release_command_orphan_on_another_digest_does_not_block_acquisition(
+    tmp_path: Path,
+) -> None:
+    """Prod 2026-10-30: an aborted deploy left its stopped alembic Machine on the NEW digest.
+
+    It carries `fly_process_group`, so it was counted as a managed Machine and every later deploy
+    died with "do not expose one immutable image digest". It serves nothing; the fleet is still
+    one digest.
+    """
+    result = _acquire_with(tmp_path, _release_command_machine("stopped"))
+
+    assert result.returncode == 0, result.stderr
+    assert "do not expose one immutable image digest" not in result.stderr
+    assert (tmp_path / "create.args").read_text().count("CALL") == 1
+
+
+@pytest.mark.parametrize(
+    "state", ["created", "starting", "started", "stopping", "replacing", "destroying", "suspended"]
+)
+def test_release_command_machine_that_may_still_run_a_migration_still_blocks(
+    tmp_path: Path, state: str
+) -> None:
+    result = _acquire_with(tmp_path, _release_command_machine(state))
+
+    assert result.returncode == 1
+    assert (
+        "do not expose one immutable image digest" in result.stderr
+        or "lifecycle" in result.stderr
+        or "operational" in result.stderr
+    ), result.stderr
+    assert not (tmp_path / "create.args").exists()
+
+
+def test_stopped_machine_in_a_real_process_group_on_another_digest_still_blocks(
+    tmp_path: Path,
+) -> None:
+    for group in ("worker", "api", "light", "autoplace", "speech_analysis", "release_command"):
+        sub = tmp_path / group
+        result = _acquire_with(sub, _release_command_machine("stopped", group=group))
+        assert result.returncode == 1, (group, result.stderr)
+        assert "do not expose one immutable image digest" in result.stderr, group
+        assert not (sub / "create.args").exists(), group
+
+
+def test_real_fleet_divergence_still_blocks_when_a_release_orphan_is_also_present(
+    tmp_path: Path,
+) -> None:
+    other = f"sha256:{'c' * 64}"
+    inventory = [
+        _managed_machine("api"),
+        _managed_machine("worker", digest=other),
+        _managed_machine("light"),
+        _managed_machine("autoplace"),
+        _release_command_machine("stopped"),
+    ]
+    result = _run(
+        tmp_path,
+        [_image(), _image(digest=other)],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[inventory, inventory, inventory],
+    )
+
+    assert result.returncode == 1
+    assert "do not expose one immutable image digest" in result.stderr
+    assert not (tmp_path / "create.args").exists()
+
+
+def test_expired_foreign_guard_is_reclaimed_past_a_stopped_release_command_orphan(
+    tmp_path: Path,
+) -> None:
+    """The guard left by the aborted deploy must be reclaimable once its lease passes."""
+    orphan = _release_command_machine("stopped")
+    expired = _deploy_guard(
+        machine_id=FOREIGN_MACHINE_ID,
+        owner="99999:1",
+        created_epoch=NOW_EPOCH - 4_000,
+    )
+    before = _inventory(orphan, expired)
+    after = _inventory(orphan)
+    result = _run(
+        tmp_path,
+        [_image(), _image(digest=RELEASE_ORPHAN_DIGEST)],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[
+            before,
+            before,
+            before,
+            after,
+            after,
+            after,
+            _inventory(orphan, _deploy_guard()),
+            _inventory(orphan, _deploy_guard()),
+            _inventory(orphan, _deploy_guard()),
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert FOREIGN_MACHINE_ID in (tmp_path / "destroy.args").read_text()
+
+
+def test_inventory_filter_drops_only_stopped_release_command_machines() -> None:
+    inventory_filter = REPO_ROOT / "scripts" / "fly-production-inventory.jq"
+    machines = [
+        _managed_machine("api"),
+        _release_command_machine("stopped"),
+        _release_command_machine("started"),
+        _managed_machine("worker", state="stopped"),
+        _deploy_guard(),
+    ]
+    out = subprocess.run(
+        ["jq", "-c", "-f", str(inventory_filter)],
+        input=json.dumps(machines),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    kept = [(m["name"], m["state"]) for m in json.loads(out.stdout)]
+    assert ("nova-release-command", "stopped") not in kept
+    assert ("nova-release-command", "started") in kept
+    assert len(kept) == 4
+
+
+def test_deploy_workflows_read_the_filtered_inventory() -> None:
+    for name in ("fly-deploy.yml", "video-poster-backfill.yml"):
+        lines = [
+            line
+            for line in (REPO_ROOT / ".github" / "workflows" / name).read_text().splitlines()
+            if "flyctl machine list" in line
+        ]
+        assert lines, name
+        for line in lines:
+            assert "| jq -c -f scripts/fly-production-inventory.jq" in line, (name, line)
+
+
 def test_deploy_guard_rejects_foreign_owner_or_executed_state(tmp_path: Path) -> None:
     foreign = _deploy_guard(owner="99999:1")
     release = _run(
