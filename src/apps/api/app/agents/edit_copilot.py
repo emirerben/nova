@@ -54,7 +54,7 @@ log = structlog.get_logger()
 # v91 (29 Ekim lane E, KRI-1039): compose with the ops, refuse only when no sequence reaches the
 # end state and name what is missing; words the creator gives, shown a piece at a time, are
 # replace_text_sequence (weighted windows, mode cumulative), never captions.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-29-v91"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v93"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

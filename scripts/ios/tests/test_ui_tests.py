@@ -379,6 +379,30 @@ class ShardOverheadTests(unittest.TestCase):
 
 
 class ResultCoverageTests(unittest.TestCase):
+    def test_unit_class_named_like_its_bundle_keeps_both_components(self):
+        expected = {"KriaTests/KriaTests/testRefresh"}
+        for identifier in (
+            "KriaTests/testRefresh()",
+            "KriaTests/KriaTests/testRefresh()",
+        ):
+            report = self.report(identifier=identifier)
+            report["testNodes"][0].update(nodeType="Unit test bundle", name="KriaTests")
+            self.assertEqual(ui.result_tests(report), {next(iter(expected)): "Passed"})
+            self.assertIn("Verified 1", ui.verify_results(report, expected))
+        for identifier, result in (
+            ("Other/testRefresh()", "Passed"),
+            ("Foreign/KriaTests/testRefresh()", "Passed"),
+            ("KriaTests/testRefresh()", "Skipped"),
+            ("KriaTests/testRefresh()", "Failed"),
+        ):
+            report = self.report(result=result, identifier=identifier)
+            report["testNodes"][0].update(nodeType="Unit test bundle", name="KriaTests")
+            with (
+                self.subTest(identifier=identifier, result=result),
+                self.assertRaises(ValueError),
+            ):
+                ui.verify_results(report, expected)
+
     def report(self, result="Passed", identifier="Example/testWorks()"):
         return {
             "testNodes": [

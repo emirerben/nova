@@ -24,7 +24,7 @@ from tests.services.test_kria_editor_ops import _job, _variant
 
 
 def test_prompt_version_pinned() -> None:
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-10-29-v91"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-10-30-v93"
 
 
 def test_op_cap_is_a_single_shared_constant() -> None:
@@ -217,3 +217,11 @@ def test_lane_modules_import_standalone() -> None:
             [sys.executable, "-c", f"import app.agents.editor_ops_v2.{lane}"],
             check=True,
         )
+
+
+def test_existing_sequence_retime_is_exposed_as_one_bulk_operation():
+    contract = editor_operation_contract(_snapshot(editor_ops_version=2))
+    assert "retime_text_sequence" in contract
+    assert "fit_to_video" in contract
+    assert "gap_policy" in contract
+    assert "Never remove" in contract

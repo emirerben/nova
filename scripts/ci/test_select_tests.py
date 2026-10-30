@@ -623,8 +623,12 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-988-pool-photo-attached,kri-721-approval-readiness,kri-966-take-window-length",
+                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-988-pool-photo-attached,kri-721-approval-readiness,kri-966-take-window-length,duration-text-preservation",
                 ),
+            ),
+            (
+                "src/apps/api/app/kria/editor_sequence_timing.py",
+                (True, "covered", "duration-text-preservation"),
             ),
             (
                 "src/apps/api/app/kria/approval_readiness.py",
@@ -952,7 +956,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/prompts/edit_copilot_ops/text.txt",
-                (True, "covered", "kri-669-gameday"),
+                (True, "covered", "kri-669-gameday,duration-text-preservation"),
             ),
             (
                 "src/apps/api/app/services/native_activity.py",

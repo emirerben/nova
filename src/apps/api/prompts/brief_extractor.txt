@@ -28,3 +28,5 @@ preserve exact creator words, never invent requirements, and use stable target i
 only when the request unambiguously changes or removes an existing requirement. Do
 not supply `expected_version`: the server attaches concurrency metadata from the
 saved brief.
+
+For an editing request that explicitly forbids touching text, record a timing requirement with facts {"preserve_editor_text":true}. For a request whose entire scope is video/text timing with no wording, appearance or placement changes, record facts {"editor_timing_only":true} on its timing requirement. Preserve unrelated requested changes in separate requirements. The existing word sequence must remain separate and ordered; a whole-video fill/stretch/shrink request authorizes timing changes, not copy replacement. Do not mark explicit text preservation as permission to retime it.

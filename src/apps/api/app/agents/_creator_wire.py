@@ -162,6 +162,8 @@ def copilot_schema():
         "behind_subject",
         "is_highlight",
         "enabled",
+        "fit_to_video",
+        "preserve_text",
     }
     numbers = {
         "at_s",
@@ -208,6 +210,8 @@ def copilot_schema():
     }
 
     def field(name):
+        if name == "gap_policy":
+            return enum("scale", "close", "fixed")
         if name in bools:
             return boolean
         if name == "base_generation":

@@ -1,0 +1,65 @@
+{
+  "tests_passed": 6,
+  "tests_failed": 0,
+  "ocr_samples_passed": 270,
+  "blank_gap_pixel_checks_passed": 104,
+  "cases": [
+    {
+      "name": "duration20",
+      "duration_s": 20,
+      "frame_count": 600,
+      "ocr_samples": 54,
+      "blank_gap_pixel_checks": 0,
+      "maximum_concurrency": 1,
+      "local_serialization_reopen": true
+    },
+    {
+      "name": "duration12",
+      "duration_s": 12,
+      "frame_count": 360,
+      "ocr_samples": 54,
+      "blank_gap_pixel_checks": 0,
+      "maximum_concurrency": 1,
+      "local_serialization_reopen": true
+    },
+    {
+      "name": "retime12",
+      "duration_s": 12,
+      "frame_count": 360,
+      "ocr_samples": 54,
+      "blank_gap_pixel_checks": 0,
+      "maximum_concurrency": 1,
+      "local_serialization_reopen": true
+    },
+    {
+      "name": "retimeUneven20",
+      "duration_s": 20,
+      "frame_count": 600,
+      "ocr_samples": 54,
+      "blank_gap_pixel_checks": 52,
+      "maximum_concurrency": 1,
+      "local_serialization_reopen": true
+    },
+    {
+      "name": "retimeAfterResize20",
+      "duration_s": 20,
+      "frame_count": 600,
+      "ocr_samples": 54,
+      "blank_gap_pixel_checks": 52,
+      "maximum_concurrency": 1,
+      "local_serialization_reopen": true
+    }
+  ],
+  "evidence_level": "local iOS simulator native compositor preview pixels and exported MP4; local JSON/session reopen",
+  "limitations": [
+    "Synthetic black PNG source, no original footage",
+    "No real-phone playback or Photos save",
+    "No production calls or rollout",
+    "Local serialization only; no app Save/relaunch",
+    "Preview frame sampling, not UI playback automation",
+    "Later fixed-gap-only backend rounding delta not exercised by these default scaled-gap native cases."
+  ],
+  "fixture_sha256": "9256110b2272d099f09a10ff5c828316456ec95ae56c39daccc509ffdeab9dab",
+  "native_test_sha256": "91bd595043cede861138f75371d79b82698ffb269fa18b97f54762acfa9c6941",
+  "capture_basis": "Hashed uncommitted inputs over a475bf57; fixture and test subsequently committed in be25d0d42. Fixed-gap backend rounding delta is covered by pure tests, not these scaled-gap native cases."
+}

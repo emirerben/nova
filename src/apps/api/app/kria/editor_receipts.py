@@ -367,6 +367,12 @@ def _wanted(req: BriefRequirement) -> Mapping[str, str]:
 
 
 def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: int = 0) -> AskShape:
+    policy = req.facts.get("sequence_timing")
+    if req.kind == "timing" and isinstance(policy, dict):
+        return AskShape(
+            groups=(_Group("timing", _CUE_LANES["timing"]),),
+            target_row_ids=frozenset(policy.get("target_ids") or ()),
+        )
     text = words(req.description)
     named = _named_cues(req, text)
     groups = [_Group(name, _CUE_LANES[name]) for name in _CUE_LANES if name in named]
@@ -406,7 +412,15 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
         live_text=live_text,
         literal=words(req.literal) if req.kind == "text" and req.literal else "",
         clip_scope=scope_clip,
-        ordinal=_ordinal(text),
+        ordinal=(
+            None
+            if req.kind == "timing"
+            and req.scope == "global"
+            and "duration_s" in req.facts
+            and "video" in text.split()
+            and not clip_only
+            else _ordinal(text)
+        ),
     )
 
 
@@ -682,6 +696,9 @@ def bind_editor_receipts(
             base = RequirementReceipt(
                 requirement_id=req.id, status="partial", verification="unchecked"
             )
+        if isinstance(req.facts.get("sequence_timing"), dict) and is_judged(req, base):
+            out.append(base)
+            continue
         shape, verdicts = shapes[req.id], verdicts_by_req[req.id]
         matched = [e for v in verdicts for e in v.matched]
         declined = _unmet_reason(req, unmet)
