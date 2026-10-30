@@ -278,7 +278,7 @@ async def test_render_in_flight_guard_is_skipped_only_for_a_fresh_state(monkeypa
 
 @pytest.mark.asyncio
 async def test_speech_cut_with_unsaved_lanes_gets_the_honest_reply(monkeypatch) -> None:
-    target = SimpleNamespace(job_id=uuid.uuid4(), snapshot={}, conversation=[], variant={})
+    target = planner._EditorTarget(job_id=uuid.uuid4(), snapshot={}, conversation=[], variant={})
     monkeypatch.setattr(planner, "_load_editor_target", AsyncMock(return_value=target))
     reply = SimpleNamespace(
         ops=[{"op": "apply_speech_cut_candidate", "candidate_id": "c"}],
@@ -428,7 +428,7 @@ async def test_unsupported_editor_refusal_offers_a_redo_that_routes_to_a_replan(
     """A re-sent request on a limited draft got a dead-end refusal (KRI-473)."""
     from app.kria.brief import wants_full_replan
 
-    target = SimpleNamespace(job_id=uuid.uuid4(), snapshot={}, conversation=[], variant={})
+    target = planner._EditorTarget(job_id=uuid.uuid4(), snapshot={}, conversation=[], variant={})
     monkeypatch.setattr(planner, "_load_editor_target", AsyncMock(return_value=target))
     refusal = "That kind of edit isn't available for this draft yet."
     reply = SimpleNamespace(ops=[], outcome="unsupported", reply=refusal)

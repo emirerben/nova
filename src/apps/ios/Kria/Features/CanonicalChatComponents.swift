@@ -1346,19 +1346,12 @@ struct FailedStage: View {
     var bodyText = "Your direction and footage are safe. Refresh the project or tell me what you want to change."
     var retryLabel = "Refresh project"
     var retry: (() -> Void)?
-    /// KRI-118 item 4: the most recent `assistant_error` event's `code`, when
-    /// this is the GENERIC failure card (`ChatWorkspaceView`'s
-    /// `.genericFailure` case). `retry` here resends the same request that
-    /// just failed -- honest for a transient/stale-state failure (network,
-    /// revision mismatch), but for a deterministic/structural one
-    /// (`nonRetryablePhoneGateErrorCodes`, `CreationConfirmationStage.swift`)
-    /// it would fail identically. "Refresh project" is misleading there, so
-    /// this offers a fresh project instead.
+    /// Structural failures need a correction in the saved conversation.
+    /// Retrying the same request cannot resolve them.
     var nonRetryableReasonCode: String? = nil
     /// The typed creator decline behind a non-retryable failure (`decline_reason`).
     var declineReason: String? = nil
-    /// Hands the creator the composer. Used where the next step is a reply in this
-    /// chat rather than a fresh project (`replyInChatDeclineReasons`).
+    /// Hands the creator the composer so a correction keeps the saved conversation.
     var replyInChat: (() -> Void)? = nil
 
     /// The one way forward the failed card offers.
@@ -1375,7 +1368,7 @@ struct FailedStage: View {
         // A Retry or Refresh would answer the same, and New chat would drop the conversation.
         if isNotRetryableNowFailureCode(code) { return .none }
         if isNonRetryableFailureCode(code) {
-            return canReply && declineReason.map(replyInChatDeclineReasons.contains) == true ? .reply : .newChat
+            return canReply ? .reply : .newChat
         }
         return canRetry ? .retry : .none
     }

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.7.0] - 2026-10-30
+
+### Changed
+- feat(kria): verify confirmed replacement orders against current execution (#1951) <!-- release-pr: 1951 -->
+
+## [0.83.6.0] - 2026-10-30
+
+### Fixed
+- fix(kria): safely recover failed editor drafts while preserving Save (KRI-1039) (#1937) <!-- release-pr: 1937 -->
+
 ## [0.83.5.0] - 2026-10-30
 
 ### Changed

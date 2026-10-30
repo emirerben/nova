@@ -222,11 +222,11 @@ async def test_faster_followup_routes_through_editor_against_resulting_sequence(
     monkeypatch.setattr(planner, "_plan_editor_revision", actual_editor)
     monkeypatch.setattr(planner, "load_intent_clips_for_item", AsyncMock(return_value=[]))
     target_snapshot = {"value": snapshot}
-    target = SimpleNamespace(job_id=item.current_job_id, snapshot=snapshot, conversation=[])
 
     async def load_target(_db, *, thread_id, item, **_kwargs):  # noqa: ANN001
-        target.snapshot = target_snapshot["value"]
-        return target
+        return planner._EditorTarget(
+            job_id=item.current_job_id, snapshot=target_snapshot["value"], conversation=[]
+        )
 
     async def extract(inputs, *, creator_request, **_kwargs):  # noqa: ANN001
         agent = BriefExtractorAgent(ModelClient())

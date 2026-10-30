@@ -1368,6 +1368,70 @@ def fresh_editor_head_payload(
     return payload
 
 
+class EditorDraftBasis(NamedTuple):
+    draft_id: str
+    snapshot_hash: str
+
+
+def failed_editor_draft_basis(
+    head: Any,
+    job: Any,
+    variant: dict[str, Any],
+    *,
+    thread_id: Any,
+    creator_id: Any,
+    item_id: Any,
+) -> EditorDraftBasis | None:
+    """Bind recovery to an owned canonical editor head at the current generation."""
+    from app.kria.drafts import KriaDraftDocument, canonical_snapshot  # noqa: PLC0415
+    from app.kria.runtime import RuntimeFailure  # noqa: PLC0415
+
+    if head is None or not (
+        head.is_head
+        and job.user_id == creator_id
+        and job.content_plan_item_id == item_id
+        and head.creator_id == creator_id
+        and head.thread_id == thread_id
+        and head.item_id == item_id
+        and head.base_job_id == job.id
+        and head.variant_key == str(variant.get("variant_id") or "")
+    ):
+        return None
+    try:
+        document = KriaDraftDocument.model_validate(head.snapshot_json)
+        if document.kind != "editor" or canonical_snapshot(document)[1] != head.snapshot_hash:
+            return None
+    except (ValueError, RuntimeFailure):
+        return None
+    if not variant_render_baseline(variant) or not fresh_editor_head_payload(head, variant, job):
+        return None
+    return EditorDraftBasis(str(head.id), head.snapshot_hash)
+
+
+def unknown_editor_render_query(session: Any, job: Any, variant: dict[str, Any]) -> Any:
+    from sqlalchemy import or_, select  # noqa: PLC0415
+
+    from app.models import CreatorAgentExecution  # noqa: PLC0415
+
+    return (
+        select(CreatorAgentExecution.id)
+        .where(
+            CreatorAgentExecution.session_id == session.id,
+            CreatorAgentExecution.target_job_id == job.id,
+            CreatorAgentExecution.status == "outcome_unknown",
+            or_(
+                CreatorAgentExecution.target_variant_id.is_(None),
+                CreatorAgentExecution.target_variant_id == variant.get("variant_id"),
+            ),
+            or_(
+                CreatorAgentExecution.target_generation_id.is_(None),
+                CreatorAgentExecution.target_generation_id == variant_render_baseline(variant),
+            ),
+        )
+        .limit(1)
+    )
+
+
 def project_editor_draft(
     variant: dict[str, Any], payload: dict[str, Any], job: Any = None
 ) -> dict[str, Any]:
