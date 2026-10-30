@@ -64,3 +64,10 @@ The artifact adapter reads the exact storage generation and checks actual stream
 The durable result is `evidence_ready`, never `reviewed` or `fixed`. No provider receives these frames yet. Provider media transport, pricing/reservation, typed findings, instruction-preserving repair authority, native correction previews and phone acceptance remain open. Existing paid gates and budgets are unchanged.
 
 Portable author qualification passes 149 tests, including actual PostgreSQL observer, admission faults, reconciliation, ownership, duplicate, lease and dispatch-setting controls. Six frame integration cases were deliberately deselected on Darwin. Full decoder qualification, including actual Linux hard-limit controls, is pending the existing Ubuntu free-regression workflow. Historical Mac decoder results do not qualify this hardened version.
+
+
+### First Linux qualification results
+
+The isolated decoder at `982c25729b4c60358c0ffe8b3caba6d24a14cddf` passed [Ubuntu run 41077807872](https://github.com/emirerben/nova/actions/runs/41077807872). Its retained JUnit report has 20 decoder controls passed with no skips, within 709 total passed and two unrelated skips. Actual pixels/timestamps/provenance, replaced and corrupt bytes, memory refusal, output flood caps, file-size enforcement and process timeout cleanup all ran. The decoder source hash matches this canonical branch exactly.
+
+Canonical run 41078179538 at `a5c7d88ea` passed 761 tests and failed six before extraction. The six frame-fence tests still expected duplicate admission to return an enqueue ID, although durable admitted markers now correctly return no new work. The test correction requires no duplicate enqueue plus exactly one existing pending row with the original ID. Production admission code is unchanged. Actual editor frame/final-fence qualification remains pending a corrected exact-head rerun; the initial approval/frame capture test passed in that run.
