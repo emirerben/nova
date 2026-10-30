@@ -44,5 +44,13 @@
       "docs/reviews/native-speed-endpoint-validation.md"
     ],
     "limitations": "Local simulator evidence; fresh exact-head hostedCI required. No product changes or failed-check waiver."
+  },
+  "keyboard_test_followup": {
+    "source_commit": "1f1b0152c1285794b2be9320cf1a1e3639944144",
+    "test_source_sha256": "ddd65c41214c7ad1329402537f527fad4d3867de9020ce317b5725df4673eb2c",
+    "scope": "Test-only keyboard readiness and exact Live text synchronization; all feature assertions unchanged.",
+    "verification": "Three full native UI repetitions passed, built/installed test binaries match; root read actual result bundle and reviewed exact patch.",
+    "validation": "docs/reviews/pr1930-keyboard-synchronization.md",
+    "limits": "Local runtime proof on merged-main compatibility artifact3012652298; finalPRpublication retains originalAPIpatch. Fresh exacthead hostedCI stillrequired, no physicalphone or newproductclaim."
   }
 }
