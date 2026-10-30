@@ -176,6 +176,7 @@ from app.services.clip_intent_planning import (
     whole_video_text_asks,
 )
 from app.services.clip_intent_resolution import IntentClip
+from app.services.clip_order_sequence import stated_anchors
 from app.services.clip_selection import answered_rows, fold_clip_selections
 from app.services.clip_understanding import understanding_incomplete
 from app.services.creative_copy_decisions import (
@@ -3753,6 +3754,8 @@ async def _plan_creator_action(
         kept_labels = await _load_kept_labels(db, item_id) if effective_brief is not None else []
         whole_video_texts = whole_video_text_asks(effective_brief)
         sequence_texts = sequence_text_literals(effective_brief)
+        # KRI-1067: a filming-order brief's first / last clip the inventory may leave out.
+        brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
         )
@@ -3797,6 +3800,7 @@ async def _plan_creator_action(
                 # 29 Ekim: the brief's word-by-word text is the text lane's, never a caption.
                 **({"sequence_texts": sequence_texts} if sequence_texts else {}),
                 **({"checked_inventory": checked_inventory} if checked_inventory else {}),
+                **({"brief_anchors": brief_anchors} if brief_anchors else {}),
                 # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
                 # never a clip question; its receipt tells the creator.
                 **(
