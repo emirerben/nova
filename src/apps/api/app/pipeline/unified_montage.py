@@ -224,6 +224,11 @@ class BriefView:
     # described label; only the scoped ones above are applied per clip.
     wants_order: bool = False
     order_by_capture: bool = False
+    # Leverkusen M1 run 2 #3: no order ask is live, but the last basis the creator let go
+    # of (the simpler version, "Continue without a fixed order") was filming time. Dropping
+    # it waived the check, not the wish: the montage still plays by filming time where the
+    # footage is dated, and nothing claims or verifies it (see ``plan_unified_montage``).
+    kept_filming_order: bool = False
     # KRI-585: an order requirement says "the order I added them", so what the clips
     # say never moves one (filming-time keys set ``order_by_capture`` instead).
     order_basis_stated: bool = False
@@ -353,6 +358,7 @@ def brief_view(brief: Any) -> BriefView:
         clip_literals=clip_literals,
         wants_order=wants_order,
         order_by_capture=order_capture,
+        kept_filming_order=not wants_order and _dropped_filming_order(brief),
         order_basis_stated=basis_stated,
         random_order_seed=None if order_capture else random_seed,
         per_clip_text_is_time=wants_time,
@@ -371,6 +377,26 @@ def brief_view(brief: Any) -> BriefView:
         curved_labels=curved_labels,
         curved_texts=frozenset(curved_texts),
     )
+
+
+def _dropped_filming_order(brief: Any) -> bool:
+    """Was the last order basis the brief superseded filming time (``kept_filming_order``)?
+
+    A dropped upload-order or random-order ask written after it wins, so a creator who
+    moved away from filming order before letting go of order altogether keeps that.
+    """
+    from app.services.choice_questions import ATTACHMENT_ORDER_KEY  # noqa: PLC0415
+
+    filming = False
+    for req in brief.requirements:
+        if req.live or req.kind != "order":
+            continue
+        key = str((req.facts or {}).get("key") or (req.facts or {}).get("by") or "").casefold()
+        if key in _CAPTURE_ORDER_KEYS:
+            filming = True
+        elif key == ATTACHMENT_ORDER_KEY or order_mode(req) == "random":
+            filming = False
+    return filming
 
 
 def _fact_is_true(value: object) -> bool:
@@ -1759,6 +1785,13 @@ def plan_unified_montage(
     trees"); the clip's label stays, where the creator put it, and covers the opening.
     """
     view = view or BriefView()
+    if view.kept_filming_order and not view.order_by_capture and not creator_order:
+        # Leverkusen M1 run 2 #3: "Make it without these" dropped the filming-order ask
+        # (its check failed), and this plan fell back to upload order: the train ride,
+        # filmed second, played 10th of 11. Plan exactly as under the ask (dated photos
+        # join the chronology, KRI-1069); with no live requirement, no receipt or contract
+        # promises it. A hand reorder made since is the later word and keeps its order.
+        view = replace(view, order_by_capture=True)
     strategy = strategy or {}
     creator_omissions = creator_omission_outcomes(strategy)
     if (
