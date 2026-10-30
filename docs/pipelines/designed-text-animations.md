@@ -25,6 +25,12 @@ Caption motion applies to complete caption lines under sentence display: the lin
 
 Still-photo slide posts export images. Their text panel continues to hide animation controls. Read-only text retains its existing editing restrictions. These options animate content inside a video, rather than application labels or buttons.
 
+## AI support
+
+The chat editor, brief extractor and main planner name animations from one registry, `TEXT_ANIMATION_VOCAB` in `text_animation_phases.py`. Each edge has its picker label, a Turkish receipt label and the phrases creators use for it ("word relay"). Prompts write `{{TEXT_ANIMATION_EDGES}}` and `app/agents/prompt_vocab.py` renders it, so "add word relay animation to all text" becomes `patch_text` with `entrance: "wordRelay"`. Brief checks, style asks, edit receipts and the "remove the effect" pass take their words from the same table.
+
+To add an animation, add it to `TextAnimationEdge` and give it a `TEXT_ANIMATION_VOCAB` entry. The import fails until the entry exists. `tests/agents/test_prompt_vocab_drift.py` fails when a prompt or AI-layer literal hand-lists three or more animations but not all of them. It also checks that the rendered chat-editor text lane offers every edge. Bump the prompt version of each agent whose rendered prompt changed.
+
 ## Renderers
 
 The native compositor, Pillow renderer and Skia renderer recognize all six edge values. The backend renderers share `designed_text_motion.py` and retain their existing font shaping. They do not silently replace an unsupported edge with static text.
