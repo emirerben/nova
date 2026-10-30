@@ -1,5 +1,7 @@
 # Generate media verification
 
+The initial separate generator sheet is superseded by the selected inline Visuals implementation. See [inline-design.md](inline-design.md) for current acceptance results and screenshots. Older results below remain historical evidence.
+
 The implementation adds a native Visuals entry with prompt and automatic modes. It creates a read-only grounded plan, reviews individual assets, and applies accepted overlays through the existing native editor. It does not enable production provider flags or budgets.
 
 ## Verified locally

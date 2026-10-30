@@ -754,6 +754,9 @@ enum NativeEditorUITestCommitTransport {
     static func api() -> KriaAPI {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CommitURLProtocol.self]
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+            URLProtocol.registerClass(GeneratedMediaImageFixtureProtocol.self)
+        }
         return KriaAPI(baseURL: URL(string: "https://editor-ui-testing.invalid")!, tokenStore: UITestTokenStore(), session: URLSession(configuration: configuration))
     }
 
@@ -771,7 +774,22 @@ enum NativeEditorUITestCommitTransport {
             guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
-            if url.path.hasSuffix("/overlay-plan") {
+            if url.path.hasSuffix("/capabilities"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                status = 200; body = Data(#"{"formats":[],"generated_images":true}"#.utf8)
+            } else if url.path.contains("/generated-media"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                let imageURL = "https://generated-media-image.invalid/cover.jpg"
+                let response: [String: JSONValue] = ["id": .string("fixture-overlay-operation"), "state": .string("ready"),
+                    "capability": .string("image"), "retryable": .bool(false), "asset_id": .string("fixture-generated-image"),
+                    "preview_url": .string(imageURL), "source_url": .string(imageURL)]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/assets"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                let response: [String: JSONValue] = ["max_assets": .number(20), "assets": .array([.object([
+                    "id": .string("fixture-generated-image"), "kind": .string("image"), "status": .string("ready"),
+                    "source_filename": .string("Generated fixture.jpg"), "gcs_path": .string("fixture/generated.jpg"),
+                    "source_url": .string("https://generated-media-image.invalid/cover.jpg")
+                ])])]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/overlay-plan") {
                 var data = request.httpBody ?? Data()
                 if data.isEmpty, let stream = request.httpBodyStream {
                     stream.open(); defer { stream.close() }
@@ -779,13 +797,17 @@ enum NativeEditorUITestCommitTransport {
                     while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
                 }
                 let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if fields["mode"] == .string("automatic"), fields["prompt"] != .string("") {
+                    client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                    return
+                }
                 let response: [String: JSONValue] = [
                     "document_fingerprint": fields["document_fingerprint"] ?? .string(""),
                     "base_generation": fields["base_generation"] ?? .string(""),
                     "message": .string("Synthetic offline overlay plan."),
                     "overlays": .array([.object([
-                        "id": .string("DCC14763-5702-4AE3-8510-8C72845E6B15"), "kind": .string("text"),
-                        "title": .string("Number 10"), "prompt": .string(""), "text": .string("10"),
+                        "id": .string("DCC14763-5702-4AE3-8510-8C72845E6B15"), "kind": .string(ProcessInfo.processInfo.environment["KRIA_OVERLAY_IMAGE"] == "1" ? "image" : "text"),
+                        "title": .string("Synthetic graphic"), "prompt": .string("A synthetic image for native UI testing"), "text": .string("10"),
                         "start_s": .number(0.5), "end_s": .number(1.5),
                         "x_frac": .number(0.2), "y_frac": .number(0.3), "scale": .number(0.2),
                         "reason": .string("Synthetic placement at 0.5 seconds.")
@@ -816,6 +838,10 @@ enum NativeEditorUITestCommitTransport {
                     while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
                 }
                 let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays"),
+                   let visuals = fields["visual_blocks"], let data = try? JSONEncoder().encode(visuals) {
+                    UserDefaults.standard.set(data, forKey: "overlay-fixture-saved-visuals")
+                }
                 if let drawings = fields["drawings"], let saved = try? JSONEncoder().encode(drawings) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedDrawingsKey)
                 }

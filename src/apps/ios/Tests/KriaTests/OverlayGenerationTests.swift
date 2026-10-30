@@ -5,6 +5,37 @@ import KriaMediaEngine
 @testable import Kria
 
 final class OverlayGenerationTests: XCTestCase {
+    @MainActor func testGeneratedImageUsesOrdinaryVisualCustomizationAndSnapshotPersistence() throws {
+        let session = NativeEditorSession(draft: NativeEditorUITestFixtures.captionVisuals)
+        let before = session.document
+        let asset = CreationVisual(id: "generated-fixture", kind: "image", status: "ready", sourceFilename: "icon.png", displayURL: nil, previewURL: nil, retryable: nil, gcsPath: "fixture/icon.png", sourceURL: nil, durationS: nil, mediaStatus: nil)
+        let row = OverlayProposal(id: UUID().uuidString, kind: .image, title: "Icon", prompt: "A clean icon", startS: 0.5, endS: 1.5, xFrac: 0.2, yFrac: 0.3, scale: 0.2, reason: "Synthetic fixture")
+        let block = try XCTUnwrap(NativeVisualAuthoring.plannedOverlay(asset: asset, proposal: row, z: 2))
+        XCTAssertEqual(block.kind, "media")
+        XCTAssertEqual(block.raw["media_kind"], .string("image"))
+        XCTAssertEqual(block.raw["origin"], .string("user"))
+        session.transactDocument(section: .visualBlocks) { $0.visualBlocks.append(block) }
+        session.undo()
+        XCTAssertEqual(session.document, before)
+        session.redo()
+        let selected = EditorSelection(kind: .visualBlock, id: row.id)
+        session.setVisualBlockOverlayLayout(id: row.id, x: 0.82, y: 0.4, scale: 0.65)
+        session.setVisualBlockTiming(id: row.id, startS: 1, endS: 3)
+        session.setVisualBlockTransform(id: row.id, fitMode: "cover", zoom: 2)
+        session.setVisualEditorStyle(selected, key: "rotation_deg", value: .number(20))
+        session.moveVisualLayer(selected, by: -1)
+        let reopened = EditorDocument(snapshot: session.document.encodeSnapshot())
+        let saved = try XCTUnwrap(reopened.visualBlocks.first { $0.id == row.id })
+        XCTAssertEqual(saved.startS, 1)
+        XCTAssertEqual(saved.endS, 3)
+        XCTAssertEqual(saved.raw["x_frac"], .number(0.82))
+        XCTAssertEqual(saved.raw["y_frac"], .number(0.4))
+        XCTAssertEqual(saved.raw["scale"], .number(0.65))
+        XCTAssertEqual(saved.raw["transform"]?.objectValue?["zoom"], .number(2))
+        XCTAssertEqual(saved.raw["editor_style"]?.objectValue?["rotation_deg"], .number(20))
+        XCTAssertEqual(reopened.visualBlocks.count, before.visualBlocks.count + 1)
+    }
+
     @MainActor func testTransparentFixtureOverlayExportsAtItsPlannedWindow() async throws {
         let session = NativeEditorSession(draft: NativeEditorUITestFixtures.sourceText)
         let imageURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png")

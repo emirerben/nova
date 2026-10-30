@@ -21,7 +21,7 @@ enum ChatUITestTransport {
     }
 }
 
-private final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
+final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "generated-media-image.invalid" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {

@@ -107,7 +107,12 @@ struct NativeVisualPanel: View {
                         .accessibilityIdentifier("native-editor-visual-style-unavailable")
                 }
                 if selected == nil {
-                    browse
+                    if showsGenerator {
+                        NativeOverlayGenerationPanel(session: session, onBack: { showsGenerator = false }, onReference: { showsImporter = true }, onAdded: { row in
+                            showsGenerator = false
+                            session.select(.init(kind: row.kind == .text ? .text : .visualBlock, id: row.id))
+                        })
+                    } else { browse }
                 } else {
                     switch panelDrafts.visualTab {
                     case .edit: placement
@@ -120,7 +125,6 @@ struct NativeVisualPanel: View {
                 }
             }
         }
-        .sheet(isPresented: $showsGenerator) { OverlayGenerationSheet(session: session) }
         .sheet(isPresented: $showsImporter, onDismiss: { Task { await session.refreshVisualLibrary() } }) { visualImporter }
         .onChange(of: uploads.records) { _, _ in Task { await session.refreshVisualLibrary() } }
         // Un-choosing a visual in the picker removes it server-side without touching `records`.

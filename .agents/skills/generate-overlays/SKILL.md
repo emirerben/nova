@@ -7,6 +7,8 @@ description: Design and refine supporting image and text overlays for Kria video
 
 Support the creator's footage with graphics. Keep the original video and audio. Render through Kria's native compositor. A generated still can use existing editor entrance and exit effects; describe that as animation applied to an image, never generated video.
 
+Keep the prompt and preview inside the existing Visuals panel. Approval inserts an ordinary media image block, with the same timing, transforms, layering and animation controls as imported images. Do not create a separate generated-image editor or restrict later edits. Reopening an already-added proposal selects that block; it must not submit another generation request.
+
 Read [taste.md](references/taste.md) when choosing an aesthetic or incorporating feedback. Read [examples.md](references/examples.md) when evaluating a changed prompt or planner.
 
 ## Plan from evidence
