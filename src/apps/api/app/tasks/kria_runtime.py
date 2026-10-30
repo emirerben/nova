@@ -5265,17 +5265,9 @@ def _device_render_state(job: Job, execution: CreatorAgentExecution) -> str | No
         if isinstance(minimum, int) and status.request.identity.recipe_revision < minimum:
             states.append("pending")
         elif status.phase == "published":
-            from app.services.device_render import (  # noqa: PLC0415
-                checked_export_report,
-                device_record,
-            )
-
-            record = device_record(job, record_variant)
-            states.append(
-                "ready"
-                if checked_export_report(record, status, str(record.get("published_attempt") or ""))
-                else "failed"
-            )
+            # Output checks are advisory: a published export is a finished video,
+            # whatever its saved verification report says.
+            states.append("ready")
         elif status.phase == "needs_attention":
             states.append("failed")
         else:

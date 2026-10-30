@@ -96,6 +96,51 @@ def test_failed_checks_never_withhold_a_finished_export(fixture, monkeypatch, ou
     )
 
 
+def test_checks_that_could_not_run_publish_the_finished_export_unverified(fixture, monkeypatch):
+    """The checker being down for the whole recheck window never withholds the video."""
+    mock_storage(fixture, monkeypatch)
+    fixture.db.execute.return_value = scalar(
+        SimpleNamespace(
+            user_id=fixture.user.id,
+            status="reserved",
+            retention_expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    attempt, _ = prepared(fixture)
+    record = device_record(fixture.job, "first")
+    reservation = record["attempts"][attempt]
+    record["actual_export_policy"] = {
+        "version": 1,
+        "source_receipts_digest": export_source_digest(
+            approved_export_sources(fixture.job, fixture.request)
+        ),
+    }
+    save_device_record(fixture.job, "first", record)
+
+    def never_measured(*args, **kwargs):
+        raise AssertionError("an unverified publish must not run the checks")
+
+    monkeypatch.setattr(routes, "_verify_export", never_measured)
+    monkeypatch.setattr(routes, "_poster_of_unmeasured_export", lambda *a: "unmeasured.jpg")
+    monkeypatch.setattr(
+        routes.storage,
+        "object_metadata",
+        lambda _: type(
+            "M", (), dict(size=reservation["size"], content_type="video/mp4", generation="g")
+        )(),
+    )
+    response = checked_completion(fixture, body(fixture, attempt), unverified=True)
+    assert response.status_code == 200, response.text
+    record = device_record(fixture.job, "first")
+    assert record["status"]["phase"] == "published"
+    stored = record["attempts"][attempt]["actual_export_verification"]
+    assert stored["status"] == "partial"
+    assert any(c["kind"] == "verification" for c in stored["checks"])
+    variant = fixture.job.assembly_plan["variants"][0]
+    assert variant["ok"] is True and variant["video_path"] == reservation["path"]
+    assert variant["poster_path"] == "unmeasured.jpg"
+
+
 def test_bytes_that_are_not_the_reserved_upload_are_still_withheld(fixture, monkeypatch):
     mock_storage(fixture, monkeypatch)
     attempt, _ = prepared(fixture)

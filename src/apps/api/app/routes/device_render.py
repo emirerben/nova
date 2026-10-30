@@ -303,7 +303,18 @@ def _nudge_kria_observer(job_id: uuid.UUID) -> None:
     nudge_kria_observer(job_id)
 
 
-def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRenderStatus]:
+def _record(
+    job: Job,
+    identity: DeviceRenderIdentity,
+    *,
+    contract_advisory: list[CreatorRenderContractError] | None = None,
+) -> tuple[dict, DeviceRenderStatus]:
+    """Load the pinned record.
+
+    With ``contract_advisory`` (export completion only), a changed approved
+    contract is appended there instead of refusing: the phone already finished a
+    video, so only a superseded attempt withholds it.
+    """
     try:
         record = device_record(job, identity.variant_id)
         status = device_status(job, identity.variant_id)
@@ -337,8 +348,12 @@ def _record(job: Job, identity: DeviceRenderIdentity) -> tuple[dict, DeviceRende
         # A record that was pinned with creator authority cannot become a
         # legacy record merely because that root authority disappeared.
         verify_device_record_contract(job, record, status)
-    except CreatorRenderContractError as exc:
+    except DeviceRecipeSuperseded as exc:
         raise _ContractRefusal(exc, identity.variant_id) from exc
+    except CreatorRenderContractError as exc:
+        if contract_advisory is None:
+            raise _ContractRefusal(exc, identity.variant_id) from exc
+        contract_advisory.append(exc)
     return record, status
 
 
@@ -1665,10 +1680,13 @@ async def _complete_device_export(
     db: AsyncSession,
     *,
     verification_token: str | None = None,
+    unverified: bool = False,
 ) -> DeviceExportCompleteOut:
+    """``unverified``: the output checks could not run for the whole recheck window, so the
+    finished export publishes without them (bytes still match the reserved upload)."""
     job = await _owned_job(db, user_id, job_id)
     try:
-        record, status = _record(job, body.identity)
+        record, status = _record(job, body.identity, contract_advisory=[])
     except _ContractRefusal as refusal:
         await _refuse_publication(db, job, refusal)
         raise
@@ -1766,18 +1784,31 @@ async def _complete_device_export(
             or not metadata.generation
         ):
             raise _ExportIntegrityError("export metadata mismatch")
-        poster_path = await asyncio.to_thread(
-            _verify_export,
-            attempt["path"],
-            str(metadata.generation),
-            attempt["size"],
-            attempt["sha256"],
-            status,
-            attempt.get("brand_tail", "none"),
-            poster_job_id=job_id,
-            advisories=advisories,
-            **verify_kwargs,
-        )
+        if unverified and verification_report is not None:
+            advisories.append(
+                {
+                    "kind": "verification",
+                    "status": "unavailable",
+                    "reason": "checks_could_not_run",
+                }
+            )
+            verification_report["status"] = "partial"
+            poster_path = await asyncio.to_thread(
+                _poster_of_unmeasured_export, attempt["path"], str(metadata.generation), job_id
+            )
+        else:
+            poster_path = await asyncio.to_thread(
+                _verify_export,
+                attempt["path"],
+                str(metadata.generation),
+                attempt["size"],
+                attempt["sha256"],
+                status,
+                attempt.get("brand_tail", "none"),
+                poster_job_id=job_id,
+                advisories=advisories,
+                **verify_kwargs,
+            )
     except FileNotFoundError as exc:
         raise HTTPException(409, "Export upload has not finished") from exc
     except _ExportIntegrityError as exc:
@@ -1817,8 +1848,9 @@ async def _complete_device_export(
         else None
     )
     job = await _owned_job(db, user_id, job_id)
+    contract_changes: list[CreatorRenderContractError] = []
     try:
-        record, status = _record(job, body.identity)
+        record, status = _record(job, body.identity, contract_advisory=contract_changes)
     except _ContractRefusal as refusal:
         await _refuse_publication(db, job, refusal)
         raise
@@ -1892,7 +1924,7 @@ async def _complete_device_export(
             save_device_record(job, body.identity.variant_id, record)
             from app.kria.automatic_export_repair import repair_failed_export  # noqa: PLC0415
 
-            if await repair_failed_export(
+            if not unverified and await repair_failed_export(
                 db, job, body.identity.variant_id, attempt_id, verification_report
             ):
                 await db.commit()
@@ -1908,17 +1940,10 @@ async def _complete_device_export(
                     }
                 ),
             }
-    try:
-        # This is deliberately inside the reacquired owner/row fence.  The
-        # byte probe above only proves the file against the recipe; publication
-        # must also prove that recipe still has its approved creator authority.
-        verify_device_record_contract(job, record, status)
-    except CreatorRenderContractError as exc:
-        if isinstance(exc, DeviceRecipeSuperseded):
-            await _refuse_publication(db, job, _ContractRefusal(exc, body.identity.variant_id))
-            raise HTTPException(422, "Export does not match the approved recipe") from exc
-        # The approved requirements moved after the phone rendered: advisory, like any
-        # other quality finding. The finished video still publishes.
+    if contract_changes:
+        # The approved requirements moved after the phone rendered (`_record` already
+        # refused a superseded attempt): advisory, like any other quality finding.
+        # The finished video still publishes.
         if verification_report is not None:
             verification_report.setdefault("checks", []).append(
                 {"kind": "authority", "status": "failed", "reason": "contract_changed"}
@@ -1929,8 +1954,6 @@ async def _complete_device_export(
             "status": "rejected",
             "failed_checks": sorted({*failed_checks, "contract"}),
         }
-    except ValueError as exc:
-        raise HTTPException(422, "Export does not match the approved recipe") from exc
     cleanup = (
         await db.execute(
             select(TemporaryMediaUpload)
