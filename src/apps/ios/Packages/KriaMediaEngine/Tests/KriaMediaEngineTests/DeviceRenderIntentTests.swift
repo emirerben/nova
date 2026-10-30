@@ -39,7 +39,7 @@ final class DeviceRenderIntentTests: XCTestCase {
         let restored = try XCTUnwrap(DeviceRenderIntentStore(root: root).load(key()))
         XCTAssertEqual(restored.decision(identity: identity(revision: 3), baseGeneration: "approved-a", published: false), .hold)
         XCTAssertEqual(restored.decision(identity: identity(revision: 3), baseGeneration: nil, published: false), .hold)
-        XCTAssertEqual(restored.decision(identity: identity(revision: 3), baseGeneration: "approved-b", published: false), .newerApprovedGeneration)
+        XCTAssertEqual(restored.decision(identity: identity(revision: 3), baseGeneration: "approved-b", published: false), .hold)
         XCTAssertEqual(restored.decision(identity: identity(revision: 1), baseGeneration: "approved-b", published: false), .hold)
         XCTAssertEqual(restored.decision(identity: identity(revision: 2), baseGeneration: "approved-a", published: true), .published)
     }

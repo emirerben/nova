@@ -17,7 +17,7 @@ public struct DeviceRenderIntentKey: Hashable, Sendable {
 
 public struct DeviceRenderIntent: Codable, Equatable, Sendable {
     public enum State: String, Codable, Sendable { case retryPending, stopped, released }
-    public enum Decision: Equatable, Sendable { case allow, hold, published, newerApprovedGeneration }
+    public enum Decision: Equatable, Sendable { case allow, hold, published }
 
     public let version: Int
     public let operationID: UUID
@@ -40,10 +40,8 @@ public struct DeviceRenderIntent: Codable, Equatable, Sendable {
         guard state != .released else { return .allow }
         let floor = max(sourceIdentity.recipeRevision, acknowledgement?.recipeRevision ?? 0, observedIdentity?.recipeRevision ?? 0)
         let sameGeneration = baseGeneration?.isEmpty == false && baseGeneration == currentGeneration
-        if identity.recipeRevision > floor, let previous = baseGeneration, !previous.isEmpty,
-           let currentGeneration, !currentGeneration.isEmpty, currentGeneration != previous {
-            return .newerApprovedGeneration
-        }
+        // A newer revision or generation never releases a Stop by itself: only a typed creator
+        // Resume does, after it reads the current status.
         if published, identity.recipeRevision >= floor,
            identity == sourceIdentity || identity == acknowledgement || identity == observedIdentity || sameGeneration {
             return .published

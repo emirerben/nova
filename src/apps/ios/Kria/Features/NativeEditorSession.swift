@@ -8436,7 +8436,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         // A change-required or outdated-app reason: a retry re-pins the same recipe and
         // this iPhone declines it again. The banner offers chat or Update Kria instead.
         guard [.retry, .resume, .renderNow].contains(deviceRenderNextStep) else { return }
-        if deviceRenders.presentations[key]?.requiresServerRetry == true {
+        if deviceRenders.isPausedByCreator(key) {
+            // This tap is the creator's typed Resume; only it may release a durable Stop.
+            await deviceRenders.resumeFromUser(key)
+        } else if deviceRenders.presentations[key]?.requiresServerRetry == true {
             let retried = await deviceRenders.retryNeedsAttention(key)
             guard retried else { return }
         }

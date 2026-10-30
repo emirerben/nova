@@ -293,6 +293,7 @@ enum DeviceRenderGate: Equatable {
         let sourceIdentity: DeviceRenderIdentity
         var acknowledgement: DeviceRenderIdentity?
         var stoppedBy: UUID?
+        var userInitiated = false
     }
     /// KRI-935: the superseded request each key already followed once, so a server that keeps
     /// pointing at the same request cannot loop the refresh.
@@ -426,9 +427,23 @@ enum DeviceRenderGate: Equatable {
         presentations[key] = held
     }
 
+    /// True while a durable Stop, an unconfirmed retry or an unreadable intent holds this render.
+    func isPausedByCreator(_ key: DeviceRenderKey) -> Bool {
+        presentations[key]?.phase == .cancelled && presentations[key]?.reasonCode == Self.pausedReason
+    }
+
     func resumeFromUser(_ key: DeviceRenderKey) async {
         guard let capabilities = capabilities[key] ?? lastEnabledCapabilities else { return }
         await reconcile(key, capabilities: capabilities, retry: true, origin: .automaticRecovery, intentAction: .creatorResume)
+    }
+
+    private func creatorRetryOwnsIntent(_ key: DeviceRenderKey) -> Bool {
+        guard let pending = pendingRetries[key], pending.userInitiated, pending.stoppedBy == nil,
+              keyOperations[key] == pending.operation,
+              let storageKey = try? intentKey(key),
+              let intent = try? intentStore.load(storageKey),
+              intent.state == .retryPending, intent.operationID == pending.operation else { return false }
+        return true
     }
 
     private func resolveIntent(_ status: DeviceRenderStatusResponse, key: DeviceRenderKey, action: IntentAction) -> Bool {
@@ -446,7 +461,7 @@ enum DeviceRenderGate: Equatable {
             guard var intent = try intentStore.load(storageKey) else { return true }
             switch intent.decision(identity: status.request.identity, baseGeneration: status.baseGeneration, published: status.phase == "published") {
             case .allow: return true
-            case .published, .newerApprovedGeneration:
+            case .published:
                 intent.state = .released
                 try intentStore.save(intent, for: storageKey)
                 return true
@@ -543,9 +558,14 @@ enum DeviceRenderGate: Equatable {
             let current = heldRequests[key] ?? requests[key]
             if let current, request.identity.recipeRevision > current.identity.recipeRevision {
                 heldRequests[key] = request
-                keyOperations[key] = UUID()
-                initiation.invalidate(identity: current.identity)
-                try await entries[key]?.cancel()
+                // A creator's own retry is still waiting for its acknowledgement. Its completion
+                // reconciles this newer read itself, so a poll must not fence it; every other
+                // newer request (and any Stop) still invalidates the operation.
+                if !creatorRetryOwnsIntent(key) {
+                    keyOperations[key] = UUID()
+                    initiation.invalidate(identity: current.identity)
+                    try await entries[key]?.cancel()
+                }
             }
             return
         }
@@ -935,7 +955,7 @@ enum DeviceRenderGate: Equatable {
         } catch { holdIntent(key, unreadable: true); return false }
         let operation = UUID()
         keyOperations[key] = operation
-        pendingRetries[key] = PendingRetry(operation: operation, sourceIdentity: request.identity)
+        pendingRetries[key] = PendingRetry(operation: operation, sourceIdentity: request.identity, userInitiated: userInitiated)
         defer {
             if pendingRetries[key]?.operation == operation { pendingRetries[key] = nil }
         }
@@ -961,6 +981,14 @@ enum DeviceRenderGate: Equatable {
                     pauseAcknowledgedRetry(key, identity: ack.identity)
                     return false
                 }
+            }
+            // A poll may have seen a different newer request while this creator retry was in flight.
+            // That one is not the revision this retry minted, so it stays fenced like any stale completion.
+            if let held = heldRequests[key], held.identity != ack.identity, userInitiated {
+                keyOperations[key] = UUID()
+                initiation.invalidate(identity: request.identity)
+                try? await entries[key]?.cancel()
+                return false
             }
             // A reconcile/save may have installed a newer request while the
             // retry was in flight. Its coordinator and receipt now own this
@@ -988,6 +1016,13 @@ enum DeviceRenderGate: Equatable {
         } catch {
             guard ownerIsCurrent, keyOperations[key] == operation, requests[key] == request else { return false }
             var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
+            if case let APIError.conflict(detail) = error, ["requires_change", "requires_update"].contains(detail.code) {
+                // A definitive refusal changed nothing on the server, so the retry marker would only
+                // wedge every later read behind "retry not confirmed". A Stop that landed meanwhile stays.
+                if let storageKey = try? intentKey(key) {
+                    _ = try? intentStore.update(storageKey, operationID: operation) { if $0.state == .retryPending { $0.state = .released } }
+                }
+            }
             if case let APIError.conflict(detail) = error, detail.code == "requires_change" {
                 // The same recipe would be refused again: the edit needs a change in
                 // chat, so Try again goes away instead of looping (S3-o).
@@ -1131,8 +1166,19 @@ enum DeviceRenderGate: Equatable {
             if let pending {
                 guard try intentStore.update(storageKey, operationID: pending.operation, change: { $0.state = .stopped }) else { throw CancellationError() }
             } else if let target {
-                try intentStore.save(DeviceRenderIntent(operationID: operation, sourceIdentity: target,
-                    baseGeneration: baseGenerations[key] ?? stored?.baseGeneration, state: .stopped), for: storageKey)
+                var stopped = DeviceRenderIntent(operationID: operation, sourceIdentity: target,
+                    baseGeneration: baseGenerations[key] ?? stored?.baseGeneration, state: .stopped)
+                // A repeated Stop keeps what the earlier one learned, so its revision floor never drops.
+                if let stored, stored.state != .released {
+                    func carried(_ identity: DeviceRenderIdentity?) -> DeviceRenderIdentity? {
+                        guard let identity, identity.jobID == target.jobID, identity.variantID == target.variantID,
+                              identity.recipeRevision >= target.recipeRevision else { return nil }
+                        return identity
+                    }
+                    stopped.acknowledgement = carried(stored.acknowledgement)
+                    stopped.observedIdentity = carried(stored.observedIdentity)
+                }
+                try intentStore.save(stopped, for: storageKey)
             }
         } catch {
             storageFailed = true

@@ -5192,6 +5192,49 @@ final class NativeEditorSessionTests: XCTestCase {
         XCTAssertEqual(fake.commitCount, 1)
     }
 
+    /// Failure mode: the editor banner's Resume went through the automatic retry path, so a durable Stop
+    /// re-held the render on every tap. That tap is the creator's typed Resume and must release it.
+    func testEditorResumeReleasesADurableStopThroughTheTypedPath() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let store = DeviceRenderIntentStore(root: output.appendingPathComponent("intents"))
+        let storageKey = DeviceRenderIntentKey(owner: "isolated-test-owner", projectID: threadID, jobID: jobID, variantID: "variant")
+        try store.save(.init(sourceIdentity: request.identity, baseGeneration: "generation-1", state: .stopped), for: storageKey)
+        let exports = SessionTestCounter()
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in
+            DeviceRenderStatusResponse(phase: "awaiting_device", request: request, baseGeneration: "generation-1")
+        }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestCountingExport(exports), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        }, intentStore: store)
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        XCTAssertEqual(session.deviceRenderKey, key)
+        XCTAssertEqual(session.deviceRenderNextStep, .resume, "setup: the Stop shows Resume: \(session.saveState)")
+        let before = await exports.value
+        XCTAssertEqual(before, 0)
+        XCTAssertEqual(try store.load(storageKey)?.state, .stopped)
+
+        await session.retryDeviceRender()
+        var rendered = false
+        for _ in 0..<100 where !rendered {
+            rendered = await exports.value == 1
+            if !rendered { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        XCTAssertTrue(rendered, "The editor's Resume must start the render the creator stopped")
+        XCTAssertEqual(try store.load(storageKey)?.state, .released)
+        await renderSessions.stopAll()
+    }
+
     /// Failure modes: an edit this iPhone declined (`unsupported_recipe`) or an outdated app put up
     /// "Retry device render", and every retry re-pinned the same recipe into the same decline (a loop
     /// with no way out). The banner must offer the conversation (or Update Kria), and the retry entry
@@ -6482,6 +6525,16 @@ private func deviceRenderRequest(jobID: UUID, revision: Int, digest: String) -> 
 private actor SessionTestExport: LocalExporting {
     func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
         ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
+    }
+}
+
+private struct SessionTestCountingExport: LocalExporting {
+    let counter: SessionTestCounter
+    init(_ counter: SessionTestCounter) { self.counter = counter }
+    func export(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], outputURL: URL, exportID: String, progress: (@Sendable (Double) -> Void)?) async throws -> ExportCheckpoint {
+        await counter.increment()
+        try Data("fixture".utf8).write(to: outputURL)
+        return ExportCheckpoint(exportID: exportID, status: .completed, progress: 1, outputURL: outputURL)
     }
 }
 
