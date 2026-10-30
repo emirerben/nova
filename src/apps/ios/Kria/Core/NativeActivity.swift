@@ -18,13 +18,13 @@ struct NativeActivity: Decodable, Identifiable, Sendable {
 
     var title: String {
         switch kind {
-        case .videoReady: String(localized: "Your video is ready")
+        case .videoReady: String(localized: "Export available")
         case .actionRequired: String(localized: "Your video needs attention")
         }
     }
     var detail: String {
         switch kind {
-        case .videoReady: String(localized: "Open the project to watch your video.")
+        case .videoReady: String(localized: "Open the project to view your export.")
         case .actionRequired: String(localized: "Open the project on your iPhone to continue.")
         }
     }

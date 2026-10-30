@@ -10,7 +10,8 @@ list projection (``list_threads``) and the full projection (``_job_projection``)
 
 Failure modes, written before the code:
 
-* a refused publication on an EDIT (T11, rejected Montage) marks only the device record;
+* a refused publication on an EDIT (the approved sources changed under the export: one
+  of the refusals that still withholds a finished video) marks only the device record;
   the variant stays ``awaiting_device`` and the drawer keeps saying Rendering
 * a phone-reported failure marks the variant, but ``job.status`` stays awaiting_device
 * an expired repair permission marks only the record (same record-only class)
@@ -33,15 +34,14 @@ import pytest
 from app.routes import creation_threads as threads_routes
 from app.routes import generative_jobs as gj
 from app.services import device_render as svc
-from app.services.creator_render_contract import build_render_contract
 from app.services.device_render import (
-    CONTRACT_REVISIONS_FIELD,
     DEVICE_RENDER_FIELD,
     device_record,
     device_status,
     save_device_record,
 )
 from tests.routes import test_device_render as _device_routes
+from tests.routes.test_background_export_verification import checked_completion
 from tests.routes.test_device_render import body, failure_body, routes
 from tests.routes.test_device_render_last_good import VARIANT, _first_render_syncing, _syncing
 
@@ -95,6 +95,17 @@ def _full_projection(job, monkeypatch) -> dict:
     return threads_routes._job_projection(job)
 
 
+def _refuse_on_changed_sources(job) -> None:
+    """Pin a source digest the job no longer has: that refusal still withholds the export.
+
+    (Output checks and a changed approved contract are advisory and publish.)"""
+    if not hasattr(job, "content_plan_item_id"):
+        job.content_plan_item_id = None  # no plan item: no automatic-repair grant to bind
+    record = device_record(job, VARIANT)
+    record["actual_export_policy"] = {"version": 1, "source_receipts_digest": "stale-sources"}
+    save_device_record(job, VARIANT, record)
+
+
 def _phase(projection: dict, variant_id: str = VARIANT) -> str | None:
     return next(v for v in projection["variants"] if v["variant_id"] == variant_id)[
         "delivery_phase"
@@ -107,14 +118,11 @@ async def test_a_refused_edit_publication_reads_needs_attention_and_keeps_the_la
 ):
     attempt = _syncing(fixture, monkeypatch)
     job = fixture.job
-    other = build_render_contract({"opening_title": "Something else"}, generation_id="second")
-    job.assembly_plan[CONTRACT_REVISIONS_FIELD][VARIANT] = other.model_dump(mode="json")
+    _refuse_on_changed_sources(job)
     job.status = "awaiting_device"
 
-    response = fixture.client.post(
-        f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
-    )
-    assert response.status_code == 409
+    response = checked_completion(fixture, body(fixture, attempt))
+    assert response.status_code == 422, response.text
 
     row = await _drawer_row(job)
     # The job and the variant never moved: only the device record knows.
@@ -206,10 +214,9 @@ async def test_a_late_failure_from_an_old_generation_never_beats_a_newer_publish
 async def test_a_refused_first_render_reads_needs_attention_with_no_artifact(fixture, monkeypatch):
     attempt = _first_render_syncing(fixture, monkeypatch)
     job = fixture.job
-    response = fixture.client.post(
-        f"/me/jobs/{job.id}/device-render/complete", json=body(fixture, attempt)
-    )
-    assert response.status_code == 409
+    _refuse_on_changed_sources(job)
+    response = checked_completion(fixture, body(fixture, attempt))
+    assert response.status_code == 422, response.text
 
     row = await _drawer_row(job)
     assert row["variants"][0]["render_status"] == "needs_attention"

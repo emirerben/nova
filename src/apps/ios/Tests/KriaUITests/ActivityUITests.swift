@@ -53,7 +53,7 @@ final class ActivityUITests: XCTestCase {
         app.buttons["Open projects"].tap()
         XCTAssertTrue(app.buttons["activity-open"].waitForExistence(timeout: 5))
         app.buttons["activity-open"].tap()
-        XCTAssertTrue(app.staticTexts["Your video is ready"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Export available"].waitForExistence(timeout: 10))
         capture(app, name: "Native activity inbox")
         return app
     }

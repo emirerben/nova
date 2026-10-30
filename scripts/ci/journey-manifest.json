@@ -2,6 +2,27 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-1052-confirmed-order-readers",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_order_replacement_schema_import.py tests/kria/test_order_replacement.py tests/kria/test_order_replacement_persistence.py tests/kria/test_order_replacement_persistence_postgres.py tests/kria/test_order_replacement_preflight.py tests/kria/test_order_replacement_reader_compatibility.py tests/kria/test_order_replacement_receipt_callers.py tests/kria/test_order_replacement_receipts.py tests/kria/test_order_replacement_sources.py",
+      "paths": [
+        "src/apps/api/app/schemas/order_replacement.py",
+        "src/apps/api/app/kria/order_replacement.py",
+        "src/apps/api/app/kria/order_replacement_persistence.py",
+        "src/apps/api/app/kria/order_replacement_receipts.py",
+        "src/apps/api/app/kria/order_replacement_sources.py",
+        "src/apps/api/tests/agents/test_order_replacement_schema_import.py",
+        "src/apps/api/tests/kria/test_order_replacement.py",
+        "src/apps/api/tests/kria/test_order_replacement_persistence.py",
+        "src/apps/api/tests/kria/test_order_replacement_persistence_postgres.py",
+        "src/apps/api/tests/kria/test_order_replacement_preflight.py",
+        "src/apps/api/tests/kria/test_order_replacement_reader_compatibility.py",
+        "src/apps/api/tests/kria/test_order_replacement_receipt_callers.py",
+        "src/apps/api/tests/kria/test_order_replacement_receipts.py",
+        "src/apps/api/tests/kria/test_order_replacement_sources.py"
+      ]
+    },
+    {
       "id": "kri-1052-source-selection-readers",
       "needs_native": false,
       "api_tests": "tests/services/test_clip_intent_source_kind.py tests/services/test_clip_selection_provenance.py tests/services/test_story_intent_reconciliation.py tests/pipeline/test_unified_montage_creator_omissions.py tests/kria/test_brief_any_order_moment_limits.py tests/kria/test_selection_reader_compatibility.py tests/kria/test_selection_reader_postgres.py",
@@ -2147,6 +2168,41 @@
         "src/apps/api/app/services/order_mode.py",
         "src/apps/api/tests/services/test_order_mode.py",
         "src/apps/api/tests/fixtures/kria_replay/29-ekim/fixture.json"
+      ]
+    },
+    {
+      "id": "kri-1039-failed-editor-recovery",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_failed_draft_correction_postgres.py tests/kria/test_render_retry_postgres.py tests/routes/test_phone_text_sequence_followup.py",
+      "xctests": [
+        "KriaTests/CreationConfirmationConflictTests/testConflictCarriesServerDetailAndStillMatchesExistingConflictChecks",
+        "KriaTests/CreationConfirmationConflictTests/testConflictDetailIsNilWithoutAStringDetail",
+        "KriaTests/CreationConfirmationConflictTests/testKnownConflictDetailsKeepTheirDedicatedErrors",
+        "KriaTests/CreationConfirmationConflictTests/testStaleDirectionReasonsOfferARefresh",
+        "KriaTests/CreationConfirmationConflictTests/testRetryableReasonsKeepCreateAsTheOnlyAction",
+        "KriaTests/CreationConfirmationConflictTests/testPlanIdentityChangesWhenKriaPlansAgain",
+        "KriaTests/CreationConfirmationConflictTests/testLastAssistantErrorCodeReadsTheMostRecentEvent",
+        "KriaTests/CreationConfirmationConflictTests/testFailedCardOffersReplyForTypedDeclinesAndNothingForAnExhaustedQuota",
+        "KriaTests/CreationConfirmationConflictTests/testNonRetryableErrorCodesCoverKRI118StructuralFailuresAlongsidePhoneGate",
+        "KriaTests/CreationConfirmationConflictTests/testStoryShapeSubtitleMapsKnownShapesAndHidesEverythingElse",
+        "KriaTests/CreationConfirmationConflictTests/testWhatKriaChangedMergesAdjustmentsBeforeNoticesAndDedups",
+        "KriaTests/CreationConfirmationConflictTests/testWhatKriaChangedIsEmptyWhenBothListsAreAbsentOrEmpty",
+        "KriaTests/CreationConfirmationConflictTests/testSelectFormatConflictSurfacesTheRealServerDetail",
+        "KriaTests/CreationConfirmationConflictTests/testSelectFormatConflictFallsBackWhenTheServerSentNoDetail",
+        "KriaTests/CreationConfirmationConflictTests/testOtherNonConfirmationActionsKeepTheGenericChangedMessage",
+        "KriaTests/ApprovalDecisionRequestTests/testApproveWithNoCleanupChoiceOmitsTheOptionalFieldsButAlwaysSendsAware",
+        "KriaTests/ApprovalDecisionRequestTests/testApproveWithACleanupChoiceEncodesTheAnalysisIDAndChoice",
+        "KriaTests/ApprovalDecisionRequestTests/testCleanAfterRestartDisclosureSerializesRetakesAwareness",
+        "KriaTests/ApprovalDecisionRequestTests/testDenyAlsoAlwaysSendsSpeechCleanupAwareTrue",
+        "KriaTests/ApprovalDecisionRequestTests/testConflictSurfacesTheKriaProblemCodeAndMessage",
+        "KriaTests/ApprovalDecisionRequestTests/testSubmitTurnConflictMessagePrefersServerDetail",
+        "KriaTests/ApprovalDecisionRequestTests/testSubmitTurnConflictMessageFallbackAndExpiredApproval",
+        "KriaTests/ApprovalDecisionRequestTests/testAllSpeechCleanupConflictCodesAreRecognized",
+        "KriaTests/ApprovalDecisionRequestTests/testConflictCodeIsNilForTheLegacyDetailStringShape",
+        "KriaTests/ApprovalDecisionRequestTests/testSpeechCleanupDispatchRefusalKeepsTheFreshDraftRetry"
+      ],
+      "paths": [
+        "src/apps/api/tests/kria/test_failed_draft_correction_postgres.py"
       ]
     },
     {

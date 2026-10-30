@@ -27,6 +27,8 @@ from app.kria.brief_checks import (
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
 )
+from app.kria.order_replacement_receipts import with_verified_order_execution
+from app.kria.order_replacement_sources import OrderReplacementSourceContext
 from app.kria.reply_language import say
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
@@ -266,6 +268,8 @@ def assess_readiness(
     prepared_collection_story: dict | None = None,
     creator_id: object = None,
     prepared_research: Mapping[str, Any] | None = None,
+    order_execution: Mapping[str, Any] | None = None,
+    order_source_context: OrderReplacementSourceContext | None = None,
 ) -> dict[str, Any]:
     """Account for every live ID using existing policy, checkers and contract.
 
@@ -402,6 +406,14 @@ def assess_readiness(
                 facts = dataclasses.replace(facts, duration_s=sum(p.duration_s for p in parts))
         except ValueError:
             pass  # Missing/invalid execution evidence stays unknown, never a pass.
+    facts = with_verified_order_execution(
+        facts,
+        brief=brief,
+        strategy=strategy,
+        execution=order_execution,
+        source_context=order_source_context,
+        creator_id=creator_id,
+    )
     receipts = {
         r.requirement_id: r
         for r in build_receipts(

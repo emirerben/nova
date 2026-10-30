@@ -80,6 +80,20 @@ def settle(job, phase):
     if phase == "published":
         attempt = str(uuid.uuid4())
         record.update(published_attempt=attempt, base_generation=attempt)
+        record["attempts"][attempt] = {
+            "path": "private/output.mp4",
+            "size": 12,
+            "sha256": "a" * 64,
+            "publication_proof": {
+                "version": 1,
+                "artifact_path": "private/output.mp4",
+                "storage_generation": "42",
+                "file_size_bytes": 12,
+                "sha256": "a" * 64,
+                "identity": record["status"]["request"]["identity"],
+                "source_receipts_digest": None,
+            },
+        }
         assembly = copy.deepcopy(job.assembly_plan)
         assembly["variants"][0].update(
             render_generation_id=attempt,
@@ -300,7 +314,13 @@ def test_exhausted_verification_records_attention_without_a_render(journey, monk
         record = copy.deepcopy(device_record(job, "first"))
         record["status"]["phase"] = "syncing"
         record["attempts"] = {
-            str(uuid.uuid4()): {"verification_task": {"state": "queued", "queued_at": queued_at}}
+            str(uuid.uuid4()): {
+                "verification_task": {
+                    "state": "queued",
+                    "queued_at": queued_at,
+                    "publish_unverified": True,
+                }
+            }
         }
         save_device_record(job, "first", record)
         db.commit()
@@ -308,8 +328,42 @@ def test_exhausted_verification_records_attention_without_a_render(journey, monk
     assert client.get("/me/activities").json()["items"][0]["kind"] == "action_required"
 
 
+def test_verification_outage_rechecks_same_upload_before_terminal_attention(journey, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from app.tasks import export_verification
+
+    _, _, job_id, client = journey
+    now = datetime.now(UTC)
+    age = max(export_verification.RECHECK_WINDOW_SECONDS, export_verification.MAX_QUEUE_SECONDS) + 1
+    queued_at = (now - timedelta(seconds=age)).isoformat()
+    attempt_id = str(uuid.uuid4())
+    queued = []
+    monkeypatch.setattr(export_verification, "enqueue", lambda *args: queued.append(args))
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        record = copy.deepcopy(device_record(job, "first"))
+        identity = record["status"]["request"]["identity"]
+        record["status"]["phase"] = "syncing"
+        record["attempts"] = {
+            attempt_id: {"verification_task": {"state": "queued", "queued_at": queued_at}}
+        }
+        save_device_record(job, "first", record)
+        db.commit()
+    export_verification._expire_queued(job_id, now)
+    assert len(queued) == 1
+    assert queued[0][2] == {"identity": identity, "attempt_id": attempt_id}
+    with sync_session() as db:
+        record = device_record(db.get(Job, job_id), "first")
+        assert list(record["attempts"]) == [attempt_id]
+        assert record["attempts"][attempt_id]["verification_task"]["publish_unverified"] is True
+        assert record["status"]["phase"] == "syncing"
+    assert client.get("/me/activities").json()["items"] == []
+
+
+@pytest.mark.parametrize("mode", ["legacy", "quality_advisory", "unverified", "format_advisory"])
 def test_actual_publication_endpoint_creates_ready_only_after_media_checks(
-    journey, monkeypatch, tmp_path
+    journey, monkeypatch, tmp_path, mode
 ):
     import hashlib
     import shutil
@@ -345,6 +399,8 @@ def test_actual_publication_endpoint_creates_ready_only_after_media_checks(
         check=True,
         timeout=20,
     )
+    if mode == "format_advisory":
+        media.write_bytes(b"an uploaded file that cannot be decoded as video")
     payload = media.read_bytes()
     monkeypatch.setattr(
         routes.storage, "signed_put_url", lambda *_: "https://fixture.invalid/upload"
@@ -357,11 +413,13 @@ def test_actual_publication_endpoint_creates_ready_only_after_media_checks(
         "object_metadata",
         lambda _: SimpleNamespace(size=len(payload), content_type="video/mp4", generation="42"),
     )
-    monkeypatch.setattr(
-        routes.storage,
-        "download_generation_to_file",
-        lambda _path, destination, **_: shutil.copyfile(media, destination),
-    )
+    downloads = []
+
+    def download(path, destination, *, generation):
+        downloads.append((path, generation))
+        shutil.copyfile(media, destination)
+
+    monkeypatch.setattr(routes.storage, "download_generation_to_file", download)
     monkeypatch.setattr(routes, "upload_video_poster", lambda *_args, **_kwargs: None)
     with sync_session() as db:
         identity = device_record(db.get(Job, job_id), "first")["status"]["request"]["identity"]
@@ -379,10 +437,74 @@ def test_actual_publication_endpoint_creates_ready_only_after_media_checks(
     )
     assert reservation.status_code == 200, reservation.text
     assert client.get("/me/activities").json()["items"] == []
+    if mode != "legacy":
+        from app.services.device_render import export_source_digest
+        from app.tasks import export_verification
+
+        monkeypatch.setattr(export_verification, "enqueue", lambda *args: None)
+        monkeypatch.setattr(routes, "_record_export_advisory", lambda *args: None)
+        with sync_session() as db:
+            job = db.get(Job, job_id)
+            record = copy.deepcopy(device_record(job, "first"))
+            record["actual_export_policy"] = {
+                "version": 1,
+                "source_receipts_digest": export_source_digest({}),
+            }
+            save_device_record(job, "first", record)
+            db.commit()
     completed = client.post(
-        base + "/complete", json={"identity": identity, "attempt_id": attempt_id}
+        base + "/complete",
+        json={"identity": identity, "attempt_id": attempt_id},
+        headers={"X-Kria-Client-Protocol": "13"},
     )
-    assert completed.status_code == 200, completed.text
+    if mode == "legacy":
+        assert completed.status_code == 200, completed.text
+    else:
+        from datetime import UTC, datetime, timedelta
+
+        from app.database import AsyncSessionLocal
+        from app.kria.device_render import DeviceExportCompleteBody
+
+        assert completed.status_code == 202, completed.text
+        assert client.get("/me/activities").json()["items"] == []
+        with sync_session() as db:
+            job = db.get(Job, job_id)
+            record = copy.deepcopy(device_record(job, "first"))
+            record["attempts"][attempt_id]["verification_task"].update(
+                state="running",
+                token="test-worker",
+                lease_until=(datetime.now(UTC) + timedelta(minutes=6)).isoformat(),
+            )
+            save_device_record(job, "first", record)
+            db.commit()
+
+        async def complete_worker():
+            async with AsyncSessionLocal() as db:
+                return await routes._complete_device_export(
+                    job_id,
+                    DeviceExportCompleteBody.model_validate(
+                        {
+                            "identity": identity,
+                            "attempt_id": attempt_id,
+                        }
+                    ),
+                    journey[0],
+                    db,
+                    verification_token="test-worker",
+                    unverified=mode == "unverified",
+                )
+
+        client.portal.call(complete_worker)
+    with sync_session() as db:
+        record = device_record(db.get(Job, job_id), "first")
+        proof = record["attempts"][attempt_id]["publication_proof"]
+        assert proof["sha256"] == hashlib.sha256(payload).hexdigest()
+        assert proof["file_size_bytes"] == len(payload)
+        assert proof["storage_generation"] == "42"
+        assert proof["identity"] == identity
+    if mode == "unverified":
+        assert len(downloads) == 1
+        assert downloads[0][1] == "42"
     rows = client.get("/me/activities").json()["items"]
     assert len(rows) == 1 and rows[0]["kind"] == "video_ready"
     assert (
@@ -392,3 +514,84 @@ def test_actual_publication_endpoint_creates_ready_only_after_media_checks(
         == 200
     )
     assert len(client.get("/me/activities").json()["items"]) == 1
+
+
+@pytest.mark.parametrize("quality", ["rejected", "partial", "unsupported"])
+def test_published_quality_findings_still_produce_activity(journey, quality):
+    _, _, job_id, client = journey
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        settle(job, "published")
+        record = copy.deepcopy(device_record(job, "first"))
+        record["actual_export_policy"] = {"version": 1, "source_receipts_digest": "sources"}
+        attempt = record["attempts"][record["published_attempt"]]
+        attempt["publication_proof"]["source_receipts_digest"] = "sources"
+        attempt["actual_export_verification"] = {
+            "status": quality,
+            "checks": [{"kind": "text", "status": "failed"}],
+        }
+        save_device_record(job, "first", record)
+        statement = activity_statement(job, "first")
+        assert statement is not None
+        db.execute(statement)
+        db.commit()
+    assert len(client.get("/me/activities").json()["items"]) == 1
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["missing", "path", "size", "sha256", "identity", "policy", "generation", "pointer"],
+)
+def test_published_activity_requires_current_byte_proof(journey, corruption):
+    _, _, job_id, _ = journey
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        settle(job, "published")
+        record = copy.deepcopy(device_record(job, "first"))
+        attempt = record["attempts"][record["published_attempt"]]
+        proof = attempt["publication_proof"]
+        if corruption == "missing":
+            attempt.pop("publication_proof")
+        elif corruption == "path":
+            proof["artifact_path"] = "other.mp4"
+        elif corruption == "size":
+            proof["file_size_bytes"] = 13
+        elif corruption == "sha256":
+            proof["sha256"] = "b" * 64
+        elif corruption == "identity":
+            proof["identity"] = {}
+        elif corruption == "policy":
+            record["actual_export_policy"] = {"version": 1, "source_receipts_digest": "other"}
+        elif corruption == "generation":
+            proof["storage_generation"] = ""
+        else:
+            assembly = copy.deepcopy(job.assembly_plan)
+            assembly["variants"][0]["video_path"] = "other.mp4"
+            job.assembly_plan = assembly
+        save_device_record(job, "first", record)
+        assert activity_statement(job, "first") is None
+
+
+@pytest.mark.parametrize(
+    "missing", [None, "storage_generation", "sha256", "identity", "verifier_version"]
+)
+def test_historical_checked_export_needs_full_byte_evidence(journey, missing):
+    _, _, job_id, _ = journey
+    with sync_session() as db:
+        job = db.get(Job, job_id)
+        settle(job, "published")
+        record = copy.deepcopy(device_record(job, "first"))
+        record["actual_export_policy"] = {"version": 1, "source_receipts_digest": "sources"}
+        attempt = record["attempts"][record["published_attempt"]]
+        report = attempt.pop("publication_proof")
+        report.update(
+            status="checked",
+            verifier_version="phone-simple-cut-v5",
+            source_receipts_digest="sources",
+            checks=[{"kind": "picture", "status": "passed"}],
+        )
+        if missing:
+            report.pop(missing)
+        attempt["actual_export_verification"] = report
+        save_device_record(job, "first", record)
+        assert (activity_statement(job, "first") is not None) == (missing is None)

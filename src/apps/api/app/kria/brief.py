@@ -27,7 +27,7 @@ import unicodedata
 import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -45,6 +45,7 @@ from app.kria.asset_holds import Authority, resolve_clip_scope, stamp_authority
 from app.kria.brief_route import fold_text, loose_text, wants_filming_time_text
 from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.duplicate_send import is_duplicate_answer
+from app.kria.order_replacement import OrderReplacementProof
 from app.kria.reply_language import detect_chat_language
 from app.kria.select_asks import withdrawn_photo_asks
 from app.kria.text_shape_ask import TEXT_SHAPE_FACT, with_text_shape
@@ -54,6 +55,10 @@ from app.schemas.text_style_intent import normalize_title_animation
 from app.services.creative_copy_decisions import APPROVED_COPY_FACT
 from app.services.kria_editor_ops_diff import font_family_key
 from app.services.order_mode import order_mode, stamp_order_facts
+
+if TYPE_CHECKING:
+    from app.kria.order_replacement_persistence import OrderReplacementWriteContext
+
 
 # `text_sequence` (29 Ekim): the creator's own words shown on screen in pieces, never captions.
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style", "text_sequence"]
@@ -288,6 +293,20 @@ class BriefRequirement(_BriefModel):
     authority: SkipJsonSchema[Authority | None] = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    order_replacement: SkipJsonSchema[OrderReplacementProof | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+    @model_validator(mode="after")
+    def _replacement_scope(self) -> BriefRequirement:
+        if self.order_replacement is not None and (
+            self.kind != "order"
+            or self.scope != "global"
+            or self.literal is not None
+            or self.id == self.order_replacement.proposal.predecessor_requirement_id
+        ):
+            raise ValueError("A confirmed replacement belongs to a new global order requirement")
+        return self
 
     @property
     def live(self) -> bool:
@@ -630,6 +649,7 @@ def apply_updates(
                     ),
                     "source_turn_id": source_turn_id,
                     "status": "open",
+                    "order_replacement": None,
                 }
             )
             changed[target.id] = changed[target.id].model_copy(
@@ -1672,6 +1692,7 @@ def persist_brief_version_sync(
     updates: Iterable[BriefUpdate],
     record_empty: bool = False,
     delegation_read_event_ids: Iterable[str] = (),
+    order_replacement: OrderReplacementWriteContext | None = None,
 ) -> CreativeBrief | None:
     """Append one version for ``turn_id``; idempotent per turn.
 
@@ -1697,25 +1718,47 @@ def persist_brief_version_sync(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return _brief_from_row(existing)
+        result = _brief_from_row(existing)
+        if order_replacement is not None:
+            from app.kria.order_replacement_persistence import check_replacement_retry
+
+            check_replacement_retry(
+                result, order_replacement, db=db, thread_id=thread_id, turn_id=turn_id
+            )
+        return result
     prior = load_latest_brief_sync(db, thread_id)
-    if not updates and not (
-        record_empty
-        and prior is None
-        and _delegation_covers_request(
-            db,
-            thread_id=thread_id,
-            turn_id=turn_id,
-            read_event_ids=delegation_read_event_ids,
+    if (
+        order_replacement is None
+        and not updates
+        and not (
+            record_empty
+            and prior is None
+            and _delegation_covers_request(
+                db,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                read_event_ids=delegation_read_event_ids,
+            )
         )
     ):
         return prior
-    merged = apply_updates(
-        prior,
-        updates,
-        source_turn_id=str(turn_id),
-        creator_text=_creator_turn_text_sync(db, thread_id, turn_id),
-    )
+    creator_text = _creator_turn_text_sync(db, thread_id, turn_id)
+    if order_replacement is not None:
+        from app.kria.order_replacement_persistence import (
+            apply_order_replacement,
+            validate_persisted_replacement,
+        )
+
+        proof = validate_persisted_replacement(
+            db, thread_id=thread_id, turn_id=turn_id, prior=prior, context=order_replacement
+        )
+        merged = apply_order_replacement(
+            prior, updates, proof=proof, source_turn_id=str(turn_id), creator_text=creator_text
+        )
+    else:
+        merged = apply_updates(
+            prior, updates, source_turn_id=str(turn_id), creator_text=creator_text
+        )
     next_version = (
         int(
             db.execute(
