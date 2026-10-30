@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.3.0] - 2026-10-30
+
+### Changed
+- fix(kria): draw the montage title once and keep the creator's curve (KRI-1029, KRI-1030) (#1930) <!-- release-pr: 1930 -->
+
 ## [0.83.2.0] - 2026-10-30
 
 ### Changed
