@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.4.0] - 2026-10-30
+
+### Changed
+- fix(export): preserve sample evidence precision (#1950) <!-- release-pr: 1950 -->
+
 ## [0.83.3.0] - 2026-10-30
 
 ### Changed
