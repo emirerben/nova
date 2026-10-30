@@ -20,7 +20,11 @@ import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.agents._runtime import RunContext
+    from app.kria.editor_repair import PreparedEditorRepair
 
 import structlog
 from pydantic import ValidationError
@@ -907,6 +911,8 @@ class PlannedKriaTurn:
     prepared_research: dict | None = None
     # The basis inputs research read that the persisted draft does not hold.
     prepared_research_terms: dict | None = None
+    editor_repair: PreparedEditorRepair | None = None
+    editor_repair_run_context: RunContext | None = None
 
 
 def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202

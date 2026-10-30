@@ -2327,6 +2327,20 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/plan_review_unscoped_same_prompt.json"
       ],
       "fixture_generator": "scripts/ios/duration-text-preservation-fixtures.py"
+    },
+    {
+      "id": "kri-1051-independent-draft-repair",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_editor_repair.py tests/kria/test_editor_repair_runtime_postgres.py tests/kria/test_editor_repair_planner_postgres.py tests/services/test_editor_repair_reviewer.py",
+      "paths": [
+        "src/apps/api/app/kria/editor_repair.py",
+        "src/apps/api/app/services/bounded_review.py",
+        "src/apps/api/app/services/editor_repair_reviewer.py",
+        "src/apps/api/tests/kria/test_editor_repair.py",
+        "src/apps/api/tests/kria/test_editor_repair_runtime_postgres.py",
+        "src/apps/api/tests/kria/test_editor_repair_planner_postgres.py",
+        "src/apps/api/tests/services/test_editor_repair_reviewer.py"
+      ]
     }
   ]
 }
