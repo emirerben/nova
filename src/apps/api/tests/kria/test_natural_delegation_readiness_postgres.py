@@ -67,7 +67,8 @@ _DELEGATED = {"delegates_all_choices": True}
 
 def _contract(prompt):
     """The FULL CREATOR REQUEST CONTRACT section the server rendered for the reading."""
-    return prompt.split("FULL CREATOR REQUEST CONTRACT", 1)[1].split("CURRENT USER", 1)[0]
+    # The rules also mention the contract by name; the rendered section is the INPUT header.
+    return prompt.split("\nFULL CREATOR REQUEST CONTRACT\n", 1)[1].split("CURRENT USER", 1)[0]
 
 
 def _coverage(events):
