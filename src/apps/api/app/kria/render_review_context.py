@@ -1,7 +1,7 @@
 """Read-only capture of approved intent and one verified native publication.
 
 VerifiedArtifactReceipt is a trusted server-internal attestation input. Constructing
-this type does not verify bytes. The storage verifier adapter is deliberately absent;
+this type does not verify bytes. The caller must use the trusted storage verifier;
 client upload hashes and publication success alone cannot supply this capability.
 """
 

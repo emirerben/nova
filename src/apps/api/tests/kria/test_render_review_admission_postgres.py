@@ -344,7 +344,17 @@ async def test_real_storage_frames_final_fence_and_duplicate_delivery(
         db.commit()
     rid = await admit_case(approved_publication, monkeypatch)
     with sync_session() as db:
-        assert admit_generation_review(db, db.get(CreatorAgentExecution, claim.execution_id)) == rid
+        assert (
+            admit_generation_review(db, db.get(CreatorAgentExecution, claim.execution_id)) is None
+        )
+        assert list(
+            db.scalars(
+                select(CreatorGenerationReview.id).where(
+                    CreatorGenerationReview.execution_id == claim.execution_id
+                )
+            )
+        ) == [rid]
+        assert db.get(CreatorGenerationReview, rid).status == "pending"
         db.commit()
     real = evidence.obtain_render_review_evidence
     calls = []
