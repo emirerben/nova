@@ -883,6 +883,34 @@ def test_unknown_source_frame_clock_keeps_the_nominal_verdict_and_its_evidence(
         )
 
 
+@pytest.mark.parametrize("displayed_ssim,uses_profile", [(0.94996, True), (0.95004, False)])
+def test_picture_evidence_preserves_profile_threshold_decisions(
+    exports, moving, monkeypatch, displayed_ssim, uses_profile
+):
+    from app.services.export_verification_admin import PictureSample
+
+    root, _, recipe = exports
+    recipe = _single_clip(recipe, start=1.5, duration=CLOCK_DURATION)
+    output = _composited(root, moving, start=1.5, duration=CLOCK_DURATION)
+    picture_scores = measured._picture_scores
+
+    def threshold_scores(reference, actual, mask):
+        _, score = picture_scores(reference, actual, mask)
+        return np.float64(0.023456), np.float64(displayed_ssim if score >= 0.95 else 0.7)
+
+    monkeypatch.setattr(measured, "_picture_scores", threshold_scores)
+    report = json.loads(json.dumps(verify_actual_export(output, status(recipe), {"a": moving})))
+    assert report["status"] == "checked", report
+    (picture,) = [check for check in report["checks"] if check["kind"] == "picture"]
+    assert picture["profile_samples"] == (picture["samples"] if uses_profile else 0), picture
+    below_bar = [sample for sample in picture["sample_evidence"] if sample["ssim_displayed"] < 0.95]
+    assert picture["profile_samples"] == len(below_bar), picture
+    for sample in picture["sample_evidence"]:
+        validated = PictureSample.model_validate(sample)
+        assert validated.ssim_displayed == displayed_ssim
+        assert validated.error_displayed == 0.023456
+
+
 def test_on_grid_single_neighbour_frame_remains_allowed(exports, moving):
     """KRI-831: retain isolated resampling tolerance, without shifting the whole clip."""
     root, _, recipe = exports

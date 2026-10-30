@@ -1035,8 +1035,8 @@ def verify_actual_export(
                                 name: value
                                 for frame, (error, score) in seen.items()
                                 for name, value in (
-                                    (f"ssim_{frame}", round(score, 4)),
-                                    (f"error_{frame}", round(error, 3)),
+                                    (f"ssim_{frame}", float(score)),
+                                    (f"error_{frame}", float(error)),
                                 )
                             },
                             **({"repeats": repeats} if repeats else {}),
