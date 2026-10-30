@@ -65,6 +65,7 @@ from app.services.creator_label_reply import (
     label_text_reply,
 )
 from app.services.spoken_quotes import regound_quoted_intents
+from app.services.too_short_clips import resolve_too_short
 from app.text_fold import loose_words
 
 if TYPE_CHECKING:
@@ -1304,7 +1305,22 @@ async def plan_and_resolve_clip_intents(
             if intent.intent_id not in dropped_ids
             for piece in split.get(intent.intent_id, [intent])
         ]
-    resolved_orders = [*selected, *named, *kept, *resolved_orders]
+    # KRI-1031: "skip anything too short to use" is settled from the clips' lengths (after the
+    # creator's taps, which win), never matched by the resolver and never asked.
+    measured = [
+        resolved
+        for intent in visual_intents
+        if (resolved := resolve_too_short(intent, clips)) is not None
+    ]
+    if measured:
+        measured_ids = {intent.intent_id for intent in measured}
+        visual_intents = [i for i in visual_intents if i.intent_id not in measured_ids]
+        log.info(
+            "clip_intent_too_short_measured",
+            intents=len(measured),
+            left_out=sum(len(intent.assignments) for intent in measured),
+        )
+    resolved_orders = [*selected, *named, *kept, *measured, *resolved_orders]
     conflicts = [intent for intent in resolved_orders if intent.status == "needs_creator"]
     if conflicts:
         return selected_result(

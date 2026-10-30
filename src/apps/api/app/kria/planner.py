@@ -86,6 +86,9 @@ from app.kria.clip_exclusions import (
     earlier_exclusions,
     exclusion_question,
     exclusions_to_ask,
+    length_exclusion_notice,
+    still_played_exclusions,
+    still_played_notice,
     with_exclusion_categories,
 )
 from app.kria.clip_scope import apply_clip_exclusions, apply_clip_scope, apply_subject_scope
@@ -3951,6 +3954,32 @@ async def _plan_creator_action(
                         update={"summary": " ".join([action.summary.strip(), notice]).strip()}
                     )
                     policy_notices = (*policy_notices, notice)
+            media_ids = [media.media_id for media in manifest.media]
+            still_played = still_played_exclusions(
+                planned.resolution.intents, action.strategy, media_ids
+            )
+            if still_played:
+                # KRI-1026: a skip that matched clips but could not take them out (another
+                # settled ask or the strategy uses them, or nothing would be left) is said.
+                log.info(
+                    "kria_clip_exclusions_kept",
+                    thread_id=str(thread_id),
+                    kept=len(still_played),
+                )
+                notice = still_played_notice([media_ids.index(m) + 1 for m in still_played])
+                if notice not in policy_notices:
+                    action = action.model_copy(
+                        update={"summary": " ".join([action.summary.strip(), notice]).strip()}
+                    )
+                    policy_notices = (*policy_notices, notice)
+            # KRI-1031: "skip anything too short to use" names the clips it left out (or says
+            # none is too short), so the creator sees what the measured rule did.
+            measured = length_exclusion_notice(planned.resolution.intents, still_played, media_ids)
+            if measured is not None and measured not in policy_notices:
+                action = action.model_copy(
+                    update={"summary": " ".join([action.summary.strip(), measured]).strip()}
+                )
+                policy_notices = (*policy_notices, measured)
         tie_asked = tie_question(ties, intent_clips, excluded=skipped)
         if tie_asked is not None:
             log.info(
@@ -4131,7 +4160,11 @@ def _unapplied_exclusions(planned: PlannedIntentResolution) -> int:
     unmatched = sum(
         1
         for intent in planned.resolution.intents
-        if intent.op == "exclude" and intent.status == "resolved" and not intent.assignments
+        if intent.op == "exclude"
+        and intent.status == "resolved"
+        and not intent.assignments
+        # KRI-1031: a measured length ask that matched nothing kept every clip on purpose.
+        and intent.by_length is None
     )
     return planned.dropped_exclusions + unmatched
 
