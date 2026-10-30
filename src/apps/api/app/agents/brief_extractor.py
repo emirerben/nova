@@ -13,6 +13,7 @@ from app.agents._schemas.brief_extractor import (
     BriefExtractionOutput,
 )
 from app.agents.main_creator import _BRIEF_PROMPT_SECTION
+from app.agents.prompt_vocab import render_vocab_tokens
 from app.kria.brief import (
     BriefUpdateBatchError,
     CreativeBrief,
@@ -58,7 +59,7 @@ from app.pipeline.prompt_loader import load_prompt
 # time as a `text_sequence` requirement, not `captions: word_by_word`. (v40 is lane B's.)
 # v42 (KRI-1027): the shared brief section records `landscape_fit` ("fill" / "fit") on a style
 # ask about how sideways clips sit in a vertical video.
-BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-30-v43"
+BRIEF_EXTRACTOR_PROMPT_VERSION = "2026-10-30-v44"
 _NARROW_BRIEF_SECTION = (
     _BRIEF_PROMPT_SECTION.replace("In\nADDITION to `action`, return", "Return")
     .replace("in the same\nJSON object as `action`", "in the response\nJSON object")
@@ -96,11 +97,12 @@ _NARROW_BRIEF_SECTION = (
 )
 # KRI-543: lets a style ask about existing text be checked instead of "can't verify". Extractor
 # only: the main planner's brief section (and so its prompt version) stays untouched.
-_STYLE_INTENT_SECTION = """
+_STYLE_INTENT_SECTION = render_vocab_tokens("""
 When a `style` requirement asks to change how existing on-screen text looks, add
 `style_intent` to its `facts` so the result can be checked:
 {"style_intent": {"set": [{"field": "entrance", "value": "fade"}], "target": "all_text"}}.
-`field` and `value` come ONLY from this list: `entrance` (none, fade, pop, slide, typewriter),
+`field` and `value` come ONLY from this list: `entrance` ({{TEXT_ANIMATION_EDGES}}; the value
+is the id, never the name in brackets),
 `alignment` (left, center, right), `text_case` (none, upper, lower, title), `font_family` (a font
 name the creator gave), `color` (a literal #RRGGBB hex the creator gave; a colour word such as
 "yellow" is NOT a hex, so omit color). Use one value per field. Add `target` ONLY when the
@@ -113,7 +115,7 @@ Examples: "Add fade in animation to all texts" -> {"style_intent": {"set": [{"fi
 "entrance", "value": "fade"}], "target": "all_text"}}. "Tüm yazılara fade in animasyonu ekle" ->
 the same. "Center the title" -> {"style_intent": {"set": [{"field": "alignment", "value":
 "center"}], "target": "title"}}.
-"""
+""")
 _NARROW_BRIEF_SECTION += _STYLE_INTENT_SECTION
 _NARROW_BRIEF_SECTION += """
 Every add/change update needs a non-empty `literal` or `description`, including

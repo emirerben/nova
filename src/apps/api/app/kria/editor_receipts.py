@@ -26,6 +26,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import MAX_REPLY_CHARS, TextStyleRow, is_judged
 from app.kria.contracts import RequirementReceipt
@@ -133,7 +134,9 @@ _POSITION_VERB = re.compile(
     r"|put|konum\w*|hizala\w*|tasi\w*|ortala\w*)\b"
 )
 _ANIMATION = re.compile(
-    r"\b(animat\w*|fade\w*|pop|pops|slide\w*|typewriter|entrance|exit|animasyon\w*|solma)\b"
+    r"\b(animat\w*|fade\w*|pop|pops|slide\w*|entrance|exit|animasyon\w*|"
+    + edge_alias_pattern(TEXT_ANIMATION_VOCAB)
+    + r")\b"
 )
 _SPEED = re.compile(
     r"\b(slow ?down|slow ?motion|slower|faster|speed ?(up|down)|hizlan\w*|yavasla\w*)\b"

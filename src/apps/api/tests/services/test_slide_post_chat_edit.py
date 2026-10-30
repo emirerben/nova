@@ -463,10 +463,8 @@ def test_video_prompt_never_contains_slide_fragment() -> None:
     assert "SLIDE POST MODE" not in _render(video)
     assert "CURRENT POST" not in _render(video)
     # exactly what it was before the slides lane existed: the three video fragments
-    lanes = [editor_ops_v2._FRAGMENT_DIR / f"{n}.txt" for n in ("text", "timeline", "audio")]
-    expected = "\n\n".join(
-        p.read_text(encoding="utf-8").strip() for p in lanes if p.read_text().strip()
-    )
+    lanes = [f"{n}.txt" for n in ("text", "timeline", "audio")]
+    expected = "\n\n".join(text for name in lanes if (text := editor_ops_v2.read_fragment(name)))
     assert editor_ops_v2.prompt_fragments() == expected
 
 
