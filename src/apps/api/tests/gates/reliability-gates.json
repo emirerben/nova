@@ -3512,6 +3512,54 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1067-filming-order-end-picker",
+      "tickets": [
+        "KRI-1067",
+        "KRI-1066"
+      ],
+      "symptom": "Leverkusen M1 (thread 4144DA86, 2026-10-29): \"chronological order from arrival to the final whistle\" kept last_clip \"the final whistle\" on the brief, the clip-intent planner wrote no last pin, nothing asked which clip it is, and the draft backstop's render contract ended the turn on 'I couldn't tell which clip \"the final whistle\" means, so I can't confirm the order.' as a recovery with no picker, question or buttons (twice).",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1067",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/app/services/clip_none_answers.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1067_filming_order_end_picker.py",
+        "tests/kria/test_kri1025_none_answer_pin.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The run's prompt, brief r2 and clip filming times (kri1067_leverkusen_m1_turn1.json) through the real Main Creator parse, _plan_from_creator_output, clip-intent parse and resolver plumbing behind a provider-transport fake, then the real choice gate, draft backstop and render contract. With the planner wiring off, the turn drafts and the backstop answers the prod sentence with nothing to tap (9 journey tests red); with it on, turn 1 is a clip picker for \"the final whistle\" with IMG_1043 (last filmed) ticked, and a tap, None or skip all reach a draft whose contract has no gap.",
+        "live_model": "Not run; no paid calls. No prompt changed; the resolver may see one more order row on these turns.",
+        "native_output": "n/a: server-only planner change; the iPhone shows the existing picker card (suggested_media_ids pre-ticks, KRI-991).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "stated first clip ticks the first filmed clip",
+        "tap the ticked clip, tap another clip, None, skip",
+        "planner already pinned the spot in other words, or wrote the same words as a sequence row",
+        "pin-only order, upload order, no stated ending, no brief: unchanged",
+        "resolver matches the ending itself (no question); resolver near miss keeps its own tick",
+        "no dated clips, one dated clip: nothing ticked or claimed",
+        "Turkish chat",
+        "inventory cap"
+      ],
+      "neighbours_gap": [
+        "The run's own planner output is redacted (sensitive_io); the first-pin-only inventory is the shape the reply implies.",
+        "Pin-only orders and an answered upload order with an unplaced stated clip still end on the KRI-1025 'Tell me which clip you mean' reply, not a picker.",
+        "KRI-1068 (pins can't be withdrawn) and KRI-1069 (photo in the selection reads as missing capture times) are separate."
+      ],
+      "follow_ups": [
+        "iPhone re-send of Leverkusen M1 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-947-951-same-moment-picker",
       "tickets": [
         "KRI-947",
