@@ -4674,8 +4674,11 @@ class NotificationInstallation(Base):
         Index("idx_notification_installation_owner", "owner_id"),
         Index(
             "uq_notification_installation_active_target",
-            "environment", "topic", "token_fingerprint",
-            unique=True, postgresql_where=text("revoked_at IS NULL"),
+            "environment",
+            "topic",
+            "token_fingerprint",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
         ),
     )
 
@@ -4688,7 +4691,8 @@ class NotificationDelivery(Base):
         UUID(as_uuid=True), ForeignKey("native_activities.id", ondelete="CASCADE"), nullable=False
     )
     installation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("notification_installations.id", ondelete="CASCADE"),
+        UUID(as_uuid=True),
+        ForeignKey("notification_installations.id", ondelete="CASCADE"),
         nullable=False,
     )
     registration_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
