@@ -1474,16 +1474,173 @@ def test_inventory_filter_drops_only_stopped_release_command_machines() -> None:
     assert len(kept) == 4
 
 
-def test_deploy_workflows_read_the_filtered_inventory() -> None:
-    for name in ("fly-deploy.yml", "video-poster-backfill.yml"):
-        lines = [
-            line
-            for line in (REPO_ROOT / ".github" / "workflows" / name).read_text().splitlines()
-            if "flyctl machine list" in line
-        ]
-        assert lines, name
-        for line in lines:
-            assert "| jq -c -f scripts/fly-production-inventory.jq" in line, (name, line)
+def _filter_program(text: str) -> str:
+    return " ".join(
+        line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")
+    )
+
+
+def test_deploy_workflow_reads_the_filtered_inventory_from_the_checked_out_repo() -> None:
+    lines = [
+        line
+        for line in (REPO_ROOT / ".github" / "workflows" / "fly-deploy.yml")
+        .read_text()
+        .splitlines()
+        if "flyctl machine list" in line
+    ]
+    assert lines
+    for line in lines:
+        assert "| jq -c -f scripts/fly-production-inventory.jq" in line, line
+
+
+def _backfill_gate_step() -> dict:
+    import yaml  # noqa: PLC0415 - test-only dependency
+
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github" / "workflows" / "video-poster-backfill.yml").read_text()
+    )
+    steps = (
+        workflow["jobs"]["backfill"]["steps"]
+        if "backfill" in workflow["jobs"]
+        else next(iter(workflow["jobs"].values()))["steps"]
+    )
+    (step,) = [s for s in steps if s.get("name") == "Prove the requested revision is live"]
+    return step
+
+
+def test_backfill_gate_runs_before_any_checkout_and_inlines_the_filter() -> None:
+    workflow = (REPO_ROOT / ".github" / "workflows" / "video-poster-backfill.yml").read_text()
+    gate = workflow.index("- name: Prove the requested revision is live")
+    checkout = workflow.index("uses: actions/checkout@")
+    assert gate < checkout, "the gate must stay ahead of the input-selected checkout"
+    step = _backfill_gate_step()["run"]
+    assert "fly-production-inventory.jq" not in step.replace(
+        "Same program as scripts/fly-production-inventory.jq", ""
+    )
+    start = step.index("inventory_filter='") + len("inventory_filter='")
+    inlined = step[start : step.index("'\n", start)]
+    assert inlined == _filter_program(
+        (REPO_ROOT / "scripts" / "fly-production-inventory.jq").read_text()
+    ), "the inlined workflow filter drifted from scripts/fly-production-inventory.jq"
+
+
+_GATE_STUB = r"""#!/usr/bin/env bash
+case "$1 $2" in
+  "machine list") cat "$STUB_INVENTORY_FILE" ;;
+  "image show") cat "$STUB_IMAGE_FILE" ;;
+  *) echo "unexpected flyctl invocation: $*" >&2; exit 97 ;;
+esac
+"""
+
+
+def _run_backfill_gate(
+    tmp_path: Path, inventory: object, step_text: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run the workflow's real pre-checkout step in an EMPTY workspace (no repo files)."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("flyctl", _GATE_STUB), ("curl", "#!/usr/bin/env bash\nexit 0\n")):
+        stub = bin_dir / name
+        stub.write_text(body)
+        stub.chmod(0o755)
+    inventory_file = tmp_path / "inventory.json"
+    inventory_file.write_text(inventory if isinstance(inventory, str) else json.dumps(inventory))
+    image_file = tmp_path / "image.json"
+    image_file.write_text(json.dumps([_image()]))
+    return subprocess.run(
+        ["bash", "-c", step_text or _backfill_gate_step()["run"]],
+        cwd=workspace,
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "STUB_INVENTORY_FILE": str(inventory_file),
+            "STUB_IMAGE_FILE": str(image_file),
+            "FLY_API_TOKEN": "dummy",
+            "EXPECTED_SHA": EXPECTED_SHA,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+
+def test_backfill_gate_passes_in_an_empty_workspace_past_a_stopped_release_orphan(
+    tmp_path: Path,
+) -> None:
+    """Red before the fix: with `jq -f scripts/...` the step dies because no checkout exists yet."""
+    result = _run_backfill_gate(tmp_path, _inventory(_release_command_machine("stopped")))
+
+    assert result.returncode == 0, result.stderr
+    assert "do not expose one immutable digest" not in result.stdout
+
+
+@pytest.mark.parametrize("state", ["created", "starting", "started", "stopping", "replacing"])
+def test_backfill_gate_still_refuses_a_release_command_machine_that_may_be_running(
+    tmp_path: Path, state: str
+) -> None:
+    result = _run_backfill_gate(tmp_path, _inventory(_release_command_machine(state)))
+
+    assert result.returncode == 1
+    assert "managed production Machines do not expose one immutable digest" in result.stdout
+
+
+def test_backfill_gate_refuses_real_divergence_beside_a_release_orphan(tmp_path: Path) -> None:
+    inventory = [
+        _managed_machine("api"),
+        _managed_machine("worker", digest=f"sha256:{'c' * 64}"),
+        _managed_machine("light"),
+        _managed_machine("autoplace"),
+        _release_command_machine("stopped"),
+    ]
+    result = _run_backfill_gate(tmp_path, inventory)
+
+    assert result.returncode == 1
+    assert "do not expose one immutable digest" in result.stdout
+
+
+def test_backfill_gate_refuses_a_non_array_inventory(tmp_path: Path) -> None:
+    for index, payload in enumerate(('{"machines": []}', "{}", "null", "")):
+        result = _run_backfill_gate(tmp_path / str(index), payload)
+        assert result.returncode != 0, payload
+
+
+def test_inventory_filter_keeps_reserved_names_and_operation_metadata_visible() -> None:
+    inventory_filter = REPO_ROOT / "scripts" / "fly-production-inventory.jq"
+    hidden_by_mistake = []
+    for name, metadata in (
+        ("nova-video-production-mutation-guard", {}),
+        ("poster-backfill-manual-1", {}),
+        ("anything", {"nova_operation": "fly-deploy-guard"}),
+        ("anything", {"nova_operation": "video-poster-backfill"}),
+    ):
+        machine = _release_command_machine("stopped")
+        machine["name"] = name
+        machine["config"]["metadata"].update(metadata)
+        out = subprocess.run(
+            ["jq", "-c", "-f", str(inventory_filter)],
+            input=json.dumps([machine]),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        if json.loads(out.stdout) != [machine]:
+            hidden_by_mistake.append((name, metadata))
+    assert hidden_by_mistake == []
+
+
+def test_inventory_filter_rejects_a_non_array_instead_of_coercing_it() -> None:
+    inventory_filter = REPO_ROOT / "scripts" / "fly-production-inventory.jq"
+    for payload in ('{"a": null}', "{}", "null", '"x"'):
+        out = subprocess.run(
+            ["jq", "-c", "-f", str(inventory_filter)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert out.returncode != 0, payload
 
 
 def test_deploy_guard_rejects_foreign_owner_or_executed_state(tmp_path: Path) -> None:

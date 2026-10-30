@@ -54,6 +54,9 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
+          # Same program as scripts/fly-production-inventory.jq (kept equal by a test): this gate
+          # runs before any checkout, so the file is not on the runner yet.
+          inventory_filter='if type != "array" then error("Fly Machine inventory is not a JSON array") else map(select( (.config.metadata // .incomplete_config.metadata // {}) as $metadata | (.name // "") as $name | ($metadata.fly_process_group == "fly_app_release_command" and .state == "stopped" and ($metadata | has("nova_operation") | not) and ($name | test("-production-mutation-guard$") | not) and ($name | startswith("poster-backfill-") | not)) | not )) end'
           managed_fleet_has_required_processes() {
             jq -e '
               [.[]
@@ -128,7 +131,7 @@ jobs:
             ' >/dev/null
           }
           for attempt in $(seq 1 20); do
-            machines_json="$(flyctl machine list --app nova-video --json | jq -c -f scripts/fly-production-inventory.jq)"
+            machines_json="$(flyctl machine list --app nova-video --json | jq -c "$inventory_filter")"
             managed_count="$(jq '[.[] | select(((.config.metadata // .incomplete_config.metadata // {}) | has("fly_process_group")))] | length' <<<"$machines_json")"
             digest_count="$(jq '[.[] | select(((.config.metadata // .incomplete_config.metadata // {}) | has("fly_process_group"))) | .image_ref.digest] | unique | length' <<<"$machines_json")"
             [[ "$managed_count" -ge 1 && "$digest_count" == "1" ]] || {
