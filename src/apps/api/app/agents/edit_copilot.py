@@ -54,10 +54,10 @@ log = structlog.get_logger()
 # v91 (29 Ekim lane E, KRI-1039): compose with the ops, refuse only when no sequence reaches the
 # end state and name what is missing; words the creator gives, shown a piece at a time, are
 # replace_text_sequence (weighted windows, mode cumulative), never captions.
-# v92 (30 Ekim): prompt-cache layout only, no rule change. Rules, catalogs and lane
+# v94 (30 Ekim): prompt-cache layout only, no rule change. Rules, catalogs and lane
 # fragments come first; the per-turn data (user message, draft, prior turns, max ops)
 # moved to prompts/edit_copilot_turn.txt at the end so the shared head is cacheable.
-EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v92"
+EDIT_COPILOT_PROMPT_VERSION = "2026-10-30-v94"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).

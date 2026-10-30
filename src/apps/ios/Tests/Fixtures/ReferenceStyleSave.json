@@ -1,0 +1,809 @@
+[
+  {
+    "name": "styledAll",
+    "recipe": {
+      "schema_version": 2,
+      "renderer_version": "kria-ios-2",
+      "canvas": {
+        "width": 1080,
+        "height": 1920
+      },
+      "frame_rate": 30.0,
+      "assets": [
+        {
+          "id": "source",
+          "relative_path": "source",
+          "fingerprint": {
+            "algorithm": "sha256",
+            "hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "byte_count": 1000
+          },
+          "duration": 10.0,
+          "natural_size": {
+            "width": 1920.0,
+            "height": 1080.0
+          },
+          "frame_rate": null,
+          "orientation_degrees": 0,
+          "is_proxy_available": true
+        },
+        {
+          "id": "font-HankenGrotesk-ExtraBold.ttf",
+          "relative_path": "font-HankenGrotesk-ExtraBold.ttf",
+          "fingerprint": {
+            "algorithm": "sha256",
+            "hex": "415b090d6c5b5e2f1bd27b285bdc988d14f024ecea4f58c40ffaea9d7a0cdd26",
+            "byte_count": 67800
+          },
+          "duration": null,
+          "natural_size": null,
+          "frame_rate": null,
+          "orientation_degrees": 0,
+          "is_proxy_available": false
+        }
+      ],
+      "tracks": [
+        {
+          "id": "authored",
+          "kind": "video",
+          "clips": [
+            {
+              "id": "cut-0",
+              "source_asset_id": "source",
+              "source_start": 2.0,
+              "source_duration": 1.0,
+              "timeline_start": 0.0,
+              "rate": 1.0,
+              "transform": {
+                "scale": 1.0,
+                "rotation_degrees": 0.0,
+                "position_x": 0.0,
+                "position_y": 0.0
+              },
+              "transition": null,
+              "text": null,
+              "volume": 1.0
+            },
+            {
+              "id": "cut-1",
+              "source_asset_id": "source",
+              "source_start": 3.0,
+              "source_duration": 1.0,
+              "timeline_start": 1.0,
+              "rate": 1.0,
+              "transform": {
+                "scale": 1.0,
+                "rotation_degrees": 0.0,
+                "position_x": 0.0,
+                "position_y": 0.0
+              },
+              "transition": null,
+              "text": null,
+              "volume": 1.0
+            },
+            {
+              "id": "cut-2",
+              "source_asset_id": "source",
+              "source_start": 4.0,
+              "source_duration": 1.0,
+              "timeline_start": 2.0,
+              "rate": 1.0,
+              "transform": {
+                "scale": 1.0,
+                "rotation_degrees": 0.0,
+                "position_x": 0.0,
+                "position_y": 0.0
+              },
+              "transition": null,
+              "text": null,
+              "volume": 1.0
+            }
+          ]
+        }
+      ],
+      "audio": {
+        "music_asset_id": null,
+        "music_volume": 1.0,
+        "original_volume": 1.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0,
+        "duck_original_during_music": false
+      },
+      "required_capabilities": [
+        "basicComposition",
+        "local1080Export",
+        "animatedText",
+        "positionedText",
+        "audioMix"
+      ],
+      "asset_manifest": {
+        "version": 1,
+        "assets": [
+          {
+            "kind": "original",
+            "id": "source",
+            "media_id": "source",
+            "fingerprint": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "byte_count": 1000
+            }
+          },
+          {
+            "kind": "library",
+            "id": "font-HankenGrotesk-ExtraBold.ttf",
+            "catalog": "font",
+            "catalog_id": "HankenGrotesk-ExtraBold.ttf",
+            "generation": "415b090d6c5b5e2f1bd27b285bdc988d14f024ecea4f58c40ffaea9d7a0cdd26",
+            "fingerprint": {
+              "sha256": "415b090d6c5b5e2f1bd27b285bdc988d14f024ecea4f58c40ffaea9d7a0cdd26",
+              "byte_count": 67800
+            }
+          }
+        ]
+      },
+      "text_layers": [
+        {
+          "id": "authored-text-0",
+          "start": 0.0,
+          "end": 1.0,
+          "anchor_x": 540.0,
+          "anchor_y": 864.0,
+          "rotation_degrees": 0.0,
+          "runs": [
+            {
+              "text": "Our",
+              "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+              "font_size": 84.0,
+              "x": 466.5,
+              "baseline_y": 893.5,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 102,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 367,
+                  "x": 62.74800109863281,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 351,
+                  "x": 110.62800216674805,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            }
+          ],
+          "effect": "static",
+          "motion": null,
+          "reveal_bounds": null,
+          "handwriting": null,
+          "discrete_reveal": null,
+          "smooth_reveal": null,
+          "staggered": null,
+          "karaoke": null,
+          "fade": null,
+          "giant_title": null,
+          "dissolve_seed": null
+        },
+        {
+          "id": "authored-text-1",
+          "start": 1.0,
+          "end": 2.0,
+          "anchor_x": 540.0,
+          "anchor_y": 864.0,
+          "rotation_degrees": 0.0,
+          "runs": [
+            {
+              "text": "Lisbon",
+              "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+              "font_size": 84.0,
+              "x": 416.43599700927734,
+              "baseline_y": 893.5,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 87,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 283,
+                  "x": 42.5880012512207,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 355,
+                  "x": 63.75600051879883,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 242,
+                  "x": 103.40399932861328,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 321,
+                  "x": 151.28400039672852,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 312,
+                  "x": 199.2480010986328,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            }
+          ],
+          "effect": "static",
+          "motion": null,
+          "reveal_bounds": null,
+          "handwriting": null,
+          "discrete_reveal": null,
+          "smooth_reveal": null,
+          "staggered": null,
+          "karaoke": null,
+          "fade": null,
+          "giant_title": null,
+          "dissolve_seed": null
+        },
+        {
+          "id": "authored-text-2",
+          "start": 2.0,
+          "end": 3.0,
+          "anchor_x": 540.0,
+          "anchor_y": 864.0,
+          "rotation_degrees": 0.0,
+          "runs": [
+            {
+              "text": "trip",
+              "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+              "font_size": 84.0,
+              "x": 471.5820007324219,
+              "baseline_y": 893.5,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 362,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 351,
+                  "x": 31.416000366210938,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 283,
+                  "x": 67.78800201416016,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 348,
+                  "x": 88.95600128173828,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            }
+          ],
+          "effect": "static",
+          "motion": null,
+          "reveal_bounds": null,
+          "handwriting": null,
+          "discrete_reveal": null,
+          "smooth_reveal": null,
+          "staggered": null,
+          "karaoke": null,
+          "fade": null,
+          "giant_title": null,
+          "dissolve_seed": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "localUndo",
+    "recipe": {
+      "schema_version": 2,
+      "renderer_version": "kria-ios-2",
+      "canvas": {
+        "width": 1080,
+        "height": 1920
+      },
+      "frame_rate": 30.0,
+      "assets": [
+        {
+          "id": "source",
+          "relative_path": "source",
+          "fingerprint": {
+            "algorithm": "sha256",
+            "hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "byte_count": 1000
+          },
+          "duration": 10.0,
+          "natural_size": {
+            "width": 1920.0,
+            "height": 1080.0
+          },
+          "frame_rate": null,
+          "orientation_degrees": 0,
+          "is_proxy_available": true
+        },
+        {
+          "id": "font-Montserrat-ExtraBold.ttf",
+          "relative_path": "font-Montserrat-ExtraBold.ttf",
+          "fingerprint": {
+            "algorithm": "sha256",
+            "hex": "d3ac6a843d3ba6d5cafd44cf39e437055c8aed7e261010f595f57d3c7b3e2c1b",
+            "byte_count": 455468
+          },
+          "duration": null,
+          "natural_size": null,
+          "frame_rate": null,
+          "orientation_degrees": 0,
+          "is_proxy_available": false
+        },
+        {
+          "id": "font-HankenGrotesk-ExtraBold.ttf",
+          "relative_path": "font-HankenGrotesk-ExtraBold.ttf",
+          "fingerprint": {
+            "algorithm": "sha256",
+            "hex": "415b090d6c5b5e2f1bd27b285bdc988d14f024ecea4f58c40ffaea9d7a0cdd26",
+            "byte_count": 67800
+          },
+          "duration": null,
+          "natural_size": null,
+          "frame_rate": null,
+          "orientation_degrees": 0,
+          "is_proxy_available": false
+        }
+      ],
+      "tracks": [
+        {
+          "id": "authored",
+          "kind": "video",
+          "clips": [
+            {
+              "id": "cut-0",
+              "source_asset_id": "source",
+              "source_start": 2.0,
+              "source_duration": 1.0,
+              "timeline_start": 0.0,
+              "rate": 1.0,
+              "transform": {
+                "scale": 1.0,
+                "rotation_degrees": 0.0,
+                "position_x": 0.0,
+                "position_y": 0.0
+              },
+              "transition": null,
+              "text": null,
+              "volume": 1.0
+            },
+            {
+              "id": "cut-1",
+              "source_asset_id": "source",
+              "source_start": 3.0,
+              "source_duration": 1.0,
+              "timeline_start": 1.0,
+              "rate": 1.0,
+              "transform": {
+                "scale": 1.0,
+                "rotation_degrees": 0.0,
+                "position_x": 0.0,
+                "position_y": 0.0
+              },
+              "transition": null,
+              "text": null,
+              "volume": 1.0
+            },
+            {
+              "id": "cut-2",
+              "source_asset_id": "source",
+              "source_start": 4.0,
+              "source_duration": 1.0,
+              "timeline_start": 2.0,
+              "rate": 1.0,
+              "transform": {
+                "scale": 1.0,
+                "rotation_degrees": 0.0,
+                "position_x": 0.0,
+                "position_y": 0.0
+              },
+              "transition": null,
+              "text": null,
+              "volume": 1.0
+            }
+          ]
+        }
+      ],
+      "audio": {
+        "music_asset_id": null,
+        "music_volume": 1.0,
+        "original_volume": 1.0,
+        "fade_in": 0.0,
+        "fade_out": 0.0,
+        "duck_original_during_music": false
+      },
+      "required_capabilities": [
+        "basicComposition",
+        "local1080Export",
+        "animatedText",
+        "positionedText",
+        "audioMix"
+      ],
+      "asset_manifest": {
+        "version": 1,
+        "assets": [
+          {
+            "kind": "original",
+            "id": "source",
+            "media_id": "source",
+            "fingerprint": {
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "byte_count": 1000
+            }
+          },
+          {
+            "kind": "library",
+            "id": "font-Montserrat-ExtraBold.ttf",
+            "catalog": "font",
+            "catalog_id": "Montserrat-ExtraBold.ttf",
+            "generation": "d3ac6a843d3ba6d5cafd44cf39e437055c8aed7e261010f595f57d3c7b3e2c1b",
+            "fingerprint": {
+              "sha256": "d3ac6a843d3ba6d5cafd44cf39e437055c8aed7e261010f595f57d3c7b3e2c1b",
+              "byte_count": 455468
+            }
+          },
+          {
+            "kind": "library",
+            "id": "font-HankenGrotesk-ExtraBold.ttf",
+            "catalog": "font",
+            "catalog_id": "HankenGrotesk-ExtraBold.ttf",
+            "generation": "415b090d6c5b5e2f1bd27b285bdc988d14f024ecea4f58c40ffaea9d7a0cdd26",
+            "fingerprint": {
+              "sha256": "415b090d6c5b5e2f1bd27b285bdc988d14f024ecea4f58c40ffaea9d7a0cdd26",
+              "byte_count": 67800
+            }
+          }
+        ]
+      },
+      "text_layers": [
+        {
+          "id": "authored-text-0",
+          "start": 0.0,
+          "end": 1.0,
+          "anchor_x": 540.0,
+          "anchor_y": 864.0,
+          "rotation_degrees": 0.0,
+          "runs": [
+            {
+              "text": "Our",
+              "font_asset_id": "font-Montserrat-ExtraBold.ttf",
+              "font_size": 64.0,
+              "x": 476.6080017089844,
+              "baseline_y": 886.9521484375,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 206,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 899,
+                  "x": 54.14400100708008,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 857,
+                  "x": 98.43199920654297,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            }
+          ],
+          "effect": "static",
+          "motion": null,
+          "reveal_bounds": null,
+          "handwriting": null,
+          "discrete_reveal": null,
+          "smooth_reveal": null,
+          "staggered": null,
+          "karaoke": null,
+          "fade": null,
+          "giant_title": null,
+          "dissolve_seed": null
+        },
+        {
+          "id": "authored-text-1",
+          "start": 1.0,
+          "end": 2.0,
+          "anchor_x": 540.0,
+          "anchor_y": 864.0,
+          "rotation_degrees": 0.0,
+          "runs": [
+            {
+              "text": "Lisbon",
+              "font_asset_id": "font-HankenGrotesk-ExtraBold.ttf",
+              "font_size": 84.0,
+              "x": 416.43599700927734,
+              "baseline_y": 893.5,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 87,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 283,
+                  "x": 42.5880012512207,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 355,
+                  "x": 63.75600051879883,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 242,
+                  "x": 103.40399932861328,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 321,
+                  "x": 151.28400039672852,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 312,
+                  "x": 199.2480010986328,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            }
+          ],
+          "effect": "static",
+          "motion": null,
+          "reveal_bounds": null,
+          "handwriting": null,
+          "discrete_reveal": null,
+          "smooth_reveal": null,
+          "staggered": null,
+          "karaoke": null,
+          "fade": null,
+          "giant_title": null,
+          "dissolve_seed": null
+        },
+        {
+          "id": "authored-text-2",
+          "start": 2.0,
+          "end": 3.0,
+          "anchor_x": 540.0,
+          "anchor_y": 864.0,
+          "rotation_degrees": 0.0,
+          "runs": [
+            {
+              "text": "trip",
+              "font_asset_id": "font-Montserrat-ExtraBold.ttf",
+              "font_size": 64.0,
+              "x": 479.26399993896484,
+              "baseline_y": 886.9521484375,
+              "letter_spacing": 0.0,
+              "shaped": false,
+              "glyphs": [
+                {
+                  "glyph_id": 885,
+                  "x": 0.0,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 857,
+                  "x": 28.607999801635742,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 727,
+                  "x": 56.959999084472656,
+                  "y": 0.0
+                },
+                {
+                  "glyph_id": 849,
+                  "x": 76.99199867248535,
+                  "y": 0.0
+                }
+              ],
+              "fill": {
+                "red": 1.0,
+                "green": 1.0,
+                "blue": 1.0,
+                "alpha": 1.0
+              },
+              "stroke": {
+                "red": 0.0,
+                "green": 0.0,
+                "blue": 0.0,
+                "alpha": 0.9019607843137255
+              },
+              "stroke_width": 0.0,
+              "blur_layers": [
+                {
+                  "alpha_power": 1,
+                  "color": {
+                    "red": 0.0,
+                    "green": 0.0,
+                    "blue": 0.0,
+                    "alpha": 0.6274509803921569
+                  },
+                  "sigma": 12.0,
+                  "dx": 0.0,
+                  "dy": 6.0
+                }
+              ],
+              "gradient": null
+            }
+          ],
+          "effect": "static",
+          "motion": null,
+          "reveal_bounds": null,
+          "handwriting": null,
+          "discrete_reveal": null,
+          "smooth_reveal": null,
+          "staggered": null,
+          "karaoke": null,
+          "fade": null,
+          "giant_title": null,
+          "dissolve_seed": null
+        }
+      ]
+    }
+  }
+]

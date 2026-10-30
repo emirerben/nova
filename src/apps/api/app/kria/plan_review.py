@@ -124,6 +124,7 @@ TEXT_BAR_OPS = frozenset(
         "remove_texts",
         "replace_text_sequence",
         "set_texts_timing",
+        "retime_text_sequence",
         "realign_labels",
         "add_text",
     }

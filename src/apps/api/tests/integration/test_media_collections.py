@@ -2319,10 +2319,15 @@ def _stub_ideas(monkeypatch, make):
         StoryIdea,
     )
 
-    calls = []
+    class Calls(list):
+        pass
+
+    calls = Calls()
+    calls.request_ids = []
 
     def run(self, input, *, ctx):
         calls.append(input)
+        calls.request_ids.append(ctx.request_id)
         return CameraRollStoriesOutput(
             stories=[
                 StoryIdea(
@@ -2514,24 +2519,41 @@ async def test_an_idea_deleted_while_generation_runs_is_not_re_offered(
     assert await _saved(client, path, group="Ferry") == []
 
 
-async def test_another_idea_adds_one_and_never_repeats_or_replaces(collection_world, monkeypatch):
+async def test_another_idea_adds_a_batch_and_never_repeats_or_replaces(
+    collection_world, monkeypatch
+):
     """Failure catalogue: another idea replacing the existing ones; repeating an existing
     idea's exact footage; the same copy under a new title or in different case; adding more
-    than one; the model never being told what the event already has."""
+    than three; the model never being told what the event already has; every candidate filtered
+    out with no second try; a request after a delete replaying the deleted idea's cached id."""
     client, _, _, owner, _ = collection_world
     path, _, ferry, _ = await _two_events(client, owner, per_event=3)
     body = {**EVENT_QUERY, "group": "Ferry"}
+    repeat = ("Reworded", "Yet another point", "  OPENING ONE ", [2])
+
+    def retried(input, fresh):
+        # The retry names the dropped angle too, so it sees one more offered idea.
+        return fresh if len(input.already_offered) > 4 else [repeat]
+
     script = {
         "first": lambda input: [("First", "Point one", "Opening one", [0])],
         "more": lambda input: [
             ("Same footage", "Entirely different point", "Fresh opening", [0]),
             ("Genuinely new", "A third point", "A third opening", [1, 2]),
             ("Also new", "A fourth point", "A fourth opening", [2]),
+            ("Too many", "A fifth point", "A fifth opening", [1]),
+            ("Way too many", "A sixth point", "A sixth opening", [0, 1]),
         ],
         "repeats_only": lambda input: [
-            ("Reworded", "Yet another point", "  OPENING ONE ", [2]),
+            repeat,
             ("Same footage", "Other point", "Other opening", [1, 2]),
         ],
+        "recovers": lambda input: retried(
+            input, [("Recovered", "A brand new point", "Brand new opening", [0, 2])]
+        ),
+        "after_delete": lambda input: retried(
+            input, [("After delete", "A point after the delete", "Opening after delete", [0, 1])]
+        ),
     }
     state = {"step": "first"}
     calls = _stub_ideas(monkeypatch, lambda input: script[state["step"]](input))
@@ -2544,24 +2566,44 @@ async def test_another_idea_adds_one_and_never_repeats_or_replaces(collection_wo
     )
     assert added.status_code == 200, added.text
     new = added.json()["stories"]
-    assert [story["title"] for story in new] == ["Genuinely new"], "exactly one, and a new one"
+    assert [story["title"] for story in new] == ["Genuinely new", "Also new", "Too many"], (
+        "a batch of up to three new ideas, none repeating the offered footage"
+    )
     first_moments = {m["id"] for m in first[0]["moments"]}
-    assert {m["id"] for m in new[0]["moments"]}.isdisjoint(first_moments)
+    assert all({m["id"] for m in n["moments"]}.isdisjoint(first_moments) for n in new)
     offered = calls[-1].already_offered
     assert [value.moment_ids for value in offered] == [[m["id"] for m in first[0]["moments"]]]
     assert offered[0].opening_text == "Opening one"
 
     saved = await _saved(client, path, group="Ferry")
-    assert {story["id"] for story in saved} == {first[0]["id"], new[0]["id"]}
+    have = [first[0]["id"], *(n["id"] for n in new)]
+    assert {story["id"] for story in saved} == set(have)
     assert next(s for s in saved if s["id"] == first[0]["id"]) == first[0], "never replaced"
 
     state["step"] = "repeats_only"
+    before = len(calls)
     nothing = await client.post(
         f"{path}/stories",
-        json={**body, "exclude_story_ids": [first[0]["id"], new[0]["id"]]},
+        json={**body, "exclude_story_ids": have[:2]},
     )
     assert nothing.status_code == 200 and nothing.json()["stories"] == []
-    assert len(await _saved(client, path, group="Ferry")) == 2
+    assert len(calls) == before + 2, "an emptied request is retried once, not endlessly"
+    assert len(await _saved(client, path, group="Ferry")) == 4
+
+    state["step"] = "recovers"
+    recovered = await client.post(f"{path}/stories", json={**body, "exclude_story_ids": have})
+    assert [s["title"] for s in recovered.json()["stories"]] == ["Recovered"], recovered.text
+    angles = [value.angle for value in calls[-1].already_offered]
+    assert "Yet another point" in angles, "the retry names the angle that was dropped"
+
+    delete = await client.delete(f"{path}/stories/{recovered.json()['stories'][0]['id']}")
+    assert delete.status_code == 200
+    state["step"] = "after_delete"
+    again = await client.post(f"{path}/stories", json={**body, "exclude_story_ids": have})
+    assert [s["title"] for s in again.json()["stories"]] == ["After delete"], (
+        "asking again after a delete is a new request, not the cached one with the deleted id"
+    )
+
     other = await client.post(
         f"{path}/stories",
         json={**body, "group": "Market", "exclude_story_ids": [first[0]["id"]]},
@@ -2571,6 +2613,43 @@ async def test_another_idea_adds_one_and_never_repeats_or_replaces(collection_wo
         f"{path}/stories", json={**body, "exclude_story_ids": [str(uuid.uuid4())]}
     )
     assert gone.status_code == 404
+
+
+async def test_an_empty_another_idea_answer_is_not_cached_and_retries_use_fresh_ids(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: a model answer of "no ideas" cached under the exclude-set digest so
+    every later tap replays [] with no model call; the filter-emptied retry reusing the first
+    pass's request id, which the cost ledger treats as an already-settled call."""
+    client, _, _, owner, _ = collection_world
+    path, _, _, _ = await _two_events(client, owner, per_event=3)
+    body = {**EVENT_QUERY, "group": "Ferry"}
+    repeat = ("Reworded", "Yet another point", "Opening one", [2])
+    script = {
+        "first": lambda input: [("First", "Point one", "Opening one", [0])],
+        "empty": lambda input: [],
+        "fresh": lambda input: [("Fresh", "A new point", "A new opening", [1, 2])],
+        "repeats": lambda input: [repeat],
+    }
+    state = {"step": "first"}
+    calls = _stub_ideas(monkeypatch, lambda input: script[state["step"]](input))
+    first = (await client.post(f"{path}/stories", json=body)).json()["stories"]
+    exclude = {**body, "exclude_story_ids": [first[0]["id"]]}
+
+    state["step"] = "empty"
+    assert (await client.post(f"{path}/stories", json=exclude)).json()["stories"] == []
+    state["step"] = "fresh"
+    again = await client.post(f"{path}/stories", json=exclude)
+    assert [s["title"] for s in again.json()["stories"]] == ["Fresh"], (
+        "the earlier empty answer must not replay from the cache"
+    )
+
+    state["step"] = "repeats"
+    before = len(calls)
+    exclude = {**body, "exclude_story_ids": [first[0]["id"], again.json()["stories"][0]["id"]]}
+    await client.post(f"{path}/stories", json=exclude)
+    ids = calls.request_ids[before:]
+    assert len(ids) == 2 and len(set(ids)) == 2, "the retry is a distinct call"
 
 
 async def test_deleting_an_event_keeps_other_events_and_bumps_the_revision(

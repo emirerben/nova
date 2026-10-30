@@ -583,8 +583,8 @@ def _receipt(status: str, verification: str = "checked", reason: str | None = No
     [
         ([("met", "checked")], "Done."),
         ([("met", "checked"), ("met", "checked")], "Done."),
-        ([("partial", "unchecked")], "Done — have a look."),
-        ([("met", "checked"), ("partial", "unchecked")], "Done — have a look."),
+        ([("partial", "unchecked")], "Here’s what changed."),
+        ([("met", "checked"), ("partial", "unchecked")], "Here’s what changed."),
         ([("partial", "checked")], "Partly done."),
         ([("partial", "checked"), ("partial", "unchecked")], "Partly done."),
         ([("not_possible", "checked")], "I couldn't do that."),
@@ -592,7 +592,7 @@ def _receipt(status: str, verification: str = "checked", reason: str | None = No
         ([("not_possible", "checked"), ("met", "checked")], "I did 1 of your 2 asks."),
         (
             [("met", "checked"), ("partial", "unchecked"), ("not_possible", "checked")],
-            "I did 2 of your 3 asks.",
+            "I did 1 of your 3 asks.",
         ),
     ],
 )
@@ -620,7 +620,7 @@ def test_the_turkish_lead_keeps_the_english_structure() -> None:
         assert receipt_lead([_receipt("not_possible"), _receipt("met")]) == (
             "2 isteğinden 1 tanesini yaptım."
         )
-        assert receipt_lead([_receipt("partial", "unchecked")]) == "Yapıldı — bir göz at."
+        assert receipt_lead([_receipt("partial", "unchecked")]) == "İşte değişiklikler."
 
 
 def test_the_lead_never_repeats_the_request_or_the_reason() -> None:
@@ -631,7 +631,7 @@ def test_the_lead_never_repeats_the_request_or_the_reason() -> None:
 
     lead = receipt_lead([receipt])
 
-    assert lead == "Done — have a look."
+    assert lead == "Here’s what changed."
     assert "cinematic" not in lead
     assert (receipt.reason or "") not in lead
     # The row carries the reason once; the old prose is still the event content.

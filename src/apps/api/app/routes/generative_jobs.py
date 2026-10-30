@@ -6885,6 +6885,70 @@ def _is_caption_cue_row(row: object) -> bool:
     return isinstance(params, dict) and params.get("source") == CAPTION_CUE_SOURCE
 
 
+def _authored_empty_caption_presentation(
+    job: Job,
+    variant: dict,
+    payload: EditorCommitRequest,
+    proposed_text: list[dict] | None,
+) -> bool:
+    """Keep a no-caption editor's presentation settings across its ownership switch."""
+    from app.services.authored_editor import is_authored_timeline
+    from app.services.device_render import device_status
+
+    assembly = job.assembly_plan or {}
+    revision = variant.get("guided_edit_revision")
+    plan = assembly.get("guided_story_execution_plan")
+    saved_meta = variant.get("caption_meta")
+    if any(
+        value is not None and not isinstance(value, dict) for value in (revision, plan, saved_meta)
+    ):
+        return False
+    revision, plan = revision or {}, plan or {}
+    if (
+        saved_meta
+        and saved_meta.get("appearance") is not None
+        and not isinstance(saved_meta["appearance"], dict)
+    ):
+        return False
+    if any(
+        rows is not None and not isinstance(rows, list)
+        for rows in (
+            variant.get("caption_cues"),
+            revision.get("caption_cues"),
+            variant.get("text_elements"),
+            revision.get("text_elements"),
+        )
+    ):
+        return False
+    if not (
+        payload.editor_state_version in (1, 2)
+        and variant.get("render_destination") == "device"
+        and variant.get("resolved_archetype") == "guided_story"
+        and is_authored_timeline(variant)
+    ):
+        return False
+    if (
+        variant.get("caption_cues")
+        or revision.get("caption_cues")
+        or variant.get("speech_timing_basis") is not None
+        or variant.get("speech_timing_unresolved")
+        or plan.get("narration") is not None
+        or assembly.get("voiceover_path")
+        or any(_is_caption_cue_row(row) for row in variant.get("text_elements") or [])
+        or any(_is_caption_cue_row(row) for row in revision.get("text_elements") or [])
+        or any(_is_caption_cue_row(row) for row in proposed_text or [])
+    ):
+        return False
+    try:
+        pinned = device_status(job, variant["variant_id"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if pinned is None or pinned.request.recipe.audio.narration_asset_id is not None:
+        return False
+    manifest = getattr(pinned.request.recipe, "asset_manifest", None)
+    return not manifest or not any(asset.kind == "voiceover" for asset in manifest.assets)
+
+
 def _phone_narrated_caption_edits_available(variant: dict) -> bool:
     """True when a phone Narrated variant's `caption_cues`/`caption_meta`
     can be Saved (KRI-280): the variant shape (a `narrated` device render)
@@ -11192,6 +11256,9 @@ def _prepare_editor_commit(
 
     caption_meta_patch: dict | None = None
     if payload.caption_meta is not None:
+        empty_caption_presentation = _authored_empty_caption_presentation(
+            job, variant, payload, validated_elements
+        )
         # Meta toggles (style/font/enabled/position) are accepted for BOTH caption
         # archetypes — the fields and the reburn task are shared.
         if not (
@@ -11199,6 +11266,7 @@ def _prepare_editor_commit(
             or guided_v2
             or _phone_subtitled_editor_lanes_available(job, variant)
             or _phone_narrated_caption_edits_available(variant)
+            or empty_caption_presentation
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -11214,6 +11282,16 @@ def _prepare_editor_commit(
                     detail="Unknown caption font.",
                 )
         caption_meta_patch = {}
+        if empty_caption_presentation:
+            saved_meta = copy.deepcopy(variant.get("caption_meta") or {})
+            prior_appearance = saved_meta.get("appearance") or {}
+            saved_meta.update(meta.model_dump(exclude_unset=True))
+            if meta.appearance is not None:
+                saved_meta["appearance"] = {
+                    **prior_appearance,
+                    **meta.appearance.model_dump(exclude_unset=True),
+                }
+            caption_meta_patch["caption_meta"] = saved_meta
         if meta.appearance is not None:
             caption_meta_patch["caption_editor_style"] = {
                 **(variant.get("caption_editor_style") or {}),

@@ -151,7 +151,9 @@ from app.services.kria_editor_ops import (
     EditorStateReplyError,
     EditorStateSpeechCutError,
     KriaEditorOpError,
+    TextTimingConflict,
     _clip_label_links,
+    build_editor_snapshot,
     compile_editor_ops,
     editor_state_has_lanes,
     failed_editor_draft_basis,
@@ -198,6 +200,75 @@ class _Completion:
 
 class ApprovedCreatorRequestTooLongError(ValueError):
     """The approval fence cannot retain every creator instruction safely."""
+
+
+def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
+    if exc.constraint == "duration":
+        closest = round(exc.required_duration_s, 3)
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=say(
+                en=(
+                    f"With these clips, the closest supported length is {closest:g}s. "
+                    "Use that length, or choose different clips? Nothing was changed."
+                ),
+                tr=(
+                    f"Bu kliplerle desteklenen en yakın süre {closest:g} saniye. "
+                    "Bu süreyi mi kullanayım, yoksa farklı klipler mi seçelim? "
+                    "Hiçbir şey değişmedi."
+                ),
+            ),
+            reply_options=[
+                say(en=f"Retime text to {closest:g}s", tr=f"Yazıları {closest:g} saniyeye yay"),
+                say(en="Choose different clips", tr="Farklı klipler seç"),
+            ],
+        )
+    if exc.constraint == "readability":
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=say(
+                en=(
+                    f"These words need at least {exc.minimum_duration_s:g}s of reading time. "
+                    "May I use a longer video, or would you like to shorten the text? "
+                    "Nothing was changed."
+                ),
+                tr=(
+                    f"Bu yazılar en az {exc.minimum_duration_s:g} saniye "
+                    "okuma süresi gerektiriyor. "
+                    "Daha uzun bir video kullanayım mı, yoksa metni kısaltmak ister misin? "
+                    "Hiçbir şey değişmedi."
+                ),
+            ),
+        )
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="question",
+        response=say(
+            en=(
+                f"Your text ends at {exc.required_duration_s:g}s, "
+                f"beyond the requested {exc.requested_duration_s:g}s. "
+                f"Keep the video at least {exc.minimum_duration_s:g}s, "
+                "or allow me to adjust the text timing? Nothing was changed."
+            ),
+            tr=(
+                f"Yazıların {exc.required_duration_s:g}. saniyede bitiyor. "
+                f"Videoyu en az {exc.minimum_duration_s:g} saniye mi tutayım, "
+                "yoksa yazıların zamanlamasını değiştirebilir miyim? Hiçbir şey değişmedi."
+            ),
+        ),
+        reply_options=[
+            say(
+                en=f"Keep the video at {exc.minimum_duration_s:g}s",
+                tr=f"Videoyu {exc.minimum_duration_s:g} saniye tut",
+            ),
+            say(
+                en=f"Retime text to {exc.requested_duration_s:g}s",
+                tr=f"Yazıları {exc.requested_duration_s:g} saniyeye yay",
+            ),
+        ],
+    )
 
 
 def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
@@ -1559,8 +1630,34 @@ def _complete_draft_turn(
                     raise EditorStateSpeechCutError(EditorStateSpeechCutError.reply)
             elif wants_speech_cut and prior_payload:
                 raise RuntimeError("Save the current draft before applying speech processing")
-            compiled = compile_editor_ops(job, editor_base.projected, arguments.operations)
-            scoped_fields = _scoped_turn_fields(db.get(CreationThreadEvent, turn.source_event_id))
+            from app.kria.editor_sequence_timing import (
+                sequence_timing_plan_from_operations,
+                timing_only_operations,
+            )
+            from app.services.kria_editor_ops_text import validate_timing_only_text
+
+            source_event = db.get(CreationThreadEvent, turn.source_event_id)
+            timing_snapshot = build_editor_snapshot(job, editor_base.projected)
+            preserve_text = any(
+                update.facts.get("preserve_editor_text") is True for update in planned.brief_updates
+            ) or any(op.get("preserve_text") is True for op in arguments.operations)
+            timing_plan = sequence_timing_plan_from_operations(
+                arguments.operations, timing_snapshot, preserve_text=preserve_text
+            )
+            compiled = compile_editor_ops(
+                job, editor_base.projected, arguments.operations, preserve_text=preserve_text
+            )
+            if timing_only_operations(arguments.operations) or any(
+                update.facts.get("editor_timing_only") is True for update in planned.brief_updates
+            ):
+                validate_timing_only_text(
+                    editor_base.projected.get("text_elements") or [],
+                    compiled.payload.text_elements
+                    if isinstance(compiled.payload, EditorCommitRequest)
+                    and compiled.payload.text_elements is not None
+                    else editor_base.projected.get("text_elements") or [],
+                )
+            scoped_fields = _scoped_turn_fields(source_event)
             if scoped_fields is not None:
                 # KRI-441 layer 3: whatever the model or a manual edit slipped outside the
                 # flagged sections is stripped from the compiled draft, never failed.
@@ -1682,22 +1779,57 @@ def _complete_draft_turn(
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
+            current_brief = load_latest_brief_sync(db, thread.id)
             if planned.brief_expected_version is not None:
-                current_brief = load_latest_brief_sync(db, thread.id)
                 if planned.brief_expected_version != (
                     current_brief.version if current_brief else 0
                 ):
                     raise RuntimeError("The request changed during planning; please retry")
+            if apply_intent.tool_name == "draft.apply_editor_ops" and timing_plan is not None:
+                from app.kria.editor_sequence_timing import merge_sequence_brief_updates
+
+                canonical_plan = timing_plan
+                if (
+                    timing_plan.intent is not None
+                    and timing_plan.intent.mode == "fill"
+                    and timing_plan.span_s is None
+                    and timing_plan.intent.target_s is None
+                    and compiled.canonical_duration_s is not None
+                ):
+                    canonical_plan = replace(
+                        timing_plan,
+                        intent=replace(timing_plan.intent, target_s=compiled.canonical_duration_s),
+                    )
+                effective_brief_updates = merge_sequence_brief_updates(
+                    current_brief,
+                    planned.brief_updates,
+                    canonical_plan,
+                    timing_snapshot,
+                    source_event.content or "" if source_event else "",
+                )
             brief = persist_brief_version_sync(
                 db,
                 thread_id=thread.id,
                 turn_id=turn.id,
-                updates=planned.brief_updates,
+                updates=effective_brief_updates,
                 # KRI-814: a typed delegation is recorded, so readiness reads it as a
                 # delegated request instead of a missing extraction.
                 record_empty=planned.brief_delegated,
                 delegation_read_event_ids=planned.brief_delegation_read_ids,
             )
+            if brief is not None and effective_brief_updates != planned.brief_updates:
+                current_ids = [req.id for req in brief.live()]
+                planned = replace(
+                    planned,
+                    brief_updates=effective_brief_updates,
+                    brief_coverage={
+                        **(planned.brief_coverage or {}),
+                        "applicable_ids": current_ids,
+                        "retrieved_ids": current_ids,
+                        "enforced_ids": [],
+                        "unresolved_ids": current_ids,
+                    },
+                )
             if settings.kria_choice_questions_enabled and apply_intent.tool_name == (
                 "draft.apply_strategy"
             ):
@@ -1890,7 +2022,10 @@ def _complete_draft_turn(
                     # Editor operations verify only the requirements stated in
                     # this very turn, against what the ops changed (KRI-558).
                     facts = plan_facts_from_editor_payload(
-                        document.editor_payload, document.editor_text_diff, changes
+                        document.editor_payload,
+                        document.editor_text_diff,
+                        changes,
+                        canonical_duration_s=compiled.canonical_duration_s,
                     )
                     facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
@@ -4077,6 +4212,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         claimed_thread_revision=claimed_thread_revision,
                         planned=planned,
                         client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
+                    )
+                except TextTimingConflict as exc:
+                    planned = replace(planned, plan=_text_timing_conflict_plan(exc))
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
                     )
                 except EditorStateReplyError as exc:
                     # The creator's unsaved state is stale (video changed) or the op
