@@ -54,7 +54,7 @@ def test_no_match_is_valid_with_one_bounded_replay_call(agent_cls, raw):
     assert client.invocations == 1
     assert agent.spec.max_attempts == 1
     assert agent.spec.sensitive_io
-    assert agent.spec.timeout_s <= 20
+    assert agent.spec.timeout_s <= 70
 
 
 def test_relevance_replay_cannot_invent_or_duplicate_source_intervals():
@@ -98,7 +98,7 @@ def test_story_replay_separates_review_reasoning_from_proposed_creative_copy():
     assert output.stories[0].rationale == story["content_plan"]["why_it_works"]
     assert client.invocations == 1
     with pytest.raises(SchemaError):
-        agent.parse(json.dumps({"stories": [story] * 4}), value)
+        agent.parse(json.dumps({"stories": [story] * 11}), value)
 
 
 def test_candidate_budget_cannot_grow_with_collection_size():
@@ -685,7 +685,7 @@ def test_another_idea_prompt_names_the_offered_ideas_by_candidate_label_only_whe
     value = evidence()
     agent = CameraRollStoriesAgent(CassetteModelClient('{"stories": []}'))
     plain = agent.render_prompt(value)
-    assert "already_offered" not in plain and "adds ONE idea" not in plain
+    assert "already_offered" not in plain and "adds up to" not in plain
 
     offered = CameraRollStoriesInput(
         **value.model_dump(),
@@ -698,7 +698,7 @@ def test_another_idea_prompt_names_the_offered_ideas_by_candidate_label_only_whe
         ],
     )
     prompt = agent.render_prompt(offered)
-    assert "adds ONE idea" in prompt
+    assert "adds up to three ideas" in prompt
     assert '"already_offered": [{"angle": "A crossing ends in a light"' in prompt
     assert '"moment_ids": ["m1"]' in prompt, "uuids stay out of the prompt; unknown ids are dropped"
     assert value.candidates[0].id not in prompt

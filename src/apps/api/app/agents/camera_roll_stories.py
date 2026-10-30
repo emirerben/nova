@@ -15,6 +15,9 @@ from app.schemas.research import ResearchEvidence, StoryResearch
 
 log = structlog.get_logger()
 
+# Most ideas one request can return; the service sizes each request below this to the footage.
+MAX_IDEAS = 10
+
 
 class StoryIdea(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -29,7 +32,7 @@ class StoryIdea(BaseModel):
 
 class CameraRollStoriesOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    stories: list[StoryIdea] = Field(default_factory=list, max_length=3)
+    stories: list[StoryIdea] = Field(default_factory=list, max_length=MAX_IDEAS)
 
 
 class _ProposedContentPlan(StoryContentPlan):
@@ -58,7 +61,7 @@ class _StoryProposal(BaseModel):
 
 class _StoryProposals(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    stories: list[_StoryProposal] = Field(default_factory=list, max_length=3)
+    stories: list[_StoryProposal] = Field(default_factory=list, max_length=MAX_IDEAS)
 
 
 class _LegacyStoryProposal(_StoryProposal):
@@ -67,7 +70,7 @@ class _LegacyStoryProposal(_StoryProposal):
 
 class _LegacyStoryProposals(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    stories: list[_LegacyStoryProposal] = Field(default_factory=list, max_length=3)
+    stories: list[_LegacyStoryProposal] = Field(default_factory=list, max_length=MAX_IDEAS)
 
 
 class OfferedIdea(BaseModel):
@@ -95,8 +98,14 @@ class CameraRollStoriesInput(MomentRelevanceInput):
         default_factory=list, max_length=20, exclude_if=lambda v: not v
     )
     editorial_taste_context: str = Field(default="", max_length=8000, exclude_if=lambda v: not v)
+    # How many ideas to aim for; the model may return fewer, never more. Prompt-only.
+    idea_count: int = Field(default=3, ge=1, le=MAX_IDEAS)
     public_research: ResearchEvidence | None = Field(default=None, exclude_if=lambda v: v is None)
     research_topic: str = Field(default="", max_length=200, exclude_if=lambda v: not v)
+
+
+def _number(count):
+    return {1: "one", 2: "two", 3: "three"}.get(count, str(count))
 
 
 def _meets_form_evidence(story, source_stops):
@@ -109,15 +118,15 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-28.4",
+        prompt_version="2026-10-30.1",
         model="gemini-2.5-flash",
         max_attempts=1,
-        timeout_s=20,
+        timeout_s=70,
         enable_clarification_retries=False,
         thinking_budget=512,
         sensitive_io=True,
     )
-    max_output_tokens = 4096
+    max_output_tokens = 12288
     Input = CameraRollStoriesInput
     Output = CameraRollStoriesOutput
 
@@ -126,6 +135,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
         # Keep source UUIDs out of the selection vocabulary. References exist
         # only within this request and resolve back to the immutable moments.
         data = input.model_dump()
+        count = data.pop("idea_count")
         if input.public_research:
             data["public_research"].pop("search_entry_html", None)
         context = {
@@ -191,14 +201,16 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "words, and why_it_works says what they get, learn or feel within the first two "
             "seconds. An idea whose only point is that the creator was there and it was nice "
             "is not an idea. "
-            "Aim for three DISTINCT, worthwhile content ideas grounded in candidate evidence, "
+            f"Aim for up to {_number(count)} DISTINCT, worthwhile content ideas grounded in "
+            "candidate evidence, "
             "the creator's query, creator_provided_event_context and supplied public_research "
             "only. Explore different viewer "
             "takeaways, specific observations, footage subsets and editorial forms before "
             "choosing. Each idea needs a different point in its angle and proposed copy, not "
             "just another title or reordered version of the same edit. The SAME footage may "
             "support multiple ideas when their points and proposed wording differ. "
-            "Return two if a third would be repetitive or weak. Return one only when the "
+            "Return fewer when more would be repetitive or weak: quality and distinctness "
+            "decide the count, never the target. Return one only when the "
             "footage supports just one worthwhile idea or the creator explicitly requests one; "
             "return zero when none is supported. Never invent facts, personal opinions or "
             "missing footage to fill the count. An explicit narrow creator request takes "
@@ -214,9 +226,9 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "use it when the creator asks for a mood edit, or when no other form fits an idea, "
             "and even then the opening names a concrete visible detail, not a "
             "feeling. Never claim a form whose footage or research requirement is unmet: that "
-            "idea is discarded. When you return three ideas, use at least "
-            "two different forms unless the creator asked narrowly for one form; three "
-            "rewordings of one form are not three options. Explain the actual value: what "
+            "idea is discarded. When you return three or more ideas, use at least "
+            "two different forms unless the creator asked narrowly for one form; several "
+            "rewordings of one form are not several options. Explain the actual value: what "
             "viewers learn, recognize, find funny or enjoy seeing. "
             "opening_text is the hook, the first thing a stranger reads. Make it a concrete "
             "promise, observation or fact supported by THESE moments, the creator's own words "
@@ -382,12 +394,12 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
                 else ""
             )
             + (
-                "This request adds ONE idea to an event that already has the ideas listed in "
-                "already_offered (their moment_ids use the same m references). This overrides "
-                "the count above: return exactly one new idea, or none when the footage "
-                "supports nothing new. It must make a different point with different opening "
-                "wording and a different selection of footage than every offered idea; never "
-                "reword or reorder one. "
+                f"This request adds up to {_number(count)} ideas to an event that already has "
+                "the ideas listed in already_offered (their moment_ids use the same m "
+                "references). This overrides the count above: return up to that many NEW ideas, "
+                "or none when the footage supports nothing new. Each must make a different "
+                "point with different opening wording and a different selection of footage "
+                "than every offered idea and than each other; never reword or reorder one. "
                 if input.already_offered
                 else ""
             )
@@ -447,17 +459,24 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
                     story.content_plan.form = None
             else:
                 sources = {candidate.id: candidate.source for candidate in input.candidates}
+                proposed = len(result.stories)
                 result.stories = [
                     story
                     for story in result.stories
                     if _meets_form_evidence(story, len({sources[v] for v in story.moment_ids}))
                 ]
+                if len(result.stories) < proposed:
+                    log.info(
+                        "camera_roll_stories_form_evidence_drops",
+                        dropped=proposed - len(result.stories),
+                        kept=len(result.stories),
+                    )
                 # A mislabelled idea is dropped on its own. Three ideas sharing one form are
                 # kept: an explicit narrow request ("just the performance clips") or a one-clip
                 # collection legitimately yields them, and the server cannot tell those apart
                 # from a lazy model. The prompt owns variety; this only makes misses visible.
                 if (
-                    len(result.stories) == 3
+                    len(result.stories) >= 3
                     and len({s.content_plan.form for s in result.stories}) < 2
                 ):
                     log.info(
