@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.21.0] - 2026-10-30
+
+### Fixed
+- fix(kria): keep the finished plan when the chat is renamed mid-turn (KRI-1075) (#1969) <!-- release-pr: 1969 -->
+
 ## [0.83.20.0] - 2026-10-30
 
 ### Fixed
