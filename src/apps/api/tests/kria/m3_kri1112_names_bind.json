@@ -1,0 +1,559 @@
+{
+ "source": {
+  "bug": "Leverkusen M3 run 1 (KRI-1112 part 3/3): names said in an earlier sentence, and a replacing order",
+  "thread": "83f2dcaa-9a05-42bc-a5f2-fa898d243e17",
+  "plan_item": "b04e62bd-0607-4720-ba81-86eb4f285cef",
+  "server": "Fly 7b5504165 (#1982), TestFlight 1819 (protocol 25), 2026-10-31 13:14-13:52Z",
+  "recorded": [
+   "clips: alias -> media id (upload order), the iOS staged file name, and the ClipUnderstanding record the resolver was sent (copied from m3_kri1112_filenames.json)",
+   "turn_1330: the 13:30:42Z clip_request_resolver input (creator_request, latest_user_message) and raw model output from the proposal trace (copied from m3_kri1112_filenames.json)",
+   "brief_v4 / brief_v5: creative_brief_versions rows v4 (13:28:02Z) and v5 (13:39:04Z, turn 27d7ce94), requirements verbatim",
+   "message_1338: the 13:38:18Z creator message (turn 27d7ce94), verbatim"
+  ],
+  "reconstructed": [
+   "turn_1330.planner_inventory: the clip-intent planner I/O is redacted. The caption row is the one the 13:30 resolver received (`caption_goal_tor`, 'the two goal clips', TOR!); the include row is the planner's own words for the same two clips as the 13:41 strategy records them (`mute_all_except_goals`, 'IMG_1037 and IMG_1039', settled by file name). source_quote values are the creator sentences they came from (copied from m3_kri1112_filenames.json)."
+  ],
+  "scrubbed": "no field kept here holds the account id"
+ },
+ "clips": [
+  {
+   "alias": "m001",
+   "media_id": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+   "kind": "video",
+   "source_filename": "4D8ED9A9-ABE9-4060-A4D7-BFE3EB8A12C3-IMG_1039.mov",
+   "record": {
+    "props": [
+     "black and red striped scarf"
+    ],
+    "people": {
+     "note": "football fans of all ages cheering",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "actions": [
+     "people waving scarves",
+     "stadium crowd cheering"
+    ],
+    "setting": "indoor football stadium",
+    "subject": "football stadium crowd and pitch",
+    "summary": "The video captures the excitement of a football match from a stadium box, showing fans cheering, waving scarves, and a wide view of the pitch and the packed stadium with red lights flashing after a goal.",
+    "activity": "watching a football match and celebrating a goal",
+    "audio_type": "ambient",
+    "visibility": "normal brightness (measured mean brightness 116/255, 0% of sampled frames near-black)",
+    "content_type": "action",
+    "visual_quality": "shaky handheld, stays sharp"
+   }
+  },
+  {
+   "alias": "m002",
+   "media_id": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+   "kind": "video",
+   "source_filename": "3C4C34C3-D4DB-41BD-A8EA-90B60720CA28-IMG_1028.mov",
+   "record": {
+    "people": {
+     "note": "a large crowd of spectators and a few players on the pitch",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "speech": {
+     "to_camera": false,
+     "has_speech": true,
+     "transcript": "Es war Nummer 28. Janek. Mit der Nummer 2 spielt Facundo."
+    },
+    "setting": "football stadium at night",
+    "subject": "stadium crowd and football pitch",
+    "summary": "The video shows a wide shot of a football stadium at night, with red lights illuminating the stands and the crowd cheering. An announcer introduces players by their numbers and names.",
+    "activity": "attending a football match, watching player introductions",
+    "audio_type": "mixed",
+    "visibility": "normal brightness (measured mean brightness 89/255, 0% of sampled frames near-black)",
+    "content_type": "ambience",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 3.0,
+      "start_s": 0.0,
+      "description": "stadium lights illuminate crowd in red"
+     },
+     {
+      "end_s": 7.5,
+      "start_s": 4.5,
+      "description": "crowd cheers as red lights flash"
+     },
+     {
+      "end_s": 11.5,
+      "start_s": 8.5,
+      "description": "stadium lights illuminate pitch and crowd"
+     }
+    ]
+   }
+  },
+  {
+   "alias": "m003",
+   "media_id": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+   "kind": "video",
+   "source_filename": "94675A31-3866-4B20-91ED-1D8AA65817A4-IMG_1037.mov",
+   "record": {
+    "props": [
+     "dark patterned scarf"
+    ],
+    "people": {
+     "note": "large crowd of spectators and football players",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "actions": [
+     "camera pans across stadium",
+     "person waves scarf"
+    ],
+    "setting": "indoor football stadium at night",
+    "subject": "football stadium crowd and match",
+    "summary": "The video shows a wide view of a football stadium during a match, with spectators in the stands. One person in the foreground waves a scarf, cheering for their team.",
+    "activity": "watching a football match, cheering for a team",
+    "audio_type": "ambient",
+    "visibility": "normal brightness (measured mean brightness 112/255, 0% of sampled frames near-black)",
+    "content_type": "action",
+    "visual_quality": "shaky handheld, stays sharp",
+    "notable_moments": [
+     {
+      "end_s": 1.9,
+      "start_s": 0.82,
+      "description": "stadium view with ongoing match"
+     },
+     {
+      "end_s": 9.94,
+      "start_s": 7.25,
+      "description": "person waves scarf and cheers"
+     }
+    ]
+   }
+  },
+  {
+   "alias": "m004",
+   "media_id": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+   "kind": "video",
+   "source_filename": "858ECB5F-F112-4D1F-A47F-42E3A710164C-IMG_1036.mov",
+   "record": {
+    "props": [
+     "red and black flags",
+     "large banner with text 'DEINER VEREIN SEIT 1900'"
+    ],
+    "people": {
+     "note": "large crowd of fans in a stadium",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "actions": [
+     "crowd members wave flags"
+    ],
+    "setting": "indoor sports stadium",
+    "subject": "stadium crowd",
+    "summary": "The clip shows a large crowd of football fans inside a stadium, waving flags and cheering. A large banner is displayed across a section of the upper stands, and the stadium lights glow red.",
+    "activity": "football fans cheering and waving flags",
+    "audio_type": "ambient",
+    "visibility": "normal brightness (measured mean brightness 105/255, 0% of sampled frames near-black)",
+    "content_type": "ambience",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 5.0,
+      "start_s": 0.0,
+      "description": "crowd chanting and waving flags"
+     },
+     {
+      "end_s": 9.5,
+      "start_s": 6.5,
+      "description": "stadium lights glow red as crowd waves flags"
+     }
+    ]
+   }
+  },
+  {
+   "alias": "m005",
+   "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+   "kind": "video",
+   "source_filename": "85302456-A18F-44F1-84CE-6A6B3C101200-IMG_1043.mov",
+   "record": {
+    "props": [
+     "red stadium seats",
+     "white football net",
+     "green football pitch"
+    ],
+    "people": {
+     "note": "large crowd of fans in the stands, football players and staff on the pitch, security personnel along the sideline",
+     "count": 99,
+     "speaks_to_camera": false
+    },
+    "actions": [
+     "crowd cheers",
+     "confetti falls from stands",
+     "football players gather on pitch",
+     "security personnel walk along sideline"
+    ],
+    "setting": "indoor football stadium",
+    "subject": "stadium crowd and football players",
+    "summary": "A large crowd in a football stadium cheers while players gather on the pitch after a match. Confetti or similar debris is thrown from the stands.",
+    "activity": "crowd cheering, players gathering",
+    "audio_type": "ambient",
+    "visibility": "normal brightness (measured mean brightness 113/255, 0% of sampled frames near-black)",
+    "content_type": "ambience",
+    "visual_quality": "sharp and steady",
+    "notable_moments": [
+     {
+      "end_s": 2.5,
+      "start_s": 0.0,
+      "description": "crowd cheers loudly as confetti falls"
+     },
+     {
+      "end_s": 7.0,
+      "start_s": 3.0,
+      "description": "players gather on pitch while crowd continues cheering"
+     }
+    ]
+   }
+  },
+  {
+   "alias": "m006",
+   "media_id": "asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+   "kind": "image",
+   "source_filename": "1971C5D6-9660-4100-8BAC-987B6CB92696-M3_06_visual.webp",
+   "record": {
+    "brands": [
+     "Bayer 04 Leverkusen",
+     "1. FC Nürnberg",
+     "DFB Pokal",
+     "Pure Energy GmbH",
+     "BayArena",
+     "Bundesliga",
+     "Barmenia Gothaer",
+     "new balance",
+     "WERKSELF",
+     "Rheinland Tarif"
+    ],
+    "subject": "Bayer Leverkusen DFB Pokal ticket",
+    "summary": "The image displays a digital football ticket for a DFB Pokal match between Bayer 04 Leverkusen and 1. FC Nürnberg at BayArena, showing seat details, match schedule, and stadium map.",
+    "on_screen_text": "Bayer 04 Leverkusen vs 1. FC Nürnberg DFB Pokal 2026/27 Tribüne VIP SÜD Block Loge 10 Pure Energy GmbH Reihe 1 Platz 2 Ticketcode: D623AD Datum 28.10.2026*"
+   }
+  }
+ ],
+ "turn_1330": {
+  "creator_request": "Montage of the match from kick-off to the end, all vertical. Start with my ticket, but blur the QR code. Title it with the final score. Label each goal clip with who scored and in which minute. End on the trophy celebration. Mute everything except the two goals. Make it 15 seconds.\nThen leave the ticket out. 5:2 for Leverkusen. Title: “Leverkusen 5:2 Nürnberg”\nLeave the names and minutes out, just write “TOR!” on both goal clips. The goals are IMG_1037 and IMG_1039.\nThere is no trophy in my footage. End on the Nürnberg players thanking their fans (IMG_1043). Leave the ticket out completely. Keep “TOR!” only on the two goal clips.\nI tapped the clips you asked about.",
+  "latest_user_message": "None of these for My ticket. The ticket: clip 6",
+  "resolver_intents": [
+   {
+    "op": "label",
+    "position": null,
+    "attribute": "who scored",
+    "intent_id": "label_goal_scorer",
+    "creator_text": null,
+    "ordered_members": null,
+    "caption_attribute": null
+   },
+   {
+    "op": "label",
+    "position": null,
+    "attribute": "in which minute",
+    "intent_id": "label_goal_minute",
+    "creator_text": null,
+    "ordered_members": null,
+    "caption_attribute": null
+   },
+   {
+    "op": "caption",
+    "position": null,
+    "attribute": "the two goal clips",
+    "intent_id": "caption_goal_tor",
+    "creator_text": "TOR!",
+    "ordered_members": null,
+    "caption_attribute": null
+   }
+  ],
+  "raw_text": "{\n  \"intents\": [\n    {\n      \"intent_id\": \"label_goal_scorer\",\n      \"assignments\": [],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"label_goal_minute\",\n      \"assignments\": [],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    },\n    {\n      \"intent_id\": \"caption_goal_tor\",\n      \"assignments\": [],\n      \"needs_vision\": [],\n      \"question\": null,\n      \"caption\": null\n    }\n  ]\n}",
+  "planner_inventory": [
+   {
+    "intent_id": "caption_goal_tor",
+    "op": "caption",
+    "attribute": "the two goal clips",
+    "label_source": "clip",
+    "transcript_kind": null,
+    "creator_text": "TOR!",
+    "caption_attribute": null,
+    "position": null,
+    "placeholder": false,
+    "source_quote": "Keep “TOR!” only on the two goal clips."
+   },
+   {
+    "intent_id": "mute_all_except_goals",
+    "op": "include",
+    "attribute": "IMG_1037 and IMG_1039",
+    "label_source": "clip",
+    "transcript_kind": null,
+    "creator_text": null,
+    "caption_attribute": null,
+    "position": null,
+    "placeholder": false,
+    "source_quote": "The goals are IMG_1037 and IMG_1039."
+   }
+  ]
+ },
+ "brief_v4": {
+  "version": 4,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "last_clip": "the Nürnberg players thanking their fans (IMG_1043)",
+     "first_clip": "my ticket"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "chronological from kick-off to the end",
+    "source_turn_id": "40b44b77-7319-41d1-ba5f-20400f2b9c23"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "all vertical",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {},
+    "scope": "clip:asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "status": "superseded",
+    "literal": null,
+    "description": "blur the QR code",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Leverkusen 5:2 Nürnberg",
+    "description": "Title: “Leverkusen 5:2 Nürnberg”",
+    "source_turn_id": "fea9a92c-ca82-4cab-a3a8-36bb2797cce0"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": null,
+    "description": "who scored and in which minute on each goal clip",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r6",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "the two goals"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Mute everything except the two goals",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r7",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 15
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 15 seconds",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "TOR!",
+    "description": "only on the two goal clips",
+    "source_turn_id": "40b44b77-7319-41d1-ba5f-20400f2b9c23"
+   },
+   {
+    "id": "r9",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4"
+      },
+      {
+       "sound_media": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Mute everything except the two goals (IMG_1037 and IMG_1039)",
+    "source_turn_id": "f2db16e9-4c73-4816-8dd5-6cc4c3ea3e38"
+   },
+   {
+    "id": "r10",
+    "kind": "select",
+    "facts": {},
+    "scope": "clip:asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "status": "open",
+    "literal": null,
+    "description": "Leave the ticket out completely",
+    "source_turn_id": "40b44b77-7319-41d1-ba5f-20400f2b9c23"
+   }
+  ]
+ },
+ "brief_v5": {
+  "version": 5,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "exact_sequence",
+     "last_clip": "the Nürnberg players thanking their fans (IMG_1043)",
+     "first_clip": "my ticket"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "exactly this order: IMG_1028, IMG_1036, IMG_1037, IMG_1039, IMG_1043",
+    "source_turn_id": "27d7ce94-2041-4caf-bbfb-504b02ea1d81"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "all vertical",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {},
+    "scope": "clip:asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "status": "superseded",
+    "literal": null,
+    "description": "blur the QR code",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Leverkusen 5:2 Nürnberg",
+    "description": "Title: “Leverkusen 5:2 Nürnberg”",
+    "source_turn_id": "fea9a92c-ca82-4cab-a3a8-36bb2797cce0"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": null,
+    "description": "who scored and in which minute on each goal clip",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r6",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "the two goals"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Mute everything except the two goals",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r7",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 15
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 15 seconds",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "TOR!",
+    "description": "only on the two goal clips",
+    "source_turn_id": "40b44b77-7319-41d1-ba5f-20400f2b9c23"
+   },
+   {
+    "id": "r9",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4"
+      },
+      {
+       "sound_media": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Mute everything except the two goals (IMG_1037 and IMG_1039)",
+    "source_turn_id": "f2db16e9-4c73-4816-8dd5-6cc4c3ea3e38"
+   },
+   {
+    "id": "r10",
+    "kind": "select",
+    "facts": {},
+    "scope": "clip:asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "status": "open",
+    "literal": null,
+    "description": "Leave the ticket out completely",
+    "source_turn_id": "40b44b77-7319-41d1-ba5f-20400f2b9c23"
+   }
+  ]
+ },
+ "message_1338": "Use exactly this order: IMG_1028, IMG_1036, IMG_1037, IMG_1039, IMG_1043. This replaces my earlier order and ending requests."
+}
