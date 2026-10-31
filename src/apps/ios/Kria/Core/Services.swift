@@ -2038,6 +2038,12 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "track_duration_unknown": timeline,
             "video_duration_unknown": timeline,
             "guided_story_revision_unavailable": reopen,
+            "speaker_background_unsupported": "A background isn’t available for this edit. Remove it and save again. Your edits are still here.",
+            "speaker_background_disabled": "Backgrounds aren’t available right now. Remove it and save again. Your edits are still here.",
+            "speaker_background_media_not_in_pool": "That photo or video isn’t in this edit’s uploads any more. Pick another background and save again. Your edits are still here.",
+            "speaker_background_media_unavailable": "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here.",
+            "speaker_background_kind_mismatch": "That background doesn’t match its file. Pick it again and save again. Your edits are still here.",
+            "speaker_background_start_out_of_range": "The background video starts past its end. Pick it again and save again. Your edits are still here.",
         ]
     }()
 

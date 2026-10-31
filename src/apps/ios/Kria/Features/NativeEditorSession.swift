@@ -2945,7 +2945,7 @@ struct NativeEditorTemporaryVideo {
                 refreshDuration()
             } else {
                 phoneTalkingIndices = NativePhoneTalkingSource.sourceIndices(variant: previewVariant, document: document,
-                    pool: pool, lanesEditable: canEdit(.mediaOverlays) || canEdit(.soundEffects))
+                    pool: pool, lanesEditable: phoneTalkingLanesEditable)
                 if let speakers = phoneTalkingIndices {
                     // A cutaway the preview can't place would show the speaker where the MP4 cuts away:
                     // fall back to the finished MP4 rather than preview a different video.
@@ -5129,6 +5129,10 @@ struct NativeEditorTemporaryVideo {
         cloudEditorUnavailableMessage == nil && canEditSection(.speakerBackground)
     }
     var speakerBackground: EditorSpeakerBackground? { document.speakerBackground }
+
+    /// A Talking edit's live preview hydrates its source clip once any phone lane is editable: cards,
+    /// sounds, or (KRI-1118) the speaker background, which composites behind that clip.
+    var phoneTalkingLanesEditable: Bool { canEdit(.mediaOverlays) || canEdit(.soundEffects) || canEdit(.speakerBackground) }
 
     /// Puts one photo or video from the item's Visuals pool behind the speaker, replacing any current one.
     /// `sourceStart` is where a video begins playing; a photo ignores it. One undo step.
