@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.32.0] - 2026-10-31
+
+### Changed
+- fix(kria): the clip picker keeps the clip it found and never pre-ticks a clip another ask stands on (Leverkusen M2) (#1985) <!-- release-pr: 1985 -->
+
 ## [0.83.31.0] - 2026-10-31
 
 ### Changed
