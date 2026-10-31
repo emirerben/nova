@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.30.0] - 2026-10-31
+
+### Fixed
+- fix(kria): save clip-matching runs and keep photo-only skips to photos (#1973) <!-- release-pr: 1973 -->
+
 ## [0.83.29.0] - 2026-10-31
 
 ### Fixed
