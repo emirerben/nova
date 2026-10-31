@@ -51,7 +51,19 @@ from app.schemas.clip_understanding import ClipUnderstanding
 # keeps a clip for it only at ``LABEL_MIN_CONFIDENCE`` (a wrong drop removes footage the
 # creator wanted) and never asks the creator about it. Always accepted here, so a
 # strategy persisted while CLIP_INTENT_EXCLUDE_ENABLED was on still loads after it is off.
-ClipIntentOp = Literal["label", "group", "order", "include", "caption", "exclude"]
+# Leverkusen M2 (2026-10-30): ``hide_part`` keeps ONE clip in the edit but never shows a part
+# at its start or end ("the kids at the start of the second goal clip are another family's
+# children, so don't show them"). A separate op, never a field on ``exclude``: every
+# whole-file consumer of ``exclude`` (scope, picker, ties, receipts) would read a partial
+# exclusion as "drop this file" and lose the rest of the clip, and one that forgot the field
+# would show the part. Membership only for the resolver; the seconds are the creator's
+# (``part_s``) and the window is enforced at planning and on the pinned recipe
+# (``app.pipeline.hidden_parts``).
+ClipIntentOp = Literal["label", "group", "order", "include", "caption", "exclude", "hide_part"]
+# Which end of the clip a ``hide_part`` part sits at.
+HiddenPartEdge = Literal["start", "end"]
+# The longest part a creator can hide by seconds (same bound as ``under_s``).
+MAX_HIDDEN_PART_S = 600.0
 ClipOrderPosition = Literal["first", "last"]
 # KRI-189: a fact-based ORDER over EVERY clip (not a first/last placement of a
 # described subset): "in the order I filmed them" -> capture_time, "along my
@@ -298,6 +310,21 @@ class ClipIntent(BaseModel):
             raise ValueError("by_length requires op=exclude")
         if self.under_s is not None and self.by_length is None:
             raise ValueError("under_s requires by_length")
+        if self.op == "hide_part":
+            if (
+                self.creator_text is not None
+                or self.caption_attribute is not None
+                or self.position is not None
+                or self.placeholder
+            ):
+                # Nothing is printed or placed for a hidden part.
+                raise ValueError(
+                    "hide_part carries no creator_text, caption_attribute, position or placeholder"
+                )
+        elif (
+            self.part_edge is not None or self.part_s is not None or self.part_attribute is not None
+        ):
+            raise ValueError("part_edge, part_s and part_attribute require op=hide_part")
         return self
 
     # Exact creator-written copy for this intent ("post match pub"), if any. A
@@ -343,6 +370,22 @@ class ClipIntent(BaseModel):
     under_s: float | None = Field(
         default=None, gt=0, le=600, exclude_if=lambda value: value is None
     )
+    # Leverkusen M2: for op="hide_part" only. Where the part sits in the clip ``attribute``
+    # names ("start" / "end"); None when the creator placed it in the middle, which the
+    # server cannot keep out and asks about instead. Omitted from dumps when unset, so every
+    # intent persisted before these fields re-dumps byte-identically.
+    part_edge: HiddenPartEdge | None = Field(default=None, exclude_if=lambda value: value is None)
+    # How many seconds from that edge are never shown: the creator's own number ("the first
+    # 3 seconds" -> 3, "start it after about 2.5 seconds" -> 2.5). None until the creator
+    # says one; a resolved hide_part always carries it (`app.kria.hidden_parts`).
+    part_s: float | None = Field(
+        default=None, gt=0, le=MAX_HIDDEN_PART_S, exclude_if=lambda value: value is None
+    )
+    # What the part shows, in the creator's words ("the kids"), for the question asking for
+    # the seconds. Never on-screen text.
+    part_attribute: str | None = Field(
+        default=None, max_length=160, exclude_if=lambda value: value is None
+    )
 
     @field_validator("intent_id", mode="before")
     @classmethod
@@ -369,6 +412,11 @@ class ClipIntent(BaseModel):
     @classmethod
     def _requirement_id(cls, v: object) -> str | None:
         return _clean(v, 24) or None
+
+    @field_validator("part_attribute", mode="before")
+    @classmethod
+    def _part_attribute(cls, v: object) -> str | None:
+        return _clean(v, 160) or None
 
 
 class ClipAssignment(BaseModel):

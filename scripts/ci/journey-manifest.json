@@ -179,6 +179,18 @@
       ]
     },
     {
+      "id": "leverkusen-m2-hidden-part",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_m2_hidden_part_replay.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/agents/test_clip_intent_planner.py",
+      "paths": [
+        "src/apps/api/app/kria/hidden_parts.py",
+        "src/apps/api/app/pipeline/hidden_parts.py",
+        "src/apps/api/tests/fixtures/creator_render_contract.schema.json",
+        "src/apps/api/tests/fixtures/m2_leverkusen_hidden_part.json",
+        "src/apps/api/tests/kria/test_m2_hidden_part_replay.py"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "needs_native": true,
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
@@ -731,7 +743,7 @@
     {
       "id": "kri-761-look-alike-exclusions",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py tests/kria/test_lev_m1_skip_inside_first_group.py",
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py tests/kria/test_lev_m1_skip_inside_first_group.py tests/kria/test_kri1076_photo_skip_postgres.py",
       "paths": [
         "src/apps/api/app/kria/clip_exclusions.py",
         "src/apps/api/app/services/too_short_clips.py",
@@ -744,7 +756,18 @@
         "src/apps/api/tests/kria/test_kri991_picker_suggestions.py",
         "src/apps/api/app/kria/clip_scope.py",
         "src/apps/api/tests/fixtures/leverkusen_m1_run2_skip_picker.json",
-        "src/apps/api/tests/kria/test_lev_m1_skip_inside_first_group.py"
+        "src/apps/api/tests/kria/test_lev_m1_skip_inside_first_group.py",
+        "src/apps/api/tests/fixtures/kri1076_leverkusen_m1_clips.json",
+        "src/apps/api/tests/kria/test_kri1076_photo_skip_postgres.py"
+      ]
+    },
+    {
+      "id": "lev-m2-found-clip-picker",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_lev_m2_found_clip_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/services/test_clip_intent_resolution.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/lev_m2_picker_turns.json",
+        "src/apps/api/tests/kria/test_lev_m2_found_clip_picker.py"
       ]
     },
     {
@@ -755,6 +778,16 @@
         "src/apps/api/app/kria/clip_ties.py",
         "src/apps/api/tests/fixtures/kri962_voiceover_tie_jobs.json",
         "src/apps/api/tests/kria/test_kri962_voiceover_tie_question.py"
+      ]
+    },
+    {
+      "id": "leverkusen-m2-missing-shot",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_leverkusen_m2_missing_shot.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1067_filming_order_end_picker.py",
+      "paths": [
+        "src/apps/api/app/kria/missing_media.py",
+        "src/apps/api/tests/kria/leverkusen_m2_turn1.json",
+        "src/apps/api/tests/kria/test_leverkusen_m2_missing_shot.py"
       ]
     },
     {
@@ -770,11 +803,13 @@
     {
       "id": "kri-968-simpler-version-names-drops",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py",
+      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py tests/kria/test_leverkusen_m1_simpler_keeps_filming_order.py",
       "paths": [
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/tests/fixtures/kri968_don_julio_walkin_t1_simpler.json",
-        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py"
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_simpler_order.json",
+        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py",
+        "src/apps/api/tests/kria/test_leverkusen_m1_simpler_keeps_filming_order.py"
       ]
     },
     {

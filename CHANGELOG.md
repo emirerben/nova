@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.34.0] - 2026-10-31
+
+### Changed
+- fix(kria): look inside the clips before calling a named shot missing (Leverkusen M2) (#1976) <!-- release-pr: 1976 -->
+
+## [0.83.33.0] - 2026-10-31
+
+### Fixed
+- fix(deploy): wait-timeout for release machine prep, sweep never-started release machines, quieter drift check (KRI-1096) (#1989) <!-- release-pr: 1989 -->
+
+## [0.83.32.0] - 2026-10-31
+
+### Changed
+- fix(kria): the clip picker keeps the clip it found and never pre-ticks a clip another ask stands on (Leverkusen M2) (#1985) <!-- release-pr: 1985 -->
+
+## [0.83.31.0] - 2026-10-31
+
+### Changed
+- fix(kria): never show a part of a clip the creator hid (Leverkusen M2 run 1, draft C) (#1984) <!-- release-pr: 1984 -->
+
+## [0.83.30.0] - 2026-10-31
+
+### Fixed
+- fix(kria): save clip-matching runs and keep photo-only skips to photos (#1973) <!-- release-pr: 1973 -->
+
+## [0.83.29.0] - 2026-10-31
+
+### Fixed
+- fix(deploy): ignore stopped release_command machines in the Fly deploy guard (KRI-1092) (#1987) <!-- release-pr: 1987 -->
+
+## [0.83.28.0] - 2026-10-31
+
+### Fixed
+- fix(kria): keep filming order when the simpler version drops it (Leverkusen M1 run 2 #3) (#1974) <!-- release-pr: 1974 -->
+
+## [0.83.27.0] - 2026-10-31
+
+### Fixed
+- fix(clip-intents): an ask with no clip op is never "please restate" (Leverkusen M2) (#1983) <!-- release-pr: 1983 -->
+
 ## [0.83.26.0] - 2026-10-31
 
 ### Fixed
