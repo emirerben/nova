@@ -89,8 +89,21 @@ check_checkout_is_deployable() {
     fail "Expected deploy revision $expected_sha is not an ancestor of origin/main; refusing deploy."
 }
 
+# Fly's one-shot release_command runner is not part of the serving fleet. An
+# aborted deploy leaves it stopped on the NEW image digest, which would read as
+# a second production digest and wedge every later deploy (2026-10-30, v1961).
+# Stopped/destroyed ones are debris and are dropped from the inventory; a live
+# one is a migration in flight and is refused by resolve_production_image.
+release_command_debris_filter='
+  [.[] | select(
+    (((.config.metadata // .incomplete_config.metadata // {}).fly_process_group)
+      == "fly_app_release_command")
+    and (.state == "stopped" or .state == "destroyed")
+    | not
+  )]'
+
 machine_list() {
-  flyctl machine list --app "$app_name" --json
+  flyctl machine list --app "$app_name" --json | jq -c "$release_command_debris_filter"
 }
 
 machine_by_id() {
@@ -724,6 +737,9 @@ resolve_production_image() {
   for ((attempt = 1; attempt <= production_settle_attempts; attempt++)); do
     machines_json="$(machine_list)" || fail "Could not read Fly Machine inventory."
     validate_reserved_inventory "$machines_json"
+    jq -e 'any(.[]; ((.config.metadata // .incomplete_config.metadata // {}).fly_process_group)
+        == "fly_app_release_command") | not' <<<"$machines_json" >/dev/null || \
+      fail "A release_command Machine is still running (a deploy migration is in flight); refusing mutation."
     managed_count="$(
       jq '[.[]
         | select(
