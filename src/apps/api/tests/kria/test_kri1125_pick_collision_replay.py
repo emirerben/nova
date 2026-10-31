@@ -255,10 +255,13 @@ def _warm_up(planned) -> ResolvedClipIntent:
 
 @pytest.mark.asyncio
 async def test_R1_one_photo_on_two_ordered_beats_is_never_silent(monkeypatch) -> None:
-    planned, _ = await _turn(monkeypatch, _thread())
+    # even a resolver that reads the typed correction and STILL lands the warm-up on the bus
+    planned, _ = await _turn(monkeypatch, _thread(), matches=_matches(order_warm_up=BUS))
     doubled = _doubled(planned.resolution)
     # acceptable outcomes: no photo holds two beats, OR the creator is asked
     assert not doubled or _asks_about_the_warmup(planned), f"silent duplicate: {doubled}"
+    assert _asks_about_the_warmup(planned)
+    assert BUS not in _rows(planned)[WARMUP_KEY]["candidate_media_ids"]
 
 
 @pytest.mark.asyncio

@@ -396,6 +396,21 @@ class ClipSelections:
                 )
         return tuple(out)
 
+    def without(self, intent: ClipIntent) -> ClipSelections:
+        """These selections minus every answer that settles ``intent`` (KRI-1125).
+
+        What a typed correction reopens: the beat goes back to the resolver as if nobody had
+        tapped it. Answers for other intents stay.
+        """
+        by_key, by_identity = dict(self.by_key), dict(self.by_identity)
+        for _ in range(len(by_key) + len(by_identity)):
+            entry = ClipSelections(by_key, by_identity).match(intent)
+            if entry is None:
+                break
+            by_key = {k: v for k, v in by_key.items() if v is not entry}
+            by_identity = {k: v for k, v in by_identity.items() if v[1] is not entry}
+        return ClipSelections(by_key, by_identity)
+
     def match(self, intent: ClipIntent) -> SelectionEntry | None:
         """Newest of the same-attribute / identity answers, else token-set similarity.
 
