@@ -406,6 +406,12 @@ class CreationCapabilitiesOut(BaseModel):
     # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=
     # text_bend_min_client_protocol.
     text_bend: bool = False
+    # KRI-1117: a Talk-to-camera edit may carry a photo / looping video behind the speaker
+    # (`EditRecipeV2.speaker_background`). True only with the flag on, `speakerBackground`
+    # verified, and a build declaring X-Kria-Client-Protocol >= speaker_background_min_
+    # client_protocol. The per-edit editor capability (`editor_capabilities.speaker_background`)
+    # narrows it to device-rendered Talk-to-camera variants.
+    speaker_background: bool = False
     # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
     voice_dictation: bool = False
     slide_post_extended_device_export: bool = False
@@ -3903,6 +3909,12 @@ async def capabilities(
             and "textBend" in set(settings.phone_render_verified_features)
             and client_protocol is not None
             and client_protocol >= settings.text_bend_min_client_protocol
+        ),
+        "speaker_background": bool(
+            settings.speaker_background_enabled
+            and "speakerBackground" in set(settings.phone_render_verified_features)
+            and client_protocol is not None
+            and client_protocol >= settings.speaker_background_min_client_protocol
         ),
         "voice_dictation": bool(
             settings.voice_dictation_enabled

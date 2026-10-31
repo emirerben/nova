@@ -48,7 +48,12 @@ from app.pipeline.phone_recipe_shared import (
     timeline_end_s,
     with_drawings,
 )
-from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, ResolvedSoundEffect, lane_names
+from app.pipeline.phone_subtitled_lanes import (
+    PhoneSubtitledLanes,
+    ResolvedSoundEffect,
+    SubtitledBackground,
+    lane_names,
+)
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
     additional_speakers_from_recipe,
@@ -146,6 +151,8 @@ _SUBTITLED_EDITOR_SECTIONS = frozenset(
         "orientation",
         # KRI-589: freehand drawings compile into the recipe's `drawing_layers`.
         "drawings",
+        # KRI-1117: the whole-edit Talk-to-camera background (`EditRecipeV2.speaker_background`).
+        "speaker_background",
     }
 )
 # KRI-467: ...plus its text lane (the opening title and any creator text),
@@ -1161,6 +1168,28 @@ def _settle_lane_labels_and_paths(
     return labels, paths
 
 
+def _background_lane(
+    document: dict | None, visuals: tuple[PhoneVisualBinding, ...]
+) -> SubtitledBackground | None:
+    """The validated ``speaker_background`` section as a pinned lane request.
+
+    The route validated the section against this job's pinned visuals; the bytes' path and
+    generation come from that pin, never from the client.
+    """
+    if not document:
+        return None
+    binding = next((v for v in visuals if v.media_id == document["media_id"]), None)
+    if binding is None:
+        raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+    return SubtitledBackground(
+        media_id=binding.media_id,
+        gcs_path=binding.gcs_path,
+        generation=binding.generation,
+        kind=binding.kind,
+        source_start_s=document.get("source_start_s", 0.0),
+    )
+
+
 def _persist_lane_state(
     row: dict,
     lanes: PhoneSubtitledLanes,
@@ -1183,6 +1212,10 @@ def _persist_lane_state(
     row["sound_effects"] = sections["sound_effects"] or None
     row["media_overlays"] = sections["media_overlays"] or None
     row["phone_lane_receipt"] = {"applied": list(lane_names(lanes)), "dropped": []}
+    if "speaker_background" in sections:
+        row["speaker_background"] = sections["speaker_background"]
+    else:
+        row.pop("speaker_background", None)
     if duck_receipt is not None:
         row[SFX_DUCK_RECEIPT_FIELD] = duck_receipt
     else:
@@ -1231,6 +1264,8 @@ def _compile_subtitled_editor_commit(
         sound_effects=prep.get("sfx_override"),
         media_overlays=prep.get("media_overlays_override"),
         visuals=visuals,
+        background_touched=bool(prep.get("speaker_background_touched")),
+        background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
 
     caption_cues = prep.get("caption_cues_override")

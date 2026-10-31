@@ -8064,6 +8064,7 @@ async def _editor_commit_item(
                 motion_scenes=section_flags.get("motion_scenes", False),
                 camera_effects=section_flags.get("camera_effects", False),
                 drawings=section_flags.get("drawings", False),
+                speaker_background=section_flags.get("speaker_background", False),
                 carousel_moment=section_flags.get("carousel_moment", False),
                 title=cleaned_title is not None,
             ),
@@ -8084,6 +8085,36 @@ async def _editor_commit_item(
             db, locked_job, _find_variant(locked_job, variant_id) or {}
         ),
     }
+    if (
+        draft_baseline is None
+        and commit_body.speaker_background is not None
+        and "speaker_background" in commit_body.model_fields_set
+    ):
+        from app.routes.generative_jobs import (  # noqa: PLC0415
+            _find_variant as _find_background_variant,
+        )
+        from app.routes.generative_jobs import _speaker_background_shape_ok  # noqa: PLC0415
+        from app.services.phone_rollout import (  # noqa: PLC0415
+            speaker_background_unavailable_reason,
+        )
+        from app.services.phone_speaker_background import (  # noqa: PLC0415
+            pin_pool_visual_for_background,
+        )
+
+        background_variant = _find_background_variant(locked_job, variant_id) or {}
+        # Only pin (download + hash) for a Save the validator can accept; every other case
+        # reaches `_validate_speaker_background_section` and gets its own refusal there.
+        if (
+            _speaker_background_shape_ok(locked_job, background_variant)
+            and speaker_background_unavailable_reason() is None
+        ):
+            await pin_pool_visual_for_background(
+                db,
+                locked_job,
+                plan_item_id=item.id,
+                media_id=commit_body.speaker_background.media_id,
+                kind=commit_body.speaker_background.kind,
+            )
     if draft_baseline is not None:
         from app.services.authored_editor import prepare_authored_editor_commit  # noqa: PLC0415
 
@@ -8258,6 +8289,7 @@ async def _editor_commit_item(
             motion_scenes=prep["sections"].get("motion_scenes", False),
             camera_effects=prep["sections"].get("camera_effects", False),
             drawings=prep["sections"].get("drawings", False),
+            speaker_background=prep["sections"].get("speaker_background", False),
             carousel_moment=prep["sections"].get("carousel_moment", False),
             title=cleaned_title is not None,
         ),

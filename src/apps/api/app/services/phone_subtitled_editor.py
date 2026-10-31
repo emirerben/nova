@@ -45,6 +45,7 @@ from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset
 from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
+    SubtitledBackground,
     SubtitledEndingClip,
     SubtitledOverlayCard,
     SubtitledSoundEffect,
@@ -168,6 +169,8 @@ def lanes_from_editor_sections(
     media_overlays: list[dict] | None,
     visuals: tuple[PhoneVisualBinding, ...],
     inspect: Any = None,
+    background_touched: bool = False,
+    background: SubtitledBackground | None = None,
 ) -> PhoneSubtitledLanes:
     """Rebuild the lanes to compile from a committed editor Save.
 
@@ -194,6 +197,10 @@ def lanes_from_editor_sections(
     The ending clip is never editable in this step -- it always carries
     forward from ``previous`` verbatim.
 
+    ``background_touched`` says the Save carried the ``speaker_background`` section
+    (KRI-1117): ``background`` is then the new value (``None`` clears it). Untouched, the
+    previous background carries over verbatim, like every other lane.
+
     Raises ``ValueError`` (never silently drops content) when: a committed
     sound effect doesn't reference the catalog, its audio format/path is
     unplayable/invalid, or its trim window is empty; a committed overlay
@@ -209,6 +216,11 @@ def lanes_from_editor_sections(
             sound_effects, previous=previous, inspect=inspect or inspect_library_asset
         ),
         ending_clip=previous.ending_clip if previous is not None else None,
+        background=(
+            background
+            if background_touched
+            else (previous.background if previous is not None else None)
+        ),
     )
 
 
@@ -289,7 +301,21 @@ def sections_from_lanes(
                 "source": "phone_lane",
             }
         )
-    return {"sound_effects": sound_effects, "media_overlays": media_overlays}
+    sections: dict[str, Any] = {"sound_effects": sound_effects, "media_overlays": media_overlays}
+    if lanes.background is not None:
+        # Present only while a background exists, so every other projection keeps its shape.
+        sections["speaker_background"] = speaker_background_document(lanes.background)
+    return sections
+
+
+def speaker_background_document(background: SubtitledBackground) -> dict[str, Any]:
+    """The editor document's ``speaker_background`` value (a fixed shared interface):
+    ``{"media_id", "kind", "source_start_s"}``. The path and generation stay server-side."""
+    return {
+        "media_id": background.media_id,
+        "kind": background.kind,
+        "source_start_s": background.source_start_s,
+    }
 
 
 def lanes_from_recipe(
@@ -426,8 +452,24 @@ def lanes_from_recipe(
                     )
                 )
 
+    background: SubtitledBackground | None = None
+    if recipe.speaker_background is not None:
+        layer = recipe.speaker_background
+        visual = visual_for(layer.asset_id)
+        if visual is not None:
+            background = SubtitledBackground(
+                media_id=visual.media_id,
+                gcs_path=visual.gcs_path,
+                generation=visual.generation,
+                kind="video" if visual.kind == "video" else "image",
+                source_start_s=layer.source_start if visual.kind == "video" else 0.0,
+            )
+
     return PhoneSubtitledLanes(
-        overlays=overlays, sound_effects=sound_effects, ending_clip=ending_clip
+        overlays=overlays,
+        sound_effects=sound_effects,
+        ending_clip=ending_clip,
+        background=background,
     )
 
 
@@ -465,6 +507,12 @@ def _pinned_recipe(assembly_plan: dict, variant_id: str) -> EditRecipeV2 | None:
         return None
     recipe = status.request.recipe
     return recipe if isinstance(recipe, EditRecipeV2) else None
+
+
+def pinned_visual(assembly_plan: dict, media_id: str) -> PhoneVisualBinding | None:
+    """The job's pinned `PhoneVisualBinding` for ``media_id`` (None when it was never bound)."""
+    matches = [v for v in _visual_bindings(assembly_plan) if v.media_id == media_id]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _visual_bindings(assembly_plan: dict) -> tuple[PhoneVisualBinding, ...]:
