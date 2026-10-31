@@ -2217,7 +2217,9 @@ def test_kri531_invented_non_clip_ops_are_dropped_silently(op: str) -> None:
 
 
 @pytest.mark.parametrize("op", ["highlight", "chapter", "order_by_time"])
-def test_kri531_unknown_ops_that_may_be_clip_operations_still_ask(op: str) -> None:
+def test_kri531_unknown_ops_that_may_be_clip_operations_are_named_not_restated(op: str) -> None:
+    # Leverkusen M2: asking to restate an op the schema doesn't have looped (no wording adds
+    # one). The draft names it instead (tests/services/test_unexpressible_clip_ops.py).
     raw = json.dumps(
         {
             "intents": [
@@ -2229,7 +2231,10 @@ def test_kri531_unknown_ops_that_may_be_clip_operations_still_ask(op: str) -> No
         ensure_ascii=False,
     )
     out = _agent().parse(raw, _berlin_input())
-    assert out.salvage_reasons == ["intent_invalid:op"]
+    assert out.salvage_question is None
+    assert [i.creator_text for i in out.intents] == ["Sabah"]
+    assert out.unexpressed == ["Bölüm başlıkları koy: Sabah, Üniversite"]
+    assert out.silent_drops == {"unexpressible_op_dropped": 1}
 
 
 def test_kri531_null_attribute_only_repaired_on_a_filming_order() -> None:
