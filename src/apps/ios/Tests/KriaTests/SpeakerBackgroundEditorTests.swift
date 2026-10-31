@@ -206,6 +206,28 @@ import KriaMediaEngine
         XCTAssertNil(session.speakerBackground)
     }
 
+    // MARK: - Talking source hydration
+
+    func testOnlySpeakerBackgroundEditableStillHydratesTheTalkingSource() throws {
+        func session(caps: [String: JSONValue]) -> NativeEditorSession {
+            var draft = NativeEditorUITestFixtures.talkingCaptions
+            draft.serverSnapshot["editor_capabilities"] = .object(caps)
+            return NativeEditorSession(draft: draft)
+        }
+        let base: [String: JSONValue] = ["caption_cues": .object(["editable": .bool(true)])]
+        XCTAssertFalse(session(caps: base).phoneTalkingLanesEditable, "no lane capability: the finished MP4")
+        let only = session(caps: base.merging(["speaker_background": .object(["editable": .bool(true)])]) { $1 })
+        XCTAssertFalse(only.canEdit(.mediaOverlays) || only.canEdit(.soundEffects))
+        XCTAssertTrue(only.phoneTalkingLanesEditable, "the background alone opens the source preview")
+
+        let variant: [String: JSONValue] = ["resolved_archetype": .string("subtitled"), "render_destination": .string("device")]
+        let pool = NativeEditorSourcePool(clips: [.init(clipIndex: 0, nativeSource: NativeTimelineSource(mediaID: "m", sourceURL: nil, original: nil, localRequired: false))], baseGeneration: "g")
+        var document = EditorDocument(clips: [])
+        document.capabilities = only.document.capabilities
+        XCTAssertEqual(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: only.phoneTalkingLanesEditable), [0])
+        XCTAssertNil(NativePhoneTalkingSource.sourceIndices(variant: variant, document: document, pool: pool, lanesEditable: false))
+    }
+
     // MARK: - Session and rail
 
     func testRailOffersBackgroundOnlyWhenTheServerOpensIt() {
