@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.34.0] - 2026-10-31
+
+### Changed
+- fix(kria): look inside the clips before calling a named shot missing (Leverkusen M2) (#1976) <!-- release-pr: 1976 -->
+
 ## [0.83.33.0] - 2026-10-31
 
 ### Fixed
