@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.23.0] - 2026-10-31
+
+### Changed
+- fix(kria): count Visuals photos in the pre-approval length (KRI-1079) (#1971) <!-- release-pr: 1971 -->
+
 ## [0.83.22.0] - 2026-10-30
 
 ### Changed
