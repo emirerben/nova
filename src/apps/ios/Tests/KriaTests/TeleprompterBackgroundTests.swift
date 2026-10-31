@@ -10,12 +10,12 @@ import XCTest
 @MainActor final class TeleprompterBackgroundTests: XCTestCase {
     private var root: URL!
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("teleprompter-bg-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
-    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
+    override func tearDown() async throws { try? FileManager.default.removeItem(at: root) }
 
     private func pickedFile(_ name: String = "picked.jpg", bytes: String = "photo") throws -> URL {
         let url = root.appendingPathComponent("picked-\(UUID().uuidString)-\(name)")

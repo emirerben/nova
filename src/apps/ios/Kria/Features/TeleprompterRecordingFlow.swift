@@ -28,6 +28,10 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
     /// A non-blocking note about the background (it could not be saved, or it could not be uploaded). Never blocks the take.
     @Published var backgroundNote: String?
     let speakerBackgroundEnabled: Bool
+    /// The live matted preview, created the first time a background is shown. Nil without a background.
+    @Published private(set) var livePreview: LiveBackgroundPreview?
+    private let makeLivePreview: () -> LiveBackgroundPreview
+    private var backgroundLoad: Task<Void, Never>?
     private var countdownTask: Task<Void, Never>?
     private var activeTake: TeleprompterTakeManifest?
     private var finalizedTake: TeleprompterTakeManifest?
@@ -40,8 +44,10 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
     init(accountID: String, projectID: UUID, root: URL? = nil,
          photoSaver: PhotoLibrarySaving = PhotoLibrarySaver(),
          speakerBackgroundEnabled: Bool = false,
+         makeLivePreview: @escaping () -> LiveBackgroundPreview = { LiveBackgroundPreview() },
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         self.speakerBackgroundEnabled = speakerBackgroundEnabled
+        self.makeLivePreview = makeLivePreview
         store = TeleprompterStore(accountID: accountID, projectID: projectID, root: root)
         script = TeleprompterScript()
         self.photoSaver = photoSaver
@@ -205,28 +211,65 @@ enum TeleprompterIntakeResult: Equatable { case queued, attached, failed(String)
         guard speakerBackgroundEnabled else { return }
         do {
             guard let choice = try store.loadBackgroundChoice() else { return }
-            if FileManager.default.fileExists(atPath: store.backgroundFileURL(for: choice.reference).path) { background = choice }
-            else { try? store.removeBackgroundChoice() }
+            if FileManager.default.fileExists(atPath: store.backgroundFileURL(for: choice.reference).path) {
+                background = choice
+                showBackgroundLive()
+            } else { try? store.removeBackgroundChoice() }
         } catch { backgroundNote = "Couldn’t restore your background. Pick it again to see yourself in front of it." }
     }
 
     /// Copies a picked file into the take store and makes it the project's background. Nothing is uploaded here.
     func chooseBackground(from url: URL, kind: SpeakerBackgroundKind) {
-        guard speakerBackgroundEnabled, !usingTake else { return }
+        // Not during a take: changing the capture graph under a running recording is not something we measured.
+        guard speakerBackgroundEnabled, !usingTake, !captureBusy else { return }
         do {
             let reference = try store.importBackground(from: url, kind: kind)
             let choice = TeleprompterBackgroundChoice(reference: reference)
             try store.save(backgroundChoice: choice)
             background = choice; backgroundNote = nil
             pruneBackgroundFiles()
+            showBackgroundLive()
         } catch { backgroundNote = "Couldn’t save this background. Free some storage and try again." }
     }
 
     func clearBackground() {
-        guard background != nil, !usingTake else { return }
+        guard background != nil, !usingTake, !captureBusy else { return }
         background = nil; backgroundNote = nil
         try? store.removeBackgroundChoice()
         pruneBackgroundFiles()
+        showBackgroundLive()
+    }
+
+    /// Points the camera's frame output and the live preview at the current choice (or away from it). Any failure leaves
+    /// the plain camera preview, and nothing here is on the recording's path.
+    private func showBackgroundLive() {
+        backgroundLoad?.cancel()
+        guard let choice = background else {
+            camera.setLiveFrameConsumer(nil)
+            livePreview?.setBackground(nil)
+            livePreview = nil
+            return
+        }
+        let preview = livePreview ?? makeLivePreview()
+        guard preview.isAvailable else { return }
+        let url = store.backgroundFileURL(for: choice.reference), kind = choice.reference.kind
+        backgroundLoad = Task { [weak self] in
+            do {
+                let provider: any LiveBackgroundProviding = kind == .image
+                    ? try await Task.detached { try StillBackground(url: url) }.value
+                    : try await LoopingVideoBackground(url: url)
+                guard let self, !Task.isCancelled, self.background?.reference == choice.reference else { provider.stop(); return }
+                preview.setBackground(provider)
+                self.livePreview = preview
+                self.camera.setLiveFrameConsumer(preview)
+            } catch is CancellationError {
+            } catch {
+                guard let self, self.background?.reference == choice.reference else { return }
+                self.camera.setLiveFrameConsumer(nil)
+                self.livePreview = nil
+                self.backgroundNote = "Couldn’t show this background in the preview. It is still saved with your take."
+            }
+        }
     }
 
     /// Records that the background file reached the visual upload, so later takes do not upload it again.
