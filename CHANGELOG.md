@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.27.0] - 2026-10-31
+
+### Fixed
+- fix(clip-intents): an ask with no clip op is never "please restate" (Leverkusen M2) (#1983) <!-- release-pr: 1983 -->
+
 ## [0.83.26.0] - 2026-10-31
 
 ### Fixed
