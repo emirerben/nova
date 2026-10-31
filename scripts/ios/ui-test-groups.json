@@ -313,6 +313,10 @@
       "KriaUITests/DrawingJourneyUITests/testDrawDoneTrimSaveReopenPersists",
       "KriaUITests/DrawingJourneyUITests/testAnimationTabKeepsItsLayoutWhateverTheEntranceIs",
       "KriaUITests/DrawingJourneyUITests/testCancelLeavesNoDrawingAndTheToolIsHiddenWithoutTheCapability",
+      "KriaUITests/SpeakerBackgroundUITests/testPickingAPhotoSelectsItAndMakesTheEditSaveable",
+      "KriaUITests/SpeakerBackgroundUITests/testNoneRemovesTheBackgroundAndBothChoicesSurviveSaveAndReopen",
+      "KriaUITests/SpeakerBackgroundUITests/testPickingNoneOnAnEditWithoutABackgroundIsNotAnEdit",
+      "KriaUITests/SpeakerBackgroundUITests/testToolIsHiddenWhenTheServerDoesNotOpenTheCapability",
       "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview",
       "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow",
       "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview",
@@ -482,6 +486,8 @@
     "src/apps/ios/Kria/Features/NativeAnimationPhasePicker.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "creation",
     "src/apps/ios/Kria/Core/GeneratedMedia.swift": "creation",
-    "src/apps/ios/Kria/Features/GeneratedMediaSheet.swift": "creation"
+    "src/apps/ios/Kria/Features/GeneratedMediaSheet.swift": "creation",
+    "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift": "editor",
+    "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor"
   }
 }

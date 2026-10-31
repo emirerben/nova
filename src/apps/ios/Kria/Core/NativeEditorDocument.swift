@@ -32,6 +32,8 @@ enum EditorSection: String, Codable, CaseIterable, Hashable, Sendable {
     case carouselMoment = "carousel_moment", title
     /// KRI-589 freehand drawings: finger strokes shown over the picture for a window.
     case drawings
+    /// KRI-1118 Talk-to-camera background: ONE photo or video behind the speaker for the whole edit. Not a list lane.
+    case speakerBackground = "speaker_background"
     /// The creator's own song (KRI-428): volume / start / remove. Lives in the commit request's
     /// `user_song`, not in the lane snapshot.
     case userSong = "user_song"
@@ -153,6 +155,49 @@ struct EditorUserSongState: Equatable, Sendable {
     var commit: EditorCommitUserSong {
         removed ? EditorCommitUserSong(removed: true) : EditorCommitUserSong(volume: volume, windowStartS: windowStartS, windowEndS: windowEndS)
     }
+}
+
+/// The `speaker_background` lane (KRI-1118): `null | {media_id, kind, source_start_s}`. `mediaID` names a photo or
+/// video in the item's Visuals pool; the recipe asset id derived from it is `visual-<media_id>`.
+struct EditorSpeakerBackground: Equatable, Sendable {
+    var mediaID: String
+    var kind: VisualMediaKind
+    /// Seconds into a video where playback starts; always 0 for a photo.
+    var sourceStartS: Double
+
+    init(mediaID: String, kind: VisualMediaKind, sourceStartS: Double = 0) {
+        self.mediaID = mediaID; self.kind = kind; self.sourceStartS = kind == .video ? sourceStartS : 0
+    }
+
+    /// Nil for any shape this client cannot represent exactly (extra keys, a bad kind, a photo with a start).
+    init?(json: JSONValue) {
+        guard case .object(let fields) = json, Set(fields.keys).isSubset(of: ["media_id", "kind", "source_start_s"]),
+              case .string(let id)? = fields["media_id"], !id.isEmpty, id.count <= SpeakerBackgroundLimits.maxIDLength,
+              !id.contains(where: \.isWhitespace),
+              case .string(let rawKind)? = fields["kind"], let kind = VisualMediaKind(rawValue: rawKind) else { return nil }
+        var start = 0.0
+        switch fields["source_start_s"] {
+        case nil, .null?: break
+        case .number(let value)?: start = value
+        default: return nil
+        }
+        guard start.isFinite, (0...SpeakerBackgroundLimits.maxSourceStart).contains(start), kind == .video || start == 0 else { return nil }
+        self.init(mediaID: id, kind: kind, sourceStartS: start)
+    }
+
+    var json: JSONValue {
+        .object(["media_id": .string(mediaID), "kind": .string(kind.rawValue), "source_start_s": .number(sourceStartS)])
+    }
+
+    /// The engine layer this lane compiles to: asset `visual-<media_id>`, looping, bound to the Talking speaker track.
+    var layer: SpeakerBackgroundLayer {
+        SpeakerBackgroundLayer(assetID: Self.assetID(forMediaID: mediaID), mediaKind: kind, sourceStart: sourceStartS,
+                               loop: true, subjectTrackID: SpeakerBackgroundLimits.defaultSubjectTrackID)
+    }
+
+    static func assetID(forMediaID id: String) -> String { "visual-" + id }
+    /// The `mediaSources` key under which the session resolves this background's bytes for the compiler.
+    static func sourceKey(forMediaID id: String) -> String { "speaker_background:" + id }
 }
 
 struct EditorTimelineSlot: Codable, Equatable, Sendable {
@@ -432,6 +477,8 @@ struct EditorDocument: Equatable, Sendable {
     var motionRuntimeHash: String?
     var cameraEffects: [EditorCameraEffect]
     var drawings: [EditorDrawing]
+    /// KRI-1118: nil = no background. See `EditorSpeakerBackground`.
+    var speakerBackground: EditorSpeakerBackground?
     var carouselMoment: [String: JSONValue]?
     var lyrics: [String: JSONValue]?
     var title: String?
@@ -455,6 +502,9 @@ struct EditorDocument: Equatable, Sendable {
     /// Rows of `clip_audio` that did not parse. The renderer refuses these
     /// rather than silently rendering without the excerpt.
     var unreadableClipAudio = 0
+    /// A non-null `speaker_background` this client could not read. The renderer refuses it rather than
+    /// silently compiling a video without the creator's background.
+    var unreadableSpeakerBackground = false
 
     /// Captions regardless of persisted representation: `caption_cues` for
     /// narrated/subtitled, `caption_cue`-marked text elements for guided_story
@@ -504,13 +554,13 @@ struct EditorDocument: Equatable, Sendable {
         let clips: [EditorTimelineSlot]; let tombstones: [EditorTimelineSlot]; let textElements: [EditorTextElement]
         let captionMeta: [String: JSONValue]; let captionCues: [EditorCaptionCue]; let music: EditorMusic?; let backgroundMusic: EditorBackgroundMusic?
         let mix: [String: JSONValue]; let soundEffects: [EditorTimedEffect]; let mediaOverlays: [EditorTimedEffect]; let visualBlocks: [EditorVisualBlock]
-        let motionScenes: [EditorMotionScene]; let motionRuntimeHash: String?; let cameraEffects: [EditorCameraEffect]; let drawings: [EditorDrawing]; let carouselMoment: [String: JSONValue]?; let lyrics: [String: JSONValue]?
+        let motionScenes: [EditorMotionScene]; let motionRuntimeHash: String?; let cameraEffects: [EditorCameraEffect]; let drawings: [EditorDrawing]; let speakerBackground: EditorSpeakerBackground?; let carouselMoment: [String: JSONValue]?; let lyrics: [String: JSONValue]?
         let title: String?; let orientation: String?; let landscapeFit: String?; let capabilities: [String: EditorCapability]; let revision: EditorRevision
         let editorState: String; let deletions: [EditorDeletion]
     }
 
-    init(schemaVersion: Int = 2, kind: String = "editor", editFormat: String = "montage", clips: [EditorTimelineSlot] = [], tombstones: [EditorTimelineSlot] = [], textElements: [EditorTextElement] = [], captionMeta: [String: JSONValue] = [:], captionCues: [EditorCaptionCue] = [], music: EditorMusic? = nil, backgroundMusic: EditorBackgroundMusic? = nil, mix: [String: JSONValue] = [:], soundEffects: [EditorTimedEffect] = [], mediaOverlays: [EditorTimedEffect] = [], visualBlocks: [EditorVisualBlock] = [], motionScenes: [EditorMotionScene] = [], motionRuntimeHash: String? = nil, cameraEffects: [EditorCameraEffect] = [], drawings: [EditorDrawing] = [], carouselMoment: [String: JSONValue]? = nil, lyrics: [String: JSONValue]? = nil, title: String? = nil, orientation: String? = nil, landscapeFit: String? = nil, capabilities: [String: EditorCapability] = [:], revision: EditorRevision = EditorRevision(), editorState: String = "renderable", deletions: [EditorDeletion] = [], opaqueRecords: [EditorSection: [EditorOpaqueRecord]] = [:]) {
-        self.schemaVersion = schemaVersion; self.kind = kind; self.editFormat = editFormat; self.clips = clips; self.tombstones = tombstones; self.textElements = textElements; self.captionMeta = captionMeta; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.mix = mix; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.drawings = drawings; self.carouselMoment = carouselMoment; self.lyrics = lyrics; self.title = title; self.orientation = orientation; self.landscapeFit = landscapeFit; self.capabilities = capabilities; self.revision = revision; self.editorState = editorState; self.deletions = deletions; self.opaqueRecords = opaqueRecords; self.rawRoot = [:]; self.rawSections = [:]; self.sectionPresence = [:]; self.loadedState = nil
+    init(schemaVersion: Int = 2, kind: String = "editor", editFormat: String = "montage", clips: [EditorTimelineSlot] = [], tombstones: [EditorTimelineSlot] = [], textElements: [EditorTextElement] = [], captionMeta: [String: JSONValue] = [:], captionCues: [EditorCaptionCue] = [], music: EditorMusic? = nil, backgroundMusic: EditorBackgroundMusic? = nil, mix: [String: JSONValue] = [:], soundEffects: [EditorTimedEffect] = [], mediaOverlays: [EditorTimedEffect] = [], visualBlocks: [EditorVisualBlock] = [], motionScenes: [EditorMotionScene] = [], motionRuntimeHash: String? = nil, cameraEffects: [EditorCameraEffect] = [], drawings: [EditorDrawing] = [], speakerBackground: EditorSpeakerBackground? = nil, carouselMoment: [String: JSONValue]? = nil, lyrics: [String: JSONValue]? = nil, title: String? = nil, orientation: String? = nil, landscapeFit: String? = nil, capabilities: [String: EditorCapability] = [:], revision: EditorRevision = EditorRevision(), editorState: String = "renderable", deletions: [EditorDeletion] = [], opaqueRecords: [EditorSection: [EditorOpaqueRecord]] = [:]) {
+        self.schemaVersion = schemaVersion; self.kind = kind; self.editFormat = editFormat; self.clips = clips; self.tombstones = tombstones; self.textElements = textElements; self.captionMeta = captionMeta; self.captionCues = captionCues; self.music = music; self.backgroundMusic = backgroundMusic; self.mix = mix; self.soundEffects = soundEffects; self.mediaOverlays = mediaOverlays; self.visualBlocks = visualBlocks; self.motionScenes = motionScenes; self.motionRuntimeHash = motionRuntimeHash; self.cameraEffects = cameraEffects; self.drawings = drawings; self.speakerBackground = speakerBackground; self.carouselMoment = carouselMoment; self.lyrics = lyrics; self.title = title; self.orientation = orientation; self.landscapeFit = landscapeFit; self.capabilities = capabilities; self.revision = revision; self.editorState = editorState; self.deletions = deletions; self.opaqueRecords = opaqueRecords; self.rawRoot = [:]; self.rawSections = [:]; self.sectionPresence = [:]; self.loadedState = nil
     }
 
     init(snapshot: [String: JSONValue]) { self = Self.decode(snapshot: snapshot) }
@@ -563,6 +613,10 @@ struct EditorDocument: Equatable, Sendable {
         document.motionRuntimeHash = string(sections["motion_runtime_hash"] ?? snapshot["motion_runtime_hash"])
         document.cameraEffects = decodeCamera(array(sections["camera_effects"] ?? snapshot["camera_effects"]) ?? [])
         document.drawings = decodeDrawings(array(sections["drawings"] ?? snapshot["drawings"]) ?? [])
+        if let lane = sections["speaker_background"] ?? snapshot["speaker_background"], lane != .null {
+            document.speakerBackground = EditorSpeakerBackground(json: lane)
+            document.unreadableSpeakerBackground = document.speakerBackground == nil
+        }
         let clipAudioRows = array(sections["clip_audio"] ?? snapshot["clip_audio"]) ?? []
         document.clipAudio = clipAudioRows.compactMap { row in
             guard let o = object(row), let id = string(o["id"]), let index = integer(o["source_clip_index"]),
@@ -606,6 +660,10 @@ struct EditorDocument: Equatable, Sendable {
         }
         writeSection(&sections, .cameraEffects, values: cameraEffects, original: Self.array(rawSections[EditorSection.cameraEffects.wireKey]), encode: encodeCamera, id: { Self.string($0["id"]) }, nonEmpty: !cameraEffects.isEmpty)
         writeSection(&sections, .drawings, values: drawings, original: Self.array(rawSections[EditorSection.drawings.wireKey]), encode: { $0.json }, id: { Self.string($0["id"]) }, nonEmpty: !drawings.isEmpty)
+        if sectionChanged(.speakerBackground) {
+            if let speakerBackground { sections[EditorSection.speakerBackground.wireKey] = speakerBackground.json }
+            else { sections[EditorSection.speakerBackground.wireKey] = .null }
+        }
         if sectionChanged(.carouselMoment) {
             if let carouselMoment { sections[EditorSection.carouselMoment.wireKey] = .object(carouselMoment) }
             else { sections[EditorSection.carouselMoment.wireKey] = .null }
@@ -662,7 +720,7 @@ struct EditorDocument: Equatable, Sendable {
     }
 
     private func currentState() -> LoadedState {
-        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, clips: clips, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, drawings: drawings, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, landscapeFit: landscapeFit, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
+        LoadedState(schemaVersion: schemaVersion, kind: kind, editFormat: editFormat, clips: clips, tombstones: tombstones, textElements: textElements, captionMeta: captionMeta, captionCues: captionCues, music: music, backgroundMusic: backgroundMusic, mix: mix, soundEffects: soundEffects, mediaOverlays: mediaOverlays, visualBlocks: visualBlocks, motionScenes: motionScenes, motionRuntimeHash: motionRuntimeHash, cameraEffects: cameraEffects, drawings: drawings, speakerBackground: speakerBackground, carouselMoment: carouselMoment, lyrics: lyrics, title: title, orientation: orientation, landscapeFit: landscapeFit, capabilities: capabilities, revision: revision, editorState: editorState, deletions: deletions)
     }
 
     private mutating func makeOpaqueRecords(_ sections: [String: JSONValue]) -> [EditorSection: [EditorOpaqueRecord]] {
@@ -685,7 +743,7 @@ private enum NativeEditorMotionCodec {
 
 private extension EditorSection {
     var wireKey: String {
-        switch self { case .timeline: "timeline_slots"; case .text: "text_elements"; case .captions: "caption_cues"; case .captionMeta: "caption_meta"; case .mix: "mix"; case .music: "music"; case .backgroundMusic: "background_music"; case .lyrics: "lyrics"; case .orientation: "orientation"; case .landscapeFit: "landscape_fit"; case .soundEffects: "sound_effects"; case .mediaOverlays: "media_overlays"; case .visualBlocks: "visual_blocks"; case .motionScenes: "motion_scenes"; case .cameraEffects: "camera_effects"; case .carouselMoment: "carousel_moment"; case .title: "title"; case .userSong: "user_song"; case .drawings: "drawings" }
+        switch self { case .timeline: "timeline_slots"; case .text: "text_elements"; case .captions: "caption_cues"; case .captionMeta: "caption_meta"; case .mix: "mix"; case .music: "music"; case .backgroundMusic: "background_music"; case .lyrics: "lyrics"; case .orientation: "orientation"; case .landscapeFit: "landscape_fit"; case .soundEffects: "sound_effects"; case .mediaOverlays: "media_overlays"; case .visualBlocks: "visual_blocks"; case .motionScenes: "motion_scenes"; case .cameraEffects: "camera_effects"; case .carouselMoment: "carousel_moment"; case .title: "title"; case .userSong: "user_song"; case .drawings: "drawings"; case .speakerBackground: "speaker_background" }
     }
 }
 
@@ -715,6 +773,7 @@ private extension EditorDocument {
         case .motionScenes: return loadedState.motionScenes != motionScenes || loadedState.motionRuntimeHash != motionRuntimeHash
         case .cameraEffects: return loadedState.cameraEffects != cameraEffects
         case .drawings: return loadedState.drawings != drawings
+        case .speakerBackground: return loadedState.speakerBackground != speakerBackground
         case .carouselMoment: return loadedState.carouselMoment != carouselMoment
         case .lyrics: return loadedState.lyrics != lyrics
         case .title: return loadedState.title != title

@@ -29,6 +29,10 @@ enum NativeEditorUITestFixtures {
         /// KRI-589: a 6 s cut whose variant opens the drawings lane; Save commits through a stub transport
         /// that keeps the saved drawings across relaunches (`-ui-testing-editor-drawing-reset` starts clean).
         case drawing = "drawing"
+        /// KRI-1118: a Talking edit whose variant opens the `speaker_background` capability, with two ready pool visuals
+        /// (a photo and a video). Save commits through the same stub transport and keeps the saved lane across
+        /// relaunches (`-ui-testing-editor-speaker-background-reset` starts with no background).
+        case speakerBackground = "speaker-background"
         /// Three clips of different lengths (1.0 / 1.4 / 1.2 s) that sit inside one viewport, so a long-press drag
         /// can reorder them without reaching the auto-scroll edge, and the durations tell the order apart. Each is
         /// at least 1 s so the default crossfades are never capped by a short neighbour and the length is exact.
@@ -147,12 +151,41 @@ enum NativeEditorUITestFixtures {
         case .retimedClips: retimedClips
         case .songTrim: songTrim
         case .drawing: drawing
+        case .speakerBackground: speakerBackground
         case .reorderClips: reorderClips
         }
     }
 
     /// The drawings the stub commit transport last saved (UserDefaults, so a relaunch "reopens" them).
     static let savedDrawingsKey = "kria.ui-test.saved-drawings.v1"
+
+    /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
+    static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
+
+    /// The two pool visuals the Background fixture offers; no URLs, so the tiles show their placeholders offline.
+    static let speakerBackgroundVisuals: [CreationVisual] = [
+        CreationVisual(id: "fixture-bg-photo", kind: "image", status: "ready", sourceFilename: "Beach photo", displayURL: nil, previewURL: nil, retryable: nil),
+        CreationVisual(id: "fixture-bg-video", kind: "video", status: "ready", sourceFilename: "City video", displayURL: nil, previewURL: nil, retryable: nil),
+    ]
+
+    static var speakerBackground: EditorDraft {
+        let defaults = UserDefaults.standard
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background-reset") {
+            defaults.removeObject(forKey: savedSpeakerBackgroundKey)
+        }
+        var value = talkingCaptions
+        var caps = value.serverSnapshot["editor_capabilities"]?.objectValue ?? [:]
+        caps["speaker_background"] = .object(["editable": .bool(true)])
+        value.serverSnapshot["editor_capabilities"] = .object(caps)
+        if let data = defaults.data(forKey: savedSpeakerBackgroundKey), let saved = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            var payload = value.serverSnapshot["editor_payload"]?.objectValue ?? [:]
+            var sections = payload["sections"]?.objectValue ?? [:]
+            sections["speaker_background"] = saved
+            payload["sections"] = .object(sections)
+            value.serverSnapshot["editor_payload"] = .object(payload)
+        }
+        return value
+    }
 
     static let drawing: EditorDraft = {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing-reset") {
@@ -797,6 +830,9 @@ enum NativeEditorUITestCommitTransport {
                 let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
                 if let drawings = fields["drawings"], let saved = try? JSONEncoder().encode(drawings) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedDrawingsKey)
+                }
+                if let lane = fields["speaker_background"], let saved = try? JSONEncoder().encode(lane) {
+                    UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedSpeakerBackgroundKey)
                 }
                 let sections = fields.keys.filter { $0 != "base_generation" && $0 != "editor_state_version" && $0 != "deletions" && $0 != "remove_music" }
                 var flags = Dictionary(uniqueKeysWithValues: sections.map { ($0, JSONValue.bool(true)) })

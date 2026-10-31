@@ -11,11 +11,18 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
     case text = "Text"
     case captions = "Captions"
     case visuals = "Visuals"
+    /// KRI-1118: shown only when the server opens `speaker_background` (a Talk-to-camera edit rendered on the phone).
+    case background = "Background"
     case sounds = "Sounds"
     /// KRI-589: shown only when the variant opens `drawings.add`.
     case draw = "Draw"
 
     var id: String { rawValue }
+
+    /// The tools the rail offers: Draw and Background appear only when the server opens them for this variant.
+    static func railTools(showsDraw: Bool, showsBackground: Bool) -> [NativeEditorTool] {
+        allCases.filter { $0 != .kria && ($0 != .draw || showsDraw) && ($0 != .background || showsBackground) }
+    }
 
     var icon: String {
         switch self {
@@ -23,6 +30,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .text: "textformat"
         case .captions: "captions.bubble"
         case .visuals: "camera.filters"
+        case .background: "photo.on.rectangle"
         case .sounds: "waveform"
         case .draw: "pencil.tip"
         }
@@ -34,6 +42,7 @@ enum NativeEditorTool: String, CaseIterable, Identifiable {
         case .text: "Add or edit text overlays"
         case .captions: "Turn captions on or off and choose a style"
         case .visuals: "Browse visual lanes and adjust supported effects"
+        case .background: "Put a photo or video behind you"
         case .sounds: "Adjust music and add sound effects"
         case .draw: "Draw on the video with your finger"
         }
@@ -592,8 +601,10 @@ struct NativeEditorToolRail: View {
     var connected = false
     /// The Draw tool is offered only when the server opens drawings for this variant.
     var showsDraw = false
+    /// The Background tool is offered only when the server opens `speaker_background` for this variant.
+    var showsBackground = false
     let onSelect: (NativeEditorTool) -> Void
-    private var tools: [NativeEditorTool] { NativeEditorTool.allCases.filter { $0 != .kria && ($0 != .draw || showsDraw) } }
+    private var tools: [NativeEditorTool] { NativeEditorTool.railTools(showsDraw: showsDraw, showsBackground: showsBackground) }
 
     private var shouldReduceMotion: Bool {
         reduceMotion || ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION"] == "1"
