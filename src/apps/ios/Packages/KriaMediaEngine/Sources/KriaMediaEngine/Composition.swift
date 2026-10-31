@@ -106,6 +106,7 @@ public struct PreviewComposition: @unchecked Sendable {
             audioParameters.append(parameter)
         }
         let overlayOrders = Self.overlayOrders(in: recipe)
+        let speakerClipIDs = Self.speakerClipIDs(in: recipe)
         for recipeTrack in recipe.tracks {
             // A track per cut can exhaust hardware decoders on long phone
             // timelines. Reuse tracks once their previous segment has ended;
@@ -330,6 +331,7 @@ public struct PreviewComposition: @unchecked Sendable {
                 if let seed = clip.overlayDissolveSeed {
                     layers[layers.count - 1].overlayDissolve = try NativeDissolveRenderer(width: recipe.canvas.width, height: recipe.canvas.height, seed: seed, maxBitmapBytes: 64 * 1024 * 1024, preset: .media)
                 }
+                if speakerClipIDs.contains(clip.id) { layers[layers.count - 1].speakerRole = .speaker }
                 if let text = clip.text { textLayers.append(try RecipeTextLayer.make(text, start: clip.timelineStart, end: end, canvas: canvas)) }
             }
         }
@@ -379,6 +381,10 @@ public struct PreviewComposition: @unchecked Sendable {
                                           transform: CGAffineTransform(scaleX: canvas.width / 16, y: canvas.height / 16),
                                           start: 0, end: total, fadeIn: 0), at: 0)
             StillClockLifetime.retain(clock, on: composition)
+        }
+        if let background = recipe.speakerBackground {
+            guard let url = assetURLs[background.assetID] else { throw MediaEngineError.missingAsset(background.assetID) }
+            layers.append(try await Self.speakerBackgroundLayer(background, url: url, composition: composition, canvas: canvas, duration: total))
         }
         try Task.checkCancellation()
         if let musicID = recipe.audio.musicAssetID {
@@ -452,12 +458,15 @@ public struct PreviewComposition: @unchecked Sendable {
         let drawings = recipe.drawingLayers.isEmpty ? nil : NativeDrawingStore(layers: recipe.drawingLayers, canvas: canvas)
         // Text behind people: one segmenter per composition, only when a layer asks for it (F7).
         let subjectMatte = recipe.textLayers.contains(where: { $0.behindSubject == true }) ? NativeSubjectMatte() : nil
+        // Speaker background: one matte per composition, shared by the player and the exporter (S15).
+        let speakerMatte = recipe.speakerBackground == nil ? nil : SpeakerMatte()
         // Instructions must span the whole asset: when the asset outlasts them AVPlayer renders no
         // video at all (audio over black, no error), while scrubbing and export stay correct.
         let covered = max(brandedTotal, composition.duration.seconds)
         videoComposition.instructions = RecipeInstructionTiming.tiledRanges(total: covered, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: textLayers, canvas: canvas,
-                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte)
+                cameraPulses: recipe.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
+                speakerMatte: speakerMatte)
         }
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = audioParameters

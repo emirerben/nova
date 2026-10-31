@@ -99,7 +99,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                     motionScenes: above ? nil : original.motionScenes,
                     drawings: above ? original.drawings : nil, transparentBackground: above,
                     // The dragged text itself paints plain while the finger is down (F8); the scene below keeps its occlusion.
-                    subjectMatte: above ? nil : original.subjectMatte)
+                    subjectMatte: above ? nil : original.subjectMatte, speakerMatte: above ? nil : original.speakerMatte)
             }
             return copy
         }
@@ -131,7 +131,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                     canvas: composition.renderSize, cameraPulses: original.cameraPulses,
                     motionScenes: transparent ? nil : original.motionScenes,
                     drawings: paintsDrawings ? original.drawings : nil, transparentBackground: transparent,
-                    subjectMatte: transparent ? nil : original.subjectMatte)
+                    subjectMatte: transparent ? nil : original.subjectMatte, speakerMatte: transparent ? nil : original.speakerMatte)
             }
             return copy
         }
@@ -195,6 +195,9 @@ public struct LivePreviewExportSnapshot: Sendable {
             guard recipe.tracks.flatMap(\.clips).first(where: { $0.id == clip.id })?.transform == clip.transform else { throw NativePreviewFeatureError("LivePreviewComposition-77") }
         }
         guard next.audio == recipe.audio, withoutVisuals(recipe.tracks) == withoutVisuals(next.tracks) else { throw NativePreviewFeatureError("LivePreviewComposition-79") }
+        // Any speaker-background change (asset, source start, loop, subject track, added or removed) re-inserts
+        // the background track, so it always takes the full rebuild.
+        guard next.speakerBackground == recipe.speakerBackground else { throw NativePreviewFeatureError("LivePreviewComposition-speaker-background") }
         if next.visualFills.contains(where: { $0.kind == .blurPrevious }), recipe.cameraPulses != next.cameraPulses {
             throw NativePreviewFeatureError("LivePreviewComposition-81")
         }
@@ -281,7 +284,9 @@ public struct LivePreviewExportSnapshot: Sendable {
         let subjectMatte = next.textLayers.contains(where: { $0.behindSubject == true }) ? (first.subjectMatte ?? NativeSubjectMatte()) : nil
         replacement.instructions = RecipeInstructionTiming.tiledRanges(total: total, layers: layers).map { range, active in
             RecipeVideoInstruction(timeRange: range, layers: active, text: painted, canvas: current.renderSize,
-                cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte)
+                cameraPulses: next.cameraPulses, motionScenes: motion, textStore: textStore, drawings: drawings, subjectMatte: subjectMatte,
+                // The background is unchanged (guarded above), so its layer and its matte carry over.
+                speakerMatte: first.speakerMatte)
         }
         // Publish only after every layer validates successfully. Never touch
         // `audioMix` here (see `withoutVisuals`).
