@@ -1441,7 +1441,7 @@ def _append_automatic_omissions_sync(
     unsupported text/style requirement after compiling the draft.  ``source_turn_id``
     stays NULL because the first version already owns the turn's source updates.
     """
-    merged = apply_updates(brief, updates, source_turn_id=None)
+    merged = apply_updates(brief, updates, source_turn_id=None, removal_provenance="server")
     next_version = (
         int(
             db.execute(
@@ -2474,6 +2474,7 @@ def _complete_draft_turn(
                     thread_id=thread.id,
                     turn_id=turn.id,
                     updates=effective_brief_updates,
+                    removal_provenance="server",
                 )
             if settings.kria_choice_questions_enabled:
                 brief = answered_brief(brief, document.strategy)

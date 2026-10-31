@@ -63,6 +63,12 @@ if TYPE_CHECKING:
 # `text_sequence` (29 Ekim): the creator's own words shown on screen in pieces, never captions.
 RequirementKind = Literal["text", "order", "select", "timing", "audio", "style", "text_sequence"]
 RequirementStatus = Literal["open", "met", "partial", "not_possible", "superseded"]
+# Who removed a requirement, stamped into its facts when the removal is applied (never inferred
+# later): "creator" for the creator's own words (the default; a model-emitted remove, a fresh
+# start), "server" for a waiver the server made (the simpler version, an automatic omission).
+# A requirement removed before this existed has no mark: its provenance is unknown.
+SUPERSEDED_BY_FACT = "superseded_by"
+RemovalProvenance = Literal["creator", "server"]
 Route = Literal["replan", "editor_ops"]
 
 # Two titles plus six dictated shot texts used all of the old 8, so a duration
@@ -644,11 +650,15 @@ def apply_updates(
     *,
     source_turn_id: str | None,
     creator_text: str | None = None,
+    removal_provenance: RemovalProvenance = "creator",
 ) -> CreativeBrief:
     """Server-assign ids and merge ``updates`` into ``prior`` (version is set on persist).
 
     ``creator_text`` is the creator's own message for this turn (KRI-824): each new or
     changed requirement's ``authority`` is stamped from it, never from the update.
+
+    ``removal_provenance`` says who removed what ``updates`` remove; each removed requirement
+    records it in its facts (``SUPERSEDED_BY_FACT``). Only a server-made waiver passes "server".
     """
     prior = prior or CreativeBrief()
     updates = list(updates)
@@ -740,7 +750,14 @@ def apply_updates(
     requirements = []
     for req in prior.requirements:
         if req.id in removed and req.live:
-            requirements.append(req.model_copy(update={"status": "superseded"}))
+            requirements.append(
+                req.model_copy(
+                    update={
+                        "status": "superseded",
+                        "facts": {**req.facts, SUPERSEDED_BY_FACT: removal_provenance},
+                    }
+                )
+            )
         elif req.id in changed and req.live:
             requirements.append(changed[req.id])
         elif req.id in withdrawn and req.live:
@@ -1743,6 +1760,7 @@ def persist_brief_version_sync(
     record_empty: bool = False,
     delegation_read_event_ids: Iterable[str] = (),
     order_replacement: OrderReplacementWriteContext | None = None,
+    removal_provenance: RemovalProvenance = "creator",
 ) -> CreativeBrief | None:
     """Append one version for ``turn_id``; idempotent per turn.
 
@@ -1807,7 +1825,11 @@ def persist_brief_version_sync(
         )
     else:
         merged = apply_updates(
-            prior, updates, source_turn_id=str(turn_id), creator_text=creator_text
+            prior,
+            updates,
+            source_turn_id=str(turn_id),
+            creator_text=creator_text,
+            removal_provenance=removal_provenance,
         )
     next_version = (
         int(

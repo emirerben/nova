@@ -451,8 +451,12 @@ def _dropped_filming_order(brief: Any) -> bool:
     """Was the last order basis the brief superseded filming time (``kept_filming_order``)?
 
     A dropped upload-order or random-order ask written after it wins, so a creator who
-    moved away from filming order before letting go of order altogether keeps that.
+    moved away from filming order before letting go of order altogether keeps that. So does
+    a filming-order ask the CREATOR removed (``SUPERSEDED_BY_FACT``): a server waiver
+    waives the check, not the wish, but the creator's own withdrawal withdraws the wish.
+    A removal stored with no mark (before it existed) reads as a waiver.
     """
+    from app.kria.brief import SUPERSEDED_BY_FACT  # noqa: PLC0415 - pipeline imports kria
     from app.services.choice_questions import ATTACHMENT_ORDER_KEY  # noqa: PLC0415
 
     filming = False
@@ -461,7 +465,7 @@ def _dropped_filming_order(brief: Any) -> bool:
             continue
         key = str((req.facts or {}).get("key") or (req.facts or {}).get("by") or "").casefold()
         if key in _CAPTURE_ORDER_KEYS:
-            filming = True
+            filming = (req.facts or {}).get(SUPERSEDED_BY_FACT) != "creator"
         elif key == ATTACHMENT_ORDER_KEY or order_mode(req) == "random":
             filming = False
     return filming
