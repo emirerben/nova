@@ -353,6 +353,21 @@ final class ChatWorkspaceTests: XCTestCase {
         XCTAssertEqual(CreationFormat.maximumClipCount(for: nil, serverLimits: [.talkingToCamera: 1]), 50)
     }
 
+    /// The server's `lipsync` format is a montage underneath: it parses, sits right after Montage with the
+    /// Slider last, shares montage's clip cap, and an `edit_format: montage` thread without a `format` stays Montage.
+    func testLipsyncFormatSitsAfterMontageAndRunsAsMontage() {
+        XCTAssertEqual(CreationFormat(serverValue: "lipsync"), .lipsync)
+        XCTAssertEqual(CreationFormat.lipsync.serverValue, "lipsync")
+        XCTAssertEqual(CreationFormat.allCases.sorted { $0.carouselOrder < $1.carouselOrder },
+                       [.montage, .lipsync, .narrated, .talkingToCamera, .slides])
+        XCTAssertTrue(CreationFormat.lipsync.runsAsMontage)
+        XCTAssertTrue(CreationFormat.montage.runsAsMontage)
+        XCTAssertFalse(CreationFormat.narrated.runsAsMontage)
+        XCTAssertFalse(CreationFormat.lipsync.usesVisualPool)
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: .lipsync, serverLimits: [.lipsync: 12, .montage: 50]), 12)
+        XCTAssertEqual(CreationFormat.maximumClipCount(for: .lipsync, serverLimits: [:]), 50)
+    }
+
     func testAttachedClipCountIgnoresVoiceoverAndVisualMedia() {
         let state: [String: JSONValue] = [
             "media_count": .number(3),

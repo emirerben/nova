@@ -1625,6 +1625,37 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(usable, "format cards took \(String(format: "%.1f", elapsed))s after New chat")
     }
 
+    /// The Lip-sync card sits right after Montage, choosing it posts its own sentence, and its attachment
+    /// sheet opens on the song step with the lip-sync subtitle (the song leads a lip-sync).
+    func testLipsyncCardFollowsMontageAndOpensTheSheetOnTheSong() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-chat"]
+        app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
+        app.launchEnvironment["KRIA_CHAT_LIPSYNC"] = "1"
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        createFreshChat(in: app)
+
+        let montage = app.buttons["format-montage"]
+        let lipsync = app.buttons["format-lipsync"]
+        let voiceover = app.buttons["format-narrated"]
+        XCTAssertTrue(lipsync.waitForExistence(timeout: 10))
+        XCTAssertEqual(lipsync.label, "Lip-sync")
+        XCTAssertGreaterThan(lipsync.frame.minX, montage.frame.minX, "Lip-sync follows Montage")
+        if voiceover.exists { XCTAssertLessThan(lipsync.frame.minX, voiceover.frame.minX, "Lip-sync precedes Voiceover") }
+        if !lipsync.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        lipsync.tap()
+
+        let bubble = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Let’s make a lip-sync video")).firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 10), "choosing the card posts its sentence")
+        let attach = app.buttons["Attach footage"]
+        XCTAssertTrue(attach.waitForExistence(timeout: 10))
+        attach.tap()
+        XCTAssertTrue(app.staticTexts["Add your song"].waitForExistence(timeout: 5), "the sheet opens on the song step")
+        XCTAssertTrue(app.staticTexts["Add the song you’re lip-syncing to."].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["attachment-step-song"].firstMatch.exists)
+    }
+
     func testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
