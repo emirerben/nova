@@ -58,12 +58,6 @@
     "phone_editor_media_unavailable",
     "phone_editor_required",
     "song_added_when_posting",
-    "speaker_background_disabled",
-    "speaker_background_kind_mismatch",
-    "speaker_background_media_not_in_pool",
-    "speaker_background_media_unavailable",
-    "speaker_background_start_out_of_range",
-    "speaker_background_unsupported",
     "timing_metadata_unavailable"
   ]
 }
