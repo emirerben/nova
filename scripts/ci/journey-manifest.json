@@ -2345,6 +2345,36 @@
       "fixture_generator": "scripts/ios/duration-text-preservation-fixtures.py"
     },
     {
+      "id": "rendered-editor-original-clock",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_phone_editor_rendered_clock.py tests/routes/test_phone_editor_rendered_clock_receipts.py tests/integration/test_rendered_clock_authored_boundary_postgres.py tests/routes/test_rendered_clock_authored_preparation.py",
+      "xctests": [
+        "KriaTests/RenderedOriginalClockTests/testRenderedPhotoWindowBuildsAndExportsAfterHydration",
+        "KriaTests/RenderedOriginalClockTests/testRenderedVideoWindowBuildsAndExportsAfterHydration",
+        "KriaTests/RenderedOriginalClockTests/testProxyRoundedVideoOverrunIsStillRejected",
+        "KriaTests/NativeEditorInteractionTests/testRenderedOriginalWindowDoesNotExpandOntoProxyFrameClock",
+        "KriaTests/NativeEditorInteractionTests/testRenderedSpeedWindowRetainsExactSourceConsumption"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/guided_edit_revision.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock.py",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
+        "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift",
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock_receipts.py",
+        "src/apps/api/app/services/client_protocol.py",
+        "src/apps/api/app/services/public_assembly_plan.py",
+        "src/apps/api/app/routes/plan_items.py",
+        "src/apps/api/app/services/authored_editor.py",
+        "src/apps/api/tests/integration/test_rendered_clock_authored_boundary_postgres.py",
+        "src/apps/api/tests/routes/test_rendered_clock_authored_preparation.py"
+      ]
+    },
+    {
       "id": "reference-style-save",
       "needs_native": true,
       "api_tests": "tests/routes/test_authored_empty_caption_metadata.py tests/kria/test_reference_style_receipts.py tests/integration/test_reference_style_save_postgres.py",
