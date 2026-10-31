@@ -286,6 +286,11 @@ class ApprovalDecisionBody(_StrictBody):
     # direction, so changing it must never invalidate the approval.
     output_orientation: Literal["portrait", "landscape"] | None = None
     landscape_fit: Literal["fit", "fill"] | None = None
+    # Who made the shape above: "explicit_pick" = the creator touched the picker,
+    # "preselected" = the app is echoing the server's default back. Newer clients send it;
+    # absent (older clients), the server infers from the value (an echoed default equals
+    # the offered one). Not part of `approval_fingerprint()`.
+    render_shape_origin: Literal["explicit_pick", "preselected"] | None = None
 
     @field_validator("expected_approval_fingerprint")
     @classmethod

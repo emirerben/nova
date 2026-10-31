@@ -371,14 +371,36 @@ def _text_bars(ctx: SuggestionContext) -> list[Mapping[str, Any]]:
 _TITLE_ROLES = frozenset({"title", "intro", "hook", "generative_intro"})
 
 
-def _title_bar(ctx: SuggestionContext) -> tuple[int, Mapping[str, Any]] | None:
+def _title_bar(
+    ctx: SuggestionContext, *, editor_ids: frozenset[str] | None = None
+) -> tuple[int, Mapping[str, Any]] | None:
     for index, bar in enumerate(_text_bars(ctx)):
         bar_id = str(bar.get("id") or "")
         if bar_id.startswith(("clip-label-", "montage-text-", "group-title-")):
             continue
+        if editor_ids is not None and bar_id not in editor_ids:
+            continue
         if bar.get("role") in _TITLE_ROLES or bar_id.startswith("guided-title"):
             return index, bar
     return None
+
+
+def _editable_title_bar(ctx: SuggestionContext) -> tuple[int, Mapping[str, Any]] | None:
+    """``_title_bar`` narrowed to a title the editor can actually resolve.
+
+    Title-targeted chips ("Animate the title") run a ``group: "title"`` op, and the editor
+    only calls a bar the title under its own rules (``kria_editor_ops_text.classify``: an
+    intro bar must start within the first 0.5 s). Offering the chip for any other opening
+    text sends a tap the editor answers with "no title" -- so a chip is offered only when
+    BOTH agree. Kill switch ``KRIA_ERROR_HONESTY_ENABLED`` restores the looser ``_title_bar``.
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.kria_error_honesty_enabled:
+        return _title_bar(ctx)
+    from app.services.kria_editor_ops_text import title_bar_ids  # noqa: PLC0415 - import cycle
+
+    return _title_bar(ctx, editor_ids=title_bar_ids(ctx.snapshot or {}))
 
 
 def _slots(ctx: SuggestionContext) -> list[Mapping[str, Any]]:
@@ -523,12 +545,12 @@ def _title_anim_available(ctx: SuggestionContext) -> bool:
         ctx.state == "ready"
         and ctx.resolved_archetype in _TITLE_ANIMATION_ARCHETYPES
         and "text" in _families(ctx)  # the op is patch_text; the parser refuses it without it
-        and _title_bar(ctx) is not None
+        and _editable_title_bar(ctx) is not None
     )
 
 
 def _title_anim_present(ctx: SuggestionContext) -> bool:
-    found = _title_bar(ctx)
+    found = _editable_title_bar(ctx)
     if found is None:
         return True
     phases = found[1].get("animation_phases")
@@ -573,7 +595,7 @@ def _ground_music(ctx: SuggestionContext) -> list[_Target]:
 
 
 def _ground_title_anim(ctx: SuggestionContext) -> list[_Target]:
-    found = _title_bar(ctx)
+    found = _editable_title_bar(ctx)
     if found is None:
         return []
     index, bar = found

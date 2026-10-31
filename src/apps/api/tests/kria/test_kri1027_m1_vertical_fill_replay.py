@@ -172,6 +172,8 @@ async def _approve_like_the_phone(snapshot: dict) -> dict[str, str]:
         strategy_payload=snapshot["strategy"],
         creator_id=thread.creator_id,
         creator_request=snapshot["intent"],
+        # As `decide_approval` passes it: the offer the app echoed came from the same brief.
+        brief_binding=snapshot.get("brief_binding"),
     )
 
 
@@ -197,8 +199,9 @@ def test_the_replay_reproduces_the_letterboxed_render():
 
 
 async def test_make_it_all_vertical_reaches_the_render_as_crop():
+    # The phone echoes the preselected shape untouched: the plan must not call it a pick.
     stash = await _approve_like_the_phone(M1_RECORDED)
-    assert stash == {"output_orientation": "portrait", "landscape_fit": "fill"}
+    assert stash == {"output_orientation": "portrait", "landscape_fit": "fill", "origin": "default"}
     clips = _story_clips(_creator_landscape_fit({"creator_render_shape": stash}))
     for media_id in SIDEWAYS:
         assert clips[media_id].transform.scale == 1, media_id  # no fit transform: no bars
@@ -209,7 +212,7 @@ async def test_keep_the_black_bars_still_letterboxes():
         "Keep the black bars on the horizontal clips", {"landscape_fit": "fit"}
     )
     stash = await _approve_like_the_phone(snapshot)
-    assert stash == {"output_orientation": "portrait", "landscape_fit": "fit"}
+    assert stash == {"output_orientation": "portrait", "landscape_fit": "fit", "origin": "default"}
     clips = _story_clips(_creator_landscape_fit({"creator_render_shape": stash}))
     for media_id in SIDEWAYS:
         assert clips[media_id].transform.scale == pytest.approx(_BAR_SCALE), media_id
@@ -217,7 +220,7 @@ async def test_keep_the_black_bars_still_letterboxes():
 
 async def test_no_ask_keeps_todays_default():
     stash = await _approve_like_the_phone(_snapshot_with_r2(None))
-    assert stash == {"output_orientation": "portrait", "landscape_fit": "fit"}
+    assert stash == {"output_orientation": "portrait", "landscape_fit": "fit", "origin": "default"}
 
 
 async def test_r2_exactly_as_prod_stored_it_is_not_guessed_from_words():
@@ -230,13 +233,13 @@ async def test_r2_exactly_as_prod_stored_it_is_not_guessed_from_words():
         "facts": {},
     }
     stash = await _approve_like_the_phone(FIXTURE["draft_snapshot"])
-    assert stash == {"output_orientation": "portrait", "landscape_fit": "fit"}
+    assert stash == {"output_orientation": "portrait", "landscape_fit": "fit", "origin": "default"}
 
 
 async def test_the_kri547_vertical_words_need_no_fact():
     """The vertical / no-bars reader Talking already applies (KRI-547) also preselects crop."""
     stash = await _approve_like_the_phone(_snapshot_with_r2("make it vertical, no black bars"))
-    assert stash == {"output_orientation": "portrait", "landscape_fit": "fill"}
+    assert stash == {"output_orientation": "portrait", "landscape_fit": "fill", "origin": "default"}
 
 
 async def test_a_creator_who_flips_the_picker_to_bars_keeps_bars():
@@ -256,7 +259,7 @@ async def test_a_creator_who_flips_the_picker_to_bars_keeps_bars():
         creator_id=uuid.uuid4(),
         creator_request=snapshot["intent"],
     )
-    assert stash == {"output_orientation": "portrait", "landscape_fit": "fit"}
+    assert stash == {"output_orientation": "portrait", "landscape_fit": "fit", "origin": "default"}
 
 
 async def test_a_talking_edit_keeps_its_preselection():
