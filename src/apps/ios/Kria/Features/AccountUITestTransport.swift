@@ -68,6 +68,25 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
          "structured_value": ["text_style_title": ["position": "top_left"]],
          "evidence": ["supporting_video_count": 3]]
     }
+    private static var textStyleDefaults: [String: Any] {
+        func role(placement: String = "auto", usual: String? = nil, fontHint: String? = nil) -> [String: Any] {
+            var value: [String: Any] = ["outline": "off", "shadow": "off", "color": "auto", "font": "auto", "placement": placement,
+                                        "placement_order": placement == "auto" ? ["bottom_left", "top_left", "middle", "top_right"] : []]
+            if let usual { value["usual_position"] = usual }
+            if let fontHint { value["font_hint"] = fontHint }
+            return value
+        }
+        let anchors: [String: (Double, Double, String)] = [
+            "top_left": (0.08, 0.12, "left"), "top": (0.5, 0.12, "center"), "top_right": (0.92, 0.12, "right"),
+            "middle": (0.5, 0.5, "center"), "bottom_left": (0.08, 0.78, "left"), "bottom": (0.5, 0.78, "center"),
+            "bottom_right": (0.92, 0.78, "right"),
+        ]
+        return ["roles": ["all_text": role(), "title": role(), "label": role(placement: "usual", usual: "bottom"),
+                          "pinned": role(placement: "usual"),
+                          "caption": role(fontHint: "TikTok Sans Bold"), "lyric": role()],
+                "position_anchors": anchors.mapValues { ["x": $0.0, "y": $0.1, "alignment": $0.2] },
+                "color_hint": "White, black or gray, whichever reads best on each shot."]
+    }
     private func bodyData(_ request: URLRequest) -> Data? {
         if let data = request.httpBody { return data }
         guard let stream = request.httpBodyStream else { return nil }
@@ -94,7 +113,8 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
             let body: [String: Any] = ["feature_available": true, "text_preferences_available": true, "enabled": true, "revision": revision,
                                       "active": item.map { [$0] } ?? [],
                                       "suggestions": learningEnabled && !learningDecided ? [learningSuggestion] : [],
-                                      "edit_learning": ["available": learning, "enabled": learningEnabled], "recent_undo": recentOperation as Any? ?? NSNull()]
+                                      "edit_learning": ["available": learning, "enabled": learningEnabled], "recent_undo": recentOperation as Any? ?? NSNull(),
+                                      "text_style_defaults": Self.textStyleDefaults]
             let data = try! JSONSerialization.data(withJSONObject: body)
             return (200, String(decoding: data, as: UTF8.self))
         }
