@@ -305,7 +305,7 @@ def test_extractor_prompt_teaches_style_intent_without_touching_the_main_planner
         BriefExtractionInput(creator_request="", user_message="x", conversation=[])
     )
     assert "style_intent" in prompt and "style_intent" not in _BRIEF_PROMPT_SECTION
-    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-10-30-v44"
+    assert BRIEF_EXTRACTOR_PROMPT_VERSION == "2026-10-31-v45"
     assert "request_scope" in prompt
     assert "preserve_editor_text" in prompt
     assert "editor_timing_only" in prompt

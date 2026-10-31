@@ -85,14 +85,6 @@ _cassette = _BASE._cassette
 
 def load_fixture() -> dict[str, Any]:
     fx = json.loads((FIXTURE_DIR / "fixture.json").read_text(encoding="utf-8"))
-    # RECONSTRUCTION, not a recording: prod recorded this brief before `main_creator` prompt v106,
-    # which writes `animated: true` for a generic "animated text" ask that names no style
-    # (prod wrote `facts: {}` and the ask lived only in the description). The scorecard replays
-    # the brief as that prompt writes it; whether the live model does so is graded by a live
-    # extractor run, not here.
-    for req in fx["brief"]["requirements"]:
-        if req.get("id") == "r1" and req.get("kind") == "text":
-            req["facts"] = {**req.get("facts", {}), "animated": True}
     return fx
 
 

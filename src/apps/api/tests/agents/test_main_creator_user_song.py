@@ -74,13 +74,13 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v103 (KRI-1027) teaches the `landscape_fit` fact ("fill" / "fit") for how sideways clips sit in
 # a vertical video: brief-on hashes re-pinned; brief-off unchanged.
 # v105 (KRI-1077): brief-on re-pinned for registry-rendered animation names.
-# v106 (prompt fidelity, disclosure): brief-on re-pinned for the generic `animated` fact.
+# v106 (prompt fidelity, animation): the two brief-enabled hashes re-pinned (one added paragraph).
 # v104 (cache layout): all four re-pinned; content is the same lines in a new order
 # (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "2609a03ce431b24ebaf8df49295fe78dcc329258782a9d7cc6fd243df23bec91",
+    (True, True): "d457efa4baba63866bd42139f883bb07d8b691995109ecdb8168b601c4b6d6b9",
     (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
-    (False, True): "81a78d8c6a90e81b8ceeb4c23e53653e25d0886d9c2fb5622620dc99ff4ce303",
+    (False, True): "1b9ba5be3204a86bce34fb042e62eb839bd628641481540f6d22cfaf30b243a6",
     (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 

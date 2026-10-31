@@ -169,9 +169,9 @@ log = structlog.get_logger()
 # (creator context, footage, manifest, conversation, message) moved to
 # prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
 # v105 (KRI-1077): title animation names come from the vocab registry (all designed edges).
-# v106 (prompt fidelity, disclosure): a generic "animated" text ask that names no style is
-# recorded as `animated: true`, so the server can tell the creator before approval what the
-# route does with it without reading the description's words.
+# v106 (prompt fidelity, animation): an UNNAMED animation ask ("with animations", "animated
+# text") is a `text` requirement carrying `animation: "any"`, not prose only; a named one
+# keeps its id. One fact for both: the disclosure unit's interim `animated: true` fact is gone.
 MAIN_CREATOR_PROMPT_VERSION = "2026-10-31-v106"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
@@ -613,12 +613,15 @@ creator's words for that video>", "keep_audio": true} (`keep_audio` false only w
 silent), whatever language they write in, and never as `last_clip` or `closing`. On a montage,
 adding or ending on a clip keeps `last_clip` as above. How on-screen text should look goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
-{{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter",
-or `animated: true` when they ask for animated or moving text without naming a style
-("animated on-screen text", "metni animasyonlu yap");
+{{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
 for "bottom left"; `placeholder` true when they ask for placeholder text to fill in later
-("placeholder location").
+("placeholder location"). Animation asked WITHOUT a name ("with animations", "animated text",
+"make the text animate") is still a `text` requirement carrying the fact, never description
+alone: {"kind": "text", "scope": "global", "facts": {"animation": "any"}} ("any" lets the
+server pick the entrance; "explain why people should visit Assos, with animations" => that
+text requirement for the explanation, animation "any"). A named one keeps its id ("fade in the
+captions" => animation "fade"). Record it only when the creator asked for animation.
 For requested heading stacks, preserve `heading_level` (1 title, 2 smaller subtitle,
 3 subordinate detail), `stack_id` (shared only by explicitly connected lines), `below_text`
 (exact predecessor words) and `smaller_than` (exact larger text words when smaller is asked)

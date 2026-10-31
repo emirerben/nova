@@ -11,7 +11,7 @@ each gap into a typed, creator-readable disclosure the draft shows BEFORE approv
   read is named ("I can't use the story structure ... on this video"). When a route unit
   starts reading a field, delete its entry here and the line disappears.
 * ``ask_declines``: brief asks nothing on the route reads (today: animated text outside the
-  title). They become a typed ``not_possible`` receipt (`with_route_declines`) whose reason is
+  title, when the phone plays no text entrance either). They become a typed ``not_possible`` receipt (`with_route_declines`) whose reason is
   a *route decline*: a format limit that never asks "simpler version?" and that approval
   readiness treats as approvable (disposition ``declined``).
 * ``research_notice``: the render's text step may search the web after approval.
@@ -108,8 +108,14 @@ def _story(value: Any, _s: Mapping[str, Any]) -> str | None:
     )
 
 
-def _pacing(value: Any, _s: Mapping[str, Any]) -> str | None:
+def _pacing(value: Any, strategy: Mapping[str, Any]) -> str | None:
     if not value or value == _ROUTE_PACE:
+        return None
+    from app.services.length_policy import effective_pace  # noqa: PLC0415
+
+    if effective_pace(strategy) is not None:
+        # The pace unit applies it: the route holds each clip as long as this pace says
+        # (`PACE_DRIVES_CUTS_ENABLED`). Only a silent "balanced" default is still not applied.
         return None
     return say(
         en=(
@@ -247,12 +253,27 @@ def is_route_decline_reason(reason: object) -> bool:
 
 def asks_text_animation(req: BriefRequirement) -> bool:
     """True when the ask is for moving text, from the brief's typed facts only: a typed
-    ``animation`` id, or ``animated`` (a generic "animated text" ask that named no style; the
-    brief writer records it, `main_creator` prompt v106). No wording is read here (KRI-667), so
-    an ask recorded without either fact is not disclosed."""
+    ``animation`` (an edge id, or "any" for a generic "animated text" ask that named no style;
+    the brief writer records it, `main_creator` prompt v106). No wording is read here
+    (KRI-667), so an ask recorded without the fact is not disclosed."""
     if req.kind not in {"text", "style"}:
         return False
-    return bool(req.facts.get("animation") or req.facts.get("animated"))
+    return bool(req.facts.get("animation"))
+
+
+def _text_animation_consumed(req: BriefRequirement) -> bool:
+    """The creation text pass plays this ask (prompt fidelity, animation unit).
+
+    Only a ``text`` ask the phone can play an entrance for: when the phone has not verified any
+    text-entrance form (``text_entrance_form`` is None) nothing moves, so the decline below
+    stays and says so. A ``style`` ask is not read by that pass."""
+    from app.kria.animation_ask import animation_ask, text_entrance_form  # noqa: PLC0415
+
+    return (
+        bool(settings.text_animation_ask_enabled)
+        and animation_ask(req) is not None
+        and text_entrance_form() is not None
+    )
 
 
 def _title_animation_consumed(req: BriefRequirement, strategy: Mapping[str, Any]) -> bool:
@@ -283,7 +304,11 @@ def ask_declines(
     for req in requirements:
         if not req.live:
             continue
-        if asks_text_animation(req) and not _title_animation_consumed(req, strategy):
+        if (
+            asks_text_animation(req)
+            and not _title_animation_consumed(req, strategy)
+            and not _text_animation_consumed(req)
+        ):
             out.append(
                 Disclosure(
                     NOT_APPLIED,

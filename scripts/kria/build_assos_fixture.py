@@ -104,6 +104,9 @@ def build(raw: Path) -> tuple[dict, dict]:
     brief = scrub(binding["brief"])
     for req in brief["requirements"]:
         req["source_turn_id"] = "synthetic-turn-1"
+    # Prod ran planner prompt v105 and recorded facts={}; v106 records an unnamed animation ask
+    # as facts.animation "any" (the model leg is not replayed offline).
+    brief["requirements"][0]["facts"] = {"animation": "any"}
 
     # ---- recorded prod outcome (what the unchanged code produced)
     variant = ap["variants"][0]
@@ -239,7 +242,8 @@ def build(raw: Path) -> tuple[dict, dict]:
             ),
             "captured": "2026-10-31 via read-only admin GETs (saved copies, no network now)",
             "recorded": [
-                "creator message and Creative Brief v1 (exact)",
+                "creator message and Creative Brief v1 (exact, except r1 facts.animation: "
+                "see reconstructed)",
                 "post-parse strategy of the planner (turns plan intents[0].arguments.strategy), "
                 "including the frozen song section",
                 "16 clip analyses (job assembly_plan.creator_brief_binding.media_snapshot)",
@@ -248,6 +252,10 @@ def build(raw: Path) -> tuple[dict, dict]:
                 "turn 2 chip text, assistant reply, brief_coverage and the copilot run outcome",
             ],
             "reconstructed": [
+                'Creative Brief v1 r1 facts.animation = "any": prod ran planner prompt v105 and '
+                "recorded facts={}; planner prompt v106 (prompt fidelity, animation) records an "
+                "unnamed animation ask there. The model leg is not replayed offline; the "
+                "structured round trip is pinned by tests/kria/test_text_animation_ask.py",
                 "nova.creator.main raw_text: prod redacts model I/O; the parsed strategy is "
                 "recorded exactly, but the raw model JSON is not replayed through "
                 "MainCreatorAgent.parse",

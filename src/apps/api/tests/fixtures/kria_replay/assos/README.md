@@ -13,7 +13,8 @@ The fixture was captured from origin/main `9c5a453b0`.
 
 ## Recorded (exact, from the saved prod capture)
 
-- creator message and Creative Brief v1 (one `text/global` requirement)
+- creator message and Creative Brief v1 (one `text/global` requirement; r1's `facts` is `{}` in
+  prod, see Reconstructed)
 - the planner's post-parse strategy, including the frozen catalog song section and its beats
 - the 16 clip analyses (media snapshot `clip_assignments`), durations, original sizes and rotation
 - `nova.research.public_facts` evidence (14 facts), `nova.research.caption_binding` raw text,
@@ -25,6 +26,10 @@ The fixture was captured from origin/main `9c5a453b0`.
 
 ## Reconstructed (prod redacts model I/O, or it was never stored)
 
+- Creative Brief v1 r1 `facts.animation = "any"`: prod ran planner prompt v105 and recorded
+  `facts={}`; planner prompt v106 (prompt fidelity, animation) records an unnamed animation ask
+  there. The model leg is not replayed offline; the server reads only the structured fact
+  (KRI-667), and `tests/kria/test_text_animation_ask.py` pins the round trip.
 - `nova.creator.main` raw text: the parsed strategy is recorded, the raw model JSON is not replayed
   through `MainCreatorAgent.parse`
 - `nova.edit.copilot` (creation text composer) raw text: rebuilt as a `research_request` whose
