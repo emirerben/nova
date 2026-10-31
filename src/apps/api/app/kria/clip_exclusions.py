@@ -15,7 +15,9 @@ of guessing:
   matches are only just over the bar (look-alikes it could not tell apart). What the
   creator tapped or typed is never contested, so an answer is never asked twice.
 * ``exclusion_question``: the picker for them, with the pinned clips left out of the
-  candidates and the matches pre-ticked.
+  candidates and the matches pre-ticked, never all the clips another live ask stands on
+  (``asked_clips``; Leverkusen M2: "Done" would have left out both goal clips the creator's
+  other asks were built on).
 * ``carry_forward_exclusions``: an ask the resolver matched in the draft before and matches
   nothing in this turn keeps that earlier match (the resolver is not deterministic, and the
   whole request is re-planned every turn).
@@ -69,6 +71,8 @@ class ContestedExclusion:
     protected: frozenset[str]
     # KRI-807: an exclude that matched nothing: the clips the resolver only suspected.
     suspected: tuple[str, ...] = ()
+    # Leverkusen M2: the clips of each other live ask (``asked_clips``).
+    others: tuple[frozenset[str], ...] = ()
 
     @property
     def blocked(self) -> tuple[str, ...]:
@@ -77,8 +81,16 @@ class ContestedExclusion:
 
     @property
     def suggested(self) -> list[str]:
-        """The clips the picker pre-ticks: the matches, else the suspects, never a pin."""
-        return [m for m in self.matched or self.suspected if m not in self.protected]
+        """The clips the picker pre-ticks: the matches, else the suspects, never a pin.
+
+        Leverkusen M2: nor the clips of another live ask the pre-ticks would leave with none
+        ("Done" on the kids skip took both goal clips, every clip of the Taha ask and the
+        TOR's only one). A skip may still take some of a group's clips (a first group of
+        three keeps its third).
+        """
+        picks = [m for m in self.matched or self.suspected if m not in self.protected]
+        emptied = {m for clips in self.others if clips <= set(picks) for m in clips}
+        return [m for m in picks if m not in emptied]
 
 
 def pinned_clips(
@@ -107,7 +119,21 @@ def pinned_clips(
     return frozenset(pinned)
 
 
-def _contested(intent: ResolvedClipIntent, protected: frozenset[str]) -> ContestedExclusion | None:
+def asked_clips(intents: Iterable[ResolvedClipIntent]) -> tuple[frozenset[str], ...]:
+    """The clips each non-skip ask matched, resolved or still asked about (Leverkusen M2: the
+    open TOR row had found the second goal clip)."""
+    return tuple(
+        frozenset(intent.media_ids())
+        for intent in intents
+        if intent.op != "exclude" and intent.assignments
+    )
+
+
+def _contested(
+    intent: ResolvedClipIntent,
+    protected: frozenset[str],
+    others: tuple[frozenset[str], ...] = (),
+) -> ContestedExclusion | None:
     if intent.op != "exclude" or intent.status != "resolved" or not intent.assignments:
         return None
     if any(a.evidence in CREATOR_EVIDENCE for a in intent.assignments):
@@ -117,15 +143,17 @@ def _contested(intent: ResolvedClipIntent, protected: frozenset[str]) -> Contest
     look_alikes = len(matched) >= 2 and (
         min(a.confidence for a in intent.assignments) < BORDERLINE_BELOW
     )
-    return ContestedExclusion(intent, matched, protected) if names_a_pin or look_alikes else None
+    if not (names_a_pin or look_alikes):
+        return None
+    return ContestedExclusion(intent, matched, protected, others=others)
 
 
 def contested_exclusions(
     intents: Sequence[ResolvedClipIntent], strategy: CreativeStrategy
 ) -> list[ContestedExclusion]:
     """The resolver-matched excludes the creator should settle, in the order written."""
-    protected = pinned_clips(intents, strategy)
-    return [c for intent in intents if (c := _contested(intent, protected)) is not None]
+    protected, others = pinned_clips(intents, strategy), asked_clips(intents)
+    return [c for intent in intents if (c := _contested(intent, protected, others)) is not None]
 
 
 def exclusions_to_ask(
@@ -143,10 +171,10 @@ def exclusions_to_ask(
     picker pre-ticks them and only the creator's tap leaves them out. A project with one
     clip is never asked which of its clips to leave out (that would leave nothing).
     """
-    protected = pinned_clips(intents, strategy)
+    protected, others = pinned_clips(intents, strategy), asked_clips(intents)
     asked: list[ContestedExclusion] = []
     for intent in intents:
-        contested = _contested(intent, protected)
+        contested = _contested(intent, protected, others)
         if contested is not None:
             asked.append(contested)
         elif (
@@ -159,7 +187,7 @@ def exclusions_to_ask(
             and intent.by_length is None
         ):
             suspected = tuple(dict.fromkeys(suspects.get(intent.intent_id, ())))
-            asked.append(ContestedExclusion(intent, (), protected, suspected))
+            asked.append(ContestedExclusion(intent, (), protected, suspected, others))
     return asked
 
 
@@ -417,6 +445,7 @@ __all__ = [
     "BORDERLINE_BELOW",
     "EARLIER_DRAFT_EVIDENCE",
     "ContestedExclusion",
+    "asked_clips",
     "carry_forward_exclusions",
     "contested_exclusions",
     "earlier_exclusions",
