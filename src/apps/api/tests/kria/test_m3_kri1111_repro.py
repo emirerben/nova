@@ -450,15 +450,15 @@ async def test_f7_the_turn_takes_the_opening_off_the_brief_and_says_so(
     # The reconstruction is the recording: v3 + this batch is v4, row for row.
     assert _rows_of(apply_updates(_brief_v3(), batch, source_turn_id=turn)) == _rows_of(_brief_v4())
 
-    await _turn_1328(monkeypatch)
+    planned = await _turn_1328(monkeypatch)
 
     # What the turn's planning found: the creator left out the opening the brief names.
-    left_out = planner.turn_excluded_anchors.get()
-    assert left_out == {"first": MY_TICKET}
-    from app.services.anchor_exclusions import withdraw_excluded_anchors  # noqa: PLC0415
-
-    withdrawal = withdraw_excluded_anchors(_brief_v3(), batch, left_out)
-    after = apply_updates(_brief_v3(), withdrawal.updates, source_turn_id=turn)
+    assert planner.turn_excluded_anchors.get() == {"first": MY_TICKET}
+    # `_plan_live_turn`'s last step, over the brief the turn started from and its updates.
+    planned, updates, notices = planner._without_excluded_anchors(
+        planned, _brief_v3(), tuple(batch), ()
+    )
+    after = apply_updates(_brief_v3(), updates, source_turn_id=turn)
     r1 = next(r for r in after.live() if r.id == "r1")
     # Only the opening goes: filming order and the model's new ending stay, no null is stored.
     assert r1.facts == {"key": "capture_time", "last_clip": ENDING}
@@ -466,7 +466,27 @@ async def test_f7_the_turn_takes_the_opening_off_the_brief_and_says_so(
     assert stated_anchors(after) == {"last": ENDING}
     # The rest of the batch is the model's, untouched (r8 moved, r10 added).
     assert _rows_of(after)[1:] == _rows_of(_brief_v4())[1:]
-    assert withdrawal.notices == (DROPPED,)
+    # Said on the draft (`pin_notices`) and, as this turn asks first, after the question.
+    assert notices == (DROPPED,)
+    assert planned.plan.response == (
+        'I couldn\'t tell which of your clips to leave out for "the ticket". Tap the ones to '
+        f"leave out, or tell me none. {DROPPED}"
+    )
+
+
+def test_f7_an_ending_the_model_withdrew_in_the_same_change_stays_withdrawn() -> None:
+    """The model's own change nulls the ending while the opening is left out: neither is
+    carried back from v3 by the server's replacement of that change."""
+    from app.services.anchor_exclusions import withdraw_excluded_anchors  # noqa: PLC0415
+
+    batch = _batch_1326(model_kept_first=True)
+    batch[0] = batch[0].model_copy(update={"facts": {"key": "capture_time", "last_clip": None}})
+
+    withdrawal = withdraw_excluded_anchors(_brief_v3(), batch, {"first": MY_TICKET})
+
+    after = apply_updates(_brief_v3(), withdrawal.updates, source_turn_id="t")
+    assert next(r for r in after.live() if r.id == "r1").facts == {"key": "capture_time"}
+    assert stated_anchors(after) == {}
 
 
 def _inventory(leave_out: str | None) -> list[ClipIntent]:
