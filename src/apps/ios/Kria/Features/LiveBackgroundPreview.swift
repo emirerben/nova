@@ -89,10 +89,18 @@ struct LiveBackgroundStatistics: Equatable, Sendable {
     var framesRaw = 0
 }
 
-/// Draws the creator in front of the chosen background, on the camera's frame queue, into a `CAMetalLayer`.
+/// Draws the creator in front of the chosen background, on the camera's frame queue, into pooled IOSurface-backed pixel
+/// buffers shown as a layer's contents.
+///
+/// Why pixel buffers and not a `CAMetalLayer` drawable (device finding 2026-10-31): the first version flipped the image
+/// vertically before `CIContext.render(_:to: MTLTexture...)`, because Core Image's origin is bottom-left. The simulator
+/// (macOS Core Image) read back upright with that flip, but the iPhone 13 Pro showed the whole composite upside down, so
+/// the two platforms disagree about the texture's origin. A pixel buffer has no such ambiguity: Core Image writes the top
+/// of the image to row 0 on both, exactly as `CIImage(cvPixelBuffer:)` reads it back. So no flip is applied anywhere and
+/// the readback tests below pin the same rows the screen shows.
 /// The preview is a convenience: it never touches the recording, and any failure shows the raw frame instead (S25).
 final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Sendable {
-    let layer = CAMetalLayer()
+    let layer = CALayer()
     private let segmenter: any PersonSegmenting
     private let queue: (any MTLCommandQueue)?
     private let context: CIContext
@@ -106,18 +114,27 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
 
     init(segmenter: any PersonSegmenting = VisionPersonSegmenter()) {
         self.segmenter = segmenter
-        let device = MTLCreateSystemDefaultDevice()
-        queue = device?.makeCommandQueue()
+        queue = MTLCreateSystemDefaultDevice()?.makeCommandQueue()
         context = LiveBackgroundCompositor.makeContext(commandQueue: queue)
-        super.init()
         let size = LiveSpeakerMatteConfig.previewSize
-        layer.device = device
-        layer.pixelFormat = .bgra8Unorm
-        layer.framebufferOnly = false
-        layer.drawableSize = size
-        layer.maximumDrawableCount = 3
+        let attributes: [CFString: Any] = [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey: Int(size.width), kCVPixelBufferHeightKey: Int(size.height),
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as [CFString: Any],
+            kCVPixelBufferMetalCompatibilityKey: true,
+        ]
+        var pool: CVPixelBufferPool?
+        CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pool)
+        self.pool = pool
+        super.init()
         layer.contentsGravity = .resizeAspect
+        layer.isOpaque = true
     }
+
+    private let pool: CVPixelBufferPool?
+    /// The last few frames, kept alive so a surface the layer may still be showing is never recycled underneath it.
+    private var recent: [CVPixelBuffer] = []
+    private static let ringSize = 3
 
     var statistics: LiveBackgroundStatistics { lock.lock(); defer { lock.unlock() }; return stats }
 
@@ -149,26 +166,45 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
         if background != nil {
             do { matte = try segmenter.mask(for: frame) } catch { matte = nil }
         }
-        let image = LiveBackgroundCompositor.compose(
-            frame: CIImage(cvPixelBuffer: frame),
-            mask: matte.map(LiveBackgroundCompositor.maskImage),
-            background: background ?? CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: LiveSpeakerMatteConfig.previewSize)),
-            canvas: LiveSpeakerMatteConfig.previewSize, mirrored: mirrored)
+        let image = composite(frame: frame, matte: matte, background: background, mirrored: mirrored)
         lock.lock()
         if matte != nil { stats.framesMatted += 1 } else { stats.framesRaw += 1 }
         lock.unlock()
         present(image)
     }
 
-    private func present(_ image: CIImage) {
-        guard let queue, let drawable = layer.nextDrawable(), let commands = queue.makeCommandBuffer() else { return }
-        let size = LiveSpeakerMatteConfig.previewSize
-        // Core Image's origin is bottom-left and a texture's is top-left.
-        let upright = image.transformed(by: CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: size.height))
-        context.render(upright, to: drawable.texture, commandBuffer: commands, bounds: CGRect(origin: .zero, size: size),
+    /// The composite exactly as `consume` draws it, in Core Image space. Split out so a test can send it through the same
+    /// render step as the screen.
+    func composite(frame: CVPixelBuffer, matte: CVPixelBuffer?, background: CIImage?, mirrored: Bool) -> CIImage {
+        LiveBackgroundCompositor.compose(
+            frame: CIImage(cvPixelBuffer: frame),
+            mask: matte.map(LiveBackgroundCompositor.maskImage),
+            background: background ?? CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: LiveSpeakerMatteConfig.previewSize)),
+            canvas: LiveSpeakerMatteConfig.previewSize, mirrored: mirrored)
+    }
+
+    /// The one place an image becomes pixel rows: Core Image's top row goes to row 0 of the buffer, which is the top row the
+    /// layer shows. No flip.
+    func render(_ image: CIImage) -> CVPixelBuffer? {
+        guard let pool else { return nil }
+        let aux: [CFString: Any] = [kCVPixelBufferPoolAllocationThresholdKey: Self.ringSize + 1]
+        var buffer: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool, aux as CFDictionary, &buffer) == kCVReturnSuccess,
+              let buffer else { return nil }
+        context.render(image, to: buffer, bounds: CGRect(origin: .zero, size: LiveSpeakerMatteConfig.previewSize),
                        colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
-        commands.present(drawable)
-        commands.commit()
+        return buffer
+    }
+
+    private func present(_ image: CIImage) {
+        guard let buffer = render(image), let surface = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue() else { return }
+        lock.lock()
+        recent.append(buffer)
+        if recent.count > Self.ringSize { recent.removeFirst(recent.count - Self.ringSize) }
+        lock.unlock()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer.contents = surface
+        CATransaction.commit()
     }
 }
 
@@ -181,18 +217,18 @@ struct LiveBackgroundPreviewView: UIViewRepresentable {
     func updateUIView(_ uiView: HostView, context: Context) {}
 
     final class HostView: UIView {
-        private let metalLayer: CAMetalLayer
-        init(layer metalLayer: CAMetalLayer) {
-            self.metalLayer = metalLayer
+        private let contentLayer: CALayer
+        init(layer contentLayer: CALayer) {
+            self.contentLayer = contentLayer
             super.init(frame: .zero)
             backgroundColor = .black
-            layer.addSublayer(metalLayer)
+            layer.addSublayer(contentLayer)
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
         override func layoutSubviews() {
             super.layoutSubviews()
             CATransaction.begin(); CATransaction.setDisableActions(true)
-            metalLayer.frame = bounds
+            contentLayer.frame = bounds
             CATransaction.commit()
         }
     }

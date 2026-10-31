@@ -249,4 +249,121 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         do { _ = try await LoopingVideoBackground(url: url); XCTFail("expected a failure") } catch { }
     }
+
+    // MARK: Presentation (device finding 2026-10-31: the whole composite was upside down on screen)
+    //
+    // compose() is pinned in Core Image space elsewhere. These tests send the composite through the SAME render step the
+    // screen uses and read the buffer back, where row 0 is the top row the layer shows. (The first version drew into a
+    // CAMetalLayer texture; the simulator's readback passed with a vertical flip while the iPhone showed it upside down.
+    // Pixel buffers have the same row order on both, so these tests now mean the same thing on the device.)
+
+    private let previewWidth = Int(LiveSpeakerMatteConfig.previewSize.width)
+    private let previewHeight = Int(LiveSpeakerMatteConfig.previewSize.height)
+
+    /// 36x64 camera frame: red marker block in the top-left corner (buffer row 0 is the top), black elsewhere.
+    private func markerFrame() -> CVPixelBuffer {
+        let buffer = pixelBuffer(width: 36, height: 64, (0, 0, 0))
+        CVPixelBufferLockBaseAddress(buffer, [])
+        let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+        let stride = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0..<16 { for x in 0..<12 { let i = y * stride + x * 4; base[i] = 0; base[i + 1] = 0; base[i + 2] = 255 } }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        return buffer
+    }
+
+    /// Renders through the presenter's own `render` and returns (r, g, b) at a pixel; row 0 is the top row the layer shows.
+    private func texturePixels(of image: CIImage, with preview: LiveBackgroundPreview) throws -> (Int, Int) -> (r: Int, g: Int, b: Int) {
+        let buffer = try XCTUnwrap(preview.render(image))
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        let stride = CVPixelBufferGetBytesPerRow(buffer)
+        let count = stride * CVPixelBufferGetHeight(buffer)
+        let bytes = Array(UnsafeBufferPointer(start: CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self), count: count))
+        CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+        return { x, row in let i = row * stride + x * 4; return (Int(bytes[i + 2]), Int(bytes[i + 1]), Int(bytes[i])) }
+    }
+
+    func testACameraMarkerInTheTopLeftLandsInTextureRowZeroColumnZero() throws {
+        let preview = LiveBackgroundPreview(segmenter: FullSegmenter())
+        let image = preview.composite(frame: markerFrame(), matte: nil, background: nil, mirrored: false)
+        let pixel = try texturePixels(of: image, with: preview)
+        XCTAssertGreaterThan(pixel(40, 40).r, 200, "top-left marker is at the top of the texture")
+        XCTAssertLessThan(pixel(40, previewHeight - 40).r, 50, "and not at the bottom")
+        XCTAssertLessThan(pixel(previewWidth - 40, 40).r, 50, "and not at the top-right")
+    }
+
+    func testAMirroredCameraMarkerMovesToTheTopRightAndStaysAtTheTop() throws {
+        let preview = LiveBackgroundPreview(segmenter: FullSegmenter())
+        let image = preview.composite(frame: markerFrame(), matte: nil, background: nil, mirrored: true)
+        let pixel = try texturePixels(of: image, with: preview)
+        XCTAssertGreaterThan(pixel(previewWidth - 40, 40).r, 200)
+        XCTAssertLessThan(pixel(40, 40).r, 50)
+        XCTAssertLessThan(pixel(previewWidth - 40, previewHeight - 40).r, 50)
+    }
+
+    func testAPhotoBackgroundMarkerInTheTopLeftIsUprightOnScreen() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let context = CGContext(data: nil, width: 90, height: 160, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 90, height: 160))
+        // CGContext origin is bottom-left: y 120..160 is the TOP of the picture.
+        context.setFillColor(CGColor(red: 0, green: 1, blue: 0, alpha: 1)); context.fill(CGRect(x: 0, y: 120, width: 30, height: 40))
+        try XCTUnwrap(UIImage(cgImage: context.makeImage()!).pngData()).write(to: url)
+        let background = try XCTUnwrap(StillBackground(url: url).frame())
+        let preview = LiveBackgroundPreview(segmenter: FullSegmenter())
+        // No camera in front: a mask of zeros shows only the background.
+        let empty = FullSegmenterBuffer.zeros()
+        let image = preview.composite(frame: markerFrame(), matte: empty, background: background, mirrored: false)
+        let pixel = try texturePixels(of: image, with: preview)
+        XCTAssertGreaterThan(pixel(40, 40).g, 200, "photo marker top-left is at the top of the texture")
+        XCTAssertLessThan(pixel(40, previewHeight - 40).g, 50)
+    }
+
+    func testAVideoBackgroundMarkerInTheTopLeftIsUprightOnScreen() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await writeMarkerVideo(to: url)
+        let video = try await LoopingVideoBackground(url: url)
+        defer { video.stop() }
+        var frame: CIImage?
+        for _ in 0..<60 where frame == nil { frame = video.frame(); try await Task.sleep(for: .milliseconds(50)) }
+        let preview = LiveBackgroundPreview(segmenter: FullSegmenter())
+        let image = preview.composite(frame: markerFrame(), matte: FullSegmenterBuffer.zeros(), background: try XCTUnwrap(frame), mirrored: false)
+        let pixel = try texturePixels(of: image, with: preview)
+        XCTAssertGreaterThan(pixel(40, 40).g, 150, "video marker top-left is at the top of the texture")
+        XCTAssertLessThan(pixel(40, previewHeight - 40).g, 60)
+    }
+
+    private func writeMarkerVideo(to url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 90, AVVideoHeightKey: 160])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: nil)
+        writer.add(input); writer.startWriting(); writer.startSession(atSourceTime: .zero)
+        let frame = pixelBuffer(width: 90, height: 160, (0, 0, 0))
+        CVPixelBufferLockBaseAddress(frame, [])
+        let base = CVPixelBufferGetBaseAddress(frame)!.assumingMemoryBound(to: UInt8.self)
+        let stride = CVPixelBufferGetBytesPerRow(frame)
+        for y in 0..<40 { for x in 0..<30 { let i = y * stride + x * 4; base[i] = 0; base[i + 1] = 255; base[i + 2] = 0 } } // BGRA green, buffer row 0 = top
+        CVPixelBufferUnlockBaseAddress(frame, [])
+        for i in 0..<15 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+            adaptor.append(frame, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 30))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed)
+    }
+}
+
+enum FullSegmenterBuffer {
+    /// An all-zero 8-bit mask: nobody in frame.
+    static func zeros() -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 6, 8, kCVPixelFormatType_OneComponent8, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer)
+        let pixels = buffer!
+        CVPixelBufferLockBaseAddress(pixels, [])
+        memset(CVPixelBufferGetBaseAddress(pixels), 0, CVPixelBufferGetBytesPerRow(pixels) * 8)
+        CVPixelBufferUnlockBaseAddress(pixels, [])
+        return pixels
+    }
 }
