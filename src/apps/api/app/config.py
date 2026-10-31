@@ -2430,6 +2430,15 @@ class Settings(BaseSettings):
     # stored nor shown to any prompt. Emergency rollback: `fly secrets set
     # SPEECH_EXCERPT_MONTAGE_ENABLED=false --app nova-video` + restart api+worker.
     speech_excerpt_montage_enabled: bool = True
+    # Pace unit (prompt fidelity): the planner's `pacing` (relaxed / balanced / fast) sets how
+    # long each clip is held in a phone montage, and the plan's snapshot carries the strategy's
+    # pace instead of the constant "fast". true = pacing drives cut lengths (shared rule
+    # `schemas.edit_proposal.pace_hold_bounds`, used by approval-time length planning and by
+    # the render); false = every cut length and the snapshot pace are byte-identical to before.
+    # A creator-stated length always wins over pace and no clip is ever dropped for it.
+    # Rollback: `fly secrets set PACE_DRIVES_CUTS_ENABLED=false --app nova-video` + restart
+    # api+worker.
+    pace_drives_cuts_enabled: bool = True
     # KRI-808: a clip's timed words are kept only when whisper's language agrees with the
     # clip's Gemini transcript; a pass that disagrees (whisper TRANSLATED accented speech) is
     # re-transcribed in the language Gemini or the chat heard, else stored as no words. Also

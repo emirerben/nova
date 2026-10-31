@@ -39,6 +39,7 @@ SERVER_FIELDS = {
     "song_captions",
     "creator_duration_s",
     "target_duration_requested",
+    "pacing_requested",
     "selected_music_section",
 }
 MODEL_HIDDEN = {

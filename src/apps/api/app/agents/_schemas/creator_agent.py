@@ -640,6 +640,14 @@ class CreativeStrategy(_CreatorModel):
         ),
     )
     pacing: CreativePace = "balanced"
+    # Server-owned provenance for ``pacing``, mirroring ``target_duration_requested``: the
+    # default "balanced" is otherwise indistinguishable from the creator saying it. True only
+    # where the creator's own words name a pace; absent (None) otherwise, so stored strategies
+    # stay byte-identical. A non-default pacing is honored without it (see
+    # ``services.length_policy.effective_pace``).
+    pacing_requested: SkipJsonSchema[bool | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     target_duration_s: ProposalDuration = Field(default=24, exclude_if=lambda value: value == 24)
     # Server-owned provenance for the duration field.  The public/default 24s
     # value is deliberately omitted from stored strategies, but a creator may

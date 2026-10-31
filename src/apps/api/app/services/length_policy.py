@@ -294,6 +294,80 @@ def natural_length_owner(strategy: Mapping[str, object] | object) -> LengthOwner
     return NATURAL_OWNER_DECLARATION[edit_format][audio]
 
 
+PaceName = Literal["relaxed", "balanced", "fast"]
+_PACE_NAMES: frozenset[str] = frozenset({"relaxed", "balanced", "fast"})
+# The directions the phone montage route can build (hard cuts over fast_cuts). A strategy
+# direction outside this set is built as the first one and the plan says so.
+ROUTE_BUILDABLE_DIRECTIONS: tuple[str, ...] = ("fast_montage",)
+FALLBACK_ROUTE_DIRECTION = "fast_montage"
+
+
+def stated_pace(strategy: Mapping[str, object] | object) -> PaceName | None:
+    """The strategy's pacing when pace may drive the montage at all, else None.
+
+    None when the kill switch is off or the strategy carries no valid pacing; callers then
+    keep today's behavior byte for byte.
+    """
+
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.pace_drives_cuts_enabled:
+        return None
+    pacing = _value(strategy, "pacing")
+    return pacing if isinstance(pacing, str) and pacing in _PACE_NAMES else None  # type: ignore[return-value]
+
+
+def effective_pace(strategy: Mapping[str, object] | object) -> PaceName | None:
+    """The pace that changes cut LENGTHS, or None when nothing was said.
+
+    ``pacing`` defaults to "balanced", so a plain "balanced" is silence (today's lengths) unless
+    the server recorded that the creator said it (``pacing_requested``, like
+    ``target_duration_requested``). "relaxed" and "fast" are decisions: the creator's words or
+    the planner's own choice, and either way they reach the cut.
+    """
+
+    pace = stated_pace(strategy)
+    if pace is None:
+        return None
+    if pace == "balanced" and _value(strategy, "pacing_requested") is not True:
+        return None
+    return pace
+
+
+def route_direction(strategy: Mapping[str, object] | object) -> str:
+    """The direction the phone montage snapshot carries: the strategy's, when this route can
+    build it, else the one it can (and the plan records the request)."""
+
+    from app.config import settings  # noqa: PLC0415
+
+    direction = _value(strategy, "direction")
+    if (
+        settings.pace_drives_cuts_enabled
+        and isinstance(direction, str)
+        and direction in ROUTE_BUILDABLE_DIRECTIONS
+    ):
+        return direction
+    return FALLBACK_ROUTE_DIRECTION
+
+
+def direction_not_built(strategy: Mapping[str, object] | object) -> str | None:
+    """The strategy's direction when this route had to build another one, else None.
+
+    None with the kill switch off, so every record stays byte-identical to before.
+    """
+
+    from app.config import settings  # noqa: PLC0415
+
+    direction = _value(strategy, "direction")
+    if (
+        settings.pace_drives_cuts_enabled
+        and isinstance(direction, str)
+        and direction != route_direction(strategy)
+    ):
+        return direction
+    return None
+
+
 def _selected_music_section(strategy: Mapping[str, object] | object) -> bool:
     section = _value(strategy, "selected_music_section")
     if not isinstance(section, Mapping):
