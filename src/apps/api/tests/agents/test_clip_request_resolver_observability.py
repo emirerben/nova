@@ -86,7 +86,11 @@ def test_r2_the_intents_and_the_clip_records_stay_readable() -> None:
     assert SEAT in json.dumps(projected)
 
 
-def test_r3_the_marker_is_the_planners_marker() -> None:
+def test_r3_the_marker_has_the_planners_shape() -> None:
+    """Same fields and digest rule as the planner's marker. The two agents are not handed the
+    same string in a real run (the resolver's request has clip ids replaced by aliases), so the
+    digests only agree here, on one input; the marker is for sizing and de-duplicating a run's
+    own rows, not for matching the planner's."""
     marker = _projected()["creator_request"]
     assert marker == {
         "redacted": True,
@@ -99,12 +103,14 @@ def test_r3_the_marker_is_the_planners_marker() -> None:
     assert marker == planner_marker
 
 
-def test_r4_the_model_still_sees_the_request() -> None:
-    agent = _agent()
-    before = agent.render_prompt(_input())
-    agent.project_input_for_observability(_input().model_dump())
-    assert agent.render_prompt(_input()) == before
-    assert _input().creator_request == REQUEST
+def test_r4_the_model_still_sees_the_request(prod_profile, monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = _Provider()
+    monkeypatch.setattr(_persistence, "persist_agent_run", lambda **_kw: None)
+    ClipRequestResolverAgent(provider).run(  # type: ignore[arg-type]
+        _input(), ctx=RunContext(plan_item_id="00000000-0000-0000-0000-000000000001")
+    )
+    [prompt] = provider.prompts
+    assert REQUEST in prompt  # the saved row is redacted; what the model reads is not
 
 
 @pytest.mark.parametrize("request_text", ["", "   "])
@@ -118,7 +124,11 @@ def test_r6_a_missing_input_projects_to_nothing() -> None:
 
 
 class _Provider:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
     def invoke(self, *, prompt: str, **_kwargs: Any) -> ModelInvocation:
+        self.prompts.append(prompt)
         empty = {"intent_id": "i_seat", "assignments": [], "needs_vision": []}
         return ModelInvocation(raw_text=json.dumps({"intents": [empty]}))
 
