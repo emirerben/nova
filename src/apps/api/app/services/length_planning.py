@@ -295,6 +295,7 @@ def build_length_plan(
     pinned_moments: Sequence[Mapping[str, Any]] | None = None,
     skipped_moments: Sequence[Mapping[str, Any]] | None = None,
     attached_visual_ids: Collection[str] = (),
+    visual_budget_s: float = 0.0,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -302,6 +303,9 @@ def build_length_plan(
     places beside the footage: attached, not source rows, never missing. Their seconds stay
     with ``asset_holds.visual_budget`` (already off the creator's target), so they are neither
     sources nor counted twice; an id in neither the clip rows nor this set is truly gone.
+    ``visual_budget_s`` is that budget's total, recorded on the plan as ``visual_budget_s``
+    so a reader of its length counts the Visuals too (the windows alone ran a 25 s montage
+    with three photos as 21.4 s, Leverkusen M1 run 2); a plan with no placed Visual omits it.
 
     KRI-723: ``pinned_moments`` (``named_moments.Pin.json()``, the creator's final order) are
     the named moments of the edit's one take with their authority: the creator's own pointed
@@ -743,6 +747,8 @@ def build_length_plan(
         "windows": windows,
         "conflicts": conflicts,
     }
+    if visual_budget_s > 0:
+        plan["visual_budget_s"] = round(float(visual_budget_s), 3)
     if missing_ids:
         # KRI-989: the ids that are genuinely gone, so the question can offer to leave them out.
         plan["missing_source_ids"] = sorted(missing_ids)

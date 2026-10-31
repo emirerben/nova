@@ -3812,6 +3812,57 @@
         "Leverkusen M1 iPhone re-send after deploy (needs KRI-1067 and KRI-1069 too for a video)"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "lev-m1-run2-skip-inside-first-group",
+      "tickets": [
+        "Leverkusen M1 run 2 #5",
+        "KRI-1076",
+        "KRI-761"
+      ],
+      "symptom": "Leverkusen M1 run 2 (thread 1a2189cc, turn 78855290, 2026-10-30): \"Put everything in the order I filmed it, starting with the train ride ... Skip the photo of the empty train seat\". The skip matched no clip (KRI-1076), and its clip picker offered 7 videos and 3 photos but not the seat photo IMG_1001, the train-display photo or the train video: \"the train ride\" matched all three and pinned_clips pinned every clip of a first/last ask. The creator could only answer None and the seat photo stayed in the edit. A matched skip hit the same rule: asked with the photo hidden, then kept because the group named it.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "Leverkusen M1 run 2 #5",
+      "journey": "kri-761-look-alike-exclusions",
+      "paths": [
+        "src/apps/api/app/kria/clip_exclusions.py",
+        "src/apps/api/app/kria/clip_scope.py",
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_skip_picker.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_lev_m1_skip_inside_first_group.py",
+        "tests/kria/test_kri761_look_alike_exclusions.py",
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "tests/kria/test_kri1026_plaza_exclusions.py",
+        "tests/kria/test_kri667_clip_exclusions.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": "kria_clip_selection_questions_enabled",
+      "evidence": {
+        "offline_replay": "The turn's 13 items (prod ids, kinds, lengths, photo records and capture times) through the real clip-intent planner and resolver agents (two resolver shards, as prod logged) and the real runtime-v2 planner; only the provider transport answers, with prod's four intents and a reconstructed train-ride match (IMG_0995, IMG_1001, IMG_1002). The real functions over those intents reproduce prod's 10 picker candidates exactly. Red before the fix (seat photo not offered; a matched skip asks with it hidden), green after: 12 offered (only the montage-audio train video held back), tap -> next turn drafts without IMG_1001 with the display photo and train video still opening; a matched skip leaves it with no question.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; the picker card is the existing KRI-761 exclude category, not device-checked for this ask.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "unmatched skip inside a first group: every clip but the strategy's sound source offered, nothing pre-ticked",
+        "tap -> left out, no second ask; None keeps every clip",
+        "matched skip inside a first group: applied without a question, the rest of the group still opens",
+        "a skip naming every clip of the group keeps them and says \"I couldn't leave out\"; the creator's tap still wins",
+        "a one-clip first/last ask is still a pin (KRI-761 Merope tray clip): never offered, never dropped by a resolver match, a matching skip asks",
+        "montage-audio source never offered or dropped",
+        "look-alike skips still ask; a capture-time order never pins (KRI-1026)"
+      ],
+      "neighbours_gap": [
+        "The resolver's train-ride matches are reconstructed (resolver I/O is not stored); run 1 matched one clip and offered every photo.",
+        "An op=group ask (\"keep the kitchen clips together\") still keeps a clip a matched skip names (KRI-667 rule, unchanged): said with the KRI-1026 notice.",
+        "The skip itself still matches nothing for the seat photo (KRI-1076, resolver)."
+      ],
+      "follow_ups": [
+        "KRI-1076"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

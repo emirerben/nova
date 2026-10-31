@@ -1131,8 +1131,10 @@ def recognize_total_duration_s(text: str) -> int | float | None:
     """Recognize an explicit whole-output duration without guessing from cut timing."""
 
     normalized = " ".join(str(text or "").casefold().split())
+    # KRI-1071: no "for/lasting N seconds" here. It times a shot as often as the video ("Show
+    # the whole line-up sheet for 3 seconds ... Make it 20 seconds." read as 3), so the brief,
+    # which tells a hold from the total, owns it (KRI-667 language policy).
     patterns = (
-        r"\b(?:for|lasting)\s+(\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
         r"\b(?:total|length)\s+(?:of\s+)?(\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
         r"\bmake\s+it\s+(\d{1,3}(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b",
         r"\bmake\s+(?:a\s+)?(\d{1,3}(?:\.\d+)?)[-\s]*(?:second|sec|s)\s+(?:edit|video)\b",

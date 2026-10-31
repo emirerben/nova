@@ -172,7 +172,7 @@ def test_prods_recorded_one_row_strategy_reproduces_prods_cut_order() -> None:
 def test_a_saved_list_without_ordering_certainty_cannot_claim_checked_order() -> None:
     receipt = _receipts(_plan(_recorded_strategy()))["r2"]
     assert receipt.status == "partial"
-    assert "order" in receipt.reason.casefold() and "saved" in receipt.reason.casefold()
+    assert "didn't say what order" in receipt.reason.casefold()
 
 
 # -- the fix: one row per subject -----------------------------------------------------------

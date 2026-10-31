@@ -89,9 +89,10 @@ def conversation_revision_matches_sync(
     a draft or an answer. An identical re-send of the creator's message (and the one-line
     answer it gets) carries nothing new for a turn that is already planning that message, so
     those events, and the automatic title, must not throw the turn back to plan again. Nor
-    must a follow-up the creator sent meanwhile: it waits as a queued turn and is planned on
-    its own after this one, so re-planning this turn with it would act on it twice. Any
-    other event in the gap is a real change.
+    must a rename from the chat list (KRI-1075): the chat name is display-only and no planner
+    input reads it. Nor must a follow-up the creator sent meanwhile: it waits as a queued
+    turn and is planned on its own after this one, so re-planning this turn with it would act
+    on it twice. Any other event in the gap is a real change.
     """
     if matches_conversation_revision(thread, expected_revision):
         return True
@@ -112,6 +113,7 @@ def conversation_revision_matches_sync(
     title_revision = (getattr(thread, "state", None) or {}).get("title_generated_revision")
     return bool(rows) and all(
         (kind == "thread_title_generated" and revision == title_revision)
+        or kind == "thread_renamed"
         or (isinstance(payload, dict) and payload.get("duplicate_of"))
         or (
             kind == "user_message"
