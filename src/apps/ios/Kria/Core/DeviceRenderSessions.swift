@@ -1158,14 +1158,21 @@ enum DeviceRenderGate: Equatable {
     func cancel(_ key: DeviceRenderKey) async {
         guard await synchronizeOwner() else { return }
         let operation = UUID()
-        let pending = pendingRetries[key].flatMap { pending in
-            pending.operation == keyOperations[key] || pending.stoppedBy == keyOperations[key] ? pending : nil
+        let current: UUID? = keyOperations[key]
+        let pending: PendingRetry? = pendingRetries[key].flatMap { (pending: PendingRetry) -> PendingRetry? in
+            let owned: Bool = pending.operation == current || pending.stoppedBy == current
+            return owned ? pending : nil
         }
         keyOperations[key] = operation
         if pending != nil { pendingRetries[key]?.stoppedBy = operation }
         let stored = try? intentStore.load(intentKey(key))
-        let target = heldRequests[key]?.identity ?? pending?.acknowledgement ?? pending?.sourceIdentity ?? requests[key]?.identity
-            ?? stored?.acknowledgement ?? stored?.observedIdentity ?? stored?.sourceIdentity
+        // Split into typed steps: the single nine-operand chain exceeded Xcode 26.3's type-check budget.
+        // Precedence is unchanged: held request, then the pending retry, then the live request, then storage.
+        let held: DeviceRenderIdentity? = heldRequests[key]?.identity
+        let retried: DeviceRenderIdentity? = pending?.acknowledgement ?? pending?.sourceIdentity
+        let live: DeviceRenderIdentity? = held ?? retried ?? requests[key]?.identity
+        let recorded: DeviceRenderIdentity? = stored?.acknowledgement ?? stored?.observedIdentity ?? stored?.sourceIdentity
+        let target: DeviceRenderIdentity? = live ?? recorded
         var storageFailed = false
         do {
             let storageKey = try intentKey(key)

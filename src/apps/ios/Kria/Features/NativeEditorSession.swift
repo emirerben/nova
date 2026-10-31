@@ -8554,3 +8554,6 @@ struct NativeEditorTemporaryVideo: Sendable {
 }
 
 private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
+
+// Declared here, in the scanned session file, so the editor capability parity test sees every extension.
+extension NativeEditorSession: NativeEditorExportSource {}

@@ -53,8 +53,6 @@ private struct ResolvedExportFile {
     func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo
 }
 
-extension NativeEditorSession: NativeEditorExportSource {}
-
 @MainActor final class NativeEditorExporter: ObservableObject {
     @Published private(set) var phase: NativeEditorExportPhase = .idle
     @Published var isSharing = false
