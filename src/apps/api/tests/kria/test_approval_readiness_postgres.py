@@ -266,11 +266,12 @@ async def _approve_over_http(monkeypatch, user_id, thread_id, approval) -> httpx
 @pytest.mark.parametrize(
     ("extra", "outcome"),
     [
-        # An English reader owns "remove ... noise" and cannot show it on this draft, so it
-        # holds; nothing reads the Turkish wording, so there it is checked after render.
+        # An English reader owns "remove ... noise" and cannot show it on this draft; nothing
+        # reads the Turkish wording. Both are checked after render (route disclosure: a
+        # recognised-but-undecidable ask is no longer held while a vague one passes).
         (
             {"kind": "audio", "scope": "global", "description": "Remove only the wind noise"},
-            {"en": "held", "tr": "unverified"},
+            {"en": "unverified", "tr": "unverified"},
         ),
         # KRI-983: no draft check owns these, so they are approved and named for a look.
         (
@@ -615,6 +616,9 @@ async def test_direct_http_approval_rechecks_readiness_and_cannot_bypass_it(monk
 @pytest.mark.parametrize("answer", ["Make this simpler version", "Okay", "No, keep everything"])
 @pytest.mark.parametrize("phone", [False, True])
 async def test_only_named_omissions_can_remove_an_unrenderable_request(monkeypatch, answer, phone):
+    # Route disclosure approves an ask no checker can decide before render (the wind noise one
+    # below); this pins the consent rule with that switch off, which is the old hold exactly.
+    monkeypatch.setattr(settings, "kria_route_disclosure_enabled", False)
     extra = {"kind": "audio", "scope": "global", "description": "Remove only the wind noise"}
     user_id, thread_id, approvals, _ = await prepare(monkeypatch, extra=extra, phone=phone)
     assert not approvals
@@ -639,6 +643,7 @@ async def test_only_named_omissions_can_remove_an_unrenderable_request(monkeypat
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phone", [False, True])
 async def test_dropping_wind_cleanup_preserves_typed_source_audio(monkeypatch, phone):
+    monkeypatch.setattr(settings, "kria_route_disclosure_enabled", False)  # the old hold, see above
     updates = [
         {"kind": "text", "scope": "title", "literal": "Gameday."},
         {

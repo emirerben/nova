@@ -358,6 +358,13 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
         with_planned_cuts,
     )
     from app.kria.drafts import _sanitize_strategy_duration_provenance
+    from app.kria.route_disclosure import (
+        UNIFIED_MONTAGE,
+        card_disclosures,
+        card_text,
+        planned_card_length,
+        with_route_declines,
+    )
     from app.tasks.kria_runtime import _strategy_changes
 
     strategy = job.strategy
@@ -386,6 +393,10 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
     brief = CreativeBrief.model_validate(fx["brief"])
     checked = brief.live()
     receipts = build_receipts(checked, facts, include_unchecked=True, strict_order=True)
+    # The same disclosure steps the draft turn runs (tasks.kria_runtime): asks the route does
+    # not read are answered plainly, unread strategy fields and research are named.
+    route = UNIFIED_MONTAGE if facts.phone_montage else None
+    receipts = with_route_declines(receipts, checked, strategy, route=route)
     report = assess_readiness(
         brief,
         strategy,
@@ -402,11 +413,17 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
     )
     if not report["ready"]:
         reply = readiness_reply(brief, report)
+    disclosures = card_disclosures(checked, strategy, route=route)
+    if disclosures:
+        reply = f"{reply}\n{card_text(disclosures)}"
     arguments = SimpleNamespace(
         strategy=CreativeStrategy.model_validate(strategy), summary=fx["planner_summary"]
     )
     changes = [c for c in _strategy_changes(arguments) if c != fx["planner_summary"]]
     draft_strategy = _sanitize_strategy_duration_provenance(strategy, brief_binding=job.binding)
+    shown_length = planned_card_length(draft_strategy, job.media, route=route)
+    if shown_length is not None:
+        draft_strategy = {**draft_strategy, "target_duration_s": shown_length}
     consequence = f"Render this draft: {reply}"
     return {
         "reply": reply,
@@ -414,6 +431,7 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
         "consequence_summary": consequence,
         "receipts": [r.model_dump(mode="json") for r in receipts],
         "ready": bool(report["ready"]),
+        "not_applied": [d.as_record() for d in disclosures],
         "draft_target_duration_s": draft_strategy.get("target_duration_s"),
         "text": "\n".join([reply, consequence, *changes, *[str(r.reason or "") for r in receipts]]),
     }
@@ -1003,7 +1021,15 @@ def consumer_gate(card_text: str, extra_fields: tuple[str, ...] = ()) -> dict[st
         if not reads[f] and f not in INDIRECT_CONSUMERS and f not in EXEMPT_FIELDS
     ]
     undisclosed = [f for f in unconsumed if not discloses_not_applied(card_text, f)]
+    from app.kria.route_disclosure import UNREAD_STRATEGY_FIELDS
+
+    # Report only: the card's registry of unread fields against what the scan above finds.
+    drift = {
+        "listed_but_read": sorted(f for f in UNREAD_STRATEGY_FIELDS if f in settable and reads[f]),
+        "unread_but_unlisted": sorted(f for f in unconsumed if f not in UNREAD_STRATEGY_FIELDS),
+    }
     return {
+        "registry_drift": drift,
         "pass": not undisclosed,
         "settable_fields": len(settable),
         "unconsumed": unconsumed,

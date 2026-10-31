@@ -147,6 +147,11 @@ async def _send(
     return dict(reply.payload or {})
 
 
+# With route disclosure the Merope asks no checker can decide before render no longer hold the
+# draft behind the simpler-version question, so the length question behind it is reached.
+ANSWERS = {**ANSWERS, "length_vs_natural": ("accept_natural", "Use the available length.")}
+
+
 def _brief_state(thread_id: uuid.UUID) -> tuple[int, list[tuple[str, dict]]]:
     with sync_session() as db:
         brief = load_latest_brief_sync(db, thread_id)

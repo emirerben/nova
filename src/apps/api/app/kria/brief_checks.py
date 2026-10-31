@@ -51,6 +51,7 @@ from app.kria.narrated_clip_sound_ask import AFTER_VOICE, ClipSoundAsk, requirem
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.order_replacement_receipts import VerifiedOrderExecution
 from app.kria.reply_language import current_reply_language, say
+from app.kria.route_disclosure import is_route_decline_reason
 from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
 from app.kria.speed_ask import asks_clip_speed
@@ -4828,8 +4829,10 @@ _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
 
 def is_format_limit(reason: str | None) -> bool:
     """True for a receipt reason the creator cannot plan around (see above)."""
-    return bool(reason) and any(
-        str(reason).startswith(prefix) for prefix in _FORMAT_LIMIT_REASON_PREFIXES
+    return bool(reason) and (
+        any(str(reason).startswith(prefix) for prefix in _FORMAT_LIMIT_REASON_PREFIXES)
+        # The route that will render this draft does not read the ask (route_disclosure).
+        or is_route_decline_reason(reason)
     )
 
 
@@ -10781,6 +10784,10 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     stored before these stopped being written still exist, so every reader of
     stored receipts filters through this too.
     """
+    if receipt.status == "not_possible" and is_route_decline_reason(receipt.reason):
+        # An ask the render route does not read is a plain answer ("I can't animate..."),
+        # though no checker owns it (route_disclosure).
+        return True
     if (
         req is not None
         and receipt.status in {"partial", "not_possible"}

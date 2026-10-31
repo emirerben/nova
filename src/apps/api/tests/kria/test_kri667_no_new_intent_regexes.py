@@ -160,6 +160,8 @@ BASELINE: dict[str, int] = {
     "kria/opening_cut_ask.py": 8,
     "kria/planner.py": 12,
     "kria/reply_language.py": 8,
+    # +1 route_disclosure: the generic "animated" ask is prose-only in the brief (no fact yet).
+    "kria/route_disclosure.py": 1,
     "kria/speaker_framing_ask.py": 29,
     "kria/strategy_policy.py": 4,
     "kria/style_asks.py": 22,
