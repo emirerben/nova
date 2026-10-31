@@ -535,3 +535,36 @@ def test_a_revision_with_a_drawing_hashes_it_and_round_trips() -> None:
         normalize_guided_editor_revision(
             {**_rich_revision(), "drawings": [{**drawing, "id": "t1"}]}
         )
+
+
+# ---- KRI-1117: the speaker-background lane must not move any existing revision's hash --------
+
+
+def test_a_revision_without_a_background_hashes_exactly_as_before_the_lane_existed() -> None:
+    for explicit in ({}, {"speaker_background": None}):
+        normalized = normalize_guided_editor_revision({**_rich_revision(), **explicit})
+        assert normalized["state_hash"] == (
+            "044e9701af268c8a4e3e700923f2fdf1ec820ae00995860fb481c9933a6b104b"
+        )
+        assert "speaker_background" not in normalized
+        assert "speaker_background" not in normalized["lane_hashes"]
+        assert (
+            GuidedEditorRevision.model_validate(normalized).state_hash == normalized["state_hash"]
+        )
+
+
+def test_a_revision_with_a_background_hashes_it_and_round_trips() -> None:
+    background = {"media_id": "visual-1", "kind": "video", "source_start_s": 1.5}
+    normalized = normalize_guided_editor_revision(
+        {**_rich_revision(), "speaker_background": background}
+    )
+    assert normalized["speaker_background"] == background
+    assert "speaker_background" in normalized["lane_hashes"]
+    assert normalized["state_hash"] != (
+        "044e9701af268c8a4e3e700923f2fdf1ec820ae00995860fb481c9933a6b104b"
+    )
+    assert GuidedEditorRevision.model_validate(normalized).speaker_background == background
+    other = normalize_guided_editor_revision(
+        {**_rich_revision(), "speaker_background": {**background, "source_start_s": 2.0}}
+    )
+    assert other["state_hash"] != normalized["state_hash"]

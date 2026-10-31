@@ -2672,6 +2672,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "motion_scenes": False,
         "camera_effects": False,
         "drawings": False,
+        "speaker_background": False,
         "carousel_moment": False,
     }
 
@@ -2846,6 +2847,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "motion_scenes": False,
         "camera_effects": False,
         "drawings": False,
+        "speaker_background": False,
         "carousel_moment": False,
     }
 
@@ -4953,6 +4955,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "motion_scenes": False,
         "camera_effects": False,
         "drawings": False,
+        "speaker_background": False,
         "carousel_moment": False,
         "title": True,
     }

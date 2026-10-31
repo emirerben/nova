@@ -247,6 +247,12 @@ class GuidedEditorRevision(BaseModel):
     user_song: GuidedEditorUserSong | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # Omission is intentional (KRI-1117): absent while there is no Talk-to-camera
+    # background, so every existing revision keeps its dump, `lane_hashes` and `state_hash`.
+    # The shared editor shape: `{media_id, kind, source_start_s}`.
+    speaker_background: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     lane_hashes: dict[str, str] = Field(default_factory=dict)
     tombstones: list[dict[str, Any]] = Field(
         default_factory=list, max_length=MAX_GUIDED_EDITOR_TOMBSTONES
@@ -578,6 +584,12 @@ def normalize_guided_editor_revision(
             json.dumps(normalized["drawings"], sort_keys=True, separators=(",", ":")).encode(
                 "utf-8"
             )
+        ).hexdigest()
+    if normalized.get("speaker_background") is not None:
+        normalized["lane_hashes"]["speaker_background"] = hashlib.sha256(
+            json.dumps(
+                normalized["speaker_background"], sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
         ).hexdigest()
     if normalized.get("caption_meta") is not None:
         normalized["lane_hashes"]["caption_meta"] = hashlib.sha256(

@@ -17,6 +17,9 @@ The subtitled phone recipe is one speaker clip + Whisper captions today
   - ``ending_clip``: an optional video clip from the Visuals pool appended
     after the speaker clip on the same main video track. Muted unless the
     creator asked for its own sound (``volume``, KRI-841).
+  - ``background``: one Visuals-pool photo or looping video the phone shows
+    behind the speaker's person mask for the whole edit (KRI-1117, the
+    Talk-to-camera "green screen"). Always muted, never retimed by speech cuts.
 
 ``PhoneSubtitledLaneRequest`` is the server-authored, unresolved shape
 persisted on ``Job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD]``.
@@ -35,7 +38,7 @@ dropped via ``drop_lane`` -- see `lane_names`/`drop_lane` below.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -66,6 +69,9 @@ PLAYABLE_SFX_EXTENSIONS = frozenset({".m4a", ".wav", ".mp3", ".aac"})
 CAPTION_BAND_TOP_FRAC = 0.62
 
 _ID_PATTERN = r"^\S+$"
+
+# Mirrors `kria.portable_speaker_background.MAX_SOURCE_START_S`.
+MAX_BACKGROUND_SOURCE_START_S = 1800.0
 
 
 class _LaneModel(BaseModel):
@@ -175,6 +181,36 @@ class SubtitledEndingClip(_LaneModel):
         return payload
 
 
+class SubtitledBackground(_LaneModel):
+    """The whole-edit background behind the speaker (KRI-1117).
+
+    One Visuals-pool photo or video, pinned like every other lane visual
+    (``gcs_path``/``generation`` are the exact bytes the runner bound). It is a
+    whole-edit lane: it has no window, so a speech cleanup cut never moves it, and
+    a video loops on output time from ``source_start_s``.
+    """
+
+    media_id: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
+    gcs_path: str = Field(min_length=1)
+    generation: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
+    kind: Literal["image", "video"] = "image"
+    source_start_s: float = Field(default=0.0, ge=0, le=MAX_BACKGROUND_SOURCE_START_S)
+
+    @model_validator(mode="after")
+    def _photo_has_no_timeline(self) -> SubtitledBackground:
+        if self.kind == "image" and self.source_start_s != 0:
+            raise ValueError("a photo background has no source start")
+        return self
+
+
+def _omit_empty_background(payload: dict) -> dict:
+    # Absent while unused: a persisted request or lane state without a background keeps the
+    # exact shape (and digest-relevant dump) it had before this lane existed.
+    if payload.get("background") is None:
+        payload.pop("background", None)
+    return payload
+
+
 class PhoneSubtitledLaneRequest(_LaneModel):
     """The unresolved lane request persisted on
     ``assembly_plan[PHONE_SUBTITLED_LANES_FIELD]``."""
@@ -182,6 +218,11 @@ class PhoneSubtitledLaneRequest(_LaneModel):
     overlays: list[SubtitledOverlayCard] = Field(default_factory=list)
     sound_effects: list[SubtitledSoundEffect] = Field(default_factory=list)
     ending_clip: SubtitledEndingClip | None = None
+    background: SubtitledBackground | None = None
+
+    @model_serializer(mode="wrap")
+    def _background_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        return _omit_empty_background(handler(self))
 
 
 class ResolvedSoundEffect(_LaneModel):
@@ -207,13 +248,21 @@ class PhoneSubtitledLanes(_LaneModel):
     overlays: list[SubtitledOverlayCard] = Field(default_factory=list)
     sound_effects: list[ResolvedSoundEffect] = Field(default_factory=list)
     ending_clip: SubtitledEndingClip | None = None
+    background: SubtitledBackground | None = None
+
+    @model_serializer(mode="wrap")
+    def _background_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        return _omit_empty_background(handler(self))
+
+
+_BackgroundCarrier = TypeVar("_BackgroundCarrier", PhoneSubtitledLaneRequest, PhoneSubtitledLanes)
 
 
 class SubtitledLaneError(UnsupportedPhonePlan):
     """One subtitled lane failed to compile.
 
-    ``lane`` is one of ``"overlays"``, ``"sound_effects"``, ``"ending_clip"``
-    -- exactly the names `lane_names`/`drop_lane` use -- so the runner can
+    ``lane`` is one of ``"overlays"``, ``"sound_effects"``, ``"ending_clip"``,
+    ``"background"`` -- exactly the names `lane_names`/`drop_lane` use -- so the runner can
     identify and drop the failing lane without parsing the message text.
     """
 
@@ -234,7 +283,7 @@ def sfx_path_is_playable(path: str) -> bool:
 
 
 def lane_names(lanes: PhoneSubtitledLanes | None) -> tuple[str, ...]:
-    """Which of ``("overlays", "sound_effects", "ending_clip")`` carry
+    """Which of ``("overlays", "sound_effects", "ending_clip", "background")`` carry
     content, in that fixed order. Empty/``None`` lanes yield ``()``."""
     if lanes is None:
         return ()
@@ -245,6 +294,8 @@ def lane_names(lanes: PhoneSubtitledLanes | None) -> tuple[str, ...]:
         names.append("sound_effects")
     if lanes.ending_clip is not None:
         names.append("ending_clip")
+    if lanes.background is not None:
+        names.append("background")
     return tuple(names)
 
 
@@ -274,6 +325,8 @@ def remap_lanes_for_cut(
       - ``ending_clip``: untouched. It always starts right after the
         speaker clip's OWN (now-shorter) end, never at a fixed
         source-timeline position, so it needs no remap.
+      - ``background``: untouched. It is a whole-edit lane with no window, and
+        a video keeps looping on output time, so a cut moves nothing in it.
 
     Returns ``(lanes, frozenset())`` unchanged when ``lanes`` is ``None`` or
     the plan removed nothing (byte-identical fast path for every render that
@@ -308,6 +361,41 @@ def remap_lanes_for_cut(
     return remapped, frozenset(dropped_card_ids)
 
 
+SPEAKER_BACKGROUND_FALLBACK_EVENT = "speaker_background_phone_fallback"
+
+
+def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _BackgroundCarrier | None:
+    """``lanes`` without its background while the phone gate is closed (KRI-1117).
+
+    Closed = `phone_rollout.speaker_background_unavailable_reason`: kill switch off,
+    ``speakerBackground`` not verified, or (inside an app request) a build below the
+    minimum protocol. The lane is removed BEFORE anything is bound or compiled, so the
+    recipe is byte-identical to one for a request that never asked, and the creator
+    still gets the edit (with their own background). The fallback is recorded for the
+    job-debug view. Works on the resolved lanes and on the persisted request alike.
+    """
+    if lanes is None or lanes.background is None:
+        return lanes
+    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+
+    reason = speaker_background_unavailable_reason()
+    if reason is None:
+        return lanes
+    import structlog  # noqa: PLC0415
+
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    structlog.get_logger(__name__).info(
+        SPEAKER_BACKGROUND_FALLBACK_EVENT, media_id=lanes.background.media_id, reason=reason
+    )
+    record_pipeline_event(
+        "phone",
+        SPEAKER_BACKGROUND_FALLBACK_EVENT,
+        {"media_id": lanes.background.media_id, "reason": reason},
+    )
+    return lanes.model_copy(update={"background": None})
+
+
 def drop_lane(lanes: PhoneSubtitledLanes, name: str) -> PhoneSubtitledLanes:
     """A copy of ``lanes`` with lane ``name`` emptied, so the runner can
     retry a compile without the lane that just failed."""
@@ -317,4 +405,6 @@ def drop_lane(lanes: PhoneSubtitledLanes, name: str) -> PhoneSubtitledLanes:
         return lanes.model_copy(update={"sound_effects": []})
     if name == "ending_clip":
         return lanes.model_copy(update={"ending_clip": None})
+    if name == "background":
+        return lanes.model_copy(update={"background": None})
     raise ValueError(f"unknown subtitled lane: {name}")

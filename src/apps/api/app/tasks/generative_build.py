@@ -7973,6 +7973,7 @@ def _run_phone_subtitled_job(
             SubtitledLaneError,
             drop_lane,
             lane_names,
+            strip_unsupported_background,
         )
         from app.services.phone_visuals import bind_phone_visual_assets  # noqa: PLC0415
 
@@ -9192,6 +9193,11 @@ def _run_phone_subtitled_job(
                         lane_request = PhoneSubtitledLaneRequest.model_validate(raw_lane_request)
                     except Exception as exc:  # noqa: BLE001
                         lane_drops.append({"lane": "request", "reason": str(exc)[:300]})
+                    else:
+                        # KRI-1117: a closed phone gate removes the background BEFORE any
+                        # byte is bound, so the render is the one the creator would get
+                        # had they never asked (trace `speaker_background_phone_fallback`).
+                        lane_request = strip_unsupported_background(lane_request)
 
                 # KRI-841: "add the X video at the very end with its own sound" -- resolve the
                 # Visuals-pool video the approved strategy names BEFORE any grounding runs, so it
@@ -9622,7 +9628,51 @@ def _run_phone_subtitled_job(
                                 ending_reason = "over_length_limit"
                                 ending_clip = None
                                 ending_visuals = ()
-                    visuals = tuple(overlay_visuals) + tuple(ending_visuals)
+                    background_lane = lane_request.background if lane_request is not None else None
+                    background_visuals: tuple = ()
+                    if background_lane is not None:
+                        background_feature = (
+                            "stillImages" if background_lane.kind == "image" else "visualVideos"
+                        )
+                        if background_feature not in settings.phone_render_verified_features:
+                            lane_drops.append(
+                                {
+                                    "lane": "background",
+                                    "reason": f"{background_feature} not verified on the phone",
+                                }
+                            )
+                            background_lane = None
+                        else:
+                            already_bound = {
+                                (v.media_id, v.gcs_path, v.generation)
+                                for v in (*overlay_visuals, *ending_visuals)
+                            }
+                            background_pin = (
+                                background_lane.media_id,
+                                background_lane.gcs_path,
+                                background_lane.generation,
+                            )
+                            if background_pin not in already_bound:
+                                try:
+                                    background_visuals = bind_phone_visual_assets(
+                                        _sync_session,
+                                        job_id=job_id,
+                                        pins={
+                                            background_lane.media_id: (
+                                                background_lane.kind,
+                                                background_lane.gcs_path,
+                                                background_lane.generation,
+                                            )
+                                        },
+                                    )
+                                except OperationalError:
+                                    raise  # transient DB -> Celery autoretry, never a lane drop
+                                except Exception as exc:  # noqa: BLE001 - a lane never fails the job
+                                    lane_drops.append(
+                                        {"lane": "background", "reason": str(exc)[:300]}
+                                    )
+                                    background_lane = None
+                    visuals = tuple(overlay_visuals) + tuple(ending_visuals) + background_visuals
                     beat_sfx_ids: frozenset[str] = frozenset(item.id for item in beat_sfx_requests)
                     requested_sfx = (
                         lane_request.sound_effects if lane_request is not None else []
@@ -9654,6 +9704,7 @@ def _run_phone_subtitled_job(
                         overlays=overlay_cards,
                         sound_effects=resolved_sfx,
                         ending_clip=ending_clip,
+                        background=background_lane,
                     )
 
                 if cut_plan is not None and lanes is not None:
@@ -9763,6 +9814,8 @@ def _run_phone_subtitled_job(
                     referenced = {card.media_id for card in lanes.overlays}
                     if lanes.ending_clip is not None:
                         referenced.add(lanes.ending_clip.media_id)
+                    if lanes.background is not None:
+                        referenced.add(lanes.background.media_id)
                     visuals = tuple(v for v in visuals if v.media_id in referenced)
                 if grounded_media_ids and overlay_receipt is not None:
                     # A grounded card that didn't survive the compiler's own

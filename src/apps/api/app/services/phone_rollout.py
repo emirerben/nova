@@ -750,6 +750,21 @@ def speaker_background_supported(*, require_client: bool | None = None) -> bool:
     )
 
 
+def speaker_background_unavailable_reason(*, require_client: bool | None = None) -> str | None:
+    """Why `speaker_background_supported` is False, or None when the lane is open.
+
+    Same three checks in the same order, named for the job-debug trace
+    (`speaker_background_phone_fallback`) and the editor's 422/426 answers.
+    """
+    if not settings.speaker_background_enabled:
+        return "disabled"
+    if "speakerBackground" not in set(settings.phone_render_verified_features):
+        return "token_not_verified"
+    if not speaker_background_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
+
+
 # Variant field an HTTP editor Save writes when it compiled one-word captions for a build
 # that declared the protocol (`single_word_captions_enabled`): a later compile with no
 # request (a worker applying a chat edit) has no app build to ask, so it trusts this.

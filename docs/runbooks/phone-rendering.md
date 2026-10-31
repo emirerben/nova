@@ -3733,3 +3733,20 @@ Rollout follows the v3 boundary above: v5 is forward-only. A request pinned to v
   round trip), `tests/kria/test_kri899_freeze_length_changes.py` (chat corrections, second
   freeze, router, editor end-drag), `KriaMediaEngineTests/FreezeFrameExportTests` (native
   export).
+
+
+## Speaker background capability (KRI-1117)
+
+| Capability | Recipe field | Gate | Detail |
+|---|---|---|---|
+| `speakerBackground` | `EditRecipeV2.speaker_background` (omitted when unused) | `SPEAKER_BACKGROUND_ENABLED` (default off) + `speakerBackground` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `SPEAKER_BACKGROUND_MIN_CLIENT_PROTOCOL` (27) | One photo or looping muted video behind the speaker of a device-rendered Talk-to-camera edit; the phone cuts the speaker out with a Vision person mask, the server only names the pinned pool visual |
+
+Prod step before the Background control appears: add `speakerBackground` to
+`PHONE_RENDER_VERIFIED_FEATURES` after a physical-iPhone preview + export check, then set
+`SPEAKER_BACKGROUND_ENABLED=true` (fly secrets, api + worker, restart). With either missing the
+compile strips the lane (trace `speaker_background_phone_fallback`) and the recipe is
+byte-identical to today's. Builds below protocol 27 get `426 client_update_required`
+(`feature: "speaker_background"`) from `device-render` and `editor-commit` for a variant that
+carries a background. The app reads `capabilities.speaker_background` (creation) and
+`editor_capabilities.speaker_background` (per variant). Rollback is the kill switch, never a
+code revert. Detail: `docs/pipelines/speaker-background.md`.
