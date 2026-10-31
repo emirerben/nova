@@ -7,7 +7,8 @@ import UIKit
 
 /// Receives raw camera frames from `TeleprompterCamera`'s video data output, on a queue of its own.
 protocol LiveFrameConsumer: AnyObject, Sendable {
-    func consume(_ frame: CVPixelBuffer)
+    /// `mirrored`: the preview must flip this frame to look like the selfie-mirrored camera preview.
+    func consume(_ frame: CVPixelBuffer, mirrored: Bool)
     /// The capture session stopped or its graph was rebuilt. Drop anything that depends on the last frame.
     func sessionDidStop()
 }
@@ -136,7 +137,7 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
         current?.setActive(false)
     }
 
-    func consume(_ frame: CVPixelBuffer) {
+    func consume(_ frame: CVPixelBuffer, mirrored: Bool) {
         lock.lock()
         stats.framesConsumed += 1
         let resume = !providerActive ? provider : nil
@@ -152,7 +153,7 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
             frame: CIImage(cvPixelBuffer: frame),
             mask: matte.map(LiveBackgroundCompositor.maskImage),
             background: background ?? CIImage(color: .black).cropped(to: CGRect(origin: .zero, size: LiveSpeakerMatteConfig.previewSize)),
-            canvas: LiveSpeakerMatteConfig.previewSize)
+            canvas: LiveSpeakerMatteConfig.previewSize, mirrored: mirrored)
         lock.lock()
         if matte != nil { stats.framesMatted += 1 } else { stats.framesRaw += 1 }
         lock.unlock()
@@ -172,7 +173,7 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
 }
 
 /// Replaces `TeleprompterCameraPreview` while a background is active. Front-camera mirroring is baked into the
-/// composite (preview only); the recorded movie is never mirrored.
+/// composite per frame, decided from the delivering connection (preview only); the recorded movie is never touched.
 struct LiveBackgroundPreviewView: UIViewRepresentable {
     let preview: LiveBackgroundPreview
 
