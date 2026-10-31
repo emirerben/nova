@@ -831,7 +831,7 @@ def picker_eligible(intent: ClipIntent) -> bool:
     resolver, so it is never in ``creator_work``; but the clips a creator taps (or names by
     file name) fully answer it, so it settles like the other membership ops (KRI-761).
     """
-    if intent.op in {"group", "include", "order", "exclude"}:
+    if intent.op in {"group", "include", "order", "exclude", "hide_part"}:
         return True
     if intent.op == "label":
         if intent.placeholder:
@@ -1162,8 +1162,9 @@ def _build_resolver_input(
             # KRI-282: a placeholder label is membership-only for the resolver ("which
             # clips are <attribute>"); it must never author text for it. KRI-667: so is
             # an exclude ("which clips are the quad bike clip"); the resolver has no
-            # exclude op, and leaving the matched clips out is the server's step.
-            op="include" if i.placeholder or i.op == "exclude" else i.op,
+            # exclude op, and leaving the matched clips out is the server's step. Leverkusen
+            # M2: so is a hidden part ("which clip is the second goal clip").
+            op="include" if i.placeholder or i.op in {"exclude", "hide_part"} else i.op,
             attribute=i.attribute,
             creator_text=i.creator_text,
             caption_attribute=i.caption_attribute,
@@ -1654,6 +1655,23 @@ async def resolve_clip_intents_for_turn(
                     )
                     continue
                 if assignment is None:
+                    continue
+                # Leverkusen M2: a hidden part on the wrong clip shows what the creator hid on
+                # the right one, so its clip is held to the label bar; below it the vision
+                # model confirms, else the creator taps it.
+                bar = LABEL_MIN_CONFIDENCE if intent.op == "hide_part" else None
+                if bar is not None and assignment.confidence < bar:
+                    vision_candidates.append(
+                        _VisionCandidate(
+                            media_id=media_id,
+                            intent_id=intent.intent_id,
+                            op=intent.op,
+                            attribute=intent.attribute,
+                            question=_fallback_question(intent),
+                            fallback_value=None,
+                            creator_text=None,
+                        )
+                    )
                     continue
                 if assignment.confidence >= MEMBERSHIP_MIN_CONFIDENCE:
                     work.kept.append(

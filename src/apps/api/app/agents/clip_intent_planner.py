@@ -158,7 +158,9 @@ _LABEL_PREVIEW_CHARS = 40
 _ASK_PREVIEW_CHARS = 90
 _UNEXPRESSED_MAX = 8
 _QUESTION_MAX_CHARS = 400
-_KNOWN_OPS = {"label", "group", "order", "include", "caption"}
+# Leverkusen M2: `hide_part` (part of one clip never shown) has no flag: a privacy ask is
+# never dropped as an invented op.
+_KNOWN_OPS = {"label", "group", "order", "include", "caption", "hide_part"}
 # KRI-667: `exclude` is a real op only with CLIP_INTENT_EXCLUDE_ENABLED; `_KNOWN_OPS`
 # stays the flag-off vocabulary (invented-op detection must not drift), and a creator
 # question may still name an exclude it could not keep.
@@ -261,6 +263,7 @@ _OP_NAMES_TR = {
     "include": "dahil etme",
     "caption": "yazı",
     "exclude": "hariç tutma",
+    "hide_part": "bölüm gizleme",
 }
 
 
@@ -604,6 +607,64 @@ def _repair_length(data: dict[str, Any]) -> None:
             under_s = None
     data["by_length"] = "too_short" if under_s is not None else by_length
     data["under_s"] = under_s
+
+
+# Leverkusen M2: what may surround a number the creator typed ("(2.5", "3,", "seconds.").
+_NUMBER_EDGES = "()[]{}\"'“”‘’«»,;:!?."
+
+
+def _creator_numbers(sources: tuple[str, ...]) -> set[float]:
+    """Every plain number in the creator's own text ("2.5", "2,5", "3"), as seconds might be.
+
+    A provenance check, like the quote fence: it reads no meaning, it only proves the number
+    is the creator's. Spelled-out numbers ("three") are not read: the server asks instead.
+    """
+    found: set[float] = set()
+    for source in sources:
+        for token in source.split():
+            try:
+                value = float(token.strip(_NUMBER_EDGES).replace(",", "."))
+            except ValueError:
+                continue
+            if math.isfinite(value):
+                found.add(round(value, 3))
+    return found
+
+
+def _repair_hidden_part(data: dict[str, Any], sources: tuple[str, ...]) -> None:
+    """Settle a ``hide_part``'s edge, seconds and content onto their fields, in place.
+
+    Leverkusen M2. ``part_edge`` is kept only as exactly "start" or "end"; anything else is
+    null and the server asks where the part is. ``part_s`` is kept only as a positive number
+    of seconds the creator actually typed (``_creator_numbers``): a number Flash invented
+    never decides which frames are hidden, so the server asks for it instead. Nothing is
+    printed for a hidden part, so on-screen copy and placement are cleared.
+    """
+    edge = data.get("part_edge")
+    edge = edge.strip().lower() if isinstance(edge, str) else None
+    data["part_edge"] = edge if edge in {"start", "end"} else None
+    seconds = data.get("part_s")
+    value: float | None = None
+    if isinstance(seconds, (int, float, str)) and not isinstance(seconds, bool):
+        try:
+            value = float(str(seconds).replace(",", ".").strip())
+        except ValueError:
+            value = None
+    if value is not None and not (0 < value <= 600 and math.isfinite(value)):
+        value = None
+    if value is not None and round(value, 3) not in _creator_numbers(sources):
+        value = None
+    data["part_s"] = value
+    content = data.get("part_attribute")
+    data["part_attribute"] = content if isinstance(content, str) and content.strip() else None
+    # Only a video has seconds to hide; a photo is never a candidate for the part.
+    data.update(
+        creator_text=None,
+        caption_attribute=None,
+        position=None,
+        placeholder=False,
+        source_kind="video",
+    )
 
 
 # KRI-511: leaving clips OUT is clip selection, which the Main Creator owns
@@ -1197,7 +1258,10 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # KRI-1031: a length exclusion ("too short to use") carries `by_length` / `under_s`.
         # 29 Ekim (thread 64bb9853): a random / any order is no `order` intent (the brief owns
         # it), and words shown a piece at a time over the video are no `caption` intent.
-        prompt_version="2026-10-29-exclude-length-text-sequence",
+        # Leverkusen M2 (2026-10-30): "don't show the kids at the start of the second goal
+        # clip" / "start it after 2.5 seconds" is one `hide_part` (edge + creator seconds),
+        # never an exclude of the whole clip and never an invented op.
+        prompt_version="2026-10-30-hide-part",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -1486,6 +1550,12 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
             # with her own voice, at the end" came back as a transcript order (KRI-531).
             data.pop("label_source", None)
             data.pop("transcript_kind", None)
+        if data.get("op") != "hide_part":
+            # Leverkusen M2: only a hidden part has an edge, seconds and content.
+            for field in ("part_edge", "part_s", "part_attribute"):
+                data.pop(field, None)
+        else:
+            _repair_hidden_part(data, sources)
         if data.get("op") != "exclude" or not input.clip_exclusions:
             # KRI-994: only an exclusion links back to a brief requirement.
             data.pop("requirement_id", None)
