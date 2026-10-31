@@ -161,3 +161,8 @@ iPhone preview + export check), then the flag, then restart.
 projection), `tests/services/test_phone_speaker_background_pin.py` and
 `tests/integration/test_speaker_background_pin_postgres.py` (S19), and the hash guard in
 `tests/schemas/test_guided_edit_revision.py`.
+
+## Evidence
+
+Device and Mac exports, the camera and matte cost on an iPhone 13 Pro, and the Phase 0 matte
+spike are in `docs/reviews/speaker-background-evidence/` (its README names each file).
