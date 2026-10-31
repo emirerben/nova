@@ -106,6 +106,8 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "remove_camera_effect",
             "apply_custom_effect",
             "set_carousel_moment",
+            "set_background",
+            "remove_background",
         }
     ),
 }
@@ -159,7 +161,7 @@ SECTION_FAMILIES: dict[str, frozenset[str]] = {
     "music": frozenset({"music"}),
     "sfx": frozenset({"sfx"}),
     "overlays": frozenset({"overlay", "visual_media", "text", "motion", "visual"}),
-    "look": frozenset({"style", "text", "effect", "clip", "caption", "carousel"}),
+    "look": frozenset({"style", "text", "effect", "clip", "caption", "carousel", "background"}),
 }
 
 # EditorCommitRequest fields -> owning section(s). `text_elements` and `caption_meta` are
@@ -183,6 +185,9 @@ FIELD_SECTIONS: dict[str, tuple[str, ...]] = {
     # KRI-589: a scoped update can never touch freehand drawings unless overlays are in scope.
     "drawings": ("overlays",),
     "carousel_moment": ("look",),
+    # KRI-1117: the Talking background is a look; a scoped update never touches it unless
+    # the look is flagged.
+    "speaker_background": ("look",),
 }
 # Documentation of the contract table (4.3, last column); the code above is its inverse.
 SECTION_COMMIT_FIELDS: dict[str, tuple[str, ...]] = {
@@ -199,7 +204,13 @@ SECTION_COMMIT_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "sfx": ("sound_effects",),
     "overlays": ("media_overlays", "visual_blocks", "motion_scenes", "drawings", "text_elements"),
-    "look": ("camera_effects", "carousel_moment", "caption_meta", "text_elements"),
+    "look": (
+        "camera_effects",
+        "carousel_moment",
+        "speaker_background",
+        "caption_meta",
+        "text_elements",
+    ),
 }
 _UNOWNED_LANES = frozenset({"orientation", "landscape_fit"})
 _LANE_KEYS = frozenset(FIELD_SECTIONS) | {"text_elements", "caption_meta"} | _UNOWNED_LANES
@@ -599,6 +610,9 @@ def apply_row_restore(
 def _lane_present(key: str, value: Any) -> bool:
     if key == "remove_music":
         return value is True
+    if key == "speaker_background":
+        # An explicit null is the creator's "clear it" (`editor_payload_dump`), a touched lane.
+        return True
     return value is not None
 
 

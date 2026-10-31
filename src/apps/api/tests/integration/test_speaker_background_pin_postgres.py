@@ -18,7 +18,10 @@ from app import storage
 from app.database import AsyncSessionLocal, sync_session
 from app.models import Job, PlanItem, PlanItemAsset
 from app.services.phone_sources import PHONE_VISUALS_FIELD
-from app.services.phone_speaker_background import pin_pool_visual_for_background
+from app.services.phone_speaker_background import (
+    pin_pool_visual_for_background,
+    pin_pool_visual_for_background_sync,
+)
 from tests.kria.test_render_retry_postgres import seed_failed
 
 PNG = base64.b64decode(
@@ -116,3 +119,65 @@ async def test_a_pool_path_that_is_not_this_items_namespace_is_refused(case):
     with pytest.raises(HTTPException) as refused:
         await _pin(case, case.item_id, media_id)
     assert refused.value.detail == {"code": "speaker_background_media_unavailable"}
+
+
+def _pin_sync(case, item_id, media_id, kind="image"):
+    with sync_session() as db:
+        job = db.get(Job, case.job_id)
+        pin_pool_visual_for_background_sync(
+            db, job, plan_item_id=item_id, media_id=str(media_id), kind=kind
+        )
+        return job.assembly_plan
+
+
+def test_the_approval_tasks_sync_pin_takes_this_items_ready_row_at_its_exact_generation(case):
+    media_id = _seed_pool_row(item_id=case.item_id, user_id=case.user_id)
+    plan = _pin_sync(case, case.item_id, media_id)
+    (row,) = plan[PHONE_VISUALS_FIELD]
+    assert (row["media_id"], row["generation"]) == (str(media_id), "42")
+    # Pinned once: a second call leaves the receipts alone.
+    assert _pin_sync(case, case.item_id, media_id)[PHONE_VISUALS_FIELD] == [row]
+
+
+def test_the_sync_pin_refuses_what_the_async_pin_refuses_and_stores_nothing(case):
+    still_analysing = _seed_pool_row(item_id=case.item_id, user_id=case.user_id, status="analyzing")
+    wrong_kind = _seed_pool_row(item_id=case.item_id, user_id=case.user_id)
+    for media_id, kind in (
+        (uuid.uuid4(), "image"),
+        (still_analysing, "image"),
+        (wrong_kind, "video"),
+    ):
+        with pytest.raises(HTTPException) as refused:
+            _pin_sync(case, case.item_id, media_id, kind)
+        assert refused.value.detail == {"code": "speaker_background_media_not_in_pool"}
+    with sync_session() as db:
+        assert PHONE_VISUALS_FIELD not in (db.get(Job, case.job_id).assembly_plan or {})
+
+
+@pytest.mark.asyncio
+async def test_the_copilots_pool_lists_only_this_items_ready_photos_and_videos(case):
+    from app.kria.planner import _background_pool_rows
+
+    ready = _seed_pool_row(item_id=case.item_id, user_id=case.user_id)
+    _seed_pool_row(item_id=case.item_id, user_id=case.user_id, status="analyzing")
+    _seed_pool_row(item_id=case.item_id, user_id=case.user_id, status="failed")
+    with sync_session() as db:
+        item = db.get(PlanItem, case.item_id)
+        clone = PlanItem(
+            **{
+                c.name: getattr(item, c.name)
+                for c in PlanItem.__table__.columns
+                if c.name not in {"id", "created_at", "updated_at"}
+            }
+        )
+        clone.id = uuid.uuid4()
+        db.add(clone)
+        db.commit()
+        other_item = clone.id
+    _seed_pool_row(item_id=other_item, user_id=case.user_id)
+
+    async with AsyncSessionLocal() as db:
+        item = await db.get(PlanItem, case.item_id)
+        rows = await _background_pool_rows(db, item)
+    assert [row["id"] for row in rows] == [str(ready)]
+    assert rows[0]["kind"] == "image"

@@ -7570,6 +7570,83 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
     )
 
 
+def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
+    """The approved strategy's ``background_media`` as ``{"media_id", "source_start_s"}``."""
+    strategy = all_candidates.get("creator_strategy")
+    raw = strategy.get("background_media") if isinstance(strategy, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    media_id = raw.get("media_id")
+    if not isinstance(media_id, str) or not media_id.strip():
+        return None
+    start = raw.get("source_start_s")
+    return {
+        "media_id": media_id.strip(),
+        "source_start_s": float(start)
+        if isinstance(start, (int, float)) and not isinstance(start, bool)
+        else 0.0,
+    }
+
+
+def _resolve_strategy_background(
+    request: dict[str, Any], *, job_id: str, lane_drops: list[dict]
+) -> tuple[Any, frozenset[str]]:
+    """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
+    that stay out of every mid-talk placement (KRI-1117).
+
+    Resolved against the job's own ready pool (the row must belong to THIS item), then the
+    same phone gate the hand-authored request passes (`strip_unsupported_background`, which
+    traces ``speaker_background_phone_fallback``). A background that cannot be resolved is
+    dropped with a ``lane_drops`` receipt and never fails the job; the reservation is returned
+    whatever becomes of the lane, so the photo is never also a card, except while the phone
+    gate is closed (then nothing about the render changes).
+    """
+    import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
+    from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
+        PhoneSubtitledLaneRequest,
+        SubtitledBackground,
+        strip_unsupported_background,
+    )
+
+    reserved = _pool_media_keys(request["media_id"])
+    try:
+        rows = pool_mod._load_ready_pool_assets(_sync_session, job_id=job_id)
+    except OperationalError:
+        raise  # transient DB -> Celery autoretry, never a lane drop
+    except Exception as exc:  # noqa: BLE001 - the background never fails the job
+        lane_drops.append({"lane": "background", "reason": f"pool unavailable: {exc}"[:300]})
+        return None, reserved
+    row = next((r for r in rows if _names_pool_media(str(r.get("id")), request["media_id"])), None)
+    if row is None:
+        lane_drops.append({"lane": "background", "reason": "not_in_ready_pool"})
+        return None, reserved
+    reserved = reserved | _pool_media_keys(str(row["id"]))
+    kind = row.get("kind")
+    if kind not in ("image", "video"):
+        lane_drops.append({"lane": "background", "reason": "not_a_photo_or_video"})
+        return None, reserved
+    if not row.get("gcs_path") or not row.get("gcs_generation"):
+        lane_drops.append({"lane": "background", "reason": "missing_generation"})
+        return None, reserved
+    try:
+        background = SubtitledBackground(
+            media_id=str(row["id"]),
+            gcs_path=str(row["gcs_path"]),
+            generation=str(row["gcs_generation"]),
+            kind=kind,
+            source_start_s=request["source_start_s"] if kind == "video" else 0.0,
+        )
+    except ValueError as exc:
+        lane_drops.append({"lane": "background", "reason": str(exc)[:300]})
+        return None, reserved
+    stripped = strip_unsupported_background(PhoneSubtitledLaneRequest(background=background))
+    if stripped is None or stripped.background is None:
+        # A closed gate renders exactly what a strategy that never asked renders: no lane and no
+        # reservation (the trace `speaker_background_phone_fallback` says why).
+        return None, frozenset()
+    return stripped.background, reserved
+
+
 def _creator_pinned_media_keys(beats: list, closing: dict | None) -> frozenset[str]:
     """Every Visuals-pool asset the creator pinned to a reaction beat, the closing photo or the
     closing badge (KRI-1019), in both spellings (`_pool_media_keys`).
@@ -9251,6 +9328,26 @@ def _run_phone_subtitled_job(
                                 volume=1.0 if ending_request["keep_audio"] else 0.0,
                             )
 
+                # KRI-1117: the photo / looping video the approved strategy names behind the
+                # speaker. A hand-authored lane request's own background wins; whatever
+                # becomes of the lane, the photo stays out of every mid-talk card below.
+                strategy_background_lane: Any = None
+                background_reserved: frozenset[str] = frozenset()
+                background_request = _strategy_background_request(all_candidates)
+                if background_request is not None:
+                    if ending_lane_only:
+                        lane_drops.append({"lane": "background", "reason": "multi_clip_talking"})
+                    elif lane_request is not None and lane_request.background is not None:
+                        lane_drops.append(
+                            {"lane": "background", "reason": "lane_request_background_wins"}
+                        )
+                    else:
+                        strategy_background_lane, background_reserved = (
+                            _resolve_strategy_background(
+                                background_request, job_id=job_id, lane_drops=lane_drops
+                            )
+                        )
+
                 # KRI-178: ground creator-authored reaction beats (from the
                 # approved strategy, NOT the lane request) before the KRI-176
                 # generic grounding runs -- an explicit "when I say X show Y"
@@ -9440,7 +9537,9 @@ def _run_phone_subtitled_job(
                                     frozenset({ending_visual_id})
                                     if ending_visual_id is not None
                                     else frozenset()
-                                ),
+                                )
+                                # KRI-1117: nor is the photo behind the speaker a card.
+                                | background_reserved,
                                 video_supported=video_overlays_enabled,
                                 **(
                                     {
@@ -9480,6 +9579,7 @@ def _run_phone_subtitled_job(
                     or grounded_cards
                     or beat_cards
                     or strategy_ending_lane is not None
+                    or strategy_background_lane is not None
                 ):
                     visual_kinds = frozenset(
                         kind
@@ -9629,6 +9729,8 @@ def _run_phone_subtitled_job(
                                 ending_clip = None
                                 ending_visuals = ()
                     background_lane = lane_request.background if lane_request is not None else None
+                    if background_lane is None:
+                        background_lane = strategy_background_lane  # KRI-1117
                     background_visuals: tuple = ()
                     if background_lane is not None:
                         background_feature = (

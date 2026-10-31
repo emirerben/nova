@@ -8085,36 +8085,16 @@ async def _editor_commit_item(
             db, locked_job, _find_variant(locked_job, variant_id) or {}
         ),
     }
-    if (
-        draft_baseline is None
-        and commit_body.speaker_background is not None
-        and "speaker_background" in commit_body.model_fields_set
-    ):
-        from app.routes.generative_jobs import (  # noqa: PLC0415
-            _find_variant as _find_background_variant,
-        )
-        from app.routes.generative_jobs import _speaker_background_shape_ok  # noqa: PLC0415
-        from app.services.phone_rollout import (  # noqa: PLC0415
-            speaker_background_unavailable_reason,
-        )
+    if draft_baseline is None:
         from app.services.phone_speaker_background import (  # noqa: PLC0415
-            pin_pool_visual_for_background,
+            pin_background_for_commit,
         )
 
-        background_variant = _find_background_variant(locked_job, variant_id) or {}
-        # Only pin (download + hash) for a Save the validator can accept; every other case
-        # reaches `_validate_speaker_background_section` and gets its own refusal there.
-        if (
-            _speaker_background_shape_ok(locked_job, background_variant)
-            and speaker_background_unavailable_reason() is None
-        ):
-            await pin_pool_visual_for_background(
-                db,
-                locked_job,
-                plan_item_id=item.id,
-                media_id=commit_body.speaker_background.media_id,
-                kind=commit_body.speaker_background.kind,
-            )
+        # KRI-1117: a Save that sets a Talking background pins the pool visual first (only
+        # one the validator can accept; every other case gets its own refusal there).
+        await pin_background_for_commit(
+            db, locked_job, variant_id, commit_body, plan_item_id=item.id
+        )
     if draft_baseline is not None:
         from app.services.authored_editor import prepare_authored_editor_commit  # noqa: PLC0415
 
