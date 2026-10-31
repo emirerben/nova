@@ -1847,7 +1847,6 @@
       "paths": [
         "src/apps/api/app/services/clip_pick_collisions.py",
         "src/apps/api/app/services/clip_selection.py",
-        "src/apps/api/app/kria/planner.py",
         "src/apps/api/tests/kria/test_kri1125_pick_collision_replay.py",
         "src/apps/api/tests/fixtures/kri1125_m4_warmup_pick.json"
       ]
