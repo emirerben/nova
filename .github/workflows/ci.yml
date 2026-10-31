@@ -957,6 +957,17 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py -q \
             | tee ../../../test-results/kri-559/named-line-windows-api-tests.log
+      - name: Verify a clip text the creator took back is neither planned nor locked as copy
+        if: contains(needs.changes.outputs.journey_ids, 'kri-1124-withdrawn-labels')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/kria/test_kri1124_withdrawn_labels_replay.py -q \
+            | tee ../../../test-results/kri-559/withdrawn-labels-api-tests.log
       - name: Verify a montage line the creator wants heard whole is held whole, never a pop-in
         if: contains(needs.changes.outputs.journey_ids, 'kri-760-whole-line-ask')
         working-directory: src/apps/api
