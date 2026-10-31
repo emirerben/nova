@@ -96,7 +96,7 @@ async def test_reopening_a_stored_order_receipt_preserves_its_actual_certainty(
         assert receipt.status == ("met" if explicit_group else "partial")
         assert shown.requirements[0].status == receipt.status
         if not explicit_group:
-            assert "saved" in receipt.reason.casefold()
+            assert "didn't say what order" in receipt.reason.casefold()
         with sync_session() as db:
             stored = db.get(CreatorEditDraft, draft_id)
             assert (stored.snapshot_json, stored.snapshot_hash) == (snapshot, snapshot_hash)

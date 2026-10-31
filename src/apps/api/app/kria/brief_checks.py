@@ -3090,7 +3090,7 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if facts.narrated_steps is not None:
         return _check_narrated_order(req, facts)
     if facts.sequence_unconfirmed:
-        return _receipt(req, "partial", unconfirmed_order_reason())
+        return _receipt(req, "partial", unconfirmed_order_reason(facts.sequence_unconfirmed))
     if facts.sequence_conflicts and not (facts.sequence_unmet or facts.sequence_absent):
         # KRI-764: one clip asked to be first AND last. The earlier ask stands and the edit
         # still renders, so say so (before approval too) instead of refusing the render.
@@ -10979,8 +10979,8 @@ _OUTCOME_REASON_TR = {
     "its clips are already in an earlier group": "klipleri zaten önceki bir grupta",
     "its clips are already placed at another spot": "klipleri zaten başka bir yerde",
     "the clips did not end up there": "klipler oraya gelmedi",
-    "the order inside this saved group wasn't recorded": (
-        "kaydedilmiş bu grubun iç sırası belirtilmemiş"
+    "you didn't say what order its clips play in": (
+        "kliplerinin hangi sırayla oynayacağını söylemedin"
     ),
     # KRI-723 (``unified_montage.MOMENT_*``).
     "I couldn't find this moment in your clip, so I can't confirm it's the one playing": (
