@@ -11,6 +11,18 @@ enum FeaturedEdit: String, CaseIterable, Identifiable {
     var aspectRatio: CGFloat { self == .bosphorus || self == .talking || self == .lipsync ? 9 / 16 : 16 / 9 }
 }
 
+extension CreationFormat {
+    /// The bundled preview video a format card plays; nil falls back to the still poster.
+    var previewEdit: FeaturedEdit? {
+        switch self {
+        case .montage: .bosphorus
+        case .lipsync: .lipsync
+        case .talkingToCamera: .talking
+        case .narrated, .slides: nil
+        }
+    }
+}
+
 @MainActor final class FeaturedEditPlayback: ObservableObject {
     let player = AVPlayer()
     @Published private(set) var isPlaying = false
