@@ -573,6 +573,48 @@ async def _free_text_choice_selection(
     return selection, False, True
 
 
+async def _free_text_clip_skip(
+    db: AsyncSession, thread: CreationThread, message: str
+) -> ClipSelectionIn | None:
+    """KRI-1066: "skip that" typed right after the ending picker is that picker's Skip.
+
+    The same server-owned answer a tap sends, so the draft ends on the last clip filmed and
+    says so (KRI-1025). Deterministic and exact (``typed_picker_skip``); anything else returns
+    ``None`` and goes to the Creator agent like any message. The thread is read only for a
+    message that looks like a withdrawal at all.
+    """
+    from app.services.pin_withdrawal import typed_picker_skip, withdrawal_candidate  # noqa: PLC0415
+
+    if not settings.kria_clip_selection_questions_enabled or not withdrawal_candidate(message):
+        return None
+    rows = (
+        await db.execute(
+            select(
+                CreationThreadEvent.role,
+                CreationThreadEvent.payload,
+                CreationThreadEvent.event_type,
+                CreationThreadEvent.content,
+            )
+            .where(
+                CreationThreadEvent.thread_id == thread.id,
+                CreationThreadEvent.role.in_({"user", "assistant"}),
+            )
+            .order_by(CreationThreadEvent.sequence)
+        )
+    ).all()
+    events = [
+        tag_event(role, payload, event_type, content) for role, payload, event_type, content in rows
+    ]
+    skip = typed_picker_skip(await load_latest_brief(db, thread.id), events, message)
+    if skip is None:
+        return None
+    try:
+        await _validate_clip_selection(db, thread, skip)
+    except RuntimeFailure:
+        return None  # a typed message must never become a hard error: let the planner read it
+    return skip
+
+
 async def _owned_thread(
     db: AsyncSession,
     *,
@@ -866,6 +908,20 @@ async def submit_turn(
         derived = await _free_text_choice_selection(db, thread, body.message)
         if derived is not None:
             choice_selection, choice_delegated, choice_reanswer = derived
+    # KRI-1066: like the choice above, a typed answer to the clip picker is stored as the
+    # selection it is (already validated by the helper); an explicit tap in the same send
+    # always wins.
+    clip_selection = body.clip_selection
+    if (
+        clip_selection is None
+        and choice_selection is None
+        and body.song_order is None
+        and body.song_range is None
+        and body.moment_order is None
+        and body.protected_region is None
+        and scope is None
+    ):
+        clip_selection = await _free_text_clip_skip(db, thread, body.message)
     if body.clip_selection is not None and settings.kria_clip_selection_questions_enabled:
         await _validate_clip_selection(db, thread, body.clip_selection)
     if body.song_order is not None and settings.user_song_montage_enabled:
@@ -952,7 +1008,7 @@ async def submit_turn(
         settings.kria_duplicate_resend_enabled
         and scope is None
         and choice_selection is None
-        and body.clip_selection is None
+        and clip_selection is None
         and body.song_order is None
         and body.song_range is None
         and body.moment_order is None
@@ -1133,9 +1189,8 @@ async def submit_turn(
             # Flag off: dropped silently, nothing stored (byte-identical to old clients).
             **({"camera_roll_story": _camera_roll_story} if _camera_roll_story else {}),
             **(
-                {"clip_selection": body.clip_selection.model_dump(mode="json")}
-                if body.clip_selection is not None
-                and settings.kria_clip_selection_questions_enabled
+                {"clip_selection": clip_selection.model_dump(mode="json")}
+                if clip_selection is not None and settings.kria_clip_selection_questions_enabled
                 else {}
             ),
             # KRI-374: flag off -> dropped silently, nothing stored.
