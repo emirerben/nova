@@ -469,16 +469,19 @@ def assess_readiness(
     }
     # The unified montage draft says what its route cannot read (animated text outside the
     # title) and approves the closest thing instead of holding the draft.
+    on_unified_montage = (
+        settings.kria_route_disclosure_enabled
+        and not policy_problem
+        and editor_payload is None
+        and _defers_to_unified_montage(strategy, media, manifest, creator_id)
+    )
     declined = (
         {
             d.requirement_id: d
             for d in ask_declines(
                 requirements,
                 strategy,
-                route=UNIFIED_MONTAGE
-                if editor_payload is None
-                and _defers_to_unified_montage(strategy, media, manifest, creator_id)
-                else None,
+                route=UNIFIED_MONTAGE if on_unified_montage else None,
             )
         }
         if not policy_problem
@@ -598,7 +601,9 @@ def assess_readiness(
             marks=protected_regions or [],
             media=media,
         )
-    if settings.kria_route_disclosure_enabled and not policy_problem and editor_payload is None:
+    if on_unified_montage:
+        # Only the route whose render judges the ask itself (the phone unified montage) may
+        # approve what no draft check can decide; every other route keeps its hold.
         rows = _approve_undecidable(rows, requirements)
     report = {
         "schema_version": 1,
@@ -653,7 +658,7 @@ def _defers_to_unified_montage(
 def _approve_undecidable(
     rows: list[dict[str, Any]], requirements: list[Any]
 ) -> list[dict[str, Any]]:
-    """An ask a checker recognises but cannot decide before render is approvable, like a vague ask.
+    """On the unified montage, an ask a checker cannot decide before render is approvable.
 
     A vague ask ("slow pace") has no checker and was already approved with a look-after line
     (`unverified`), while an ask a checker did recognise but lacked the facts to decide held
@@ -661,6 +666,7 @@ def _approve_undecidable(
     precise the ask, the harder the stop. Both now wait for the render's own verdict, named to
     the creator. Researched-text and keep-text-off asks keep their own flows (the research
     preview and the mark card), and a prepared story keeps its frozen-evidence rule."""
+    from app.kria.brief_checks import _has_duration_target  # noqa: PLC0415
     from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
     from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
 
@@ -675,6 +681,11 @@ def _approve_undecidable(
             # An order ask is judged on proof of who asked and what ran: a missing or wrong
             # proof is held (the worker would refuse the render after approval).
             or req.kind == "order"
+            # A quoted text is checked on the draft and the worker refuses a render whose
+            # confirmed text is missing from the plan: the creator fixes it before approval.
+            or (req.kind == "text" and bool(req.literal))
+            # A length ask whose evidence is missing stays unknown, never a pass.
+            or (req.kind == "timing" and _has_duration_target(req))
             or "collection_story" in req.facts
             or (req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping))
             or _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY))

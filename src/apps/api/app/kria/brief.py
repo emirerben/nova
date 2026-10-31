@@ -565,6 +565,7 @@ STICKY_FACTS = frozenset(
         "first_clip",
         "last_clip",
         "animation",
+        "animated",
         "position",
         "placeholder",
         "ending_clip",

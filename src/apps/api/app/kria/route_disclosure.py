@@ -23,7 +23,6 @@ function is pure and fail-open; the switch is ``settings.kria_route_disclosure_e
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -231,14 +230,6 @@ def strategy_notices(strategy: Mapping[str, Any] | None, *, route: str | None) -
 
 # --- brief asks the route does not read ------------------------------------------------------
 
-# The one wording guess here (KRI-667 baseline +1): the brief records a generic "animated" ask
-# only as prose (`facts` stay empty, Assos r1), so there is no structured field to read yet. When
-# the extractor writes `facts.animation` for it, delete this and read the field.
-_ANIMATION_WORDS = re.compile(
-    r"\banimat(?:e|ed|es|ing|ion|ions)\b|\banimasyon\w*|\bhareketli\b|\bkinetic\b",
-    re.IGNORECASE,
-)
-
 ANIMATION_DECLINE_EN = (
     "I can't animate on-screen text on this video yet, so the text shows without motion"
 )
@@ -255,17 +246,13 @@ def is_route_decline_reason(reason: object) -> bool:
 
 
 def asks_text_animation(req: BriefRequirement) -> bool:
-    """True when the ask is for moving text: a typed ``animation`` fact, or the planner's own
-    restatement of the ask says so. The creator's quoted words (``literal``) are not read, so
-    a title that is "Animated Cities" does not count as an animation ask."""
+    """True when the ask is for moving text, from the brief's typed facts only: a typed
+    ``animation`` id, or ``animated`` (a generic "animated text" ask that named no style; the
+    brief writer records it, `main_creator` prompt v106). No wording is read here (KRI-667), so
+    an ask recorded without either fact is not disclosed."""
     if req.kind not in {"text", "style"}:
         return False
-    if req.facts.get("animation"):
-        return True
-    description = req.description or ""
-    if req.literal:
-        description = description.replace(req.literal, " ")
-    return bool(_ANIMATION_WORDS.search(description))
+    return bool(req.facts.get("animation") or req.facts.get("animated"))
 
 
 def _title_animation_consumed(req: BriefRequirement, strategy: Mapping[str, Any]) -> bool:
@@ -371,7 +358,11 @@ def research_notice(
     """The render's text step may search the web after approval: say so now.
 
     Shown on the unified route when the planner chose the explainer direction and no research
-    was already shown on the card (``previewed``: the sourced preview lines say it)."""
+    was already shown on the card (``previewed``: the sourced preview lines say it).
+
+    Limit: the render searches when the text composer returns a ``research_request`` (decided
+    at render), which nothing at draft time predicts. The explainer direction is the nearest
+    typed signal, so a plan with another direction that still researches gets no line."""
     if not enabled() or route != UNIFIED_MONTAGE or previewed:
         return None
     from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415

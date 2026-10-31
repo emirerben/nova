@@ -169,7 +169,10 @@ log = structlog.get_logger()
 # (creator context, footage, manifest, conversation, message) moved to
 # prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
 # v105 (KRI-1077): title animation names come from the vocab registry (all designed edges).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-30-v105"
+# v106 (prompt fidelity, disclosure): a generic "animated" text ask that names no style is
+# recorded as `animated: true`, so the server can tell the creator before approval what the
+# route does with it without reading the description's words.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-31-v106"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -610,7 +613,9 @@ creator's words for that video>", "keep_audio": true} (`keep_audio` false only w
 silent), whatever language they write in, and never as `last_clip` or `closing`. On a montage,
 adding or ending on a clip keeps `last_clip` as above. How on-screen text should look goes in the
 `facts` of its text requirement, only what the creator said: `animation` (an id from
-{{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
+{{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter",
+or `animated: true` when they ask for animated or moving text without naming a style
+("animated on-screen text", "metni animasyonlu yap");
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
 for "bottom left"; `placeholder` true when they ask for placeholder text to fill in later
 ("placeholder location").
