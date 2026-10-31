@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import json
 import re
+from hashlib import sha256
 from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -231,6 +232,29 @@ class ClipRequestResolverAgent(Agent[ClipRequestResolverInput, ClipRequestResolv
 
     def required_fields(self) -> list[str]:
         return ["intents"]
+
+    def project_input_for_observability(
+        self, input_dict: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """The input a saved `agent_run` keeps (KRI-1076).
+
+        A missed match is diagnosed from the intents asked and the clip records they were
+        matched against, so those stay readable. The creator's whole request does not: the
+        clip-intent planner, which gets the same text, saves a length and digest in its place,
+        and so does this agent.
+        """
+        projected = super().project_input_for_observability(input_dict)
+        if projected is None or "creator_request" not in projected:
+            return projected
+        text = str(projected["creator_request"] or "")
+        return {
+            **projected,
+            "creator_request": {
+                "redacted": True,
+                "chars": len(text),
+                "sha256": sha256(text.encode()).hexdigest(),
+            },
+        }
 
     def render_prompt(self, input: ClipRequestResolverInput) -> str:  # noqa: A002
         intent_lines = "\n".join(_format_intent(i) for i in input.intents)
