@@ -1803,8 +1803,12 @@ def run_post_approval(
     typography_client: Any = None,
     stop_at_composer: bool = False,
     force_flash_fallback: bool = False,
+    extra_features: tuple[str, ...] = (),
 ) -> dict:
     """The real phone worker on ``job`` up to the device pin. Returns what it saw.
+
+    ``extra_features`` are further verified device capabilities for the run (the Assos replay
+    verifies ``crossfade``, which a text_explainer / guided_story plan draws; this edit did not).
 
     ``stop_at_composer`` records the creation text composer's input (no model) and stops
     there. Otherwise ``composer_client`` / ``typography_client`` answer the two model calls
@@ -1867,6 +1871,7 @@ def run_post_approval(
                     "animatedText",
                     "authoredText",
                     "audioMix",
+                    *extra_features,
                 ],
             ),
         ]

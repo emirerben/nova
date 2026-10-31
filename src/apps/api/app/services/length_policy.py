@@ -368,6 +368,49 @@ def direction_not_built(strategy: Mapping[str, object] | object) -> str | None:
     return None
 
 
+# The directions the phone montage builds as a story (beats with text, held crossfaded
+# moments) when the footage and the creator's asks allow it (text-explainer unit).
+STORY_DIRECTIONS: tuple[str, ...] = ("text_explainer", "guided_story")
+
+
+def story_direction(strategy: Mapping[str, object] | object) -> str | None:
+    """The story direction the phone montage should try to build for ``strategy``, else None.
+
+    None with the kill switch off (``STORY_DIRECTIONS_ON_MONTAGE_ENABLED``) and for every
+    other direction, so those plans stay exactly what they were.
+    """
+
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.story_directions_on_montage_enabled:
+        return None
+    direction = _value(strategy, "direction")
+    return direction if isinstance(direction, str) and direction in STORY_DIRECTIONS else None
+
+
+def story_hold_floor_s(strategy: Mapping[str, object] | object) -> float | None:
+    """The shortest a clip may be held under a story direction, else None.
+
+    The guided compiler's own minimum moment for that direction (``_DIRECTION_POLICY``), read
+    from there so planning, the render and the compile can never disagree; a relaxed pace
+    raises it to the relaxed hold. A clip shorter than this simply plays whole
+    (``guided_moment_floor_s``); this floor never drops one.
+    """
+
+    direction = story_direction(strategy)
+    if direction is None:
+        return None
+    from app.pipeline.guided_story import _DIRECTION_POLICY  # noqa: PLC0415
+    from app.schemas.edit_proposal import pace_hold_bounds  # noqa: PLC0415
+
+    floor = float(_DIRECTION_POLICY[direction]["min_moment_s"])
+    if effective_pace(strategy) == "relaxed":
+        # A relaxed story reads slowly: its holds start at the relaxed pace's usual hold, not
+        # at the direction's bare minimum (fast and balanced hold the minimum).
+        floor = max(floor, pace_hold_bounds("relaxed").preferred_s)
+    return floor
+
+
 def _selected_music_section(strategy: Mapping[str, object] | object) -> bool:
     section = _value(strategy, "selected_music_section")
     if not isinstance(section, Mapping):

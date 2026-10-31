@@ -233,7 +233,7 @@ def _clips(media_ids: list[str]) -> list[UnifiedClip]:
 def _cuts(strategy: dict[str, Any]):
     clips = _clips(_dispatched(strategy))
     plan = plan_unified_montage(clips, None, strategy=strategy, clip_intents_enabled=True)
-    return plan.snapshot.fast_cuts
+    return plan.cuts
 
 
 def test_the_recorded_records_tell_steak_from_the_rest() -> None:

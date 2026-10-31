@@ -459,7 +459,12 @@ def _opening_end(snapshot: dict, slots: list[dict]) -> float:
             default=0.0,
         )
     first_end = _window(slots[0])[1]
-    return first_end if any(float(bar.get("start_s", 0)) < first_end for bar in bars) else 0.0
+    # A story beat's placeholder caption (`story_direction`) is not an opening to preserve.
+    return (
+        first_end
+        if any(float(bar.get("start_s", 0)) < first_end for bar in bars if not _is_story_seed(bar))
+        else 0.0
+    )
 
 
 def _speech_windows(snapshot: dict, slots: list[dict], opener_end: float) -> list[tuple]:
@@ -573,6 +578,16 @@ def research_windows(snapshot: dict) -> list[dict]:
     return result
 
 
+def _is_story_seed(bar: dict) -> bool:
+    """A story beat's placeholder caption (`story_direction.STORY_SEED_PREFIX`), not copy."""
+    from app.config import settings  # noqa: PLC0415
+    from app.pipeline.story_direction import STORY_SEED_PREFIX  # noqa: PLC0415
+
+    return settings.story_directions_on_montage_enabled and str(bar.get("id") or "").startswith(
+        STORY_SEED_PREFIX
+    )
+
+
 def _place_research_text(
     snapshot: dict,
     *,
@@ -601,6 +616,7 @@ def _place_research_text(
     if start < opening and any(
         float(bar.get("start_s", 0)) < end and float(bar.get("end_s", 0)) > start
         for bar in snapshot.get("text_bars") or []
+        if not _is_story_seed(bar)
     ):
         raise ResearchUnavailable("Research preserves the existing opening")
     if end - start < 2 or len(text) > 180 or len(text) / (end - start) > 15:
@@ -611,11 +627,13 @@ def _place_research_text(
     for index, bar in enumerate(snapshot.get("text_bars") or []):
         a, b = float(bar.get("start_s", 0)), float(bar.get("end_s", 0))
         if start < b and end > a:
+            # A story beat's placeholder caption (`story_direction`) is replaceable wherever
+            # the explanation lands, even partly over it: it only holds the beat's place.
+            placeholder = _is_story_seed(bar)
             if (
                 speech  # a Talking edit's text in a pause is the creator's own
                 or bar.get("id") in (snapshot.get("copy_constraints") or {})
-                or a < start
-                or b > end
+                or ((a < start or b > end) and not placeholder)
                 or (
                     bar.get("caption_cue")
                     or str(bar.get("role", "")).startswith(("caption", "lyric"))

@@ -4,9 +4,9 @@ Thin wrapper over the scorecard (`scripts/kria/score_assos.py`, `make kria-repla
 which replays the recorded request through the real card, worker, research, text-composition,
 phone-text-style and device-recipe code with recorded or reconstructed model text.
 
-Checks 1-9 are the development baseline: RED on the unchanged code on purpose. They are
-`xfail(strict=True)`, so CI stays green today and the first phase that turns one green fails
-the run until its marker is removed (the ratchet). `pytest --runxfail` shows the real failures.
+Checks 1-9 started as the development baseline: RED on the unchanged code on purpose, held as
+`xfail(strict=True)` so the first phase that turned one green failed the run until its marker was
+removed (the ratchet). All nine are green now and carry no marker.
 Check 10 is report-only by owner rule (the product never fails a user for these gaps): it must
 run and list its gaps, never fail. Check 11 (no catalog music on the phone) is already green.
 """
@@ -86,14 +86,11 @@ def test_unchanged_code_reproduces_prod(report) -> None:
     assert not drift, drift
 
 
-RED = "phase 0 baseline: red on unchanged code, a later phase turns it green"
-
-
 @pytest.mark.parametrize(
     "check_id",
     [
         1,
-        pytest.param(2, marks=pytest.mark.xfail(strict=True, reason=RED + " (pace/direction)")),
+        2,
         3,
         4,
         5,

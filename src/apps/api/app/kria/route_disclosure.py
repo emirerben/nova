@@ -220,12 +220,100 @@ UNREAD_STRATEGY_FIELDS: dict[str, Callable[[Any, Mapping[str, Any]], str | None]
 }
 
 
-def strategy_notices(strategy: Mapping[str, Any] | None, *, route: str | None) -> list[Disclosure]:
+def _story_verdict(
+    strategy: Mapping[str, Any],
+    requirements: Sequence[BriefRequirement] | None,
+    media: Mapping[str, Any] | None,
+) -> tuple[str, str | None] | None:
+    """``(direction, reason)`` for a planner direction the route builds as a story, else None.
+
+    ``reason`` None means the story will be built (the route reads ``direction``,
+    ``story_structure`` and ``pacing``); a reason means the route keeps the fast montage and
+    says why. The same pure rules the render applies (`pipeline.story_direction`), over what
+    the draft knows before approval: the strategy, the live asks and the pinned length plan.
+    Fail-open: any trouble returns None and the generic lines below stand.
+    """
+    from app.services.length_policy import story_direction  # noqa: PLC0415
+
+    direction = story_direction(strategy)
+    if direction is None:
+        return None
+    try:
+        from app.kria.brief import CreativeBrief  # noqa: PLC0415
+        from app.pipeline.story_direction import (  # noqa: PLC0415
+            crossfade_blocker,
+            story_blocker,
+            story_lines,
+            story_media_blocker,
+        )
+        from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
+
+        view = brief_view(CreativeBrief(version=1, requirements=list(requirements or [])))
+        reason = (
+            story_blocker(strategy, view)
+            or (None if story_lines(strategy) else "no_story_lines")
+            or story_media_blocker(strategy, media)
+            or crossfade_blocker(strategy, direction)
+        )
+    except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
+        return None
+    return direction, reason
+
+
+def _story_lines_notice(strategy: Mapping[str, Any]) -> str | None:
+    """The outline sets the chapters and their text, but the clips keep their order."""
+    items = [v for v in (strategy.get("story_structure") or []) if str(v or "").strip()]
+    if not items:
+        return None
+    return say(
+        en=(
+            f"The planned story structure ({_list(items)}) sets the chapters and their "
+            "on-screen text, but it won't reorder your clips: they stay in the order you gave"
+        ),
+        tr=(
+            f"Planlanan hikâye yapısı ({_list(items)}) bölümleri ve ekran yazılarını belirliyor "
+            "ama kliplerinin sırasını değiştirmeyecek: verdiğin sırada kalacaklar"
+        ),
+    )
+
+
+def strategy_notices(
+    strategy: Mapping[str, Any] | None,
+    *,
+    route: str | None,
+    requirements: Sequence[BriefRequirement] | None = None,
+    media: Mapping[str, Any] | None = None,
+) -> list[Disclosure]:
     """Typed "not applied" lines for strategy fields the route does not read."""
     if not enabled() or route != UNIFIED_MONTAGE or not strategy:
         return []
+    verdict = _story_verdict(strategy, requirements, media)
     out: list[Disclosure] = []
     for field, build in UNREAD_STRATEGY_FIELDS.items():
+        if verdict is not None:
+            direction, reason = verdict
+            if reason is None and field in {"direction", "pacing"}:
+                continue  # built as that story: both are read (`story_direction`)
+            if field == "direction":
+                # Cut as a fast montage instead: the one line says why (a reason that is only
+                # the plan's own trouble leaves the generic line below).
+                from app.pipeline.story_direction import (  # noqa: PLC0415
+                    fallback_note,
+                    says_fallback,
+                )
+
+                if says_fallback(reason, direction):
+                    out.append(
+                        Disclosure(
+                            NOT_APPLIED, field, fallback_note(reason, direction, future=True)
+                        )
+                    )
+                    continue
+            if field == "story_structure" and reason is None:
+                text = _story_lines_notice(strategy)
+                if text:
+                    out.append(Disclosure(NOT_APPLIED, field, text))
+                continue
         try:
             text = build(strategy.get(field), strategy)
         except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
@@ -420,6 +508,7 @@ def card_disclosures(
     *,
     route: str | None,
     research_previewed: bool = False,
+    media: Mapping[str, Any] | None = None,
 ) -> list[Disclosure]:
     """Lines for the draft reply and approval card: research after approval, then unread strategy
     fields.
@@ -428,7 +517,9 @@ def card_disclosures(
     research = research_notice(requirements, strategy, route=route, previewed=research_previewed)
     # Research first: it is the one line about something that will happen, and the card keeps
     # whole lines within its budget, longest-lived (strategy detail) last.
-    return ([research] if research is not None else []) + strategy_notices(strategy, route=route)
+    return ([research] if research is not None else []) + strategy_notices(
+        strategy, route=route, requirements=requirements, media=media
+    )
 
 
 def card_text(disclosures: Sequence[Disclosure], *, limit: int = 640) -> str:

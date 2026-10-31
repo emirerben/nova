@@ -96,6 +96,7 @@ from app.pipeline.hidden_parts import (
     usable_s,
 )
 from app.pipeline.pinned_text import drawable_pins, pins_from_strategy
+from app.pipeline.story_direction import story_floor_for
 from app.schemas.clip_intents import PLACEHOLDER_LABEL_TEXT
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
@@ -143,6 +144,7 @@ from app.services.length_policy import (
     natural_length_owner,
     route_direction,
     stated_pace,
+    story_direction,
 )
 from app.services.order_mode import order_mode, seeded_permutation
 from app.services.order_mode import random_order_seed as order_seed_of
@@ -664,6 +666,20 @@ class UnifiedMontagePlan:
     # hard-cut fast montages only): the plan was built as ``snapshot.direction`` and a receipt
     # may say so. None (every plan whose strategy direction was built) is not recorded.
     requested_direction: str | None = None
+    # Text-explainer unit: a story direction (text_explainer / guided_story) built as story
+    # beats lists how many; ``story_fallback`` is the fast plan it was built from (the worker
+    # falls back to it if the text step cannot place the story's text), and
+    # ``direction_fallback`` is the reason a story direction was cut as a fast montage
+    # (`story_direction.fallback_note`). All empty for every other plan, so records stay as is.
+    story_beats: int | None = None
+    story_fallback: UnifiedMontagePlan | None = None
+    direction_fallback: str | None = None
+
+    @property
+    def cuts(self) -> list[FastMontageCut]:
+        """The planned cuts (clip, source window, length) in play order, whatever layout the
+        snapshot has: a story plan keeps the fast plan's cuts it was built from."""
+        return list((self.story_fallback or self).snapshot.fast_cuts or [])
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -751,6 +767,13 @@ class UnifiedMontagePlan:
         direction_asked = (
             {"requested_direction": self.requested_direction} if self.requested_direction else {}
         )
+        if self.story_beats is not None:
+            direction_asked["story"] = {
+                "direction": self.snapshot.direction,
+                "beats": self.story_beats,
+            }
+        if self.direction_fallback:
+            direction_asked["direction_fallback"] = self.direction_fallback
         record = {
             "version": 1,
             "brief_version": self.brief_version,
@@ -1932,6 +1955,10 @@ def plan_unified_montage(
     pace = effective_pace(strategy)
     default_cut_s = pace_hold_bounds(pace).preferred_s if pace is not None else DEFAULT_CUT_S
     growth_max_s = pace_hold_bounds(pace).maximum_s if pace is not None else READING_MAX_S
+    # A story direction (text_explainer / guided_story) holds every clip at least its own
+    # minimum moment: the same floor approval-time planning applies, only where nothing the
+    # creator asked keeps this a fast montage (`story_direction.story_blocker`).
+    story_floor_s = story_floor_for(strategy, view) if song_duration_s is None else None
     if song_duration_s is not None and (song_plan_item_id is None or song_generation is None):
         raise ValueError("a song montage needs the song's plan item and generation")
     if not clips:
@@ -2236,9 +2263,10 @@ def plan_unified_montage(
             minimum_duration_s=minimums,
             maximum_duration_s=seat_maximums,
         )
-        if pace is not None:
+        if pace is not None or story_floor_s is not None:
             # The same rule the approval-time plan applies (``paced_selection``): the planner's
-            # pace sets how long each clip is held, with no creator length stated.
+            # pace (and a story direction's minimum moment) sets how long each clip is held,
+            # with no creator length stated.
             from app.services.length_planning import paced_selection  # noqa: PLC0415
 
             candidate = (
@@ -2250,6 +2278,7 @@ def plan_unified_montage(
                     cap_s=MAX_BEST_PARTS_DURATION_S,
                     minimums=minimums,
                     maximums=seat_maximums,
+                    story_floor_s=story_floor_s,
                 )
                 or candidate
             )
@@ -2830,7 +2859,7 @@ def plan_unified_montage(
         # An unknown font or colour is a style preference, never a reason to
         # fail the render: fall back to the default typography.
         snapshot = build({})
-    return UnifiedMontagePlan(
+    plan = UnifiedMontagePlan(
         snapshot=snapshot,
         clip_ids=[clip.media_id for clip in ordered],
         title=title,
@@ -2907,6 +2936,47 @@ def plan_unified_montage(
             if any(cut.media_id == media_id for cut in cuts)
         ],
     )
+    return _as_story_direction(
+        plan,
+        strategy,
+        view,
+        approved_length_plan=approved_length_plan,
+        song=song_duration_s is not None,
+    )
+
+
+def _as_story_direction(
+    plan: UnifiedMontagePlan,
+    strategy: Mapping[str, Any],
+    view: BriefView,
+    *,
+    approved_length_plan: Mapping[str, Any] | None,
+    song: bool,
+) -> UnifiedMontagePlan:
+    """``plan`` rebuilt as the planner's story direction where the route can, else ``plan``.
+
+    A text_explainer / guided_story strategy is built as story beats over the same clips
+    (`story_direction.build_story_plan`); where a creator's ask or the footage keeps it a fast
+    montage the plan says why (``direction_fallback``). Any other direction, or the kill switch
+    off, returns ``plan`` untouched.
+    """
+    direction = story_direction(strategy)
+    if direction is None:
+        return plan
+    from app.pipeline.story_direction import build_story_plan  # noqa: PLC0415
+
+    story, reason = build_story_plan(
+        plan,
+        strategy=strategy,
+        view=view,
+        direction=direction,
+        stated_pace=stated_pace(strategy),
+        approved_length_plan=approved_length_plan,
+        song=song,
+    )
+    if story is not None:
+        return story
+    return replace(plan, direction_fallback=reason)
 
 
 def _title_shown_as_label(

@@ -2454,6 +2454,16 @@ class Settings(BaseSettings):
     # Rollback: `fly secrets set PACE_DRIVES_CUTS_ENABLED=false --app nova-video` + restart
     # api+worker.
     pace_drives_cuts_enabled: bool = True
+    # Text-explainer unit (prompt fidelity): a planner direction of `text_explainer` or
+    # `guided_story` is built as a story on the phone montage route (story beats from
+    # `story_structure`, the text step's captions as the beat text, every moment held at least
+    # the direction's own minimum, crossfades) instead of always a hard-cut fast montage. true =
+    # built where the footage and the creator's asks allow it; anything else (a per-clip text
+    # ask, a freeze, a stated length the holds cannot fit, a text step that fails) is cut as the
+    # fast montage and the plan says so. Never refuses a render. false = byte-identical to
+    # before. Rollback: `fly secrets set STORY_DIRECTIONS_ON_MONTAGE_ENABLED=false --app
+    # nova-video` + restart api+worker.
+    story_directions_on_montage_enabled: bool = True
     # KRI-808: a clip's timed words are kept only when whisper's language agrees with the
     # clip's Gemini transcript; a pass that disagrees (whisper TRANSLATED accented speech) is
     # re-transcribed in the language Gemini or the chat heard, else stored as no words. Also

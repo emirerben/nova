@@ -58,6 +58,17 @@ cut grid (16 cuts, 18.005 s), four captions, static effects, fonts, approval car
 shape default and orientation stamp. Those rows are informational; a phase that changes the output
 on purpose changes them too (`ASSOS_EXPECT_BASELINE=1` asserts them in pytest).
 
+## Replay of the recorded caption binding
+
+The recorded `nova.research.caption_binding` answer names research windows by id (`window-3`), and
+a window id only means something against the timeline it was written for. When a plan changes the
+timeline (a text_explainer cut as story beats, a relaxed pace), `score_assos._Sequence(rebind=True)`
+keeps what the model decided (each caption's words, evidence ids and the quote of the picture it
+describes) and re-seats the caption on the first free window of the plan that shows that picture
+and fits its character limit, in the recorded order; a caption whose picture is in no free window
+is left out. On the timeline the answer was recorded against it picks the same windows. The Assos
+replay also verifies `crossfade` (real prod does), which the story directions draw.
+
 ## What the checks do not prove
 
 They check the named observable, not that the video is good. Check 2 compares mean cut length

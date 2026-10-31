@@ -385,8 +385,10 @@ def _enrich_best_parts_snapshot(
     if not isinstance(media_snapshot, dict):
         return media_snapshot
     from app.kria.asset_holds import asset_holds, visual_budget  # noqa: PLC0415
+    from app.pipeline.story_direction import story_floor_for  # noqa: PLC0415
     from app.pipeline.unified_montage import (  # noqa: PLC0415
         MIN_READABLE_SHOT_S,
+        brief_view,
         unheld_still_frames,
     )
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
@@ -419,6 +421,16 @@ def _enrich_best_parts_snapshot(
     if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
         recording = media_snapshot["voiceover"].get("duration_s")
     moments = brief_moment_ask(brief)
+    # A planner direction of text_explainer / guided_story holds every clip at least that
+    # direction's own minimum moment, so the approved windows already play as the story the
+    # render builds (and the length on the card is its length). Only where nothing the
+    # creator asked keeps the draft a fast montage; the worker decides the rest with the
+    # same rule (`story_direction.story_blocker`).
+    story_floor_s = (
+        story_floor_for(strategy, brief_view(brief))
+        if strategy.get("edit_format") == "montage" and recording is None
+        else None
+    )
     held = _held_closing_ids(closing_quote)
     grounded = {str(row.get("quote")): row for row in named_lines or () if isinstance(row, Mapping)}
     named = [
@@ -524,6 +536,7 @@ def _enrich_best_parts_snapshot(
             skipped_moments=(
                 [pin.json() for pin in moment_pins.skipped] if moment_pins is not None else None
             ),
+            story_floor_s=story_floor_s,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is

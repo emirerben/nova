@@ -2199,6 +2199,8 @@ def _complete_draft_turn(
                 document.strategy,
                 route=route_name,
                 research_previewed=draft_research is not None and draft_research.ready,
+                # The pinned length plan: whether a story direction's holds fit the length.
+                media=_card_media,
             )
         route_notice = card_text(route_disclosures) if route_disclosures else None
         if route_notice:

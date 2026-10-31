@@ -7147,6 +7147,63 @@ def _approved_research(snapshot: Mapping[str, Any]) -> Any:
     return research if research.status == "ready" else None
 
 
+def _composed_plan(
+    plan: Any, assignments: list, all_candidates: dict, compose: Callable[[Any], Any]
+) -> Any:
+    """``plan`` with its text composed; a story direction that cannot be falls back, never fails.
+
+    A plan that is not a story is composed as always. A plan built as a story direction
+    (text_explainer / guided_story) is composed too, and the phone's own dry run must accept it;
+    if the text step cannot place the story's text (a research window or a copy rule the beat
+    layout cannot meet) or the phone cannot draw the layout, the fast montage the route always
+    made is composed instead, with ``direction_fallback`` saying why. A provider timeout, quota
+    or budget failure is not the story's doing (the fast montage would hit it too) and is raised
+    as before.
+    """
+    fast = getattr(plan, "story_fallback", None)
+    if fast is None:
+        plan.snapshot = compose(plan)
+        return plan
+    from app.agents._runtime import (  # noqa: PLC0415
+        AiBudgetExceededError,
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+    )
+    from app.pipeline.phone_plan_repair import (  # noqa: PLC0415
+        PhoneProposalRejected,
+        validate_proposal_phone_compiles,
+    )
+    from app.services.creation_text_composition import CreationTextTimeoutError  # noqa: PLC0415
+
+    reason: str | None = None
+    try:
+        plan.snapshot = compose(plan)
+        validate_proposal_phone_compiles(
+            plan.snapshot,
+            assignments,
+            landscape_fit="fit" if _creator_landscape_fit(all_candidates) == "fit" else "fill",
+        )
+        return plan
+    except (
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+        AiBudgetExceededError,
+        CreationTextTimeoutError,
+    ):
+        raise
+    except PhoneProposalRejected as exc:
+        reason = "phone_rejected"
+        log.warning("story_direction_phone_rejected", error=str(exc)[:300])
+    except Exception as exc:  # noqa: BLE001 - a direction is never a reason to fail a render
+        reason = "story_text_failed"
+        log.warning(
+            "story_direction_text_failed", error=str(exc)[:300], error_type=type(exc).__name__
+        )
+    fallback = replace(fast, direction_fallback=reason)
+    fallback.snapshot = compose(fallback)
+    return fallback
+
+
 @phone_text_generation
 def _run_phone_unified_montage_job(
     job_id: str, snapshot: dict, all_candidates: dict, *, ownership_epoch: int | None
@@ -7331,16 +7388,32 @@ def _run_phone_unified_montage_job(
         if isinstance(all_candidates.get("brief"), dict)
         else ""
     )
-    plan.snapshot = compose_creation_text(
-        plan.snapshot,
-        creator_request=str(request or ""),
-        ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
-        copy_constraints=snapshot_copy_constraints(plan.snapshot),
-        text_requirements=brief.live() if brief is not None else None,
-        # KRI-881: sourced wording the creator approved, replayed without a new search.
-        prepared_research=_approved_research(snapshot),
-    )
+
+    def compose(candidate: Any) -> Any:
+        return compose_creation_text(
+            candidate.snapshot,
+            creator_request=str(request or ""),
+            ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+            copy_constraints=snapshot_copy_constraints(candidate.snapshot),
+            text_requirements=brief.live() if brief is not None else None,
+            # KRI-881: sourced wording the creator approved, replayed without a new search.
+            prepared_research=_approved_research(snapshot),
+        )
+
+    # A planner direction built as a story (text_explainer / guided_story) never costs the
+    # creator their video: if the text step cannot place its text, or the phone cannot draw the
+    # layout, the fast montage the route always made is composed instead and the note says why.
+    plan = _composed_plan(plan, assignments, all_candidates, compose)
     record = plan.record()
+    from app.pipeline.story_direction import fallback_note, says_fallback  # noqa: PLC0415
+
+    if (requested := (strategy or {}).get("direction")) and says_fallback(
+        plan.direction_fallback, str(requested)
+    ):
+        # The planner's story direction was cut as a fast montage: one line, with the finished
+        # video, saying why (`story_direction.fallback_note`).
+        with _worker_reply_language(snapshot):
+            record["repair_notes"] = [fallback_note(plan.direction_fallback, str(requested))]
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
     # (byte-identical record) when nothing was collapsed.
     record.update(montage_record_fields(duplicate_aliases))
@@ -7409,7 +7482,7 @@ def _run_phone_unified_montage_job(
                 },
             )
             if notes:
-                record["repair_notes"] = notes
+                record["repair_notes"] = [*record.get("repair_notes", []), *notes]
 
     with _sync_session() as db:
         entry_row = _lock_owned_entry_job(db, job_id)

@@ -79,7 +79,28 @@ def _load_29_ekim():  # noqa: ANN202
 _BASE = _load_29_ekim()
 _result = _BASE._result
 _guarded = _BASE._guarded
-_prod_flags = _BASE._prod_flags
+
+
+def _prod_flags():  # noqa: ANN202
+    """The shared prod flags plus the device capability the story directions draw with.
+
+    Real prod verifies ``crossfade`` (`tests/_prod_profile.PROD_VERIFIED_FEATURES`); the shared
+    29-Ekim set lists only the two text capabilities that edit needed. A text_explainer or
+    guided_story plan crossfades its moments, so the Assos replay verifies it too.
+    """
+    from app.config import settings
+
+    stack = _BASE._prod_flags()
+    stack.enter_context(
+        patch.object(
+            settings,
+            "phone_render_verified_features",
+            [*settings.phone_render_verified_features, "crossfade"],
+        )
+    )
+    return stack
+
+
 _cassette = _BASE._cassette
 
 
@@ -265,21 +286,62 @@ def build_job(
 
 
 class _Sequence:
-    """A model client that answers a fixed list of recorded texts in call order."""
+    """A model client that answers a fixed list of recorded texts in call order.
 
-    def __init__(self, texts: list[str]) -> None:
+    The recorded caption-binding answer names research windows by id ("window-3"), and a
+    window id only means something against the timeline it was written for. ``rebind`` keeps
+    what the model decided (each caption's words, evidence and the quote of the picture it
+    describes) and re-seats each caption on the first window of THIS plan that shows that
+    picture and does not overlap one already used, in the recorded order; a caption whose
+    picture is in no free window is left out, as the model would have left it out. With the
+    plan the answer was recorded against it picks the same windows.
+    """
+
+    def __init__(self, texts: list[str], *, rebind: bool = False) -> None:
         self.texts = list(texts)
+        self.rebind = rebind
 
     def client(self):  # noqa: ANN202
         from app.agents._runtime import ModelClient, ModelInvocation
 
-        texts = self.texts
+        texts, rebind = self.texts, self.rebind
 
         class _Recorded(ModelClient):
-            def invoke(self, **_kwargs: Any) -> ModelInvocation:
-                return ModelInvocation(raw_text=texts.pop(0))
+            def invoke(self, **kwargs: Any) -> ModelInvocation:
+                raw = texts.pop(0)
+                return ModelInvocation(
+                    raw_text=_rebound(raw, str(kwargs.get("prompt") or "")) if rebind else raw
+                )
 
         return _Recorded()
+
+
+def _rebound(raw: str, prompt: str) -> str:
+    """``raw`` (a recorded caption-binding answer) bound to the windows in ``prompt``."""
+    try:
+        answer = json.loads(raw)
+        windows = json.loads(prompt.rsplit("Data:\n", 1)[1])["snapshot"]["research_windows"]
+    except (ValueError, KeyError, IndexError):
+        return raw
+    if not isinstance(answer, dict) or not isinstance(answer.get("captions"), list):
+        return raw
+    used: list[tuple[float, float]] = []
+    kept = []
+    for caption in answer["captions"]:
+        quote = str(caption.get("visual_quote") or "")
+        shown = f"{caption.get('context_label') or ''}: {caption.get('text') or ''}"
+        for window in windows:
+            span = (float(window["start_s"]), float(window["end_s"]))
+            seen = "\n".join(str((row or {}).get("text", "")) for row in window.get("seen") or [])
+            if (
+                quote in seen
+                and len(shown) <= int(window.get("max_characters") or 0)
+                and not any(span[0] < b and span[1] > a for a, b in used)
+            ):
+                used.append(span)
+                kept.append({**caption, "window_id": window["id"]})
+                break
+    return json.dumps({**answer, "captions": kept})
 
 
 def replay(job: SimpleNamespace, research: dict) -> dict[str, Any]:
@@ -302,7 +364,9 @@ def replay(job: SimpleNamespace, research: dict) -> dict[str, Any]:
         recipes.append(recipe)
         return real_validate(recipe, *args, **kwargs)
 
-    sequence = _Sequence([research["caption_binding_raw_text"], research["claim_review_raw_text"]])
+    sequence = _Sequence(
+        [research["caption_binding_raw_text"], research["claim_review_raw_text"]], rebind=True
+    )
     from app.kria import plan_blocks
     from app.tasks import generative_build as _GB
 
@@ -328,6 +392,7 @@ def replay(job: SimpleNamespace, research: dict) -> dict[str, Any]:
             job,
             composer_client=_cassette(research["composer_raw_text"]),
             typography_client=_cassette(research["typography_raw_text"]),
+            extra_features=("crossfade",),
         )
     plan = seen.get("assembly_plan") or {}
     variant = (plan.get("variants") or [{}])[0]
@@ -956,6 +1021,7 @@ def check_9_provider_failure(fx: dict) -> dict:
 ROUTE_FILES = (
     "pipeline/unified_montage.py",
     "pipeline/best_parts.py",
+    "pipeline/story_direction.py",
     "services/length_policy.py",
     "services/length_planning.py",
     "kria/duplicate_uploads.py",
