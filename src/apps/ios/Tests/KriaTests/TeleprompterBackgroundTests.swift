@@ -1,3 +1,4 @@
+import CoreImage
 import XCTest
 @testable import Kria
 
@@ -239,6 +240,108 @@ import XCTest
         XCTAssertEqual(calls.order, [])
         XCTAssertTrue(flow.attachmentFinished)
         XCTAssertNotNil(flow.backgroundNote)
+    }
+
+    // MARK: Video background restarts when the recording really starts
+
+    private final class FakeProvider: LiveBackgroundProviding, @unchecked Sendable {
+        var restarts = 0, stops = 0
+        func frame() -> CIImage? { nil }
+        func setActive(_ active: Bool) {}
+        func restart() { restarts += 1 }
+        func stop() { stops += 1 }
+    }
+
+    private final class Providers: @unchecked Sendable {
+        private let lock = NSLock()
+        private(set) var made: [FakeProvider] = []
+        func make() -> FakeProvider { lock.lock(); defer { lock.unlock() }; let p = FakeProvider(); made.append(p); return p }
+    }
+
+    private func flowWithFakeProviders(_ providers: Providers) -> TeleprompterRecordingFlow {
+        TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: DiscardingSaver(),
+                                  speakerBackgroundEnabled: true,
+                                  makeLivePreview: { LiveBackgroundPreview(segmenter: FailingNoMask()) },
+                                  makeBackgroundProvider: { _, _ in providers.make() })
+    }
+
+    private struct FailingNoMask: PersonSegmenting {
+        struct Failure: Error {}
+        func mask(for frame: CVPixelBuffer) throws -> CVPixelBuffer { throw Failure() }
+    }
+
+    private func waitForPreview(_ flow: TeleprompterRecordingFlow, count: Int, _ providers: Providers) async throws {
+        for _ in 0..<150 where providers.made.count < count || flow.livePreview == nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(providers.made.count, count)
+    }
+
+    func testRecordStartRestartsTheVideoOnceAndNotBeforeTheMovieOutputStarts() async throws {
+        let providers = Providers()
+        let flow = flowWithFakeProviders(providers)
+        flow.chooseBackground(from: try pickedFile("clip.mov"), kind: .video)
+        try await waitForPreview(flow, count: 1, providers)
+        let provider = try XCTUnwrap(providers.made.first)
+
+        flow.stage = .countdown
+        flow.cameraChanged(.ready)
+        XCTAssertEqual(provider.restarts, 0, "not at pick time and not during the countdown")
+        flow.stage = .starting
+        XCTAssertEqual(provider.restarts, 0, "not at the button tap")
+        flow.cameraChanged(.recording)
+        XCTAssertEqual(provider.restarts, 1, "the moment the movie output has started")
+        XCTAssertEqual(flow.stage, .recording)
+        flow.cameraChanged(.recording)
+        XCTAssertEqual(provider.restarts, 1, "a repeated phase report is not a second start")
+    }
+
+    func testARetakeRestartsTheVideoAgain() async throws {
+        let providers = Providers()
+        let flow = flowWithFakeProviders(providers)
+        flow.chooseBackground(from: try pickedFile("clip.mov"), kind: .video)
+        try await waitForPreview(flow, count: 1, providers)
+        let provider = try XCTUnwrap(providers.made.first)
+        for take in 1...2 {
+            flow.stage = .starting
+            flow.cameraChanged(.recording)
+            XCTAssertEqual(provider.restarts, take)
+            flow.stage = .camera
+        }
+    }
+
+    func testClearingAndRepickingLeavesNoStalePlayer() async throws {
+        let providers = Providers()
+        let flow = flowWithFakeProviders(providers)
+        flow.chooseBackground(from: try pickedFile("one.mov"), kind: .video)
+        try await waitForPreview(flow, count: 1, providers)
+        let first = try XCTUnwrap(providers.made.first)
+        let preview = try XCTUnwrap(flow.livePreview)
+        flow.clearBackground()
+        XCTAssertNil(flow.livePreview)
+        flow.stage = .starting
+        flow.cameraChanged(.recording)
+        XCTAssertEqual(first.restarts, 0, "nothing restarts once the background is cleared")
+
+        flow.stage = .camera
+        flow.chooseBackground(from: try pickedFile("two.mov"), kind: .video)
+        try await waitForPreview(flow, count: 2, providers)
+        let second = providers.made[1]
+        flow.stage = .starting
+        flow.cameraChanged(.recording)
+        XCTAssertEqual(second.restarts, 1)
+        XCTAssertEqual(first.restarts, 0)
+        _ = preview
+    }
+
+    func testReplacingTheVideoStopsTheOldPlayer() async throws {
+        let providers = Providers()
+        let flow = flowWithFakeProviders(providers)
+        flow.chooseBackground(from: try pickedFile("one.mov"), kind: .video)
+        try await waitForPreview(flow, count: 1, providers)
+        flow.chooseBackground(from: try pickedFile("two.mov"), kind: .video)
+        try await waitForPreview(flow, count: 2, providers)
+        for _ in 0..<50 where providers.made[0].stops == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(providers.made[0].stops, 1, "the old player is released")
+        XCTAssertEqual(providers.made[1].stops, 0)
     }
 
     // MARK: Statement to the server (PUT speaker-background)

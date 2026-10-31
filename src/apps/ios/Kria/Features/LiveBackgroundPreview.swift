@@ -62,6 +62,12 @@ final class LoopingVideoBackground: LiveBackgroundProviding, @unchecked Sendable
         if active { player.play() } else { player.pause() }
     }
 
+    /// Seeks to the very first frame and plays on, looping as before. Zero tolerance, so the first frame is frame 0 and not
+    /// the nearest keyframe. Until the seek lands the previous frame stays on screen.
+    func restart() {
+        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { [weak player] _ in player?.play() }
+    }
+
     /// Where the loop is, in seconds. For the loop test only.
     var playbackSeconds: Double { player.currentTime().seconds }
 
@@ -149,6 +155,12 @@ final class LiveBackgroundPreview: NSObject, LiveFrameConsumer, @unchecked Senda
 
     /// Matting stops with the session, so a video background stops decoding too. The first frame of the next session
     /// resumes it.
+    /// The recording just started: a video background begins again from its first frame.
+    func restartBackground() {
+        lock.lock(); let current = provider; providerActive = true; lock.unlock()
+        current?.restart()
+    }
+
     func sessionDidStop() {
         lock.lock(); providerActive = false; let current = provider; lock.unlock()
         current?.setActive(false)

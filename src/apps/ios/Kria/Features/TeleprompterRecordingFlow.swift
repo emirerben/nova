@@ -58,6 +58,8 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     /// The live matted preview, created the first time a background is shown. Nil without a background.
     @Published private(set) var livePreview: LiveBackgroundPreview?
     private let makeLivePreview: () -> LiveBackgroundPreview
+    typealias BackgroundProviderFactory = @Sendable (SpeakerBackgroundReference, URL) async throws -> any LiveBackgroundProviding
+    private let makeBackgroundProvider: BackgroundProviderFactory
     private let backgroundIntake: BackgroundIntake?
     private let backgroundStatement: BackgroundStatement?
     private var uploadingBackground = false
@@ -82,11 +84,13 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
          makeLivePreview: @escaping () -> LiveBackgroundPreview = { LiveBackgroundPreview() },
          backgroundIntake: BackgroundIntake? = nil,
          backgroundStatement: BackgroundStatement? = nil,
+         makeBackgroundProvider: @escaping BackgroundProviderFactory = TeleprompterRecordingFlow.liveBackgroundProvider,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         self.speakerBackgroundEnabled = speakerBackgroundEnabled
         self.makeLivePreview = makeLivePreview
         self.backgroundIntake = backgroundIntake
         self.backgroundStatement = backgroundStatement
+        self.makeBackgroundProvider = makeBackgroundProvider
         store = TeleprompterStore(accountID: accountID, projectID: projectID, root: root)
         script = TeleprompterScript()
         self.photoSaver = photoSaver
@@ -189,6 +193,8 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
             cancelCountdown()
         } else if phase == .recording, stage == .starting {
             stage = .recording
+            // The movie output has really started: a video background plays from its first frame, as the edit will.
+            livePreview?.restartBackground()
             if autoScrollAfterStart { script.resume() }
         } else if phase == .finalizing {
             script.pause(); stage = .finalizing; persistDraft()
@@ -281,6 +287,14 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         showBackgroundLive()
     }
 
+    /// A photo is decoded once off the main thread; a video is a muted, looping player.
+    static let liveBackgroundProvider: BackgroundProviderFactory = { reference, url in
+        switch reference.kind {
+        case .image: try await Task.detached { try StillBackground(url: url) }.value
+        case .video: try await LoopingVideoBackground(url: url)
+        }
+    }
+
     /// Points the camera's frame output and the live preview at the current choice (or away from it). Any failure leaves
     /// the plain camera preview, and nothing here is on the recording's path.
     private func showBackgroundLive() {
@@ -293,12 +307,10 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         }
         let preview = livePreview ?? makeLivePreview()
         guard preview.isAvailable else { return }
-        let url = store.backgroundFileURL(for: choice.reference), kind = choice.reference.kind
+        let url = store.backgroundFileURL(for: choice.reference), reference = choice.reference, make = makeBackgroundProvider
         backgroundLoad = Task { [weak self] in
             do {
-                let provider: any LiveBackgroundProviding = kind == .image
-                    ? try await Task.detached { try StillBackground(url: url) }.value
-                    : try await LoopingVideoBackground(url: url)
+                let provider = try await make(reference, url)
                 guard let self, !Task.isCancelled, self.background?.reference == choice.reference else { provider.stop(); return }
                 preview.setBackground(provider)
                 self.livePreview = preview
