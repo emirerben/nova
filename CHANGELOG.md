@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.26.0] - 2026-10-31
+
+### Fixed
+- fix(ios): prepare compatible rendered-clock readers (KRI-1060) (#1946) <!-- release-pr: 1946 -->
+
 ## [0.83.25.0] - 2026-10-31
 
 ### Changed
