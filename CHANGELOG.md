@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.31.0] - 2026-10-31
+
+### Changed
+- fix(kria): never show a part of a clip the creator hid (Leverkusen M2 run 1, draft C) (#1984) <!-- release-pr: 1984 -->
+
 ## [0.83.30.0] - 2026-10-31
 
 ### Fixed
