@@ -52,6 +52,7 @@ from app.config import settings
 from app.kria import planner
 from app.kria.approval_readiness import assess_readiness, readiness_reply
 from app.kria.brief import CreativeBrief
+from app.kria.reply_language import reply_language_for
 from app.pipeline.prompt_loader import load_prompt
 from app.services import clip_intent_planning as planning
 from app.services import clip_intent_resolution as resolution
@@ -379,8 +380,24 @@ def test_control_t11_pins_seated_by_photos_pass_the_contract_and_readiness() -> 
     assert list(_contract(strategy, _brief()).unresolved) == []
 
 
+@pytest.mark.parametrize(
+    ("language", "refusal", "next_step"),
+    [
+        (
+            None,
+            PIN_MESSAGE,
+            "Tell me which clip you mean, and I'll make a new draft.",
+        ),
+        (
+            "tr",
+            '"{}" derken hangi klibi kastettiğini anlayamadım, o yüzden sırayı doğrulayamıyorum.',
+            "Hangi klibi kastettiğini söyle, yeni bir taslak hazırlayayım.",
+        ),
+    ],
+    ids=["en", "tr"],
+)
 async def test_f6_a_blocked_pin_is_said_once_with_a_next_step_not_on_every_requirement(
-    monkeypatch,
+    monkeypatch, language, refusal, next_step
 ) -> None:
     """The refusal is the whole draft's, not each requirement's: M4 14:32Z showed the same
     sentence under "Make it 20 seconds", "Skip the dark photo" and every label. Said once, with
@@ -391,11 +408,14 @@ async def test_f6_a_blocked_pin_is_said_once_with_a_next_step_not_on_every_requi
     brief = _brief(first=words)
     strategy = _strategy(await _turn(monkeypatch, brief=brief))
 
-    report = _readiness(strategy, brief)
-    assert report["policy_problem"] == PIN_MESSAGE.format(words), report["policy_problem"]
+    with reply_language_for(language):
+        report = _readiness(strategy, brief)
+        reply = readiness_reply(brief, report)
+
+    assert report["policy_problem"] == refusal.format(words), report["policy_problem"]
     assert not report["ready"]
-
-    reply = readiness_reply(brief, report)
-
-    assert reply.count(PIN_MESSAGE.format(words)) == 1, reply
-    assert "Tell me which clip you mean" in reply, reply
+    assert reply.count(refusal.format(words)) == 1, reply
+    assert next_step in reply, reply
+    held = [line for line in reply.splitlines() if line.startswith("- ")]
+    assert "- Make it 20 seconds" in held and len(held) == 9, held  # still named, once each
+    assert not any(words in line for line in held), held
