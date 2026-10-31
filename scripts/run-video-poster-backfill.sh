@@ -23,6 +23,7 @@ max_wait_s="${POSTER_BACKFILL_MAX_WAIT_S:-18600}"
 guard_resolve_attempts="${FLY_GUARD_RESOLVE_ATTEMPTS:-5}"
 production_settle_attempts="${FLY_PRODUCTION_SETTLE_ATTEMPTS:-20}"
 guard_reclaim_grace_s="${FLY_GUARD_RECLAIM_GRACE_S:-300}"
+release_machine_stale_s="${FLY_RELEASE_MACHINE_STALE_S:-900}"
 minimum_deploy_guard_lease_s="${DEPLOY_GUARD_MIN_REMAINING_S:-0}"
 deploy_guard_lease_s=2700
 backfill_guard_lease_s=18900
@@ -730,6 +731,33 @@ reclaim_or_block_deploy_guard() {
     fail "Expired deploy guard $machine_id could not be force-destroyed."
 }
 
+# Destroys release_command Machines that never started and are older than the
+# stale age (default 15m, past flyctl's 10m wait-timeout), so no live deploy can
+# own one. Needs positive evidence on both counts: a readable `created` state
+# with a created_at timestamp, and a readable events array with no start/exit.
+reap_stale_release_command_machines() {
+  local machines_json="$1"
+  local now stale_ids id machine_json
+  now="$(date -u +%s)" || fail "Could not read current UTC epoch for release Machine validation."
+  stale_ids="$(
+    jq -r --argjson now "$now" --argjson stale "$release_machine_stale_s" '
+      .[]
+      | select(((.config.metadata // .incomplete_config.metadata // {}).fly_process_group)
+          == "fly_app_release_command")
+      | select(.state == "created" and (.created_at | type) == "string")
+      | select(($now - (.created_at | fromdateiso8601? // $now)) > $stale)
+      | .id
+    ' <<<"$machines_json"
+  )" || fail "Could not evaluate release_command Machines."
+  for id in $stale_ids; do
+    machine_json="$(jq -c --arg id "$id" '.[] | select(.id == $id)' <<<"$machines_json")"
+    machine_never_ran <<<"$machine_json" || continue
+    echo "Destroying release_command Machine $id: it never started and is older than ${release_machine_stale_s}s."
+    flyctl machine destroy --force --app "$app_name" "$id" || \
+      fail "Stale release_command Machine $id could not be force-destroyed."
+  done
+}
+
 resolve_production_image() {
   local require_expected_revision="$1"
   local image_json machines_json managed_count unique_images deployed_sha image_match_count image_tag
@@ -737,9 +765,19 @@ resolve_production_image() {
   for ((attempt = 1; attempt <= production_settle_attempts; attempt++)); do
     machines_json="$(machine_list)" || fail "Could not read Fly Machine inventory."
     validate_reserved_inventory "$machines_json"
-    jq -e 'any(.[]; ((.config.metadata // .incomplete_config.metadata // {}).fly_process_group)
-        == "fly_app_release_command") | not' <<<"$machines_json" >/dev/null || \
-      fail "A release_command Machine is still running (a deploy migration is in flight); refusing mutation."
+    if ! jq -e 'any(.[]; ((.config.metadata // .incomplete_config.metadata // {}).fly_process_group)
+        == "fly_app_release_command") | not' <<<"$machines_json" >/dev/null; then
+      # A live release_command Machine is a migration in flight, or one flyctl
+      # abandoned while the image was still preparing (2026-10-30: no start, no
+      # exit, auto_destroy never fires). Wait out the former, sweep the latter.
+      reap_stale_release_command_machines "$machines_json"
+      if (( attempt == production_settle_attempts )); then
+        fail "A release_command Machine is still running (a deploy migration is in flight); refusing mutation."
+      fi
+      echo "Waiting for the release_command Machine to finish (attempt $attempt/$production_settle_attempts)..."
+      sleep "$poll_interval_s"
+      continue
+    fi
     managed_count="$(
       jq '[.[]
         | select(

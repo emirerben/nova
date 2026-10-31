@@ -1175,10 +1175,17 @@ def test_backfill_reproves_managed_digest_after_winning_name_before_start(
     assert not (tmp_path / "destroy.args").exists()
 
 
-def _release_command_machine(state: str, *, digest: str) -> dict:
-    return _managed_machine(
+def _release_command_machine(
+    state: str, *, digest: str, created_at: str | None = None, started: bool = False
+) -> dict:
+    machine = _managed_machine(
         "fly_app_release_command", digest=digest, state=state, machine_id="feedrelcmd01"
     )
+    if created_at is not None:
+        machine["created_at"] = created_at
+    if started:
+        machine["events"] = [{"type": "start", "timestamp": 1}]
+    return machine
 
 
 def test_deploy_guard_ignores_stopped_release_command_debris(tmp_path: Path) -> None:
@@ -1219,6 +1226,65 @@ def test_deploy_guard_refuses_while_release_command_is_in_flight(tmp_path: Path)
     assert result.returncode == 1
     assert "release_command Machine" in result.stderr
     assert not (tmp_path / "create.args").exists()
+
+
+# NOW_EPOCH is 2_000_000_000 (2033-05-18T03:33:20Z).
+_STALE_CREATED = "2033-05-18T03:00:00Z"  # 33 min old, past the 15 min stale age
+_FRESH_CREATED = "2033-05-18T03:30:00Z"  # 3 min old
+
+
+def test_deploy_guard_destroys_stale_release_machine_that_never_started(tmp_path: Path) -> None:
+    """flyctl abandons the release Machine mid image-prep; auto_destroy never fires."""
+    stuck = _release_command_machine(
+        "created", digest=f"sha256:{'d' * 64}", created_at=_STALE_CREATED
+    )
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[
+            [*_inventory(), stuck],
+            _inventory(),
+            _inventory(),
+            _inventory(),
+            _inventory(_deploy_guard()),
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "feedrelcmd01" in (tmp_path / "destroy.args").read_text()
+
+
+def test_deploy_guard_never_destroys_a_live_release_machine(tmp_path: Path) -> None:
+    other = f"sha256:{'d' * 64}"
+    cases = {
+        "fresh_never_started": _release_command_machine(
+            "created", digest=other, created_at=_FRESH_CREATED
+        ),
+        "stale_but_started": _release_command_machine(
+            "started", digest=other, created_at=_STALE_CREATED, started=True
+        ),
+        "stale_with_unreadable_events": {
+            k: v
+            for k, v in _release_command_machine(
+                "created", digest=other, created_at=_STALE_CREATED
+            ).items()
+            if k != "events"
+        },
+        "stale_with_unreadable_created_at": _release_command_machine(
+            "created", digest=other, created_at="not-a-timestamp"
+        ),
+    }
+    for name, machine in cases.items():
+        result = _run(
+            tmp_path / name,
+            [_image()],
+            args=["--acquire-deploy-guard"],
+            machine_sequence=[[*_inventory(), machine]] * 4,
+        )
+        assert result.returncode == 1, name
+        assert "release_command Machine is still running" in result.stderr, name
+        assert not (tmp_path / name / "destroy.args").exists(), name
 
 
 def test_deploy_guard_acquire_is_dormant_and_exact_release_is_forced(
