@@ -1188,7 +1188,10 @@ enum KriaClientProtocolContract {
     /// only to this protocol and answers 426 `client_update_required` to an older build whose Save carries
     /// caption phases or replaces captions that hold them, since it would drop them.
     /// 25 preserves per-line caption size and position choices in the shared appearance map.
-    static let version = 25
+    /// 27 (KRI-1115): decodes a recipe's `speaker_background` and the `speakerBackground` capability. This app
+    /// skips 26: the server already uses 26 for `RENDERED_TIMELINE_CLOCK_PROTOCOL`, so 27 is set exactly to match
+    /// the server's `SPEAKER_BACKGROUND_PROTOCOL`. A build declaring 27 also satisfies the server's `>= 26` check.
+    static let version = 27
     static let header = "X-Kria-Client-Protocol"
 }
 
