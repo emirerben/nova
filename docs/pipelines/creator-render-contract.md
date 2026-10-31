@@ -1349,7 +1349,10 @@ what the creator said was refused after rendering while the receipt read "met". 
   `apply_sequence`): the planner (`unified_montage._apply_sequence`) and `build_render_contract`
   both call it, so they cannot drift. Leading groups come first, closing groups last, every
   other clip keeps its basis position, clips inside a group keep basis order, a clip named by
-  two groups belongs to the first. `order_ids` is therefore `[start clip(s)] + [the rest by
+  two groups belongs to the first first / last group naming it, else the first group
+  (`seat_owners`; KRI-1109: "the whole match" as one positionless group plus "ending on
+  IMG_1043" ends on IMG_1043 however the planner listed the two, and is no conflict; one clip
+  asked first AND last still is, KRI-764). `order_ids` is therefore `[start clip(s)] + [the rest by
   capture time] + [end clip(s)]`; `order_basis` stays `capture_time` (or `attachment_order`),
   so no consumer changes: `verify_phone_recipe`, the speech-montage b-roll order, cloud
   `check_guided_plan_order` / `order_satisfied` and the editor rebind all compare against
