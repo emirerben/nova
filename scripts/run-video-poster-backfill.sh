@@ -7,6 +7,7 @@
 
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 app_name="${FLY_APP_NAME:-nova-video}"
 region="${FLY_REGION:-iad}"
 guard_name="${app_name}-production-mutation-guard"
@@ -90,7 +91,7 @@ check_checkout_is_deployable() {
 }
 
 machine_list() {
-  flyctl machine list --app "$app_name" --json
+  flyctl machine list --app "$app_name" --json | jq -c -f "$script_dir/fly-production-inventory.jq"
 }
 
 machine_by_id() {
