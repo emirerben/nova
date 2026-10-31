@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.35.0] - 2026-10-31
+
+### Fixed
+- feat(camera-roll): steer event ideas on every request; no fixed clip cap per idea (KRI-1062) (#1982) <!-- release-pr: 1982 -->
+
 ## [0.83.34.0] - 2026-10-31
 
 ### Changed
