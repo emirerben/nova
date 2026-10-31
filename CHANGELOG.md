@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.24.0] - 2026-10-31
+
+### Fixed
+- fix(kria): keep the quoted line a sound ask names, so it plays whole (Leverkusen M1 run 2 #4) (#1970) <!-- release-pr: 1970 -->
+
 ## [0.83.23.0] - 2026-10-31
 
 ### Changed
