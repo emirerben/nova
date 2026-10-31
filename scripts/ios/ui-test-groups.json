@@ -442,6 +442,7 @@
     "src/apps/ios/Kria/Features/TeleprompterWindow.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterStore.swift": "creation",
     "src/apps/ios/Kria/Features/TeleprompterBackground.swift": "creation",
+    "src/apps/ios/Kria/Core/SpeakerBackgroundSubmission.swift": "creation",
     "src/apps/ios/Kria/Features/LiveBackgroundCompositing.swift": "creation",
     "src/apps/ios/Kria/Features/LiveBackgroundPreview.swift": "creation",
     "src/apps/ios/Tests/KriaUITests/TeleprompterUITests.swift": "creation",

@@ -17,6 +17,8 @@ struct TeleprompterBackgroundChoice: Codable, Equatable, Sendable {
     var reference: SpeakerBackgroundReference
     /// Set once the file was handed to the visual upload, so later takes in this project do not upload it again.
     var uploaded: Bool? = nil
+    /// Set once the server accepted the statement of which visual is the background (or turned the feature off).
+    var stated: Bool? = nil
 }
 
 extension TeleprompterStore {
@@ -39,6 +41,16 @@ extension TeleprompterStore {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(backgroundChoice).write(to: backgroundChoiceURL, options: .atomic)
     }
+
+    /// A background the server was already told about was cleared here: the clear still has to reach the server. Holds the
+    /// idempotency key of that one clear, so a retry replays instead of applying twice.
+    var serverClearURL: URL { directory.appendingPathComponent("background-clear.txt", isDirectory: false) }
+    var pendingServerClearEventID: String? { try? String(contentsOf: serverClearURL, encoding: .utf8) }
+    func markServerClearPending(eventID: String) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data(eventID.utf8).write(to: serverClearURL, options: .atomic)
+    }
+    func removeServerClearPending() { try? FileManager.default.removeItem(at: serverClearURL) }
 
     func removeBackgroundChoice() throws {
         guard FileManager.default.fileExists(atPath: backgroundChoiceURL.path) else { return }
