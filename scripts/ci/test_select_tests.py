@@ -889,7 +889,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/clip_scope.py",
-                (True, "covered", "kri-598-voiceover-planner,kri-623-ruled-out-clips"),
+                (
+                    True,
+                    "covered",
+                    "kri-598-voiceover-planner,kri-623-ruled-out-clips,kri-761-look-alike-exclusions",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/narrated_photo_sequence.py",
