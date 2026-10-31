@@ -1,0 +1,79 @@
+{
+  "source": "Prod job 3d28fa04-37eb-4254-b0b3-3d050a6ae49c (Leverkusen M2 run 3, thread d1ac7437-7395-4228-8c62-faf503846734, approved turn 48e2956c), Fly v1967 = 355a33dae, failed 2026-10-31T12:50:50Z. Read-only `admin.py --prod GET jobs/<id>/debug`; media, paths and user ids left out.",
+  "creator_request_excerpt": "Label the selfie 'Taha 🤝 me'",
+  "brief_requirement": {
+    "id": "r2",
+    "kind": "text",
+    "scope": "clip:asset-71843110-fb7d-4124-90a2-99861d248a2a",
+    "literal": "Taha 🤝 me",
+    "description": "Label the selfie"
+  },
+  "creator_render_requirements": {
+    "digest": "c81c5fb3ebfff83a9016da889b10622df8f5f28159ab0f149f416a809d0e4f6d",
+    "version": 1,
+    "order_ids": [
+      "asset-71843110-fb7d-4124-90a2-99861d248a2a",
+      "asset-223f68d8-edf8-48c4-a92a-80913b1d0409",
+      "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+      "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4"
+    ],
+    "duration_s": 12.0,
+    "unresolved": [],
+    "exact_texts": [
+      {
+        "role": "clip",
+        "text": "Taha 🤝 me",
+        "media_id": "asset-71843110-fb7d-4124-90a2-99861d248a2a",
+        "duration_s": null,
+        "shot_index": null
+      }
+    ],
+    "order_basis": "capture_time",
+    "brief_digest": "a0afe0316392ec0a6f200247924689f6a3d1f4baf7624c963de4db24517cae4a",
+    "generation_id": "52b5e3faaa2b4d39b4d964d75c531dfb",
+    "order_required": true,
+    "original_audio": "require",
+    "strategy_digest": "0d545b1d3002a016e8e9ab210fd5552f38e989569adf57ef2f6e9aeff9fd8ac0",
+    "audio_source_ids": [],
+    "require_voiceover": false
+  },
+  "creator_length_policy": {
+    "owner": "creator",
+    "version": 1,
+    "check_mode": "log_only",
+    "generation_id": "52b5e3faaa2b4d39b4d964d75c531dfb",
+    "natural_owner": "footage",
+    "contract_digest": "c81c5fb3ebfff83a9016da889b10622df8f5f28159ab0f149f416a809d0e4f6d",
+    "requested_duration_s": 12.0
+  },
+  "unified_montage_labels": [
+    {
+      "text": "Taha 🤝 me",
+      "inferred": false,
+      "media_id": "71843110-fb7d-4124-90a2-99861d248a2a",
+      "fact_kind": null,
+      "provenance": "creator"
+    }
+  ],
+  "observed_failure": {
+    "status": "processing_failed",
+    "failure_reason": "phone_plan_unsupported",
+    "error_detail": "This edit put confirmed text in the wrong place.",
+    "field_path": "shot_labels[]",
+    "decline_reason": "evidence_missing"
+  },
+  "replayed_phone_recipe": {
+    "how": "The job's approved guided_edit through compile_execution_plan + repair_plan_for_contract + compile_phone_guided_plan on 7f9cc18dc (main), offline.",
+    "picture": [
+      {"source": "visual", "contract_id": "asset-71843110-fb7d-4124-90a2-99861d248a2a", "start_s": 0.0, "end_s": 1.367},
+      {"source": "visual", "contract_id": "asset-223f68d8-edf8-48c4-a92a-80913b1d0409", "start_s": 1.367, "end_s": 2.567},
+      {"source": "original", "contract_id": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4", "start_s": 2.567, "end_s": 8.167},
+      {"source": "original", "contract_id": "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4", "start_s": 8.167, "end_s": 12.167}
+    ],
+    "text_layers": [
+      {"text": "Taha 🤝 me", "start_s": 0.0, "end_s": 1.367, "anchor_y_px": 1497.6, "canvas_px": [1080, 1920]}
+    ],
+    "verify_phone_recipe_on_main": "TextPlacementError shot_labels[] evidence_missing: This edit put confirmed text in the wrong place.",
+    "verify_phone_recipe_with_fix": "passed"
+  }
+}
