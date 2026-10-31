@@ -93,6 +93,28 @@ def is_phone_subtitled_editor_variant(variant: dict) -> bool:
     )
 
 
+def variant_carries_speaker_background(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold a Talk-to-camera background (KRI-1117)?
+
+    Any of the three places that can: the projected ``speaker_background`` row, the lane
+    state a phone-editor Save persisted, or the pinned device recipe. PURE.
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+    if variant.get("speaker_background"):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and lanes.get("background"):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return recipe is not None and recipe.speaker_background is not None
+
+
 def project_phone_subtitled_editor_sections(
     assembly_plan: dict, variant: dict
 ) -> dict[str, list[dict]] | None:

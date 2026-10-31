@@ -91,6 +91,7 @@ from app.services.phone_rollout import (
     recipe_has_single_word_text,
     single_word_text_client_supported,
     single_word_text_verified,
+    speaker_background_client_supported,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
@@ -107,6 +108,7 @@ from app.services.phone_subtitled_editor import (
     lanes_from_editor_sections,
     lanes_from_recipe,
     sections_from_lanes,
+    variant_carries_speaker_background,
 )
 from app.services.phone_voiceover_timeline import (
     narrated_timings_and_assignments,
@@ -825,6 +827,30 @@ def prepare_phone_editor_commit(
     if stored_drawings and not freehand_drawing_client_supported():
         # A recompile would pin a recipe (`drawingLayers`) this app build cannot decode.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
+    stored_variant = next(
+        (
+            v
+            for v in (job.assembly_plan or {}).get("variants", [])
+            if isinstance(v, dict) and v.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if (
+        stored_variant is not None
+        and not speaker_background_client_supported()
+        and variant_carries_speaker_background(job.assembly_plan or {}, stored_variant)
+    ):
+        # KRI-1117: a recompile would pin `speaker_background`, which this app build cannot
+        # decode, or (compile strips it for such a build) silently take the creator's
+        # background off. Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background",
+                "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
     try:
         _rebind_editor_render_contract(
             staged,
@@ -907,6 +933,20 @@ def prepare_phone_editor_commit(
         # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
         # build cannot decode or draw; nothing is committed.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    if (
+        getattr(device_status(staged, variant_id).request.recipe, "speaker_background", None)
+        is not None
+        and not speaker_background_client_supported()
+    ):
+        # KRI-1117: the belt for a recompile that pinned a background this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background",
+                "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(
         device_status(staged, variant_id).request.recipe
     ):
