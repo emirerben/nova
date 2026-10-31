@@ -251,7 +251,7 @@ struct TextPreferencesView: View {
     /// Pinned above the scrolling settings so the frame stays in view while a setting changes.
     private var header: some View {
         let spec = TextRoleSpec.spec(role)
-        return VStack(spacing: 12) {
+        return VStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(TextRoleSpec.all) { chip($0) }
@@ -260,32 +260,29 @@ struct TextPreferencesView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("text-preference-role")
             }
-            HStack(alignment: .top, spacing: 16) {
-                preview(width: 136)
-                    .overlay {
-                        Button { enlarged = true } label: { Color.clear.contentShape(Rectangle()) }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Enlarge preview")
-                            .accessibilityIdentifier("text-preferences-preview-enlarge")
-                    }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(spec.label).font(KriaFont.body(17).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                    Text(spec.blurb).font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
-                        .accessibilityIdentifier("text-preference-role-description")
-                    lookSummary.padding(.top, 4)
+            preview(width: 140)
+                .overlay {
+                    Button { enlarged = true } label: { Color.clear.contentShape(Rectangle()) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Enlarge preview")
+                        .accessibilityIdentifier("text-preferences-preview-enlarge")
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    // Sits just outside the frame so it never covers the sample text drawn on it.
                     Button { enlarged = true } label: {
-                        Label("Tap to enlarge", systemImage: "arrow.up.left.and.arrow.down.right")
-                            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                            .padding(.horizontal, 12).frame(minHeight: 44)
-                            .background(KriaColor.fill, in: Capsule())
-                            .contentShape(Capsule())
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                            .frame(width: 28, height: 28).background(KriaColor.fill, in: Circle())
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .offset(x: 44, y: 8)
                     .accessibilityHidden(true)
                 }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 20)
+            Text(spec.blurb).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                .multilineTextAlignment(.center).lineLimit(2)
+                .padding(.horizontal, 20)
+                .accessibilityIdentifier("text-preference-role-description")
         }
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
@@ -309,7 +306,7 @@ struct TextPreferencesView: View {
                 Text(spec.blurb).font(KriaFont.body(15)).foregroundStyle(KriaColor.mutedInk).multilineTextAlignment(.center)
                     .accessibilityIdentifier("text-preference-sheet-description")
                 preview(width: 300, identifier: "text-preferences-preview-large")
-                Button("Done") { enlarged = false }
+                Button { enlarged = false } label: { Text("Done").frame(maxWidth: .infinity) }
                     .buttonStyle(KriaPrimaryButtonStyle())
                     .frame(width: 300)
                     .accessibilityIdentifier("text-preferences-preview-done")
@@ -318,29 +315,6 @@ struct TextPreferencesView: View {
         }
         .background(KriaColor.paper)
         .presentationDetents([.large])
-    }
-
-    /// What the selected type looks like right now, defaults spelled out.
-    private var lookSummary: some View {
-        let effective = isAllText ? rule : rule.inheriting(from: allTextRule)
-        let rows: [(String, String)] = [
-            ("Font", effective.fontFamily ?? defaults.font),
-            ("Spot", effective.position.map(TextRoleSpec.positionName) ?? defaults.shortPlacement),
-            ("Color", effective.color.map(colorName) ?? defaults.color),
-            ("Outline", effective.strokeWidth.map { $0 == 0 ? "Off" : "On" } ?? defaults.outline),
-            ("Shadow", effective.shadowEnabled.map { $0 ? "On" : "Off" } ?? defaults.shadow),
-        ]
-        return VStack(alignment: .leading, spacing: 3) {
-            ForEach(rows, id: \.0) { row in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(row.0).foregroundStyle(KriaColor.zinc)
-                    Text(row.1).foregroundStyle(KriaColor.ink).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .font(KriaFont.body(13))
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("text-preference-look-summary")
     }
 
     private func chip(_ spec: TextRoleSpec) -> some View {
