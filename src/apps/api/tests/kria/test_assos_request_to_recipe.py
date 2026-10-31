@@ -100,7 +100,7 @@ RED = "phase 0 baseline: red on unchanged code, a later phase turns it green"
         pytest.param(6, marks=pytest.mark.xfail(strict=True, reason=RED + " (creator selected)")),
         pytest.param(7, marks=pytest.mark.xfail(strict=True, reason=RED + " (research disclosed)")),
         pytest.param(8, marks=pytest.mark.xfail(strict=True, reason=RED + " (look chip font)")),
-        pytest.param(9, marks=pytest.mark.xfail(strict=True, reason=RED + " (provider failure)")),
+        9,
         11,
     ],
 )
