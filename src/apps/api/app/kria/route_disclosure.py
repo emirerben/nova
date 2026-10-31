@@ -11,9 +11,10 @@ each gap into a typed, creator-readable disclosure the draft shows BEFORE approv
   read is named ("I can't use the story structure ... on this video"). When a route unit
   starts reading a field, delete its entry here and the line disappears.
 * ``ask_declines``: brief asks nothing on the route reads (today: animated text outside the
-  title, when the phone plays no text entrance either). They become a typed ``not_possible`` receipt (`with_route_declines`) whose reason is
-  a *route decline*: a format limit that never asks "simpler version?" and that approval
-  readiness treats as approvable (disposition ``declined``).
+  title, when the phone plays no text entrance either). They become a typed ``not_possible``
+  receipt (`with_route_declines`) whose reason is a *route decline*: a format limit that never
+  asks "simpler version?" and that approval readiness treats as approvable (disposition
+  ``declined``).
 * ``research_notice``: the render's text step may search the web after approval.
 * ``planned_card_length``: the length shown on the draft is the length the plan renders.
 
