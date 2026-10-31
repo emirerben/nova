@@ -5354,6 +5354,70 @@ final class NativeEditorSessionTests: XCTestCase {
         await secondSessions.stopAll()
     }
 
+    /// Deterministic concurrent Resume: a second tap while the creator's /retry is still in flight is the same
+    /// intent. It must not fence the in-flight retry, release its marker or mint a second /retry. The gate is
+    /// always opened and both taps always awaited, so a regression fails the assertions instead of hanging.
+    func testSecondResumeWhileTheCreatorRetryIsInFlightCoalescesIntoIt() async throws {
+        let threadID = UUID(), jobID = UUID()
+        let fake = EditorCommitSpy(draftSnapshot: DraftSnapshot(draftID: "d", itemID: "item", variantKey: "variant", draftRevision: 4, snapshotHash: "h", etag: "e", baseJobID: jobID.uuidString, baseGenerationID: "generation-1", snapshot: [:], canUndo: false, createdAt: .now))
+        fake.phoneDestination = true
+        fake.phoneRenderingCapabilities = PhoneRenderingCapabilities(enabled: true, recipeVersions: [1, 2], verifiedFeatures: MediaCapability.allCases.map(\.rawValue))
+        let request = deviceRenderRequest(jobID: jobID, revision: 1, digest: "a")
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: output) }
+        let intents = output.appendingPathComponent("intents")
+        let storageKey = DeviceRenderIntentKey(owner: "isolated-test-owner", projectID: threadID, jobID: jobID, variantID: "variant")
+        let status = SessionTestStatus(DeviceRenderStatusResponse(phase: "needs_attention", request: request, reasonCode: DeviceRenderSessions.pausedReason, baseGeneration: "generation-1"))
+        let mints = SessionTestCounter(), exports = SessionTestCounter(), gate = SessionTestHeldGate(), secondDone = SessionTestHeldGate()
+        let renderSessions = DeviceRenderSessions(fetch: { _, _ in await status.response }, factory: { _, _ in
+            try DeviceRenderCoordinator(directory: output, exporter: SessionTestCountingExport(exports), sources: SessionTestSources(), publisher: SessionTestPublisher())
+        }, intentStore: DeviceRenderIntentStore(root: intents), retryFailure: { _, identity, _ in
+            await mints.increment()
+            await gate.hold()
+            await status.set(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, baseGeneration: "generation-1"))
+            let raw = try JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(identity))
+            let data = try JSONSerialization.data(withJSONObject: ["identity": raw, "phase": "awaiting_device"])
+            return try JSONDecoder().decode(DeviceRenderRetryAck.self, from: data)
+        })
+        let session = NativeEditorSession(draft: EditorDraft(projectID: threadID, clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 4))
+        session.useDeviceRendering(renderSessions)
+        await session.load(api: fake, threadID: threadID)
+        session.selectClip(session.draft.clips[0].id)
+        session.trimSelected(edge: .trailing, to: 1.5)
+        await session.save()
+        let key = DeviceRenderKey(projectID: threadID, jobID: jobID, variantID: "variant")
+        XCTAssertTrue(renderSessions.isPausedByCreator(key))
+        XCTAssertEqual(renderSessions.presentations[key]?.requiresServerRetry, true)
+
+        let firstTap = Task { await session.retryDeviceRender() }
+        let firstInFlight = await gate.waitHeld(timeout: .seconds(5))
+        XCTAssertTrue(firstInFlight, "setup: the first tap's /retry reached the server call")
+        let secondTap = Task { await session.retryDeviceRender(); await secondDone.markDone() }
+        let secondReturned = await secondDone.waitDone(timeout: .seconds(5))
+        let duringMints = await mints.value
+        let duringState = try? DeviceRenderIntentStore(root: intents).load(storageKey)?.state
+
+        await gate.open()
+        await firstTap.value
+        await secondTap.value
+        var rendered = false
+        for _ in 0..<100 where !rendered {
+            rendered = await exports.value == 1
+            if !rendered { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        let finalMints = await mints.value, finalExports = await exports.value
+        let finalState = try DeviceRenderIntentStore(root: intents).load(storageKey)?.state
+        await renderSessions.stopAll()
+
+        XCTAssertTrue(secondReturned, "The second tap returns without waiting on the in-flight retry")
+        XCTAssertEqual(duringMints, 1, "A second tap during the in-flight retry must not mint another /retry")
+        XCTAssertEqual(duringState, .retryPending, "...nor release the in-flight retry's marker")
+        XCTAssertTrue(rendered, "The in-flight retry completes and renders once")
+        XCTAssertEqual(finalMints, 1)
+        XCTAssertEqual(finalExports, 1)
+        XCTAssertEqual(finalState, .released)
+    }
+
     /// Failure modes: an edit this iPhone declined (`unsupported_recipe`) or an outdated app put up
     /// "Retry device render", and every retry re-pinned the same recipe into the same decline (a loop
     /// with no way out). The banner must offer the conversation (or Update Kria), and the retry entry
@@ -6664,6 +6728,28 @@ private struct SessionTestSources: DeviceSourceResolving {
 private actor SessionTestPublisher: DeviceRenderPublishing {
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication { .published }
+}
+
+private actor SessionTestHeldGate {
+    private var isHeld = false, isOpen = false, isDone = false
+    private var openWaiters: [CheckedContinuation<Void, Never>] = []
+    func hold() async {
+        guard !isOpen else { return }
+        isHeld = true
+        await withCheckedContinuation { openWaiters.append($0) }
+    }
+    func open() { isOpen = true; let saved = openWaiters; openWaiters.removeAll(); for waiter in saved { waiter.resume() } }
+    func markDone() { isDone = true }
+    func waitHeld(timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !isHeld, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        return isHeld
+    }
+    func waitDone(timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !isDone, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        return isDone
+    }
 }
 
 private actor SessionTestCounter {

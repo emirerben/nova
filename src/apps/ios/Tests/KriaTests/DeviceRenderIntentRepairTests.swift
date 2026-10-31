@@ -74,11 +74,15 @@ import XCTest
         XCTAssertEqual(automatic, 0, "A later revision stays held after a published result")
         XCTAssertEqual(sessions.presentations[key]?.phase, .cancelled)
 
+        // The decline accepted for the held revision schedules its own follow-up read, so the typed Resume can be
+        // queued behind it and return first. Wait for the Resume's real outcome, with a deadline, then assert it.
         await sessions.resumeFromUser(key)
+        _ = await eventually { await exporter.calls == 1 && (try? store.load(storageKey))?.state == .released }
         for coordinator in coordinators { await coordinator.waitUntilIdle() }
         let resumed = await exporter.calls
-        XCTAssertEqual(resumed, 1)
-        XCTAssertEqual(try store.load(storageKey)?.state, .released)
+        let diagnostic = "presentation=\(String(describing: sessions.presentations[key])) intent=\(String(describing: try? store.load(storageKey)))"
+        XCTAssertEqual(resumed, 1, diagnostic)
+        XCTAssertEqual(try store.load(storageKey)?.state, .released, diagnostic)
         await sessions.stopAll()
     }
 
@@ -210,6 +214,15 @@ import XCTest
     }
 
     // MARK: Fixtures
+
+    private func eventually(timeout: Duration = .seconds(5), _ condition: () async -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        return await condition()
+    }
 
     private func scratch() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
 

@@ -941,6 +941,12 @@ enum DeviceRenderGate: Equatable {
     }
 
     private func retryNeedsAttention(_ key: DeviceRenderKey, userInitiated: Bool) async -> Bool {
+        // COALESCE-GUARD-BEGIN
+        // The creator's own retry is already in flight: another tap is the same intent, not a new one.
+        // Running it would release the retry marker, fence the in-flight operation and mint a second /retry.
+        if let pending = pendingRetries[key], pending.userInitiated, pending.stoppedBy == nil,
+           keyOperations[key] == pending.operation { return false }
+        // COALESCE-GUARD-END
         guard resetOperation == nil, await synchronizeOwner(), let request = requests[key] else { return false }
         do {
             if failedIntentWrites.contains(try intentKey(key)) {
