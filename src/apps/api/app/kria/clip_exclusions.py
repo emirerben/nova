@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.agents._schemas.creator_agent import CreativeStrategy
-from app.kria.clip_scope import placed_media
+from app.kria.clip_scope import placed_media, places_a_group
 from app.kria.reply_language import say
 from app.schemas.clip_intents import (
     CREATOR_EVIDENCE,
@@ -100,14 +100,19 @@ def pinned_clips(
     strategy places or plays (a reaction beat, closing media, a montage audio source).
 
     A group, an include, a capture-time order or a model-written clip description assigns
-    many clips and says nothing about any one of them, so none of those pins.
+    many clips and says nothing about any one of them, so none of those pins. Nor does a
+    first/last ask the resolver matched to several clips (Leverkusen M1 run 2 #5: "starting
+    with the train ride" hid "the photo of the empty train seat" from its own skip).
     """
     pinned = set(placed_media(strategy))
     for intent in intents:
         if intent.status != "resolved":
             continue
         pins_clips = (
-            intent.op == "order" and intent.position is not None and intent.order_by is None
+            intent.op == "order"
+            and intent.position is not None
+            and intent.order_by is None
+            and not places_a_group(intent)
         ) or (intent.op == "label" and bool(intent.creator_text) and not intent.placeholder)
         if pins_clips:
             pinned.update(a.media_id for a in intent.assignments)
