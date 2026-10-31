@@ -10,7 +10,12 @@ from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.agents._skills import load_skill
 from app.agents.media_moment_relevance import MomentRelevanceInput
 from app.config import settings
-from app.schemas.media_collections import FORM_EVIDENCE, StoryContentPlan, StoryForm
+from app.schemas.media_collections import (
+    FORM_EVIDENCE,
+    MAX_STORY_MOMENTS,
+    StoryContentPlan,
+    StoryForm,
+)
 from app.schemas.research import ResearchEvidence, StoryResearch
 
 log = structlog.get_logger()
@@ -25,7 +30,7 @@ class StoryIdea(BaseModel):
     hook: str = Field(min_length=1, max_length=280)
     payoff: str = Field(min_length=1, max_length=280)
     rationale: str = Field(min_length=1, max_length=500)
-    moment_ids: list[str] = Field(min_length=1, max_length=8)
+    moment_ids: list[str] = Field(min_length=1, max_length=MAX_STORY_MOMENTS)
     content_plan: StoryContentPlan
     research: StoryResearch | None = None
 
@@ -54,7 +59,7 @@ class _ProposedContentPlan(StoryContentPlan):
 class _StoryProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=100)
-    moment_ids: list[str] = Field(min_length=1, max_length=8)
+    moment_ids: list[str] = Field(min_length=1, max_length=MAX_STORY_MOMENTS)
     content_plan: _ProposedContentPlan
     research_fact_ids: list[str] = Field(default_factory=list, max_length=3)
 
@@ -68,7 +73,7 @@ class OfferedIdea(BaseModel):
 
     angle: str = Field(max_length=280)
     opening_text: str = Field(max_length=100)
-    moment_ids: list[str] = Field(default_factory=list, max_length=8)
+    moment_ids: list[str] = Field(default_factory=list, max_length=MAX_STORY_MOMENTS)
 
 
 class CaptureSpan(BaseModel):
@@ -144,7 +149,7 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.media.camera_roll_stories",
         prompt_id="camera_roll_stories",
-        prompt_version="2026-10-30.1",
+        prompt_version="2026-10-31.1",
         model="gemini-2.5-flash",
         max_attempts=1,
         timeout_s=70,
@@ -204,7 +209,6 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "distinct_sources": len(by_source),
             "available_source_seconds": round(available_seconds, 3),
             "maximum_story_seconds": 60,
-            "maximum_story_moments": 8,
         }
         photos = sum(1 for candidate in input.candidates if candidate.media == "still")
         if photos:
@@ -273,7 +277,18 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "Use only candidate id references (m1, m2, etc.) in moment_ids, never source "
             "references (s1, s2). Each reference may appear only once per story. "
             "Order those moments to serve that idea, using complete intervals at "
-            "normal speed, at most eight per story and sixty seconds total. "
+            "normal speed, sixty seconds total at most. There is no fixed number of moments: "
+            "use as many as the idea needs, from one to dozens. "
+            "The creator's direction about the edit itself decides its shape and wins over "
+            "the defaults below. When the query or creator_provided_event_context asks for "
+            "more clips, a vlog, a recap, a day-in-the-life, the whole event or a fast-paced "
+            "edit, cut many shorter moments from across the whole event (often ten to twenty-"
+            "five, a few seconds each) rather than a few long ones, and cover its beginning, "
+            "middle and end. When it asks for short, simple or a single moment, use few. "
+            "A vlog follows the creator's own experience in the order it happened, so "
+            "first-person framing is welcome there; its opening still tells a stranger what "
+            "they will see (for example the start line through to the finish), and its form "
+            "is guide when it moves through three or more sources, otherwise atmosphere. "
             "Use footage_summary to judge the scope. For a useful multi-stop guide or "
             "explanation with enough relevant footage, develop the premise through concrete "
             "details and a payoff, typically around 20–45 seconds. Do not default to a few "
@@ -376,7 +391,8 @@ class CameraRollStoriesAgent(Agent[CameraRollStoriesInput, CameraRollStoriesOutp
             "idea with generic filler just to meet the suggested duration. "
             "Before returning, run four tests on the title, opening, closing and caption of "
             "every idea. Rewrite any line that fails; drop an idea only when no supported "
-            "rewrite passes. (1) Diary test: does any "
+            "rewrite passes. In a vlog the creator asked for, first person passes these tests "
+            "whenever the line names a concrete detail. (1) Diary test: does any "
             "line only make sense as the creator's own memory of the day ('my day', 'we "
             "spent', 'a quiet morning in')? Rewrite it for a stranger. (2) Brochure test: "
             "does any line use a slogan or admiration filler that could caption any trip "
