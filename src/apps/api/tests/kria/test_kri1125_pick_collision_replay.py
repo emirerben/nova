@@ -418,8 +418,13 @@ async def test_R6_a_video_on_two_beats_is_not_a_clash(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_R7_a_group_that_contains_the_photo_is_not_a_single_photo_clash(monkeypatch) -> None:
-    thread = _thread(warm_up_pick=WARMUP_PHOTO)
-    planned, _ = await _turn(monkeypatch, thread, matches=_matches(order_entrance_gate=[GATE, BUS]))
+    """The warm-up tap sits on the bus photo, and the bus beat is a group that contains it."""
+    planned, _ = await _turn(
+        monkeypatch,
+        _thread(until_the_pick=True),
+        matches=_matches(order_nurnberg_bus=[GATE, BUS]),
+    )
     assert not planned.resolution.needs_creator
-    gate = next(i for i in planned.resolution.intents if i.intent_id == "order_entrance_gate")
-    assert [a.media_id for a in gate.assignments] == [GATE, BUS]
+    bus = next(i for i in planned.resolution.intents if i.intent_id == "order_nurnberg_bus")
+    assert [a.media_id for a in bus.assignments] == [GATE, BUS]
+    assert [a.media_id for a in _warm_up(planned).assignments] == [BUS]
