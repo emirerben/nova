@@ -1050,9 +1050,10 @@ def brief_order_fields(
 
     29 Ekim: a random-order ask rides the strategy as its own choice; the seed itself stays
     on the requirement so every re-run draws the same permutation. A creator's answer to an
-    order question (``ordering_choice``) is never replaced. Under that ask a described group
-    with no stated inner order takes it as its inner order (`confirm_unordered_groups`), so
-    the draft never asks the creator to order a group they asked to have shuffled.
+    order question (``ordering_choice``) is never replaced. Under that ask, or a filming-order
+    one, a described group with no stated inner order takes it as its inner order
+    (`confirm_unordered_groups`), so the draft never asks the creator to order a group they
+    asked to have shuffled or kept in filming order.
     """
     from app.services.order_mode import confirm_unordered_groups  # noqa: PLC0415
 
