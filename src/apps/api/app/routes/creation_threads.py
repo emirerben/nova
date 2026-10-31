@@ -108,6 +108,7 @@ from app.routes.plan_items import (
     _OVERLAY_ALLOWED_CONTENT_TYPES,
     _pool_asset_counts_toward_capacity,
 )
+from app.schemas.creation_formats import CREATION_FORMATS
 from app.schemas.edit_proposal import SNAPSHOT_FALLBACK_TITLE, EditProposal, parse_edit_proposal
 from app.schemas.slide_post import parse_slide_post, sticker_asset_ids
 from app.services.creation_thread_titles import (
@@ -235,12 +236,7 @@ _MEDIA_EXTENSIONS = {
     "audio/webm": ".webm",
     "audio/ogg": ".ogg",
 }
-_PAPER_FORMATS = {
-    "montage": "montage",
-    "narrated": "narrated_planned",
-    "talking_to_camera": "subtitled",
-    "slides": "slides",
-}
+_PAPER_FORMATS = {key: fmt.edit_format for key, fmt in CREATION_FORMATS.items()}
 # Valid neutral context for a new chat project before onboarding has generated
 # a personalized persona. Keep this schema-valid so render dispatch can use the
 # project immediately; existing non-empty personas are never replaced.
@@ -836,6 +832,19 @@ def _client_id(value: str) -> str:
 
 def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web") -> dict[str, str]:
     available = {"montage": "montage"}
+    # Song-lane cards (Lip-sync) are montages offered wherever an uploaded song can be used,
+    # to a native client only: the web never sees `media.song`, so it never sees them.
+    if native_mode != "web":
+        from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
+
+        if phone_user_song_supported():
+            available.update(
+                {
+                    key: fmt.edit_format
+                    for key, fmt in CREATION_FORMATS.items()
+                    if fmt.needs_song_lane
+                }
+            )
     if settings.narrated_archetype_enabled:
         available["narrated"] = "narrated_planned"
     if settings.subtitled_archetype_enabled:

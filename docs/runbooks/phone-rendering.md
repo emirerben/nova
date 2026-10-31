@@ -3010,6 +3010,15 @@ Flow:
    `song_sync = "lipsync" | "background"` (lip-sync cues such as "lip sync",
    "singing along", "mouthing the words" mean lip-sync; anything else is
    background). A missing `song_sync` is repaired to `background` with a notice.
+   **Lip-sync card (KRI-1093).** The iOS picker's `lipsync` card is a montage
+   (`select_format {"format": "lipsync"}` stores `state.format = "lipsync"`,
+   `state.edit_format = "montage"`; registry: `app/schemas/creation_formats.py`).
+   It is offered only to a native client while `phone_user_song_supported()` holds.
+   `creator_sessions.resolve_item_creator_context` reads the latest thread's
+   `state.format` into `ResolvedCreatorManifest.chosen_format` (omitted when unset, so
+   every other manifest/prompt is byte-identical). With a usable song the prompt adds one
+   paragraph, and an unset `song_sync` repairs to `lipsync` instead of `background`. The
+   model's own `song_sync` is never overridden: "use it as background music" still wins.
 4. **Gate (lip-sync only).** `kria/planner._song_order_gate` waits up to
    `SONG_ALIGNMENT_TURN_DEADLINE_S` (45 s) for the alignment, then replies "still
    checking your clips". It does NOT ask when the song analysis is not `ready`
