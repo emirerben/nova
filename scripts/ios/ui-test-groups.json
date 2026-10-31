@@ -150,6 +150,7 @@
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
       "KriaUITests/AccountPrivacyUITests/testEachTextRoleExplainsItselfAndKeepsThePreview",
+      "KriaUITests/AccountPrivacyUITests/testSavedCustomColorShowsSelectedAndAutoClearsIt",
       "KriaUITests/AccountPrivacyUITests/testEnlargedPreviewShowsTheSelectedTypeAndClosesWithDone",
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",

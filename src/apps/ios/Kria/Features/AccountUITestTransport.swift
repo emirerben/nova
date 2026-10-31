@@ -27,7 +27,8 @@ private final class AccountUITestURLProtocol: URLProtocol, @unchecked Sendable {
         let mode = ProcessInfo.processInfo.environment["KRIA_ACCOUNT_TEST_MODE"] ?? "normal"
         let result: (Int, String)
         if path.hasPrefix("/me/memory"), mode.hasPrefix("text-preferences") {
-            let result = AccountTextPreferenceFixture.shared.reply(request, stale: mode.hasSuffix("stale"), learning: mode.hasSuffix("learning"))
+            let result = AccountTextPreferenceFixture.shared.reply(request, stale: mode.hasSuffix("stale"), learning: mode.hasSuffix("learning"),
+                                                                   customColor: mode.hasSuffix("custom-color"))
             deliver(result)
             return
         }
@@ -60,6 +61,7 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
     private var item: [String: Any]?
     private var recentOperation: [String: Any]?
     private var learningInitialized = false
+    private var customColorSeeded = false
     private var learningEnabled = false
     private var learningDecided = false
     private var learningSuggestion: [String: Any] {
@@ -100,7 +102,7 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
         }
         return data
     }
-    func reply(_ request: URLRequest, stale: Bool, learning: Bool, initiallyEnabled: Bool = false) -> (Int, String) {
+    func reply(_ request: URLRequest, stale: Bool, learning: Bool, customColor: Bool = false, initiallyEnabled: Bool = false) -> (Int, String) {
         lock.lock(); defer { lock.unlock() }
         let path = request.url?.path ?? ""
         if learning && !learningInitialized {
@@ -108,6 +110,11 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
             learningEnabled = initiallyEnabled
             item = ["id": "approved-title", "normalized_key": "text_style_title", "instruction": "My title choices",
                     "structured_value": ["text_style_title": ["shadow_enabled": false, "stroke_width": 0]]]
+        }
+        if customColor && !customColorSeeded {
+            customColorSeeded = true
+            item = ["id": "approved-all-text", "normalized_key": "text_style_all_text", "instruction": "My text choices",
+                    "structured_value": ["text_style_all_text": ["color": "#7A3FD1"]]]
         }
         if request.httpMethod == "GET" {
             let body: [String: Any] = ["feature_available": true, "text_preferences_available": true, "enabled": true, "revision": revision,

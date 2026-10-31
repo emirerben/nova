@@ -184,6 +184,30 @@ import XCTest
         }
     }
 
+    func testSavedCustomColorShowsSelectedAndAutoClearsIt() {
+        let app = launch(mode: "text-preferences-custom-color")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let custom = app.descendants(matching: .any)["text-preference-color-custom"]
+        reveal(custom, app: app)
+        XCTAssertTrue(custom.isSelected, "A saved color outside the presets selects the custom swatch")
+        XCTAssertTrue(custom.label.hasPrefix("Custom color"), custom.label)
+        XCTAssertEqual(custom.value as? String, "#7A3FD1")
+        XCTAssertTrue(app.otherElements["text-preferences-preview"].exists)
+        XCTAssertFalse(app.buttons["White"].isSelected)
+        let auto = app.buttons["text-preference-color-auto"]
+        XCTAssertFalse(auto.isSelected)
+        auto.tap()
+        XCTAssertTrue(auto.isSelected, "Auto is a visible chip and clears the color")
+        XCTAssertFalse(custom.isSelected)
+        let white = app.buttons["White"]
+        reveal(white, app: app)
+        white.tap()
+        XCTAssertTrue(white.isSelected)
+        XCTAssertFalse(auto.isSelected)
+    }
+
     func testEnlargedPreviewShowsTheSelectedTypeAndClosesWithDone() {
         let app = launch(mode: "text-preferences")
         let manage = app.buttons["Manage account"]

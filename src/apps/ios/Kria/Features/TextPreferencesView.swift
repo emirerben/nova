@@ -393,40 +393,90 @@ struct TextPreferencesView: View {
                 HStack {
                     Text("Color")
                     Spacer()
-                    Text(isAllText ? defaults.color : "Same as All text (\(inheritedColor))").foregroundStyle(KriaColor.mutedInk)
+                    Text(rule.color.map(colorName) ?? (isAllText ? defaults.color : "Same as All text (\(inheritedColor))"))
+                        .foregroundStyle(KriaColor.mutedInk)
                     Image(systemName: "checkmark").font(.caption.bold()).opacity(rule.color == nil ? 1 : 0)
                 }.frame(minHeight: 44).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("text-preference-color-default")
+            .accessibilityHint(rule.color == nil ? "" : "Clears the color")
             .accessibilityAddTraits(rule.color == nil ? .isSelected : [])
             if rule.color == nil && (isAllText || inheritedColor == allTextDefaults.color) {
                 Text(defaults.colorHint).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
             }
-            HStack {
-                Spacer()
-                ForEach(["#FFFFFF", "#000000", "#FFFF00", "#FF0000", "#0000FF"], id: \.self) { hex in
-                    Button { rule.color = rule.color == hex ? nil : hex } label: {
-                        ZStack {
-                            Circle().fill(KriaColor.fill).frame(width: 40, height: 40)
-                            Circle().fill(nativeEditorColor(hex)).frame(width: 28, height: 28)
-                            if rule.color == hex {
-                                Image(systemName: "checkmark").font(.caption.bold())
-                                    .foregroundStyle(hex == "#000000" || hex == "#0000FF" ? Color.white : Color.black)
-                            }
-                        }.frame(minWidth: 44, minHeight: 44)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(colorName(hex))
-                    .accessibilityAddTraits(rule.color == hex ? .isSelected : [])
-                }
-                Spacer()
-            }
-            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-            TextField("Custom color, e.g. #FFFFFF", text: Binding(get: { rule.color ?? "" }, set: { rule.color = $0.isEmpty ? nil : $0 }))
-                .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                .accessibilityLabel("Text color hex")
+            colorSwatches
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
         }
+    }
+
+    private static let presetColors = ["#FFFFFF", "#000000", "#FFFF00", "#FF0000", "#0000FF"]
+
+    private var colorSwatches: some View {
+        let current = rule.color?.uppercased()
+        let customHex = current.flatMap { SlidePostTextElement.isHex($0) && !Self.presetColors.contains($0) ? $0 : nil }
+        return HStack(spacing: 0) {
+            Button { rule.color = nil } label: {
+                Text(isAllText ? "Auto" : "Same")
+                    .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                    .frame(width: 40, height: 40)
+                    .background(rule.color == nil ? KriaColor.butter : KriaColor.fill, in: Circle())
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isAllText ? "Auto" : "Same as All text")
+            .accessibilityAddTraits(rule.color == nil ? .isSelected : [])
+            .accessibilityIdentifier("text-preference-color-auto")
+            ForEach(Self.presetColors, id: \.self) { hex in
+                Button { rule.color = current == hex ? nil : hex } label: {
+                    ZStack {
+                        Circle().fill(KriaColor.fill).frame(width: 40, height: 40)
+                        Circle().fill(nativeEditorColor(hex)).frame(width: 28, height: 28)
+                        if current == hex {
+                            Image(systemName: "checkmark").font(.caption.bold())
+                                .foregroundStyle(hex == "#000000" || hex == "#0000FF" ? Color.white : Color.black)
+                        }
+                    }.frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(colorName(hex))
+                .accessibilityAddTraits(current == hex ? .isSelected : [])
+            }
+            customSwatch(customHex)
+        }
+    }
+
+    /// The system picker sits invisibly under our own circle so the swatch matches the presets; the circle never takes the tap.
+    private func customSwatch(_ customHex: String?) -> some View {
+        ZStack {
+            ColorPicker("Custom color", selection: Binding(
+                get: { nativeEditorColor(rule.color ?? "#FFFFFF") },
+                set: { rule.color = nativeEditorHex($0) }
+            ), supportsOpacity: false)
+                .labelsHidden().opacity(0.02)
+                .frame(width: 44, height: 44)
+                .accessibilityValue(customHex ?? "")
+                .accessibilityAddTraits(customHex != nil ? .isSelected : [])
+                .accessibilityIdentifier("text-preference-color-custom")
+            ZStack {
+                Circle().fill(KriaColor.fill).frame(width: 40, height: 40)
+                if let customHex {
+                    Circle().fill(nativeEditorColor(customHex)).frame(width: 28, height: 28)
+                    Image(systemName: "checkmark").font(.caption.bold())
+                        .foregroundStyle(Self.isLight(customHex) ? Color.black : Color.white)
+                } else {
+                    Image(systemName: "paintpalette").font(.system(size: 16, weight: .semibold)).foregroundStyle(KriaColor.ink)
+                }
+            }
+            .allowsHitTesting(false).accessibilityHidden(true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+    }
+
+    private static func isLight(_ hex: String) -> Bool {
+        let value = UInt32(hex.dropFirst(), radix: 16) ?? 0
+        let luma = 0.299 * Double((value >> 16) & 255) + 0.587 * Double((value >> 8) & 255) + 0.114 * Double(value & 255)
+        return luma > 150
     }
 
     private var effectsSection: some View {
