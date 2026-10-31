@@ -816,9 +816,18 @@ class Settings(BaseSettings):
     # renders with the creator's own background -- the recipe is byte-identical to
     # today's. A pinned recipe that already carries it answers 426
     # `client_update_required` (`speaker_background`) to an older build, which cannot
-    # decode the key. Default FALSE (dark ship). Apply:
-    # `fly secrets set SPEAKER_BACKGROUND_ENABLED=true --app nova-video` +
-    # `fly machine restart <id>` (api + worker); rollback = `...=false` + restart.
+    # decode the key. The same gate hides the capability (`editor_capabilities.
+    # speaker_background`, device-rendered Talk-to-camera variants only; thread capability
+    # `speaker_background`) and refuses an editor Save that SETS one (422
+    # `speaker_background_disabled`, 426 below the min protocol). Clearing a background
+    # always works, so a rollback never traps one on an edit. Default FALSE (dark ship).
+    # Apply: `fly secrets set SPEAKER_BACKGROUND_ENABLED=true --app nova-video` +
+    # `fly machine restart <id>` (api + worker), AFTER `speakerBackground` is in
+    # PHONE_RENDER_VERIFIED_FEATURES (set that first: with the flag on and the token
+    # missing every request is stripped). Rollback = kill switch, never a code revert:
+    # `fly secrets set SPEAKER_BACKGROUND_ENABLED=false` + restart (api + worker); recipes
+    # already pinned keep their background, new compiles strip it. Runbook:
+    # docs/pipelines/speaker-background.md.
     speaker_background_enabled: bool = False
     speaker_background_min_client_protocol: int = 27
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
