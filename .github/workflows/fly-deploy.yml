@@ -193,6 +193,7 @@ jobs:
           timeout --signal=TERM --kill-after=60s 2100s \
             scripts/fly-deploy-with-retry.sh \
             --remote-only \
+            --wait-timeout 10m \
             --env "CREATOR_DURATION_CHECK_MODE=${CREATOR_DURATION_CHECK_MODE}" \
             --env "CREATOR_DURATION_CHECK_REVISION=${GITHUB_SHA}" \
             --label "org.opencontainers.image.revision=${GITHUB_SHA}"
