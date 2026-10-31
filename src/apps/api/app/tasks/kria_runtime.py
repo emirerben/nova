@@ -142,7 +142,11 @@ from app.services.choice_questions import (
     simpler_version_question,
     tag_event,
 )
-from app.services.client_protocol import APPROVAL_CLIENT_PROTOCOL_FIELD
+from app.services.client_protocol import (
+    APPROVAL_CLIENT_PROTOCOL_FIELD,
+    bind_sending_build,
+    unbind_sending_build,
+)
 from app.services.creation_thread_titles import conversation_revision_matches_sync
 from app.services.creative_copy_gate import CREATIVE_COPY_PENDING, creative_copy_problem
 from app.services.creator_label_reply import LabelTextReply, label_text_reply
@@ -151,7 +155,9 @@ from app.services.kria_editor_ops import (
     EditorStateReplyError,
     EditorStateSpeechCutError,
     KriaEditorOpError,
+    TextTimingConflict,
     _clip_label_links,
+    build_editor_snapshot,
     compile_editor_ops,
     editor_state_has_lanes,
     failed_editor_draft_basis,
@@ -162,6 +168,7 @@ from app.services.kria_editor_ops import (
 )
 from app.services.kria_editor_ops_diff import describe_diff
 from app.services.phone_rollout import stamped_client_protocol
+from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
 from app.services.thought_summaries import (
     ThoughtSummaryPublisher,
@@ -198,6 +205,75 @@ class _Completion:
 
 class ApprovedCreatorRequestTooLongError(ValueError):
     """The approval fence cannot retain every creator instruction safely."""
+
+
+def _text_timing_conflict_plan(exc: TextTimingConflict) -> KriaTurnPlan:
+    if exc.constraint == "duration":
+        closest = round(exc.required_duration_s, 3)
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=say(
+                en=(
+                    f"With these clips, the closest supported length is {closest:g}s. "
+                    "Use that length, or choose different clips? Nothing was changed."
+                ),
+                tr=(
+                    f"Bu kliplerle desteklenen en yakın süre {closest:g} saniye. "
+                    "Bu süreyi mi kullanayım, yoksa farklı klipler mi seçelim? "
+                    "Hiçbir şey değişmedi."
+                ),
+            ),
+            reply_options=[
+                say(en=f"Retime text to {closest:g}s", tr=f"Yazıları {closest:g} saniyeye yay"),
+                say(en="Choose different clips", tr="Farklı klipler seç"),
+            ],
+        )
+    if exc.constraint == "readability":
+        return KriaTurnPlan(
+            mode="respond",
+            turn_value="question",
+            response=say(
+                en=(
+                    f"These words need at least {exc.minimum_duration_s:g}s of reading time. "
+                    "May I use a longer video, or would you like to shorten the text? "
+                    "Nothing was changed."
+                ),
+                tr=(
+                    f"Bu yazılar en az {exc.minimum_duration_s:g} saniye "
+                    "okuma süresi gerektiriyor. "
+                    "Daha uzun bir video kullanayım mı, yoksa metni kısaltmak ister misin? "
+                    "Hiçbir şey değişmedi."
+                ),
+            ),
+        )
+    return KriaTurnPlan(
+        mode="respond",
+        turn_value="question",
+        response=say(
+            en=(
+                f"Your text ends at {exc.required_duration_s:g}s, "
+                f"beyond the requested {exc.requested_duration_s:g}s. "
+                f"Keep the video at least {exc.minimum_duration_s:g}s, "
+                "or allow me to adjust the text timing? Nothing was changed."
+            ),
+            tr=(
+                f"Yazıların {exc.required_duration_s:g}. saniyede bitiyor. "
+                f"Videoyu en az {exc.minimum_duration_s:g} saniye mi tutayım, "
+                "yoksa yazıların zamanlamasını değiştirebilir miyim? Hiçbir şey değişmedi."
+            ),
+        ),
+        reply_options=[
+            say(
+                en=f"Keep the video at {exc.minimum_duration_s:g}s",
+                tr=f"Videoyu {exc.minimum_duration_s:g} saniye tut",
+            ),
+            say(
+                en=f"Retime text to {exc.requested_duration_s:g}s",
+                tr=f"Yazıları {exc.requested_duration_s:g} saniyeye yay",
+            ),
+        ],
+    )
 
 
 def _full_creator_request_sync(db, *, thread_id: uuid.UUID, through_sequence: int) -> str | None:  # noqa: ANN001
@@ -893,6 +969,30 @@ def _unresolved_choice_plan(
     return None
 
 
+def _unstuck_recovery(
+    db: Any,
+    thread_id: uuid.UUID,
+    plan: KriaTurnPlan,
+    brief: Any,
+    notices: tuple[str, ...],
+) -> KriaTurnPlan:
+    """KRI-1068: the backstop's reply, never word for word the last message Kria showed
+    (a reply, a draft or a render note), and saying first what this turn's "skip that"
+    dropped (``notices``)."""
+    previous = db.execute(
+        select(CreationThreadEvent.content)
+        .where(
+            CreationThreadEvent.thread_id == thread_id,
+            CreationThreadEvent.role == "assistant",
+            CreationThreadEvent.content.is_not(None),
+        )
+        .order_by(CreationThreadEvent.sequence.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    response = " ".join([*notices, unrepeated_reply(plan.response or "", previous, brief)])
+    return plan if response == plan.response else plan.model_copy(update={"response": response})
+
+
 def _label_text_unresolved(unresolved: str, brief: Any) -> LabelTextReply | None:
     """The label-text question behind the contract's ``unresolved`` line, if it is one.
 
@@ -1559,8 +1659,34 @@ def _complete_draft_turn(
                     raise EditorStateSpeechCutError(EditorStateSpeechCutError.reply)
             elif wants_speech_cut and prior_payload:
                 raise RuntimeError("Save the current draft before applying speech processing")
-            compiled = compile_editor_ops(job, editor_base.projected, arguments.operations)
-            scoped_fields = _scoped_turn_fields(db.get(CreationThreadEvent, turn.source_event_id))
+            from app.kria.editor_sequence_timing import (
+                sequence_timing_plan_from_operations,
+                timing_only_operations,
+            )
+            from app.services.kria_editor_ops_text import validate_timing_only_text
+
+            source_event = db.get(CreationThreadEvent, turn.source_event_id)
+            timing_snapshot = build_editor_snapshot(job, editor_base.projected)
+            preserve_text = any(
+                update.facts.get("preserve_editor_text") is True for update in planned.brief_updates
+            ) or any(op.get("preserve_text") is True for op in arguments.operations)
+            timing_plan = sequence_timing_plan_from_operations(
+                arguments.operations, timing_snapshot, preserve_text=preserve_text
+            )
+            compiled = compile_editor_ops(
+                job, editor_base.projected, arguments.operations, preserve_text=preserve_text
+            )
+            if timing_only_operations(arguments.operations) or any(
+                update.facts.get("editor_timing_only") is True for update in planned.brief_updates
+            ):
+                validate_timing_only_text(
+                    editor_base.projected.get("text_elements") or [],
+                    compiled.payload.text_elements
+                    if isinstance(compiled.payload, EditorCommitRequest)
+                    and compiled.payload.text_elements is not None
+                    else editor_base.projected.get("text_elements") or [],
+                )
+            scoped_fields = _scoped_turn_fields(source_event)
             if scoped_fields is not None:
                 # KRI-441 layer 3: whatever the model or a manual edit slipped outside the
                 # flagged sections is stripped from the compiled draft, never failed.
@@ -1682,22 +1808,57 @@ def _complete_draft_turn(
         if planned.brief_route is not None:
             # KRI-188: persist this turn's requirements (idempotent per turn),
             # then check each one deterministically against what was drafted.
+            current_brief = load_latest_brief_sync(db, thread.id)
             if planned.brief_expected_version is not None:
-                current_brief = load_latest_brief_sync(db, thread.id)
                 if planned.brief_expected_version != (
                     current_brief.version if current_brief else 0
                 ):
                     raise RuntimeError("The request changed during planning; please retry")
+            if apply_intent.tool_name == "draft.apply_editor_ops" and timing_plan is not None:
+                from app.kria.editor_sequence_timing import merge_sequence_brief_updates
+
+                canonical_plan = timing_plan
+                if (
+                    timing_plan.intent is not None
+                    and timing_plan.intent.mode == "fill"
+                    and timing_plan.span_s is None
+                    and timing_plan.intent.target_s is None
+                    and compiled.canonical_duration_s is not None
+                ):
+                    canonical_plan = replace(
+                        timing_plan,
+                        intent=replace(timing_plan.intent, target_s=compiled.canonical_duration_s),
+                    )
+                effective_brief_updates = merge_sequence_brief_updates(
+                    current_brief,
+                    planned.brief_updates,
+                    canonical_plan,
+                    timing_snapshot,
+                    source_event.content or "" if source_event else "",
+                )
             brief = persist_brief_version_sync(
                 db,
                 thread_id=thread.id,
                 turn_id=turn.id,
-                updates=planned.brief_updates,
+                updates=effective_brief_updates,
                 # KRI-814: a typed delegation is recorded, so readiness reads it as a
                 # delegated request instead of a missing extraction.
                 record_empty=planned.brief_delegated,
                 delegation_read_event_ids=planned.brief_delegation_read_ids,
             )
+            if brief is not None and effective_brief_updates != planned.brief_updates:
+                current_ids = [req.id for req in brief.live()]
+                planned = replace(
+                    planned,
+                    brief_updates=effective_brief_updates,
+                    brief_coverage={
+                        **(planned.brief_coverage or {}),
+                        "applicable_ids": current_ids,
+                        "retrieved_ids": current_ids,
+                        "enforced_ids": [],
+                        "unresolved_ids": current_ids,
+                    },
+                )
             if settings.kria_choice_questions_enabled and apply_intent.tool_name == (
                 "draft.apply_strategy"
             ):
@@ -1890,7 +2051,10 @@ def _complete_draft_turn(
                     # Editor operations verify only the requirements stated in
                     # this very turn, against what the ops changed (KRI-558).
                     facts = plan_facts_from_editor_payload(
-                        document.editor_payload, document.editor_text_diff, changes
+                        document.editor_payload,
+                        document.editor_text_diff,
+                        changes,
+                        canonical_duration_s=compiled.canonical_duration_s,
                     )
                     facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
@@ -2523,6 +2687,12 @@ def _complete_draft_turn(
             )
             if blocked is not None:
                 blocked_plan, blocked_reason = blocked
+                # KRI-1068: record the clip a reply is stuck on, so "skip that" next turn
+                # drops it; never send the same stuck reply twice in a row.
+                stuck_on = pin_block_coverage(gate_brief, blocked_plan.response)
+                blocked_plan = _unstuck_recovery(
+                    db, thread.id, blocked_plan, gate_brief, planned.pin_notices
+                )
                 # Same rollback-then-respond pattern as the receipts gate above: the
                 # speculative draft/brief work is undone and the reply is persisted in
                 # the normal response transaction (the old draft stays the head).
@@ -2545,6 +2715,7 @@ def _complete_draft_turn(
                         **(planned.brief_coverage or {}),
                         "stage": "draft",
                         "reason": blocked_reason,
+                        **stuck_on,
                         **(
                             {
                                 "accepted_omission_ids": unmet_ids,
@@ -3026,6 +3197,7 @@ async def _plan_with_live_agent(
     # KRI-1037: "Try again" after a provider deadline starts the Main Creator on its lighter
     # rung (the claim stamped the snapshot from the thread's last finished turn).
     degraded_token = start_degraded_retry.set(bool(snapshot.get("start_degraded")))
+    sender = bind_sending_build(stamped_client_protocol(snapshot.get("client_protocol")))
     try:
         async with async_sessionmaker(engine, expire_on_commit=False)() as db:
             parsed_state = parse_editor_state(editor_state)
@@ -3161,6 +3333,7 @@ async def _plan_with_live_agent(
     finally:
         turn_deadline.reset(deadline)
         start_degraded_retry.reset(degraded_token)
+        unbind_sending_build(sender)
         stop.set()
         try:
             await heartbeat
@@ -4077,6 +4250,15 @@ def run_kria_turn(self, turn_id: str) -> dict[str, str]:  # noqa: ANN001
                         claimed_thread_revision=claimed_thread_revision,
                         planned=planned,
                         client_protocol=stamped_client_protocol(snapshot.get("client_protocol")),
+                    )
+                except TextTimingConflict as exc:
+                    planned = replace(planned, plan=_text_timing_conflict_plan(exc))
+                    completion = _complete_response_turn(
+                        identifier,
+                        lease_owner=lease_owner,
+                        lease_epoch=lease_epoch,
+                        claimed_thread_revision=claimed_thread_revision,
+                        plan=planned.plan,
                     )
                 except EditorStateReplyError as exc:
                     # The creator's unsaved state is stale (video changed) or the op

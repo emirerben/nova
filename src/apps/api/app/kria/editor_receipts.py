@@ -26,6 +26,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, edge_alias_pattern
 from app.kria.brief import BriefRequirement
 from app.kria.brief_checks import MAX_REPLY_CHARS, TextStyleRow, is_judged
 from app.kria.contracts import RequirementReceipt
@@ -133,7 +134,9 @@ _POSITION_VERB = re.compile(
     r"|put|konum\w*|hizala\w*|tasi\w*|ortala\w*)\b"
 )
 _ANIMATION = re.compile(
-    r"\b(animat\w*|fade\w*|pop|pops|slide\w*|typewriter|entrance|exit|animasyon\w*|solma)\b"
+    r"\b(animat\w*|fade\w*|pop|pops|slide\w*|entrance|exit|animasyon\w*|"
+    + edge_alias_pattern(TEXT_ANIMATION_VOCAB)
+    + r")\b"
 )
 _SPEED = re.compile(
     r"\b(slow ?down|slow ?motion|slower|faster|speed ?(up|down)|hizlan\w*|yavasla\w*)\b"
@@ -253,6 +256,7 @@ class AskShape:
     literal: str = ""
     clip_scope: str = ""
     ordinal: int | None = None
+    quantified_named_scope: bool = False
 
 
 def _fact_cues(req: BriefRequirement) -> set[str]:
@@ -367,6 +371,12 @@ def _wanted(req: BriefRequirement) -> Mapping[str, str]:
 
 
 def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: int = 0) -> AskShape:
+    policy = req.facts.get("sequence_timing")
+    if req.kind == "timing" and isinstance(policy, dict):
+        return AskShape(
+            groups=(_Group("timing", _CUE_LANES["timing"]),),
+            target_row_ids=frozenset(policy.get("target_ids") or ()),
+        )
     text = words(req.description)
     named = _named_cues(req, text)
     groups = [_Group(name, _CUE_LANES[name]) for name in _CUE_LANES if name in named]
@@ -406,7 +416,19 @@ def ask_shape(req: BriefRequirement, rows: Sequence[TextStyleRow], live_text: in
         live_text=live_text,
         literal=words(req.literal) if req.kind == "text" and req.literal else "",
         clip_scope=scope_clip,
-        ordinal=_ordinal(text),
+        quantified_named_scope=bool(row_ids)
+        and req.scope == "global"
+        and bool(_QUANTIFIER.search(text))
+        and not _wanted(req),
+        ordinal=(
+            None
+            if req.kind == "timing"
+            and req.scope == "global"
+            and "duration_s" in req.facts
+            and "video" in text.split()
+            and not clip_only
+            else _ordinal(text)
+        ),
     )
 
 
@@ -593,6 +615,14 @@ class _Verdict:
         return not self.matched or bool(self.wrong or self.short)
 
 
+def _uncertain_scope_changes(shape: AskShape, verdicts: Sequence[_Verdict]) -> list[DiffEntry]:
+    """A named row plus a quantity can name a reference rather than the destination."""
+    if not shape.quantified_named_scope or any(v.matched or v.wrong or v.short for v in verdicts):
+        return []
+    entries = {id(entry): entry for verdict in verdicts for entry in verdict.off_target}
+    return list(entries.values())
+
+
 def _fits(group: _Group, entry: DiffEntry) -> bool:
     return any(
         entry.lane == lane and (not fields or entry.field in fields) for lane, fields in group.alts
@@ -670,6 +700,8 @@ def bind_editor_receipts(
             verdicts = [_match_group(g, shape, pool) for g in shape.groups]
             verdicts_by_req[req.id] = verdicts
             sources = [e for v in verdicts for e in v.sources]
+            if _unmet_reason(req, unmet) is None:
+                sources.extend(_uncertain_scope_changes(shape, verdicts))
             if cued_pass:
                 claimed.update(id(e) for e in sources)
             else:
@@ -682,6 +714,9 @@ def bind_editor_receipts(
             base = RequirementReceipt(
                 requirement_id=req.id, status="partial", verification="unchecked"
             )
+        if isinstance(req.facts.get("sequence_timing"), dict) and is_judged(req, base):
+            out.append(base)
+            continue
         shape, verdicts = shapes[req.id], verdicts_by_req[req.id]
         matched = [e for v in verdicts for e in v.matched]
         declined = _unmet_reason(req, unmet)
@@ -736,6 +771,16 @@ def _bind_by_diff(
     live: int,
 ) -> RequirementReceipt:
     nothing = say(en="Nothing changed for this", tr="Bunun için bir şey değişmedi")
+    uncertain_changes = _uncertain_scope_changes(shape, verdicts)
+    if uncertain_changes and declined is None:
+        return base.model_copy(
+            update={
+                "status": "partial",
+                "verification": "unchecked",
+                "stage": "applied",
+                "reason": "; ".join(_phrases(uncertain_changes, live, 3))[:300],
+            }
+        )
     if not shape.cued:
         # No word or fact named a dimension: say what the turn changed, never "Done".
         if matched and declined is None:
@@ -847,20 +892,26 @@ def receipt_lead(
         return ""
     total = len(receipts)
     failed = sum(r.status == "not_possible" for r in receipts)
+    completed = sum(r.status == "met" and r.verification == "checked" for r in receipts)
     if failed == total:
         lead = say(
             en="I couldn't do that." if total == 1 else "I couldn't do those.",
             tr="Bunu yapamadım." if total == 1 else "Bunları yapamadım.",
         )
+    elif failed and completed:
+        lead = say(
+            en=f"I did {completed} of your {total} asks.",
+            tr=f"{total} isteğinden {completed} tanesini yaptım.",
+        )
     elif failed:
         lead = say(
-            en=f"I did {total - failed} of your {total} asks.",
-            tr=f"{total} isteğinden {total - failed} tanesini yaptım.",
+            en="Here’s what changed and what I couldn’t do.",
+            tr="İşte değişenler ve yapamadıklarım.",
         )
     elif any(r.status == "partial" and r.verification == "checked" for r in receipts):
         lead = say(en="Partly done.", tr="Kısmen yapıldı.")
     elif any(r.verification == "unchecked" for r in receipts):
-        lead = say(en="Done — have a look.", tr="Yapıldı — bir göz at.")
+        lead = say(en="Here’s what changed.", tr="İşte değişiklikler.")
     else:
         lead = say(en="Done.", tr="Yapıldı.")
     parts = [lead, *notices, (notes or "").strip()]

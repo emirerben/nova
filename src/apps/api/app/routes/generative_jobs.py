@@ -5476,6 +5476,7 @@ async def dispatch_set_orientation(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="guided_story_revision_unavailable",
             )
+        _require_rendered_clock_reader(current_revision)
         if revision_number is None or base_generation is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -6883,6 +6884,70 @@ def _is_caption_cue_row(row: object) -> bool:
 
     params = row.get("source_params") if isinstance(row, dict) else None
     return isinstance(params, dict) and params.get("source") == CAPTION_CUE_SOURCE
+
+
+def _authored_empty_caption_presentation(
+    job: Job,
+    variant: dict,
+    payload: EditorCommitRequest,
+    proposed_text: list[dict] | None,
+) -> bool:
+    """Keep a no-caption editor's presentation settings across its ownership switch."""
+    from app.services.authored_editor import is_authored_timeline
+    from app.services.device_render import device_status
+
+    assembly = job.assembly_plan or {}
+    revision = variant.get("guided_edit_revision")
+    plan = assembly.get("guided_story_execution_plan")
+    saved_meta = variant.get("caption_meta")
+    if any(
+        value is not None and not isinstance(value, dict) for value in (revision, plan, saved_meta)
+    ):
+        return False
+    revision, plan = revision or {}, plan or {}
+    if (
+        saved_meta
+        and saved_meta.get("appearance") is not None
+        and not isinstance(saved_meta["appearance"], dict)
+    ):
+        return False
+    if any(
+        rows is not None and not isinstance(rows, list)
+        for rows in (
+            variant.get("caption_cues"),
+            revision.get("caption_cues"),
+            variant.get("text_elements"),
+            revision.get("text_elements"),
+        )
+    ):
+        return False
+    if not (
+        payload.editor_state_version in (1, 2)
+        and variant.get("render_destination") == "device"
+        and variant.get("resolved_archetype") == "guided_story"
+        and is_authored_timeline(variant)
+    ):
+        return False
+    if (
+        variant.get("caption_cues")
+        or revision.get("caption_cues")
+        or variant.get("speech_timing_basis") is not None
+        or variant.get("speech_timing_unresolved")
+        or plan.get("narration") is not None
+        or assembly.get("voiceover_path")
+        or any(_is_caption_cue_row(row) for row in variant.get("text_elements") or [])
+        or any(_is_caption_cue_row(row) for row in revision.get("text_elements") or [])
+        or any(_is_caption_cue_row(row) for row in proposed_text or [])
+    ):
+        return False
+    try:
+        pinned = device_status(job, variant["variant_id"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if pinned is None or pinned.request.recipe.audio.narration_asset_id is not None:
+        return False
+    manifest = getattr(pinned.request.recipe, "asset_manifest", None)
+    return not manifest or not any(asset.kind == "voiceover" for asset in manifest.assets)
 
 
 def _phone_narrated_caption_edits_available(variant: dict) -> bool:
@@ -9014,6 +9079,9 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
                 )
             )
         except ValueError:
+            if persisted.get("timing_mode") is not None:
+                log.warning("guided_editor_clock_revision_invalid", job_id=str(job.id))
+                return None
             # A corrupt/stale revision must not make the read endpoint 500. The
             # immutable approval remains the safe projection until the client
             # refreshes and saves a new revision.
@@ -9029,6 +9097,53 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
         log.warning("guided_editor_approval_projection_failed", job_id=str(job.id), exc_info=True)
         return None
     try:
+        rendered_source_durations = None
+        from app.services.device_render import DEVICE_RENDER_FIELD
+        from app.services.phone_sources import (
+            PHONE_SOURCES_FIELD,
+            PHONE_VISUALS_FIELD,
+            PhoneSourceBinding,
+            PhoneVisualBinding,
+        )
+
+        # Reader-first rollout: an existing plan or receipt never upgrades a saved clock.
+        # No production writer stamps this marker until every reader is compatible.
+        clock_marker = _stored_variant_field(job, variant, "_guided_editor_clock")
+        if clock_marker not in (None, "rendered-v1"):
+            raise ValueError("unsupported guided editor clock")
+        rendered_clock_requested = clock_marker == "rendered-v1"
+        has_native_state = any(
+            key in assembly
+            for key in (PHONE_SOURCES_FIELD, PHONE_VISUALS_FIELD, DEVICE_RENDER_FIELD)
+        )
+        if rendered_clock_requested:
+            if not has_native_state or not _stored_variant_field(
+                job, variant, PHONE_EDITOR_PLAN_FIELD
+            ):
+                raise ValueError("rendered editor clock requires native source receipts")
+            bindings = [
+                PhoneSourceBinding.model_validate(row)
+                for row in assembly.get(PHONE_SOURCES_FIELD) or []
+            ]
+            by_identity = {
+                (item.media_id, item.proxy_path, item.generation): item for item in bindings
+            }
+            visuals = {
+                (item.media_id, item.gcs_path, item.generation): item
+                for row in assembly.get(PHONE_VISUALS_FIELD) or []
+                for item in [PhoneVisualBinding.model_validate(row)]
+            }
+            rendered_source_durations = {}
+            for source in snapshot.media:
+                binding = by_identity.get((source.media_id, source.gcs_path, source.generation))
+                if binding is None:
+                    visual = visuals.get((source.media_id, source.gcs_path, source.generation))
+                    if visual is None or visual.kind != source.kind:
+                        raise ValueError("rendered editor source lacks its original receipt")
+                    if visual.kind == "video":
+                        rendered_source_durations[source.media_id] = visual.duration_s
+                else:
+                    rendered_source_durations[source.media_id] = binding.original.duration_s
         # Older approvals recorded the confirmed style only in the creator
         # identity. Recover presentation for the initial editor projection,
         # leaving the immutable approval, plan hash, and word receipts intact.
@@ -9056,6 +9171,7 @@ def _guided_v2_revision(job: Job, variant: dict) -> dict[str, Any] | None:
                 snapshot=snapshot.model_dump(mode="json"),
                 execution_plan=projected_plan,
                 base_generation=variant_render_baseline(variant),
+                rendered_source_durations=rendered_source_durations,
             )
         )
     except (TypeError, ValueError):
@@ -9184,6 +9300,9 @@ def _guided_v2_slot_rows(
                 "source_duration_s": source.get("duration_s"),
                 "in_s": segment.get("source_start_s"),
                 "duration_s": segment.get("duration_s"),
+                **(
+                    {"timing_mode": "rendered"} if revision.get("timing_mode") == "rendered" else {}
+                ),
                 **({"source_crop": segment["source_crop"]} if segment.get("source_crop") else {}),
                 **(
                     {"playback_rate": segment["playback_rate"]}
@@ -9223,6 +9342,42 @@ def _guided_v2_slot_rows(
     return slots
 
 
+def _require_rendered_clock_reader(revision: dict) -> None:
+    from app.services.client_protocol import (
+        RENDERED_TIMELINE_CLOCK_PROTOCOL,
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if (
+        revision.get("timing_mode") == "rendered"
+        and in_http_request()
+        and (current_client_protocol() or 0) < RENDERED_TIMELINE_CLOCK_PROTOCOL
+    ):
+        raise HTTPException(
+            status_code=426,
+            detail={
+                "code": "client_update_required",
+                "feature": "rendered_timeline_clock",
+                "minimum_client_protocol": RENDERED_TIMELINE_CLOCK_PROTOCOL,
+            },
+        )
+
+
+def require_editor_clock_reader(job: Job, variant: dict) -> None:
+    """Check server-owned clock state before changing the editor's mode."""
+    saved = variant.get("guided_edit_revision")
+    marker = _stored_variant_field(job, variant, "_guided_editor_clock")
+    if marker is None and not (isinstance(saved, dict) and saved.get("timing_mode") is not None):
+        return
+    current = _guided_v2_revision(job, variant)
+    if current is None:
+        raise _timeline_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_revision_unavailable"
+        )
+    _require_rendered_clock_reader(current)
+
+
 def _guided_v2_timeline_projection(
     job: Job,
     variant: dict,
@@ -9243,6 +9398,7 @@ def _guided_v2_timeline_projection(
             "clips": [],
             "edit_wide_look_presets": [],
         }
+    _require_rendered_clock_reader(revision)
     sources = list(revision.get("sources") or [])
     segment_layout, layout_by_media_id = _guided_v2_layouts(job, variant)
 
@@ -9865,6 +10021,7 @@ def _guided_v2_revision_for_write(
         raise _timeline_error(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "guided_story_revision_unavailable"
         )
+    _require_rendered_clock_reader(current)
     if payload.revision_number is None:
         raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
     if payload.revision_number is not None and payload.revision_number != int(
@@ -10236,6 +10393,7 @@ def _guided_v2_revision_from_commit(
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "GUIDED_REVISION_INVALID")
     if payload.base_generation != variant_render_baseline(variant):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+    _require_rendered_clock_reader(current)
     if payload.guided_revision_number is not None and payload.guided_revision_number != int(
         current["revision_number"]
     ):
@@ -10243,6 +10401,9 @@ def _guided_v2_revision_from_commit(
     if payload.guided_revision_number is None:
         raise _timeline_error(status.HTTP_409_CONFLICT, "GUIDED_REVISION_TOKEN_REQUIRED")
     raw = dict(payload.guided_revision or current)
+    raw.pop("timing_mode", None)
+    if current.get("timing_mode") is not None:
+        raw["timing_mode"] = current["timing_mode"]
     if raw.get("caption_meta") is not None:
         try:
             raw["caption_meta"] = EditorCommitCaptionMeta.model_validate(
@@ -10933,6 +11094,7 @@ def _prepare_editor_commit(
         require_phone_text_style_client,
     )
 
+    require_editor_clock_reader(job, variant)
     require_phone_text_style_client(variant.get(PHONE_TEXT_STYLE_FIELD))
     payload = normalize_editor_deletion_request(job, variant_id, payload)
     require_guided_story_editor_commit(job, variant_id, payload)
@@ -10950,6 +11112,7 @@ def _prepare_editor_commit(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="guided_story_revision_unavailable",
             )
+        _require_rendered_clock_reader(current)
         if payload.guided_revision_number is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail="GUIDED_REVISION_TOKEN_REQUIRED"
@@ -11192,6 +11355,9 @@ def _prepare_editor_commit(
 
     caption_meta_patch: dict | None = None
     if payload.caption_meta is not None:
+        empty_caption_presentation = _authored_empty_caption_presentation(
+            job, variant, payload, validated_elements
+        )
         # Meta toggles (style/font/enabled/position) are accepted for BOTH caption
         # archetypes — the fields and the reburn task are shared.
         if not (
@@ -11199,6 +11365,7 @@ def _prepare_editor_commit(
             or guided_v2
             or _phone_subtitled_editor_lanes_available(job, variant)
             or _phone_narrated_caption_edits_available(variant)
+            or empty_caption_presentation
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -11214,6 +11381,16 @@ def _prepare_editor_commit(
                     detail="Unknown caption font.",
                 )
         caption_meta_patch = {}
+        if empty_caption_presentation:
+            saved_meta = copy.deepcopy(variant.get("caption_meta") or {})
+            prior_appearance = saved_meta.get("appearance") or {}
+            saved_meta.update(meta.model_dump(exclude_unset=True))
+            if meta.appearance is not None:
+                saved_meta["appearance"] = {
+                    **prior_appearance,
+                    **meta.appearance.model_dump(exclude_unset=True),
+                }
+            caption_meta_patch["caption_meta"] = saved_meta
         if meta.appearance is not None:
             caption_meta_patch["caption_editor_style"] = {
                 **(variant.get("caption_editor_style") or {}),

@@ -73,6 +73,7 @@ MAX_UPDATES_PER_TURN = 16
 MAX_BRIEF_REQUEST_CHARS = 9_000
 _SCOPE_RE = re.compile(r"^(title|per_clip|global|clip:[A-Za-z0-9._:-]{1,100})$")
 _MAX_FACTS_BYTES = 2_000
+_MAX_DESCRIPTION_CHARS = 300
 
 
 def _nfc(value: str) -> str:
@@ -212,7 +213,7 @@ class BriefUpdate(_BriefModel):
     kind: RequirementKind | None = None
     scope: str | None = None
     literal: str | None = Field(default=None, max_length=200)
-    description: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     facts: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("scope", mode="before")
@@ -282,7 +283,7 @@ class BriefRequirement(_BriefModel):
     kind: RequirementKind
     scope: str
     literal: str | None = Field(default=None, max_length=200)
-    description: str | None = Field(default=None, max_length=300)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     facts: dict[str, Any] = Field(default_factory=dict)
     source_turn_id: str | None = None
     status: RequirementStatus = "open"
@@ -581,11 +582,35 @@ def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[s
             k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts
         }
         facts = {**kept, **update.facts} if kept else update.facts
+    if any(facts[k] is None for k in STICKY_FACTS & facts.keys()):
+        # KRI-1068: a change that sets a sticky fact to null withdraws it ("skip that"
+        # about the clip a reply was stuck on), so the fact is gone rather than kept as null.
+        facts = {k: v for k, v in facts.items() if not (k in STICKY_FACTS and v is None)}
     mark = facts.get(APPROVED_COPY_FACT)
     if mark is not None and not (isinstance(mark, Mapping) and mark.get("text") == update.literal):
         # KRI-945: the mark belongs to the words it copied; other words are someone else's.
         facts = {k: v for k, v in facts.items() if k != APPROVED_COPY_FACT}
     return facts
+
+
+def _with_cut_quote(update: BriefUpdate, *sources: str | None) -> str | None:
+    """``update``'s description, with a quoted line it cut from the creator's words put back.
+
+    Leverkusen M1 run 2 (thread 1a2189cc): "...the train clip with the announcement "Nächster
+    Halt: Leverkusen Mitte"..." was recorded without its quote, so the clip played a moment that
+    cut the line (`kept_sound_lines`). Only a sound ask with no literal: its quote names the line
+    to keep, and the clip-sound toggle reads facts, never these words. ``sources`` are the
+    creator's own message, then (for a change) the description it replaces.
+    """
+    if update.kind != "audio" or update.literal:
+        return update.description
+    from app.services.spoken_quotes import restore_cut_quote  # noqa: PLC0415
+
+    for source in sources:
+        restored = restore_cut_quote(update.description, source)
+        if restored and len(restored) <= _MAX_DESCRIPTION_CHARS:
+            return _nfc(restored)
+    return update.description
 
 
 def apply_updates(
@@ -633,7 +658,7 @@ def apply_updates(
                     "kind": update.kind,
                     "scope": update.scope,
                     "literal": update.literal,
-                    "description": update.description,
+                    "description": _with_cut_quote(update, creator_text, target.description),
                     # KRI-1029: this turn's own shape words win over a carried shape.
                     "facts": with_text_shape(
                         update.kind,
@@ -661,7 +686,7 @@ def apply_updates(
             kind=update.kind,
             scope=update.scope,
             literal=update.literal,
-            description=update.description,
+            description=_with_cut_quote(update, creator_text),
             facts=with_text_shape(
                 update.kind,
                 update.description,

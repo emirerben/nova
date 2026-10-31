@@ -3512,6 +3512,54 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1067-filming-order-end-picker",
+      "tickets": [
+        "KRI-1067",
+        "KRI-1066"
+      ],
+      "symptom": "Leverkusen M1 (thread 4144DA86, 2026-10-29): \"chronological order from arrival to the final whistle\" kept last_clip \"the final whistle\" on the brief, the clip-intent planner wrote no last pin, nothing asked which clip it is, and the draft backstop's render contract ended the turn on 'I couldn't tell which clip \"the final whistle\" means, so I can't confirm the order.' as a recovery with no picker, question or buttons (twice).",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1067",
+      "paths": [
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/app/services/clip_none_answers.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1067_filming_order_end_picker.py",
+        "tests/kria/test_kri1025_none_answer_pin.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The run's prompt, brief r2 and clip filming times (kri1067_leverkusen_m1_turn1.json) through the real Main Creator parse, _plan_from_creator_output, clip-intent parse and resolver plumbing behind a provider-transport fake, then the real choice gate, draft backstop and render contract. With the planner wiring off, the turn drafts and the backstop answers the prod sentence with nothing to tap (9 journey tests red); with it on, turn 1 is a clip picker for \"the final whistle\" with IMG_1043 (last filmed) ticked, and a tap, None or skip all reach a draft whose contract has no gap.",
+        "live_model": "Not run; no paid calls. No prompt changed; the resolver may see one more order row on these turns.",
+        "native_output": "n/a: server-only planner change; the iPhone shows the existing picker card (suggested_media_ids pre-ticks, KRI-991).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "stated first clip ticks the first filmed clip",
+        "tap the ticked clip, tap another clip, None, skip",
+        "planner already pinned the spot in other words, or wrote the same words as a sequence row",
+        "pin-only order, upload order, no stated ending, no brief: unchanged",
+        "resolver matches the ending itself (no question); resolver near miss keeps its own tick",
+        "no dated clips, one dated clip: nothing ticked or claimed",
+        "Turkish chat",
+        "inventory cap"
+      ],
+      "neighbours_gap": [
+        "The run's own planner output is redacted (sensitive_io); the first-pin-only inventory is the shape the reply implies.",
+        "Pin-only orders and an answered upload order with an unplaced stated clip still end on the KRI-1025 'Tell me which clip you mean' reply, not a picker.",
+        "KRI-1068 (pins can't be withdrawn) and KRI-1069 (photo in the selection reads as missing capture times) are separate."
+      ],
+      "follow_ups": [
+        "iPhone re-send of Leverkusen M1 after deploy"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-947-951-same-moment-picker",
       "tickets": [
         "KRI-947",
@@ -3712,6 +3760,162 @@
         "Plaza T1 iPhone re-send after deploy: the title renders at the top, off Maximo's face",
         "Readiness: treat a phone Talking title's top position as checkable",
         "80-character title cut on phone titles"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "rendered-editor-original-clock",
+      "tickets": [
+        "KRI-1060"
+      ],
+      "symptom": "A successful native original window1.920s reopens as1.933333s after editor frame normalization and fails source bounds.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "https://github.com/emirerben/nova/pull/1946",
+      "journey": "rendered-editor-original-clock",
+      "paths": [
+        "src/apps/api/app/schemas/guided_edit_revision.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
+        "src/apps/api/app/services/client_protocol.py",
+        "src/apps/api/app/services/public_assembly_plan.py"
+      ],
+      "regression_tests": [
+        "tests/routes/test_phone_editor_rendered_clock.py",
+        "tests/routes/test_phone_editor_rendered_clock_receipts.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "514 current-main backend cases passed, including unchanged legacy/hash, source overrun, private-marker fallback, saved-state refusal and old-client mutation controls. No production opt-in is emitted.",
+        "live_model": "Not run; no provider or prompt change.",
+        "native_output": "Current reader-first compatibility:118 iOS26.5 simulator tests passed, including protocol25 header, generated1.920s source preview/export and strict original-source overrun controls. Duration measured in export; pixels inspected in preview only. Native tree d25dfadf07e284362ae258f8e22bd5e2152986a2. No original-phone acceptance.",
+        "production": "Reader-first only; no activation, project migration or deployment. Future API/worker readers and protocol26 app admission are required."
+      },
+      "neighbours_covered": [
+        "Legacy frozen hashes",
+        "original and Visuals receipts",
+        "text-only Save/reopen",
+        "old/missing/current protocol",
+        "actual source overrun",
+        "rate and transition reflow",
+        "Legacy private plan without modern identity state",
+        "Present-but-empty modern state refuses missing originals"
+      ],
+      "neighbours_gap": [
+        "original physical-phone stack/local binding duration",
+        "original request word/order and export fidelity",
+        "native manual rate setter with crossfade interaction"
+      ],
+      "follow_ups": [
+        "KRI-1060"
+      ],
+      "red_control": "not_applicable",
+      "fix_prs": [
+        1946
+      ],
+      "gap_reason": "Reader deployment, future explicit admission and original-phone acceptance remain pending under KRI-1060."
+    },
+    {
+      "id": "kri-1068-stuck-pin-withdrawal",
+      "tickets": [
+        "KRI-1068",
+        "KRI-1066"
+      ],
+      "symptom": "Leverkusen M1 (thread 4144DA86, 2026-10-29): \"chronological order from arrival to the final whistle\" stored last_clip \"the final whistle\" on brief r2; nothing was seated last, so the draft backstop refused \"I couldn't tell which clip 'the final whistle' means, so I can't confirm the order.\" The creator's \"Okay make it simplier\" got the identical sentence back and \"Okay skip that part\" left the clip on brief v1-v3 (sticky first/last clips, KRI-522; \"simpler\" needs an earlier simpler-version offer). No video.",
+      "boundary": "brief",
+      "status": "open_pr",
+      "owner": "KRI-1068",
+      "paths": [
+        "src/apps/api/app/services/pin_withdrawal.py",
+        "src/apps/api/app/services/clip_none_answers.py",
+        "src/apps/api/app/kria/brief.py",
+        "src/apps/api/app/kria/planner.py",
+        "src/apps/api/app/tasks/kria_runtime.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_kri1068_pin_withdrawal.py",
+        "tests/kria/test_kri1068_pin_withdrawal_postgres.py",
+        "tests/kria/test_kri1025_none_answer_pin.py",
+        "tests/services/test_request_following_kri522.py"
+      ],
+      "harness": "real_with_db",
+      "evidence": {
+        "offline_replay": "Real runtime turns over scratch Postgres (submit_turn + run_kria_turn): turn 1 stuck on the ending with blocked_pins stored, a non-withdrawing turn gets the ways forward (never the same reply), \"Okay skip that part\" / \"Okay make it simplier\" persist a brief version without last_clip and reach the approval card saying it was dropped. Planner step, gate, backstop and render contract real; the Main Creator returns the turn's reconstructed draft (its I/O is redacted in prod).",
+        "live_model": "Not run (no paid calls).",
+        "native_output": "Not applicable: chat and brief only; no render path changed.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "EN and TR withdrawals: skip that (part), skip it, drop it, never mind, forget it, forget the ending, make it simpler, leave it out, bo\u015fver, o k\u0131sm\u0131 atla, daha basit yap",
+        "only the stuck clip goes: the seated opening and the filming-order ask stay",
+        "pin-only ending (no basis order) is removed as a whole, no ordering-rule dead end",
+        "the model's own change of the same requirement cannot carry the clip back; its remove stands",
+        "KRI-522: a non-withdrawing reword keeps the clip; a clip named since the block is not withdrawn",
+        "not right after a stuck reply (a draft, a question, an older stuck reply): nothing withdrawn",
+        "a repeated recovery about something else also changes wording"
+      ],
+      "neighbours_gap": [
+        "A withdrawal inside a longer message (\"skip that and make it 30 seconds\") is left to the Main Creator.",
+        "A typed \"skip that\" after a clip picker (KRI-1067's possible fix) is not read here; the None tap is KRI-1025's path.",
+        "A clip-intent row the planner re-reads from the original wording on later turns may still ask about the dropped words (raw creator request is re-planned every turn).",
+        "The receipts-gate recovery (approval readiness / simpler-version offer) has no repeat guard."
+      ],
+      "follow_ups": [
+        "Leverkusen M1 iPhone re-send after deploy (needs KRI-1067 and KRI-1069 too for a video)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
+      "id": "lev-m1-run2-skip-inside-first-group",
+      "tickets": [
+        "Leverkusen M1 run 2 #5",
+        "KRI-1076",
+        "KRI-761"
+      ],
+      "symptom": "Leverkusen M1 run 2 (thread 1a2189cc, turn 78855290, 2026-10-30): \"Put everything in the order I filmed it, starting with the train ride ... Skip the photo of the empty train seat\". The skip matched no clip (KRI-1076), and its clip picker offered 7 videos and 3 photos but not the seat photo IMG_1001, the train-display photo or the train video: \"the train ride\" matched all three and pinned_clips pinned every clip of a first/last ask. The creator could only answer None and the seat photo stayed in the edit. A matched skip hit the same rule: asked with the photo hidden, then kept because the group named it.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "Leverkusen M1 run 2 #5",
+      "journey": "kri-761-look-alike-exclusions",
+      "paths": [
+        "src/apps/api/app/kria/clip_exclusions.py",
+        "src/apps/api/app/kria/clip_scope.py",
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_skip_picker.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_lev_m1_skip_inside_first_group.py",
+        "tests/kria/test_kri761_look_alike_exclusions.py",
+        "tests/kria/test_kri807_unmatched_exclusion_picker.py",
+        "tests/kria/test_kri1026_plaza_exclusions.py",
+        "tests/kria/test_kri667_clip_exclusions.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": "kria_clip_selection_questions_enabled",
+      "evidence": {
+        "offline_replay": "The turn's 13 items (prod ids, kinds, lengths, photo records and capture times) through the real clip-intent planner and resolver agents (two resolver shards, as prod logged) and the real runtime-v2 planner; only the provider transport answers, with prod's four intents and a reconstructed train-ride match (IMG_0995, IMG_1001, IMG_1002). The real functions over those intents reproduce prod's 10 picker candidates exactly. Red before the fix (seat photo not offered; a matched skip asks with it hidden), green after: 12 offered (only the montage-audio train video held back), tap -> next turn drafts without IMG_1001 with the display photo and train video still opening; a matched skip leaves it with no question.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; the picker card is the existing KRI-761 exclude category, not device-checked for this ask.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "unmatched skip inside a first group: every clip but the strategy's sound source offered, nothing pre-ticked",
+        "tap -> left out, no second ask; None keeps every clip",
+        "matched skip inside a first group: applied without a question, the rest of the group still opens",
+        "a skip naming every clip of the group keeps them and says \"I couldn't leave out\"; the creator's tap still wins",
+        "a one-clip first/last ask is still a pin (KRI-761 Merope tray clip): never offered, never dropped by a resolver match, a matching skip asks",
+        "montage-audio source never offered or dropped",
+        "look-alike skips still ask; a capture-time order never pins (KRI-1026)"
+      ],
+      "neighbours_gap": [
+        "The resolver's train-ride matches are reconstructed (resolver I/O is not stored); run 1 matched one clip and offered every photo.",
+        "An op=group ask (\"keep the kitchen clips together\") still keeps a clip a matched skip names (KRI-667 rule, unchanged): said with the KRI-1026 notice.",
+        "The skip itself still matches nothing for the seat photo (KRI-1076, resolver)."
+      ],
+      "follow_ups": [
+        "KRI-1076"
       ],
       "red_control": "not_applicable"
     }

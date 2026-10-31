@@ -12,7 +12,7 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias, get_args
 
 from pydantic import (
     AliasChoices,
@@ -437,7 +437,7 @@ class CreativeStrategy(_CreatorModel):
         exclude_if=lambda value: value is None,
         description=(
             "How the opening title enters, ONLY when the creator named it ('animated with "
-            "typewriter'): typewriter | fade | pop | slide. Omit otherwise."
+            f"typewriter'): {' | '.join(get_args(TitleAnimation))}. Omit otherwise."
         ),
     )
     label_position: LabelPosition | None = Field(

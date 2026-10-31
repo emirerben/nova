@@ -1,0 +1,61 @@
+{
+  "_source": {
+    "issue": "Leverkusen M1 run 2 #5 (not filed: Linear at its issue cap)",
+    "thread": "1a2189cc-a212-424f-8486-e721e4e483b3",
+    "turn": "78855290-993b-4696-ada2-dc121510ced2",
+    "server": "Fly eed794157, TestFlight 1819, protocol 25",
+    "recorded": [
+      "creator_request: the M1 prompt as sent (kit PROMPT.txt, turn 78855290)",
+      "media ids, file names, kinds, video lengths and attachment order (thread media events; Visuals rows in the order of the prod filming-order intent's assignments)",
+      "photo descriptions (media-library rows, cut at 140 characters by the export) and every photo capture time (server rows)",
+      "planner_intents: the four intent ids and ops (prod turn plan clip_intent_inventory); exclude_empty_seat_photo and include_one_view_photo attributes (prod clip question, approved job)",
+      "prod_candidates: the clip question the creator saw at 18:36:06 (7 videos + IMG_1019, IMG_1038, IMG_1017)",
+      "montage_audio: the train video IMG_1002 (approved job 93f662a7 creator_strategy)",
+      "include_one_view_photo matched IMG_1017 (approved job resolved_clip_intents)"
+    ],
+    "reconstructed": [
+      "video records (the kit README's 'Shows' column; clip records are not exported)",
+      "video capture times (kit README local times, CET = UTC+1, same offset as the recorded photo times)",
+      "order_train_first's words and matches: the prod inventory names it, the resolver's matches are not stored. The picker left out exactly IMG_0995, IMG_1001 and IMG_1002, and only this ask and the montage audio can protect a clip on that turn",
+      "the Main Creator strategy (only what the exclusion step reads)"
+    ]
+  },
+  "creator_request": "Montage of my night at the BayArena: my friend Taha invited me to his VIP box for Bayer Leverkusen vs 1. FC Nürnberg in the DFB-Pokal. Put everything in the order I filmed it, starting with the train ride. Make it all vertical, no black bars. Skip the photo of the empty train seat, and use only one of the two photos of the view from our box. Keep the sound only on the train clip with the announcement \"Nächster Halt: Leverkusen Mitte\" and mute everything else. Title: \"Pokalnacht in Leverkusen 🔴⚫\". Make it 25 seconds. Suggest a song but don't add it.",
+  "media": [
+    {"name": "IMG_1036", "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4", "kind": "video", "duration_s": 8.533333, "capture_time": "2026-10-28T19:49:47Z", "summary": "Nürnberg away end in the stadium, banner VEREIN SEIT 1900."},
+    {"name": "IMG_1027", "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4", "kind": "video", "duration_s": 8.066667, "capture_time": "2026-10-28T19:33:14Z", "summary": "Crowd pan across the stands with waving flags."},
+    {"name": "IMG_1037", "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4", "kind": "video", "duration_s": 9.866667, "capture_time": "2026-10-28T20:25:46Z", "summary": "First goal: Taha celebrating in the VIP box."},
+    {"name": "IMG_1026", "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4", "kind": "video", "duration_s": 6.533333, "capture_time": "2026-10-28T19:16:50Z", "summary": "Players warming up on the pitch before kick-off."},
+    {"name": "IMG_1043", "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4", "kind": "video", "duration_s": 7.5, "capture_time": "2026-10-28T21:47:37Z", "summary": "Nürnberg players thank their fans at the away end."},
+    {"name": "IMG_1028", "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4", "kind": "video", "duration_s": 11.066667, "capture_time": "2026-10-28T19:36:41Z", "summary": "Dark stadium light show while the announcer reads the line-up."},
+    {"name": "IMG_1002", "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4", "kind": "video", "duration_s": 7.866667, "capture_time": "2026-10-28T17:42:36Z", "summary": "Inside the regional train; the announcement says Nächster Halt: Leverkusen Mitte."},
+    {"name": "IMG_1039", "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4", "kind": "video", "duration_s": 18.333333, "capture_time": "2026-10-28T21:35:40Z", "summary": "Second goal: kids at the start, TOR on the big screen, Taha screaming."},
+    {"name": "IMG_0995", "media_id": "asset-285921bd-b096-40a0-80b7-94733264c81b", "kind": "image", "duration_s": null, "capture_time": "2026-10-28T17:34:31Z", "summary": "A low-angle photo from inside a modern train car, showing standing passengers and two digital displays with route information."},
+    {"name": "IMG_1019", "media_id": "asset-f15de426-ab46-4604-9217-589ea3357ec3", "kind": "image", "duration_s": null, "capture_time": "2026-10-28T18:52:22Z", "summary": "A photo taken from a stadium box showing red seats in the foreground, a vibrant green football field, stadium lights, and a small TV screen "},
+    {"name": "IMG_1038", "media_id": "asset-a5a3072b-1061-41d9-91d1-1e956ccdf38d", "kind": "image", "duration_s": null, "capture_time": "2026-10-28T20:33:20Z", "summary": "The image shows a printed document detailing the Mannschaftsaufstellung (team lineup) for a DFB-Pokal football match between Bayer 04 Leverk"},
+    {"name": "IMG_1001", "media_id": "asset-3f1c6135-32db-4f0d-94da-b763893d867b", "kind": "image", "duration_s": null, "capture_time": "2026-10-28T17:35:12Z", "summary": "A photo taken from inside a train or bus, showing the back of a dark grey seat with a light grey folded tray table, and a window reflecting "},
+    {"name": "IMG_1017", "media_id": "asset-f00148fa-f787-449f-9b65-415da83baad6", "kind": "image", "duration_s": null, "capture_time": "2026-10-28T18:52:13Z", "summary": "A wide shot from inside a stadium luxury box, featuring red spectator seats in the foreground, a brightly lit green football field, and crow"}
+  ],
+  "planner_intents": [
+    {"intent_id": "order_all_filmed", "op": "order", "order_by": "capture_time", "attribute": "everything", "source_quote": "Put everything in the order I filmed it"},
+    {"intent_id": "order_train_first", "op": "order", "position": "first", "attribute": "the train ride", "source_quote": "starting with the train ride"},
+    {"intent_id": "exclude_empty_seat_photo", "op": "exclude", "attribute": "the photo of the empty train seat", "source_quote": "Skip the photo of the empty train seat"},
+    {"intent_id": "include_one_view_photo", "op": "include", "attribute": "one of the two photos of the view from our box", "source_quote": "use only one of the two photos of the view from our box"}
+  ],
+  "train_ride": ["IMG_0995", "IMG_1001", "IMG_1002"],
+  "one_view_photo": "IMG_1017",
+  "seat_photo": "IMG_1001",
+  "montage_audio": "IMG_1002",
+  "prod_candidates": [
+    "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+    "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+    "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+    "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+    "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+    "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+    "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+    "asset-f15de426-ab46-4604-9217-589ea3357ec3",
+    "asset-a5a3072b-1061-41d9-91d1-1e956ccdf38d",
+    "asset-f00148fa-f787-449f-9b65-415da83baad6"
+  ]
+}

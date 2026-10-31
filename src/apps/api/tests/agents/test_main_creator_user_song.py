@@ -73,11 +73,14 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # "words to SHOW are on-screen text" rule in main_creator.txt (all four hashes re-pinned).
 # v103 (KRI-1027) teaches the `landscape_fit` fact ("fill" / "fit") for how sideways clips sit in
 # a vertical video: brief-on hashes re-pinned; brief-off unchanged.
+# v105 (KRI-1077): brief-on re-pinned for registry-rendered animation names.
+# v104 (cache layout): all four re-pinned; content is the same lines in a new order
+# (per-turn INPUT block moved to the end), plus two orientation lines and one closing line.
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "89ef3d63c6207b32c8aba76876f3db0ba02a3be8794670ca00f8ef1fbc07f9d6",
-    (True, False): "7750407c6061324b3a6c034144f94e1f2340dfe337f24957b8b4f88bd29ace8f",
-    (False, True): "638b32c7bbdabfe44a2f7d751caf2d3c6863ad3d18ec773efa846226286c979c",
-    (False, False): "48f744f1f02dfc89d44310431a53150ca269664efc22d552f161ede6c02f0760",
+    (True, True): "c2fae873a6b7a25983107ce6b0fd102c69dc2b8af3579c0d6b11d9136a425b2b",
+    (True, False): "e3de37c194b88bd906568375111a33a5d8ec8bdab981a29ff6f377162710e87e",
+    (False, True): "313a4d5fb4658c85fb14dfe34f3ed98f424ed6cf5c2ba45619bd967858ac8a5b",
+    (False, False): "e804c3135cb2e6eae9093216bee3ee0d97159aa120c2b1eef8e34e61a3d37240",
 }
 
 
@@ -158,7 +161,7 @@ def test_song_section_is_the_only_difference_when_a_song_is_attached() -> None:
 
 
 def test_prompt_version_is_bumped_and_wired_into_the_spec() -> None:
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-29-v103"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-10-30-v105"
     assert MainCreatorAgent.spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 

@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-10-29-v91",
+  "prompt_version": "2026-10-30-v96",
   "input": {
     "utterance": "make the captions shorter",
     "prior_turns": [],
@@ -88,7 +88,7 @@
   "output": {},
   "meta": {
     "source": "hand_authored_golden",
-    "case": "same prompt without a scope: music and clip ops survive; offline replay contract metadata repinned for v86, not live rerecorded",
+    "case": "same prompt without a scope: music and clip ops survive; offline replay contract metadata repinned for v86, not live rerecorded; offline contract metadata repinned for v93, not live rerecorded",
     "plan_review_scope_eval": true
   }
 }

@@ -22,6 +22,7 @@ from __future__ import annotations
 import unicodedata
 from typing import Any
 
+from app.agents._schemas.text_animation_phases import phases_patch
 from app.agents.editor_ops_v2 import OpSpec, is_v2_snapshot
 from app.kria.reply_language import say
 
@@ -56,7 +57,7 @@ def coerce_text_patch(patch: object, state: Any) -> dict[str, Any] | None:
         _as_float,
         _coerce_patch,
     )
-    from app.services.kria_editor_ops_text import EXTRA_PATCH_FIELDS, PHASE_KEYS  # noqa: PLC0415
+    from app.services.kria_editor_ops_text import EXTRA_PATCH_FIELDS  # noqa: PLC0415
 
     if not isinstance(patch, dict) or not patch:
         state.invalid_value()
@@ -96,20 +97,11 @@ def coerce_text_patch(patch: object, state: Any) -> dict[str, Any] | None:
             return None
         clean["behind_subject"] = patch["behind_subject"]
     if "animation_phases" in patch:
-        phases = patch["animation_phases"]
-        if not isinstance(phases, dict) or not phases or set(phases) - PHASE_KEYS:
+        phases = phases_patch(patch["animation_phases"])
+        if phases is None:
             state.invalid_value()
             return None
-        from app.agents._schemas.text_animation_phases import (  # noqa: PLC0415
-            TextAnimationPhases,
-        )
-
-        try:
-            TextAnimationPhases(**phases)
-        except Exception:  # noqa: BLE001
-            state.invalid_value()
-            return None
-        clean["animation_phases"] = dict(phases)
+        clean["animation_phases"] = phases
     return clean or None
 
 
@@ -324,7 +316,21 @@ def _coerce_set_texts_timing(name: str, payload: dict, snapshot: dict, state: An
                 state.invalid_value()
                 return None
             out[key] = number
+    if name == "retime_text_sequence":
+        if "fit_to_video" in payload:
+            if not isinstance(payload["fit_to_video"], bool):
+                state.invalid_value()
+                return None
+            out["fit_to_video"] = payload["fit_to_video"]
+        if "gap_policy" in payload:
+            if payload["gap_policy"] not in {"scale", "close", "fixed"}:
+                state.invalid_value()
+                return None
+            out["gap_policy"] = payload["gap_policy"]
     absolute = {"start_s", "end_s"} & out.keys()
+    if name == "retime_text_sequence" and (absolute != {"start_s", "end_s"} or "shift_s" in out):
+        state.invalid_value()
+        return None
     if ("shift_s" in out) == bool(absolute):
         state.invalid_value()
         return None
@@ -514,6 +520,13 @@ SPECS: list[OpSpec] = [
         coerce=_coerce_set_texts_timing,
     ),
     OpSpec(
+        name="retime_text_sequence",
+        required=frozenset({"selector", "start_s", "end_s"}),
+        fields=frozenset({"fit_to_video", "gap_policy"}),
+        family=_FAMILY,
+        coerce=_coerce_set_texts_timing,
+    ),
+    OpSpec(
         name="realign_labels",
         fields=frozenset({"selector"}),
         family=_FAMILY,
@@ -534,4 +547,5 @@ def register_handlers() -> None:
     ops.register_handler("remove_texts", text.op_remove_texts)
     ops.register_handler("replace_text_sequence", text.op_replace_text_sequence)
     ops.register_handler("set_texts_timing", text.op_set_texts_timing)
+    ops.register_handler("retime_text_sequence", text.op_retime_text_sequence)
     ops.register_handler("realign_labels", text.op_realign_labels)

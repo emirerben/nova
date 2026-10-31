@@ -80,7 +80,7 @@ class ClassificationTests(unittest.TestCase):
             ".github/workflows/ci.yml": ALL,
             ".github/workflows/ci-changes.yml": ALL,
             "scripts/ci/select-tests.py": ALL,
-            "scripts/ci/test_select_tests.py": ALL,
+            "scripts/ci/test_select_tests.py": set(),
             "Dockerfile": ALL,
             "Makefile": ALL,
             "assets/fonts/font.ttf": ALL,
@@ -474,6 +474,127 @@ class GitDiffTests(unittest.TestCase):
     def selected(self):
         return ci.selection("pull_request", self.base, self.commit())[0]
 
+    def test_selector_contract_test_changes_stay_on_unconditional_linux_gate(self):
+        self.write("scripts/ci/test_select_tests.py", "changed selector assertions")
+        head = self.commit()
+        suites, _, groups = ci.selection_details("pull_request", self.base, head)
+        self.assertEqual(suites, set())
+        self.assertEqual(groups, "none")
+        self.assertEqual(
+            ci.journey_details("pull_request", self.base, head),
+            (False, "not_applicable", ""),
+        )
+        self.assertFalse(ci.native_validation("pull_request", suites, False))
+        workflow = (SCRIPT.parents[2] / ".github/workflows/ci-changes.yml").read_text()
+        self.assertIn(
+            "python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v", workflow
+        )
+        self.assertLess(
+            workflow.index("Test CI selection"),
+            workflow.index("Select affected suites"),
+        )
+
+    def test_audited_chat_workspace_tests_keep_full_native_units_without_exports(self):
+        path = "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift"
+        self.write(path, "changed unit assertions")
+        head = self.commit()
+        suites, _, groups = ci.selection_details("pull_request", self.base, head)
+        self.assertEqual(suites, {"ios"})
+        self.assertEqual(groups, "none")
+        self.assertEqual(
+            ci.journey_details("pull_request", self.base, head),
+            (False, "not_applicable", ""),
+        )
+        self.assertTrue(ci.native_validation("pull_request", suites, False))
+        self.assertEqual(ci.native_legs([]), ["unit"])
+        named = {test for row in ci.JOURNEYS for test in row.get("xctests", [])}
+        self.assertFalse(
+            any(test.startswith("KriaTests/ChatWorkspaceTests/") for test in named)
+        )
+
+    def test_isolated_tests_never_override_runtime_or_policy_dependencies(self):
+        isolated = (
+            "scripts/ci/test_select_tests.py",
+            "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift",
+        )
+        for path in isolated:
+            self.write(path, "changed unit assertions")
+        base = self.base
+        all_journeys = {row["id"] for row in ci.JOURNEYS}
+        cases = {
+            "scripts/ci/select-tests.py": (ALL, all_journeys),
+            ".github/workflows/ci.yml": (ALL, all_journeys),
+            "scripts/ci/journey-manifest.json": (ALL, all_journeys),
+            "src/apps/api/app/routes/generative_jobs.py": (
+                {"api", "ios"},
+                {"kri-648-phone-text", "kri-852-speech-editor"},
+            ),
+            "src/apps/api/app/schemas/guided_edit_revision.py": (
+                {"api", "ios"},
+                {
+                    "kri-1032-montage-copy-parity",
+                    "kri-561-song-order",
+                    "kri-689-clip-speed",
+                },
+            ),
+            "src/apps/ios/Kria/Features/NativeEditorSession.swift": (
+                {"ios", "ios_ui"},
+                {"kri-648-phone-text", "kri-669-gameday", "kri-852-speech-editor"},
+            ),
+            "src/apps/ios/Tests/KriaTests/DeviceMontageRenderE2ETests.swift": (
+                {"ios"},
+                {"kri-492-length-ownership", "kri-524-creation"},
+            ),
+            "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift": (
+                {"ios"},
+                set(),
+            ),
+            "scripts/ios/kri-492-length-e2e.py": (
+                {"ios", "ios_ui"},
+                {"kri-492-length-ownership"},
+            ),
+            "new-runtime/unknown.py": (ALL, set()),
+        }
+        for path, (required_suites, required_journeys) in cases.items():
+            with self.subTest(path=path):
+                self.write(path, "changed dependency")
+                head = self.commit()
+                actual = set(
+                    ci.journey_details("pull_request", base, head)[2].split(",")
+                ) - {""}
+                self.assertTrue(required_journeys <= actual)
+                suites = ci.selection("pull_request", base, head)[0]
+                self.assertTrue(required_suites <= suites)
+                self.assertTrue(
+                    ci.native_validation(
+                        "pull_request", suites, bool(required_journeys)
+                    )
+                )
+                legs = ci.native_legs(actual)
+                if required_journeys & {
+                    "kri-492-length-ownership",
+                    "kri-689-clip-speed",
+                    "kri-669-gameday",
+                    "kri-524-creation",
+                }:
+                    self.assertIn("creation", legs)
+                if "kri-648-phone-text" in required_journeys:
+                    self.assertIn("screens", legs)
+                Path(path).unlink()
+
+    def test_full_regression_cadences_ignore_isolated_test_exemptions(self):
+        for event in ("push", "schedule", "workflow_dispatch"):
+            with self.subTest(event=event):
+                self.assertEqual(ci.selection(event, self.base, self.base)[0], ALL)
+                selected, coverage, ids = ci.journey_details(
+                    event, self.base, self.base
+                )
+                self.assertTrue(selected)
+                self.assertEqual(coverage, "covered")
+                self.assertEqual(
+                    set(ids.split(",")), {row["id"] for row in ci.JOURNEYS}
+                )
+
     def test_focused_and_unit_only_group_outputs(self):
         self.write("src/apps/ios/Kria/Features/CreationAttachments.swift", "changed")
         head = self.commit()
@@ -623,8 +744,12 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-988-pool-photo-attached,kri-721-approval-readiness,kri-966-take-window-length",
+                    "kri-524-creation,kri-557-thinking,kri-787-merope-t1-replay,kri-577-reliability-gates,kri-760-whole-line-ask,kri-988-pool-photo-attached,kri-721-approval-readiness,kri-966-take-window-length,duration-text-preservation",
                 ),
+            ),
+            (
+                "src/apps/api/app/kria/editor_sequence_timing.py",
+                (True, "covered", "duration-text-preservation"),
             ),
             (
                 "src/apps/api/app/kria/approval_readiness.py",
@@ -660,7 +785,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/routes/plan_items.py",
-                (True, "covered", "kri-557-thinking,slide-post-binding-recovery"),
+                (
+                    True,
+                    "covered",
+                    "kri-557-thinking,slide-post-binding-recovery,rendered-editor-original-clock",
+                ),
             ),
             (
                 "src/apps/api/app/schemas/user_song.py",
@@ -675,7 +804,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-561-song-order,kri-1032-montage-copy-parity,kri-689-clip-speed",
+                    "kri-561-song-order,kri-1032-montage-copy-parity,kri-689-clip-speed,rendered-editor-original-clock",
                 ),
             ),
             (
@@ -764,7 +893,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/clip_scope.py",
-                (True, "covered", "kri-598-voiceover-planner,kri-623-ruled-out-clips"),
+                (
+                    True,
+                    "covered",
+                    "kri-598-voiceover-planner,kri-623-ruled-out-clips,kri-761-look-alike-exclusions",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/narrated_photo_sequence.py",
@@ -952,7 +1085,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/prompts/edit_copilot_ops/text.txt",
-                (True, "covered", "kri-669-gameday"),
+                (True, "covered", "kri-669-gameday,duration-text-preservation"),
             ),
             # This has journey impact but no incident-corpus repro mapping.
             (
@@ -978,9 +1111,31 @@ class GitDiffTests(unittest.TestCase):
             (
                 True,
                 "covered",
-                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes",
+                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes,rendered-editor-original-clock",
             ),
         )
+
+    def test_rendered_clock_paths_select_the_recovery_journey(self):
+        for path in (
+            "src/apps/api/app/routes/generative_jobs.py",
+            "src/apps/api/app/services/guided_timeline.py",
+            "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+            "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
+        ):
+            with self.subTest(path=path):
+                self.write(path, "changed")
+                selected, coverage, ids = ci.journey_details(
+                    "pull_request", self.base, self.commit()
+                )
+                self.assertTrue(selected)
+                self.assertEqual(coverage, "covered")
+                self.assertIn("rendered-editor-original-clock", ids.split(","))
+                self.assertTrue(
+                    ci.journey_needs_native(
+                        "pull_request", self.base, self.git("rev-parse", "HEAD")
+                    )
+                )
+                self.base = self.git("rev-parse", "HEAD")
 
     def test_journey_native_runner_is_linux_for_python_only_and_mac_for_mixed(self):
         self.write("src/apps/api/app/kria/duplicate_uploads.py", "changed")

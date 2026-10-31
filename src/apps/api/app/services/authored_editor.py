@@ -58,6 +58,8 @@ def prepare_authored_editor_commit(
     from app.routes.generative_jobs import (
         _find_variant,
         _prepare_editor_commit,
+        _require_caption_animation_client,
+        require_editor_clock_reader,
         variant_render_baseline,
     )
     from app.services.phone_editor import _StagedJob
@@ -69,6 +71,8 @@ def prepare_authored_editor_commit(
         raise HTTPException(404, detail="Variant not found")
     if payload.base_generation != variant_render_baseline(variant):
         raise HTTPException(409, detail="baseline_conflict")
+    require_editor_clock_reader(job, variant)
+    _require_caption_animation_client(job, variant, payload)
     if not is_authored_timeline(variant) and (
         payload.timeline_slots is None or not any(not row.removed for row in payload.timeline_slots)
     ):
