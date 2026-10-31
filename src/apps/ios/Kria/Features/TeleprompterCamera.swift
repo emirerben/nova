@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import OSLog
 import SwiftUI
 import UIKit
 
@@ -679,19 +680,37 @@ final class LiveFrameRelay: NSObject, AVCaptureVideoDataOutputSampleBufferDelega
     }
 
     func sessionDidStop() {
-        lock.lock(); let current = consumer; lock.unlock()
+        lock.lock(); let current = consumer; loggedConnection = false; lock.unlock()
         current?.sessionDidStop()
+    }
+
+    /// Re-arms the once-per-session connection log (a new output was attached).
+    func sessionWillStart() { lock.lock(); loggedConnection = false; lock.unlock() }
+
+    private var loggedConnection = false
+    private static let log = Logger(subsystem: "com.kria.app", category: "teleprompter")
+
+    /// One line per session, from the first frame, so the state the connection ACTUALLY has can be read off a device.
+    private func logConnectionOnce(_ connection: AVCaptureConnection) {
+        lock.lock(); let already = loggedConnection; loggedConnection = true; lock.unlock()
+        guard !already else { return }
+        let mirrored = connection.isVideoMirrored, adjusts = connection.automaticallyAdjustsVideoMirroring
+        let angle = connection.videoRotationAngle
+        Self.log.notice("live data output connection isVideoMirrored=\(mirrored, privacy: .public) automaticallyAdjustsVideoMirroring=\(adjusts, privacy: .public) videoRotationAngle=\(angle, privacy: .public) previewMirrored=\(LivePreviewOrientation.previewMirrored(connectionIsMirrored: mirrored), privacy: .public)")
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         lock.lock(); let current = consumer; lock.unlock()
         guard let current, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        current.consume(buffer)
+        logConnectionOnce(connection)
+        current.consume(buffer, mirrored: LivePreviewOrientation.previewMirrored(connectionIsMirrored: connection.isVideoMirrored))
     }
 }
 
 /// Adds or removes the one `AVCaptureVideoDataOutput` the live preview needs. Settings are the ones measured on an
-/// iPhone 13 Pro running beside the movie output (KRI-1114 spike): 32BGRA, late frames discarded, portrait, not mirrored.
+/// iPhone 13 Pro running beside the movie output (KRI-1114 spike): 32BGRA, late frames discarded, portrait (rotation 90, the
+/// same angle the preview layer uses). Mirroring is REQUESTED off, but it is not trusted: the relay reads
+/// `isVideoMirrored` from the connection on every frame and the preview mirrors accordingly.
 enum LiveFrameOutputGraph {
     /// Returns whether a live output is attached afterwards.
     static func reconcile(session: AVCaptureSession, existing: inout AVCaptureVideoDataOutput?, wanted: Bool,
@@ -722,6 +741,7 @@ enum LiveFrameOutputGraph {
                 connection.isVideoMirrored = false
             }
         }
+        relay.sessionWillStart()
         existing = output
         return true
     }

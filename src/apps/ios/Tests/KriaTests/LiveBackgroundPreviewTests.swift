@@ -54,7 +54,9 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         private var frames = 0, stops = 0
         var frameCount: Int { lock.lock(); defer { lock.unlock() }; return frames }
         var stopCount: Int { lock.lock(); defer { lock.unlock() }; return stops }
-        func consume(_ frame: CVPixelBuffer) { lock.lock(); frames += 1; lock.unlock() }
+        private var flags: [Bool] = []
+        var mirroredFlags: [Bool] { lock.lock(); defer { lock.unlock() }; return flags }
+        func consume(_ frame: CVPixelBuffer, mirrored: Bool) { lock.lock(); frames += 1; flags.append(mirrored); lock.unlock() }
         func sessionDidStop() { lock.lock(); stops += 1; lock.unlock() }
     }
 
@@ -89,6 +91,7 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         relay.captureOutput(output, didOutput: sample, from: connection)
         relay.captureOutput(output, didOutput: sample, from: connection)
         XCTAssertEqual(consumer.frameCount, 2)
+        XCTAssertEqual(consumer.mirroredFlags, [true, true], "an unmirrored connection means the preview applies the selfie flip")
         relay.sessionDidStop()
         XCTAssertEqual(consumer.stopCount, 1)
         relay.setConsumer(nil)
@@ -121,16 +124,16 @@ final class LiveBackgroundPreviewTests: XCTestCase {
     func testAFailingMatteDrawsTheRawFrameAndKeepsGoing() {
         let preview = LiveBackgroundPreview(segmenter: FailingSegmenter())
         preview.setBackground(Still())
-        for _ in 0..<5 { preview.consume(pixelBuffer()) }
+        for _ in 0..<5 { preview.consume(pixelBuffer(), mirrored: true) }
         XCTAssertEqual(preview.statistics, LiveBackgroundStatistics(framesConsumed: 5, framesMatted: 0, framesRaw: 5))
     }
 
     func testAWorkingMatteIsCountedAndNoBackgroundYetIsRaw() {
         let preview = LiveBackgroundPreview(segmenter: FullSegmenter())
-        preview.consume(pixelBuffer())
+        preview.consume(pixelBuffer(), mirrored: true)
         XCTAssertEqual(preview.statistics.framesRaw, 1, "no background loaded yet: the camera alone")
         preview.setBackground(Still())
-        preview.consume(pixelBuffer())
+        preview.consume(pixelBuffer(), mirrored: true)
         XCTAssertEqual(preview.statistics.framesMatted, 1)
     }
 
@@ -140,9 +143,9 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         preview.setBackground(background)
         preview.sessionDidStop()
         XCTAssertEqual(background.active, [false])
-        preview.consume(pixelBuffer())
+        preview.consume(pixelBuffer(), mirrored: true)
         XCTAssertEqual(background.active, [false, true])
-        preview.consume(pixelBuffer())
+        preview.consume(pixelBuffer(), mirrored: true)
         XCTAssertEqual(background.active, [false, true], "only the first frame resumes it")
     }
 

@@ -139,6 +139,54 @@ final class LiveBackgroundCompositingTests: XCTestCase {
         XCTAssertLessThan(pixel(mirrored, x: 1, y: 4).r, 12)
     }
 
+    // MARK: Selfie orientation (device finding: the live preview was flipped against the plain preview)
+
+    /// Left half red, right half blue.
+    private var leftRedRightBlue: CIImage {
+        solid(0, 0, 1, size: canvas).composited(over: solid(0, 0, 0, size: canvas))
+            .cropped(to: CGRect(x: 4, y: 0, width: 4, height: 8))
+            .composited(over: solid(1, 0, 0, size: CGSize(width: 4, height: 8)))
+    }
+
+    func testMirroredTrueSwapsLeftAndRightAndFalseKeepsThem() {
+        let person = LiveBackgroundCompositor.maskImage(mask { _, _ in 255 })
+        let green = solid(0, 1, 0, size: canvas)
+        let plain = LiveBackgroundCompositor.compose(frame: leftRedRightBlue, mask: person, background: green, canvas: canvas, mirrored: false)
+        XCTAssertGreaterThan(pixel(plain, x: 1, y: 4).r, 243, "not mirrored: red stays on the left")
+        XCTAssertGreaterThan(pixel(plain, x: 6, y: 4).b, 243)
+        let mirrored = LiveBackgroundCompositor.compose(frame: leftRedRightBlue, mask: person, background: green, canvas: canvas, mirrored: true)
+        XCTAssertGreaterThan(pixel(mirrored, x: 1, y: 4).b, 243, "mirrored: blue moves to the left")
+        XCTAssertGreaterThan(pixel(mirrored, x: 6, y: 4).r, 243)
+        let rawMirrored = LiveBackgroundCompositor.compose(frame: leftRedRightBlue, mask: nil, background: green, canvas: canvas, mirrored: true)
+        XCTAssertGreaterThan(pixel(rawMirrored, x: 1, y: 4).b, 243, "the raw fallback frame mirrors the same way")
+    }
+
+    func testTheMaskFollowsTheMirrorSoThePersonStaysUnderTheirOwnPixels() {
+        // Person on the left of the sensor image (red), mask on the left. Mirrored, both move right together.
+        let left = LiveBackgroundCompositor.maskImage(mask { x, _ in x < 4 ? 255 : 0 })
+        let green = solid(0, 1, 0, size: canvas)
+        let out = LiveBackgroundCompositor.compose(frame: leftRedRightBlue, mask: left, background: green, canvas: canvas, mirrored: true)
+        XCTAssertGreaterThan(pixel(out, x: 6, y: 4).r, 243, "the red person is on the right and still opaque")
+        XCTAssertGreaterThan(pixel(out, x: 1, y: 4).g, 243, "the left is the background, not the blue half of the camera")
+    }
+
+    func testComposeNeverFlipsVerticallyWhateverTheMirror() {
+        // Core Image's origin is bottom-left: top half red means high y is red.
+        let topRed = solid(1, 0, 0, size: CGSize(width: 8, height: 4)).transformed(by: CGAffineTransform(translationX: 0, y: 4))
+            .composited(over: solid(0, 0, 1, size: canvas))
+        let person = LiveBackgroundCompositor.maskImage(mask { _, _ in 255 })
+        for mirrored in [false, true] {
+            let out = LiveBackgroundCompositor.compose(frame: topRed, mask: person, background: solid(0, 1, 0, size: canvas), canvas: canvas, mirrored: mirrored)
+            XCTAssertGreaterThan(pixel(out, x: 4, y: 6).r, 243, "top stays top (mirrored \(mirrored))")
+            XCTAssertGreaterThan(pixel(out, x: 4, y: 1).b, 243, "bottom stays bottom (mirrored \(mirrored))")
+        }
+    }
+
+    func testThePreviewMirrorsExactlyWhenTheConnectionDoesNot() {
+        XCTAssertTrue(LivePreviewOrientation.previewMirrored(connectionIsMirrored: false), "an unmirrored buffer needs the selfie flip")
+        XCTAssertFalse(LivePreviewOrientation.previewMirrored(connectionIsMirrored: true), "a buffer that arrives mirrored must not be flipped back")
+    }
+
     func testCoverFitFillsTheCanvasForALandscapeBackground() {
         let wide = solid(0, 1, 0, size: CGSize(width: 64, height: 16))
         let fitted = LiveBackgroundCompositor.coverFit(wide, into: CGSize(width: 9, height: 16))

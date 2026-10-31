@@ -21,8 +21,6 @@ enum LiveSpeakerMatteConfig {
     static let curveHigh: Float = 0.65
     /// The size the spike drew at (540x960 drawable). The layer is scaled up by the view.
     static let previewSize = CGSize(width: 540, height: 960)
-    /// Front-camera selfie mirroring is preview-only. The recorded take is never mirrored.
-    static let mirrorsPreview = true
 }
 
 /// The soft-edge curve, as a function and as the 256-entry lookup Core Image applies on the GPU.
@@ -43,6 +41,14 @@ enum SpeakerMatteCurve {
         return CIImage(bitmapData: Data(bytes), bytesPerRow: 256 * 4, size: CGSize(width: 256, height: 1),
                        format: .RGBA8, colorSpace: nil)
     }
+}
+
+/// The selfie rule: the plain camera preview is mirrored, so the live preview must be too, whatever the data output's
+/// connection really delivers. A connection that reports `isVideoMirrored == true` already hands over mirrored pixels,
+/// so flipping again would undo it. `isVideoMirrored = false` was requested at attach time but may not take effect,
+/// which is why this is read from the connection at frame time.
+enum LivePreviewOrientation {
+    static func previewMirrored(connectionIsMirrored: Bool) -> Bool { !connectionIsMirrored }
 }
 
 /// Pure compositing: the camera frame over a background, through a soft mask. Rendering to a texture, and the
@@ -72,8 +78,10 @@ enum LiveBackgroundCompositor {
 
     /// The camera over the background. A nil mask is the raw frame alone (the S25 fallback). Mirroring applies to the
     /// camera and its mask, never to the background.
+    /// `mirrored` is decided per frame from the connection that delivered it (`LivePreviewOrientation`), never assumed.
+    /// Only the horizontal axis is ever flipped: Core Image's origin is bottom-left and an upright frame stays upright.
     static func compose(frame: CIImage, mask: CIImage?, background: CIImage, canvas: CGSize,
-                        mirrored: Bool = LiveSpeakerMatteConfig.mirrorsPreview) -> CIImage {
+                        mirrored: Bool) -> CIImage {
         let e = frame.extent
         let scale = max(canvas.width / e.width, canvas.height / e.height)
         var fit = CGAffineTransform(scaleX: scale, y: scale)
