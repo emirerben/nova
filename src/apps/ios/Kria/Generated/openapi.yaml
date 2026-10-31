@@ -11001,7 +11001,7 @@
             "items": {
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 60,
             "minItems": 1,
             "title": "Beat Reasons",
             "type": "array"
@@ -11121,14 +11121,14 @@
               "format": "uuid",
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 60,
             "minItems": 1,
             "nullable": true,
             "title": "Moment Order",
             "type": "array"
           },
           "replace_index": {
-            "maximum": 7.0,
+            "maximum": 59.0,
             "minimum": 0.0,
             "nullable": true,
             "title": "Replace Index",
