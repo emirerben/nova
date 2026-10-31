@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.28.0] - 2026-10-31
+
+### Fixed
+- fix(kria): keep filming order when the simpler version drops it (Leverkusen M1 run 2 #3) (#1974) <!-- release-pr: 1974 -->
+
 ## [0.83.27.0] - 2026-10-31
 
 ### Fixed
