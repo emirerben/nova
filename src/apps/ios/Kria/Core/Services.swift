@@ -115,7 +115,7 @@ protocol SlidePostProposalClient: Sendable {
     func slidePostThoughtSummaries(itemID: String, clientRequestID: String) async throws -> KriaThoughtSummaryResponse
 }
 
-protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, CameraRollItemsClient, Sendable {
+protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgroundClient, CameraRollItemsClient, Sendable {
     func editorialTaste() async throws -> EditorialTasteProfile
     func saveEditorialTaste(_ body: EditorialTasteWrite) async throws -> EditorialTasteProfile
     func forgetEditorialTaste(revision: Int, eventID: String) async throws -> EditorialTasteProfile
@@ -433,6 +433,7 @@ extension KriaAPIClient {
 
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func setSongRange(threadID: UUID, range: SongFilmingRange?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
+    func setSpeakerBackground(threadID: UUID, clientUploadID: String?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread { throw APIError.unsupported }
     func deleteProject(_ project: ProjectSummary) async throws { throw APIError.unsupported }
 
     func submitTurn(threadID: UUID, request: SubmitTurnRequest) async throws -> TurnAccepted {
@@ -1363,6 +1364,15 @@ struct KriaAPI: KriaAPIClient {
             "expected_revision": .number(Double(expectedRevision)),
         ]
         return try await request(path: "creation-threads/\(threadID.uuidString)/song-range", method: "PUT", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
+    }
+    /// KRI-1119: `PUT creation-threads/{id}/speaker-background`. A nil `clientUploadID` clears it: no reference key at all.
+    func setSpeakerBackground(threadID: UUID, clientUploadID: String?, expectedRevision: Int, clientEventID: String) async throws -> CreationThread {
+        var body: [String: JSONValue] = [
+            "client_event_id": .string(clientEventID),
+            "expected_revision": .number(Double(expectedRevision)),
+        ]
+        if let clientUploadID { body["client_upload_id"] = .string(clientUploadID) }
+        return try await request(path: "creation-threads/\(threadID.uuidString)/speaker-background", method: "PUT", bodyData: try JSONEncoder().encode(body), decode: CreationThread.self)
     }
     func renameProject(_ project: ProjectSummary, title: String, clientEventID: String) async throws -> CreationThread {
         let body: [String: JSONValue] = ["title": .string(title), "expected_revision": .number(Double(project.serverRevision)), "client_event_id": .string(clientEventID)]

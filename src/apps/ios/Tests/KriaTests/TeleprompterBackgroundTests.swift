@@ -241,6 +241,129 @@ import XCTest
         XCTAssertNotNil(flow.backgroundNote)
     }
 
+    // MARK: Statement to the server (PUT speaker-background)
+
+    private final class Statements: @unchecked Sendable {
+        var sent: [SpeakerBackgroundIntent] = []
+        var outcomes: [SpeakerBackgroundOutcome] = []
+        func next(_ intent: SpeakerBackgroundIntent) -> SpeakerBackgroundOutcome {
+            sent.append(intent)
+            return outcomes.isEmpty ? .saved : outcomes.removeFirst()
+        }
+    }
+
+    private func statedFlow(_ statements: Statements, project: UUID = UUID(), picked: Bool = true) throws -> TeleprompterRecordingFlow {
+        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: project, root: root, photoSaver: DiscardingSaver(),
+                                             speakerBackgroundEnabled: true,
+                                             backgroundIntake: { [self] _, reference, _ in .queued(selection(for: reference)) },
+                                             backgroundStatement: { statements.next($0) })
+        if picked { flow.chooseBackground(from: try pickedFile(), kind: .image) }
+        return flow
+    }
+
+    private func finish(_ flow: TeleprompterRecordingFlow) throws {
+        let take = TeleprompterTakeManifest(script: flow.script.draft, slot: .pending)
+        try flow.store.save(manifest: take)
+        try FileManager.default.createDirectory(at: flow.store.takesDirectory, withIntermediateDirectories: true)
+        try Data("movie".utf8).write(to: flow.store.fileURL(for: take))
+        flow.seedActiveTakeForTesting(take)
+        flow.camera.seedFinalizedAudioCheckForTesting(TakeAudioCheck(verdict: .ok, peakDb: -12, activeFraction: 0.8))
+        flow.camera.onFinalized?(flow.store.fileURL(for: take), nil)
+    }
+
+    func testUseTakeStatesTheUploadedBackgroundAfterTheUploadOnce() async throws {
+        let statements = Statements()
+        let flow = try statedFlow(statements)
+        try finish(flow)
+        let reference = try XCTUnwrap(flow.selectedTake?.speakerBackground)
+        await flow.useTake { _, _ in .attached }
+        XCTAssertEqual(statements.sent, [.set(clientUploadID: "ios-\(reference.id.uuidString)", eventID: "speaker-bg-set-\(reference.id.uuidString)")])
+        XCTAssertEqual(flow.background?.stated, true)
+        await flow.syncBackgroundStatement()
+        XCTAssertEqual(statements.sent.count, 1, "stated once, not on every poll")
+    }
+
+    func testAFailedStatementKeepsTheTakeAndTheUploadAndRetriesAtTheNextOpeningWithTheSameEventId() async throws {
+        let project = UUID()
+        let statements = Statements(); statements.outcomes = [.failed]
+        let flow = try statedFlow(statements, project: project)
+        try finish(flow)
+        await flow.useTake { _, _ in .attached }
+        XCTAssertTrue(flow.attachmentFinished, "the take stays attached")
+        XCTAssertEqual(flow.selectedTake?.status, .accepted)
+        XCTAssertEqual(flow.background?.uploaded, true, "the background upload stays handed over")
+        XCTAssertNotEqual(flow.background?.stated, true)
+        XCTAssertEqual(flow.backgroundNote, TeleprompterRecordingFlow.statementFailureNote)
+        XCTAssertEqual(TeleprompterRecordingFlow.statementFailureNote, "Couldn’t tell Kria which picture is your background. Your take is saved.")
+
+        let reopened = try statedFlow(statements, project: project, picked: false)
+        await reopened.load()
+        await reopened.syncBackgroundStatement()
+        XCTAssertEqual(statements.sent.count, 2)
+        XCTAssertEqual(statements.sent[0], statements.sent[1], "same upload id and same event id: the server replays instead of applying twice")
+        XCTAssertEqual(reopened.background?.stated, true)
+    }
+
+    func testTheServerTurningItOffIsQuietAndNotRetried() async throws {
+        let statements = Statements(); statements.outcomes = [.unavailable]
+        let flow = try statedFlow(statements)
+        try finish(flow)
+        await flow.useTake { _, _ in .attached }
+        XCTAssertNil(flow.backgroundNote)
+        XCTAssertEqual(flow.background?.stated, true)
+        await flow.syncBackgroundStatement()
+        XCTAssertEqual(statements.sent.count, 1)
+    }
+
+    func testABackgroundClearedBeforeUseTakeSendsNothing() async throws {
+        let statements = Statements()
+        let flow = try statedFlow(statements)
+        flow.clearBackground()
+        try finish(flow)
+        await flow.useTake { _, _ in .attached }
+        await flow.syncBackgroundStatement()
+        XCTAssertEqual(statements.sent, [])
+    }
+
+    func testClearingAPickTheServerKnowsSendsOneClearAndRetriesItUntilItLands() async throws {
+        let project = UUID()
+        let statements = Statements()
+        let flow = try statedFlow(statements, project: project)
+        try finish(flow)
+        await flow.useTake { _, _ in .attached }
+        XCTAssertEqual(statements.sent.count, 1)
+
+        statements.outcomes = [.failed]
+        flow.clearBackground()
+        await flow.syncBackgroundStatement()
+        guard case .clear(let eventID) = statements.sent.last else { return XCTFail("\(statements.sent)") }
+        XCTAssertEqual(flow.backgroundNote, TeleprompterRecordingFlow.statementFailureNote)
+
+        let reopened = try statedFlow(statements, project: project, picked: false)
+        await reopened.load()
+        await reopened.syncBackgroundStatement()
+        XCTAssertEqual(statements.sent.last, .clear(eventID: eventID), "the retry replays the same clear")
+        await reopened.syncBackgroundStatement()
+        XCTAssertEqual(statements.sent.count, 3, "once it landed it is not sent again")
+    }
+
+    func testAnotherPickReplacesTheOldOneSoNoClearIsSent() async throws {
+        let statements = Statements()
+        let flow = try statedFlow(statements)
+        try finish(flow)
+        await flow.useTake { _, _ in .attached }
+        flow.clearBackground()
+        flow.chooseBackground(from: try pickedFile("two.png"), kind: .image)
+        let second = try XCTUnwrap(flow.background).reference
+        var take = try XCTUnwrap(flow.selectedTake)
+        take.speakerBackground = second
+        flow.seedSelectedTakeForTesting(take)
+        await flow.uploadBackgroundIfNeeded()
+        XCTAssertEqual(statements.sent.count, 2)
+        XCTAssertEqual(statements.sent.last?.clientUploadID, "ios-\(second.id.uuidString)")
+        XCTAssertFalse(statements.sent.contains { if case .clear = $0 { true } else { false } })
+    }
+
     // MARK: Capability gating
 
     func testSpeakerBackgroundIsOffUnlessTheServerAdvertisesIt() throws {

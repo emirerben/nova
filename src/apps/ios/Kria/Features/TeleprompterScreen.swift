@@ -26,10 +26,12 @@ struct TeleprompterScreen: View {
          intakeState: @escaping (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?,
          speakerBackgroundEnabled: Bool = false,
          backgroundIntake: BackgroundIntake? = nil,
+         backgroundStatement: BackgroundStatement? = nil,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         _flow = StateObject(wrappedValue: TeleprompterRecordingFlow(
             accountID: accountID, projectID: projectID, speakerBackgroundEnabled: speakerBackgroundEnabled,
-            backgroundIntake: backgroundIntake, reportDiagnostic: reportDiagnostic))
+            backgroundIntake: backgroundIntake, backgroundStatement: backgroundStatement,
+            reportDiagnostic: reportDiagnostic))
         self.admissionMessage = admissionMessage; self.intake = intake; self.intakeState = intakeState
     }
 
@@ -46,6 +48,8 @@ struct TeleprompterScreen: View {
         .interactiveDismissDisabled(flow.captureBusy || flow.usingTake)
         .task {
             await flow.load()
+            // A statement the last opening could not make is retried here.
+            await flow.syncBackgroundStatement()
             while !Task.isCancelled {
                 if !flow.usingTake, let take = flow.selectedTake, take.status == .attaching,
                    let state = await intakeState(take) {

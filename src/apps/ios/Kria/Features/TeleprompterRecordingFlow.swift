@@ -25,6 +25,9 @@ struct CameraBackgroundSelection: Equatable, Sendable {
     }
 }
 
+/// States (or clears) which visual is the background on the server. Returns how it ended.
+typealias BackgroundStatement = (SpeakerBackgroundIntent) async -> SpeakerBackgroundOutcome
+
 enum BackgroundIntakeResult: Equatable, Sendable { case queued(CameraBackgroundSelection), failed(String) }
 /// Uploads a take's background file as a visual. Called after the take itself was handed to intake, never before.
 typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReference, URL) async -> BackgroundIntakeResult
@@ -56,7 +59,11 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     @Published private(set) var livePreview: LiveBackgroundPreview?
     private let makeLivePreview: () -> LiveBackgroundPreview
     private let backgroundIntake: BackgroundIntake?
+    private let backgroundStatement: BackgroundStatement?
     private var uploadingBackground = false
+    private var statingBackground = false
+    static let statementFailureNote = "Couldn’t tell Kria which picture is your background. Your take is saved."
+
     /// Set when the background reached the visual upload. The seam for the server to learn which visual it is.
     @Published private(set) var queuedBackground: CameraBackgroundSelection?
     private var backgroundLoad: Task<Void, Never>?
@@ -74,10 +81,12 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
          speakerBackgroundEnabled: Bool = false,
          makeLivePreview: @escaping () -> LiveBackgroundPreview = { LiveBackgroundPreview() },
          backgroundIntake: BackgroundIntake? = nil,
+         backgroundStatement: BackgroundStatement? = nil,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         self.speakerBackgroundEnabled = speakerBackgroundEnabled
         self.makeLivePreview = makeLivePreview
         self.backgroundIntake = backgroundIntake
+        self.backgroundStatement = backgroundStatement
         store = TeleprompterStore(accountID: accountID, projectID: projectID, root: root)
         script = TeleprompterScript()
         self.photoSaver = photoSaver
@@ -263,7 +272,9 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
     }
 
     func clearBackground() {
-        guard background != nil, !usingTake, !captureBusy else { return }
+        guard let cleared = background, !usingTake, !captureBusy else { return }
+        // The server already knows this pick: it must hear about the clear too.
+        if cleared.stated == true { try? store.markServerClearPending(eventID: "speaker-bg-clear-\(UUID().uuidString)") }
         background = nil; backgroundNote = nil
         try? store.removeBackgroundChoice()
         pruneBackgroundFiles()
@@ -302,8 +313,49 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         }
     }
 
-    /// Hands the take's background file to the visual upload, once. A failure is a note: the take stays attached.
+    /// Hands the take's background file to the visual upload once, then (re)states which visual it is. Either failing is a
+    /// note: the take stays attached.
     func uploadBackgroundIfNeeded() async {
+        await handOverBackground()
+        await syncBackgroundStatement()
+    }
+
+    /// Tells the server which visual is the background, or that it was cleared. Safe to call at any time: it sends only
+    /// what the server has not heard yet, with idempotency keys that are stable across retries and relaunches. A failure
+    /// keeps the choice and is tried again at the next opening.
+    func syncBackgroundStatement() async {
+        guard speakerBackgroundEnabled, let backgroundStatement, !statingBackground else { return }
+        statingBackground = true; defer { statingBackground = false }
+        let pendingSet = background.flatMap { $0.uploaded == true && $0.stated != true ? $0 : nil }
+        if let clearID = store.pendingServerClearEventID {
+            // A new pick replaces the old one on the server, so its set makes the clear unnecessary.
+            if pendingSet == nil {
+                switch await backgroundStatement(.clear(eventID: clearID)) {
+                case .saved, .unavailable: store.removeServerClearPending()
+                case .failed: backgroundNote = Self.statementFailureNote; return
+                }
+            } else { store.removeServerClearPending() }
+        }
+        guard let choice = pendingSet else { return }
+        let intent = SpeakerBackgroundIntent.set(clientUploadID: "ios-\(choice.reference.id.uuidString)",
+                                                 eventID: "speaker-bg-set-\(choice.reference.id.uuidString)")
+        switch await backgroundStatement(intent) {
+        case .saved, .unavailable:
+            // Unavailable means the server turned it off: nothing more to say, and nothing to retry.
+            markBackgroundStated(choice.reference.id)
+        case .failed:
+            backgroundNote = Self.statementFailureNote
+        }
+    }
+
+    private func markBackgroundStated(_ id: UUID) {
+        guard var choice = background, choice.reference.id == id else { return }
+        choice.stated = true
+        guard (try? store.save(backgroundChoice: choice)) != nil else { return }
+        background = choice
+    }
+
+    private func handOverBackground() async {
         guard speakerBackgroundEnabled, let backgroundIntake, !uploadingBackground,
               let take = selectedTake ?? pendingTake, take.status == .attaching || take.status == .accepted,
               let reference = take.speakerBackground else { return }

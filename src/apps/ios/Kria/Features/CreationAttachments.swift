@@ -16,9 +16,6 @@ struct AttachmentSheet: View {
     /// script to read while recording. Nil = the sheet as before.
     var voiceoverScript: VoiceoverScript? = nil
     let refresh: () async -> Void
-    /// KRI-1119: told when a camera take's background file was handed to the visual upload. The server learns which
-    /// visual is the Talk-to-camera background from this (see `CameraBackgroundSelection`). Nil = nobody listens yet.
-    var onSpeakerBackgroundQueued: ((CameraBackgroundSelection) -> Void)? = nil
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var auth: AuthStore
     @Environment(\.dismiss) private var dismiss
@@ -242,6 +239,7 @@ struct AttachmentSheet: View {
                         intakeState: cameraTakeState,
                         speakerBackgroundEnabled: speakerBackgroundAvailable,
                         backgroundIntake: useCameraBackground,
+                        backgroundStatement: stateSpeakerBackground,
                         reportDiagnostic: { report in Task { try? await model.api.reportRecorderDiagnostic(report) } })
                         .environment(\.dynamicTypeSize, dynamicTypeSize)
                 }
@@ -423,7 +421,6 @@ struct AttachmentSheet: View {
                                                   kind: reference.kind, fileName: reference.fileName)
         if model.uploads.containsIntake(recordID: reference.id) {
             if let failure = model.uploads.failures.first(where: { $0.id == reference.id }) { return .failed(failure.message) }
-            onSpeakerBackgroundQueued?(selection)
             return .queued(selection)
         }
         model.uploads.dismissFailure(id: reference.id)
@@ -433,8 +430,19 @@ struct AttachmentSheet: View {
         guard accepted else {
             return .failed(model.uploads.failures.first(where: { $0.id == reference.id })?.message ?? "Add it again from your media.")
         }
-        onSpeakerBackgroundQueued?(selection)
         return .queued(selection)
+    }
+
+    /// Names (or clears) the background on the server with `PUT creation-threads/{id}/speaker-background`, then shows the
+    /// updated thread. Called at enqueue time: the reserved upload row may still be preparing, which the server accepts.
+    private func stateSpeakerBackground(_ intent: SpeakerBackgroundIntent) async -> SpeakerBackgroundOutcome {
+        switch await SpeakerBackgroundSubmission.submit(client: model.api, threadID: projectID, intent: intent) {
+        case .saved(let updated):
+            model.uploads.publishUpdatedThread(updated, projectID: projectID)
+            return .saved
+        case .unavailable: return .unavailable
+        case .failed: return .failed
+        }
     }
 
     private func cameraTakeState(_ take: TeleprompterTakeManifest) async -> TeleprompterIntakeResult? {
