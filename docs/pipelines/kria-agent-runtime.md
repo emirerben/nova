@@ -300,6 +300,23 @@ router, request rendering), `app/kria/brief_checks.py` (receipts, reply).
   the KRI-689 groups in `tests/tasks/test_unified_montage_dispatch.py` and
   `tests/pipeline/test_phone_guided_speed.py`; failure modes:
   `docs/reviews/kri-689-chat-speed-failure-modes.md`; contract: `plans/playback-speed.md`.
+  *A clip named by its number (Leverkusen M2 run 3)*: "put Taha's scream at the end of clip 2
+  in slow motion" lost "clip 2" (an ask word plus a number) and found no "scream" in any record,
+  so the speed was `not_grounded` ("which clip?"). `speed_ask._clip_number` now reads the app's
+  own numbering ("clip 2", "video two", "2. klip", "klip 2"; never "2 clips" / "2 klip", "2x",
+  seconds; two numbers name none) into `SpeedSpec.clip_number`, and `plan_unified_montage`
+  maps it through `clip_numbers` (`app_clip_numbers`: the item's clip rows, Visuals never
+  counted). The words left ("taha scream") must then be shown by that clip's cut
+  (`named_moments.locate_in_clip` over the clip's stored moments, one content word, place words
+  like "end" / "moments" ignored; `shows`): otherwise the row is `moment_not_found` /
+  `moment_not_shown` / `clip_not_in_edit` and the receipt says so naming the clip ("I couldn't
+  find that moment in clip 2, ... I can slow down all of clip 2 instead"), never a "Done" on
+  footage that isn't the scream. With approval readiness on (that account), the runtime skipped
+  the KRI-775 plan, so readiness said "I'll point it out after"; `readiness_plan_blockers` now
+  runs the same plan for a speed ask and `assess_readiness(plan_blockers=...)` takes its checked,
+  creator-fixable miss (never a renderer limit, never a pass, so an approval re-check that runs
+  no plan always agrees with a ready draft). Guard:
+  `tests/kria/test_leverkusen_m2_run3_moment_window.py`.
 - **Curved text (KRI-1029).** "Curved title X on the palms" / "kavisli başlık" becomes the
   brief fact `text_shape` (`curved` / `straight`), stamped by `brief.apply_updates` from the
   requirement's own description (`kria/text_shape_ask.py`: folded tokens, the shape word must
@@ -606,6 +623,22 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   question naming the clips. The Main Creator's ask (upload included) stands only once
   every clip was checked: the creator tapped "None" for it, or already answered that card.
   On with `CLIP_INTENTS_ENABLED`. Guard: `tests/kria/test_leverkusen_m2_missing_shot.py`.
+- *A moment named inside one of several clips (Leverkusen M2 run 3)*: "then the TOR on the
+  big screen" (the creator tapped clip 2, an 18 s goal clip, for it). KRI-723's pins cover one
+  take only, so the window was the clip's opening (its record had `best_moments: []`:
+  `analysis_fallback`) and the row was "met" because the clip was in its place.
+  `named_moments.clip_moments` locates each stated-order row's words inside each video it names
+  from the stored record alone (`locate_in_clip`); a located moment seats that clip's window
+  through the length plan's described moments (`_enrich_best_parts_snapshot`), and the
+  finished plan judges it (`_clip_moment_miss`): met only when a cut shows it or plays the whole
+  clip; `not_shown_in_clip` when located but not shown; `not_found_in_clip` when no record
+  places it and the creator's tap is the only evidence (a row the resolver matched from the
+  record keeps its clip-level verdict). Both are KRI-723-style limits (a note naming the moment
+  and clip, `_MOMENT_NOT_IN_CLIP`, never a hold-back that would drop the whole order), read on
+  the filming-order path too. The pre-approval reply says it first (`_clip_moment_notice`: "I
+  couldn't find the "TOR" on the big screen in clip 2 on my own, so clip 2 plays from 0.0 s to
+  5.6 s and may not show it."). Still open: no model localizes a moment a record omits.
+  Guard: `tests/kria/test_leverkusen_m2_run3_moment_window.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains
