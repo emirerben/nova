@@ -179,6 +179,18 @@
       ]
     },
     {
+      "id": "leverkusen-m2-hidden-part",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_m2_hidden_part_replay.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/agents/test_clip_intent_planner.py",
+      "paths": [
+        "src/apps/api/app/kria/hidden_parts.py",
+        "src/apps/api/app/pipeline/hidden_parts.py",
+        "src/apps/api/tests/fixtures/creator_render_contract.schema.json",
+        "src/apps/api/tests/fixtures/m2_leverkusen_hidden_part.json",
+        "src/apps/api/tests/kria/test_m2_hidden_part_replay.py"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "needs_native": true,
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
@@ -731,7 +743,7 @@
     {
       "id": "kri-761-look-alike-exclusions",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py",
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py tests/kria/test_lev_m1_skip_inside_first_group.py tests/kria/test_kri1076_photo_skip_postgres.py",
       "paths": [
         "src/apps/api/app/kria/clip_exclusions.py",
         "src/apps/api/app/services/too_short_clips.py",
@@ -741,7 +753,21 @@
         "src/apps/api/tests/fixtures/kri807_don_julio_m1_clips.json",
         "src/apps/api/tests/fixtures/kri991_donjulio_lunch_m2_clips.json",
         "src/apps/api/tests/kria/test_kri807_unmatched_exclusion_picker.py",
-        "src/apps/api/tests/kria/test_kri991_picker_suggestions.py"
+        "src/apps/api/tests/kria/test_kri991_picker_suggestions.py",
+        "src/apps/api/app/kria/clip_scope.py",
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_skip_picker.json",
+        "src/apps/api/tests/kria/test_lev_m1_skip_inside_first_group.py",
+        "src/apps/api/tests/fixtures/kri1076_leverkusen_m1_clips.json",
+        "src/apps/api/tests/kria/test_kri1076_photo_skip_postgres.py"
+      ]
+    },
+    {
+      "id": "lev-m2-found-clip-picker",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_lev_m2_found_clip_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/services/test_clip_intent_resolution.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/lev_m2_picker_turns.json",
+        "src/apps/api/tests/kria/test_lev_m2_found_clip_picker.py"
       ]
     },
     {
@@ -752,6 +778,16 @@
         "src/apps/api/app/kria/clip_ties.py",
         "src/apps/api/tests/fixtures/kri962_voiceover_tie_jobs.json",
         "src/apps/api/tests/kria/test_kri962_voiceover_tie_question.py"
+      ]
+    },
+    {
+      "id": "leverkusen-m2-missing-shot",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_leverkusen_m2_missing_shot.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1067_filming_order_end_picker.py",
+      "paths": [
+        "src/apps/api/app/kria/missing_media.py",
+        "src/apps/api/tests/kria/leverkusen_m2_turn1.json",
+        "src/apps/api/tests/kria/test_leverkusen_m2_missing_shot.py"
       ]
     },
     {
@@ -767,11 +803,13 @@
     {
       "id": "kri-968-simpler-version-names-drops",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py",
+      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py tests/kria/test_leverkusen_m1_simpler_keeps_filming_order.py",
       "paths": [
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/tests/fixtures/kri968_don_julio_walkin_t1_simpler.json",
-        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py"
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_simpler_order.json",
+        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py",
+        "src/apps/api/tests/kria/test_leverkusen_m1_simpler_keeps_filming_order.py"
       ]
     },
     {
@@ -1339,7 +1377,7 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/planner.py",
@@ -1355,7 +1393,9 @@
         "src/apps/api/prompts/brief_extractor.txt",
         "src/apps/api/tests/kria/test_natural_delegation_readiness_postgres.py",
         "src/apps/api/tests/kria/test_kri983_lipsync_song_journey.py",
-        "src/apps/api/tests/fixtures/kri983_lipsync_song_turns.json"
+        "src/apps/api/tests/fixtures/kri983_lipsync_song_turns.json",
+        "src/apps/api/tests/kria/test_lev_m1_length_photo_holds_replay.py",
+        "src/apps/api/tests/fixtures/lev_m1_run2_length_photo_holds.json"
       ]
     },
     {
@@ -2023,7 +2063,7 @@
     {
       "id": "kri-942-clip-sound-toggle",
       "needs_native": false,
-      "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/tasks/test_kri1028_kept_line_window.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",
+      "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/tasks/test_kri1028_kept_line_window.py tests/tasks/test_leverkusen_m1_announcement_quote.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",
       "paths": [
         "src/apps/api/app/kria/clip_sound_toggle_ask.py",
         "src/apps/api/app/kria/draft_sound_carry.py",
@@ -2032,8 +2072,10 @@
         "src/apps/api/app/services/kept_sound_lines.py",
         "src/apps/api/tests/fixtures/kri942_donjulio_walkin_m1.json",
         "src/apps/api/tests/fixtures/kri1028_plaza_m1_recoleta.json",
+        "src/apps/api/tests/fixtures/leverkusen_m1_train_announcement.json",
         "src/apps/api/tests/tasks/test_kri942_clip_sound_toggle.py",
-        "src/apps/api/tests/tasks/test_kri1028_kept_line_window.py"
+        "src/apps/api/tests/tasks/test_kri1028_kept_line_window.py",
+        "src/apps/api/tests/tasks/test_leverkusen_m1_announcement_quote.py"
       ]
     },
     {
@@ -2336,6 +2378,36 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/plan_review_unscoped_same_prompt.json"
       ],
       "fixture_generator": "scripts/ios/duration-text-preservation-fixtures.py"
+    },
+    {
+      "id": "rendered-editor-original-clock",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_phone_editor_rendered_clock.py tests/routes/test_phone_editor_rendered_clock_receipts.py tests/integration/test_rendered_clock_authored_boundary_postgres.py tests/routes/test_rendered_clock_authored_preparation.py",
+      "xctests": [
+        "KriaTests/RenderedOriginalClockTests/testRenderedPhotoWindowBuildsAndExportsAfterHydration",
+        "KriaTests/RenderedOriginalClockTests/testRenderedVideoWindowBuildsAndExportsAfterHydration",
+        "KriaTests/RenderedOriginalClockTests/testProxyRoundedVideoOverrunIsStillRejected",
+        "KriaTests/NativeEditorInteractionTests/testRenderedOriginalWindowDoesNotExpandOntoProxyFrameClock",
+        "KriaTests/NativeEditorInteractionTests/testRenderedSpeedWindowRetainsExactSourceConsumption"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/guided_edit_revision.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock.py",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
+        "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift",
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock_receipts.py",
+        "src/apps/api/app/services/client_protocol.py",
+        "src/apps/api/app/services/public_assembly_plan.py",
+        "src/apps/api/app/routes/plan_items.py",
+        "src/apps/api/app/services/authored_editor.py",
+        "src/apps/api/tests/integration/test_rendered_clock_authored_boundary_postgres.py",
+        "src/apps/api/tests/routes/test_rendered_clock_authored_preparation.py"
+      ]
     },
     {
       "id": "reference-style-save",

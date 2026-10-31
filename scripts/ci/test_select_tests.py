@@ -785,7 +785,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/routes/plan_items.py",
-                (True, "covered", "kri-557-thinking,slide-post-binding-recovery"),
+                (
+                    True,
+                    "covered",
+                    "kri-557-thinking,slide-post-binding-recovery,rendered-editor-original-clock",
+                ),
             ),
             (
                 "src/apps/api/app/schemas/user_song.py",
@@ -800,7 +804,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-561-song-order,kri-1032-montage-copy-parity,kri-689-clip-speed",
+                    "kri-561-song-order,kri-1032-montage-copy-parity,kri-689-clip-speed,rendered-editor-original-clock",
                 ),
             ),
             (
@@ -889,7 +893,11 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/kria/clip_scope.py",
-                (True, "covered", "kri-598-voiceover-planner,kri-623-ruled-out-clips"),
+                (
+                    True,
+                    "covered",
+                    "kri-598-voiceover-planner,kri-623-ruled-out-clips,kri-761-look-alike-exclusions",
+                ),
             ),
             (
                 "src/apps/api/app/pipeline/narrated_photo_sequence.py",
@@ -1111,9 +1119,31 @@ class GitDiffTests(unittest.TestCase):
             (
                 True,
                 "covered",
-                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes,native-activity-account-boundary,native-notification-runtime",
+                "kri-524-creation,kri-557-thinking,kri-648-phone-text,kri-551-consented-retakes,rendered-editor-original-clock,native-activity-account-boundary,native-notification-runtime",
             ),
         )
+
+    def test_rendered_clock_paths_select_the_recovery_journey(self):
+        for path in (
+            "src/apps/api/app/routes/generative_jobs.py",
+            "src/apps/api/app/services/guided_timeline.py",
+            "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+            "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
+        ):
+            with self.subTest(path=path):
+                self.write(path, "changed")
+                selected, coverage, ids = ci.journey_details(
+                    "pull_request", self.base, self.commit()
+                )
+                self.assertTrue(selected)
+                self.assertEqual(coverage, "covered")
+                self.assertIn("rendered-editor-original-clock", ids.split(","))
+                self.assertTrue(
+                    ci.journey_needs_native(
+                        "pull_request", self.base, self.git("rev-parse", "HEAD")
+                    )
+                )
+                self.base = self.git("rev-parse", "HEAD")
 
     def test_journey_native_runner_is_linux_for_python_only_and_mac_for_mixed(self):
         self.write("src/apps/api/app/kria/duplicate_uploads.py", "changed")

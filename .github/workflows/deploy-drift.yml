@@ -35,13 +35,19 @@ name: Deploy drift check
 # about is "did the code on main successfully deploy", and the Fly Deploy
 # workflow's own run history answers that without another credential to rotate.
 #
-# On failure GitHub emails the workflow's last committer. Note: GitHub disables
+# On failure GitHub emails the user who last edited the cron schedule. Note: GitHub disables
 # cron workflows after 60 days without repo activity — a red run after
 # reactivating the repo may just need a manual re-enable.
 
 on:
   schedule:
     - cron: "17 * * * *"
+  # GitHub's cron is best-effort (about 10 runs in 3 days were observed on
+  # 2026-10-28..31), so also re-evaluate every time a deploy finishes. Repeated
+  # failed deploys then flag drift the moment it passes the budget.
+  workflow_run:
+    workflows: ["Fly Deploy"]
+    types: [completed]
   workflow_dispatch:
 
 # Least privilege: read the Fly Deploy run history and main's commit list.
@@ -108,9 +114,21 @@ jobs:
           # main has moved. Drift only counts once the OLDEST undeployed commit
           # is older than the budget: a merge from ten minutes ago is a deploy
           # in progress, not an incident.
+          # Release-metadata commits carry [skip ci], so they never start a
+          # deploy and can never match the deployed SHA. Counting them turned
+          # every quiet 2h stretch red (8 of 13 reds since 2026-10-23).
           undeployed=$(gh api "repos/$REPO/compare/$deployed_sha...$main_sha" \
-            --jq '[.commits[] | {sha: .sha, date: .commit.committer.date}]')
+            --jq '[.commits[]
+                   | select((.commit.message | startswith("chore(release): publish metadata")
+                             and contains("[skip ci]")) | not)
+                   | {sha: .sha, date: .commit.committer.date}]')
           count=$(echo "$undeployed" | jq 'length')
+
+          total=$(gh api "repos/$REPO/compare/$deployed_sha...$main_sha" --jq '.commits | length')
+          if [ "$count" = "0" ] && [ "$total" != "0" ]; then
+            echo "Only release-metadata commits are undeployed — nothing to deploy."
+            exit 0
+          fi
 
           if [ "$count" = "0" ]; then
             # deployed_sha is ahead of / diverged from main — e.g. history was

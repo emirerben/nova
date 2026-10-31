@@ -1,0 +1,184 @@
+{
+  "_source": "prod thread 5dda77f9-b42a-48da-b0f1-fd98fe52e169 (Leverkusen kit M1 run 1, 2026-10-30, Fly 1deead562), turn a8da158a. KRI-1076. Media ids are the prod ones. Photo analyses (subject, description, aspect) are verbatim from the prod Visuals records (photo_analysis_t1.jsonl, all `ready` on attempt 1) with their server capture times. The 8 video records were not captured: each is a one-line stand-in written from the kit answer key (capture times from the files, converted to UTC). Prod logged `kria_clip_exclusions_contested asks=1 pinned=0 suspected=0 unmatched=1` in both planning passes and asked a picker with `suggested_media_ids: []`; the resolver's own input and output were never saved (no agent_run rows).",
+  "creator_request": "Montage of my night at the BayArena: my friend Taha invited me to his VIP box for Bayer Leverkusen vs 1. FC Nürnberg in the DFB-Pokal. Put everything in the order I filmed it, starting with the train ride. Make it all vertical, no black bars. Skip the photo of the empty train seat, and use only one of the two photos of the view from our box. Keep the sound only on the train clip with the announcement \"Nächster Halt: Leverkusen Mitte\" and mute everything else. Title: \"Pokalnacht in Leverkusen 🔴⚫\". Make it 25 seconds. Suggest a song but don't add it.",
+  "prod_clip_question": {
+    "intent_id": "exclude_empty_seat_photo",
+    "label": "the photo of the empty train seat",
+    "candidate_media_ids": [
+      "analysis-proxy-ios-A15C7BC7-C393-49A0-AC6F-A9D821A84E54.mp4",
+      "analysis-proxy-ios-D14400C9-7DFA-40AB-B4E4-E1EAA9AF4988.mp4",
+      "analysis-proxy-ios-49B6C777-C69B-489C-BCA2-339C2E1F1779.mp4",
+      "analysis-proxy-ios-585846F6-95CE-412F-953C-AFAF030B0670.mp4",
+      "analysis-proxy-ios-61410322-58BD-48A8-BC80-F1C14762B96A.mp4",
+      "analysis-proxy-ios-D2114CC7-B7BA-4128-A786-2721B2AD7780.mp4",
+      "analysis-proxy-ios-F4BDB36C-E80C-4345-A1FC-0791EB4474EC.mp4",
+      "asset-e683bf0e-0778-431f-b5c0-8900749b1acd",
+      "asset-9020cd7c-0dfe-477e-8a52-521ec8c26054",
+      "asset-6fea4fda-1fb6-4fcf-816f-089b3c8bde9b",
+      "asset-a92f0e33-cb70-4ce4-ba1b-da51d7bfb0cf",
+      "asset-6ae1e1a7-ab3c-4429-b78a-d2fef17b6d62"
+    ],
+    "suggested_media_ids": []
+  },
+  "clips": [
+    {
+      "media_id": "analysis-proxy-ios-A15C7BC7-C393-49A0-AC6F-A9D821A84E54.mp4",
+      "file_name": "IMG_1036",
+      "kind": "video",
+      "capture_time": "2026-10-28T19:49:47Z",
+      "duration_s": 8.5,
+      "analysis": {
+        "understanding": {
+          "subject": "Away fans with a banner and smoke",
+          "summary": "The away end with a large banner, red-black flags and smoke, seen through a safety net."
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-D14400C9-7DFA-40AB-B4E4-E1EAA9AF4988.mp4",
+      "file_name": "IMG_1027",
+      "kind": "video",
+      "capture_time": "2026-10-28T19:33:14Z",
+      "duration_s": 8.0,
+      "analysis": {
+        "understanding": {
+          "subject": "Stadium screen, flags and pitch before kick-off",
+          "summary": "The big screen and the north stand, a fast pan along the flags, then the pitch with stewards."
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-49B6C777-C69B-489C-BCA2-339C2E1F1779.mp4",
+      "file_name": "IMG_1037",
+      "kind": "video",
+      "capture_time": "2026-10-28T20:25:46Z",
+      "duration_s": 9.8,
+      "analysis": {
+        "understanding": {
+          "subject": "Goal celebration in the box",
+          "summary": "The pitch from the box, a fast pan, then a man with round glasses celebrating a goal."
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-585846F6-95CE-412F-953C-AFAF030B0670.mp4",
+      "file_name": "IMG_1026",
+      "kind": "video",
+      "capture_time": "2026-10-28T19:16:50Z",
+      "duration_s": 6.5,
+      "analysis": {
+        "understanding": {
+          "subject": "Warm-up seen from a stadium box",
+          "summary": "Players warm up with balls on the pitch; the NORDKURVE banner and a club crest on the big screen."
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-61410322-58BD-48A8-BC80-F1C14762B96A.mp4",
+      "file_name": "IMG_1028",
+      "kind": "video",
+      "capture_time": "2026-10-28T19:36:41Z",
+      "duration_s": 11.0,
+      "analysis": {
+        "understanding": {
+          "subject": "Stadium light show",
+          "summary": "The floodlights go out and spotlights sweep a dark pitch while the announcer reads the line-up."
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-B5A1863E-99DF-4253-BB36-81A6B3390D77.mp4",
+      "file_name": "IMG_1002",
+      "kind": "video",
+      "capture_time": "2026-10-28T17:42:36Z",
+      "duration_s": 7.8,
+      "analysis": {
+        "understanding": {
+          "subject": "Night regional train, window side, then the aisle",
+          "summary": "Filmed from a window seat of a regional train at night; at 4.5 s the camera turns to the aisle with seat backs and ceiling lights while a German announcement plays."
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-D2114CC7-B7BA-4128-A786-2721B2AD7780.mp4",
+      "file_name": "IMG_1039",
+      "kind": "video",
+      "capture_time": "2026-10-28T21:35:40Z",
+      "duration_s": 18.3,
+      "analysis": {
+        "understanding": {
+          "subject": "Late goal: children, the TOR screen, the stand",
+          "summary": "Children wave scarves, the camera pans to the pitch, the big screen shows TOR, and the stand celebrates."
+        }
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-F4BDB36C-E80C-4345-A1FC-0791EB4474EC.mp4",
+      "file_name": "IMG_1043",
+      "kind": "video",
+      "capture_time": "2026-10-28T21:47:37Z",
+      "duration_s": 7.5,
+      "analysis": {
+        "understanding": {
+          "subject": "Away players thank their fans after the whistle",
+          "summary": "Players in white kits walk to the away end and applaud, stewards in orange vests in front."
+        }
+      }
+    },
+    {
+      "media_id": "asset-e683bf0e-0778-431f-b5c0-8900749b1acd",
+      "file_name": "IMG_0995",
+      "kind": "image",
+      "capture_time": "2026-10-28T17:34:31Z",
+      "analysis": {
+        "subject": "Train interior with passengers",
+        "description": "A low-angle photo from inside a modern train car, showing standing passengers and two digital displays with route information.",
+        "aspect": 0.75
+      }
+    },
+    {
+      "media_id": "asset-9020cd7c-0dfe-477e-8a52-521ec8c26054",
+      "file_name": "IMG_1019",
+      "kind": "image",
+      "capture_time": "2026-10-28T18:52:22Z",
+      "analysis": {
+        "subject": "Football stadium interior from box",
+        "description": "A photo taken from a stadium box showing red seats in the foreground, a vibrant green football field, stadium lights, and a small TV screen displaying a man's face.",
+        "aspect": 0.75
+      }
+    },
+    {
+      "media_id": "asset-6fea4fda-1fb6-4fcf-816f-089b3c8bde9b",
+      "file_name": "IMG_1038",
+      "kind": "image",
+      "capture_time": "2026-10-28T20:33:20Z",
+      "analysis": {
+        "subject": "Football match team lineup document",
+        "description": "The image shows a printed document detailing the Mannschaftsaufstellung (team lineup) for a DFB-Pokal football match between Bayer 04 Leverkusen and 1.FC Nürnberg, including starting players, substitutes, trainers, and officials.",
+        "aspect": 0.75
+      }
+    },
+    {
+      "media_id": "asset-a92f0e33-cb70-4ce4-ba1b-da51d7bfb0cf",
+      "file_name": "IMG_1001",
+      "kind": "image",
+      "capture_time": "2026-10-28T17:35:12Z",
+      "analysis": {
+        "subject": "Train seat and window view",
+        "description": "A photo taken from inside a train or bus, showing the back of a dark grey seat with a light grey folded tray table, and a window reflecting the interior.",
+        "aspect": 0.75
+      }
+    },
+    {
+      "media_id": "asset-6ae1e1a7-ab3c-4429-b78a-d2fef17b6d62",
+      "file_name": "IMG_1017",
+      "kind": "image",
+      "capture_time": "2026-10-28T18:52:13Z",
+      "analysis": {
+        "subject": "Football stadium interior from luxury box",
+        "description": "A wide shot from inside a stadium luxury box, featuring red spectator seats in the foreground, a brightly lit green football field, and crowded red stands under a modern roof structure.",
+        "aspect": 0.75
+      }
+    }
+  ]
+}

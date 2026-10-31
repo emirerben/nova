@@ -89,6 +89,9 @@ class PlannedIntentResolution:
     inventory: dict[str, Any] | None = None
     checked_intents: tuple[ClipIntent, ...] = ()
     rejected_selections: tuple[RejectedClipSelection, ...] = ()
+    # Leverkusen M2: previews of asks whose op the schema doesn't have (the planner's
+    # ``unexpressed``). Never a question; the turn's draft names them (`unexpressed_notice`).
+    unexpressed_asks: tuple[str, ...] = ()
 
 
 # KRI-950: the record a picker turn keeps (`KriaTurnPlan.clip_intent_inventory`). A planner
@@ -1378,6 +1381,7 @@ async def plan_and_resolve_clip_intents(
             **kwargs,
             checked_intents=checked_intents,
             rejected_selections=rejected_selections,
+            unexpressed_asks=tuple(output.unexpressed),
         )
 
     selected, visual_intents, dropped_ids = apply_creator_selections(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Collection, Mapping, Sequence
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,6 +17,14 @@ from app.pipeline.best_parts import (
     select_best_parts,
     select_moment_windows,
     select_pinned_moment_windows,
+)
+from app.pipeline.hidden_parts import (
+    HiddenPart,
+    hidden_parts_from_strategy,
+    keep_out,
+    parts_by_media,
+    shows_hidden,
+    usable_s,
 )
 from app.schemas.edit_proposal import (
     MIN_PROPOSAL_DURATION_S,
@@ -286,6 +295,7 @@ def build_length_plan(
     pinned_moments: Sequence[Mapping[str, Any]] | None = None,
     skipped_moments: Sequence[Mapping[str, Any]] | None = None,
     attached_visual_ids: Collection[str] = (),
+    visual_budget_s: float = 0.0,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -293,6 +303,9 @@ def build_length_plan(
     places beside the footage: attached, not source rows, never missing. Their seconds stay
     with ``asset_holds.visual_budget`` (already off the creator's target), so they are neither
     sources nor counted twice; an id in neither the clip rows nor this set is truly gone.
+    ``visual_budget_s`` is that budget's total, recorded on the plan as ``visual_budget_s``
+    so a reader of its length counts the Visuals too (the windows alone ran a 25 s montage
+    with three photos as 21.4 s, Leverkusen M1 run 2); a plan with no placed Visual omits it.
 
     KRI-723: ``pinned_moments`` (``named_moments.Pin.json()``, the creator's final order) are
     the named moments of the edit's one take with their authority: the creator's own pointed
@@ -356,6 +369,17 @@ def build_length_plan(
     by_id = {source["media_id"]: source for source in sources}
     if len(by_id) != len(sources):
         raise ValueError("duplicate length plan source")
+    # Leverkusen M2: a clip with a part the creator hid offers only what it may still show.
+    hidden = {
+        media_id: parts
+        for media_id, parts in parts_by_media(hidden_parts_from_strategy(strategy)).items()
+        if media_id in by_id and by_id[media_id]["kind"] == "video"
+    }
+    for media_id, parts in hidden.items():
+        source = by_id[media_id]
+        room = usable_s(source["duration_s"], parts)
+        current = source["maximum_duration_s"]
+        source["maximum_duration_s"] = room if current is None else min(current, room)
     ordered_sources = [
         by_id[media_id] for media_id in dict.fromkeys(order_ids) if media_id in by_id
     ]
@@ -582,6 +606,17 @@ def build_length_plan(
             },
             cap_duration_s=cap_s,
         )
+    if hidden and result is not None:
+        result, unplaceable = _kept_out_of_hidden(result, by_id, hidden)
+        if unplaceable:
+            pre_conflicts.append(
+                BestPartsConflict(
+                    HIDDEN_PART_UNPLACEABLE,
+                    float(len(unplaceable)),
+                    0.0,
+                    "A window cannot leave out the part of its clip the creator hid.",
+                )
+            )
     windows = result.receipt() if result is not None else []
     conflicts = [
         {
@@ -712,6 +747,8 @@ def build_length_plan(
         "windows": windows,
         "conflicts": conflicts,
     }
+    if visual_budget_s > 0:
+        plan["visual_budget_s"] = round(float(visual_budget_s), 3)
     if missing_ids:
         # KRI-989: the ids that are genuinely gone, so the question can offer to leave them out.
         plan["missing_source_ids"] = sorted(missing_ids)
@@ -748,6 +785,51 @@ def build_length_plan(
     elif isinstance(strategy.get("licensed_music_selection"), Mapping):
         plan["licensed_music"] = dict(strategy["licensed_music_selection"])
     return plan
+
+
+# Leverkusen M2: the code of the conflict a window that cannot leave out a hidden part raises.
+HIDDEN_PART_UNPLACEABLE = "hidden_part_unplaceable"
+# Windows the creator or their words pinned to an exact interval: never slid out of a part.
+_PINNED_WINDOW_REASONS = frozenset({"creator_answer", "closing_quote", "grounded_moment"})
+
+
+def _kept_out_of_hidden(
+    result: BestPartsResult,
+    by_id: Mapping[str, Mapping[str, Any]],
+    hidden: Mapping[str, Sequence[HiddenPart]],
+) -> tuple[BestPartsResult, list[str]]:
+    """``result`` with every window slid out of its clip's hidden parts (same length).
+
+    A window pinned to the creator's interval, one with no room left, or one that would land
+    on another window of its clip is not moved and is returned by media id: the plan then
+    carries a conflict, so no approval card offers it."""
+    parts = list(result.parts)
+    unplaceable: list[str] = []
+    for index, part in enumerate(parts):
+        own = hidden.get(part.media_id)
+        duration = float(by_id[part.media_id]["duration_s"]) if own else 0.0
+        if not own or not shows_hidden(part.source_start_s, part.source_end_s, duration, own):
+            continue
+        moved = (
+            keep_out(part.source_start_s, part.source_end_s, duration, own)
+            if part.reason not in _PINNED_WINDOW_REASONS
+            else None
+        )
+        if moved is not None and any(
+            other is not part
+            and other.media_id == part.media_id
+            and moved[0] < other.source_end_s - 0.001
+            and moved[1] > other.source_start_s + 0.001
+            for other in parts
+        ):
+            moved = None
+        if moved is None:
+            unplaceable.append(part.media_id)
+            continue
+        parts[index] = BestPart(
+            part.media_id, round(moved[0], 3), round(moved[1], 3), part.score, part.reason
+        )
+    return replace(result, parts=tuple(parts)), unplaceable
 
 
 def _moment_or_quote_windows(

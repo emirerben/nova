@@ -356,7 +356,7 @@ async def generate_stories(db, owner, identifier, body):
                 opening_text=(row.story_json.get("content_plan") or {}).get("opening_text", "")[
                     :100
                 ],
-                moment_ids=[value["id"] for value in row.moments_json][:8],
+                moment_ids=[value["id"] for value in row.moments_json],
             )
             for row in offered_rows
         ],
@@ -449,11 +449,25 @@ async def generate_stories(db, owner, identifier, body):
                 raise HTTPException(409, "Story evidence changed; retry")
         except (TerminalError, ResearchUnavailable) as exc:
             await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
+            log.warning(
+                "collection_stories_failed",
+                error=type(exc).__name__,
+                detail=str(exc)[:300],
+                cause=type(exc.__cause__).__name__ if exc.__cause__ else None,
+                candidate_moments=len(candidates),
+                target=input.idea_count,
+                adding=bool(body.exclude_story_ids),
+            )
             raise HTTPException(503, "Ideas could not be completed. Please try again.") from exc
         except Exception:
             await asyncio.to_thread(complete_media_asset_fact, claim, None, failed=True)
             raise
     else:
+        log.warning(
+            "collection_stories_claim_unavailable",
+            status=claim.status,
+            adding=bool(body.exclude_story_ids),
+        )
         raise HTTPException(
             409 if claim.status == "busy" else 503,
             {
@@ -550,7 +564,7 @@ async def generate_stories(db, owner, identifier, body):
             OfferedIdea(
                 angle=idea.content_plan.angle[:280],
                 opening_text=idea.content_plan.opening_text[:100],
-                moment_ids=idea.moment_ids[:8],
+                moment_ids=idea.moment_ids,
             )
             for idea in dropped
         ]

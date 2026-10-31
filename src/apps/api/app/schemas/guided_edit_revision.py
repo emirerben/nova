@@ -214,6 +214,9 @@ class GuidedEditorRevision(BaseModel):
     state_hash: str = Field(default="", min_length=0, max_length=64)
     renderer_version: str = GUIDED_EDITOR_RENDERER_VERSION
     effect_schema_version: str = "custom-effects-v1"
+    timing_mode: Literal["rendered"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     base_generation: str = ""
     orientation: Literal["portrait", "landscape"] = "portrait"
     sources: list[GuidedEditorSource] = Field(min_length=1, max_length=MAX_EDIT_PROPOSAL_MEDIA)
@@ -265,6 +268,21 @@ class GuidedEditorRevision(BaseModel):
             raise ValueError("guided editor segment IDs must be unique")
         if any(segment.media_id not in source_ids for segment in self.segments):
             raise ValueError("guided editor segment references an unapproved source")
+        if self.timing_mode == "rendered":
+            sources = {source.media_id: source for source in self.sources}
+            for segment in self.segments:
+                source = sources[segment.media_id]
+                end = segment.source_end_s
+                if end is None:
+                    end = segment.source_start_s + segment.duration_s * float(
+                        segment.playback_rate or 1
+                    )
+                if (
+                    source.kind == "video"
+                    and source.duration_s is not None
+                    and end > source.duration_s + 1e-6
+                ):
+                    raise ValueError("rendered editor source window exceeds original duration")
         if any(
             (
                 segment.source_end_s
@@ -446,6 +464,8 @@ def normalize_guided_editor_revision(
     normalized = revision.model_dump(mode="json", exclude_none=False)
 
     def frame(value: float) -> float:
+        if revision.timing_mode == "rendered":
+            return float(value)
         return round(round(float(value) * GUIDED_EDITOR_FPS) / GUIDED_EDITOR_FPS, 6)
 
     cursor = 0.0
@@ -587,6 +607,7 @@ def guided_editor_revision_from_approval(
     snapshot: dict[str, Any],
     execution_plan: dict[str, Any],
     base_generation: str = "",
+    rendered_source_durations: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Create the initial editable projection without mutating approval."""
 
@@ -597,7 +618,9 @@ def guided_editor_revision_from_approval(
             gcs_path=str(row["gcs_path"]),
             generation=str(row["generation"]),
             kind=str(row["kind"]),
-            duration_s=row.get("duration_s"),
+            duration_s=(rendered_source_durations or {}).get(
+                str(row["media_id"]), row.get("duration_s")
+            ),
         )
         for row in snapshot.get("media") or []
     ]
@@ -685,6 +708,7 @@ def guided_editor_revision_from_approval(
             approval_proposal_version=proposal_version,
             approval_media_digest=media_digest,
             revision_number=1,
+            timing_mode="rendered" if rendered_source_durations is not None else None,
             base_generation=base_generation,
             orientation=execution_plan.get("output_orientation", "portrait"),
             sources=sources,

@@ -920,7 +920,10 @@ butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit thr
   sound", KRI-1028) is also judged on holding that sentence: the length plan records it as
   `kept_lines` (`app/services/kept_sound_lines.py`; the timed sentence, its window as the clip's
   floor, `held`), and the receipt says '"…" plays whole (4.6-8.9 s of that clip)' or
-  `line_partly_in_edit` / `line_not_in_edit`.
+  `line_partly_in_edit` / `line_not_in_edit`. The line is read off the sound ask's own words, so
+  a quoted line the brief writer cut from the creator's sentence ("…with the announcement
+  "Nächster Halt: Leverkusen Mitte"…", Leverkusen M1 run 2) is put back when the brief is written
+  (`brief._with_cut_quote` → `spoken_quotes.restore_cut_quote`, from the creator's own message).
   Reasons: `partial_unsupported`, `line_not_found`, `line_ambiguous`, `line_unknown`,
   `line_not_in_edit`, `line_partly_in_edit`, `not_in_edit`, `clip_mismatch`, `window_past_end`,
   `no_sound`, `contract_conflict`, `render_refused`, `not_built`, `overridden`.
@@ -3565,6 +3568,8 @@ win independently, including explicit false/zero. The iPhone account page and ch
 Undo use existing revision/idempotency-protected `/me/memory` operations. Account
 rules require the existing creator-memory rollout gate; no TikTok style derivation
 flag needs enabling. Observation-derived styles are not confirmed preferences.
+
+`GET /me/memory` also returns `text_style_defaults` (built by `text_style_defaults()` in `pipeline/phone_text_style.py` from the resolver's own constants, only when `text_preferences_available`); the iPhone Text preferences screen shows it as what each text type does when nothing is saved. `position_anchors` are nominal spots, the fitted row lands near them (e.g. left text at x about 0.06, block centre a little above y 0.78).
 
 Guided/unified plans share the proxy face sampler and persist resolved text rows
 for preview/export. Recorded voiceover intros are materialized into real text rows

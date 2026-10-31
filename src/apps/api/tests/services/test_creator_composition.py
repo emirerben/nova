@@ -104,7 +104,12 @@ def test_the_hidden_voice_is_also_dropped_from_a_selected_set_and_attachment_ord
 
 
 def test_the_contract_model_did_not_grow_a_field():
-    """Older workers read stamped jobs with `extra="forbid"`: no new contract field."""
+    """Older workers read stamped jobs with `extra="forbid"`: no new contract field.
+
+    One deliberate exception, Leverkusen M2's ``hidden_parts``: it is left out of the stored
+    contract when empty (older workers keep reading every other job) and an older worker
+    refusing a job that hides a part is the privacy-safe outcome
+    (``test_an_older_worker_still_reads_every_contract_that_hides_nothing``)."""
     assert set(CreatorRenderContract.model_fields) == {
         "version",
         "generation_id",
@@ -119,6 +124,7 @@ def test_the_contract_model_did_not_grow_a_field():
         "order_required",
         "order_basis",
         "unresolved",
+        "hidden_parts",
         "digest",
     }
 
