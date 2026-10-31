@@ -25,7 +25,7 @@ import json
 import re
 import unicodedata
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -66,9 +66,12 @@ RequirementStatus = Literal["open", "met", "partial", "not_possible", "supersede
 # Who removed a requirement, stamped into its facts when the removal is applied (never inferred
 # later): "creator" for the creator's own words (the default; a model-emitted remove, a fresh
 # start), "server" for a waiver the server made (the simpler version, an automatic omission).
-# A requirement removed before this existed has no mark: its provenance is unknown.
+# A requirement removed before this existed has no mark: its provenance is unknown. A later
+# creator removal of an already-superseded requirement moves its mark up to "creator"; a server
+# removal never changes an existing mark.
 SUPERSEDED_BY_FACT = "superseded_by"
-RemovalProvenance = Literal["creator", "server"]
+CREATOR_REMOVAL = "creator"
+SERVER_REMOVAL = "server"
 Route = Literal["replan", "editor_ops"]
 
 # Two titles plus six dictated shot texts used all of the old 8, so a duration
@@ -520,6 +523,10 @@ def start_fresh_updates(
     match). This turn's own adds stand, and a change this turn already aimed at a saved
     requirement keeps that target (it is not removed twice). Removals are bound to the
     brief the prompt showed, like any other change/remove.
+
+    A requirement an earlier turn already superseded is removed again unless the creator
+    already owns that removal: the fresh start is the creator's word, so a filming-order ask
+    the server waived (or one stored before the mark existed) must not outlive it.
     """
     updates = tuple(updates)
     shown = prior or CreativeBrief()
@@ -528,10 +535,18 @@ def start_fresh_updates(
         BriefUpdate(
             operation="remove", target_requirement_id=req.id, expected_version=shown.version
         )
-        for req in shown.live()
+        for req in shown.requirements
         if req.id not in targeted
+        and (req.live or req.facts.get(SUPERSEDED_BY_FACT) != CREATOR_REMOVAL)
     )
     return (*removals, *updates)
+
+
+def removed_target_ids(updates: Iterable[BriefUpdate]) -> frozenset[str]:
+    """Ids a batch removes: what a server-owned writer passes as ``server_removed_ids``."""
+    return frozenset(
+        update.target_requirement_id or "" for update in updates if update.operation == "remove"
+    )
 
 
 def _next_id_number(requirements: Iterable[BriefRequirement]) -> int:
@@ -650,19 +665,24 @@ def apply_updates(
     *,
     source_turn_id: str | None,
     creator_text: str | None = None,
-    removal_provenance: RemovalProvenance = "creator",
+    server_removed_ids: Collection[str] = (),
 ) -> CreativeBrief:
     """Server-assign ids and merge ``updates`` into ``prior`` (version is set on persist).
 
     ``creator_text`` is the creator's own message for this turn (KRI-824): each new or
     changed requirement's ``authority`` is stamped from it, never from the update.
 
-    ``removal_provenance`` says who removed what ``updates`` remove; each removed requirement
-    records it in its facts (``SUPERSEDED_BY_FACT``). Only a server-made waiver passes "server".
+    Each removed requirement records who removed it in its facts (``SUPERSEDED_BY_FACT``):
+    "server" only for an id in ``server_removed_ids`` (a waiver the server made), otherwise
+    "creator". The set is per requirement, so one batch can carry both. A ``remove`` may also
+    name an already-superseded requirement: that only moves the mark up (a creator's removal
+    sets "creator"; a server removal never changes an existing mark), so the creator's last
+    word wins over an earlier waiver and a retry changes nothing.
     """
     prior = prior or CreativeBrief()
     updates = list(updates)
     live_by_id = {req.id: req for req in prior.live()}
+    known_ids = {req.id for req in prior.requirements}
     if any(
         update.operation != "add" and update.expected_version != prior.version for update in updates
     ):
@@ -671,7 +691,8 @@ def apply_updates(
     if len(targets) != len(set(targets)):
         raise BriefUpdateBatchError("conflicting updates target the same requirement")
     for update in updates:
-        if update.operation != "add" and update.target_requirement_id not in live_by_id:
+        reachable = known_ids if update.operation == "remove" else live_by_id
+        if update.operation != "add" and update.target_requirement_id not in reachable:
             raise BriefUpdateBatchError("target requirement is missing or superseded")
     counter = _next_id_number(prior.requirements)
     incoming: list[BriefRequirement] = []
@@ -749,15 +770,26 @@ def apply_updates(
     )
     requirements = []
     for req in prior.requirements:
-        if req.id in removed and req.live:
-            requirements.append(
-                req.model_copy(
-                    update={
-                        "status": "superseded",
-                        "facts": {**req.facts, SUPERSEDED_BY_FACT: removal_provenance},
-                    }
+        if req.id in removed:
+            by = SERVER_REMOVAL if req.id in server_removed_ids else CREATOR_REMOVAL
+            if req.live:
+                requirements.append(
+                    req.model_copy(
+                        update={
+                            "status": "superseded",
+                            "facts": {**req.facts, SUPERSEDED_BY_FACT: by},
+                        }
+                    )
                 )
-            )
+            elif by == CREATOR_REMOVAL and req.facts.get(SUPERSEDED_BY_FACT) != CREATOR_REMOVAL:
+                # Already waived (or stored before the mark existed): the creator's word is last.
+                requirements.append(
+                    req.model_copy(
+                        update={"facts": {**req.facts, SUPERSEDED_BY_FACT: CREATOR_REMOVAL}}
+                    )
+                )
+            else:
+                requirements.append(req)
         elif req.id in changed and req.live:
             requirements.append(changed[req.id])
         elif req.id in withdrawn and req.live:
@@ -1760,7 +1792,7 @@ def persist_brief_version_sync(
     record_empty: bool = False,
     delegation_read_event_ids: Iterable[str] = (),
     order_replacement: OrderReplacementWriteContext | None = None,
-    removal_provenance: RemovalProvenance = "creator",
+    server_removed_ids: Collection[str] = (),
 ) -> CreativeBrief | None:
     """Append one version for ``turn_id``; idempotent per turn.
 
@@ -1829,7 +1861,7 @@ def persist_brief_version_sync(
             updates,
             source_turn_id=str(turn_id),
             creator_text=creator_text,
-            removal_provenance=removal_provenance,
+            server_removed_ids=server_removed_ids,
         )
     next_version = (
         int(
