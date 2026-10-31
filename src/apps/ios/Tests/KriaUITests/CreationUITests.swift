@@ -1206,6 +1206,39 @@ final class CreationUITests: XCTestCase {
         XCTAssertEqual(sent.count, sentBefore + 1, "one message for both questions")
     }
 
+    /// Leverkusen M2: the second question came pre-ticked (one of the two clips it needed). Answering the first one
+    /// turned the button straight into Done, which sent the unseen pre-tick. A pre-ticked question is only done once
+    /// the creator has seen it, so Next shows it first and the pre-tick can still be corrected.
+    func testPreTickedSecondQuestionIsShownBeforeDoneAndCanBeCorrected() {
+        let app = launchClipQuestionFixture(capability: "later-suggested")
+        XCTAssertTrue(app.buttons["clip-choose"].waitForExistence(timeout: 15))
+        let sent = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "You:"))
+        let sentBefore = sent.count
+        app.buttons["clip-choose"].tap()
+        let main = app.buttons["clip-done"]
+        XCTAssertTrue(main.waitForExistence(timeout: 5))
+        let title = app.staticTexts["clip-sheet-title"]
+        XCTAssertEqual(title.label, "Which clips are Dodgeball?")
+        XCTAssertFalse(main.isEnabled, "the first question has no suggestion and needs an answer")
+        app.buttons["clip-select-dodgeball-fixture-clip"].tap()
+        XCTAssertEqual(main.label, "Next", "the pre-ticked second question has not been shown yet")
+        attachScreenshot(app, "pre-ticked-second-next")
+        main.tap()
+        XCTAssertTrue(eventually { title.label == "Which clips are Football?" }, title.label)
+        XCTAssertEqual(sent.count, sentBefore, "Next sends nothing")
+        XCTAssertEqual(app.buttons["clip-thumb-football-fixture-clip-4"].value as? String, "Selected", "the pre-tick is shown")
+        XCTAssertEqual(main.label, "Done")
+        // The suggestion only had one of the two clips; the creator adds the other before sending.
+        app.buttons["clip-select-football-fixture-clip-3"].tap()
+        XCTAssertEqual(app.descendants(matching: .any)["clip-count"].label, "2 of 2 selected")
+        attachScreenshot(app, "pre-ticked-second-corrected")
+        main.tap()
+        XCTAssertTrue(app.staticTexts["You: Dodgeball: clip 1. Football: clips 3, 4"].waitForExistence(timeout: 10))
+        let echo = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "answers[dodgeball=fixture-clip;football=fixture-clip-3+fixture-clip-4]")).firstMatch
+        XCTAssertTrue(echo.waitForExistence(timeout: 10), "one turn carried the corrected second answer")
+        XCTAssertEqual(sent.count, sentBefore + 1, "one message for both questions")
+    }
+
     /// A tap opens the clip full screen and playing, without picking it; "Use this clip" picks the clip being shown
     /// and goes back to the grid; the circle on a tile picks without opening anything.
     func testTappingAClipOpensItPlayingAndUseThisClipPicksIt() {

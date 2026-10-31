@@ -137,7 +137,8 @@ struct ClipSelectionCard: View {
 
 /// Full-height grid of 9:16 clip tiles with number badges. A tap opens the clip (`ClipPreviewPager`); the circle on a
 /// tile, or a slide across tiles, selects. A sticky bar carries the count, "None of these" and the main button:
-/// "Next" while another group still needs an answer, then "Done", which sends every group's answer at once.
+/// "Next" while another group is unseen or unanswered (a pre-ticked one included), then "Done", which sends every
+/// group's answer at once.
 struct ClipPickerSheet: View {
     let question: ClipQuestion
     @Binding var state: ClipSelectionState
@@ -213,6 +214,9 @@ struct ClipPickerSheet: View {
         .sensoryFeedback(.selection, trigger: state.selectedCount)
         .sensoryFeedback(.selection, trigger: categoryKey)
         .sensoryFeedback(.success, trigger: doneToken)
+        // Next and the group tabs both change `categoryKey`; either way the creator has now seen that group.
+        .onAppear { state.markShown(categoryKey) }
+        .onChange(of: categoryKey) { _, key in state.markShown(key) }
         .sheet(item: $previewing) { target in
             ClipPreviewPager(
                 ids: category.candidateMediaIDs, startIndex: target.index, state: $state, categoryKey: category.key,
@@ -374,7 +378,7 @@ struct ClipPickerSheet: View {
                 }
             }
             let answered = state.isAnswered(category.key)
-            let next = answered ? state.nextUnanswered(after: category.key) : nil
+            let next = answered ? state.nextPending(after: category.key) : nil
             Button {
                 if let next {
                     categoryKey = next.key

@@ -211,6 +211,8 @@ struct ClipSelectionState: Equatable {
     let question: ClipQuestion
     private(set) var selected: [String: Set<String>]
     private(set) var none: Set<String> = []
+    /// Categories the picker has put on screen. Kept here, not in the sheet, so closing and reopening it remembers.
+    private(set) var shown: Set<String> = []
 
     /// `suggested_media_ids` start ticked.
     init(question: ClipQuestion) {
@@ -275,16 +277,25 @@ struct ClipSelectionState: Equatable {
     /// A category is answered once it has a tick or "None of these".
     func isAnswered(_ key: String) -> Bool { count(in: key) > 0 || isNone(key) }
 
-    /// The first unanswered category after `key`, wrapping round to the start; nil once every other category is
-    /// answered. The picker's main button moves here ("Next") instead of sending, so a question with two groups
-    /// never goes out with only the first one answered.
-    func nextUnanswered(after key: String) -> ClipQuestion.Category? {
+    mutating func markShown(_ key: String) {
+        guard question.categories.contains(where: { $0.key == key }) else { return }
+        shown.insert(key)
+    }
+
+    /// Done needs both: the creator has seen the category and it has a tick or "None of these". A suggestion is only
+    /// the starting selection, so a pre-ticked category the creator never opened is not done (KRI-1101).
+    func isDone(_ key: String) -> Bool { shown.contains(key) && isAnswered(key) }
+
+    /// The first category after `key` (the one on screen) that is not done, wrapping round to the start; nil once
+    /// every other category is done. The picker's main button moves here ("Next") instead of sending, so a question
+    /// with two groups never goes out with a group the creator has not seen or answered.
+    func nextPending(after key: String) -> ClipQuestion.Category? {
         let categories = question.categories
         guard !categories.isEmpty else { return nil }
         let start = categories.firstIndex { $0.key == key } ?? categories.count - 1
         for step in 1...categories.count {
             let category = categories[(start + step) % categories.count]
-            if category.key != key, !isAnswered(category.key) { return category }
+            if category.key != key, !isDone(category.key) { return category }
         }
         return nil
     }

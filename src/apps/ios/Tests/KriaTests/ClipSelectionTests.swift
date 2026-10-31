@@ -175,6 +175,28 @@ final class ClipSelectionTests: XCTestCase {
         XCTAssertFalse(state.isNone("dodgeball"))
     }
 
+    /// KRI-1101: a suggestion is only the starting selection. A pre-ticked group is not done until the picker has
+    /// shown it, so Next walks to it instead of Done sending it unseen.
+    func testPreTickedGroupsAreNotDoneUntilShown() throws {
+        var state = ClipSelectionState(question: try XCTUnwrap(ClipQuestion.parse(payload: payload(categories: [
+            category("a", "A", ["1", "2"]),
+            category("b", "B", ["2", "3"], suggested: ["3"]),
+            category("c", "C", ["1", "3"], suggested: ["1"]),
+        ]))))
+        state.markShown("a")
+        state.toggle("1", in: "a")
+        XCTAssertFalse(state.isDone("b"), "pre-ticked but never shown")
+        XCTAssertEqual(state.nextPending(after: "a")?.key, "b")
+        state.markShown("b")
+        XCTAssertEqual(state.nextPending(after: "b")?.key, "c")
+        state.markShown("c")
+        XCTAssertNil(state.nextPending(after: "c"), "every group shown and answered")
+        state.clear(in: "b")
+        XCTAssertEqual(state.nextPending(after: "c")?.key, "b", "a shown group the creator emptied still needs an answer")
+        state.markShown("unknown")
+        XCTAssertFalse(state.isDone("unknown"))
+    }
+
     func testNoneIsIgnoredWhenServerDoesNotAllowIt() throws {
         var state = ClipSelectionState(question: try question(allowNone: false))
         state.toggleNone("dodgeball")
