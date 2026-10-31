@@ -185,6 +185,8 @@ public enum SubjectOcclusion {
 /// the production one; tests inject a synthetic one through `NativeSubjectMatte.segmenterFactory`.
 protocol NativePersonSegmenting: AnyObject {
     func confidence(for frame: CIImage, canvas: CGRect) throws -> SubjectConfidenceMap?
+    /// The speaker matte's full-resolution 8-bit mask (row 0 = top). Defaults to `confidence` (`SpeakerMatte.swift`).
+    func personMask(for frame: CIImage, canvas: CGRect, config: SpeakerMatteConfig) throws -> CVPixelBuffer?
 }
 
 /// Per-composition temporal state + sanity + rate limiting. Shared by every compositor instance a
@@ -283,18 +285,8 @@ final class VisionPersonSegmenter: NativePersonSegmenting {
     private var poolSize: (Int, Int) = (0, 0)
 
     func confidence(for frame: CIImage, canvas: CGRect) throws -> SubjectConfidenceMap? {
-        let scale = Double(NativeSubjectMatte.inputMaxSide) / Double(max(canvas.width, canvas.height))
-        let width = max(16, Int((canvas.width * scale).rounded())), height = max(16, Int((canvas.height * scale).rounded()))
-        guard let buffer = makeBuffer(width: width, height: height) else { return nil }
-        let scaled = frame.cropped(to: canvas)
-            .transformed(by: CGAffineTransform(translationX: -canvas.minX, y: -canvas.minY))
-            .transformed(by: CGAffineTransform(scaleX: CGFloat(width) / canvas.width, y: CGFloat(height) / canvas.height))
-        context.render(scaled, to: buffer, bounds: CGRect(x: 0, y: 0, width: width, height: height), colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
-        let request = VNGeneratePersonSegmentationRequest()
-        request.qualityLevel = .balanced
-        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
-        try VNImageRequestHandler(cvPixelBuffer: buffer, options: [:]).perform([request])
-        guard let mask = request.results?.first?.pixelBuffer else { return nil }
+        guard let buffer = render(frame, canvas: canvas, maxSide: NativeSubjectMatte.inputMaxSide),
+              let mask = try segment(buffer, quality: .balanced) else { return nil }
         CVPixelBufferLockBaseAddress(mask, .readOnly); defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
         guard CVPixelBufferGetPixelFormatType(mask) == kCVPixelFormatType_OneComponent8,
               let base = CVPixelBufferGetBaseAddress(mask) else { return nil }
@@ -303,6 +295,31 @@ final class VisionPersonSegmenter: NativePersonSegmenting {
         var values = [Float](repeating: 0, count: w * h)
         for y in 0..<h { for x in 0..<w { values[y * w + x] = Float(bytes[y * stride + x]) / 255 } }
         return SubjectConfidenceMap(width: w, height: h, values: values)
+    }
+
+    /// Vision's buffer as is: no `[Float]` copy and no downsample (the speaker matte scales it in Core Image).
+    func personMask(for frame: CIImage, canvas: CGRect, config: SpeakerMatteConfig) throws -> CVPixelBuffer? {
+        guard let buffer = render(frame, canvas: canvas, maxSide: config.inputMaxSide) else { return nil }
+        return try segment(buffer, quality: config.quality.vision)
+    }
+
+    private func render(_ frame: CIImage, canvas: CGRect, maxSide: Int) -> CVPixelBuffer? {
+        let scale = Double(maxSide) / Double(max(canvas.width, canvas.height))
+        let width = max(16, Int((canvas.width * scale).rounded())), height = max(16, Int((canvas.height * scale).rounded()))
+        guard let buffer = makeBuffer(width: width, height: height) else { return nil }
+        let scaled = frame.cropped(to: canvas)
+            .transformed(by: CGAffineTransform(translationX: -canvas.minX, y: -canvas.minY))
+            .transformed(by: CGAffineTransform(scaleX: CGFloat(width) / canvas.width, y: CGFloat(height) / canvas.height))
+        context.render(scaled, to: buffer, bounds: CGRect(x: 0, y: 0, width: width, height: height), colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        return buffer
+    }
+
+    private func segment(_ buffer: CVPixelBuffer, quality: VNGeneratePersonSegmentationRequest.QualityLevel) throws -> CVPixelBuffer? {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = quality
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        try VNImageRequestHandler(cvPixelBuffer: buffer, options: [:]).perform([request])
+        return request.results?.first?.pixelBuffer
     }
 
     private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {

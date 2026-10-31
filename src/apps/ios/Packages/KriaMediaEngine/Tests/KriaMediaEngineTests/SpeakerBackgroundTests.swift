@@ -125,4 +125,83 @@ final class SpeakerBackgroundTests: XCTestCase {
         object["speaker_background"] = ["asset_id": "media-1", "media_kind": "image"]
         XCTAssertThrowsError(try decode(object))
     }
+
+    // MARK: - Rendering (KRI-1116). An empty room makes the matte answer "background only", so every
+    // pixel of the frame is the background asset as the compositor placed it.
+
+    #if canImport(AVFoundation)
+    private let canvas = Canvas(width: 120, height: 200)
+
+    @MainActor private func backgroundFrames(_ background: SpeakerTestBackground, at times: [Double], directory: URL) async throws -> [SpeakerTestFrame] {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = directory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let room = try await writeEmptyRoomClip(directory: directory, size: (canvas.width, canvas.height), seconds: 3)
+        let scene = try speakerRecipe(canvas: canvas, speaker: room, duration: 3, background: background)
+        var frames: [SpeakerTestFrame] = []
+        for time in times { frames.append(try await previewFrame(scene.recipe, urls: scene.urls, at: time)) }
+        return frames
+    }
+
+    /// S9: a 1 s video background behind a 3 s edit loops from `source_start` (not from 0); with `loop` off
+    /// it holds its last frame instead of going black.
+    @MainActor func testShortVideoLoops() async throws {
+        let directory = try speakerTestDirectory(self)
+        // Quarter seconds: red, black, blue, white.
+        let quarters = [CGColor(red: 1, green: 0, blue: 0, alpha: 1), CGColor(red: 0, green: 0, blue: 0, alpha: 1),
+                        CGColor(red: 0, green: 0, blue: 1, alpha: 1), CGColor(red: 1, green: 1, blue: 1, alpha: 1)]
+        let video = try await writeSpeakerTestVideo(directory: directory, name: "quarters", size: (120, 200), seconds: 1) { context, index in
+            context.setFillColor(quarters[min(3, Int(Double(index) / 30 / 0.25))])
+            context.fill(CGRect(x: 0, y: 0, width: 120, height: 200))
+        }
+        let times = [0.1, 0.35, 0.6, 1.1, 2.85]
+        let looped = try await backgroundFrames(SpeakerTestBackground(url: video, kind: .video, sourceStart: 0.5), at: times, directory: directory)
+        for (frame, (time, expected)) in zip(looped, zip(times, [2, 3, 2, 2, 3])) {
+            XCTAssertTrue(isColor(frame.rgb(fx: 0.5, fy: 0.5), quarters[expected]), "looped background at \(time) s: \(frame.rgb(fx: 0.5, fy: 0.5))")
+        }
+        let once = try await backgroundFrames(SpeakerTestBackground(url: video, kind: .video, sourceStart: 0.5, loop: false), at: times, directory: directory)
+        for (frame, (time, expected)) in zip(once, zip(times, [2, 3, 3, 3, 3])) {
+            XCTAssertTrue(isColor(frame.rgb(fx: 0.5, fy: 0.5), quarters[expected]), "unlooped background at \(time) s: \(frame.rgb(fx: 0.5, fy: 0.5))")
+        }
+    }
+
+    /// S10: a landscape photo cover-fits the portrait canvas: centered, no letterbox bars, no stretch.
+    /// Thirds blue | red | white: the canvas shows only the red middle.
+    @MainActor func testLandscapeBackgroundCoverFits() async throws {
+        let directory = try speakerTestDirectory(self)
+        let photo = try writeSpeakerTestImage(directory: directory, name: "landscape", size: (320, 180)) { context in
+            for (index, color) in [CGColor(red: 0, green: 0, blue: 1, alpha: 1), CGColor(red: 1, green: 0, blue: 0, alpha: 1),
+                                   CGColor(red: 1, green: 1, blue: 1, alpha: 1)].enumerated() {
+                context.setFillColor(color)
+                context.fill(CGRect(x: Double(index) * 320 / 3, y: 0, width: 320 / 3 + 1, height: 180))
+            }
+        }
+        let frame = try await backgroundFrames(SpeakerTestBackground(url: photo), at: [1], directory: directory)[0]
+        for (fx, fy) in [(0.02, 0.01), (0.98, 0.01), (0.02, 0.99), (0.98, 0.99), (0.5, 0.01), (0.5, 0.99), (0.5, 0.5)] {
+            XCTAssertTrue(isColor(frame.rgb(fx: fx, fy: fy), CGColor(red: 1, green: 0, blue: 0, alpha: 1)), "cover-fit red at (\(fx), \(fy)): \(frame.rgb(fx: fx, fy: fy))")
+        }
+    }
+
+    /// S10: the photo's EXIF orientation is applied. Stored landscape with orientation 6 (rotate 90 degrees
+    /// clockwise), its left half red, it displays upright with red on top, like an upright portrait control.
+    @MainActor func testRotatedImageUsesOrientation() async throws {
+        let directory = try speakerTestDirectory(self)
+        let red = CGColor(red: 1, green: 0, blue: 0, alpha: 1), blue = CGColor(red: 0, green: 0, blue: 1, alpha: 1)
+        let rotated = try writeSpeakerTestImage(directory: directory, name: "rotated", size: (320, 180), orientation: 6) { context in
+            context.setFillColor(red); context.fill(CGRect(x: 0, y: 0, width: 160, height: 180))
+            context.setFillColor(blue); context.fill(CGRect(x: 160, y: 0, width: 160, height: 180))
+        }
+        let upright = try writeSpeakerTestImage(directory: directory, name: "upright", size: (180, 320)) { context in
+            context.setFillColor(red); context.fill(CGRect(x: 0, y: 160, width: 180, height: 160))
+            context.setFillColor(blue); context.fill(CGRect(x: 0, y: 0, width: 180, height: 160))
+        }
+        for (name, url) in [("orientation 6", rotated), ("upright control", upright)] {
+            let frame = try await backgroundFrames(SpeakerTestBackground(url: url), at: [1], directory: directory)[0]
+            for fx in [0.1, 0.5, 0.9] {
+                XCTAssertTrue(isColor(frame.rgb(fx: fx, fy: 0.2), red), "\(name): red on top at x \(fx): \(frame.rgb(fx: fx, fy: 0.2))")
+                XCTAssertTrue(isColor(frame.rgb(fx: fx, fy: 0.8), blue), "\(name): blue at the bottom at x \(fx): \(frame.rgb(fx: fx, fy: 0.8))")
+            }
+        }
+    }
+    #endif
 }
