@@ -28,10 +28,10 @@ def song_lane(monkeypatch):
 
 
 @pytest.mark.parametrize("native_mode", ["pilot", "strict"])
-def test_native_picker_lists_lipsync_right_after_montage(song_lane, native_mode) -> None:
+def test_native_picker_lists_lipsync_last(song_lane, native_mode) -> None:
     formats = routes._available_formats(native_mode=native_mode)
 
-    assert list(formats)[:2] == ["montage", "lipsync"]
+    assert list(formats)[-1] == "lipsync"
     assert formats["lipsync"] == "montage"
     assert routes._format_clip_limit(formats["lipsync"]) == routes._format_clip_limit(
         formats["montage"]

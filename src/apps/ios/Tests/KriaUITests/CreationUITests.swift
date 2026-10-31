@@ -1625,9 +1625,9 @@ final class CreationUITests: XCTestCase {
         XCTAssertTrue(usable, "format cards took \(String(format: "%.1f", elapsed))s after New chat")
     }
 
-    /// The Lip-sync card sits right after Montage, choosing it posts its own sentence, and its attachment
+    /// The Lip-sync card is the far-right card, choosing it posts its own sentence, and its attachment
     /// sheet opens on the song step with the lip-sync subtitle (the song leads a lip-sync).
-    func testLipsyncCardFollowsMontageAndOpensTheSheetOnTheSong() {
+    func testLipsyncCardIsFarRightAndOpensTheSheetOnTheSong() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v2"
@@ -1636,14 +1636,14 @@ final class CreationUITests: XCTestCase {
         app.launch()
         createFreshChat(in: app)
 
-        let montage = app.buttons["format-montage"]
+        let slider = app.buttons["format-slides"]
         let lipsync = app.buttons["format-lipsync"]
-        let voiceover = app.buttons["format-narrated"]
         XCTAssertTrue(lipsync.waitForExistence(timeout: 10))
         XCTAssertEqual(lipsync.label, "Lip-sync")
-        XCTAssertGreaterThan(lipsync.frame.minX, montage.frame.minX, "Lip-sync follows Montage")
-        if voiceover.exists { XCTAssertLessThan(lipsync.frame.minX, voiceover.frame.minX, "Lip-sync precedes Voiceover") }
-        if !lipsync.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(slider.exists)
+        XCTAssertGreaterThan(lipsync.frame.minX, slider.frame.minX, "Lip-sync is the far-right card, after Slider")
+        for _ in 0..<5 where !lipsync.isHittable { app.scrollViews["format-carousel"].swipeLeft() }
+        XCTAssertTrue(lipsync.isHittable, "the far-right card can be scrolled to")
         lipsync.tap()
 
         let bubble = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Let’s make a lip-sync video")).firstMatch

@@ -832,8 +832,15 @@ def _client_id(value: str) -> str:
 
 def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web") -> dict[str, str]:
     available = {"montage": "montage"}
+    if settings.narrated_archetype_enabled:
+        available["narrated"] = "narrated_planned"
+    if settings.subtitled_archetype_enabled:
+        available["talking_to_camera"] = "subtitled"
+    if settings.slide_posts_enabled:
+        available["slides"] = "slides"
     # Song-lane cards (Lip-sync) are montages offered wherever an uploaded song can be used,
     # to a native client only: the web never sees `media.song`, so it never sees them.
+    # They are listed last: Lip-sync is the far-right card.
     if native_mode != "web":
         from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
 
@@ -845,12 +852,6 @@ def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web"
                     if fmt.needs_song_lane
                 }
             )
-    if settings.narrated_archetype_enabled:
-        available["narrated"] = "narrated_planned"
-    if settings.subtitled_archetype_enabled:
-        available["talking_to_camera"] = "subtitled"
-    if settings.slide_posts_enabled:
-        available["slides"] = "slides"
     if settings.ios_device_only_mode or native_mode != "web":
         from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
 

@@ -2493,7 +2493,7 @@ private struct CreationWorkspaceView: View {
                 return format
             }
             // The service advertises capability, not presentation order. Keep
-            // the post as the final card even if a rollout reorders its list.
+            // Lip-sync as the final card (Slider just before it) even if a rollout reorders its list.
             availableFormats = formats.sorted { $0.carouselOrder < $1.carouselOrder }
             capabilities = response
             capabilitiesReadAt = Date()
@@ -3437,10 +3437,10 @@ extension CreationFormat {
     var carouselOrder: Int {
         switch self {
         case .montage: 0
-        case .lipsync: 1
-        case .narrated: 2
-        case .talkingToCamera: 3
-        case .slides: 4
+        case .narrated: 1
+        case .talkingToCamera: 2
+        case .slides: 3
+        case .lipsync: 4
         }
     }
 }
