@@ -3162,10 +3162,12 @@ async def read_creative_brief(
         else []
     )
     unconfirmed_drafts = {
-        str(row.id)
+        str(row.id): sorted(name for _position, name, _members in groups)
         for row in drafts
-        if unconfirmed_order_groups(
-            ((row.snapshot_json or {}).get("strategy") or {}).get("resolved_clip_intents")
+        if (
+            groups := unconfirmed_order_groups(
+                ((row.snapshot_json or {}).get("strategy") or {}).get("resolved_clip_intents")
+            )
         )
     }
     newest: dict[str, RequirementReceipt] = {}
@@ -3188,10 +3190,11 @@ async def read_creative_brief(
             # Older events can hold a "can't verify" receipt that judged nothing;
             # it is never a requirement's outcome, so the requirement stays open.
             rid = receipt.requirement_id
+            unconfirmed = unconfirmed_drafts.get(str((event.payload or {}).get("draft_id")))
             if (
                 receipt.status == "met"
                 and getattr(live.get(rid), "kind", None) == "order"
-                and str((event.payload or {}).get("draft_id")) in unconfirmed_drafts
+                and unconfirmed is not None
             ):
                 with reply_language_for(thread_reply_language(thread)):
                     receipt = receipt.model_copy(
@@ -3199,7 +3202,7 @@ async def read_creative_brief(
                             "status": "partial",
                             "verification": "checked",
                             "stage": "applied",
-                            "reason": unconfirmed_order_reason(),
+                            "reason": unconfirmed_order_reason(unconfirmed),
                         }
                     )
             if rid not in newest and (
