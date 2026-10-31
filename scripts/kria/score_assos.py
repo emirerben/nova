@@ -311,10 +311,23 @@ def replay(job: SimpleNamespace, research: dict) -> dict[str, Any]:
         return real_validate(recipe, *args, **kwargs)
 
     sequence = _Sequence([research["caption_binding_raw_text"], research["claim_review_raw_text"]])
+    from app.kria import plan_blocks
+    from app.tasks import generative_build as _GB
+
+    live_blocks: list[dict[str, Any]] = []
+
+    def record_blocks(_job_id: Any, blocks: list[dict[str, Any]]) -> None:
+        # The live plan feed the creator sees, in emission order (later wins per section).
+        live_blocks.extend(copy.deepcopy(blocks))
+
     quiet = io.StringIO()
     with (
         contextlib.redirect_stdout(quiet),
         contextlib.redirect_stderr(quiet),
+        patch.object(plan_blocks, "enabled", lambda: True),
+        patch.object(plan_blocks, "_emit", lambda job_id, blocks: record_blocks(job_id, blocks)),
+        patch.object(plan_blocks, "emit_post_caption", lambda _job_id: None),
+        patch.object(_GB, "_emit_post_caption", lambda _job_id: None),
         patch.object(researched_text.GroundedResearchAgent, "run", search),
         patch.object(researched_text, "default_client", sequence.client),
         patch.object(phone_rollout, "validate_phone_pilot_recipe", capture),
@@ -335,6 +348,7 @@ def replay(job: SimpleNamespace, research: dict) -> dict[str, Any]:
         "execution": execution,
         "recipe": recipes[-1] if recipes else None,
         "searches": searches,
+        "live_blocks": live_blocks,
         "text_elements": [t for t in variant.get("text_elements", []) if not t.get("removed")],
         "cuts": [
             round(float(w["resolved_duration_s"]), 4) for w in execution.get("beat_windows") or []
@@ -735,10 +749,11 @@ def check_6_creator_selected(fx: dict, base: dict, rs: dict) -> dict:
     default = server_default_shape(fx)
     echo = replay(build_job(fx, shape=default), rs)
     pick = {"output_orientation": "portrait", "landscape_fit": "fit"}
-    explicit = replay(build_job(fx, shape=pick), rs)
+    # An explicit pick as the approval stage records it (the origin stamp rides the shape).
+    explicit = replay(build_job(fx, shape={**pick, "origin": "creator"}), rs)
     echo_reason = echo["execution"].get("output_orientation_reason")
     pick_reason = explicit["execution"].get("output_orientation_reason")
-    ok = echo_reason != CREATOR_SELECTED_REASON
+    ok = echo_reason != CREATOR_SELECTED_REASON and pick_reason == CREATOR_SELECTED_REASON
     return _result(
         6,
         '"creator selected" is stamped only for an explicit pick, not an echoed default',
@@ -747,15 +762,17 @@ def check_6_creator_selected(fx: dict, base: dict, rs: dict) -> dict:
         if ok
         else [
             f"the app echoed the server's preselected shape {default} (the creator "
-            f"picked nothing) and the plan says {echo_reason!r}"
+            f"picked nothing) and the plan says {echo_reason!r}; an explicit pick says "
+            f"{pick_reason!r}"
         ],
         {
             "server_default_shape": default,
             "echoed_default_reason": echo_reason,
             "explicit_portrait_pick_reason": pick_reason,
             "recorded_prod_reason": fx["prod_outcome"]["recipe"]["output_orientation_reason"],
-            "note": "the worker input has no field that tells an echo from a pick; the "
-            "explicit-pick reason is informational, only the echoed-default case decides",
+            "note": "the worker tells an echo from a pick by the origin stamp inside the "
+            "stored shape (written at approval); a shape without it reads as an echoed "
+            "default, and an explicit pick must still be labelled as the creator's",
         },
     )
 
@@ -784,13 +801,23 @@ def check_7_research_disclosed(fx: dict, base: dict) -> dict:
 
 def check_8_look_chip(fx: dict, base: dict) -> dict:
     from app.kria import plan_blocks
+    from app.tasks import generative_build as gb
 
-    quiet = io.StringIO()
+    # What the creator is shown is the LAST look block on the live plan feed. The first one
+    # is built from the pinned plan before the phone typography step (the replay stubs that
+    # step out, so it is rebuilt here with the worker's own helper); the typography step
+    # then emits the final one, which `replay` recorded.
     with (
-        contextlib.redirect_stdout(quiet),
         patch.object(plan_blocks, "enabled", lambda: True),
+        patch.object(gb, "current_phone_text_policy", lambda: {"active": True}),
     ):
-        look = plan_blocks.decided_block(base["execution"], "look")
+        early = plan_blocks.blocks_from_guided_plan(base["execution"], **gb._early_look_font())
+    looks = [
+        b
+        for b in [*early, *base["live_blocks"]]
+        if b.get("section_id") == "look"
+    ]
+    look = looks[-1]
     chips = (look.get("payload") or {}).get("chips") or []
     chip_fonts = [
         _font_key(re.sub(r"\s+titles$", "", c, flags=re.I))

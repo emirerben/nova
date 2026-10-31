@@ -4735,7 +4735,9 @@ async def _confirm_render_shape(
         db, item, edit_plan.strategy, user_id, creator_request=creator_request
     )
     try:
-        return render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
+        chosen = render_shape.resolve_choice(offer, body.output_orientation, body.landscape_fit)
+        # An echoed server default is not a creator pick: record which it was.
+        return render_shape.stamp_origin(offer, chosen, None) if chosen is not None else None
     except render_shape.RenderShapeError as exc:
         if not strict:
             return None

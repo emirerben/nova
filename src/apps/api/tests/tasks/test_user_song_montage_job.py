@@ -789,6 +789,7 @@ def test_the_creators_output_shape_reaches_the_song_snapshot(harness, sync):
     job.all_candidates["creator_render_shape"] = {
         "output_orientation": "landscape",
         "landscape_fit": "fit",
+        "origin": "creator",
     }
 
     gb._run_generative_job(str(job.id))

@@ -2199,6 +2199,10 @@ def _job_projection(job: Job | None, *, item: Any = None) -> dict[str, Any] | No
     repair_notes = primary_variant.get("phone_repair_notes") if primary_variant else None
     if isinstance(repair_notes, list):
         render_notes += [note for note in repair_notes if isinstance(note, str) and note]
+    # What the phone's export check could not confirm (advisory; the video still shipped).
+    export_notes = primary_variant.get("export_check_notes") if primary_variant else None
+    if isinstance(export_notes, list):
+        render_notes += [note for note in export_notes if isinstance(note, str) and note]
     return {
         "id": str(job.id),
         "status": job.status,

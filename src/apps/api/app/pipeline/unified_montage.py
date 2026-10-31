@@ -1779,6 +1779,7 @@ def plan_unified_montage(
     song_plan_item_id: str | None = None,
     song_generation: int | None = None,
     output_orientation: str | None = None,
+    output_orientation_reason: str | None = None,
     creator_duration_proven: bool = False,
     approved_length_plan: Mapping[str, Any] | None = None,
     speech_order: bool = False,
@@ -2711,7 +2712,11 @@ def plan_unified_montage(
         snapshot_kwargs["label_position"] = label_position
     if output_orientation in ("portrait", "landscape"):
         snapshot_kwargs["output_orientation"] = output_orientation
-        snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON
+        # The caller says whether the creator picked this shape or the app echoed the
+        # server default; absent keeps the original wording.
+        snapshot_kwargs["output_orientation_reason"] = (
+            output_orientation_reason or CREATOR_SELECTED_ORIENTATION_REASON
+        )
     style: dict[str, Any] = {}
     if family is not None:
         style["font_family"] = family
