@@ -1190,6 +1190,8 @@ jobs:
           # The export/OCR proofs (~10 of the unit leg's minutes) run on PRs that
           # touch render, export or text code; ios.yml runs them on every main push.
           KRIA_IOS_SKIP_RENDER_EVIDENCE: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios_render_evidence == 'false' && '1' || '0' }}
+          # Selected journeys keep the proofs they name (journey-gate.py native-units).
+          KRIA_JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
       - name: Record compiled iPhone input timestamps

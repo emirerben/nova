@@ -13,16 +13,21 @@ code they prove (or the tests and fixtures themselves). Every push to main
 (ios.yml) and the nightly runs still execute the whole unit suite, so a
 regression these proofs catch surfaces on the merge that caused it.
 
-  render_evidence.py skip-args       -skip-testing lines for xcodebuild
+  render_evidence.py skip-args       -skip-testing lines for xcodebuild, minus
+                                     tests named by the journeys in
+                                     KRIA_JOURNEY_IDS
   render_evidence.py check           fail if a listed test no longer exists
 """
 
+import json
+import os
 import re
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 TESTS_DIR = REPO / "src/apps/ios/Tests/KriaTests"
+JOURNEY_MANIFEST = REPO / "scripts/ci/journey-manifest.json"
 
 # Class or Class/method identifiers inside the KriaTests bundle.
 TESTS = (
@@ -60,8 +65,32 @@ def triggered(paths):
     return any(path.startswith(TRIGGER_PREFIXES) for path in paths)
 
 
-def skip_args():
-    return [f"-skip-testing:KriaTests/{test}" for test in TESTS]
+def named_by_journeys(journey_ids, manifest=JOURNEY_MANIFEST):
+    """Listed tests that a selected journey names: those must still run.
+
+    journey-gate.py native-units requires every named journey test in the unit
+    result bundle, so a selected journey keeps its proofs on the PR.
+    """
+    selected = {i for i in journey_ids.split(",") if i}
+    if not selected:
+        return set()
+    journeys = json.loads(Path(manifest).read_text())["journeys"]
+    named = {
+        test.removeprefix("KriaTests/")
+        for row in journeys
+        if row["id"] in selected
+        for test in row.get("xctests", [])
+    }
+    return {
+        test
+        for test in TESTS
+        if any(name == test or name.startswith(test + "/") for name in named)
+    }
+
+
+def skip_args(journey_ids=""):
+    keep = named_by_journeys(journey_ids)
+    return [f"-skip-testing:KriaTests/{test}" for test in TESTS if test not in keep]
 
 
 def missing(tests_dir=TESTS_DIR):
@@ -81,7 +110,9 @@ def missing(tests_dir=TESTS_DIR):
 def main(argv):
     command = argv[1] if len(argv) > 1 else ""
     if command == "skip-args":
-        print("\n".join(skip_args()))
+        args = skip_args(os.environ.get("KRIA_JOURNEY_IDS", ""))
+        if args:
+            print("\n".join(args))
         return 0
     if command == "check":
         gone = missing()

@@ -80,7 +80,8 @@ PR; their iPhone renders run nightly and on manual CI dispatch, which is how a
 PR gets native render evidence. The `unit` leg also skips the export/OCR unit
 proofs listed in `scripts/ios/render_evidence.py` (real MP4 exports read back
 with Vision) unless the PR touches the render, export or text code in that
-file's trigger list: after they landed on 2026-10-30 the leg's unit execution
+file's trigger list, or a selected journey names them (`journey-gate.py
+native-units` needs every named test in the unit results): after they landed on 2026-10-30 the leg's unit execution
 went from a median of ~12 to ~22 min. `ios.yml` runs the whole unit suite on
 every main push and nightly, so they still gate each merge's follow-up. The legs start as soon as selection finishes and compile while
 `journey-offline` runs; `scripts/ci/wait-for-jobs.py` blocks only before the

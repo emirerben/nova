@@ -33,6 +33,38 @@ class RenderEvidenceTests(unittest.TestCase):
         self.assertEqual(len(args), len(render_evidence.TESTS))
         self.assertTrue(all(a.startswith("-skip-testing:KriaTests/") for a in args))
 
+    def test_selected_journeys_keep_every_test_they_name(self):
+        # journey-gate.py native-units fails when a named journey test is
+        # missing from the unit result bundle, so the skip must leave them in.
+        manifest = render_evidence.JOURNEY_MANIFEST.read_text()
+        import json
+
+        journeys = json.loads(manifest)["journeys"]
+        for row in journeys:
+            skipped = {a.removeprefix("-skip-testing:") for a in render_evidence.skip_args(row["id"])}
+            for test in row.get("xctests", []):
+                self.assertFalse(
+                    any(test == s or test.startswith(s + "/") for s in skipped),
+                    f"{row['id']} names {test}, which would be skipped",
+                )
+        everything = ",".join(row["id"] for row in journeys)
+        named = render_evidence.named_by_journeys(everything)
+        self.assertEqual(
+            render_evidence.skip_args(everything),
+            [f"-skip-testing:KriaTests/{t}" for t in render_evidence.TESTS if t not in named],
+        )
+        self.assertIn("DurationTextPreservationTests", named)
+        self.assertEqual(len(render_evidence.skip_args("")), len(render_evidence.TESTS))
+
+    def test_skip_args_cli_reads_the_selected_journeys(self):
+        script = ROOT / "scripts/ios/render_evidence.py"
+        env = {"KRIA_JOURNEY_IDS": "editor-durable-save,reference-style-save", "PATH": "/usr/bin:/bin"}
+        out = subprocess.run([sys.executable, str(script), "skip-args"], env=env,
+                             capture_output=True, text=True, check=True).stdout.split()
+        self.assertNotIn("-skip-testing:KriaTests/SavedDraftPreviewRangeTests", out)
+        self.assertNotIn("-skip-testing:KriaTests/ReferenceStyleSaveTests", out)
+        self.assertIn("-skip-testing:KriaTests/DurationTextPreservationTests", out)
+
     def test_render_paths_trigger_and_others_do_not(self):
         for path in (
             "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/LivePreviewComposition.swift",
@@ -82,6 +114,7 @@ class RenderEvidenceTests(unittest.TestCase):
         verify = (ROOT / "scripts/ios/verify.sh").read_text()
         self.assertIn('if [[ "${KRIA_IOS_SKIP_RENDER_EVIDENCE:-0}" == "1" ]]', verify)
         self.assertIn("render_evidence.py\" skip-args", verify)
+        self.assertIn("KRIA_JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}", workflow)
         # The main-push release workflow never sets the skip.
         self.assertNotIn("KRIA_IOS_SKIP_RENDER_EVIDENCE", (ROOT / ".github/workflows/ios.yml").read_text())
 
