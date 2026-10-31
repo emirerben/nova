@@ -2532,6 +2532,8 @@ def _model_strategy_hygiene(strategy: CreativeStrategy) -> CreativeStrategy:
         # the same in `_apply_explicit_render_intent`.
         "target_duration_requested": None,
         "creator_duration_s": None,
+        # Pace provenance is server-owned the same way (re-stamped from the creator's words).
+        "pacing_requested": None,
         # KRI-476: conflict answers are written only by the Kria planner gate.
         "choice_answers": None,
     }

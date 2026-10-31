@@ -279,6 +279,9 @@ def _field(source: Any, name: str) -> Any:
     return source.get(name) if isinstance(source, Mapping) else getattr(source, name, None)
 
 
+PACE_MIN_HEADROOM_S = 0.1
+
+
 def paced_selection(
     sources: Sequence[Any],
     pace: str,
@@ -341,6 +344,11 @@ def paced_selection(
         cap_duration_s=cap_s,
     )
     if result.conflicts or result.duration_s < MIN_PROPOSAL_DURATION_S:
+        return None
+    if paced_budget is None and result.duration_s < MIN_PROPOSAL_DURATION_S + PACE_MIN_HEADROOM_S:
+        # A free total that lands exactly on the minimum is 2.967 s after whole-frame rounding
+        # and the montage is refused (KRI-993 steak edit): keep the plain windows. Here, not in
+        # the render alone, so the approval-time plan and the worker's follow one rule.
         return None
     return result
 

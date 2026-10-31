@@ -1156,6 +1156,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                             True if requested_duration_s is not None else None
                         ),
                         "creator_duration_s": requested_duration_s,
+                        # Pace provenance is server-owned too; the route re-stamps it from
+                        # the creator's words (`_apply_explicit_render_intent`).
+                        "pacing_requested": None,
                         "selected_music_section": None,
                         # Preserve the actual requested target rather than a
                         # conflicting model-selected duration.
