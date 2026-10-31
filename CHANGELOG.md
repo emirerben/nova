@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.36.0] - 2026-10-31
+
+### Changed
+- feat(ios): show text types on a video frame and the real defaults in Text preferences (#1988) <!-- release-pr: 1988 -->
+
 ## [0.83.35.0] - 2026-10-31
 
 ### Fixed
