@@ -261,18 +261,20 @@ def _story_verdict(
 
 
 def _story_lines_notice(strategy: Mapping[str, Any]) -> str | None:
-    """The outline sets the chapters and their text, but the clips keep their order."""
+    """The outline sets the chapters (clip grouping), but the clips keep their order."""
     items = [v for v in (strategy.get("story_structure") or []) if str(v or "").strip()]
     if not items:
         return None
     return say(
         en=(
-            f"The planned story structure ({_list(items)}) sets the chapters and their "
-            "on-screen text, but it won't reorder your clips: they stay in the order you gave"
+            f"The planned story structure ({_list(items)}) sets the chapters "
+            "(which clips are grouped together), but it won't reorder your clips: they stay in "
+            "the order you gave"
         ),
         tr=(
-            f"Planlanan hikâye yapısı ({_list(items)}) bölümleri ve ekran yazılarını belirliyor "
-            "ama kliplerinin sırasını değiştirmeyecek: verdiğin sırada kalacaklar"
+            f"Planlanan hikâye yapısı ({_list(items)}) bölümleri (hangi kliplerin birlikte "
+            "gruplanacağını) belirliyor ama kliplerinin sırasını değiştirmeyecek: verdiğin sırada "
+            "kalacaklar"
         ),
     )
 
