@@ -12,12 +12,15 @@ import XCTest
 
     private func reveal(_ element: XCUIElement, app: XCUIApplication) {
         for _ in 0..<12 {
-            let top = app.navigationBars.firstMatch.exists ? app.navigationBars.firstMatch.frame.maxY : app.frame.minY + 60
+            var top = app.navigationBars.firstMatch.exists ? app.navigationBars.firstMatch.frame.maxY : app.frame.minY + 60
             var bottom = app.frame.maxY - 50
             // A form row can be reported hittable behind the fixed Save inset.
             // Only the stable parent page owns that frame: child font pickers
             // must never query the disappearing parent's Save button.
             if app.navigationBars["Text preferences"].exists {
+                // The video frame and role chips stay pinned above the settings.
+                let header = app.otherElements["text-preferences-header"]
+                if header.exists, header.frame.maxY.isFinite { top = max(top, header.frame.maxY) }
                 let save = app.buttons["text-preferences-save"]
                 if save.exists {
                     let frame = save.frame
@@ -37,13 +40,35 @@ import XCTest
         XCTAssertTrue(element.isHittable, "Control must be visible: \(element.identifier)\n\(app.debugDescription)")
     }
 
+    /// The role chips scroll sideways, so a chip off the edge has no hit point until the row is swiped.
+    @discardableResult private func selectRole(_ role: String, app: XCUIApplication) -> XCUIElement {
+        let chip = app.buttons["text-preference-role-" + role]
+        XCTAssertTrue(chip.waitForExistence(timeout: 5), role)
+        let row = app.otherElements["text-preference-role"].firstMatch
+        for _ in 0..<4 where !(chip.frame.minX >= 0 && chip.frame.maxX <= app.frame.maxX - 4) { row.swipeLeft() }
+        for _ in 0..<4 where !(chip.frame.minX >= 0 && chip.frame.maxX <= app.frame.maxX - 4) { row.swipeRight() }
+        chip.tap()
+        return chip
+    }
+
     private func scrollForm(_ app: XCUIApplication, down: Bool) {
         // Whole-screen flings can jump a row from below the fixed Save bar to
         // above the navigation bar, then back again. Move within the form in
         // small steps so reveal converges instead of oscillating on CI devices.
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.4 : 0.65))
-        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.65 : 0.4))
-        start.press(forDuration: 0.05, thenDragTo: end)
+        var top = app.frame.height * 0.4, bottom = app.frame.height * 0.65
+        // On Text preferences the pinned header and Save bar cover the screen's
+        // middle, so a drag must start and end between them to move the form.
+        let header = app.otherElements["text-preferences-header"], save = app.buttons["text-preferences-save"]
+        if app.navigationBars["Text preferences"].exists, header.exists, header.frame.maxY.isFinite {
+            top = header.frame.maxY + 12
+            bottom = (save.exists && save.frame.minY.isFinite ? save.frame.minY : app.frame.maxY * 0.9) - 12
+            let step = (bottom - top) * 0.35, mid = (top + bottom) / 2
+            top = mid - step; bottom = mid + step
+        }
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: (down ? top : bottom) / app.frame.height))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: (down ? bottom : top) / app.frame.height))
+        // A held, slow drag keeps a flick's momentum from carrying a row over the short window between header and Save bar.
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.3)
     }
 
     func testExcludedFontSurvivesPickerReturnSaveAndReopen() {
@@ -94,14 +119,13 @@ import XCTest
         let manage = app.buttons["Manage account"]
         reveal(manage, app: app); manage.tap()
         app.buttons["account-text-preferences"].tap()
-        let shadow = app.buttons["text-preference-shadow"]
-        reveal(shadow, app: app); shadow.tap(); app.buttons["Off"].tap()
-        let role = app.buttons["text-preference-role"]
-        for _ in 0..<5 where !role.isHittable { app.swipeDown() }
-        reveal(role, app: app); role.tap(); app.buttons["Title"].tap()
-        role.tap(); app.buttons["All Text"].tap()
+        let shadow = app.segmentedControls["text-preference-shadow"]
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        selectRole("title", app: app)
+        XCTAssertTrue(app.staticTexts["The big opening line in the first seconds."].waitForExistence(timeout: 5))
+        selectRole("all_text", app: app)
         reveal(shadow, app: app)
-        XCTAssertTrue(shadow.label.contains("Off"), "Changing scope must retain the unsaved draft")
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Changing scope must retain the unsaved draft")
     }
 
     func testTextPreferencesSaveOffEffectsAndReopen() {
@@ -113,16 +137,17 @@ import XCTest
         XCTAssertTrue(app.staticTexts["Text preferences"].waitForExistence(timeout: 5))
         let font = app.buttons["text-preference-font"]
         reveal(font, app: app)
-        font.tap()
-        app.buttons["Automatic"].tap()
-        let outline = app.buttons["text-preference-outline"]
+        XCTAssertTrue(font.label.contains("Kria picks"))
+        let outline = app.segmentedControls["text-preference-outline"]
         reveal(outline, app: app)
-        outline.tap()
-        app.buttons["Off"].tap()
-        let shadow = app.buttons["text-preference-shadow"]
+        XCTAssertTrue(outline.buttons["Off"].isSelected, "Outline shows its real default before anything is saved")
+        outline.buttons["On"].tap()
+        outline.buttons["Off"].tap()
+        let shadow = app.segmentedControls["text-preference-shadow"]
         reveal(shadow, app: app)
-        shadow.tap()
-        app.buttons["Off"].tap()
+        XCTAssertTrue(shadow.buttons["Off"].isSelected, "Shadow shows its real default before anything is saved")
+        shadow.buttons["On"].tap()
+        shadow.buttons["Off"].tap()
         let save = app.buttons["text-preferences-save"]
         reveal(save, app: app)
         save.tap()
@@ -130,11 +155,78 @@ import XCTest
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["account-text-preferences"].tap()
         reveal(app.buttons["text-preference-font"], app: app)
-        XCTAssertTrue(app.buttons["text-preference-font"].label.contains("Automatic"))
-        reveal(app.buttons["text-preference-outline"], app: app)
-        XCTAssertTrue(app.buttons["text-preference-outline"].label.contains("Off"))
-        reveal(app.buttons["text-preference-shadow"], app: app)
-        XCTAssertTrue(app.buttons["text-preference-shadow"].label.contains("Off"))
+        XCTAssertTrue(app.buttons["text-preference-font"].label.contains("Kria picks"))
+        reveal(app.segmentedControls["text-preference-outline"], app: app)
+        XCTAssertTrue(app.segmentedControls["text-preference-outline"].buttons["Off"].isSelected)
+        reveal(app.segmentedControls["text-preference-shadow"], app: app)
+        XCTAssertTrue(app.segmentedControls["text-preference-shadow"].buttons["Off"].isSelected)
+    }
+
+    func testEachTextRoleExplainsItselfAndKeepsThePreview() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let descriptions = [
+            "all_text": "Every kind of text below, unless you set one differently.",
+            "title": "The big opening line in the first seconds.",
+            "label": "A short tag like a name, place or score.",
+            "pinned": "A small note that stays in a corner for the whole video.",
+            "caption": "Your spoken words, shown as you say them.",
+            "lyric": "Song words, shown in time with the music.",
+        ]
+        XCTAssertTrue(app.otherElements["text-preferences-preview"].waitForExistence(timeout: 5))
+        for role in ["title", "label", "pinned", "caption", "lyric", "all_text"] {
+            let chip = selectRole(role, app: app)
+            XCTAssertTrue(app.staticTexts[descriptions[role]!].waitForExistence(timeout: 5), "\(role) description")
+            XCTAssertTrue(app.otherElements["text-preferences-preview"].exists, "\(role) preview")
+            XCTAssertTrue(chip.isSelected, "\(role) chip selected")
+        }
+    }
+
+    func testSavedCustomColorShowsSelectedAndAutoClearsIt() {
+        let app = launch(mode: "text-preferences-custom-color")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let custom = app.descendants(matching: .any)["text-preference-color-custom"]
+        reveal(custom, app: app)
+        XCTAssertTrue(custom.isSelected, "A saved color outside the presets selects the custom swatch")
+        XCTAssertTrue(custom.label.hasPrefix("Custom color"), custom.label)
+        XCTAssertEqual(custom.value as? String, "#7A3FD1")
+        XCTAssertTrue(app.otherElements["text-preferences-preview"].exists)
+        XCTAssertFalse(app.buttons["White"].isSelected)
+        let auto = app.buttons["text-preference-color-auto"]
+        XCTAssertFalse(auto.isSelected)
+        auto.tap()
+        XCTAssertTrue(auto.isSelected, "Auto is a visible chip and clears the color")
+        XCTAssertFalse(custom.isSelected)
+        let white = app.buttons["White"]
+        reveal(white, app: app)
+        white.tap()
+        XCTAssertTrue(white.isSelected)
+        XCTAssertFalse(auto.isSelected)
+    }
+
+    func testEnlargedPreviewShowsTheSelectedTypeAndClosesWithDone() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        let enlarge = app.buttons["text-preferences-preview-enlarge"]
+        XCTAssertTrue(enlarge.waitForExistence(timeout: 5))
+        enlarge.tap()
+        let done = app.buttons["text-preferences-preview-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["text-preference-sheet-description"].label, "The big opening line in the first seconds.")
+        let large = app.otherElements["text-preferences-preview-large"]
+        XCTAssertTrue(large.exists)
+        XCTAssertGreaterThan(large.frame.width, 280, "The enlarged preview is big enough to read")
+        XCTAssertEqual(large.value as? String, "Title")
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["text-preferences-preview"].exists)
     }
 
     func testTextPreferencesStaleWriteKeepsEditsAndOffersReload() {
@@ -143,10 +235,9 @@ import XCTest
         reveal(manage, app: app)
         manage.tap()
         app.buttons["account-text-preferences"].tap()
-        let shadow = app.buttons["text-preference-shadow"]
+        let shadow = app.segmentedControls["text-preference-shadow"]
         reveal(shadow, app: app)
-        shadow.tap()
-        app.buttons["Off"].tap()
+        shadow.buttons["On"].tap()
         let save = app.buttons["text-preferences-save"]
         reveal(save, app: app)
         save.tap()
@@ -175,15 +266,15 @@ import XCTest
         learn.switches.firstMatch.tap()
         XCTAssertEqual(learn.value as? String, "0")
         XCTAssertFalse(app.staticTexts["Based on 3 finished videos"].exists)
-        let role = app.buttons["text-preference-role"]
-        for _ in 0..<6 where !role.isHittable { app.swipeDown() }
-        reveal(role, app: app); role.tap(); app.buttons["Title"].tap()
+        selectRole("title", app: app)
         let placement = app.buttons["text-preference-placement"]
+        // The form keeps its scroll offset across roles; the learning section left it far below Placement.
+        for _ in 0..<10 where !placement.exists { scrollForm(app, down: true) }
         reveal(placement, app: app)
         XCTAssertTrue(placement.label.contains("Top Left"))
-        let shadow = app.buttons["text-preference-shadow"]
+        let shadow = app.segmentedControls["text-preference-shadow"]
         reveal(shadow, app: app)
-        XCTAssertTrue(shadow.label.contains("Off"))
+        XCTAssertTrue(shadow.buttons["Off"].isSelected)
     }
 
     func testFinishedEditLearningDismissAndResetHistory() {
@@ -198,7 +289,7 @@ import XCTest
         XCTAssertTrue(dismiss.waitForNonExistence(timeout: 5), "Dismiss must finish its asynchronous save and reload")
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["account-text-preferences"].tap()
-        XCTAssertTrue(app.buttons["text-preference-role"].waitForExistence(timeout: 5),
+        XCTAssertTrue(app.buttons["text-preference-role-title"].waitForExistence(timeout: 5),
                       "Loaded preferences must appear before checking persistence")
         XCTAssertFalse(dismiss.exists)
         let reset = app.buttons["text-learning-reset"]
