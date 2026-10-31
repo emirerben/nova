@@ -8,7 +8,9 @@ text, or `starts_fresh` (`start_fresh_updates`), also planned chronologically. P
 
 Forward provenance, stamped when the removal is applied and never inferred afterwards:
 `apply_updates` marks every removed requirement `facts.superseded_by = "creator"` (the default) or
-`"server"` (`removal_provenance="server"`: the simpler version and the automatic omission). The
+`"server"` (its id is in `server_removed_ids`: the simpler version and the automatic omission), so a
+batch mixing both is exact. Removing an already-superseded requirement is allowed and only moves the
+mark up: a creator's removal sets "creator", a server removal never changes an existing mark. The
 worker reads the mark. Anything stored before this change has no mark and reads exactly as #1974
 reads it (disclosed ambiguity: a creator removal stored earlier cannot be told from a waiver, and
 nothing is back-filled).
@@ -21,6 +23,10 @@ Ways this can fail (each pinned below):
  W4 the mark is wrong or missing for some kind of requirement, or alters its other facts.
  W5 a live alternative order (any / random / upload) or a live filming ask changes.
  W7 a later creator withdrawal is read as an earlier waiver (the last word must win).
+ W8 a fresh start does not reach an ask the server (or a legacy store) already waived.
+ W9 a retry changes the result, a server removal overrides a creator's mark, or an unknown id or a
+    change of a superseded requirement stops being refused.
+ W10 a batch that mixes a creator removal and a server omission mislabels one of them.
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ import pytest
 
 from app.kria.brief import (
     BriefUpdate,
+    BriefUpdateBatchError,
     CreativeBrief,
     apply_updates,
     start_fresh_updates,
@@ -96,7 +103,7 @@ def test_w1_start_fresh_is_a_creators_withdrawal() -> None:
 
 
 def test_w2_a_server_waiver_is_marked_server_and_keeps_filming_order() -> None:
-    waived = _remove(_live(), removal_provenance="server")
+    waived = _remove(_live(), server_removed_ids={"r1"})
     assert (_r1(waived).status, _r1(waived).facts[MARK]) == ("superseded", "server")
     assert brief_view(waived).kept_filming_order is True
     assert _plays(waived) == "filming"
@@ -137,9 +144,7 @@ def test_w3_continue_without_a_fixed_order_is_still_a_waiver() -> None:
         ("timing", {"duration_s": 7}),
     ],
 )
-@pytest.mark.parametrize(
-    "who, expected", [(None, "creator"), ("creator", "creator"), ("server", "server")]
-)
+@pytest.mark.parametrize("who, expected", [(None, "creator"), ("server", "server")])
 def test_w4_every_new_removal_is_marked_and_nothing_else_changes(
     kind: str, facts: dict, who: str | None, expected: str
 ) -> None:
@@ -149,7 +154,7 @@ def test_w4_every_new_removal_is_marked_and_nothing_else_changes(
         source_turn_id="t1",
     )
     [req] = prior.requirements
-    kwargs = {} if who is None else {"removal_provenance": who}
+    kwargs = {} if who is None else {"server_removed_ids": {req.id}}
     [out] = _remove(prior, req.id, **kwargs).requirements
     assert out.status == "superseded"
     assert out.facts == {**req.facts, MARK: expected}
@@ -197,7 +202,7 @@ def test_w5_a_live_filming_ask_is_unchanged() -> None:
 
 
 def test_w7_a_creator_withdrawal_after_a_waiver_is_not_a_waiver() -> None:
-    waived = _remove(_live(), removal_provenance="server")
+    waived = _remove(_live(), server_removed_ids={"r1"})
     added = apply_updates(
         waived,
         [
@@ -232,6 +237,113 @@ def test_w7_a_waiver_after_a_creator_withdrawal_is_a_waiver() -> None:
         ],
         source_turn_id="t3",
     )
-    waived = _remove(added, added.requirements[-1].id, removal_provenance="server")
+    new_id = added.requirements[-1].id
+    waived = _remove(added, new_id, server_removed_ids={new_id})
     assert waived.requirements[-1].facts[MARK] == "server"
     assert brief_view(waived).kept_filming_order is True
+
+
+# -- W8: a fresh start reaches what was already waived -----------------------------------------
+
+
+def test_w8_starting_fresh_after_a_server_waiver_withdraws_the_filming_wish() -> None:
+    waived = _remove(_live(), server_removed_ids={"r1"})
+    assert _plays(waived) == "filming"
+    fresh = apply_updates(waived, start_fresh_updates(waived, ()), source_turn_id="t3")
+    assert _r1(fresh).facts[MARK] == "creator"
+    assert _plays(fresh) == "upload"
+
+
+def test_w8_starting_fresh_after_a_legacy_unmarked_drop_withdraws_the_filming_wish() -> None:
+    legacy = _pinned_brief()  # stored by the server's waiver before the mark existed
+    assert MARK not in _r1(legacy).facts and _plays(legacy) == "filming"
+    fresh = apply_updates(legacy, start_fresh_updates(legacy, ()), source_turn_id="t3")
+    assert _r1(fresh).facts[MARK] == "creator"
+    assert _plays(fresh) == "upload"
+
+
+def test_w8_a_fresh_start_leaves_a_live_ask_the_turn_itself_changed() -> None:
+    prior = _live()
+    change = BriefUpdate(
+        operation="change",
+        target_requirement_id="r1",
+        expected_version=prior.version,
+        kind="order",
+        scope="global",
+        description="in the order I added the clips",
+        facts={"key": "attachment"},
+    )
+    fresh = apply_updates(prior, start_fresh_updates(prior, [change]), source_turn_id="t2")
+    assert _r1(fresh).status == "open" and _r1(fresh).facts["key"] == "attachment"
+
+
+# -- W9: retries, and what stays refused ------------------------------------------------------
+
+
+@pytest.mark.parametrize("server", [False, True])
+def test_w9_applying_the_same_removal_twice_changes_nothing(server: bool) -> None:
+    kwargs = {"server_removed_ids": {"r1"}} if server else {}
+    once = _remove(_live(), **kwargs)
+    twice = _remove(once, **kwargs)
+    assert twice.requirements == once.requirements
+
+
+@pytest.mark.parametrize(
+    "start, who, expected",
+    [
+        ("unmarked", "creator", "creator"),
+        ("server", "creator", "creator"),
+        ("creator", "creator", "creator"),
+        ("unmarked", "server", None),
+        ("server", "server", "server"),
+        ("creator", "server", "creator"),
+    ],
+)
+def test_w9_a_removal_only_moves_the_mark_up(start: str, who: str, expected: str | None) -> None:
+    base = _pinned_brief() if start == "unmarked" else _live()
+    if start == "server":
+        base = _remove(base, server_removed_ids={"r1"})
+    elif start == "creator":
+        base = _remove(base)
+    kwargs = {"server_removed_ids": {"r1"}} if who == "server" else {}
+    out = _remove(base, **kwargs)
+    assert _r1(out).status == "superseded"
+    assert _r1(out).facts.get(MARK) == expected
+
+
+def test_w9_an_unknown_requirement_and_a_change_of_a_superseded_one_are_still_refused() -> None:
+    superseded = _remove(_live())
+    with pytest.raises(BriefUpdateBatchError):
+        _remove(superseded, "r999")
+    with pytest.raises(BriefUpdateBatchError):
+        apply_updates(
+            superseded,
+            [
+                BriefUpdate(
+                    operation="change",
+                    target_requirement_id="r1",
+                    expected_version=superseded.version,
+                    kind="order",
+                    scope="global",
+                    description="x",
+                    facts={"key": "attachment"},
+                )
+            ],
+            source_turn_id="t3",
+        )
+
+
+# -- W10: a batch can mix both ----------------------------------------------------------------
+
+
+def test_w10_a_mixed_batch_labels_each_removal_by_its_own_author() -> None:
+    prior = _live()
+    batch = [
+        BriefUpdate(operation="remove", target_requirement_id=rid, expected_version=prior.version)
+        for rid in ("r1", "r6")
+    ]
+    out = apply_updates(prior, batch, source_turn_id="t2", server_removed_ids={"r1"})
+    by_id = {r.id: r for r in out.requirements}
+    assert by_id["r1"].facts[MARK] == "server"  # the server omitted the filming ask
+    assert by_id["r6"].facts[MARK] == "creator"  # the creator withdrew the text ask
+    assert brief_view(out).kept_filming_order is True

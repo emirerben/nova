@@ -11,6 +11,8 @@ Order consumption, separately (that journey leaves out a text requirement, and n
 is reachable as an omission there; nothing here forces a readiness result):
  D3 a filming-order requirement removed by the server's automatic-omission append reloads
     "server" and keeps filming order; removed by a creator turn it reloads "creator" and does not.
+ D4 a fresh start after that stored server waiver is stored "creator" and no longer keeps filming
+    order; replaying the same turn (a retry) stores nothing new.
 """
 
 from __future__ import annotations
@@ -20,7 +22,12 @@ import uuid
 import pytest
 
 from app.database import sync_session
-from app.kria.brief import BriefUpdate, load_latest_brief_sync, persist_brief_version_sync
+from app.kria.brief import (
+    BriefUpdate,
+    load_latest_brief_sync,
+    persist_brief_version_sync,
+    start_fresh_updates,
+)
 from app.pipeline.unified_montage import brief_view
 from app.tasks.kria_runtime import _append_automatic_omissions_sync
 from tests.kria.test_kri968_simpler_version_names_drops_postgres import (  # noqa: F401
@@ -135,3 +142,36 @@ async def test_d3_a_creator_turn_removal_is_stored_creator_and_is_not_kept() -> 
         reloaded = load_latest_brief_sync(db, thread_id)
     assert reloaded.requirements[0].facts[MARK] == "creator"
     assert brief_view(reloaded).kept_filming_order is False
+
+
+@pytest.mark.asyncio
+async def test_d4_a_fresh_start_after_a_stored_waiver_is_creators_and_idempotent() -> None:
+    user_id, thread_id, brief = await _brief_with_a_filming_ask()
+    with sync_session() as db:
+        _append_automatic_omissions_sync(
+            db,
+            thread_id=thread_id,
+            brief=brief,
+            updates=(
+                BriefUpdate(
+                    operation="remove", target_requirement_id="r1", expected_version=brief.version
+                ),
+            ),
+        )
+        db.commit()
+        waived = load_latest_brief_sync(db, thread_id)
+    assert waived.requirements[0].facts[MARK] == "server"
+    assert brief_view(waived).kept_filming_order is True
+
+    turn_id = uuid.UUID((await _submit(user_id, thread_id, "Start over", 3)).turn_id)
+    fresh = start_fresh_updates(waived, ())
+    with sync_session() as db:
+        persist_brief_version_sync(db, thread_id=thread_id, turn_id=turn_id, updates=fresh)
+        db.commit()
+        once = load_latest_brief_sync(db, thread_id)
+        persist_brief_version_sync(db, thread_id=thread_id, turn_id=turn_id, updates=fresh)
+        db.commit()
+        again = load_latest_brief_sync(db, thread_id)
+    assert once.requirements[0].facts[MARK] == "creator"
+    assert brief_view(once).kept_filming_order is False
+    assert (again.version, again.requirements) == (once.version, once.requirements)
