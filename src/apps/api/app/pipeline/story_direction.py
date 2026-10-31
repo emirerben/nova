@@ -218,13 +218,12 @@ def story_media_blocker(strategy: Mapping[str, Any], media: Mapping[str, Any] | 
     plan = (media or {}).get("length_plan")
     if floor is None or not isinstance(plan, Mapping) or plan.get("window_eligible") is not True:
         return None
-    capacity = {
-        str(row.get("media_id")): row.get("duration_s")
-        for row in plan.get("sources") or []
-        if isinstance(row, Mapping)
-    }
+    sources = [row for row in plan.get("sources") or [] if isinstance(row, Mapping)]
+    capacity = {str(row.get("media_id")): row.get("duration_s") for row in sources}
+    stills = {str(row.get("media_id")) for row in sources if row.get("kind") == "image"}
     for window in plan.get("windows") or []:
-        if not isinstance(window, Mapping):
+        # A photo keeps its own hold; the story floor is a video-clip rule.
+        if not isinstance(window, Mapping) or str(window.get("media_id")) in stills:
             continue
         held = float(window.get("source_end_s", 0)) - float(window.get("source_start_s", 0))
         source = capacity.get(str(window.get("media_id")))

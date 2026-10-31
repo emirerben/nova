@@ -17,7 +17,12 @@ from app.config import settings
 from app.kria.brief import BriefRequirement, CreativeBrief
 from app.kria.route_disclosure import UNIFIED_MONTAGE, card_disclosures
 from app.pipeline.guided_story import compile_proposal_execution_plan
-from app.pipeline.story_direction import says_fallback, story_blocker, story_floor_for
+from app.pipeline.story_direction import (
+    says_fallback,
+    story_blocker,
+    story_floor_for,
+    story_media_blocker,
+)
 from app.pipeline.unified_montage import BriefView, UnifiedClip, brief_view, plan_unified_montage
 from app.schemas.edit_proposal import EditProposalSnapshot
 from app.services.creation_text_composition import (
@@ -270,6 +275,23 @@ def test_placeholders_the_text_step_did_not_replace_are_dropped_once_it_wrote_te
     untouched = with_ops([{"op": "remove_text", "bar_index": 1}])
     assert _drop_unused_story_seeds(untouched) is untouched
     assert len(compile_proposal_execution_plan(untouched)["text_elements"]) == 2
+
+
+def test_a_plain_photo_in_the_pinned_plan_does_not_make_the_card_promise_a_fast_montage() -> None:
+    media = _media(5)
+    media["clip_assignments"].append(
+        {"media_id": "p0", "gcs_path": "p0.jpg", "generation": "1", "kind": "image"}
+    )
+    approved = build_length_plan(STRATEGY, media, story_floor_s=story_hold_floor_s(STRATEGY))
+    photo = next(w for w in approved["windows"] if w["media_id"] == "p0")
+    # Premise: a photo keeps its own ~1.2 s hold, shorter than the story floor by design.
+    assert photo["source_end_s"] - photo["source_start_s"] < story_hold_floor_s(STRATEGY)
+    assert story_media_blocker(STRATEGY, {"length_plan": approved}) is None
+    # A video window held below the floor still names the fallback.
+    short = {**approved, "windows": [dict(w) for w in approved["windows"]]}
+    video = next(w for w in short["windows"] if w["media_id"] == "c0")
+    video["source_end_s"] = video["source_start_s"] + 1.0
+    assert story_media_blocker(STRATEGY, {"length_plan": short}) == "holds_do_not_fit"
 
 
 def test_the_card_names_a_fast_montage_fallback_before_approval() -> None:
