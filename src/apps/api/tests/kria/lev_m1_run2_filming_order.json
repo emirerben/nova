@@ -1,0 +1,1568 @@
+{
+ "source": {
+  "bug": "Leverkusen M1 run 2 #2 (KRI-1080)",
+  "thread": "1a2189cc-a212-424f-8486-e721e4e483b3",
+  "plan_item": "6f4f30ae-2bbe-4485-b7e8-b6721e2db0e2",
+  "job": "93f662a7-8994-4b25-8c0d-9c7f1a59389f",
+  "server": "Fly eed794157, TestFlight 1819 (protocol 25), 2026-10-30 18:35-18:47Z",
+  "prompt": "... Put everything in the order I filmed it, starting with the train ride. ...",
+  "recorded": [
+   "brief_v1: the job's bound brief with r1/r5 back at their turn-1 state; its digest is the turns' brief_digest cc520ab853826e4f2318f3f4793aa1422f005bb25d9105b79d2fc9575dd4293a",
+   "media_snapshot: the snapshot approval pinned (job 93f662a7); its media_identity digest is the turns' media_digest 05158ee42d6d8e21fe212aa0b3a5027d009368dbeb9f3edffef272a208810fc6 before scrubbing (account id in paths replaced, capture places dropped)",
+   "strategy: the approved draft's creator_strategy (turn 5, rationale dropped)",
+   "turn 2 r1: needs_choice 'The order inside this saved group wasn't recorded. ...'; turn 3 r1 (after 'any order inside the train group is fine'): evidence_missing 'I can't confirm this draft does it yet.' / receipt 'I can't confirm the order this draft uses.'"
+  ],
+  "reconstructed": [
+   "train_group: Main Creator / clip-intent I/O is redacted. The turn-1 skip picker left out exactly IMG_0995, IMG_1001 and IMG_1002 (the clips 'starting with the train ride' pinned) and turn 2 carried those matches (clip_intent_matches_carried carried=2 skipped_resolver=True), so the first group is those three with no ordered_members; turn 3 is the same group answered (ordered_members false)."
+  ]
+ },
+ "brief_v1": {
+  "version": 1,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Put everything in the order I filmed it",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it all vertical, no black bars",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r3",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip the photo of the empty train seat, and use only one of the two photos of the view from our box",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Keep the sound only on the train clip with the announcement and mute everything else",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r5",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 25
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 25 seconds",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Pokalnacht in Leverkusen 🔴⚫",
+    "description": null,
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "everything",
+    "intent_id": "order_capture_time_all"
+   },
+   {
+    "op": "include",
+    "attribute": "one of the two photos of the view from our box",
+    "intent_id": "include_one_view_photo"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [
+    "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4"
+   ],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Pokalnacht in Leverkusen 🔴⚫",
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Train journey with the next stop announcement",
+   "Team lineup and view from the VIP box",
+   "Match action and crowd celebrations"
+  ],
+  "target_duration_s": 25,
+  "creator_duration_s": 25,
+  "selected_media_ids": [
+   "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+   "asset-285921bd-b096-40a0-80b7-94733264c81b",
+   "asset-a5a3072b-1061-41d9-91d1-1e956ccdf38d",
+   "asset-f15de426-ab46-4604-9217-589ea3357ec3",
+   "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+   "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+   "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+   "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+   "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+   "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+   "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "everything",
+    "intent_id": "order_capture_time_all",
+    "assignments": [
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-285921bd-b096-40a0-80b7-94733264c81b",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-f15de426-ab46-4604-9217-589ea3357ec3",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-a5a3072b-1061-41d9-91d1-1e956ccdf38d",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-3f1c6135-32db-4f0d-94da-b763893d867b",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-f00148fa-f787-449f-9b65-415da83baad6",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "one of the two photos of the view from our box",
+    "intent_id": "include_one_view_photo",
+    "assignments": [
+     {
+      "evidence": "A wide shot from inside a stadium luxury box, featuring red spectator seats in the foreground, a brightly lit green football field",
+      "media_id": "asset-f00148fa-f787-449f-9b65-415da83baad6",
+      "confidence": 0.9
+     }
+    ]
+   }
+  ],
+  "selected_music_section": null,
+  "target_duration_requested": true
+ },
+ "train_group": {
+  "op": "order",
+  "position": "first",
+  "status": "resolved",
+  "attribute": "the train ride",
+  "intent_id": "order_train_ride_first",
+  "assignments": [
+   {
+    "media_id": "asset-285921bd-b096-40a0-80b7-94733264c81b",
+    "confidence": 0.9,
+    "evidence": "train display photo"
+   },
+   {
+    "media_id": "asset-3f1c6135-32db-4f0d-94da-b763893d867b",
+    "confidence": 0.9,
+    "evidence": "train seat photo"
+   },
+   {
+    "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+    "confidence": 0.9,
+    "evidence": "train announcement"
+   }
+  ]
+ },
+ "media_snapshot": {
+  "clip_paths": [
+   "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+   "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+   "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+   "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+   "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+   "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+   "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+   "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4"
+  ],
+  "clip_assignments": [
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T19:49:47Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "football stadium crowd",
+     "exposure": {
+      "frames": 9,
+      "version": 1,
+      "mean_luma": 104.7,
+      "near_black_share": 0.0
+     },
+     "duration_s": 8.533333,
+     "transcript": "",
+     "description": "crowd cheers loudly, waving flags fans continue chanting with flags waving",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 4.0,
+       "energy": 7.0,
+       "start_s": 0.0,
+       "description": "crowd cheers loudly, waving flags"
+      },
+      {
+       "end_s": 8.0,
+       "energy": 7.5,
+       "start_s": 4.5,
+       "description": "fans continue chanting with flags waving"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "large banner with text 'UNSER VEREIN SEIT 1900'",
+       "red and black flags"
+      ],
+      "brands": [],
+      "people": {
+       "note": "a large crowd of football fans wearing red and dark clothing",
+       "count": null,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "fans cheer",
+       "fans wave flags"
+      ],
+      "setting": "inside a football stadium during a match",
+      "subject": "football stadium crowd",
+      "summary": "A large crowd of football fans inside a stadium cheers and waves flags, with a prominent banner visible. Red lights illuminate parts of the stadium ceiling.",
+      "activity": "football fans cheering and waving flags",
+      "audio_type": "ambient",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady with foreground obstruction",
+      "notable_moments": [
+       {
+        "end_s": 4.0,
+        "start_s": 0.0,
+        "description": "crowd cheers loudly, waving flags"
+       },
+       {
+        "end_s": 8.0,
+        "start_s": 4.5,
+        "description": "fans continue chanting with flags waving"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+    "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+    "has_audio": true,
+    "duration_s": 8.533333,
+    "source_filename": "C7AB2961-0C69-4925-9F9F-6D529B0257C4-IMG_1036.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "fbedb1c35b3a85c62776f9c1aa37176716963f8a3e0df67278e71ced2710585f",
+       "has_audio": true,
+       "byte_count": 16378394,
+       "duration_s": 8.533333333333333,
+       "orientation_degrees": 90
+      },
+      "duration_s": 8.533333333333333,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "b4ae3c67-b8dd-41f4-966f-f08f7fa3ed01",
+    "library_source_id": "52a82810-8f17-4b67-899a-0a26048287d4",
+    "manifest_identity": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+    "storage_generation": "1793385165153027"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T19:33:14Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "stadium crowd and football pitch",
+     "exposure": {
+      "frames": 9,
+      "version": 1,
+      "mean_luma": 120.6,
+      "near_black_share": 0.0
+     },
+     "duration_s": 8.066667,
+     "transcript": "",
+     "description": "wide shot of football pitch and stadium lights crowd cheers with flags waving",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 1.5,
+       "energy": 6.0,
+       "start_s": 0.0,
+       "description": "wide shot of football pitch and stadium lights"
+      },
+      {
+       "end_s": 7.5,
+       "energy": 8.0,
+       "start_s": 5.0,
+       "description": "crowd cheers with flags waving"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "red and black flags",
+       "stadium banners"
+      ],
+      "brands": [
+       "Zalando",
+       "BASF",
+       "Bayer 04 Leverkusen"
+      ],
+      "people": {
+       "note": "large crowd of fans in the stadium stands",
+       "count": null,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "camera pans across the stadium",
+       "fans cheer and wave flags"
+      ],
+      "setting": "indoor football stadium at night",
+      "subject": "stadium crowd and football pitch",
+      "summary": "The video shows a wide view of a football stadium, panning from the empty pitch to a section of the stands filled with cheering fans, some waving flags and banners. The stadium lights are on, and the atmosphere is lively.",
+      "activity": "fans cheering and waving flags in a football stadium",
+      "audio_type": "mixed",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady pan",
+      "notable_moments": [
+       {
+        "end_s": 1.5,
+        "start_s": 0.0,
+        "description": "wide shot of football pitch and stadium lights"
+       },
+       {
+        "end_s": 7.5,
+        "start_s": 5.0,
+        "description": "crowd cheers with flags waving"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+    "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+    "has_audio": true,
+    "duration_s": 8.066667,
+    "source_filename": "720F05E2-D829-4B33-AABD-63BB77FC7C20-IMG_1027.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "4a546b3edbe9a0ec857e8b14929c02ec01ff7e7fb9286875b14af37ec9d9aa60",
+       "has_audio": true,
+       "byte_count": 15397369,
+       "duration_s": 8.035,
+       "orientation_degrees": 90
+      },
+      "duration_s": 8.066666666666666,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "ba3ee192-800b-4f04-8b1c-d9f6a0afc7b7",
+    "library_source_id": "12bf91d9-1fa2-41c8-a846-54dae3a2c91b",
+    "manifest_identity": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+    "storage_generation": "1793385167689790"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T20:25:46Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "soccer match in a stadium",
+     "exposure": {
+      "frames": 11,
+      "version": 1,
+      "mean_luma": 111.7,
+      "near_black_share": 0.0
+     },
+     "duration_s": 9.866667,
+     "transcript": "",
+     "description": "",
+     "video_codec": "h264",
+     "best_moments": [],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "brands": [],
+      "people": {
+       "note": "crowd in the stadium and a young man in the stands",
+       "count": null,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "soccer players play on the field",
+       "young man turns to camera",
+       "young man waves a scarf enthusiastically"
+      ],
+      "setting": "indoor soccer stadium during a night match",
+      "subject": "soccer match in a stadium",
+      "summary": "The video shows a soccer match in progress from an elevated perspective in a stadium. A young man in the stands turns to the camera, waves a scarf, and cheers enthusiastically.",
+      "activity": "watching a soccer match and cheering",
+      "audio_type": "music",
+      "content_type": "action",
+      "on_screen_text": "",
+      "visual_quality": "shaky handheld, stays sharp",
+      "notable_moments": []
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+    "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+    "has_audio": true,
+    "duration_s": 9.866667,
+    "source_filename": "3157446D-62BE-4743-83FD-F6B00EA67968-IMG_1037.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "d838faf6b0495b61e2d482733061374f88f5790fcbc9293e74ea118879bab7dc",
+       "has_audio": true,
+       "byte_count": 18712920,
+       "duration_s": 9.836666666666666,
+       "orientation_degrees": 90
+      },
+      "duration_s": 9.866666666666667,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "529d6461-d927-4bfc-a72f-6d9b4dc0c255",
+    "library_source_id": "843aa9fe-21f7-407d-9257-a571c024b6bf",
+    "manifest_identity": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+    "storage_generation": "1793385171537916"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T19:16:50Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "football players on pitch",
+     "exposure": {
+      "frames": 13,
+      "version": 1,
+      "mean_luma": 125.0,
+      "near_black_share": 0.0
+     },
+     "duration_s": 6.533333,
+     "transcript": "250. 250.",
+     "description": "players standing on field during warm-up player bending over a ball on the pitch football players moving across the field",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 3.0,
+       "energy": 4.0,
+       "start_s": 0.0,
+       "description": "players standing on field during warm-up"
+      },
+      {
+       "end_s": 6.0,
+       "energy": 5.0,
+       "start_s": 3.0,
+       "description": "player bending over a ball on the pitch"
+      },
+      {
+       "end_s": 9.0,
+       "energy": 4.0,
+       "start_s": 6.0,
+       "description": "football players moving across the field"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "green football pitch",
+       "white football",
+       "football goal",
+       "stadium seating",
+       "advertising boards"
+      ],
+      "brands": [
+       "Bayer 04",
+       "ZALANDO",
+       "WIESENHOF",
+       "ERGO",
+       "bwin"
+      ],
+      "people": {
+       "note": "several football players and a large crowd of spectators",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": true,
+       "transcript": "250. 250."
+      },
+      "actions": [
+       "players standing on field",
+       "player bending over ball",
+       "players moving around field"
+      ],
+      "setting": "football stadium",
+      "subject": "football players on pitch",
+      "summary": "The clip shows a wide view of a football stadium with players on the green pitch, some standing and others engaged in light activity. Spectators fill the stands in the background, and stadium lights illuminate the scene.",
+      "activity": "football players training or warming up",
+      "audio_type": "ambient",
+      "content_type": "action",
+      "on_screen_text": "",
+      "visual_quality": "shaky handheld, slightly blurry",
+      "notable_moments": [
+       {
+        "end_s": 3.0,
+        "start_s": 0.0,
+        "description": "players standing on field during warm-up"
+       },
+       {
+        "end_s": 6.0,
+        "start_s": 3.0,
+        "description": "player bending over a ball on the pitch"
+       },
+       {
+        "end_s": 9.0,
+        "start_s": 6.0,
+        "description": "football players moving across the field"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "250. 250.",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+    "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+    "has_audio": true,
+    "duration_s": 6.533333,
+    "source_filename": "24700921-4177-44FB-8A7A-65B963645CE3-IMG_1026.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "c800fd4afba9eb447b234e97cb3d41af4495fa0618c84c8fbf722e88b874b81b",
+       "has_audio": true,
+       "byte_count": 12583441,
+       "duration_s": 6.501666666666667,
+       "orientation_degrees": 90
+      },
+      "duration_s": 6.533333333333333,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "c4408ec9-70ad-4c3d-817f-aeb220faa9b1",
+    "library_source_id": "a35a1641-c0f4-4368-98ed-b23caf9de0ba",
+    "manifest_identity": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+    "storage_generation": "1793385173232944"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T21:47:37Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "football stadium crowd and players",
+     "exposure": {
+      "frames": 8,
+      "version": 1,
+      "mean_luma": 113.3,
+      "near_black_share": 0.0
+     },
+     "duration_s": 7.5,
+     "transcript": "",
+     "description": "crowd cheers loudly and waves flags players huddle on the pitch fans continue waving flags from stands",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 5.0,
+       "energy": 7.0,
+       "start_s": 0.0,
+       "description": "crowd cheers loudly and waves flags"
+      },
+      {
+       "end_s": 7.0,
+       "energy": 6.0,
+       "start_s": 5.0,
+       "description": "players huddle on the pitch"
+      },
+      {
+       "end_s": 9.0,
+       "energy": 6.5,
+       "start_s": 7.0,
+       "description": "fans continue waving flags from stands"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "red stadium seats",
+       "white and red flags",
+       "green football pitch",
+       "white football goal net",
+       "black stadium banner with 'SEIT 1900'",
+       "orange safety vests"
+      ],
+      "brands": [],
+      "people": {
+       "note": "large crowd of fans in the stands, multiple football players on the field, security personnel around the pitch",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "fans cheering and moving arms",
+       "fans waving flags",
+       "football players huddling on the pitch"
+      ],
+      "setting": "football stadium",
+      "subject": "football stadium crowd and players",
+      "summary": "The video shows a wide view of a football stadium during what appears to be a match or event. Fans in the stands are cheering and waving flags, while players are gathered on the field. A large banner with \"SEIT 1900\" is visible in the stands.",
+      "activity": "fans cheering and waving flags, football players gathering on the pitch",
+      "audio_type": "ambient",
+      "content_type": "action",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": [
+       {
+        "end_s": 5.0,
+        "start_s": 0.0,
+        "description": "crowd cheers loudly and waves flags"
+       },
+       {
+        "end_s": 7.0,
+        "start_s": 5.0,
+        "description": "players huddle on the pitch"
+       },
+       {
+        "end_s": 9.0,
+        "start_s": 7.0,
+        "description": "fans continue waving flags from stands"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+    "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+    "has_audio": true,
+    "duration_s": 7.5,
+    "source_filename": "A30CAA8D-C078-4129-B11D-AFF0AD924696-IMG_1043.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "1d19566cf509922f4f522ebcb903a08521b75e69d7b5b060b5931daa66b32343",
+       "has_audio": true,
+       "byte_count": 14469063,
+       "duration_s": 7.5,
+       "orientation_degrees": 90
+      },
+      "duration_s": 7.5,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "7f37a705-6686-4cf8-872b-ca51e8757b7c",
+    "library_source_id": "1ad778ab-3859-4173-97b1-c6680bb55fb6",
+    "manifest_identity": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+    "storage_generation": "1793385177218231"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T19:36:41Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "football stadium crowd",
+     "exposure": {
+      "frames": 12,
+      "version": 1,
+      "mean_luma": 89.0,
+      "near_black_share": 0.0
+     },
+     "duration_s": 11.066667,
+     "transcript": "Mit der Nummer 28, Janis. Mit der Nummer 2 spielt Facundo.",
+     "description": "announcer calls out player number 28 to a cheering crowd crowd cheers loudly as stadium lights flash red announcer calls out player number 2, Facundo crowd cheers as stadium lights flash red and white",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 3.0,
+       "energy": 6.0,
+       "start_s": 0.0,
+       "description": "announcer calls out player number 28 to a cheering crowd"
+      },
+      {
+       "end_s": 6.2,
+       "energy": 7.0,
+       "start_s": 3.7,
+       "description": "crowd cheers loudly as stadium lights flash red"
+      },
+      {
+       "end_s": 10.0,
+       "energy": 6.0,
+       "start_s": 7.2,
+       "description": "announcer calls out player number 2, Facundo"
+      },
+      {
+       "end_s": 11.5,
+       "energy": 6.0,
+       "start_s": 10.5,
+       "description": "crowd cheers as stadium lights flash red and white"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "large green football pitch",
+       "stadium seating areas",
+       "red stadium lights",
+       "large video screen"
+      ],
+      "brands": [],
+      "people": {
+       "note": "large crowd of spectators in a stadium",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "language": "hawaiian",
+       "segments": [
+        {
+         "text": "Der Torhüter Nr.",
+         "end_s": 2.36,
+         "start_s": 0.0
+        },
+        {
+         "text": "28 Jannis",
+         "end_s": 4.96,
+         "start_s": 2.66
+        },
+        {
+         "text": "Mit der Nr.",
+         "end_s": 7.42,
+         "start_s": 5.82
+        },
+        {
+         "text": "2 spielt Fakulto",
+         "end_s": 9.48,
+         "start_s": 7.42
+        }
+       ],
+       "to_camera": false,
+       "has_speech": true,
+       "transcript": "Mit der Nummer 28, Janis. Mit der Nummer 2 spielt Facundo."
+      },
+      "actions": [
+       "stadium lights illuminate pitch",
+       "crowd cheers in response to announcer"
+      ],
+      "setting": "football stadium at night",
+      "subject": "football stadium crowd",
+      "summary": "The video shows a wide view of a football stadium at night, with the pitch illuminated and red lights in the stands. An announcer is heard calling out player names and numbers, while the crowd cheers. The camera pans slightly, showing the atmosphere inside the stadium.",
+      "activity": "attending a football match",
+      "audio_type": "mixed",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady, slight pan",
+      "notable_moments": [
+       {
+        "end_s": 3.0,
+        "start_s": 0.0,
+        "description": "announcer calls out player number 28 to a cheering crowd"
+       },
+       {
+        "end_s": 6.2,
+        "start_s": 3.7,
+        "description": "crowd cheers loudly as stadium lights flash red"
+       },
+       {
+        "end_s": 10.0,
+        "start_s": 7.2,
+        "description": "announcer calls out player number 2, Facundo"
+       },
+       {
+        "end_s": 11.5,
+        "start_s": 10.5,
+        "description": "crowd cheers as stadium lights flash red and white"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "Mit der Nummer 28, Janis. Mit der Nummer 2 spielt Facundo.",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+    "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+    "has_audio": true,
+    "duration_s": 11.066667,
+    "source_filename": "8F6B9C85-4824-4A02-B8D8-C66D9B661DC8-IMG_1028.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "2a8bc07f26b13a0d1f1199753204317c7bb7a84b64978c0656afbe1c59378ed5",
+       "has_audio": true,
+       "byte_count": 21360586,
+       "duration_s": 11.035,
+       "orientation_degrees": 90
+      },
+      "duration_s": 11.066666666666666,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "06e9e3f6-762f-402b-8138-02e79c327e70",
+    "library_source_id": "ab9b0e6a-6d30-4529-b56a-97ce75f44b52",
+    "manifest_identity": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+    "storage_generation": "1793385179190036"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T17:42:36Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "train interior with passenger reflection",
+     "exposure": {
+      "frames": 9,
+      "version": 1,
+      "mean_luma": 86.7,
+      "near_black_share": 0.0
+     },
+     "duration_s": 7.866667,
+     "transcript": "Hauptbahnhof. Nächster Halt, Leverkusen Mitte.",
+     "description": "train interior window view train moving past lights pan to train cabin interior",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 1.7,
+       "energy": 3.0,
+       "start_s": 0.0,
+       "description": "train interior window view"
+      },
+      {
+       "end_s": 4.5,
+       "energy": 4.0,
+       "start_s": 2.5,
+       "description": "train moving past lights"
+      },
+      {
+       "end_s": 8.0,
+       "energy": 3.0,
+       "start_s": 6.0,
+       "description": "pan to train cabin interior"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "white train seats"
+      ],
+      "brands": [],
+      "people": {
+       "note": "passengers in a train, one reflected in window holding a phone",
+       "count": 3,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "language": "de",
+       "segments": [
+        {
+         "text": "Aachen Hauptbahnhof.",
+         "end_s": 1.34,
+         "start_s": 0.0
+        },
+        {
+         "text": "Nächster Halt Leverkurve Mitte.",
+         "end_s": 4.3,
+         "start_s": 2.22
+        }
+       ],
+       "to_camera": false,
+       "has_speech": true,
+       "transcript": "Hauptbahnhof. Nächster Halt, Leverkusen Mitte."
+      },
+      "setting": "train interior at night",
+      "subject": "train interior with passenger reflection",
+      "summary": "The video shows the interior of a train, primarily focusing on a window reflecting a passenger holding a phone. An announcement for the next stop, Leverkusen Mitte, is heard.",
+      "activity": "traveling by train",
+      "audio_type": "dialogue",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "shaky handheld",
+      "notable_moments": [
+       {
+        "end_s": 1.7,
+        "start_s": 0.0,
+        "description": "train interior window view"
+       },
+       {
+        "end_s": 4.5,
+        "start_s": 2.5,
+        "description": "train moving past lights"
+       },
+       {
+        "end_s": 8.0,
+        "start_s": 6.0,
+        "description": "pan to train cabin interior"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "Hauptbahnhof. Nächster Halt, Leverkusen Mitte.",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+    "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+    "has_audio": true,
+    "duration_s": 7.866667,
+    "source_filename": "3D11BC34-5D64-437C-AE1D-0CEF0C24775E-IMG_1002.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "d8ed7e9f0a7bb90e80ec095264ae6ebc6f1b1456125279856317f07255cd98ba",
+       "has_audio": true,
+       "byte_count": 12517648,
+       "duration_s": 7.835,
+       "orientation_degrees": 90
+      },
+      "duration_s": 7.866666666666666,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "bccee686-8533-4090-8c06-d1f3b1f5f639",
+    "library_source_id": "901b155f-ea08-4914-aab9-372b7d29bc7c",
+    "manifest_identity": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+    "storage_generation": "1793385181600028"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T21:35:40Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "stadium crowd",
+     "exposure": {
+      "frames": 20,
+      "version": 1,
+      "mean_luma": 115.9,
+      "near_black_share": 0.0
+     },
+     "duration_s": 18.333333,
+     "transcript": "",
+     "description": "fans cheer and wave scarves camera pans to stadium interior crowd celebrates a goal man enthusiastically waves scarf wide shot of stadium crowd",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 1.9,
+       "energy": 7.5,
+       "start_s": 0.0,
+       "description": "fans cheer and wave scarves"
+      },
+      {
+       "end_s": 5.4,
+       "energy": 6.0,
+       "start_s": 2.2,
+       "description": "camera pans to stadium interior"
+      },
+      {
+       "end_s": 10.4,
+       "energy": 8.0,
+       "start_s": 6.8,
+       "description": "crowd celebrates a goal"
+      },
+      {
+       "end_s": 13.9,
+       "energy": 9.0,
+       "start_s": 11.2,
+       "description": "man enthusiastically waves scarf"
+      },
+      {
+       "end_s": 18.9,
+       "energy": 7.0,
+       "start_s": 14.5,
+       "description": "wide shot of stadium crowd"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "red stadium seats",
+       "black and white football scarf"
+      ],
+      "brands": [],
+      "people": {
+       "note": "a diverse crowd of fans, including adults and children",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "people cheer loudly",
+       "people wave scarves in the air",
+       "camera pans across the stadium",
+       "people celebrate a goal"
+      ],
+      "setting": "indoor football stadium suite and stands at night",
+      "subject": "stadium crowd",
+      "summary": "A group of fans in a stadium suite celebrate while watching a football match. The camera shows them cheering and waving scarves, then pans across the large, lively stadium and the football pitch.",
+      "activity": "fans cheering and watching a football match",
+      "audio_type": "ambient",
+      "content_type": "action",
+      "on_screen_text": "",
+      "visual_quality": "shaky handheld, stays sharp",
+      "notable_moments": [
+       {
+        "end_s": 1.9,
+        "start_s": 0.0,
+        "description": "fans cheer and wave scarves"
+       },
+       {
+        "end_s": 5.4,
+        "start_s": 2.2,
+        "description": "camera pans to stadium interior"
+       },
+       {
+        "end_s": 10.4,
+        "start_s": 6.8,
+        "description": "crowd celebrates a goal"
+       },
+       {
+        "end_s": 13.9,
+        "start_s": 11.2,
+        "description": "man enthusiastically waves scarf"
+       },
+       {
+        "end_s": 18.9,
+        "start_s": 14.5,
+        "description": "wide shot of stadium crowd"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+    "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+    "has_audio": true,
+    "duration_s": 18.333333,
+    "source_filename": "D14CEBE2-DAC5-42B2-975E-F454A6B6A619-IMG_1039.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "a573b8d51b0542c6bccf1059326647b72c54760975332b21d54bfabc2c144678",
+       "has_audio": true,
+       "byte_count": 34943164,
+       "duration_s": 18.30666666666667,
+       "orientation_degrees": 90
+      },
+      "duration_s": 18.333333333333332,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "04dee6e7-0a87-466d-a51b-a79b21d9531f",
+    "library_source_id": "800fbaff-8713-4b5d-a2f5-2abe4e16dfb5",
+    "manifest_identity": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+    "storage_generation": "1793385194279909"
+   }
+  ],
+  "visuals": [
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-28T17:34:31Z"
+    },
+    "media_id": "asset-285921bd-b096-40a0-80b7-94733264c81b",
+    "source_filename": "EAFAAE5C-9CA0-43BE-B002-23E069C8A973-IMG_0995.jpeg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-28T18:52:22Z"
+    },
+    "media_id": "asset-f15de426-ab46-4604-9217-589ea3357ec3",
+    "source_filename": "6D59B32B-2562-4A07-AC6E-D6E032934AC0-IMG_1019.jpeg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-28T20:33:20Z"
+    },
+    "media_id": "asset-a5a3072b-1061-41d9-91d1-1e956ccdf38d",
+    "source_filename": "4CD5216F-C415-407F-8086-4A739E352B92-IMG_1038.jpeg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-28T17:35:12Z"
+    },
+    "media_id": "asset-3f1c6135-32db-4f0d-94da-b763893d867b",
+    "source_filename": "73887973-1083-4462-9671-2A7783D417D0-IMG_1001.jpeg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-28T18:52:13Z"
+    },
+    "media_id": "asset-f00148fa-f787-449f-9b65-415da83baad6",
+    "source_filename": "7412C16A-90F3-49D6-A551-D61974F6812F-IMG_1017.jpeg"
+   }
+  ],
+  "length_plan": {
+   "owner": "creator",
+   "sources": [
+    {
+     "kind": "video",
+     "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+     "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+     "duration_s": 8.533333333333333,
+     "generation": null,
+     "storage_generation": "1793385165153027"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+     "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+     "duration_s": 8.035,
+     "generation": null,
+     "storage_generation": "1793385167689790"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+     "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+     "duration_s": 9.836666666666666,
+     "generation": null,
+     "storage_generation": "1793385171537916"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+     "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+     "duration_s": 6.501666666666667,
+     "generation": null,
+     "storage_generation": "1793385173232944"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+     "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+     "duration_s": 7.5,
+     "generation": null,
+     "storage_generation": "1793385177218231"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+     "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+     "duration_s": 11.035,
+     "generation": null,
+     "storage_generation": "1793385179190036"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+     "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+     "duration_s": 7.835,
+     "generation": null,
+     "storage_generation": "1793385181600028"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/u-leverkusen/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+     "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+     "duration_s": 18.30666666666667,
+     "generation": null,
+     "storage_generation": "1793385194279909"
+    }
+   ],
+   "version": 1,
+   "windows": [
+    {
+     "score": 7.5,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+     "source_end_s": 6.7,
+     "source_start_s": 4.5
+    },
+    {
+     "score": 8.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+     "source_end_s": 7.2,
+     "source_start_s": 5.0
+    },
+    {
+     "score": 0.0,
+     "reason": "analysis_fallback",
+     "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+     "source_end_s": 2.2,
+     "source_start_s": 0.0
+    },
+    {
+     "score": 5.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+     "source_end_s": 5.2,
+     "source_start_s": 3.0
+    },
+    {
+     "score": 7.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+     "source_end_s": 2.2,
+     "source_start_s": 0.0
+    },
+    {
+     "score": 7.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+     "source_end_s": 5.9,
+     "source_start_s": 3.7
+    },
+    {
+     "score": 4.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+     "source_end_s": 4.5,
+     "source_start_s": 2.5
+    },
+    {
+     "score": 9.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+     "source_end_s": 13.4,
+     "source_start_s": 11.2
+    }
+   ],
+   "conflicts": [],
+   "capacity_s": 31.037,
+   "natural_owner": "footage",
+   "capacity_raw_s": 77.583,
+   "window_eligible": true,
+   "max_source_count": 80,
+   "target_duration_s": 17.4,
+   "natural_duration_s": null
+  },
+  "best_parts": [
+   {
+    "score": 7.5,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+    "source_end_s": 6.7,
+    "source_start_s": 4.5
+   },
+   {
+    "score": 8.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+    "source_end_s": 7.2,
+    "source_start_s": 5.0
+   },
+   {
+    "score": 0.0,
+    "reason": "analysis_fallback",
+    "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+    "source_end_s": 2.2,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 5.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+    "source_end_s": 5.2,
+    "source_start_s": 3.0
+   },
+   {
+    "score": 7.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+    "source_end_s": 2.2,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 7.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+    "source_end_s": 5.9,
+    "source_start_s": 3.7
+   },
+   {
+    "score": 4.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+    "source_end_s": 4.5,
+    "source_start_s": 2.5
+   },
+   {
+    "score": 9.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+    "source_end_s": 13.4,
+    "source_start_s": 11.2
+   }
+  ],
+  "best_parts_conflicts": [],
+  "best_parts_capacity_s": 31.037
+ }
+}

@@ -513,6 +513,8 @@ def _enrich_best_parts_snapshot(
             kept_lines=kept,
             still_holds=still_holds,
             attached_visual_ids=attached_visual_ids,
+            # The Visuals play beside the windows whether or not they fit inside the total.
+            visual_budget_s=budget.total_s,
             pinned_moments=(
                 [pin.json() for pin in moment_pins.pins] if moment_pins is not None else None
             ),
@@ -1061,9 +1063,10 @@ def brief_order_fields(
 
     29 Ekim: a random-order ask rides the strategy as its own choice; the seed itself stays
     on the requirement so every re-run draws the same permutation. A creator's answer to an
-    order question (``ordering_choice``) is never replaced. Under that ask a described group
-    with no stated inner order takes it as its inner order (`confirm_unordered_groups`), so
-    the draft never asks the creator to order a group they asked to have shuffled.
+    order question (``ordering_choice``) is never replaced. Under that ask, or a filming-order
+    one, a described group with no stated inner order takes it as its inner order
+    (`confirm_unordered_groups`), so the draft never asks the creator to order a group they
+    asked to have shuffled or kept in filming order.
     """
     from app.services.order_mode import confirm_unordered_groups  # noqa: PLC0415
 

@@ -731,7 +731,7 @@
     {
       "id": "kri-761-look-alike-exclusions",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py",
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py tests/kria/test_lev_m1_skip_inside_first_group.py",
       "paths": [
         "src/apps/api/app/kria/clip_exclusions.py",
         "src/apps/api/app/services/too_short_clips.py",
@@ -741,7 +741,10 @@
         "src/apps/api/tests/fixtures/kri807_don_julio_m1_clips.json",
         "src/apps/api/tests/fixtures/kri991_donjulio_lunch_m2_clips.json",
         "src/apps/api/tests/kria/test_kri807_unmatched_exclusion_picker.py",
-        "src/apps/api/tests/kria/test_kri991_picker_suggestions.py"
+        "src/apps/api/tests/kria/test_kri991_picker_suggestions.py",
+        "src/apps/api/app/kria/clip_scope.py",
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_skip_picker.json",
+        "src/apps/api/tests/kria/test_lev_m1_skip_inside_first_group.py"
       ]
     },
     {
@@ -1349,7 +1352,7 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/planner.py",
@@ -1365,7 +1368,9 @@
         "src/apps/api/prompts/brief_extractor.txt",
         "src/apps/api/tests/kria/test_natural_delegation_readiness_postgres.py",
         "src/apps/api/tests/kria/test_kri983_lipsync_song_journey.py",
-        "src/apps/api/tests/fixtures/kri983_lipsync_song_turns.json"
+        "src/apps/api/tests/fixtures/kri983_lipsync_song_turns.json",
+        "src/apps/api/tests/kria/test_lev_m1_length_photo_holds_replay.py",
+        "src/apps/api/tests/fixtures/lev_m1_run2_length_photo_holds.json"
       ]
     },
     {
@@ -2033,7 +2038,7 @@
     {
       "id": "kri-942-clip-sound-toggle",
       "needs_native": false,
-      "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/tasks/test_kri1028_kept_line_window.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",
+      "api_tests": "tests/tasks/test_kri942_clip_sound_toggle.py tests/tasks/test_kri1028_kept_line_window.py tests/tasks/test_leverkusen_m1_announcement_quote.py tests/pipeline/test_phone_guided_plan.py tests/tasks/test_phone_guided_dispatch.py",
       "paths": [
         "src/apps/api/app/kria/clip_sound_toggle_ask.py",
         "src/apps/api/app/kria/draft_sound_carry.py",
@@ -2042,8 +2047,10 @@
         "src/apps/api/app/services/kept_sound_lines.py",
         "src/apps/api/tests/fixtures/kri942_donjulio_walkin_m1.json",
         "src/apps/api/tests/fixtures/kri1028_plaza_m1_recoleta.json",
+        "src/apps/api/tests/fixtures/leverkusen_m1_train_announcement.json",
         "src/apps/api/tests/tasks/test_kri942_clip_sound_toggle.py",
-        "src/apps/api/tests/tasks/test_kri1028_kept_line_window.py"
+        "src/apps/api/tests/tasks/test_kri1028_kept_line_window.py",
+        "src/apps/api/tests/tasks/test_leverkusen_m1_announcement_quote.py"
       ]
     },
     {

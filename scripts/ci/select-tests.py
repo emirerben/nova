@@ -12,6 +12,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ios"))
 import ui_tests
 
 SUITES = ("api", "ios", "ios_ui", "shared_motion")
+# These test sources do not alter app code or a fixture-export harness. Selector
+# contracts always run before selection; ChatWorkspace cases run in full units.
+ISOLATED_TEST_SUITES = {
+    "scripts/ci/test_select_tests.py": frozenset(),
+    "src/apps/ios/Tests/KriaTests/ChatWorkspaceTests.swift": frozenset({"ios"}),
+}
 SHARED_MOTION_PATHS = (
     "src/apps/api/app/pipeline/motion_scene.py",
     "src/apps/web/src/__tests__/lib/motion-runtime.test.ts",
@@ -120,6 +126,8 @@ def matches_journey_path(path, prefix):
 
 def journey_affected(path):
     """Whether a change needs an incident-corpus journey or an explicit gap."""
+    if path in ISOLATED_TEST_SUITES:
+        return False
     if path.startswith(JOURNEY_PREFIXES) or any(
         matches_journey_path(path, prefix)
         for journey in JOURNEYS
@@ -137,6 +145,8 @@ def journey_ids_for_path(path):
     Single source of truth shared by the CI selector and `unmapped-paths`, so
     the local preship report can never disagree with what CI will decide.
     """
+    if path in ISOLATED_TEST_SUITES:
+        return set()
     if path in JOURNEY_POLICY_PATHS:
         return {journey["id"] for journey in JOURNEYS}
     matches = [
@@ -268,6 +278,8 @@ SWIFT_SERVER_MIRRORS = (
 
 
 def affected(path):
+    if path in ISOLATED_TEST_SUITES:
+        return set(ISOLATED_TEST_SUITES[path])
     if path.startswith("src/packages/motion-runtime/"):
         return set(SUITES)
     if path in SHARED_MOTION_PATHS:
