@@ -268,6 +268,12 @@ def _no_pre_render_checker(req: Any) -> bool:
         # one could answer, before the step that does it had run. An editor draft still
         # proves it from its own ops (the caller never reaches here for one).
         return True
+    from app.kria.brief_checks import asks_text_animation  # noqa: PLC0415
+
+    # A whole-video "with animations" has no words to check on a draft and its look is judged on
+    # the finished text lane: never a reason to hold approval (`unverified`, named after render).
+    if asks_text_animation(req) and req.scope == "global" and not req.literal:
+        return True
     # A text ask's words are checked on the draft even when its look is judged at render.
     return not _has_checker(req) or (req.kind != "text" and judged_at_render(req))
 

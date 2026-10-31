@@ -789,6 +789,13 @@ class Settings(BaseSettings):
     # Apply: `fly secrets set CAPTION_ANIMATION_ENABLED=false` (api + worker) + restart.
     caption_animation_enabled: bool = True
     caption_animation_min_client_protocol: int = 24
+    # Prompt fidelity (animation): "with animations" / "animated text" reaches the rendered text.
+    # Default TRUE. brief_view reads an animation ask at any text scope, an unnamed ask gets one
+    # tasteful entrance (`animation_ask.DEFAULT_TEXT_ENTRANCE`), the creation text pass applies
+    # and verifies it (never raises), and the receipt checker judges it. False: byte-identical to
+    # before (title-scope asks only, unnamed asks stay prose, no verification pass).
+    # Apply: `fly secrets set TEXT_ANIMATION_ASK_ENABLED=false` (api + worker) + restart.
+    text_animation_ask_enabled: bool = True
     # Text behind people ON THE PHONE (the device twin of `text_behind_subject_enabled`
     # below, which is the cloud Skia lane). When True, `compile_text_overlay` stamps
     # `behind_subject` on a phone recipe text layer whose text element asks for it, and

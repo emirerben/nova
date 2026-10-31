@@ -583,6 +583,7 @@ def _place_research_text(
     windows: list[tuple[float, float]],
     remove_indexes: set[int],
     metadata: dict,
+    look: dict | None = None,
 ) -> dict:
     """One sourced explanation as an ``add_text`` op, after the placement checks.
 
@@ -653,11 +654,19 @@ def _place_research_text(
         "end_s": end,
         **metadata,
     }
-    return {"op": "add_text", "text": text, "start_s": start, "end_s": end, "research": research}
+    op = {"op": "add_text", "text": text, "start_s": start, "end_s": end, "research": research}
+    if look:
+        # The creator's text-look ask (an entrance) rides on the added row itself.
+        op["patch"] = dict(look)
+    return op
 
 
 def research_operations(
-    captions: list, evidence: ResearchEvidence, snapshot: dict, request: str
+    captions: list,
+    evidence: ResearchEvidence,
+    snapshot: dict,
+    request: str,
+    look: dict | None = None,
 ) -> list[dict]:
     slots = snapshot.get("slots") or []
     facts = {fact.id: fact for fact in evidence.facts}
@@ -735,6 +744,7 @@ def research_operations(
                     "retrieved_at": evidence.retrieved_at,
                     "search_entry_html": evidence.search_entry_html,
                 },
+                look=look,
             )
         )
     if not additions:
@@ -749,9 +759,17 @@ def _with_removals(additions: list[dict], remove_indexes: set[int]) -> list[dict
 
 
 def run_researched_revision(
-    request: ResearchRequest, *, utterance: str, snapshot: dict, ctx: RunContext | None = None
+    request: ResearchRequest,
+    *,
+    utterance: str,
+    snapshot: dict,
+    ctx: RunContext | None = None,
+    look: dict | None = None,
 ):
-    """Called by both creation composition and follow-up chat, under the turn deadline."""
+    """Called by both creation composition and follow-up chat, under the turn deadline.
+
+    ``look`` is the creator's text-style patch (an entrance) the explanations are added with;
+    None keeps the ops exactly as before."""
     from app.agents.edit_copilot import EditCopilotOutput
 
     request.authorize(utterance)
@@ -788,7 +806,7 @@ def run_researched_revision(
     bound["research_windows"] = windows
     copy_input = ResearchCopyInput(request=utterance, snapshot=bound, evidence=evidence)
     result = ResearchCopyAgent(default_client()).run(copy_input, ctx=research_ctx)
-    ops = research_operations(result.captions, evidence, snapshot, utterance)
+    ops = research_operations(result.captions, evidence, snapshot, utterance, look=look)
     review = ResearchReviewAgent(default_client()).run(
         ResearchReviewInput(context=copy_input, proposed=result), ctx=research_ctx
     )

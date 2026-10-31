@@ -48,6 +48,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.config import settings
 from app.kria.asset_holds import (
     AssetHold,
     hold_outcomes,
@@ -259,6 +260,13 @@ class BriefView:
     title_animation: str | None = None
     label_position: str | None = None
     placeholder_labels: bool = False
+    # Prompt fidelity (animation): the animation a live text ask names at ANY scope, and the
+    # corner a global text ask names. ``text_animation`` is the creator's NAMED edge for the
+    # whole text (an unnamed "with animations" is `animation_requested` alone: the creation text
+    # pass gives it the default entrance). Both stay None with `text_animation_ask_enabled` off.
+    text_animation: str | None = None
+    animation_requested: bool = False
+    text_position: str | None = None
     # KRI-828 / KRI-899: every live freeze the creator asked for (corroborated by their
     # words), a later correction already folded into the freeze it changes
     # (`freeze_ask.live_freezes`).
@@ -299,6 +307,19 @@ def brief_view(brief: Any) -> BriefView:
     curved_title = curved_labels = False
     curved_texts: set[str] = set()
     live = brief.live()
+    animation_requested = False
+    text_animation: str | None = None
+    text_position: str | None = None
+    if settings.text_animation_ask_enabled:
+        from app.kria.animation_ask import (  # noqa: PLC0415
+            animation_targets,
+            requested_text_position,
+        )
+
+        asks = animation_targets(live)
+        animation_requested = bool(asks)
+        text_animation = next((a.edge for t, a in asks if t == "all" and a.named), None)
+        text_position = requested_text_position(live)
     freezes = live_freezes(live)
     speeds = live_speeds(live)
     for req in live:
@@ -381,6 +402,9 @@ def brief_view(brief: Any) -> BriefView:
         title_animation=title_animation,
         label_position=label_position,
         placeholder_labels=placeholder_labels,
+        text_animation=text_animation,
+        animation_requested=animation_requested,
+        text_position=text_position,
         freezes=freezes,
         speeds=speeds,
         hold_requirements=hold_requirements(brief),
@@ -2663,8 +2687,12 @@ def plan_unified_montage(
     pins = drawable_pins(pins, total_s, [cut.output_duration_s for cut in cuts])
     # KRI-522: the brief is cumulative, so the creator's ask survives a later turn whose
     # strategy omits it; the strategy's own typed value is the fallback.
-    title_animation = view.title_animation or normalize_title_animation(
-        strategy.get("title_animation")
+    title_animation = (
+        view.title_animation
+        or normalize_title_animation(strategy.get("title_animation"))
+        # A named edge for "all the text" is the title's too (the title is drawn here, so it
+        # keeps its own centred, held look); an unnamed ask is completed by the text pass.
+        or view.text_animation
     )
     title_shown_as_label = _title_shown_as_label(
         title, labels.get(cuts[0].media_id) if cuts else None, strategy, title_animation
@@ -2706,7 +2734,12 @@ def plan_unified_montage(
         snapshot_kwargs["title_animation"] = title_animation
     if title_bend is not None:
         snapshot_kwargs["title_bend"] = title_bend
-    label_position = view.label_position or normalize_label_position(strategy.get("label_position"))
+    label_position = (
+        view.label_position
+        # A global "bottom left" is the corner the labels this route draws sit in.
+        or view.text_position
+        or normalize_label_position(strategy.get("label_position"))
+    )
     if label_position is not None and labels:
         snapshot_kwargs["label_position"] = label_position
     if output_orientation in ("portrait", "landscape"):

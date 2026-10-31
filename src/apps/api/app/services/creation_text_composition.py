@@ -432,7 +432,9 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         raise CreationTextCompositionError("Text composition contains a non-text operation")
     if not program.operations:
         _check_copy(texts, program.copy_constraints)
-        return plan
+        if program.text_look is None:
+            return plan
+        return _replay_look_only(plan, texts, program)
     try:
         # add_text uses random IDs in interactive editing. Bind new identities
         # deterministically here so compiling an approved snapshot is repeatable.
@@ -506,6 +508,7 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
         raise
     except (ValueError, TypeError, KeyError) as exc:
         raise CreationTextCompositionError(f"Text composition could not compile: {exc}") from exc
+    rows = apply_text_look(rows, program.text_look)
     result = copy.deepcopy(plan)
     result["text_elements"] = rows
     _check_copy(rows, program.copy_constraints)
@@ -515,6 +518,106 @@ def replay_text_composition(plan: dict, program: TextCompositionProgram) -> dict
     return GuidedStoryExecutionPlan.model_validate(result).model_dump(
         mode="json", exclude_none=False
     )
+
+
+def _replay_look_only(plan: dict, texts: list[dict], program: TextCompositionProgram) -> dict:
+    """A program with no operations but an entrance default: the base lane plus the look."""
+    try:
+        rows = [
+            TextElement.model_validate(row).model_dump(mode="json", exclude_none=False)
+            for row in texts
+        ]
+    except (ValueError, TypeError, KeyError) as exc:
+        raise CreationTextCompositionError(f"Text composition could not compile: {exc}") from exc
+    result = copy.deepcopy(plan)
+    result["text_elements"] = apply_text_look(rows, program.text_look)
+    from app.pipeline.guided_story import GuidedStoryExecutionPlan
+
+    return GuidedStoryExecutionPlan.model_validate(result).model_dump(
+        mode="json", exclude_none=False
+    )
+
+
+def _plays_entrance(row: Mapping[str, Any]) -> bool:
+    """Has this row already decided how it enters (the composer, the creator, a legacy effect)?"""
+    return row.get("animation_phases") is not None or str(row.get("effect") or "static") not in {
+        "static",
+        "none",
+    }
+
+
+def _look_rows(rows: list[dict], target: str) -> list[dict]:
+    """The animatable rows a look target names, in lane order."""
+    from app.kria.brief_checks import _CLIP_ID_PART_RE, _text_style_rows  # noqa: PLC0415
+
+    styles = {style.id: style for style in _text_style_rows(rows)}
+    token = target.split(":", 1)[1] if target.startswith("clip:") else ""
+
+    def named(clip_id: str | None) -> bool:
+        if not clip_id or not token:
+            return False
+        if clip_id == token:
+            return True
+        parts = {part.casefold() for part in _CLIP_ID_PART_RE.split(clip_id)}
+        return len(token) >= 6 and token.isalnum() and token.casefold() in parts
+
+    picked = []
+    for row in rows:
+        style = styles.get(row.get("id"))
+        # Caption-lane, lyric and removed rows are not in `styles`; a creator's pinned corner
+        # text (a stamp, a sign-off) keeps the look the creator pinned it with.
+        if style is None or str(row.get("id") or "").startswith("guided-pinned-"):
+            continue
+        if (
+            target == "all"
+            or (target == "title" and style.kind == "title")
+            or (target == "labels" and style.kind == "label")
+            or (token and style.kind == "label" and named(style.clip_id))
+        ):
+            picked.append(row)
+    return picked
+
+
+def apply_text_look(rows: list[dict], look: Any) -> list[dict]:
+    """Rows with the creator's entrance default applied to every named row that plays none.
+
+    Most specific target first, so a creator's "typewriter on the title, fade on the rest"
+    keeps both. Never overwrites a row that already enters some way. ``look`` None returns
+    ``rows`` unchanged (byte-identical).
+    """
+    if look is None:
+        return rows
+    from app.kria.animation_ask import entrance_patch  # noqa: PLC0415
+
+    rows = copy.deepcopy(rows)
+    for entry in look.entries:
+        patch = entrance_patch(entry.entrance, look.form)
+        for row in _look_rows(rows, entry.target):
+            if not _plays_entrance(row):
+                row.update(patch)
+    return rows
+
+
+def unanimated_look_rows(rows: list[dict], look: Any) -> int:
+    """How many rows a look names that still play no entrance (0 = the ask is on screen)."""
+    if look is None:
+        return 0
+    seen: set[str] = set()
+    for entry in look.entries:
+        seen.update(
+            str(row.get("id")) for row in _look_rows(rows, entry.target) if not _plays_entrance(row)
+        )
+    return len(seen)
+
+
+def _research_entrance_patch(look: Any) -> dict[str, Any] | None:
+    """The style patch researched explanations are added with: the ``all`` entry's entrance."""
+    if look is None:
+        return None
+    from app.kria.animation_ask import entrance_patch  # noqa: PLC0415
+
+    entry = next((e for e in look.entries if e.target == "all"), None)
+    return entrance_patch(entry.entrance, look.form) if entry is not None else None
 
 
 _CAPTION_LANE_SAMPLE_LINES = 6
@@ -693,6 +796,63 @@ def creation_model_snapshot(
     return model_snapshot
 
 
+def _requested_look(text_requirements: Sequence[BriefRequirement] | None) -> Any:
+    """The creator's animation ask as a ``TextLook``, else None (nothing asked, switch off, or
+    a phone that plays no text entrance: logged, never an error)."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.text_animation_ask_enabled or not text_requirements:
+        return None
+    from app.kria.animation_ask import animation_targets, text_look_for  # noqa: PLC0415
+    from app.schemas.text_composition import TextLook  # noqa: PLC0415
+
+    live = [req for req in text_requirements if req.live]
+    if not animation_targets(live):
+        return None
+    look = text_look_for(live)
+    if look is None:
+        log.info("creation_text_animation_unavailable", reason="phone_gate_closed")
+        return None
+    return TextLook.model_validate(look)
+
+
+def _ensure_text_look(snapshot: EditProposalSnapshot, look: Any) -> EditProposalSnapshot:
+    """Check that the creator's animation ask is on the composed text, and complete it if not.
+
+    The composer is asked for the ask but can omit it, and researched explanations replace its
+    output entirely; so, like the hierarchy facts, the finished lane is verified. Unlike them
+    this never raises: a missing entrance is filled by the deterministic look, and anything
+    that still plays none is reported (``creation_text_animation_unmet``) for the receipt to
+    say, never a reason to fail the render.
+    """
+    if look is None:
+        return snapshot
+    from app.pipeline.guided_story import compile_proposal_execution_plan  # noqa: PLC0415
+
+    try:
+        plan = compile_proposal_execution_plan(snapshot)
+        missing = unanimated_look_rows(plan["text_elements"], look)
+        if not missing:
+            return snapshot
+        program = snapshot.text_composition
+        if program is None:
+            texts, slots = _lanes(plan)
+            program = TextCompositionProgram(base_digest=_digest(texts, slots))
+        repaired = snapshot.model_copy(
+            update={"text_composition": program.model_copy(update={"text_look": look})}
+        )
+        left = unanimated_look_rows(
+            compile_proposal_execution_plan(repaired)["text_elements"], look
+        )
+        log.info("creation_text_animation_completed", missing=missing, unmet=left)
+        if left:
+            log.warning("creation_text_animation_unmet", rows=left)
+        return repaired
+    except Exception as exc:  # noqa: BLE001 - report-only: an animation ask never fails a render
+        log.warning("creation_text_animation_skipped", error=str(exc)[:200])
+        return snapshot
+
+
 def compose_creation_text(
     snapshot: EditProposalSnapshot,
     *,
@@ -701,6 +861,30 @@ def compose_creation_text(
     copy_constraints: Mapping[str, str] | None = None,
     text_requirements: Sequence[BriefRequirement] | None = None,
     prepared_research: PreparedResearch | None = None,
+) -> EditProposalSnapshot:
+    """Compose the initial text lane, then make sure a requested animation is on it."""
+    look = _requested_look(text_requirements)
+    composed = _compose_creation_text(
+        snapshot,
+        creator_request=creator_request,
+        ctx=ctx,
+        copy_constraints=copy_constraints,
+        text_requirements=text_requirements,
+        prepared_research=prepared_research,
+        research_look=look,
+    )
+    return _ensure_text_look(composed, look)
+
+
+def _compose_creation_text(
+    snapshot: EditProposalSnapshot,
+    *,
+    creator_request: str,
+    ctx: RunContext | None = None,
+    copy_constraints: Mapping[str, str] | None = None,
+    text_requirements: Sequence[BriefRequirement] | None = None,
+    prepared_research: PreparedResearch | None = None,
+    research_look: Any = None,
 ) -> EditProposalSnapshot:
     """Compose the initial text lane of a planned draft.
 
@@ -884,7 +1068,13 @@ def compose_creation_text(
         from app.services.researched_text import run_researched_revision
 
         output = run_researched_revision(
-            output.research_request, utterance=creator_request, snapshot=model_snapshot, ctx=ctx
+            output.research_request,
+            utterance=creator_request,
+            snapshot=model_snapshot,
+            ctx=ctx,
+            # The creator's "with animations" reaches the explanations that replace the
+            # composer's output (None unless they asked, so the ops stay byte-identical).
+            look=_research_entrance_patch(research_look),
         )
     if (
         output.needs_clarification
