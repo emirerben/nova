@@ -1051,6 +1051,13 @@ class Settings(BaseSettings):
     # sourced wording + citations, and pin them to the approval (`app.kria.research_preview`).
     # false => the render researches after approval exactly as before. Restart api + worker.
     kria_research_preview_enabled: bool = True
+    # Prompt fidelity (disclosure): before approval, say what the route that will render the
+    # draft does not read (unread strategy fields, asks like animated text, research after
+    # approval), show the length the plan renders, and approve (with that disclosure) an ask
+    # whose checker cannot decide before render instead of holding the draft. Never blocks.
+    # Default TRUE; false + restart (api + worker) = byte-identical to before
+    # (`app.kria.route_disclosure`, agents/DECISIONS.md "Route disclosure").
+    kria_route_disclosure_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False

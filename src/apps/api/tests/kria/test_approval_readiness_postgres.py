@@ -267,10 +267,12 @@ async def _approve_over_http(monkeypatch, user_id, thread_id, approval) -> httpx
     ("extra", "outcome"),
     [
         # An English reader owns "remove ... noise" and cannot show it on this draft, so it
-        # holds; nothing reads the Turkish wording, so there it is checked after render.
+        # holds; nothing reads the Turkish wording, so there it is checked after render. The
+        # phone unified montage judges the ask at render (route disclosure), so it is approved
+        # there and named for a look; every other route keeps the hold.
         (
             {"kind": "audio", "scope": "global", "description": "Remove only the wind noise"},
-            {"en": "held", "tr": "unverified"},
+            {"en": "held", "en_phone": "unverified", "tr": "unverified"},
         ),
         # KRI-983: no draft check owns these, so they are approved and named for a look.
         (
@@ -308,6 +310,8 @@ async def _approve_over_http(monkeypatch, user_id, thread_id, approval) -> httpx
 async def test_each_unproven_request_is_held_simplified_or_left_to_check_after_render(
     monkeypatch, language, extra, outcome, phone
 ):
+    if phone and "en_phone" in outcome:
+        outcome = {**outcome, "en": outcome["en_phone"]}
     if language == "tr":
         extra = {
             **extra,
@@ -615,6 +619,9 @@ async def test_direct_http_approval_rechecks_readiness_and_cannot_bypass_it(monk
 @pytest.mark.parametrize("answer", ["Make this simpler version", "Okay", "No, keep everything"])
 @pytest.mark.parametrize("phone", [False, True])
 async def test_only_named_omissions_can_remove_an_unrenderable_request(monkeypatch, answer, phone):
+    # The phone unified montage approves the wind-noise ask (route disclosure); this pins the
+    # consent rule on the hold, which that route's old behaviour is with the switch off.
+    monkeypatch.setattr(settings, "kria_route_disclosure_enabled", not phone)
     extra = {"kind": "audio", "scope": "global", "description": "Remove only the wind noise"}
     user_id, thread_id, approvals, _ = await prepare(monkeypatch, extra=extra, phone=phone)
     assert not approvals
@@ -639,6 +646,7 @@ async def test_only_named_omissions_can_remove_an_unrenderable_request(monkeypat
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phone", [False, True])
 async def test_dropping_wind_cleanup_preserves_typed_source_audio(monkeypatch, phone):
+    monkeypatch.setattr(settings, "kria_route_disclosure_enabled", not phone)  # see above
     updates = [
         {"kind": "text", "scope": "title", "literal": "Gameday."},
         {

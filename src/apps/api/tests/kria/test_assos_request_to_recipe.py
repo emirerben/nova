@@ -92,13 +92,13 @@ RED = "phase 0 baseline: red on unchanged code, a later phase turns it green"
 @pytest.mark.parametrize(
     "check_id",
     [
-        pytest.param(1, marks=pytest.mark.xfail(strict=True, reason=RED + " (animation)")),
+        1,
         pytest.param(2, marks=pytest.mark.xfail(strict=True, reason=RED + " (pace/direction)")),
-        pytest.param(3, marks=pytest.mark.xfail(strict=True, reason=RED + " (hook)")),
-        pytest.param(4, marks=pytest.mark.xfail(strict=True, reason=RED + " (story order)")),
-        pytest.param(5, marks=pytest.mark.xfail(strict=True, reason=RED + " (length)")),
+        3,
+        4,
+        5,
         pytest.param(6, marks=pytest.mark.xfail(strict=True, reason=RED + " (creator selected)")),
-        pytest.param(7, marks=pytest.mark.xfail(strict=True, reason=RED + " (research disclosed)")),
+        7,
         pytest.param(8, marks=pytest.mark.xfail(strict=True, reason=RED + " (look chip font)")),
         pytest.param(9, marks=pytest.mark.xfail(strict=True, reason=RED + " (provider failure)")),
         11,

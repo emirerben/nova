@@ -84,7 +84,16 @@ _cassette = _BASE._cassette
 
 
 def load_fixture() -> dict[str, Any]:
-    return json.loads((FIXTURE_DIR / "fixture.json").read_text(encoding="utf-8"))
+    fx = json.loads((FIXTURE_DIR / "fixture.json").read_text(encoding="utf-8"))
+    # RECONSTRUCTION, not a recording: prod recorded this brief before `main_creator` prompt v106,
+    # which writes `animated: true` for a generic "animated text" ask that names no style
+    # (prod wrote `facts: {}` and the ask lived only in the description). The scorecard replays
+    # the brief as that prompt writes it; whether the live model does so is graded by a live
+    # extractor run, not here.
+    for req in fx["brief"]["requirements"]:
+        if req.get("id") == "r1" and req.get("kind") == "text":
+            req["facts"] = {**req.get("facts", {}), "animated": True}
+    return fx
 
 
 def load_research() -> dict[str, Any]:
@@ -358,6 +367,13 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
         with_planned_cuts,
     )
     from app.kria.drafts import _sanitize_strategy_duration_provenance
+    from app.kria.route_disclosure import (
+        UNIFIED_MONTAGE,
+        card_disclosures,
+        card_text,
+        planned_card_length,
+        with_route_declines,
+    )
     from app.tasks.kria_runtime import _strategy_changes
 
     strategy = job.strategy
@@ -386,6 +402,10 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
     brief = CreativeBrief.model_validate(fx["brief"])
     checked = brief.live()
     receipts = build_receipts(checked, facts, include_unchecked=True, strict_order=True)
+    # The same disclosure steps the draft turn runs (tasks.kria_runtime): asks the route does
+    # not read are answered plainly, unread strategy fields and research are named.
+    route = UNIFIED_MONTAGE if facts.phone_montage else None
+    receipts = with_route_declines(receipts, checked, strategy, route=route)
     report = assess_readiness(
         brief,
         strategy,
@@ -402,11 +422,17 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
     )
     if not report["ready"]:
         reply = readiness_reply(brief, report)
+    disclosures = card_disclosures(checked, strategy, route=route)
+    if disclosures:
+        reply = f"{reply}\n{card_text(disclosures)}"
     arguments = SimpleNamespace(
         strategy=CreativeStrategy.model_validate(strategy), summary=fx["planner_summary"]
     )
     changes = [c for c in _strategy_changes(arguments) if c != fx["planner_summary"]]
     draft_strategy = _sanitize_strategy_duration_provenance(strategy, brief_binding=job.binding)
+    shown_length = planned_card_length(draft_strategy, job.media, route=route)
+    if shown_length is not None:
+        draft_strategy = {**draft_strategy, "target_duration_s": shown_length}
     consequence = f"Render this draft: {reply}"
     return {
         "reply": reply,
@@ -414,6 +440,7 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
         "consequence_summary": consequence,
         "receipts": [r.model_dump(mode="json") for r in receipts],
         "ready": bool(report["ready"]),
+        "not_applied": [d.as_record() for d in disclosures],
         "draft_target_duration_s": draft_strategy.get("target_duration_s"),
         "text": "\n".join([reply, consequence, *changes, *[str(r.reason or "") for r in receipts]]),
     }
@@ -1003,7 +1030,15 @@ def consumer_gate(card_text: str, extra_fields: tuple[str, ...] = ()) -> dict[st
         if not reads[f] and f not in INDIRECT_CONSUMERS and f not in EXEMPT_FIELDS
     ]
     undisclosed = [f for f in unconsumed if not discloses_not_applied(card_text, f)]
+    from app.kria.route_disclosure import UNREAD_STRATEGY_FIELDS
+
+    # Report only: the card's registry of unread fields against what the scan above finds.
+    drift = {
+        "listed_but_read": sorted(f for f in UNREAD_STRATEGY_FIELDS if f in settable and reads[f]),
+        "unread_but_unlisted": sorted(f for f in unconsumed if f not in UNREAD_STRATEGY_FIELDS),
+    }
     return {
+        "registry_drift": drift,
         "pass": not undisclosed,
         "settable_fields": len(settable),
         "unconsumed": unconsumed,
@@ -1148,6 +1183,95 @@ def negative_controls() -> list[dict]:
         )
     )
     return controls
+
+
+def hold_controls(fx: dict) -> list[dict]:
+    """Asks the draft check can still fix before approval must stay held on the unified route.
+
+    A conversion from held to approvable is wrong when the worker would refuse the render
+    after approval (a quoted text missing from the plan, a wrong order) or when the length
+    evidence is missing (never a pass). A vague ask nothing can check is the approvable control.
+    Each row builds the Assos draft with one requirement swapped in and reads approval readiness."""
+
+    def ready(job, req) -> tuple[bool, str]:  # noqa: ANN001
+        from app.kria.approval_readiness import assess_readiness
+        from app.kria.brief import CreativeBrief
+
+        report = assess_readiness(
+            CreativeBrief(version=1, requirements=[req]),
+            job.strategy,
+            media=job.media,
+            manifest=manifest(fx),
+            creator_request="x",
+            creator_id=job.user_id,
+        )
+        return bool(report["ready"]), report["requirements"][0]["disposition"]
+
+    def req(**kw):  # noqa: ANN003, ANN202
+        from app.kria.brief import BriefRequirement
+
+        base = {"id": "r1", "kind": "text", "scope": "global", "description": "x", "facts": {}}
+        return BriefRequirement(**{**base, **kw})
+
+    with _prod_flags():
+        job = build_job(fx)
+        no_length = copy.deepcopy(job)
+        no_length.media = {k: v for k, v in job.media.items() if k != "length_plan"}
+        cases = [
+            (
+                "a length ask with no length evidence stays held",
+                no_length,
+                req(kind="timing", description="make it 8 seconds", facts={"duration_s": 8}),
+                False,
+            ),
+            (
+                "a vague ask nothing can check is approvable with a look-after line",
+                job,
+                req(kind="style", description="make it feel dreamy"),
+                True,
+            ),
+        ]
+        rows = []
+        # The Assos draft never reaches `evidence_missing` for a quoted text (its phone text is
+        # executable or a choice), so the conversion step itself is fed the held row: a quoted
+        # text and an order ask the worker would refuse after approval must come back unchanged.
+        from app.kria.approval_readiness import _approve_undecidable
+
+        for name, kind in (
+            ("a quoted text missing from the draft stays held", "text"),
+            ("an order ask with no proof stays held", "order"),
+        ):
+            requirement = req(kind=kind, description="x", literal="Zzyzx Qvortle")
+            held = [
+                {
+                    "requirement_id": "r1",
+                    "disposition": "evidence_missing",
+                    "reason": "held",
+                    "evidence_owner": "brief_checks",
+                }
+            ]
+            got = _approve_undecidable(held, [requirement])[0]["disposition"]
+            rows.append(
+                {
+                    "name": f"hold: {name}",
+                    "expected_pass": False,
+                    "got_pass": got != "evidence_missing",
+                    "ok": got == "evidence_missing",
+                    "detail": got,
+                }
+            )
+        for name, case_job, requirement, expect in cases:
+            got, disposition = ready(case_job, requirement)
+            rows.append(
+                {
+                    "name": f"hold: {name}",
+                    "expected_pass": expect,
+                    "got_pass": got,
+                    "ok": expect == got,
+                    "detail": disposition,
+                }
+            )
+    return rows
 
 
 # --------------------------------------------------------------------------- reproduction
@@ -1305,7 +1429,7 @@ def run_offline() -> dict:
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             ]
-    controls = negative_controls()
+    controls = negative_controls() + hold_controls(fx)
     scored = [c for c in checks if not c.get("report_only")]
     return {
         "fixture": fx["fixture_id"],
