@@ -21,6 +21,9 @@ from contextvars import ContextVar, Token
 APPROVAL_CLIENT_PROTOCOL_FIELD = "approval_client_protocol"
 CAPTION_STYLE_SCOPE_PROTOCOL = 25
 RENDERED_TIMELINE_CLOCK_PROTOCOL = 26
+# The app build skipped 26 and went straight to 27: the first build that decodes
+# `speaker_background`.
+SPEAKER_BACKGROUND_PROTOCOL = 27
 
 
 def caption_style_scope_supported() -> bool:

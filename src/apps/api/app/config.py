@@ -806,6 +806,21 @@ class Settings(BaseSettings):
     # `fly machine restart <id>` (api + worker); rollback = `...=false` + restart.
     text_behind_subject_phone_enabled: bool = False
     text_behind_subject_phone_min_client_protocol: int = 21
+    # Talk-to-camera green screen ON THE PHONE (KRI-1115): `speaker_background` on a V2
+    # recipe names a photo or looping video that `KriaMediaEngine` composites behind the
+    # speaker clip's Vision person mask. Also needs `speakerBackground` in
+    # PHONE_RENDER_VERIFIED_FEATURES (fly secret, set after a physical-device preview +
+    # export check) and, inside an app request, a build declaring
+    # `X-Kria-Client-Protocol` >= the min protocol (27: the first build that decodes the
+    # key). When any of the three is missing the compile STRIPS the lane and the edit
+    # renders with the creator's own background -- the recipe is byte-identical to
+    # today's. A pinned recipe that already carries it answers 426
+    # `client_update_required` (`speaker_background`) to an older build, which cannot
+    # decode the key. Default FALSE (dark ship). Apply:
+    # `fly secrets set SPEAKER_BACKGROUND_ENABLED=true --app nova-video` +
+    # `fly machine restart <id>` (api + worker); rollback = `...=false` + restart.
+    speaker_background_enabled: bool = False
+    speaker_background_min_client_protocol: int = 27
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

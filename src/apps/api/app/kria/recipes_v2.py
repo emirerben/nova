@@ -9,6 +9,7 @@ from pydantic import Field, model_serializer, model_validator
 from app.kria.portable_camera import CameraPulse
 from app.kria.portable_drawing import PortableDrawingLayer
 from app.kria.portable_motion import MotionSceneProgram
+from app.kria.portable_speaker_background import SpeakerBackgroundLayer
 from app.kria.portable_text import PortableTextLayer
 from app.kria.portable_visual import VisualCanvasFill
 from app.kria.recipes import EditRecipeV1
@@ -31,6 +32,7 @@ class EditRecipeV2(EditRecipeV1):
     camera_pulses: list[CameraPulse] = Field(default_factory=list, max_length=100)
     text_layers: list[PortableTextLayer] = Field(default_factory=list, max_length=500)
     drawing_layers: list[PortableDrawingLayer] = Field(default_factory=list, max_length=12)
+    speaker_background: SpeakerBackgroundLayer | None = None
 
     @model_serializer(mode="wrap")
     def preserve_legacy_camera_shape(self, handler):
@@ -43,6 +45,8 @@ class EditRecipeV2(EditRecipeV1):
             payload.pop("camera_pulses", None)
         if not self.drawing_layers:
             payload.pop("drawing_layers", None)
+        if self.speaker_background is None:
+            payload.pop("speaker_background", None)
         return payload
 
     @model_validator(mode="after")
@@ -78,6 +82,14 @@ class EditRecipeV2(EditRecipeV1):
         ):
             self.required_capabilities |= {"singleWordText"}
         manifest = {asset.id: asset for asset in self.asset_manifest.assets}
+        if self.speaker_background is not None:
+            source = manifest.get(self.speaker_background.asset_id)
+            if (
+                not isinstance(source, VisualRenderAsset)
+                or source.media_kind != self.speaker_background.media_kind
+            ):
+                raise ValueError("a speaker background requires a matching Visuals asset")
+            self.required_capabilities |= {"speakerBackground"}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
         # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not
