@@ -156,7 +156,9 @@ def background_pin_request(job: Any, variant_id: str, payload: Any) -> tuple[str
     `_validate_speaker_background_section` and get their own refusal there. The one rule the
     HTTP Save route and the chat apply paths (async copilot edit, sync approval task) share.
     """
-    if "speaker_background" not in payload.model_fields_set or payload.speaker_background is None:
+    if "speaker_background" not in getattr(payload, "model_fields_set", ()):
+        return None
+    if getattr(payload, "speaker_background", None) is None:
         return None
     from app.routes.generative_jobs import (  # noqa: PLC0415
         _find_variant,

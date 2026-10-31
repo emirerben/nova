@@ -106,6 +106,8 @@ SECTION_OPS: dict[str, frozenset[str]] = {
             "remove_camera_effect",
             "apply_custom_effect",
             "set_carousel_moment",
+            "set_background",
+            "remove_background",
         }
     ),
 }

@@ -171,6 +171,7 @@ def copilot_schema():
         "start_s",
         "end_s",
         "duration_s",
+        "source_start_s",
         "in_s",
         "target_s",
         "shift_s",
