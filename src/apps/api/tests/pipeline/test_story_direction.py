@@ -213,6 +213,22 @@ def test_when_the_story_text_cannot_be_placed_the_worker_composes_the_fast_monta
         _composed_plan(plan, [], {}, timeout)
 
 
+def test_the_soft_time_limit_in_the_story_text_pass_is_not_swallowed_as_a_fallback() -> None:
+    from billiard.exceptions import SoftTimeLimitExceeded
+
+    plan = _plan(STRATEGY)
+    composed: list[str] = []
+
+    def out_of_time(candidate):  # noqa: ANN001, ANN202
+        composed.append(candidate.snapshot.direction)
+        raise SoftTimeLimitExceeded()
+
+    # No second text pass runs with no time left; the orchestrator's own handling gets it.
+    with pytest.raises(SoftTimeLimitExceeded):
+        _composed_plan(plan, [], {}, out_of_time)
+    assert composed == ["text_explainer"]
+
+
 def test_a_composed_story_is_composed_once_and_a_fast_montage_as_always() -> None:
     for strategy, direction in (
         (STRATEGY, "text_explainer"),

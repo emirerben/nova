@@ -7189,6 +7189,7 @@ def _composed_plan(
         ProviderQuotaExceededError,
         AiBudgetExceededError,
         CreationTextTimeoutError,
+        SoftTimeLimitExceeded,
     ):
         raise
     except PhoneProposalRejected as exc:
