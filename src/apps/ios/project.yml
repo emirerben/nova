@@ -71,8 +71,6 @@ targets:
         buildPhase: resources
       - path: ../web/public/plan/type-posters/talking.jpg
         buildPhase: resources
-      - path: ../web/public/plan/type-posters/lipsync.jpg
-        buildPhase: resources
       - path: ../web/public/plan/type-posters/slider-lisbon-taberna-1.jpg
         buildPhase: resources
       - path: ../web/public/plan/type-posters/slider-lisbon-taberna-2.jpg

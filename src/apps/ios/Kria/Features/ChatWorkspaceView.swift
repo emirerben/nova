@@ -3359,7 +3359,7 @@ enum CreationFormat: String, CaseIterable, Identifiable {
     var imageName: String {
         switch self {
         case .montage: "montage"
-        case .lipsync: "lipsync"
+        case .lipsync: "featured-lipsync"
         case .narrated: "voiceover"
         case .talkingToCamera: "talking"
         case .slides: "trulli-street"
