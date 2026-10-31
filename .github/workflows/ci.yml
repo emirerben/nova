@@ -1187,6 +1187,9 @@ jobs:
           # Only the unit leg executes the unit suite; the other legs compile
           # the same bundles and skip it (verify.sh prepare-ui contract).
           KRIA_IOS_UNIT_TESTS: ${{ matrix.leg == 'unit' && github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && '1' || '0' }}
+          # The export/OCR proofs (~10 of the unit leg's minutes) run on PRs that
+          # touch render, export or text code; ios.yml runs them on every main push.
+          KRIA_IOS_SKIP_RENDER_EVIDENCE: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios_render_evidence == 'false' && '1' || '0' }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
       - name: Record compiled iPhone input timestamps

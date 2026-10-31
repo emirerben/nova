@@ -1251,9 +1251,11 @@ class GitDiffTests(unittest.TestCase):
             output.read_text(),
             "api=false\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
-            'journey_ids=\njourney_needs_native=false\nnative_legs=["unit"]\n',
+            'journey_ids=\njourney_needs_native=false\nnative_legs=["unit"]\n'
+            "ios_render_evidence=false\n",
         )
         self.assertIn("ios: run", summary.read_text())
+        self.assertIn("Export/OCR unit proofs: skipped", summary.read_text())
         self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())
 
 
