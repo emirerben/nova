@@ -148,3 +148,76 @@ def test_a_phone_that_plays_no_entrance_emits_nothing_and_says_so(monkeypatch) -
 def test_kill_switch_off_reads_no_ask(monkeypatch) -> None:
     monkeypatch.setattr(settings, "text_animation_ask_enabled", False)
     assert bc.asks_text_animation(_req("animated text", facts={"animation": "any"})) is False
+
+
+def _prepared_research(req_id: str = "r1") -> dict:
+    return {
+        "version": 1,
+        "status": "ready",
+        "requirement_id": req_id,
+        "topic": "why visit Assos",
+        "request_quote": "explain why people should visit Assos",
+        "basis_digest": "0" * 64,
+        "texts": [
+            {
+                "text": "Assos has a sunken Aegean harbour",
+                "media_ids": ["m1"],
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "sources": [{"title": "t", "url": "https://example.com/a"}],
+                "facts": [
+                    {
+                        "id": "fact-0",
+                        "text": "Assos has a harbour.",
+                        "sources": [{"title": "t", "url": "https://example.com/a"}],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _research_plus_animation_req():
+    return _req(
+        "with animations, explain why people should visit Assos",
+        facts={
+            "animation": "any",
+            "research": {
+                "topic": "why visit Assos",
+                "request_quote": "explain why people should visit Assos",
+            },
+        },
+    )
+
+
+def test_research_plus_animation_never_reads_checked_before_the_animation_is_seen(
+    monkeypatch,
+) -> None:
+    """The combined Assos ask: research met must not stand for an unchecked animation."""
+    req = _research_plus_animation_req()
+    facts = bc.PlanFacts(research=_prepared_research(), phone_text=True)
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["authoredText"])
+    receipt = bc._check_requirement(req, facts)
+    assert (receipt.status, receipt.verification) == ("met", "unchecked")
+    # kill switch off: the research verdict stands alone, byte-identical to before
+    monkeypatch.setattr(settings, "text_animation_ask_enabled", False)
+    off = bc._check_requirement(req, facts)
+    assert (off.status, off.verification) == ("met", "checked")
+
+
+def test_research_plus_animation_on_a_phone_that_cannot_animate_says_so(monkeypatch) -> None:
+    req = _research_plus_animation_req()
+    monkeypatch.setattr(settings, "phone_render_verified_features", ["positionedText"])
+    receipt = bc._check_requirement(
+        req, bc.PlanFacts(research=_prepared_research(), phone_text=True)
+    )
+    assert receipt.status == "not_possible" and "animat" in (receipt.reason or "")
+
+
+def test_a_literal_global_text_position_never_moves_the_labels() -> None:
+    from app.kria.animation_ask import requested_text_position
+
+    literal = _req("Assos 2026", literal="Assos 2026", facts={"position": "bottom_right"})
+    assert requested_text_position([literal]) is None
+    free = _req("labels bottom right", facts={"position": "bottom_right"})
+    assert requested_text_position([free]) == "bottom_right"

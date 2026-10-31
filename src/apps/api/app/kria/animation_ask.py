@@ -119,9 +119,15 @@ def animation_targets(requirements: Iterable[Any]) -> list[tuple[str, AnimationA
 
 
 def requested_text_position(requirements: Iterable[Any]) -> str | None:
-    """The corner a live GLOBAL text ask names (``facts.position``), else None."""
+    """The corner a live GLOBAL, non-literal text ask names (``facts.position``), else None.
+
+    A literal ask ("put 'Assos 2026' bottom right") pins ITS OWN line; it never moves the
+    per-clip labels, which is a different route's behaviour.
+    """
     for req in requirements:
         if getattr(req, "kind", None) != "text" or not getattr(req, "live", True):
+            continue
+        if getattr(req, "literal", None):
             continue
         if str(getattr(req, "scope", "") or "") != "global":
             continue

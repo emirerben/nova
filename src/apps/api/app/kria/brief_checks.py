@@ -6669,6 +6669,30 @@ def _check_text_animation(req: BriefRequirement, facts: PlanFacts) -> Requiremen
     return judged if judged is not None else _receipt(req, "partial", _NO_CHECKER)
 
 
+def _research_with_animation(
+    req: BriefRequirement, facts: PlanFacts, researched: RequirementReceipt
+) -> RequirementReceipt:
+    """One text ask that carries researched facts AND "with animations" (the Assos shape).
+
+    The research verdict alone must not stand for the animation nobody checked: the receipt
+    keeps the research met but is only ``checked`` when the finished text lane also shows an
+    entrance. Before that it is ``unchecked`` and says what the render will do (or that this
+    phone cannot); a miss or decline on the animation is reported as such. Report-only.
+    """
+    animation = _check_text_animation(req, facts)
+    if animation.status == "met" and animation.verification == "checked":
+        return researched
+    if animation.status in ("met", "partial"):
+        return _receipt(
+            req,
+            "met",
+            animation.reason if animation.status == "met" else None,
+            verification="unchecked",
+            stage=researched.stage,
+        )
+    return animation
+
+
 def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
     """Judge a TEXT requirement's look facts (title animation, label corner, font, colour).
 
@@ -10492,6 +10516,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if req.kind == "text":
         researched = None if req.literal else _check_research(req, facts)
         if researched is not None:
+            if researched.status == "met" and asks_text_animation(req):
+                return _research_with_animation(req, facts, researched)
             return researched
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _with_text_look(req, facts, _check_per_clip_text(req, facts))
