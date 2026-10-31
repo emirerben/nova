@@ -25,8 +25,7 @@ SONG = {
 def _media(count: int, duration_s: float = 6.0) -> dict[str, Any]:
     return {
         "clip_assignments": [
-            {"media_id": f"c{i}", "duration_s": duration_s, "hook_score": 1.0}
-            for i in range(count)
+            {"media_id": f"c{i}", "duration_s": duration_s, "hook_score": 1.0} for i in range(count)
         ]
     }
 
@@ -51,7 +50,7 @@ def test_relaxed_over_a_song_section_holds_longer_and_keeps_every_clip() -> None
 
 
 def test_too_many_clips_for_the_floor_keeps_the_plain_plan_instead_of_failing() -> None:
-    # 100 clips x 1.4 s is over the 120 s edit cap: pace cannot be met, so the plan is the plain one.
+    # 100 clips x 1.4 s is over the 120 s edit cap: pace cannot be met, so the plain plan stands.
     plain = _plan({"pacing": "balanced", **SONG}, count=100)
     relaxed = _plan({"pacing": "relaxed", **SONG}, count=100)
     assert relaxed["windows"] == plain["windows"]
@@ -90,9 +89,17 @@ def test_fast_over_free_footage_shortens_holds_but_keeps_a_whole_video() -> None
     assert max(_holds(fast)) <= 1.5 + 1e-6
     assert sum(_holds(fast)) >= 3.0
     assert sum(_holds(fast)) < sum(_holds(plain))
-    # Two very short clips cannot make 3 s at the fast ceiling: the plain plan stands.
+    # Two clips at the 1.5 s ceiling are exactly 3 s, which whole-frame rounding can undercut
+    # (KRI-993 steak edit, fast pace, 2 clips -> 2.967 s -> the montage was refused): the plain
+    # plan stands, and so does the render.
     short = _plan({"pacing": "fast"}, count=2)
-    assert short["conflicts"] == [] and sum(_holds(short)) >= 3.0
+    assert short["conflicts"] == [] and "pace" not in short
+    clips = [
+        UnifiedClip(media_id=f"c{i}", proxy_path=f"c{i}.mp4", generation="1", duration_s=6.0)
+        for i in range(2)
+    ]
+    rendered = plan_unified_montage(clips, strategy={"edit_format": "montage", "pacing": "fast"})
+    assert rendered.snapshot.duration_s >= 3.0
 
 
 def test_planning_and_the_render_read_one_rule() -> None:
@@ -101,9 +108,7 @@ def test_planning_and_the_render_read_one_rule() -> None:
         strategy = {"edit_format": "montage", "pacing": pacing}
         plan = build_length_plan(strategy, _media(6))
         clips = [
-            UnifiedClip(
-                media_id=f"c{i}", proxy_path=f"c{i}.mp4", generation="1", duration_s=6.0
-            )
+            UnifiedClip(media_id=f"c{i}", proxy_path=f"c{i}.mp4", generation="1", duration_s=6.0)
             for i in range(6)
         ]
         rendered = plan_unified_montage(clips, strategy=copy.deepcopy(strategy))
