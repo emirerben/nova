@@ -545,6 +545,27 @@ def test_main_creator_eval(
             copy = f"{strategy.get('rationale', '')} {action.get('summary', '')}".casefold()
             assert "full-screen transition" not in copy
 
+    card_meta = fixture.meta.get("kri1093_card")
+    if card_meta:
+        # KRI-1093: the Lip-sync picker card (`manifest.chosen_format`) defaults an attached
+        # song to lipsync; the creator's own words still win. Grade the strategy the creator
+        # ends up with after the server repair, and the model's own choice where it is pinned.
+        from app.agents._schemas.creator_agent import ResolvedCreatorManifest
+        from app.agents._schemas.creator_policy import repair_creator_user_song
+        from app.agents.main_creator import MainCreatorOutput
+
+        assert result.output is not None
+        action = MainCreatorOutput.model_validate(result.output).action
+        assert action.kind == "propose_strategy"
+        assert action.strategy.audio_strategy == "user_song"
+        pinned = card_meta.get("expect_model_song_sync")
+        if pinned is not None:
+            assert action.strategy.song_sync == pinned
+        manifest = ResolvedCreatorManifest.model_validate(fixture.input["capability_manifest"])
+        assert manifest.chosen_format == card_meta["chosen_format"]
+        repaired, _notices = repair_creator_user_song(manifest, action.strategy)
+        assert repaired.song_sync == card_meta["expect_final_song_sync"]
+
     user_song_meta = fixture.meta.get("user_song")
     if user_song_meta:
         # KRI-374: with an uploaded song on the manifest the song IS the music,
