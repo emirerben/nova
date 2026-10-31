@@ -39,6 +39,14 @@ Ways this can fail, written before the fix (each is pinned below):
  F10 an ask written in Turkish is judged against clip records the analyzer writes in English:
     no word of it can ever be found, so every Turkish first/last pin would be held.
 
+Found while fixing, pinned by existing guards: a clip-by-clip check drops the second goal clip
+from "Taha celebrating in both goal clips" (only one record says "celebrating";
+``test_leverkusen_m2_missing_shot`` F3); a check without word endings misses "my friend
+smiling" on a record that says "smiles" (``test_kri991_picker_suggestions``); and an ask no
+record says any word of ("the final whistle", "my friend in the red cap" on one-line records)
+is beyond what words can judge, so it stays the resolver's (``test_kri1067_filming_order_end_
+picker`` F10/F11, ``test_kri802_question_batch``).
+
 Feeds the RECORDED resolver input (clip records, intents, creator request) through the real
 ``resolve_clip_intents_for_turn`` with the RECORDED model output (``raw_text``) replayed by a stub
 client, and checks the prompt the replay sent is byte-identical to what the recorded input
