@@ -266,7 +266,13 @@ def asks_clip_speed(req: BriefRequirement) -> bool:
     rate = _recorded_rate(req)
     if rate is not None:
         return rate != 1.0
-    tokens = _tokens(req.description or "")
+    return says_clip_speed(req.description or "")
+
+
+def says_clip_speed(text: str) -> bool:
+    """True when the words alone ask footage to play faster or slower (`asks_clip_speed`'s
+    reading, for words that are not yet a requirement, e.g. a clip-intent quote)."""
+    tokens = _tokens(text)
     return _english_words(tokens) or _turkish_words(tokens)
 
 

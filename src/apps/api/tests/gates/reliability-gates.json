@@ -3764,6 +3764,61 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "rendered-editor-original-clock",
+      "tickets": [
+        "KRI-1060"
+      ],
+      "symptom": "A successful native original window1.920s reopens as1.933333s after editor frame normalization and fails source bounds.",
+      "boundary": "persistence",
+      "status": "open_pr",
+      "owner": "https://github.com/emirerben/nova/pull/1946",
+      "journey": "rendered-editor-original-clock",
+      "paths": [
+        "src/apps/api/app/schemas/guided_edit_revision.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
+        "src/apps/api/app/services/client_protocol.py",
+        "src/apps/api/app/services/public_assembly_plan.py"
+      ],
+      "regression_tests": [
+        "tests/routes/test_phone_editor_rendered_clock.py",
+        "tests/routes/test_phone_editor_rendered_clock_receipts.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "514 current-main backend cases passed, including unchanged legacy/hash, source overrun, private-marker fallback, saved-state refusal and old-client mutation controls. No production opt-in is emitted.",
+        "live_model": "Not run; no provider or prompt change.",
+        "native_output": "Current reader-first compatibility:118 iOS26.5 simulator tests passed, including protocol25 header, generated1.920s source preview/export and strict original-source overrun controls. Duration measured in export; pixels inspected in preview only. Native tree d25dfadf07e284362ae258f8e22bd5e2152986a2. No original-phone acceptance.",
+        "production": "Reader-first only; no activation, project migration or deployment. Future API/worker readers and protocol26 app admission are required."
+      },
+      "neighbours_covered": [
+        "Legacy frozen hashes",
+        "original and Visuals receipts",
+        "text-only Save/reopen",
+        "old/missing/current protocol",
+        "actual source overrun",
+        "rate and transition reflow",
+        "Legacy private plan without modern identity state",
+        "Present-but-empty modern state refuses missing originals"
+      ],
+      "neighbours_gap": [
+        "original physical-phone stack/local binding duration",
+        "original request word/order and export fidelity",
+        "native manual rate setter with crossfade interaction"
+      ],
+      "follow_ups": [
+        "KRI-1060"
+      ],
+      "red_control": "not_applicable",
+      "fix_prs": [
+        1946
+      ],
+      "gap_reason": "Reader deployment, future explicit admission and original-phone acceptance remain pending under KRI-1060."
+    },
+    {
       "id": "kri-1068-stuck-pin-withdrawal",
       "tickets": [
         "KRI-1068",

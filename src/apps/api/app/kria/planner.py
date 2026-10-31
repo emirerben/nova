@@ -49,7 +49,7 @@ from app.agents._schemas.edit_format import (
     NARRATED_EDIT_FORMATS,
 )
 from app.agents.brief_extractor import BriefExtractionInput, BriefExtractorAgent
-from app.agents.clip_intent_planner import ConfirmedTitleCopy
+from app.agents.clip_intent_planner import ConfirmedTitleCopy, unexpressed_notice
 from app.agents.length_options import length_options
 from app.agents.main_creator import (
     MAIN_CREATOR_CONVERSATION_MAX,
@@ -98,6 +98,7 @@ from app.kria.compose_with_ops import compose_unmet_with_ops
 from app.kria.contracts import KriaTurnPlan
 from app.kria.draft_sound_carry import sound_asks_unchanged
 from app.kria.duplicate_send import is_duplicate_answer
+from app.kria.hidden_parts import carry_hidden_parts, earlier_hidden_parts, hidden_part_question
 from app.kria.missing_media import (
     CHECKED,
     FOUND,
@@ -3431,9 +3432,12 @@ async def _plan_turn_clip_intents(
             if state.approved is not None
         ],
         clips=intent_clips,
+        # KRI-1076: the plan item makes the planner's and resolver's agent_run rows
+        # (their input and answer) land, so a missed match can be read afterwards.
         run_context=RunContext(
             request_id=str(thread_id),
             creator_id=str(creator_id),
+            plan_item_id=str(item_id),
         ),
         # KRI-282: chat clips have no background vision lane, so give the
         # turn itself a larger (cached, converging) foreground budget.
@@ -4060,6 +4064,8 @@ async def _plan_creator_action(
         # any footage intents with a notice.
         and action.strategy.edit_format not in CLIP_INTENT_FREE_EDIT_FORMATS
     ):
+        # Leverkusen M2: the parts of clips the head draft already keeps out (no flag).
+        earlier_hidden = await _earlier_hidden_parts(db, item_id)
         earlier_excluded = (
             await _earlier_exclusions(db, item_id) if settings.clip_intent_exclude_enabled else []
         )
@@ -4145,6 +4151,16 @@ async def _plan_creator_action(
                 planned = replace(
                     planned, resolution=replace(planned.resolution, intents=carried_intents)
                 )
+        # Leverkusen M2: a part of a clip the head draft hid stays hidden, with the most seconds
+        # the creator gave: a re-plan never shows it again.
+        kept_hidden, carried_hidden = carry_hidden_parts(
+            planned.resolution.intents,
+            earlier_hidden,
+            clip_ids={clip.media_id for clip in intent_clips},
+        )
+        if carried_hidden:
+            log.info("kria_hidden_parts_carried", thread_id=str(thread_id), carried=carried_hidden)
+            planned = replace(planned, resolution=replace(planned.resolution, intents=kept_hidden))
         # KRI-761: an exclude that names a clip another ask pins, or that look-alikes share,
         # is the creator's to settle: the picker, never a guess. KRI-807: so is one that
         # matched no clip ("skip the blurry shot"), never a free-text ask.
@@ -4203,6 +4219,21 @@ async def _plan_creator_action(
                 continuable=(
                     planned.resolution.status == "pending" and not planned.resolution.needs_creator
                 ),
+            )
+        # Leverkusen M2: a part with its clip but no edge or seconds (or one that leaves nothing
+        # of the clip) is asked about in plain words; it is never drafted with the part showing.
+        hidden_question = hidden_part_question(planned.resolution.intents, intent_clips)
+        if hidden_question is not None:
+            log.info("kria_hidden_part_question", thread_id=str(thread_id))
+            return PlannedKriaTurn(
+                plan=_clip_intent_resolution_plan(
+                    question=hidden_question,
+                    status="needs_creator",
+                    diagnostics={"stage": "hidden_part", "reason": "needs_creator"},
+                    clip_intent_inventory=planned.inventory,
+                ),
+                manifest_hash=manifest.manifest_hash,
+                context_hash=manifest.context_hash,
             )
         if settings.clip_intent_exclude_enabled:
             asked = exclusion_question(contested, intent_clips)
@@ -4304,6 +4335,15 @@ async def _plan_creator_action(
                     update={"summary": " ".join([action.summary.strip(), measured]).strip()}
                 )
                 policy_notices = (*policy_notices, measured)
+        # Leverkusen M2: an ask no clip operation can carry ("start that clip after the
+        # kids") was a "please restate" that looped. It never holds the turn; the draft says
+        # once what the clip steps couldn't do and what they can.
+        unexpressed = unexpressed_notice(planned.unexpressed_asks)
+        if unexpressed is not None and unexpressed not in policy_notices:
+            action = action.model_copy(
+                update={"summary": " ".join([action.summary.strip(), unexpressed]).strip()}
+            )
+            policy_notices = (*policy_notices, unexpressed)
         tie_asked = tie_question(ties, intent_clips, excluded=skipped)
         if tie_asked is not None:
             log.info(
@@ -4489,6 +4529,30 @@ async def _earlier_exclusions(db: AsyncSession, item_id: uuid.UUID) -> list[Reso
         return earlier_exclusions(snapshot)
     except Exception as exc:  # noqa: BLE001 - an earlier match is a convenience, never a gate
         log.info("kria_earlier_exclusions_unreadable", error_type=type(exc).__name__)
+        return []
+
+
+async def _earlier_hidden_parts(db: AsyncSession, item_id: uuid.UUID) -> list[ResolvedClipIntent]:
+    """The settled ``hide_part`` intents of the item's head draft (Leverkusen M2).
+
+    Read like ``_earlier_exclusions``, in a savepoint. Unreadable reads as none: the current
+    turn's own ask still hides the part, and the pinned-recipe check refuses any render that
+    shows a part the approved strategy hides.
+    """
+    try:
+        async with db.begin_nested():
+            snapshot = (
+                await db.execute(
+                    select(CreatorEditDraft.snapshot_json)
+                    .where(CreatorEditDraft.item_id == item_id, CreatorEditDraft.is_head.is_(True))
+                    .order_by(CreatorEditDraft.updated_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+        await db.rollback()
+        return earlier_hidden_parts(snapshot)
+    except Exception as exc:  # noqa: BLE001 - see above: never the only guard
+        log.info("kria_earlier_hidden_parts_unreadable", error_type=type(exc).__name__)
         return []
 
 

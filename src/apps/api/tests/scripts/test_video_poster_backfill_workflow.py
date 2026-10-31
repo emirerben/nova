@@ -1175,6 +1175,52 @@ def test_backfill_reproves_managed_digest_after_winning_name_before_start(
     assert not (tmp_path / "destroy.args").exists()
 
 
+def _release_command_machine(state: str, *, digest: str) -> dict:
+    return _managed_machine(
+        "fly_app_release_command", digest=digest, state=state, machine_id="feedrelcmd01"
+    )
+
+
+def test_deploy_guard_ignores_stopped_release_command_debris(tmp_path: Path) -> None:
+    """A release machine left by an aborted deploy must not block every later deploy.
+
+    Incident 2026-10-30: v1961's release_command timed out pulling the image and
+    left a stopped fly_app_release_command Machine on the new digest. The fleet
+    check counted it as a second production digest and refused all deploys.
+    """
+    new_digest = f"sha256:{'d' * 64}"
+    debris = _release_command_machine("stopped", digest=new_digest)
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[
+            [*_inventory(), debris],
+            [*_inventory(), debris],
+            [*_inventory(), debris],
+            [*_inventory(_deploy_guard()), debris],
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "immutable image digest" not in result.stderr
+    assert not (tmp_path / "destroy.args").exists()
+
+
+def test_deploy_guard_refuses_while_release_command_is_in_flight(tmp_path: Path) -> None:
+    running = _release_command_machine("started", digest=f"sha256:{'d' * 64}")
+    result = _run(
+        tmp_path,
+        [_image()],
+        args=["--acquire-deploy-guard"],
+        machine_sequence=[[*_inventory(), running]] * 4,
+    )
+
+    assert result.returncode == 1
+    assert "release_command Machine" in result.stderr
+    assert not (tmp_path / "create.args").exists()
+
+
 def test_deploy_guard_acquire_is_dormant_and_exact_release_is_forced(
     tmp_path: Path,
 ) -> None:

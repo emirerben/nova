@@ -179,6 +179,18 @@
       ]
     },
     {
+      "id": "leverkusen-m2-hidden-part",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_m2_hidden_part_replay.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/agents/test_clip_intent_planner.py",
+      "paths": [
+        "src/apps/api/app/kria/hidden_parts.py",
+        "src/apps/api/app/pipeline/hidden_parts.py",
+        "src/apps/api/tests/fixtures/creator_render_contract.schema.json",
+        "src/apps/api/tests/fixtures/m2_leverkusen_hidden_part.json",
+        "src/apps/api/tests/kria/test_m2_hidden_part_replay.py"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "needs_native": true,
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
@@ -731,7 +743,7 @@
     {
       "id": "kri-761-look-alike-exclusions",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py tests/kria/test_lev_m1_skip_inside_first_group.py",
+      "api_tests": "tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri807_unmatched_exclusion_picker.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1026_plaza_exclusions.py tests/kria/test_kri1031_too_short_clips.py tests/kria/test_lev_m1_skip_inside_first_group.py tests/kria/test_kri1076_photo_skip_postgres.py",
       "paths": [
         "src/apps/api/app/kria/clip_exclusions.py",
         "src/apps/api/app/services/too_short_clips.py",
@@ -744,7 +756,9 @@
         "src/apps/api/tests/kria/test_kri991_picker_suggestions.py",
         "src/apps/api/app/kria/clip_scope.py",
         "src/apps/api/tests/fixtures/leverkusen_m1_run2_skip_picker.json",
-        "src/apps/api/tests/kria/test_lev_m1_skip_inside_first_group.py"
+        "src/apps/api/tests/kria/test_lev_m1_skip_inside_first_group.py",
+        "src/apps/api/tests/fixtures/kri1076_leverkusen_m1_clips.json",
+        "src/apps/api/tests/kria/test_kri1076_photo_skip_postgres.py"
       ]
     },
     {
@@ -780,11 +794,13 @@
     {
       "id": "kri-968-simpler-version-names-drops",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py",
+      "api_tests": "tests/kria/test_kri968_simpler_version_names_drops_postgres.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_kri759_simpler_version_refusal.py tests/kria/test_leverkusen_m1_simpler_keeps_filming_order.py",
       "paths": [
         "src/apps/api/app/tasks/kria_runtime.py",
         "src/apps/api/tests/fixtures/kri968_don_julio_walkin_t1_simpler.json",
-        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py"
+        "src/apps/api/tests/fixtures/leverkusen_m1_run2_simpler_order.json",
+        "src/apps/api/tests/kria/test_kri968_simpler_version_names_drops_postgres.py",
+        "src/apps/api/tests/kria/test_leverkusen_m1_simpler_keeps_filming_order.py"
       ]
     },
     {
@@ -2353,6 +2369,36 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/plan_review_unscoped_same_prompt.json"
       ],
       "fixture_generator": "scripts/ios/duration-text-preservation-fixtures.py"
+    },
+    {
+      "id": "rendered-editor-original-clock",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_phone_editor_rendered_clock.py tests/routes/test_phone_editor_rendered_clock_receipts.py tests/integration/test_rendered_clock_authored_boundary_postgres.py tests/routes/test_rendered_clock_authored_preparation.py",
+      "xctests": [
+        "KriaTests/RenderedOriginalClockTests/testRenderedPhotoWindowBuildsAndExportsAfterHydration",
+        "KriaTests/RenderedOriginalClockTests/testRenderedVideoWindowBuildsAndExportsAfterHydration",
+        "KriaTests/RenderedOriginalClockTests/testProxyRoundedVideoOverrunIsStillRejected",
+        "KriaTests/NativeEditorInteractionTests/testRenderedOriginalWindowDoesNotExpandOntoProxyFrameClock",
+        "KriaTests/NativeEditorInteractionTests/testRenderedSpeedWindowRetainsExactSourceConsumption"
+      ],
+      "paths": [
+        "src/apps/api/app/schemas/guided_edit_revision.py",
+        "src/apps/api/app/services/guided_timeline.py",
+        "src/apps/api/app/routes/generative_jobs.py",
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock.py",
+        "src/apps/ios/Kria/Core/NativeEditorInteraction.swift",
+        "src/apps/ios/Kria/Features/NativeEditorRetiming.swift",
+        "src/apps/ios/Tests/KriaTests/RenderedOriginalClockTests.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorInteractionTests.swift",
+        "src/apps/api/tests/routes/test_phone_editor_rendered_clock_receipts.py",
+        "src/apps/api/app/services/client_protocol.py",
+        "src/apps/api/app/services/public_assembly_plan.py",
+        "src/apps/api/app/routes/plan_items.py",
+        "src/apps/api/app/services/authored_editor.py",
+        "src/apps/api/tests/integration/test_rendered_clock_authored_boundary_postgres.py",
+        "src/apps/api/tests/routes/test_rendered_clock_authored_preparation.py"
+      ]
     },
     {
       "id": "reference-style-save",

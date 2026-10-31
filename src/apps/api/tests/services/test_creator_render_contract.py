@@ -6,6 +6,7 @@ from app.services.creator_render_contract import (
     CONTRACT_FIELD,
     CreatorRenderContract,
     CreatorRenderContractError,
+    HiddenPartRequirement,
     TextRequirement,
     build_render_contract,
     read_render_contract,
@@ -233,6 +234,15 @@ def test_matrix_dispositions_are_valid_and_owned():
 
 
 # strategy fragment that sets each `supported` path -> it must change the contract.
+_HIDDEN_PART_ROW = {
+    "intent_id": "hide_kids",
+    "op": "hide_part",
+    "attribute": "the second goal clip",
+    "part_edge": "start",
+    "part_s": 2.5,
+    "status": "resolved",
+    "assignments": [{"media_id": "a", "confidence": 1.0}],
+}
 _SUPPORTED_FRAGMENTS = {
     "editorial_plan.beats[].media_ids[]": {
         "editorial_plan": {
@@ -258,6 +268,9 @@ _SUPPORTED_FRAGMENTS = {
     "pinned_texts[].text": {"pinned_texts": [{"text": "Part 1", "corner": "bottom_left"}]},
     "pinned_texts[].corner": {"pinned_texts": [{"text": "Part 1", "corner": "top_left"}]},
     "ordering_choice": {"ordering_choice": "chronological"},
+    # Leverkusen M2: a hidden part's edge and seconds become `hidden_parts`.
+    "resolved_clip_intents[].part_edge": {"resolved_clip_intents": [_HIDDEN_PART_ROW]},
+    "resolved_clip_intents[].part_s": {"resolved_clip_intents": [_HIDDEN_PART_ROW]},
 }
 # fragments for fields that are NOT supported -> the contract must ignore them.
 _UNSUPPORTED_FRAGMENTS = {
@@ -422,6 +435,11 @@ def _phone_cases():
         "order_required": (
             {"order_required": True, "order_ids": ("b2", "b1", "b0")},
             "ordering_choice",
+        ),
+        # Leverkusen M2: the speaker's take opens at 0 s, inside a hidden first second.
+        "hidden_parts": (
+            {"hidden_parts": (HiddenPartRequirement(media_id="talk", edge="start", seconds=1.0),)},
+            "resolved_clip_intents[].part_s",
         ),
     }
 
@@ -1136,7 +1154,13 @@ def test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it
     dispatch fails terminally, cloud preflight, the editor and device pinning all reject it.
     New plan facts ride as sibling dicts on the job instead (``creator_route``, like
     ``cloud_evidence``). ``tests/fixtures/creator_render_contract.schema.json`` is the schema
-    as of origin/main at KRI-470 PR-D; change it only with an explicit rolling-deploy plan."""
+    as of origin/main at KRI-470 PR-D; change it only with an explicit rolling-deploy plan.
+
+    Leverkusen M2 changed it once, on purpose: ``hidden_parts`` (a part of a clip the creator
+    asked never to show). Rolling-deploy plan: the field is left out of the stored contract
+    when empty, so every other job is byte-identical and an older worker reads it (pinned
+    below). A job that hides a part is refused by an older or rolled-back worker, which is
+    the privacy-safe outcome: a sibling dict would be ignored there and render the part."""
     import json
     from pathlib import Path
 
@@ -1144,6 +1168,24 @@ def test_the_contract_model_schema_is_unchanged_so_old_workers_can_still_read_it
         (Path(__file__).parents[1] / "fixtures" / "creator_render_contract.schema.json").read_text()
     )
     assert CreatorRenderContract.model_json_schema() == golden
+
+
+def test_an_older_worker_still_reads_every_contract_that_hides_nothing():
+    """The model an older worker runs (no ``hidden_parts``, extra keys forbidden) validates
+    a contract this code stores for a strategy without a hidden part, digest included."""
+    from pydantic import create_model
+
+    contract = build_render_contract({"opening_title": "Hi"}, generation_id="g")
+    assert contract is not None
+    fields = {
+        name: (info.annotation, info)
+        for name, info in CreatorRenderContract.model_fields.items()
+        if name != "hidden_parts"
+    }
+    older = create_model("OlderContract", __config__=CreatorRenderContract.model_config, **fields)
+    stored = contract.model_dump(mode="json")
+    assert "hidden_parts" not in stored
+    assert older.model_validate(stored).model_dump(mode="json") == stored
 
 
 # --- described-shot labels placed by the clip-intent resolver (Tigre M1, 2026-10-10) -----
