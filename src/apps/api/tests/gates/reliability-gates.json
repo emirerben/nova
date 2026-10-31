@@ -3869,6 +3869,51 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1112-names-said-earlier-bind",
+      "tickets": [
+        "KRI-1112",
+        "KRI-614",
+        "KRI-522"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 2026-10-31): 13:22 \"The goals are IMG_1037 and IMG_1039.\" did not settle the planner's later \"the two goal clips\" TOR! caption (apply_file_name_references reads only an intent's own words; the resolver never sees names), so at 13:30 Kria asked \"I couldn't tell which of your clips show \\\"the two goal clips\\\"\". At 13:38 \"Use exactly this order: IMG_1028, ... IMG_1043. This replaces my earlier order and ending requests\" became r1 key exact_sequence, but brief v5 kept the sticky first_clip \"my ticket\" and the old last_clip, which held the complete list back.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1112",
+      "paths": [
+        "src/apps/api/app/services/clip_file_names.py",
+        "src/apps/api/app/services/clip_intent_planning.py",
+        "src/apps/api/app/kria/brief.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1112_names_bind.py",
+        "tests/kria/test_kri1068_pin_withdrawal.py",
+        "tests/services/test_request_following_kri522.py"
+      ],
+      "harness": "mocked_provider",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The 13:30 turn's clip-intent planning with the planner's rows replayed through its real parser and the resolver recorded (name-blind), over the recorded clips and creator request; the 13:38 order change through the real brief merge over the recorded brief v4 (its other rows equal v5). On origin/main d7ee70f5f 5 of 16 fail, 11 guards pass; on the fix all 16 pass.",
+        "live_model": "Not run (no paid calls); no prompt change.",
+        "native_output": "Not applicable: clip-intent planning and brief merge only; no render path changed.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "case/extension and iOS upload-UUID spellings of the names bind",
+        "a stem two clips share, an unknown stem, bare numbers bind nothing",
+        "a name tied to another subject, a wider subject, two subjects in one sentence, or a later correcting sentence bind nothing",
+        "same-basis rewording keeps first/last (KRI-522, KRI-1068 F9); a pin-only ask given its first basis keeps the opening; a new basis keeps the ends it restates"
+      ],
+      "neighbours_gap": [
+        "A correction (two sentences tying the same subject to names) is left to the resolver or picker instead of taking the newer one.",
+        "Turkish plural/possessive forms beyond -ler/-lar (\"gollerim\") never bind.",
+        "The recorded brief v5 still holds the stale ends; its approval also needs the listed-order credit (KRI-1112 part 1, session B)."
+      ],
+      "follow_ups": [
+        "Leverkusen M3 iPhone re-send after deploy (with KRI-1108..1113)"
+      ],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "lev-m1-run2-skip-inside-first-group",
       "tickets": [
         "Leverkusen M1 run 2 #5",

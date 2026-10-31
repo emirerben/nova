@@ -577,7 +577,10 @@ def apply_file_name_references(
     "first ımg_7382 then ımg_7820" names clips the resolver cannot see: its records carry
     what a clip shows, never its file name, so it used to ask "which of your clips match
     ımg_7382?". An intent whose attribute is nothing but file names, each naming exactly
-    one clip (``services.clip_file_names``), is settled here like a tapped answer.
+    one clip (``services.clip_file_names``), is settled here like a tapped answer. So is
+    one whose words the creator tied to file names in a sentence of their own ("The goals
+    are IMG_1037 and IMG_1039." for "the two goal clips", KRI-1112:
+    ``ClipNameIndex.subject_references``).
 
     Returns ``(settled, remaining, split)``. An ``order`` intent naming several clips is a
     sequence: ``split`` maps its id to one order intent per clip, in the order named, each
@@ -596,6 +599,11 @@ def apply_file_name_references(
         refs, others = index.references(intent.attribute)
         if refs and names_only(others) and all(ref.media_id for ref in refs):
             named[intent.intent_id] = refs
+        elif not refs:
+            # KRI-1112: "the two goal clips" after "The goals are IMG_1037 and IMG_1039."
+            bound = index.subject_references(creator_request, intent.attribute)
+            if bound is not None:
+                named[intent.intent_id] = bound
     pinned: set[str] = set()
     for intent in intents:
         refs = named.get(intent.intent_id, [])

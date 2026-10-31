@@ -164,10 +164,71 @@ class ClipNameIndex:
                 index += 1
         return refs, others
 
+    def subject_references(self, text: str, subject: str) -> list[NameReference] | None:
+        """The clips ONE sentence of ``text`` ties to ``subject`` by file name (KRI-1112).
+
+        Leverkusen M3: "The goals are IMG_1037 and IMG_1039." came a message before the
+        planner's "the two goal clips"; the resolver never sees a name, so it asked again. A
+        sentence ties names to a subject when its other words are exactly the subject's own
+        (``subject_words``: fillers, "are" / "is" and counts aside, a plural "s" / "ler"
+        equal to its singular), and every name in it is one clip. None when no sentence or
+        two sentences ("Sorry, the goals are ...") name clips with the subject's words, when
+        the sentence says more ("the goal celebrations", "IMG_1037 for the goal and IMG_1039
+        for the fans") or when a name is shared, unknown or a bare number.
+        """
+        want = subject_words(self.references(subject)[1])
+        if not want:
+            return None
+        found: list[tuple[list[NameReference], list[str]]] = []
+        for sentence in _SENTENCE_END.split(text or ""):
+            refs, others = self.references(sentence)
+            said = subject_words(others)
+            if refs and any(_same_word(w, s) for w in want for s in said):
+                found.append((refs, said))
+        if len(found) != 1:
+            return None
+        refs, said = found[0]
+        if any(ref.media_id is None for ref in refs) or not _same_words(want, said):
+            return None
+        return refs
+
 
 def names_only(others: Iterable[str]) -> bool:
     """True when the words besides the file names describe nothing ("then", "the clip")."""
     return all(word in _FILLER_WORDS for word in others)
+
+
+# KRI-1112: a sentence ends at ".", "!" or "?" before a space or the end (never inside
+# "IMG_1037.MOV"), or at a line break.
+_SENTENCE_END = re.compile(r"[.!?]+(?=\s|$)|\n+")
+# Words that tie a subject to names or count them, saying nothing about what they show
+# ("the goals ARE ...", "the TWO goal clips", "BOTH"). Folded like `_FILLER_WORDS`.
+_LINK_WORDS = frozenset(
+    "is are was were these those here both all each every one two three four five six "
+    "bunlar sunlar iki uc dort bes alti her tum butun ikisi".split()
+)
+# A plural is its singular plus one of these ("goals" / "goal", "goller" / "gol").
+_PLURAL_ENDINGS = ("s", "es", "ler", "lar")
+
+
+def subject_words(others: Iterable[str]) -> list[str]:
+    """The words of a subject (folded, from ``ClipNameIndex.references``) that describe it."""
+    return [
+        word
+        for word in others
+        if word not in _FILLER_WORDS and word not in _LINK_WORDS and not word.isdigit()
+    ]
+
+
+def _same_word(a: str, b: str) -> bool:
+    return a == b or any(a + end == b or b + end == a for end in _PLURAL_ENDINGS)
+
+
+def _same_words(want: Iterable[str], said: Iterable[str]) -> bool:
+    want, said = list(want), list(said)
+    return all(any(_same_word(w, s) for s in said) for w in want) and all(
+        any(_same_word(s, w) for w in want) for s in said
+    )
 
 
 __all__ = [
@@ -176,4 +237,5 @@ __all__ = [
     "NameReference",
     "clip_display_name",
     "names_only",
+    "subject_words",
 ]
