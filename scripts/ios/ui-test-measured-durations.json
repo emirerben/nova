@@ -193,5 +193,9 @@
   "KriaUITests/TeleprompterUITests/testScriptControlsAreReachableAtAccessibilitySize": 46.5,
   "KriaUITests/TeleprompterUITests/testScriptIsSavedAndCameraFailureKeepsItEditable": 28.5,
   "KriaUITests/TeleprompterUITests/testWindowBackgroundAndDimensionsSurviveReopening": 65.6,
-  "KriaUITests/TeleprompterUITests/testWindowHandlesDoNotPauseOrScrollTheScript": 40.0
+  "KriaUITests/TeleprompterUITests/testWindowHandlesDoNotPauseOrScrollTheScript": 40.0,
+  "KriaUITests/SpeakerBackgroundUITests/testNoneRemovesTheBackgroundAndBothChoicesSurviveSaveAndReopen": 41.6,
+  "KriaUITests/SpeakerBackgroundUITests/testPickingAPhotoSelectsItAndMakesTheEditSaveable": 15.0,
+  "KriaUITests/SpeakerBackgroundUITests/testPickingNoneOnAnEditWithoutABackgroundIsNotAnEdit": 11.2,
+  "KriaUITests/SpeakerBackgroundUITests/testToolIsHiddenWhenTheServerDoesNotOpenTheCapability": 5.0
 }
