@@ -37,6 +37,30 @@ final class NativeCompositionTests: XCTestCase {
         }
     }
 
+    /// Speaker background S11: a video background's own (louder) audio never reaches the mix. The
+    /// composition gets no audio track for it, and the export's peak stays at the speaker's level.
+    @MainActor func testBackgroundVideoContributesNoAudio() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (120, 200), seconds: 2, toneAmplitude: 0.2)
+        let loud = try await writeSpeakerTestVideo(directory: directory, name: "loud", size: (120, 200), seconds: 1, toneAmplitude: 0.9) { context, _ in
+            context.setFillColor(SpeakerColor.background)
+            context.fill(CGRect(x: 0, y: 0, width: 120, height: 200))
+        }
+        let plain = try speakerRecipe(canvas: Canvas(width: 120, height: 200), speaker: speaker, duration: 2, background: nil)
+        let scene = try speakerRecipe(canvas: Canvas(width: 120, height: 200), speaker: speaker, duration: 2,
+                                      background: SpeakerTestBackground(url: loud, kind: .video))
+        let withBackground = try await AVPlayerPreviewComposer().makePreview(recipe: scene.recipe, assetURLs: scene.urls)
+        let without = try await AVPlayerPreviewComposer().makePreview(recipe: plain.recipe, assetURLs: plain.urls)
+        let audioTracks = try await withBackground.playerItem.asset.loadTracks(withMediaType: .audio).count
+        let plainAudioTracks = try await without.playerItem.asset.loadTracks(withMediaType: .audio).count
+        XCTAssertEqual(audioTracks, plainAudioTracks)
+        XCTAssertEqual(withBackground.playerItem.audioMix?.inputParameters.count, without.playerItem.audioMix?.inputParameters.count)
+        let peak = try await peakAudio(try await exportSpeakerRecipe(scene.recipe, urls: scene.urls, directory: directory))
+        XCTAssertGreaterThan(peak, 0.1, "the speaker is heard")
+        XCTAssertLessThan(peak, 0.55, "the background's tone leaked into the export")
+    }
+
     /// KRI-99: a clip trimmed flush against its source's own end (rate 1,
     /// no crop, no hold) failed to render in the last fraction of a second
     /// — the recipe's sourceDuration can be a hair ahead of what the source
