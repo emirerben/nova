@@ -1429,6 +1429,12 @@ struct NativeEditorTemporaryVideo {
             itemID = "fixture-drawing-item"
             variantKey = "initial"
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
+            // KRI-1118: same stub commit transport; the pool visuals are canned (see `refreshVisualLibrary`).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-speaker-background-item"
+            variantKey = "initial"
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
             previewVariant = NativeEditorUITestFixtures.songReferenceVariant
@@ -4577,6 +4583,11 @@ struct NativeEditorTemporaryVideo {
                     sourceFilename: "Gallery video \(index)", displayURL: nil, previewURL: nil, retryable: nil,
                     sourceURL: Bundle.main.url(forResource: "montage", withExtension: "mp4"))
             }
+            return true
+        }
+        // KRI-1118: the Background fixture's canned pool.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
+            visualLibrary = NativeEditorUITestFixtures.speakerBackgroundVisuals
             return true
         }
         #endif
