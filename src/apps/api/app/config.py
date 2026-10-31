@@ -928,6 +928,13 @@ class Settings(BaseSettings):
     # Default TRUE; kill switch = false + restart (the field is dropped, no question is
     # asked, the montage behaves exactly as before).
     kria_choice_questions_enabled: bool = True
+    # Prompt fidelity, errors unit: a provider/transport failure on a follow-up is answered
+    # with the honest "try again" reply (after ONE bounded extractor retry) instead of "I
+    # couldn't reliably read every requested change"; sensitive agents keep the error CLASS
+    # (never text) in their logged error; the "Animate the title" chip is offered only when
+    # the editor can resolve a title. Default TRUE; kill switch = false + restart (api +
+    # worker) -> byte-identical to the previous behaviour on all three.
+    kria_error_honesty_enabled: bool = True
     # KRI-724: on a one-take phone Talking draft, ask the creator which time a spoken word /
     # line is meant ("the first time SHE says Merope"; a line to cut said twice) before
     # approval, and render exactly that occurrence. Default false; on = Fly secret

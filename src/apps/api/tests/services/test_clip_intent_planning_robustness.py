@@ -197,7 +197,7 @@ def test_sensitive_run_records_error_class_but_never_content() -> None:
     err = ClipIntentSchemaError("secret creator words", error_class="intent_invalid:creator_text")
     assert agent._safe_error(err) == "sensitive_agent_error:intent_invalid:creator_text"
     assert "secret" not in (agent._safe_error(err) or "")
-    assert agent._safe_error(ValueError("secret")) == "sensitive_agent_error"
+    assert agent._safe_error(ValueError("secret")) == "sensitive_agent_error:value_error"
 
 
 def _wire(monkeypatch, client: MockModelClient) -> AsyncMock:

@@ -53,4 +53,4 @@ def test_runtime_preserves_quota_error_for_sensitive_agent(
     assert exc_info.value is error
     runs = [payload for payload in captured if payload.get("outcome") == "terminal_provider_quota"]
     assert len(runs) == 1
-    assert runs[0]["error"] == "sensitive_agent_error"
+    assert runs[0]["error"] == "sensitive_agent_error:provider_quota_exceeded_error"
