@@ -65,8 +65,9 @@ Questions, each answered by running something. Results are written here, not ask
 
 | Question | How | Result |
 |---|---|---|
-| Edge quality: `.balanced` vs `.accurate`, soft vs hard mask, with and without guided upsampling | Engine harness on real talking-head frames, montage of cutouts over a busy background | TBD |
-| Mask rate: 15 Hz with hold vs 30 Hz vs 15 Hz with interpolation | Same harness on a moving subject, look for stepping | TBD |
+| Edge quality: `.balanced` vs `.accurate`, soft vs hard mask, with and without guided upsampling | Mac harness on three real talking-head clips (416 to 720 px wide, upscaled to 1080x1920), 2x crops over a magenta/cyan checker | **Measured (Mac).** `.accurate` + soft mask + steep curve `smoothstep(0.3, 0.7)` is cleanest: crisp, anti-aliased, keeps curls, no halo. The current text-matte recipe (balanced, mask shrunk to 192x256 then upscaled 5.6x, hard cut 0.40) leaves a wide pale halo and stair-steps. A hard cut on the accurate mask still chops curls. Vision's output size is set by quality (balanced 384x512, accurate 1512x2016), so input resolution changes nothing (mean mask difference 0.0026). A gray guided filter gave no visible gain. Low confidence on native-resolution footage, hair-color spill remains in every variant. |
+| Mask rate: 15 Hz with hold vs 30 Hz vs 15 Hz with interpolation | Same harness on a moving subject, look for stepping | **Measured (Mac).** 15 Hz hold alternates about 5.7 px and 0 px silhouette movement per frame (freeze, then jump). Linear interpolation ghosts a double hand on fast motion. 30 Hz has neither. Decision: segment every frame. |
+| Mac cost (not a device number) | Same harness | Vision per frame about 10.5 ms balanced and about 35 ms accurate, independent of input size. CI wrap and scale of the Vision buffer 0.8 ms, versus 1.5 ms for the `[Float]` CPU copy of the accurate mask. Keep the mask as a CIImage. |
 | Cost: 60 s export, 30 fps preview, seek p95 | Physical iPhone only. Simulator and Mac numbers do not satisfy this. | owed (iPhone 13 Pro `unavailable` at the time of writing) |
 | Camera: can `AVCaptureMovieFileOutput` and `AVCaptureVideoDataOutput` run together | Physical iPhone only. The simulator has no camera. | owed (same) |
 
