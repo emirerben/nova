@@ -33,14 +33,19 @@ from typing import Any
 from app.agents.prompt_vocab import render_vocab_tokens
 
 EDITOR_OPS_VERSION = 2
-LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides", "overlays")
+LANES: tuple[str, ...] = ("text", "timeline", "audio", "slides", "overlays", "background")
 # Lanes whose prompt fragment is appended ONLY on the named surface, so video
 # prompts stay byte-identical (KRI-301).
 SURFACE_ONLY_LANES: dict[str, str] = {"slides": "slide_post"}
 # Lanes whose prompt fragment (`<name>.txt` under prompts/edit_copilot_ops/) is appended only when
 # the snapshot actually offers the lane's op family, so every other prompt stays byte-identical
 # (KRI-661). Keyed by the family in `snapshot["allowed_op_families"]`.
-FAMILY_FRAGMENTS: dict[str, str] = {"overlay": "overlay_cards.txt", "caption": "captions.txt"}
+FAMILY_FRAGMENTS: dict[str, str] = {
+    "overlay": "overlay_cards.txt",
+    "caption": "captions.txt",
+    # KRI-1117: only while the snapshot offers the background family (the capability is open).
+    "background": "speaker_background.txt",
+}
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 
