@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.38.0] - 2026-10-31
+
+### Changed
+- feat(kria): inspect source intervals for prompt-specific named moments (#1961) <!-- release-pr: 1961 -->
+
 ## [0.83.37.0] - 2026-10-31
 
 ### Fixed
