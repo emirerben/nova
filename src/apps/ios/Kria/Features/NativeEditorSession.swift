@@ -3319,6 +3319,15 @@ struct NativeEditorTemporaryVideo {
                 resolvedMedia[key] = resolved
             }
         }
+        if let background = document.speakerBackground {
+            let key = EditorSpeakerBackground.sourceKey(forMediaID: background.mediaID)
+            if resolvedMedia[key] == nil, authoredVisualSources[key] == nil {
+                sourcePreviewState = .preparing
+                let resolved = try await resolveSpeakerBackgroundSource(background, resolver: resolver)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+                resolvedMedia[key] = resolved
+            }
+        }
         return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }
     }
 
@@ -5098,6 +5107,56 @@ struct NativeEditorTemporaryVideo {
             raw: ["token": .string(CameraEmphasis.token), "intensity": .number(min(CameraEmphasis.maxIntensity, max(0.01, strength))), "easing": .string(resolved), "source": .string("user")])
         transactDocument(section: .cameraEffects) { $0.cameraEffects.append(effect) }
         select(.init(kind: .cameraEffect, id: effect.id))
+    }
+
+    // MARK: Speaker background (KRI-1118)
+
+    /// The Background tool exists only when the server advertises `speaker_background` for this variant (a
+    /// device-rendered Talk-to-camera edit on a build that speaks protocol 27, with the kill switch on).
+    /// Never inferred from the lane: a variant with a background but no capability is read-only.
+    var canEditSpeakerBackground: Bool {
+        cloudEditorUnavailableMessage == nil && canEditSection(.speakerBackground)
+    }
+    var speakerBackground: EditorSpeakerBackground? { document.speakerBackground }
+
+    /// Puts one photo or video from the item's Visuals pool behind the speaker, replacing any current one.
+    /// `sourceStart` is where a video begins playing; a photo ignores it. One undo step.
+    @discardableResult
+    func setSpeakerBackground(mediaID: String, kind: VisualMediaKind, sourceStart: Double = 0) -> Bool {
+        guard canEditSpeakerBackground,
+              let value = EditorSpeakerBackground(json: EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart).json)
+        else { return false }
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
+        return true
+    }
+
+    /// Clears the background. A no-op (and no unsaved change) when there is none.
+    @discardableResult
+    func removeSpeakerBackground() -> Bool {
+        guard canEditSpeakerBackground, document.speakerBackground != nil else { return false }
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = nil }
+        return true
+    }
+
+    /// The pool visuals that can sit behind the speaker: ready photos and videos.
+    var speakerBackgroundChoices: [CreationVisual] { Self.backgroundChoices(from: visualLibrary) }
+    static func backgroundChoices(from library: [CreationVisual]) -> [CreationVisual] {
+        library.filter { $0.status == "ready" && VisualMediaKind(rawValue: $0.kind) != nil }
+    }
+
+    /// Bytes for the compiler's pinned `visual-<media_id>` asset. The library is the source of truth for the
+    /// original URL and storage generation; it is refreshed once if the background was saved before it loaded.
+    private func resolveSpeakerBackgroundSource(_ background: EditorSpeakerBackground, resolver: NativeEditorSourceResolver) async throws -> ResolvedEditorSource {
+        func match() -> CreationVisual? {
+            visualLibrary.first { $0.id == background.mediaID && $0.kind == background.kind.rawValue && $0.status == "ready" }
+        }
+        if match() == nil { await refreshVisualLibrary() }
+        guard let asset = match(), let url = asset.originalMediaURL else {
+            throw MediaEngineError.missingAsset(EditorSpeakerBackground.assetID(forMediaID: background.mediaID))
+        }
+        var resolved = try await resolver.resolveMedia(id: asset.id, url: url, generation: asset.sourceGeneration ?? document.revision.baseGeneration)
+        resolved.visualGeneration = asset.sourceGeneration ?? "0"
+        return resolved
     }
 
     // MARK: Drawings (KRI-589)
