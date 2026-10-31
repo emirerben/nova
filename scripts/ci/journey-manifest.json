@@ -781,6 +781,16 @@
       ]
     },
     {
+      "id": "leverkusen-m2-missing-shot",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_leverkusen_m2_missing_shot.py tests/kria/test_kri991_picker_suggestions.py tests/kria/test_kri1067_filming_order_end_picker.py",
+      "paths": [
+        "src/apps/api/app/kria/missing_media.py",
+        "src/apps/api/tests/kria/leverkusen_m2_turn1.json",
+        "src/apps/api/tests/kria/test_leverkusen_m2_missing_shot.py"
+      ]
+    },
+    {
       "id": "kri-947-951-same-moment-picker",
       "needs_native": false,
       "api_tests": "tests/services/test_kri947_kri951_m2_picker_rows.py tests/services/test_clip_selection.py tests/services/test_kri696_picker_creator_caption.py tests/kria/test_kri802_question_batch.py tests/kria/test_kri807_unmatched_exclusion_picker.py",
