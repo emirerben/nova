@@ -2031,13 +2031,16 @@ def _base_text_elements(
         return [*elements, *_caption_lane_elements(snapshot, pin_windows)]
 
     # The creator's named title entrance (KRI-522) also plays on a story direction's title
-    # (text-explainer unit). Unset keeps the direction's own fade byte-for-byte.
+    # (text-explainer unit). Unset, or STORY_DIRECTIONS_ON_MONTAGE_ENABLED off, keeps the
+    # direction's own fade byte-for-byte.
     story_title_phases = (
         TextAnimationPhases(
             entrance=snapshot.title_animation,
             speed=TITLE_ANIMATION_SPEED[snapshot.title_animation],
         )
-        if snapshot.title_animation is not None and snapshot.direction != "fast_montage"
+        if snapshot.title_animation is not None
+        and snapshot.direction != "fast_montage"
+        and settings.story_directions_on_montage_enabled
         else None
     )
     # A labeled edit shows only confirmed creator copy (see show_title).
