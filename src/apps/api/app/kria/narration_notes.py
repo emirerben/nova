@@ -136,7 +136,8 @@ def speech_decides_order(strategy: object, brief: Any, contract: Any) -> bool:
     from app.pipeline.unified_montage import brief_view  # noqa: PLC0415 - pipeline imports kria
 
     view = brief_view(brief)
-    if view.order_by_capture or view.order_basis_stated:
+    # A dropped filming-order ask still orders the montage (`BriefView.kept_filming_order`).
+    if view.order_by_capture or view.order_basis_stated or view.kept_filming_order:
         return False
     if _field(strategy, "ordering_choice") in ("group_first", "chronological"):
         return False

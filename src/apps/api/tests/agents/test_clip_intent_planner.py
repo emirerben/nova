@@ -1897,8 +1897,8 @@ def test_kri667_flag_off_never_keeps_an_exclude() -> None:
 
 
 def test_kri667_prompt_teaches_exclude_only_with_the_flag() -> None:
-    off = _agent().render_prompt(_cappadocia_input())
-    on = _agent().render_prompt(_cappadocia_input(exclusions=True))
+    off = _without_hide_part(_agent().render_prompt(_cappadocia_input()))
+    on = _without_hide_part(_agent().render_prompt(_cappadocia_input(exclusions=True)))
     flat = " ".join(on.split())
     assert "- exclude:" in on
     assert '"op":"label|group|order|include|caption|exclude"' in on
@@ -2217,7 +2217,9 @@ def test_kri531_invented_non_clip_ops_are_dropped_silently(op: str) -> None:
 
 
 @pytest.mark.parametrize("op", ["highlight", "chapter", "order_by_time"])
-def test_kri531_unknown_ops_that_may_be_clip_operations_still_ask(op: str) -> None:
+def test_kri531_unknown_ops_that_may_be_clip_operations_are_named_not_restated(op: str) -> None:
+    # Leverkusen M2: asking to restate an op the schema doesn't have looped (no wording adds
+    # one). The draft names it instead (tests/services/test_unexpressible_clip_ops.py).
     raw = json.dumps(
         {
             "intents": [
@@ -2229,7 +2231,10 @@ def test_kri531_unknown_ops_that_may_be_clip_operations_still_ask(op: str) -> No
         ensure_ascii=False,
     )
     out = _agent().parse(raw, _berlin_input())
-    assert out.salvage_reasons == ["intent_invalid:op"]
+    assert out.salvage_question is None
+    assert [i.creator_text for i in out.intents] == ["Sabah"]
+    assert out.unexpressed == ["Bölüm başlıkları koy: Sabah, Üniversite"]
+    assert out.silent_drops == {"unexpressible_op_dropped": 1}
 
 
 def test_kri531_null_attribute_only_repaired_on_a_filming_order() -> None:
@@ -2525,12 +2530,29 @@ _OFF_PROMPT_SHA256 = "e0f6d521fbf27a58b2e429655f3f6a19d49cbf5b72881e4e5d06648b2c
 # the kill-switch-OFF prompt is still byte for byte the pre-KRI-993 one.
 _29EKIM_START = "\n\nA request for NO particular sequence is not a clip operation"
 _29EKIM_END = "even when they quote the words: return no\nintent for them.\n"
+# Leverkusen M2 (2026-10-30) added the `hide_part` op to every rendering, kill switch or not
+# (a privacy ask is never an invented op): its bullet and its three JSON fields.
+_HIDE_PART_START = "\n- hide_part: a part at the START or the END of ONE clip"
+_HIDE_PART_END = "`caption_attribute` and `position` null."
+_HIDE_PART_JSON = (
+    ("|hide_part", ""),
+    (',"part_edge":"start|end|null","part_s":null,"part_attribute":null', ""),
+)
+
+
+def _without_hide_part(prompt: str) -> str:
+    start = prompt.index(_HIDE_PART_START)
+    end = prompt.index(_HIDE_PART_END, start) + len(_HIDE_PART_END)
+    prompt = prompt[:start] + prompt[end:]
+    for added, before in _HIDE_PART_JSON:
+        prompt = prompt.replace(added, before)
+    return prompt
 
 
 def test_kri993_kill_switch_off_prompt_is_byte_identical_to_before() -> None:
     import hashlib
 
-    off = _agent().render_prompt(_input())
+    off = _without_hide_part(_agent().render_prompt(_input()))
     start = off.index(_29EKIM_START)
     end = off.index(_29EKIM_END, start) + len(_29EKIM_END)
     before_29ekim = off[:start] + "\n" + off[end:]

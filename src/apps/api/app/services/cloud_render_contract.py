@@ -78,6 +78,9 @@ CLOUD_UNEVIDENCED: dict[str, Decline] = {
     "audio_source_ids": Decline("capability_unavailable", _ASK_PHONE),
     "original_audio": Decline("capability_unavailable", _ASK_PHONE),
     "order_required": Decline("capability_unavailable", _ASK_PHONE),
+    # Leverkusen M2: no cloud renderer keeps a hidden part out or reports the source windows
+    # it read, so a part the creator hid is refused before any render, on every cloud route.
+    "hidden_parts": Decline("capability_unavailable", _ASK_PHONE),
 }
 _CLOUD_UNRESOLVED = Decline("needs_choice", "Tell me which option you want and I'll continue.")
 # A requirement a cloud adapter can in principle prove, but whose renderer did
@@ -194,6 +197,7 @@ _MESSAGE_PREFLIGHT = {
     "order_required": "This cloud renderer can't verify the confirmed clip order yet.",
     "duration_s": "This cloud renderer can't produce a verified length for this edit.",
     "require_voiceover": "This cloud renderer can't carry your recorded voice for this edit.",
+    "hidden_parts": "This cloud renderer can't keep out the part of a clip you asked me to hide.",
 }
 
 
@@ -334,6 +338,7 @@ def preflight_cloud_contract(
         # them for an adapter that structurally can never prove them.
         ("duration_s", contract.duration_s is not None and declaration is not None, None),
         ("require_voiceover", contract.require_voiceover and declaration is not None, None),
+        ("hidden_parts", bool(contract.hidden_parts), None),
     )
     for requirement, present, field_path in checks:
         if present and declined(requirement):
@@ -629,6 +634,9 @@ def verify_cloud_variant(
     length_policy = read_length_policy(assembly, contract)
     if contract.unresolved:
         raise _decline("unresolved", contract.unresolved[0])
+    if contract.hidden_parts:
+        # Leverkusen M2: a cloud render never proves a hidden part stayed out.
+        raise _decline("hidden_parts", _MESSAGE_PREFLIGHT["hidden_parts"])
     if not any(
         (
             contract.duration_s is not None,
