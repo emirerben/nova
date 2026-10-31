@@ -59,6 +59,8 @@ from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE,
     ENDING_CLIP_NOTICES,
+    SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE,
+    SPEAKER_BACKGROUND_NOTICES,
     TALKING_CLIP_INTENTS_DROPPED_NOTICE,
     CreatorSfxUnavailableError,
     compile_strategy_to_plan,
@@ -257,6 +259,24 @@ _KNOWN_TR: dict[str, str] = {
     ),
     ENDING_CLIP_NOT_ALSO_A_POP_IN_NOTICE: (
         "Sonda istediğin video sadece orada oynuyor, söylediğin bir kelimede ayrıca çıkmıyor."
+    ),
+    # KRI-1117: a photo or looping video behind the speaker.
+    SPEAKER_BACKGROUND_NOTICES["unavailable"]: (
+        "Bunu arkana koyamadım: fotoğraf ya da video arka planı sadece iPhone'da hazırlanan "
+        "konuşmalı düzenlemelerde çalışıyor ve şu an burada kullanılamıyor."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["not_found"]: (
+        "Arka plan için söylediğin fotoğraf ya da videoyu bulamadım; kendi arka planını bıraktım."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["pick_not_found"]: (
+        "Kamerada seçtiğin arka planı kullanamadım: artık bu düzenlemenin fotoğraf ve "
+        "videoları arasında değil; kendi arka planını bıraktım."
+    ),
+    SPEAKER_BACKGROUND_NOTICES["kind_off"]: (
+        "Bunu arka plan yapamadım: bu iPhone onu henüz arkanda çizemiyor."
+    ),
+    SPEAKER_BACKGROUND_NOT_ALSO_A_POP_IN_NOTICE: (
+        "Arkandaki fotoğraf ya da video sadece arka plan, söylediğin bir kelimede ayrıca çıkmıyor."
     ),
     (
         "Sound effects can't render on your iPhone yet. Ask for this edit without the sound effect."

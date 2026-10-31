@@ -55,6 +55,7 @@ from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_TIMED_CARDS,
     ending_clip_candidates,
+    speaker_background_open,
 )
 from app.services.length_policy import creator_duration_s
 
@@ -172,7 +173,9 @@ log = structlog.get_logger()
 # v106 (prompt fidelity, animation): an UNNAMED animation ask ("with animations", "animated
 # text") is a `text` requirement carrying `animation: "any"`, not prose only; a named one
 # keeps its id. One fact for both: the disclosure unit's interim `animated: true` fact is gone.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-31-v106"
+# v107 (KRI-1117): `background_media` (a photo / looping video behind the Talking speaker), taught
+# only where the manifest advertises `speaker_background`; every other prompt is byte-identical.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-31-v107"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -352,6 +355,28 @@ plays to its end and this video follows it, so never also use that video in `rea
 stays for a photo held over the last seconds of the talk, and a plain "end on ..." about the talk
 itself is not an `ending_clip`. Say in `summary`, in plain words, that the video is added after
 the talk with its own sound.
+""".strip("\n")
+
+# KRI-1117: a photo or looping video shown BEHIND the speaker for the whole talk (a green screen
+# without the green). Appended to the `$reaction_beats_section` slot ONLY when the manifest
+# advertises `speaker_background`, so every other prompt stays byte-identical. The repair
+# (`creator_capabilities.repair_creator_speaker_background`) never trusts the model's choice alone
+# and writes the creator's camera pick in when the model leaves it out.
+_SPEAKER_BACKGROUND_PROMPT_SECTION = """
+PHOTO OR VIDEO BEHIND THE SPEAKER (iPhone Talking only)
+When the creator asks to put a photo or video BEHIND them for the whole talk, like a green
+screen ("put this photo behind me", "use the beach video as my background", "arkamda bu
+fotoğraf dursun"), set `background_media`: {"media_id": "<the matching media_context entry's
+exact media_id>"}. Find it by matching what the creator named against the IMAGE or VIDEO
+entries in `media_context` (its `filename`, its `creator_context`, or its
+`analysis_only_not_copy` evidence), then copy THAT entry's exact `media_id`; never invent,
+shorten or guess an id, and never use one of the speaker's own clips. A video background plays
+muted and loops; add `source_start_s` only when the creator names where it should start. When
+the manifest carries `speaker_background_pick`, the creator already chose that background in the
+camera: set `background_media` to that exact id unless the creator now names a different one.
+A background is only the backdrop: never also use the same photo or video in `reaction_beats`,
+`closing_media` or as a cutaway. A plain "background" about audio ("background music") is not
+this. Say in `summary`, in plain words, that it sits behind them for the whole video.
 """.strip("\n")
 
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
@@ -990,6 +1015,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 + (
                     "\n" + _TIMED_CARDS_PROMPT_SECTION
                     if _timed_cards_available(input.capability_manifest)
+                    else ""
+                )
+                # KRI-1117: a photo / looping video behind the speaker; "" unless advertised.
+                + (
+                    "\n" + _SPEAKER_BACKGROUND_PROMPT_SECTION
+                    if speaker_background_open(input.capability_manifest)
                     else ""
                 )
             ),

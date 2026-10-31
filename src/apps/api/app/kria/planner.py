@@ -213,10 +213,12 @@ from app.services.creator_sessions import (
 from app.services.kept_sound_lines import kept_line_records
 from app.services.kria_editor_ops import (
     EDITOR_STATE_STALE_REPLY,
+    MAX_BACKGROUND_POOL_ROWS,
     MAX_EDITOR_OPS,
     SPEECH_CUT_NEEDS_SAVE_REPLY,
     EditorDraftBasis,
     EditorStateStaleError,
+    background_state,
     build_editor_snapshot,
     clip_facts_by_media_id,
     clip_seen_by_media_id,
@@ -2020,7 +2022,61 @@ async def _copilot_clip_context(
             context["sfx_catalog"] = catalog
     except Exception:  # noqa: BLE001 - fail closed: empty catalog => no add_sfx
         log.warning("kria_copilot_sfx_catalog_unavailable", thread_id=str(thread_id), exc_info=True)
+    try:
+        # KRI-1117: the photos and videos a Talking edit's background can be. No query while
+        # the lane is closed for this variant, so every other turn reads exactly what it read.
+        if background_state(job, variant)[0]:
+            pool = await _background_pool_rows(db, item)
+            if pool:
+                context["background_pool"] = pool
+    except Exception:  # noqa: BLE001 - fail closed: empty pool => no set_background
+        log.warning(
+            "kria_copilot_background_pool_unavailable", thread_id=str(thread_id), exc_info=True
+        )
     return context
+
+
+async def _background_pool_rows(db: AsyncSession, item: PlanItem) -> list[dict]:
+    """The item's own ready photos and videos for ``set_background`` (one query, savepoint).
+
+    Only THIS item's pool (S19): the id the model copies is the pool row id the Save pins.
+    The speaker's own clips are not Visuals and never appear here.
+    """
+    from app.models import PlanItemAsset  # noqa: PLC0415
+
+    owner = select(ContentPlan.user_id).where(ContentPlan.id == item.content_plan_id)
+    async with db.begin_nested():
+        rows = (
+            (
+                await db.execute(
+                    select(PlanItemAsset)
+                    .where(
+                        PlanItemAsset.plan_item_id == item.id,
+                        PlanItemAsset.user_id == owner.scalar_subquery(),
+                        PlanItemAsset.status == "ready",
+                        PlanItemAsset.kind.in_(("image", "video")),
+                        PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                    )
+                    .order_by(PlanItemAsset.created_at, PlanItemAsset.id)
+                    .limit(MAX_BACKGROUND_POOL_ROWS)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    pool: list[dict] = []
+    for row in rows:
+        entry: dict[str, Any] = {"id": str(row.id), "kind": row.kind}
+        label = " ".join(str(row.source_filename or "").split())[:60]
+        if label:
+            entry["label"] = label
+        if row.kind == "video" and isinstance(row.duration_s, (int, float)):
+            entry["duration_s"] = round(float(row.duration_s), 2)
+        context_note = " ".join(str(getattr(row, "user_context", None) or "").split())[:80]
+        if context_note:
+            entry["context"] = context_note
+        pool.append(entry)
+    return pool
 
 
 SFX_CATALOG_LIMIT = 40

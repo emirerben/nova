@@ -166,6 +166,7 @@ from app.services.kria_editor_ops import (
     _clip_label_links,
     build_editor_snapshot,
     compile_editor_ops,
+    editor_payload_dump,
     editor_state_has_lanes,
     failed_editor_draft_basis,
     merge_editor_draft,
@@ -176,6 +177,10 @@ from app.services.kria_editor_ops import (
 from app.services.kria_editor_ops_diff import describe_diff
 from app.services.length_policy import creator_duration
 from app.services.phone_rollout import stamped_client_protocol
+from app.services.phone_speaker_background import (
+    BACKGROUND_REFUSALS,
+    pin_background_for_commit_sync,
+)
 from app.services.pin_withdrawal import pin_block_coverage, unrepeated_reply
 from app.services.song_order import model_text
 from app.services.thought_summaries import (
@@ -1717,7 +1722,7 @@ def _complete_draft_turn(
                         reverted_fields=[*repair.reverted_fields, *repair.reverted_bars],
                     )
                 if isinstance(compiled.payload, EditorCommitRequest):
-                    repaired_data = compiled.payload.model_dump(mode="json", exclude_none=True)
+                    repaired_data = editor_payload_dump(compiled.payload)
                     if not plan_review.lanes_in(repaired_data):
                         raise KriaEditorOpError(
                             say(
@@ -1759,9 +1764,7 @@ def _complete_draft_turn(
                 intent=arguments.summary,
                 edit_format=str(item.edit_format or "montage"),
                 editor_payload=(
-                    merge_editor_draft(
-                        prior_payload, compiled.payload.model_dump(mode="json", exclude_none=True)
-                    )
+                    merge_editor_draft(prior_payload, editor_payload_dump(compiled.payload))
                     if isinstance(compiled.payload, EditorCommitRequest)
                     else compiled.payload
                 ),
@@ -5252,6 +5255,7 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                     else None
                 )
                 device_variant = _is_device_variant(current_job, approval.target_variant_id)
+                plan_before_background_pin = current_job.assembly_plan
                 try:
                     # Inside the try: deriving the lanes re-validates the pinned
                     # recipe, and a device recipe that fails is a refusal too.
@@ -5259,6 +5263,15 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         db,
                         current_job,
                         _find_variant(current_job, approval.target_variant_id) or {},
+                    )
+                    # KRI-1117: a chat edit that sets a Talking background pins its pool
+                    # visual first, like the HTTP Save route (never any other Save).
+                    pin_background_for_commit_sync(
+                        db,
+                        current_job,
+                        approval.target_variant_id,
+                        editor_payload,
+                        plan_item_id=item.id,
                     )
                     editor_prep = prepare_editor_commit(
                         current_job,
@@ -5291,6 +5304,9 @@ def _claim_approval_dispatch(approval_id: uuid.UUID) -> _ApprovalDispatchClaim |
                         temporary=explicitly_temporary(document.intent),
                     )
                 except (HTTPException, ValueError, KeyError) as exc:
+                    # A refused Save leaves no pinned receipt behind (the pin replaces the
+                    # plan dict, never edits it in place).
+                    current_job.assembly_plan = plan_before_background_pin
                     if not device_variant:
                         raise
                     # A device variant re-compiles its phone recipe here
@@ -5429,6 +5445,13 @@ _DEVICE_EDIT_REFUSALS = {
         "so I left the video as it was."
     ),
 }
+# KRI-1117: a background the Save or the pin refused, with the reason (S18).
+_DEVICE_EDIT_REFUSALS.update(
+    {
+        code: f"{en}, so I left the video as it was."
+        for code, (en, _tr) in BACKGROUND_REFUSALS.items()
+    }
+)
 _DEVICE_EDIT_REFUSAL_FALLBACK = (
     "I couldn't apply that change on your iPhone, so I left the video as it was."
 )
@@ -5450,6 +5473,12 @@ _DEVICE_EDIT_REFUSALS_TR = {
         "olduğu gibi bıraktım."
     ),
 }
+_DEVICE_EDIT_REFUSALS_TR.update(
+    {
+        code: f"{tr}, o yüzden videoyu olduğu gibi bıraktım."
+        for code, (_en, tr) in BACKGROUND_REFUSALS.items()
+    }
+)
 _DEVICE_EDIT_REFUSAL_FALLBACK_TR = (
     "Bu değişikliği iPhone'unda uygulayamadım, o yüzden videoyu olduğu gibi bıraktım."
 )

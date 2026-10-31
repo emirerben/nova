@@ -997,7 +997,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
-                (True, "covered", "kri-841-talking-ending-clip"),
+                (True, "covered", "kri-841-talking-ending-clip,speaker-background"),
             ),
             (
                 "src/apps/api/tests/tasks/test_kri841_talking_ending_clip.py",

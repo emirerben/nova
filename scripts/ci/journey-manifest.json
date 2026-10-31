@@ -2448,6 +2448,39 @@
         "src/apps/ios/Tests/KriaTests/ReferenceStyleSaveTests.swift",
         "src/apps/ios/Tests/Fixtures/ReferenceStyleSave.json"
       ]
+    },
+    {
+      "id": "speaker-background",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_speaker_background.py tests/tasks/test_speaker_background_worker.py tests/routes/test_speaker_background_editor.py tests/services/test_phone_speaker_background_pin.py tests/integration/test_speaker_background_pin_postgres.py tests/kria/test_speaker_background_chat.py tests/tasks/test_speaker_background_strategy_worker.py tests/routes/test_speaker_background_chat_ops.py tests/integration/test_speaker_background_camera_pick_postgres.py tests/kria/test_editor_capability_parity.py",
+      "xctests": [
+        "KriaTests/SpeakerBackgroundEditorTests/testEveryFixtureLayerTheEditorCanExpressCompilesToTheSharedRecipeLayer",
+        "KriaTests/SpeakerBackgroundEditorTests/testClearingTheBackgroundCompilesByteIdenticalToAnEditThatNeverHadOne",
+        "KriaTests/SpeakerBackgroundEditorTests/testSaveSendsTheChosenBackgroundThenNullWhenItIsCleared",
+        "KriaTests/SpeakerBackgroundEditorTests/testTheLaneIsNotAnUnsupportedLaneAndAnUnreadableOneIs",
+        "KriaUITests/SpeakerBackgroundUITests/testNoneRemovesTheBackgroundAndBothChoicesSurviveSaveAndReopen",
+        "KriaUITests/SpeakerBackgroundUITests/testPickingAPhotoSelectsItAndMakesTheEditSaveable"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/portable_speaker_background.py",
+        "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
+        "src/apps/api/app/services/phone_speaker_background.py",
+        "src/apps/api/app/agents/editor_ops_v2/background.py",
+        "src/apps/api/prompts/edit_copilot_ops/speaker_background.txt",
+        "src/apps/api/tests/kria/test_speaker_background_chat.py",
+        "src/apps/api/tests/tasks/test_speaker_background_strategy_worker.py",
+        "src/apps/api/tests/routes/test_speaker_background_chat_ops.py",
+        "src/apps/api/tests/integration/test_speaker_background_camera_pick_postgres.py",
+        "src/apps/api/tests/kria/test_speaker_background.py",
+        "src/apps/api/tests/tasks/test_speaker_background_worker.py",
+        "src/apps/api/tests/routes/test_speaker_background_editor.py",
+        "src/apps/api/tests/services/test_phone_speaker_background_pin.py",
+        "src/apps/api/tests/integration/test_speaker_background_pin_postgres.py",
+        "tests/fixtures/speaker-background-parity/",
+        "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift",
+        "src/apps/ios/Tests/KriaTests/SpeakerBackgroundEditorTests.swift",
+        "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift"
+      ]
     }
   ]
 }

@@ -62,6 +62,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.kria.portable_speaker_background import SpeakerBackgroundLayer
 from app.kria.portable_visual import VisualMediaPlacement
 from app.kria.recipes import (
     AssetFingerprint,
@@ -92,9 +93,11 @@ from app.pipeline.phone_subtitled_lanes import (
     CAPTION_BAND_TOP_FRAC,
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
+    SubtitledBackground,
     SubtitledEndingClip,
     SubtitledOverlayCard,
     _lane_error,
+    strip_unsupported_background,
 )
 from app.pipeline.silence_cut import CutPlan
 from app.services.phone_sources import (
@@ -260,6 +263,13 @@ def compile_phone_subtitled_plan(
         SAME main video track right after the speaker clip, extending the
         recipe's own duration. Muted (``volume=0``) by default; the creator's
         "with its own sound" ask (KRI-841) sets ``SubtitledEndingClip.volume``.
+      - ``lanes.background`` (KRI-1117): one pinned Visuals-pool photo or video
+        behind the speaker's person mask for the whole edit, compiled into
+        ``EditRecipeV2.speaker_background`` (no timeline clip; the phone composites
+        it). Stripped first while the phone gate is closed
+        (`strip_unsupported_background`), so a closed gate is byte-identical to a
+        request that never asked. A missing or unplayable asset raises
+        ``SubtitledLaneError`` for the ``background`` lane.
 
     ``duck_sfx_under_speech`` (default ``False``, from
     ``settings.phone_sfx_speech_duck_enabled``) scales the volume of every
@@ -362,6 +372,7 @@ def compile_phone_subtitled_plan(
     """
     if output_orientation not in ("portrait", "landscape"):
         raise ValueError(f"unknown output_orientation {output_orientation!r}")
+    lanes = strip_unsupported_background(lanes)
     is_landscape = output_orientation == "landscape"
     canvas = _LANDSCAPE_STORY_CANVAS if is_landscape else _STORY_CANVAS
     if is_landscape:
@@ -657,6 +668,17 @@ def compile_phone_subtitled_plan(
             tracks.append(sfx_track)
             required_capabilities |= {"soundEffects", "audioMix"}
 
+    speaker_background: SpeakerBackgroundLayer | None = None
+    if lanes is not None and lanes.background is not None:
+        try:
+            speaker_background = _compile_background(
+                lanes.background, visuals=visuals, assets=assets, manifest=manifest
+            )
+        except UnsupportedPhonePlan:
+            raise
+        except Exception as exc:  # noqa: BLE001 - untrusted lane content
+            raise _lane_error("background", str(exc), capability="speakerBackground") from exc
+
     return EditRecipeV2(
         canvas=canvas,
         assets=list(assets.values()),
@@ -665,6 +687,70 @@ def compile_phone_subtitled_plan(
         text_layers=layers,
         audio=AudioMixRecipe(original_volume=1.0),
         required_capabilities=required_capabilities,
+        # `None` is omitted from the recipe wire, so a recipe without a background
+        # keeps its exact bytes and digest.
+        speaker_background=speaker_background,
+    )
+
+
+def _compile_background(
+    background: SubtitledBackground,
+    *,
+    visuals: tuple[PhoneVisualBinding, ...],
+    assets: dict[str, MediaAsset],
+    manifest: dict[str, object],
+) -> SpeakerBackgroundLayer:
+    """The recipe layer for the whole-edit background, pinning its visual (KRI-1117, S9).
+
+    A photo is held for the whole edit; a video loops from ``source_start_s``. A video
+    with no playable footage from that start (zero or unreadable duration, or a start at
+    or past the end) fails the lane at compile time instead of mid-render.
+    """
+    try:
+        visual = require_bound_visual(
+            visuals,
+            media_id=background.media_id,
+            path=background.gcs_path,
+            generation=background.generation,
+        )
+    except ValueError as exc:
+        raise _lane_error("background", str(exc), capability="speakerBackground") from exc
+    if visual.kind != background.kind:
+        raise _lane_error(
+            "background",
+            f"background asks for a {background.kind} but the pinned visual is a {visual.kind}",
+            capability="speakerBackground",
+        )
+    media_asset: MediaAsset
+    if visual.kind == "video":
+        duration = visual.duration_s or 0.0
+        if duration <= 0 or background.source_start_s >= duration:
+            raise _lane_error(
+                "background",
+                "no playable footage remains from the background's start",
+                capability="speakerBackground",
+            )
+        media_asset = MediaAsset(
+            id=f"visual-{visual.media_id}",
+            relative_path=f"visual-{visual.media_id}",
+            fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+            duration=duration if duration <= 1800 else None,
+            natural_size=MediaSize(width=visual.width or 1, height=visual.height or 1),
+            orientation_degrees=visual.orientation_degrees,
+        )
+    else:
+        media_asset = MediaAsset(
+            id=f"visual-{visual.media_id}",
+            relative_path=f"visual-{visual.media_id}",
+            fingerprint=AssetFingerprint(hex=visual.sha256, byte_count=visual.byte_count),
+        )
+    render_asset = visual.render_asset()
+    manifest[render_asset.id] = render_asset
+    assets[render_asset.id] = media_asset
+    return SpeakerBackgroundLayer(
+        asset_id=render_asset.id,
+        media_kind=visual.kind,
+        source_start=background.source_start_s if visual.kind == "video" else 0.0,
     )
 
 

@@ -472,6 +472,7 @@ def _editor_snapshot(variant: dict[str, Any], generation_id: str | None) -> dict
         "camera_effects",
         "drawings",
         "carousel_moment",
+        "speaker_background",
     )
     sections = {key: variant[key] for key in keys if key in variant}
     if isinstance(sections.get("text_elements"), list):

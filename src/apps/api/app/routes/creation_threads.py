@@ -116,10 +116,14 @@ from app.services.creation_thread_titles import (
     prepare_title,
     start_title_generation,
 )
+from app.services.creator_capabilities import (
+    SPEAKER_BACKGROUND_STATE_KEY,
+    canonical_pool_media_id,
+)
 from app.services.creator_direction_receipts import project_direction_receipt
 from app.services.creator_execution_contract import requests_guided_voiceover
 from app.services.creator_render_projection import build_creator_render_projection
-from app.services.creator_sessions import reconcile_render_state
+from app.services.creator_sessions import CREATOR_VISIBLE_ASSET_STATES, reconcile_render_state
 from app.services.device_render import variant_delivery_phase
 from app.services.generative_upload_paths import DIRECT_VOICEOVER_PREFIX
 from app.services.guided_speech_cleanup import DISABLED_MESSAGE as CLEANUP_DISABLED_MESSAGE
@@ -406,6 +410,12 @@ class CreationCapabilitiesOut(BaseModel):
     # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=
     # text_bend_min_client_protocol.
     text_bend: bool = False
+    # KRI-1117: a Talk-to-camera edit may carry a photo / looping video behind the speaker
+    # (`EditRecipeV2.speaker_background`). True only with the flag on, `speakerBackground`
+    # verified, and a build declaring X-Kria-Client-Protocol >= speaker_background_min_
+    # client_protocol. The per-edit editor capability (`editor_capabilities.speaker_background`)
+    # narrows it to device-rendered Talk-to-camera variants.
+    speaker_background: bool = False
     # KRI-742: the chat composers show a mic button (VOICE_DICTATION_ENABLED).
     voice_dictation: bool = False
     slide_post_extended_device_export: bool = False
@@ -3822,6 +3832,125 @@ async def set_song_range(
     return await _response(db, thread)
 
 
+class SpeakerBackgroundBody(StrictBody):
+    """The photo or video the creator picked behind them in the camera; no reference clears it.
+
+    The pick names a Visuals-pool row of this thread's item, by the pool row id (the reservation
+    id: one row from reservation to ready, the manifest's ``asset-<id>`` spelling is accepted
+    too) or by the ``client_upload_id`` the app reserved it with. Either works while the upload
+    is still in flight (`preparing`); setting takes exactly one of the two.
+    """
+
+    media_id: str | None = Field(default=None, min_length=1, max_length=160)
+    client_upload_id: str | None = Field(default=None, min_length=1, max_length=128)
+    client_event_id: str = Field(min_length=1, max_length=160)
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("client_event_id")
+    @classmethod
+    def validate_client_event_id(cls, value: str) -> str:
+        return _client_id(value)
+
+    @model_validator(mode="after")
+    def _one_reference(self) -> SpeakerBackgroundBody:
+        if self.media_id is not None and self.client_upload_id is not None:
+            raise ValueError("name the background by media_id or client_upload_id, not both")
+        return self
+
+
+@router.put("/{thread_id}/speaker-background", response_model=CreationThreadOut)
+@limiter.limit("30/minute")
+async def set_speaker_background(
+    request: Request,
+    thread_id: str,
+    body: SpeakerBackgroundBody,
+    user: CurrentUser,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    native_client: NativeClient = False,
+    client_protocol: KriaClientProtocol = None,
+) -> CreationThreadOut:
+    """Record the background the creator picked in the camera (KRI-1117).
+
+    The pick is thread state (``state["speaker_background"] = {"media_id", "kind"}``), read by
+    the Main Creator's manifest and written into the plan by the server repair when the agent
+    leaves it out: the creator's explicit pick wins (KRI-129). The id must be a photo or video
+    of THIS thread's item pool (S19); setting needs the phone gate open for the caller's build,
+    clearing is always allowed so a creator can take the pick back.
+    """
+    if rejected := creation_mutation_admission(
+        request, native_client=native_client, client_protocol=client_protocol
+    ):
+        return rejected
+    setting = body.media_id is not None or body.client_upload_id is not None
+    if setting and not (
+        settings.speaker_background_enabled
+        and "speakerBackground" in set(settings.phone_render_verified_features)
+        and client_protocol is not None
+        and client_protocol >= settings.speaker_background_min_client_protocol
+    ):
+        raise RuntimeFailure(404, "speaker_background_unavailable", "Backgrounds unavailable")
+    owner_id = user.id
+    thread = await _load(thread_id, user, db, lock=True, creator_id=owner_id)
+    if thread.status != "active":
+        raise HTTPException(status_code=409, detail="Creation thread is archived")
+    canonical = canonical_pool_media_id(body.media_id) if body.media_id is not None else None
+    if body.media_id is not None and canonical is None:
+        raise RuntimeFailure(422, "speaker_background_media_invalid", "Pick a photo or video.")
+    wanted = {"media_id": canonical, "client_upload_id": body.client_upload_id}
+    duplicate = await _duplicate(db, thread.id, body.client_event_id)
+    if duplicate:
+        if duplicate.event_type != "speaker_background_set" or (duplicate.payload or {}) != wanted:
+            raise HTTPException(status_code=409, detail="Idempotency key reused")
+        await db.rollback()
+        return await _response(db, await _load(thread_id, user, db, creator_id=owner_id))
+    if not matches_conversation_revision(thread, body.expected_revision):
+        raise HTTPException(status_code=409, detail="Creation thread changed")
+    state = dict(getattr(thread, "state", None) or {})
+    if not setting:
+        state.pop(SPEAKER_BACKGROUND_STATE_KEY, None)
+    else:
+        if not thread.active_plan_item_id:
+            raise RuntimeFailure(409, "speaker_background_needs_item", "Attach your video first.")
+        reference = (
+            PlanItemAsset.id == uuid.UUID(canonical.removeprefix("asset-"))
+            if canonical is not None
+            else PlanItemAsset.client_upload_id == body.client_upload_id
+        )
+        row = (
+            await db.execute(
+                select(PlanItemAsset).where(
+                    reference,
+                    PlanItemAsset.plan_item_id == thread.active_plan_item_id,
+                    PlanItemAsset.user_id == owner_id,
+                    PlanItemAsset.kind.in_(("image", "video")),
+                    # `preparing`: the app calls this when it queues the upload, before the
+                    # bytes land. The render still waits for `ready` (repair + worker).
+                    PlanItemAsset.status.in_(("preparing", *CREATOR_VISIBLE_ASSET_STATES)),
+                    PlanItemAsset.deduplicated_to_asset_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise RuntimeFailure(
+                422,
+                "speaker_background_media_not_in_pool",
+                "That photo or video isn't in this video's visuals.",
+            )
+        state[SPEAKER_BACKGROUND_STATE_KEY] = {"media_id": f"asset-{row.id}", "kind": row.kind}
+    thread.state = state
+    await _append(
+        db,
+        thread,
+        event_type="speaker_background_set",
+        role="user",
+        payload=wanted,
+        client_event_id=body.client_event_id,
+    )
+    await db.commit()
+    await db.refresh(thread)
+    return await _response(db, thread)
+
+
 @router.get("/capabilities", response_model=CreationCapabilitiesOut)
 async def capabilities(
     user: CurrentUser,
@@ -3907,6 +4036,12 @@ async def capabilities(
             and "textBend" in set(settings.phone_render_verified_features)
             and client_protocol is not None
             and client_protocol >= settings.text_bend_min_client_protocol
+        ),
+        "speaker_background": bool(
+            settings.speaker_background_enabled
+            and "speakerBackground" in set(settings.phone_render_verified_features)
+            and client_protocol is not None
+            and client_protocol >= settings.speaker_background_min_client_protocol
         ),
         "voice_dictation": bool(
             settings.voice_dictation_enabled

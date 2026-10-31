@@ -689,6 +689,19 @@ FIELD_MATRIX: dict[str, FieldRule] = {
     ),
     **_rules(
         "upstream_resolved",
+        "speaker_background_repair",
+        "background_media",
+        "background_media.media_id",
+        "background_media.source_start_s",
+        note=(
+            "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
+            "creator_capabilities.repair_creator_speaker_background; the phone Talking worker "
+            "resolves it into the lane request's background and records the drop in "
+            "phone_lane_receipt. The contract itself does not verify it"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
         "choice_questions",
         "choice_answers[]",
         *(

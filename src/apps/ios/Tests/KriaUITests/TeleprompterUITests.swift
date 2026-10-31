@@ -188,9 +188,60 @@ import XCTest
         capture(app, "Previous take restored after failed intake")
     }
 
-    private func launchTalking(largeText: Bool = false, review: Bool = false) -> XCUIApplication {
+    /// KRI-1119 failure modes: the Background capsule must not exist unless the server offers the feature; a pick shows its
+    /// state and survives reopening the camera; clearing returns to None; the camera never claims the preview is the render.
+    func testBackgroundCapsuleIsHiddenWithoutTheCapability() {
+        let app = launchTalking()
+        openScriptCamera(app)
+        XCTAssertFalse(app.buttons["teleprompter-background"].exists)
+        XCTAssertFalse(app.staticTexts["teleprompter-background-preview-notice"].exists)
+    }
+
+    func testBackgroundCanBePickedKeptAndCleared() {
+        let app = launchTalking(speakerBackground: true)
+        openScriptCamera(app)
+        let capsule = app.buttons["teleprompter-background"]
+        XCTAssertTrue(capsule.waitForExistence(timeout: 5))
+        XCTAssertEqual(capsule.value as? String, "None")
+        XCTAssertFalse(app.staticTexts["teleprompter-background-preview-notice"].exists)
+
+        capsule.tap()
+        XCTAssertFalse(app.buttons["teleprompter-background-clear"].exists, "nothing to clear yet")
+        app.buttons["teleprompter-background-choose"].tap()
+        XCTAssertEqual(capsule.value as? String, "Photo")
+        let notice = app.staticTexts["teleprompter-background-preview-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        XCTAssertFalse(notice.label.localizedCaseInsensitiveContains("same"), "the preview never promises identical pixels")
+        capture(app, "Background picked, camera unavailable")
+
+        app.buttons["Close camera"].tap()
+        app.buttons["teleprompter-close"].tap()
+        app.buttons["teleprompter-open"].tap()
+        app.buttons["teleprompter-open-camera"].tap()
+        XCTAssertTrue(app.staticTexts["teleprompter-camera-error"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["teleprompter-background"].value as? String, "Photo", "a retake keeps the background")
+
+        app.buttons["teleprompter-background"].tap()
+        app.buttons["teleprompter-background-clear"].tap()
+        XCTAssertEqual(app.buttons["teleprompter-background"].value as? String, "None")
+        XCTAssertFalse(app.staticTexts["teleprompter-background-preview-notice"].exists)
+    }
+
+    func testReviewNamesTheBackgroundAndKeepsTheTakeUsable() {
+        let app = launchTalking(review: true, speakerBackground: true)
+        app.buttons["teleprompter-open"].tap()
+        XCTAssertTrue(app.staticTexts["teleprompter-review-background"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
+        capture(app, "Review take with a background")
+    }
+
+    private func launchTalking(largeText: Bool = false, review: Bool = false, speakerBackground: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-chat"]
+        if speakerBackground {
+            app.launchArguments.append("-ui-testing-speaker-background")
+            app.launchEnvironment["KRIA_TELEPROMPTER_BACKGROUND_FIXTURE"] = "1"
+        }
         app.launchEnvironment["KRIA_CHAT_CREATION_FLOW"] = "v1"
         app.launchEnvironment["KRIA_TELEPROMPTER_CAMERA_UNAVAILABLE"] = "1"
         if review { app.launchEnvironment["KRIA_TELEPROMPTER_REVIEW_FIXTURE"] = "1" }

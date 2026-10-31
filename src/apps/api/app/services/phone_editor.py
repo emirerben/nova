@@ -48,7 +48,12 @@ from app.pipeline.phone_recipe_shared import (
     timeline_end_s,
     with_drawings,
 )
-from app.pipeline.phone_subtitled_lanes import PhoneSubtitledLanes, ResolvedSoundEffect, lane_names
+from app.pipeline.phone_subtitled_lanes import (
+    PhoneSubtitledLanes,
+    ResolvedSoundEffect,
+    SubtitledBackground,
+    lane_names,
+)
 from app.pipeline.phone_subtitled_plan import (
     SFX_DUCK_RECEIPT_FIELD,
     additional_speakers_from_recipe,
@@ -91,6 +96,7 @@ from app.services.phone_rollout import (
     recipe_has_single_word_text,
     single_word_text_client_supported,
     single_word_text_verified,
+    speaker_background_client_supported,
     text_bend_client_supported,
     validate_phone_pilot_recipe,
 )
@@ -107,6 +113,7 @@ from app.services.phone_subtitled_editor import (
     lanes_from_editor_sections,
     lanes_from_recipe,
     sections_from_lanes,
+    variant_carries_speaker_background,
 )
 from app.services.phone_voiceover_timeline import (
     narrated_timings_and_assignments,
@@ -144,6 +151,8 @@ _SUBTITLED_EDITOR_SECTIONS = frozenset(
         "orientation",
         # KRI-589: freehand drawings compile into the recipe's `drawing_layers`.
         "drawings",
+        # KRI-1117: the whole-edit Talk-to-camera background (`EditRecipeV2.speaker_background`).
+        "speaker_background",
     }
 )
 # KRI-467: ...plus its text lane (the opening title and any creator text),
@@ -825,6 +834,30 @@ def prepare_phone_editor_commit(
     if stored_drawings and not freehand_drawing_client_supported():
         # A recompile would pin a recipe (`drawingLayers`) this app build cannot decode.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "drawing"})
+    stored_variant = next(
+        (
+            v
+            for v in (job.assembly_plan or {}).get("variants", [])
+            if isinstance(v, dict) and v.get("variant_id") == variant_id
+        ),
+        None,
+    )
+    if (
+        stored_variant is not None
+        and not speaker_background_client_supported()
+        and variant_carries_speaker_background(job.assembly_plan or {}, stored_variant)
+    ):
+        # KRI-1117: a recompile would pin `speaker_background`, which this app build cannot
+        # decode, or (compile strips it for such a build) silently take the creator's
+        # background off. Nothing is committed.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background",
+                "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
     try:
         _rebind_editor_render_contract(
             staged,
@@ -907,6 +940,20 @@ def prepare_phone_editor_commit(
         # KRI-646: the recompiled recipe pins bent text (`textLayers[].bend`) that this app
         # build cannot decode or draw; nothing is committed.
         raise HTTPException(426, detail={"code": "client_update_required", "feature": "text_bend"})
+    if (
+        getattr(device_status(staged, variant_id).request.recipe, "speaker_background", None)
+        is not None
+        and not speaker_background_client_supported()
+    ):
+        # KRI-1117: the belt for a recompile that pinned a background this build cannot decode.
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "speaker_background",
+                "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+            },
+        )
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(
         device_status(staged, variant_id).request.recipe
     ):
@@ -1121,6 +1168,28 @@ def _settle_lane_labels_and_paths(
     return labels, paths
 
 
+def _background_lane(
+    document: dict | None, visuals: tuple[PhoneVisualBinding, ...]
+) -> SubtitledBackground | None:
+    """The validated ``speaker_background`` section as a pinned lane request.
+
+    The route validated the section against this job's pinned visuals; the bytes' path and
+    generation come from that pin, never from the client.
+    """
+    if not document:
+        return None
+    binding = next((v for v in visuals if v.media_id == document["media_id"]), None)
+    if binding is None:
+        raise ValueError("that background isn't a visual Kria pinned for this Talking edit")
+    return SubtitledBackground(
+        media_id=binding.media_id,
+        gcs_path=binding.gcs_path,
+        generation=binding.generation,
+        kind=binding.kind,
+        source_start_s=document.get("source_start_s", 0.0),
+    )
+
+
 def _persist_lane_state(
     row: dict,
     lanes: PhoneSubtitledLanes,
@@ -1143,6 +1212,10 @@ def _persist_lane_state(
     row["sound_effects"] = sections["sound_effects"] or None
     row["media_overlays"] = sections["media_overlays"] or None
     row["phone_lane_receipt"] = {"applied": list(lane_names(lanes)), "dropped": []}
+    if "speaker_background" in sections:
+        row["speaker_background"] = sections["speaker_background"]
+    else:
+        row.pop("speaker_background", None)
     if duck_receipt is not None:
         row[SFX_DUCK_RECEIPT_FIELD] = duck_receipt
     else:
@@ -1191,6 +1264,8 @@ def _compile_subtitled_editor_commit(
         sound_effects=prep.get("sfx_override"),
         media_overlays=prep.get("media_overlays_override"),
         visuals=visuals,
+        background_touched=bool(prep.get("speaker_background_touched")),
+        background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
 
     caption_cues = prep.get("caption_cues_override")

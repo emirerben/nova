@@ -360,6 +360,14 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Bent text awaits native parity and device qualification",
             capability="textBend",
         )
+    # Speaker background: same explicit gate; the compile strips the lane unless verified.
+    if recipe.speaker_background is not None and "speakerBackground" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "Speaker backgrounds await native parity and device qualification",
+            capability="speakerBackground",
+        )
     # Text behind people: same explicit gate (`compile_text_overlay` strips the flag before
     # it gets here unless verified; this catches a caller that stamped it afterwards).
     if any(layer.behind_subject for layer in recipe.text_layers) and "behindSubject" not in set(
@@ -704,6 +712,57 @@ def text_behind_subject_phone_supported(*, require_client: bool | None = None) -
         and "behindSubject" in set(settings.phone_render_verified_features)
         and text_behind_subject_phone_client_supported(require_client=require_client)
     )
+
+
+def speaker_background_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a recipe's ``speaker_background``?
+
+    At least ``speaker_background_min_client_protocol`` (27) knows the key; an older build
+    refuses the whole recipe (`rejectUnknownAssetFields`). ``require_client`` ``None``
+    applies the gate only inside an HTTP request (workers have no app build to qualify);
+    pass ``True``/``False`` to force it. Mirrors `text_behind_subject_phone_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.speaker_background_min_client_protocol
+
+
+def speaker_background_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a phone recipe carry ``speaker_background`` right now".
+
+    True iff the kill switch (``speaker_background_enabled``, default off) is on,
+    ``speakerBackground`` is in ``phone_render_verified_features`` (the device-parity
+    gate) and the app-build gate holds (`speaker_background_client_supported`). When
+    False, the compile strips the lane and the edit keeps the creator's own background.
+    """
+    return bool(
+        settings.speaker_background_enabled
+        and "speakerBackground" in set(settings.phone_render_verified_features)
+        and speaker_background_client_supported(require_client=require_client)
+    )
+
+
+def speaker_background_unavailable_reason(*, require_client: bool | None = None) -> str | None:
+    """Why `speaker_background_supported` is False, or None when the lane is open.
+
+    Same three checks in the same order, named for the job-debug trace
+    (`speaker_background_phone_fallback`) and the editor's 422/426 answers.
+    """
+    if not settings.speaker_background_enabled:
+        return "disabled"
+    if "speakerBackground" not in set(settings.phone_render_verified_features):
+        return "token_not_verified"
+    if not speaker_background_client_supported(require_client=require_client):
+        return "client_protocol_below_min"
+    return None
 
 
 # Variant field an HTTP editor Save writes when it compiled one-word captions for a build
