@@ -65,8 +65,16 @@ final class AIConsentTests: XCTestCase {
 }
 
 private final class ConsentTokenStore: TokenStore, @unchecked Sendable {
+    private let lock = NSLock()
     private var session: MobileSession?
-    func read() throws -> MobileSession? { session }
-    func write(_ session: MobileSession) throws { self.session = session }
-    func delete() throws { session = nil }
+    func read() throws -> MobileSession? { lock.withLock { session } }
+    func write(_ session: MobileSession) throws { lock.withLock { self.session = session } }
+    func delete() throws { lock.withLock { session = nil } }
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        lock.withLock {
+            guard session == expected else { return SessionStoreUpdate(applied: false, current: session) }
+            session = replacement
+            return SessionStoreUpdate(applied: true, current: session)
+        }
+    }
 }

@@ -4603,3 +4603,121 @@ class GeneratedMediaOperation(Base):
     expires_at: Mapped[datetime] = mapped_column(
         TIMESTAMPTZ, nullable=False, server_default=text("now() + interval '24 hours'")
     )
+
+
+class NativeActivity(Base):
+    __tablename__ = "native_activities"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("creation_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    variant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    ownership_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    identity: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    generation: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    semantic_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, nullable=False, server_default=func.now()
+    )
+    read_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('video_ready', 'action_required')", name="ck_native_activity_kind"
+        ),
+        CheckConstraint(
+            "ownership_epoch >= 0 AND length(variant_id) > 0 AND length(generation) > 0",
+            name="ck_native_activity_target",
+        ),
+        Index("idx_native_activity_owner_created", "owner_id", "created_at", "id"),
+    )
+
+
+class NotificationInstallation(Base):
+    __tablename__ = "notification_installations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    environment: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_token: Mapped[bytes | None] = mapped_column(BYTEA, nullable=True)
+    token_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    registered_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "environment IN ('sandbox', 'production') AND registration_version > 0",
+            name="ck_notification_installation_target",
+        ),
+        CheckConstraint(
+            "revoked_at IS NOT NULL OR encrypted_token IS NOT NULL",
+            name="ck_notification_installation_token",
+        ),
+        Index("idx_notification_installation_owner", "owner_id"),
+        Index(
+            "uq_notification_installation_active_target",
+            "environment",
+            "topic",
+            "token_fingerprint",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    activity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("native_activities.id", ondelete="CASCADE"), nullable=False
+    )
+    installation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("notification_installations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    registration_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    available_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    lease_until: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    lease_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    last_result_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("activity_id", "installation_id", name="uq_notification_delivery_pair"),
+        CheckConstraint(
+            "status IN ('pending','leased','accepted','suppressed','rejected','exhausted','uncertain')",
+            name="ck_notification_delivery_status",
+        ),
+        CheckConstraint(
+            "attempts >= 0 AND registration_version > 0", name="ck_notification_delivery_attempts"
+        ),
+        CheckConstraint(
+            "(status = 'leased' AND lease_id IS NOT NULL AND lease_until IS NOT NULL) OR "
+            "(status != 'leased' AND lease_id IS NULL AND lease_until IS NULL)",
+            name="ck_notification_delivery_lease",
+        ),
+        Index("idx_notification_delivery_due", "status", "available_at"),
+    )

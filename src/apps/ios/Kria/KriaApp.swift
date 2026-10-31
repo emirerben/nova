@@ -1,10 +1,12 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 @main struct KriaApp: App {
     @UIApplicationDelegateAdaptor(KriaAppDelegate.self) private var appDelegate
     @StateObject private var auth: AuthStore
     @StateObject private var model: AppModel
+    @StateObject private var notifications = NativeNotificationCoordinator()
     private let container: ModelContainer
     init() {
         // Launch ends when the first transcript row is visible (`ChatWorkspaceView`); `launch.init` is the
@@ -35,7 +37,7 @@ import SwiftData
             try? auth.signIn(with: MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600), displayName: "Retry QA")
             auth.acceptAIConsent()
             _auth = StateObject(wrappedValue: auth)
-            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }))
             return
         }
         if let configuration = CameraRollLiveQA.configuration() {
@@ -48,7 +50,7 @@ import SwiftData
             try? auth.signIn(with: configuration.session, displayName: "Emir · local QA")
             auth.acceptAIConsent()
             _auth = StateObject(wrappedValue: auth)
-            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }))
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-account") {
@@ -60,14 +62,15 @@ import SwiftData
             let payload = Data("{\"sub\":\"\(UUID().uuidString)\"}".utf8).base64EncodedString()
             try? auth.signIn(with: MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "fixture-refresh", expiresIn: 3600), displayName: "Test creator")
             _auth = StateObject(wrappedValue: auth)
-            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext)))
+            _model = StateObject(wrappedValue: AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }))
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-camera-roll-original-link") || ProcessInfo.processInfo.arguments.contains("-camera-roll-benchmark") || ProcessInfo.processInfo.arguments.contains("-camera-roll-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-device-collection") || ProcessInfo.processInfo.arguments.contains("-camera-roll-story-review") || ProcessInfo.processInfo.arguments.contains("-camera-roll-export-proof") {
             let container = Self.fallbackContainer()
             self.container = container
-            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore()))
-            _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext)))
+            let auth = AuthStore(tokenStore: ChatUITestTokenStore())
+            _auth = StateObject(wrappedValue: auth)
+            _model = StateObject(wrappedValue: AppModel(api: ChatUITestTransport.api(), cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity }))
             return
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") {
@@ -77,18 +80,20 @@ import SwiftData
             PerfFixture.installHashObserver()
             let api = ChatUITestTransport.api()
             // With an expired fixture session the account is "signed in", so its profile read must hit the fixture too.
-            _auth = StateObject(wrappedValue: AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken ? api : nil))
-            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext))
+            let auth = AuthStore(tokenStore: ChatUITestTokenStore(), api: PerfFixture.expiredToken || ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil ? api : nil)
+            _auth = StateObject(wrappedValue: auth)
+            let model = AppModel(api: api, cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity })
             if PerfFixture.uploadTicks { model.uploads.startProgressTicksForTesting() }
             _model = StateObject(wrappedValue: model)
             return
         }
         #endif
-        _auth = StateObject(wrappedValue: AuthStore())
+        let auth = AuthStore()
+        _auth = StateObject(wrappedValue: auth)
         let container = (try? ModelContainer(for: CachedProject.self, CachedAsset.self, CachedUploadJob.self, CachedReceipt.self)) ?? Self.fallbackContainer()
         self.container = container
         _model = StateObject(
-            wrappedValue: AppModel(cache: CacheRepository(context: container.mainContext))
+            wrappedValue: AppModel(cache: CacheRepository(context: container.mainContext), renderOwner: { [weak auth] in auth?.localStorageIdentity })
         )
     }
     var body: some Scene {
@@ -96,6 +101,17 @@ import SwiftData
             RootView()
                 .environmentObject(auth)
                 .environmentObject(model)
+                .environmentObject(notifications)
+                .task(id: auth.localStorageIdentity) {
+                    notifications.configure(api: model.api)
+                    notifications.openActivity = { [weak model] id, owner in
+                        guard let model else { return false }
+                        return try await model.openNativeActivity(id: id, expectedOwner: owner)
+                    }
+                    appDelegate.notifications = notifications
+                    await notifications.bind(owner: auth.isSignedIn ? model.api.mediaLibraryOwner : nil)
+                    await appDelegate.deliverPendingTap()
+                }
                 .preferredColorScheme(.light)
         }
             .modelContainer(container)
@@ -105,7 +121,41 @@ import SwiftData
     }
 }
 
-@MainActor final class KriaAppDelegate: NSObject, UIApplicationDelegate {
+@MainActor final class KriaAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    weak var notifications: NativeNotificationCoordinator?
+    private var pendingActivityID: String?
+
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Task { await notifications?.registered(token: deviceToken) }
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        notifications?.registrationFailed()
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let activityID = response.actionIdentifier == UNNotificationDefaultActionIdentifier
+            ? response.notification.request.content.userInfo["activity_id"] as? String : nil
+        Task { @MainActor in
+            if let activityID, UUID(uuidString: activityID) != nil {
+                pendingActivityID = activityID
+                await deliverPendingTap()
+            }
+        }
+        completionHandler()
+    }
+
+    func deliverPendingTap() async {
+        guard let notifications, let id = pendingActivityID else { return }
+        pendingActivityID = nil
+        await notifications.receiveTap(["activity_id": id])
+    }
+
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
         guard identifier == BackgroundUploadCoordinator.sessionIdentifier else {
             completionHandler()
@@ -185,8 +235,8 @@ struct RootView: View {
             await NativeUpdateUITestTransport.triggerTypedUpdateRequirement()
         }
         #endif
-        .onChange(of: auth.isSignedIn) { _, signedIn in
-            if !signedIn { Task { await model.deviceRenders.stopAll() } }
+        .onChange(of: auth.localStorageIdentity) { previous, current in
+            if previous != nil, previous != current { Task { await model.deviceRenders.stopAll() } }
         }
     }
 

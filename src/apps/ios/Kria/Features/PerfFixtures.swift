@@ -254,14 +254,14 @@ enum PerfFixture {
 final class PerfTokenState: @unchecked Sendable {
     static let shared = PerfTokenState()
     private let lock = NSLock()
-    private var session: MobileSession
+    private var session: MobileSession?
     private var rotated = false
 
     private init() {
         session = MobileSession(accessToken: Self.jwt(expiresIn: -3600, tag: "stale"), refreshToken: "perf-refresh-1", expiresIn: 3600)
     }
 
-    var current: MobileSession {
+    var current: MobileSession? {
         lock.lock(); defer { lock.unlock() }
         return session
     }
@@ -271,16 +271,25 @@ final class PerfTokenState: @unchecked Sendable {
         session = new
     }
 
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) -> SessionStoreUpdate {
+        lock.withLock {
+            guard session == expected else { return SessionStoreUpdate(applied: false, current: session) }
+            session = replacement
+            return SessionStoreUpdate(applied: true, current: session)
+        }
+    }
+
     func accepts(_ request: URLRequest) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let header = request.value(forHTTPHeaderField: "Authorization") else { return true } // unauthenticated route
-        return rotated && header == "Bearer \(session.accessToken)"
+        return rotated && header == "Bearer \(session?.accessToken ?? "")"
     }
 
     func rotate() -> PerfFixture.Response {
         lock.lock(); defer { lock.unlock() }
         rotated = true
-        session = MobileSession(accessToken: Self.jwt(expiresIn: 3600, tag: "fresh"), refreshToken: "perf-refresh-2", expiresIn: 3600)
+        let session = MobileSession(accessToken: Self.jwt(expiresIn: 3600, tag: "fresh"), refreshToken: "perf-refresh-2", expiresIn: 3600)
+        self.session = session
         PerfCounters.shared.increment("auth refresh")
         let body: [String: Any] = ["access_token": session.accessToken, "refresh_token": session.refreshToken, "expires_in": 3600]
         return PerfFixture.Response(status: 200, data: (try? JSONSerialization.data(withJSONObject: body)) ?? Data())

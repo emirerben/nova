@@ -27,6 +27,7 @@ from app.limiter import get_real_ip, limiter
 from app.models import MobileIdentity, MobileSession, User
 from app.services.auth_locks import (
     account_lifecycle_lock_key,
+    mobile_session_family_lock_statement,
 )
 from app.services.auth_locks import (
     acquire_auth_locks as _acquire_auth_locks,
@@ -46,6 +47,7 @@ from app.services.mobile_auth import (
     refresh_token_hash,
     verify_provider_id_token,
 )
+from app.services.notification_delivery import revoke_family_installations_statement
 from app.services.reviewer_login import DUMMY_HASH, is_configured, verify_password
 
 log = structlog.get_logger(__name__)
@@ -400,6 +402,25 @@ async def mobile_reviewer_login(
     return result
 
 
+async def _locked_refresh_session(db: AsyncSession, token_hash: str) -> MobileSession | None:
+    family_id = (
+        await db.execute(
+            select(MobileSession.family_id).where(MobileSession.token_hash == token_hash)
+        )
+    ).scalar_one_or_none()
+    if family_id is None:
+        return None
+    await db.execute(mobile_session_family_lock_statement(family_id))
+    return (
+        await db.execute(
+            select(MobileSession)
+            .where(MobileSession.token_hash == token_hash, MobileSession.family_id == family_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
+
+
 @router.post("/mobile/refresh", response_model=MobileSessionOut)
 async def mobile_refresh(
     body: MobileRefreshRequest, db: AsyncSession = Depends(get_db)
@@ -407,11 +428,7 @@ async def mobile_refresh(
     if not body.refresh_token or not settings.mobile_jwt_secret:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     token_hash = refresh_token_hash(body.refresh_token)
-    session = (
-        await db.execute(
-            select(MobileSession).where(MobileSession.token_hash == token_hash).with_for_update()
-        )
-    ).scalar_one_or_none()
+    session = await _locked_refresh_session(db, token_hash)
     if session is None:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
     now = datetime.now(UTC)
@@ -438,6 +455,9 @@ async def mobile_refresh(
             update(MobileSession)
             .where(MobileSession.family_id == session.family_id)
             .values(revoked_at=now)
+        )
+        await db.execute(
+            revoke_family_installations_statement(session.user_id, session.family_id, now)
         )
         await db.commit()
         raise HTTPException(status_code=401, detail={"code": "refresh_reuse_detected"})
@@ -559,18 +579,16 @@ async def mobile_revoke(
     body: MobileRefreshRequest, db: AsyncSession = Depends(get_db)
 ) -> MobileRevokeResponse:
     if body.refresh_token and settings.mobile_jwt_secret:
-        session = (
-            await db.execute(
-                select(MobileSession).where(
-                    MobileSession.token_hash == refresh_token_hash(body.refresh_token)
-                )
-            )
-        ).scalar_one_or_none()
+        session = await _locked_refresh_session(db, refresh_token_hash(body.refresh_token))
         if session is not None:
+            now = datetime.now(UTC)
             await db.execute(
                 update(MobileSession)
                 .where(MobileSession.family_id == session.family_id)
-                .values(revoked_at=datetime.now(UTC))
+                .values(revoked_at=now)
+            )
+            await db.execute(
+                revoke_family_installations_statement(session.user_id, session.family_id, now)
             )
             await db.commit()
     return MobileRevokeResponse()

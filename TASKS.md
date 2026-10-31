@@ -20,6 +20,8 @@ The autonomous dev-loop mints one **build_task** per unchecked item below.
 
 ## Backlog
 
+- [x] Add the first native Activity inbox :: Durable deduplicated ready/action-required entries, current owner/generation navigation guards and offline API/native UI evidence. Push delivery and native continued processing remain follow-ups.
+
 - [x] Acknowledge pending creator requests and recover unclaimed analysis :: Persist one assistant acknowledgment per preparation attempt, republish stalled pool tasks with their existing claim tokens, and distinguish planning failures from analysis failures.
 
 - [ ] (p80) Web review page for the dev-loop queue :: Next.js admin page at src/apps/web/src/app/admin/build-tasks/page.tsx listing build_tasks by status, showing each gate_report (per-gate pass/fail table) and linking the PRs. Mirror src/apps/web/src/app/admin/jobs/page.tsx; add a typed client src/apps/web/src/lib/admin-build-tasks-api.ts over the /api/admin proxy; re-queue/block buttons (PATCH action). Inherits ADMIN_BASIC_AUTH middleware. Add a Jest test under src/apps/web/src/__tests__/admin/. Verify the real admin patterns first.

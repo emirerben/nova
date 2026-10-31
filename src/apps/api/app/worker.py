@@ -15,6 +15,7 @@ from app.services.celery_isolation import (
     result_backend_transport_options,
 )
 from app.services.celery_soft_shutdown import install_soft_shutdown_early_exit
+from app.services.notification_runtime import notification_beat_schedule
 
 # Local launchers set this once per worktree.  It is intentionally an env var,
 # rather than a settings field: the shared .env is symlinked by
@@ -63,6 +64,7 @@ celery_app = Celery(
         "app.tasks.tiktok",
         "app.tasks.account_lifecycle",
         "app.tasks.apple_revocation",
+        "app.tasks.notification_delivery",
         "app.tasks.edit_training_exports",
         "app.tasks.edit_training_artifacts",
         "app.tasks.creator_quality_review",
@@ -108,6 +110,8 @@ celery_app = Celery(
 # machine that might be stopped) but is at least loud in effect: Beat
 # entries are rare and reviewed, unlike per-request dispatch call sites.
 MAINTENANCE_TASK_NAMES: tuple[str, ...] = (
+    "tasks.sweep_notifications",
+    "tasks.deliver_notification",
     "tasks.reconcile_generated_media",
     "tasks.reconcile_export_verifications",
     "app.tasks.request_following.collect",
@@ -367,6 +371,8 @@ celery_app.conf.update(
         },
     },
 )
+
+celery_app.conf.beat_schedule.update(notification_beat_schedule())
 
 if settings.celery_soft_shutdown_early_exit_enabled:
     install_soft_shutdown_early_exit()

@@ -237,15 +237,18 @@ extension KriaAPI {
 /// re-sent until it lands instead of leaving phone and server disagreeing.
 struct APIDeviceRenderFailureReporter: DeviceRenderFailureReporter {
     let api: any KriaAPIClient
+    var isAuthorized: @Sendable () async -> Bool = { true }
     func report(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async {
         _ = await deliver(identity: identity, reasonCode: reasonCode, detail: detail)
     }
     func deliver(identity: DeviceRenderIdentity, reasonCode: DeviceRenderFailureReasonCode, detail: String) async -> DeviceRenderReportOutcome {
+        guard await isAuthorized() else { return .rejected }
         do {
             _ = try await api.reportDeviceRenderFailure(
                 jobID: identity.jobID, identity: identity,
                 reasonCode: reasonCode.rawValue, detail: String(detail.prefix(2000))
             )
+            guard await isAuthorized() else { return .rejected }
             return .accepted
         } catch {
             #if DEBUG
@@ -278,7 +281,21 @@ extension APIError: DeviceRenderTransientFailure {
 /// Keeps a phone render running for the short window iOS grants after the creator
 /// leaves Kria. When the window expires the coordinator stops the encode and keeps
 /// the receipt resumable, so coming back continues it instead of "export failed".
-struct UIKitDeviceRenderBackgroundExecution: DeviceRenderBackgroundExecution {
+@MainActor struct UIKitDeviceRenderBackgroundExecution: DeviceRenderBackgroundExecution {
+    private let scheduler: any ContinuedProcessingExportScheduling
+    private let initiation: DeviceRenderUserInitiation
+    private let isForeground: @MainActor @Sendable () -> Bool
+    private let fallback: @MainActor @Sendable (@escaping @Sendable () -> Void) -> DeviceRenderExecutionWindow
+
+    init(scheduler: any ContinuedProcessingExportScheduling = AppleContinuedProcessingExportScheduler(),
+         initiation: DeviceRenderUserInitiation = .shared,
+         isForeground: @escaping @MainActor @Sendable () -> Bool = { UIApplication.shared.applicationState == .active },
+         fallback: @escaping @MainActor @Sendable (@escaping @Sendable () -> Void) -> DeviceRenderExecutionWindow = UIKitDeviceRenderBackgroundExecution.beginShortWindow) {
+        self.fallback = fallback
+        self.scheduler = scheduler
+        self.initiation = initiation
+        self.isForeground = isForeground
+    }
     @MainActor private final class Window {
         var identifier: UIBackgroundTaskIdentifier = .invalid
         func end() {
@@ -290,22 +307,40 @@ struct UIKitDeviceRenderBackgroundExecution: DeviceRenderBackgroundExecution {
 
     static func install() { DeviceRenderBackground.install(Self()) }
 
-    func begin(name: String, expiring: @escaping @Sendable () -> Void) async -> @Sendable () async -> Void {
-        let window = await MainActor.run { () -> Window in
-            let window = Window()
-            window.identifier = UIApplication.shared.beginBackgroundTask(withName: name) {
-                expiring()
-                // iOS terminates an app that keeps an expired task open.
-                MainActor.assumeIsolated { window.end() }
-            }
-            return window
+    @MainActor func begin(context: DeviceRenderExecutionContext, expiring: @escaping @Sendable () -> Void) async throws -> DeviceRenderExecutionWindow {
+        let authorized = initiation.consume(context.origin, identity: context.identity)
+        let continued = DurableDeviceRenderWindow(scheduler: scheduler, isForeground: isForeground, expiring: expiring)
+        if try await continued.acquire(authorized: authorized) {
+            do { try Task.checkCancellation() }
+            catch { continued.finish(.cancelled); throw error }
+            return DeviceRenderExecutionWindow(reportProgress: { await continued.reportProgress($0) },
+                                               finish: { await continued.finish($0) })
         }
-        return { await window.end() }
+        try Task.checkCancellation()
+        return fallback(expiring)
+    }
+
+    private static func beginShortWindow(expiring: @escaping @Sendable () -> Void) -> DeviceRenderExecutionWindow {
+        let window = Window()
+        window.identifier = UIApplication.shared.beginBackgroundTask(withName: "Kria render") {
+            MainActor.assumeIsolated {
+                guard window.identifier != .invalid else { return }
+                window.end()
+                expiring()
+            }
+        }
+        return DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in await window.end() })
     }
 }
 
 struct DeviceExportPublisher: DeviceRenderPublishing {
     let api: any KriaAPIClient
+    var isAuthorized: @Sendable () async -> Bool = { true }
+
+    private func requireOwner() async throws {
+        try Task.checkCancellation()
+        guard await isAuthorized() else { throw CancellationError() }
+    }
     // A separate session keeps API Bearer credentials out of storage PUT requests.
     var uploadSession: URLSession = URLSession(configuration: .ephemeral)
     private static func acceptsStorageURL(_ url: URL) -> Bool {
@@ -329,19 +364,23 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         #endif
     }
     func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool {
+        try await requireOwner()
         do {
             let status = try await api.deviceRender(jobID: identity.jobID, variantID: identity.variantID)
+            try await requireOwner()
             return status.request.identity == identity && ["awaiting_device", "syncing", "published"].contains(status.phase)
         }
         catch APIError.conflict { return false }
     }
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        try await requireOwner()
         let current = try await api.deviceRender(jobID: identity.jobID, variantID: identity.variantID)
+        try await requireOwner()
         guard current.request.identity == identity else { return .superseded }
         guard ["awaiting_device", "syncing", "published"].contains(current.phase) else { throw APIError.conflict }
         let complete = DeviceExportCompleteBody(identity: identity, attemptID: attemptID)
         if current.phase == "published" {
-            do { try await api.completeDeviceExport(complete); return .published }
+            do { try await requireOwner(); try await api.completeDeviceExport(complete); try await requireOwner(); return .published }
             catch APIError.conflict { return .superseded }
         }
         let fingerprint = try await Task.detached { try SHA256Fingerprinter().fingerprint(file: file) }.value
@@ -350,7 +389,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         let marker = file.deletingPathExtension().appendingPathExtension("uploaded")
         let markerText = "\(attemptID.uuidString.lowercased())\n\(fingerprint.hex)"
         if current.phase == "syncing", (try? String(contentsOf: marker, encoding: .utf8)) == markerText {
-            do { try await api.completeDeviceExport(complete); return .published }
+            do { try await requireOwner(); try await api.completeDeviceExport(complete); try await requireOwner(); return .published }
             catch APIError.conflict {
                 if !(try await isCurrent(identity)) { return .superseded }
                 // The server lost the upload (e.g. the reservation expired): upload again.
@@ -359,10 +398,12 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         }
         let reservation: DeviceExportUploadTarget
         do {
+            try await requireOwner()
             reservation = try await api.reserveDeviceExport(DeviceExportUploadBody(identity: identity, attemptID: attemptID, fileSizeBytes: fingerprint.byteCount, sha256: fingerprint.hex, brandTail: brandTail))
         } catch let error as APIError where error.conflictDetail == "Upload attempt reused for different bytes" {
             throw DeviceExportAttemptReused()
         }
+        try await requireOwner()
         guard reservation.attemptID == attemptID, Self.acceptsStorageURL(reservation.uploadURL), reservation.expiresAt > Date() else { throw APIError.invalidResponse }
         var put = URLRequest(url: reservation.uploadURL)
         put.httpMethod = "PUT"
@@ -374,7 +415,7 @@ struct DeviceExportPublisher: DeviceRenderPublishing {
         guard (200..<300).contains(response.statusCode) || response.statusCode == 412 else { throw APIError.requestFailed(status: response.statusCode) }
         try? Data(markerText.utf8).write(to: marker, options: .atomic)
         try Task.checkCancellation()
-        do { try await api.completeDeviceExport(complete); return .published }
+        do { try await requireOwner(); try await api.completeDeviceExport(complete); try await requireOwner(); return .published }
         catch APIError.conflict {
             if try await isCurrent(identity) { throw APIError.conflict }
             return .superseded

@@ -37,13 +37,27 @@ enum ProfileFetchState: Equatable, Sendable {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-chat") { return "teleprompter-ui-fixture" }
         #endif
-        guard isSignedIn, let session = try? tokenStore.read(),
-              let subject = Self.jwtSubject(in: session.accessToken) else { return nil }
-        return SHA256.hash(data: Data(subject.utf8)).map { String(format: "%02x", $0) }.joined()
+        guard isSignedIn else { lastKnownLocalIdentity = nil; return nil }
+        let session: MobileSession?
+        do { session = try tokenStore.read() }
+        catch {
+            // The Keychain could not be read (for example, the device is locked). That is an unknown
+            // owner, not a different one: keep the identity this signed-in session already proved so
+            // in-flight device renders are not torn down. Nothing here changes how the token is stored.
+            return lastKnownLocalIdentity
+        }
+        guard let session, let subject = Self.jwtSubject(in: session.accessToken) else { lastKnownLocalIdentity = nil; return nil }
+        let identity = SHA256.hash(data: Data(subject.utf8)).map { String(format: "%02x", $0) }.joined()
+        lastKnownLocalIdentity = identity
+        return identity
     }
+    /// The owner the last successful token read proved. Cleared on sign-in, sign-out, expiry and any
+    /// read that proves the session is gone or has no subject, so it can never outlive an account.
+    private var lastKnownLocalIdentity: String?
 
     func clearLocalAccountMedia() {
         guard let identity = localStorageIdentity else { return }
+        try? DeviceRenderIntentPersistence.store.removeAccount(owner: identity)
         try? TeleprompterStore.removeAccount(accountID: identity)
         try? MediaLibraryOriginals(owner: identity).removeAccount()
         Task { await TranscriptCache.shared.removeAccount(owner: identity) }
@@ -63,12 +77,20 @@ enum ProfileFetchState: Equatable, Sendable {
         if isSignedIn, let session { hasAIConsent = defaults.bool(forKey: Self.aiConsentKey(for: session)) }
         sessionExpiredSubscription = NotificationCenter.default.publisher(for: .kriaSessionExpired)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.expireSession() }
+            .sink { [weak self] notification in
+                guard let self else { return }
+                if notification.object is MobileSession {
+                    do { guard try self.tokenStore.read() == nil else { return } }
+                    catch { return }
+                }
+                self.expireSession()
+            }
         projectDeletedSubscription = NotificationCenter.default.publisher(for: .kriaProjectDeleted)
             .receive(on: RunLoop.main)
             .sink { [weak self] notification in
                 guard let projectID = notification.object as? UUID,
                       let identity = self?.localStorageIdentity else { return }
+                try? DeviceRenderIntentPersistence.store.removeProject(owner: identity, projectID: projectID)
                 try? TeleprompterStore.removeProject(accountID: identity, projectID: projectID)
                 Task { await TranscriptCache.shared.remove(owner: identity, threadID: projectID) }
             }
@@ -83,6 +105,7 @@ enum ProfileFetchState: Equatable, Sendable {
     }
     func signIn(with session: MobileSession, displayName: String?) throws {
         try tokenStore.write(session)
+        lastKnownLocalIdentity = nil
         defaults.set(false, forKey: Self.invalidatedSessionKey)
         self.displayName = displayName
         isSignedIn = true
@@ -98,6 +121,7 @@ enum ProfileFetchState: Equatable, Sendable {
         // deletion fails, a process restart must not resurrect that session.
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
+        lastKnownLocalIdentity = nil
         displayName = nil
         email = nil
         linkedProviders = []
@@ -110,6 +134,7 @@ enum ProfileFetchState: Equatable, Sendable {
     private func expireSession() {
         defaults.set(true, forKey: Self.invalidatedSessionKey)
         try? tokenStore.delete()
+        lastKnownLocalIdentity = nil
         displayName = nil
         email = nil
         linkedProviders = []
@@ -246,7 +271,8 @@ enum WorkspaceDestination: Equatable, Sendable {
         api: KriaAPIClient = KriaAPI(),
         editorOperations: EditorOperations = LocalEditorOperations(),
         cache: CacheRepository? = nil,
-        chatDrafts: ChatDraftStore = ChatDraftStore()
+        chatDrafts: ChatDraftStore = ChatDraftStore(),
+        renderOwner: @escaping @MainActor () -> String? = { nil }
     ) {
         Perf.begin("appmodel.init")
         defer { Perf.end("appmodel.init") }
@@ -254,7 +280,7 @@ enum WorkspaceDestination: Equatable, Sendable {
         self.api = api
         self.editorOperations = editorOperations
         self.uploads = BackgroundUploadCoordinator(api: api)
-        self.deviceRenders = DeviceRenderSessions(api: api)
+        self.deviceRenders = DeviceRenderSessions(api: api, ownerIdentity: renderOwner)
         self.cache = cache
         Perf.begin("cache.load")
         if let cache, let cached = try? cache.projects(), !cached.isEmpty {
@@ -544,6 +570,17 @@ enum WorkspaceDestination: Equatable, Sendable {
         destination = .chat(project.id)
         errorMessage = nil
         return true
+    }
+
+    @discardableResult func openNativeActivity(id: UUID, expectedOwner: String?) async throws -> Bool {
+        guard let expectedOwner, expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        let activity = try await api.nativeActivity(id: id, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        let project = try await api.nativeActivityProject(threadID: activity.threadID, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        _ = try await api.readNativeActivity(id: id, owner: expectedOwner)
+        guard expectedOwner == api.mediaLibraryOwner, !Task.isCancelled else { return false }
+        return selectProject(project.summary)
     }
 
     /// Shows the camera roll in the workspace. The selected project stays selected underneath, so closing the

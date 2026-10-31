@@ -316,7 +316,13 @@ async def test_refresh_rotates_once_and_links_replacement(monkeypatch) -> None:
         replaced_by=None,
     )
     replacement = SimpleNamespace(id=uuid.uuid4())
-    db = _db(_scalar(old), _scalar(user), _scalar(replacement), _scalars(["google"]))
+    db = _db(
+        _scalar(old.family_id),
+        _scalar(old),
+        _scalar(user),
+        _scalar(replacement),
+        _scalars(["google"]),
+    )
     issued = auth.MobileSessionOut(
         access_token="next-access",
         refresh_token="next-refresh",
@@ -339,19 +345,20 @@ async def test_refresh_rotates_once_and_links_replacement(monkeypatch) -> None:
 async def test_refresh_token_reuse_revokes_entire_family(monkeypatch) -> None:
     monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
     reused = SimpleNamespace(
+        user_id=uuid.uuid4(),
         family_id=uuid.uuid4(),
         used_at=datetime.now(UTC) - timedelta(minutes=5),
         replaced_by=uuid.uuid4(),
         revoked_at=None,
     )
-    db = _db(_scalar(reused), MagicMock())
+    db = _db(_scalar(reused.family_id), _scalar(reused), MagicMock(), MagicMock())
 
     with pytest.raises(HTTPException) as raised:
         await auth.mobile_refresh(auth.MobileRefreshRequest(refresh_token="reused"), db)
 
     assert raised.value.status_code == 401
     assert raised.value.detail == {"code": "refresh_reuse_detected"}
-    assert db.execute.await_count == 2
+    assert db.execute.await_count == 5
     db.commit.assert_awaited_once()
 
 
@@ -367,14 +374,14 @@ async def test_refresh_replay_inside_grace_window_is_superseded_not_revoked(monk
         replaced_by=uuid.uuid4(),
         revoked_at=None,
     )
-    db = _db(_scalar(replayed))
+    db = _db(_scalar(replayed.family_id), _scalar(replayed))
 
     with pytest.raises(HTTPException) as raised:
         await auth.mobile_refresh(auth.MobileRefreshRequest(refresh_token="replayed"), db)
 
     assert raised.value.status_code == 401
     assert raised.value.detail == {"code": "refresh_superseded"}
-    assert db.execute.await_count == 1
+    assert db.execute.await_count == 3
     db.commit.assert_not_awaited()
 
 
@@ -382,12 +389,13 @@ async def test_refresh_replay_inside_grace_window_is_superseded_not_revoked(monk
 async def test_refresh_replay_of_a_revoked_family_inside_grace_still_rejects(monkeypatch) -> None:
     monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
     replayed = SimpleNamespace(
+        user_id=uuid.uuid4(),
         family_id=uuid.uuid4(),
         used_at=datetime.now(UTC) - timedelta(seconds=2),
         replaced_by=uuid.uuid4(),
         revoked_at=datetime.now(UTC) - timedelta(seconds=1),
     )
-    db = _db(_scalar(replayed), MagicMock())
+    db = _db(_scalar(replayed.family_id), _scalar(replayed), MagicMock(), MagicMock())
 
     with pytest.raises(HTTPException) as raised:
         await auth.mobile_refresh(auth.MobileRefreshRequest(refresh_token="replayed"), db)
@@ -398,8 +406,8 @@ async def test_refresh_replay_of_a_revoked_family_inside_grace_still_rejects(mon
 @pytest.mark.asyncio
 async def test_revoke_invalidates_the_complete_refresh_family(monkeypatch) -> None:
     monkeypatch.setattr(settings, "mobile_jwt_secret", "test-secret")
-    session = SimpleNamespace(family_id=uuid.uuid4())
-    db = _db(_scalar(session), MagicMock())
+    session = SimpleNamespace(family_id=uuid.uuid4(), user_id=uuid.uuid4())
+    db = _db(_scalar(session.family_id), _scalar(session), MagicMock(), MagicMock())
 
     response = await auth.mobile_revoke(
         auth.MobileRefreshRequest(refresh_token="current-refresh"),
@@ -407,9 +415,12 @@ async def test_revoke_invalidates_the_complete_refresh_family(monkeypatch) -> No
     )
 
     assert response.revoked is True
-    assert db.execute.await_count == 2
-    update_statement = db.execute.await_args_list[1].args[0]
+    assert db.execute.await_count == 5
+    update_statement = db.execute.await_args_list[3].args[0]
     assert session.family_id in update_statement.compile().params.values()
+    registration_revocation = db.execute.await_args_list[4].args[0]
+    assert session.family_id in registration_revocation.compile().params.values()
+    assert session.user_id in registration_revocation.compile().params.values()
     db.commit.assert_awaited_once()
 
 
@@ -722,15 +733,15 @@ async def test_refresh_rejects_invalid_session_states(monkeypatch, scenario) -> 
         used_at=None,
         revoked_at=datetime.now(UTC) if scenario == "revoked" else None,
     )
-    db = _db(_scalar(session), _scalar(None))
+    db = _db(_scalar(session.family_id), _scalar(session), _scalar(None))
 
     with pytest.raises(HTTPException) as raised:
         await auth.mobile_refresh(auth.MobileRefreshRequest(refresh_token="refresh"), db)
     assert raised.value.status_code == 401
     if scenario == "missing_user":
-        assert db.execute.await_count == 2
+        assert db.execute.await_count == 4
     else:
-        assert db.execute.await_count == 1
+        assert db.execute.await_count == 3
 
 
 @pytest.mark.asyncio

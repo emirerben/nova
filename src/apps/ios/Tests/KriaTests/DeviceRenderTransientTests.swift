@@ -688,7 +688,7 @@ private final class Phone: @unchecked Sendable {
 
         // Resume: the server lifts the pause for this identity, then the phone renders it.
         await server.then([.success(DeviceRenderStatusResponse(phase: "awaiting_device", request: request, pausedByUser: true)), awaiting(request)])
-        await sessions.reconcile(key, capabilities: enabled, retry: true)
+        await sessions.resumeFromUser(key)
         let identities = await resumed.identities
         XCTAssertEqual(identities, [request.identity], "Resume calls /retry with the identity the server still holds")
         let synced = await eventually { sessions.presentations[key]?.phase == .synced }
