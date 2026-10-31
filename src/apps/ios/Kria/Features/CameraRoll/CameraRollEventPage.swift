@@ -213,6 +213,7 @@ struct CameraRollEventPage: View {
                 }
             }
             if !ideas.isEmpty {
+                if !generating { CameraRollDirectionField(model: model, group: event.id).padding(.top, 4) }
                 Button { model.anotherIdea(in: event.id) } label: {
                     HStack(spacing: 8) {
                         if generating { KriaSpinner(size: 14) } else { Image(systemName: "sparkle").font(.system(size: 12, weight: .bold)) }

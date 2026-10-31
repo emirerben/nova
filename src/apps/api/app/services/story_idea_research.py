@@ -13,6 +13,7 @@ from app.agents.camera_roll_stories import (
     CameraRollStoriesInput,
     CameraRollStoriesOutput,
 )
+from app.schemas.media_collections import MAX_STORY_MOMENTS
 from app.schemas.research import same_claim
 from app.services.researched_text import (
     GroundedGeminiClient,
@@ -54,7 +55,7 @@ class StoryResearchReviewInput(BaseModel):
 
 class StoryBeatCheck(BaseModel):
     story_index: int = Field(ge=0, le=2)
-    beat_index: int = Field(ge=0, le=7)
+    beat_index: int = Field(ge=0, le=MAX_STORY_MOMENTS - 1)
     supported: bool
     source_quote: str = Field(max_length=500)
     reason: str = Field(min_length=1, max_length=240)
