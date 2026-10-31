@@ -347,3 +347,24 @@ def test_w10_a_mixed_batch_labels_each_removal_by_its_own_author() -> None:
     assert by_id["r1"].facts[MARK] == "server"  # the server omitted the filming ask
     assert by_id["r6"].facts[MARK] == "creator"  # the creator withdrew the text ask
     assert brief_view(out).kept_filming_order is True
+
+
+# -- W11: an editor-ops timing turn re-expresses the batch; a fresh start must survive it ------
+
+
+@pytest.mark.parametrize("start", ["server-stored waiver", "legacy unmarked drop"])
+def test_w11_a_fresh_start_on_an_editor_timing_turn_still_withdraws_the_wish(start: str) -> None:
+    from app.kria.editor_sequence_timing import SequenceTimingPlan, merge_sequence_brief_updates
+
+    waived = (
+        _remove(_live(), server_removed_ids={"r1"})
+        if start == "server-stored waiver"
+        else _pinned_brief()
+    )
+    assert _plays(waived) == "filming"
+    planned = start_fresh_updates(waived, ())  # what the planner hands the runtime
+    # The runtime re-expresses the planned batch for an editor-ops timing turn; no timing intent.
+    merged = merge_sequence_brief_updates(waived, planned, SequenceTimingPlan((), ""), {}, "")
+    stored = apply_updates(waived, merged, source_turn_id="t3")
+    assert _r1(stored).facts[MARK] == "creator"
+    assert _plays(stored) == "upload"
