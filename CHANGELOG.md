@@ -2,6 +2,86 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.38.0] - 2026-10-31
+
+### Changed
+- feat(kria): inspect source intervals for prompt-specific named moments (#1961) <!-- release-pr: 1961 -->
+
+## [0.83.37.0] - 2026-10-31
+
+### Fixed
+- fix(camera-roll): one flagged researched idea no longer fails the batch; never replay an empty first answer (#1986) <!-- release-pr: 1986 -->
+
+## [0.83.36.0] - 2026-10-31
+
+### Changed
+- feat(ios): show text types on a video frame and the real defaults in Text preferences (#1988) <!-- release-pr: 1988 -->
+
+## [0.83.35.0] - 2026-10-31
+
+### Fixed
+- feat(camera-roll): steer event ideas on every request; no fixed clip cap per idea (KRI-1062) (#1982) <!-- release-pr: 1982 -->
+
+## [0.83.34.0] - 2026-10-31
+
+### Changed
+- fix(kria): look inside the clips before calling a named shot missing (Leverkusen M2) (#1976) <!-- release-pr: 1976 -->
+
+## [0.83.33.0] - 2026-10-31
+
+### Fixed
+- fix(deploy): wait-timeout for release machine prep, sweep never-started release machines, quieter drift check (KRI-1096) (#1989) <!-- release-pr: 1989 -->
+
+## [0.83.32.0] - 2026-10-31
+
+### Changed
+- fix(kria): the clip picker keeps the clip it found and never pre-ticks a clip another ask stands on (Leverkusen M2) (#1985) <!-- release-pr: 1985 -->
+
+## [0.83.31.0] - 2026-10-31
+
+### Changed
+- fix(kria): never show a part of a clip the creator hid (Leverkusen M2 run 1, draft C) (#1984) <!-- release-pr: 1984 -->
+
+## [0.83.30.0] - 2026-10-31
+
+### Fixed
+- fix(kria): save clip-matching runs and keep photo-only skips to photos (#1973) <!-- release-pr: 1973 -->
+
+## [0.83.29.0] - 2026-10-31
+
+### Fixed
+- fix(deploy): ignore stopped release_command machines in the Fly deploy guard (KRI-1092) (#1987) <!-- release-pr: 1987 -->
+
+## [0.83.28.0] - 2026-10-31
+
+### Fixed
+- fix(kria): keep filming order when the simpler version drops it (Leverkusen M1 run 2 #3) (#1974) <!-- release-pr: 1974 -->
+
+## [0.83.27.0] - 2026-10-31
+
+### Fixed
+- fix(clip-intents): an ask with no clip op is never "please restate" (Leverkusen M2) (#1983) <!-- release-pr: 1983 -->
+
+## [0.83.26.0] - 2026-10-31
+
+### Fixed
+- fix(ios): prepare compatible rendered-clock readers (KRI-1060) (#1946) <!-- release-pr: 1946 -->
+
+## [0.83.25.0] - 2026-10-31
+
+### Changed
+- fix(kria): a skip inside a "start with" group can reach its clip (Leverkusen M1 run 2 #5) (#1972) <!-- release-pr: 1972 -->
+
+## [0.83.24.0] - 2026-10-31
+
+### Fixed
+- fix(kria): keep the quoted line a sound ask names, so it plays whole (Leverkusen M1 run 2 #4) (#1970) <!-- release-pr: 1970 -->
+
+## [0.83.23.0] - 2026-10-31
+
+### Changed
+- fix(kria): count Visuals photos in the pre-approval length (KRI-1079) (#1971) <!-- release-pr: 1971 -->
+
 ## [0.83.22.0] - 2026-10-30
 
 ### Changed

@@ -84,10 +84,28 @@ matrix entry, so new fields cannot ship unclassified.
 render path, which contract requirements it `consumes` (routes from and
 verifies) and which it `declines`, with a typed reason. Every requirement
 (`duration_s`, `require_voiceover`, `audio_source_ids`, `original_audio`,
-`exact_texts`, `order_required`, `unresolved`) must be consumed or declined
-exactly once. Today only the phone speech montage routes from the audio, duration
-and order requirements; every other phone path is verified at pin time
-(`verify_phone_recipe`). The cloud adapters consume exactly what their renderer
+`exact_texts`, `order_required`, `hidden_parts`, `unresolved`) must be consumed or
+declined exactly once. Today only the phone speech montage routes from the audio, duration
+and order requirements, and only the unified montage plans its windows out of a hidden part;
+every other phone path is verified at pin time (`verify_phone_recipe`).
+
+### Hidden parts (Leverkusen M2)
+
+"The kids at the start of the second goal clip are another family's children, so don't show
+them": a resolved `hide_part` clip intent (one clip, `part_edge` start/end, the creator's
+`part_s`) is pinned as `hidden_parts` ({media_id, edge, seconds}). The source seconds no
+frame may come from are the part plus `HIDDEN_EDGE_GUARD_S` (a frame guard for the
+presentation-interval rule, plus half a second because the creator's number is an estimate;
+`app/pipeline/hidden_parts.py`). The length planner and the montage planner slide every
+movable window out of the part and cap the clip's capacity at what it may still show; an
+approved or frozen window that would show it, or a part nobody settled, refuses the plan.
+`verify_phone_recipe` refuses any recipe clip (picture, sound or overlay) whose own source
+window reaches into a part, whatever writer compiled it; every cloud adapter declines it
+(`capability_unavailable`) before rendering. The field is left out of the stored contract
+when empty, so every other job is byte-identical; an older or rolled-back worker refuses a
+job that hides a part (fails closed). A part with no clip, edge or seconds is a question for
+the creator (`app/kria/hidden_parts.py`), and a re-draft keeps the head draft's part with
+the most seconds asked. The cloud adapters consume exactly what their renderer
 emits receipt evidence for (see "Cloud evidence"); the rest stay declined.
 Behaviour tests drive the real entry points (`verify_phone_recipe`,
 `check_phone_dispatch_contract`, `preflight_cloud_contract`,
@@ -486,6 +504,7 @@ preflight decline:
 | `order_required` | **gated** (pre-render plan gate), evidences | **declined** (greedy matcher never reads the contract), evidences | declined |
 | `exact_texts` | honours typed copy (opening, closing, shot labels) + **gated** (pre-render plan check), evidences | declined | declined |
 | `audio_source_ids` | declined (mixes every clip's sound) | declined | declined |
+| `hidden_parts` | declined (no renderer keeps a part out or reports its windows) | declined | declined |
 
 Before this PR every cloud adapter declined `exact_texts`, `audio_source_ids`,
 `original_audio` and `order_required`, and classic voiceover/narrated jobs rendered

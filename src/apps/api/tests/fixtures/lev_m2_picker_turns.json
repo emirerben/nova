@@ -1,0 +1,160 @@
+{
+  "_source": "Leverkusen M2 run 1, 2026-10-30, thread d048973b-0cfe-4e3d-a002-e7f7a2a94031 (chat 'Taha 1'), Fly eed794157, iOS protocol 25. 'turns' copies each turn's resolver intent_stats, vision counts, reply and clip_question from GET /kria/threads/{id}/turns. Media ids and durations are the plan item's. Prod clip records are redacted on read, so 'record' is rebuilt from the kit notes (what each clip shows); the resolver and vision answers in the test are scripted from intent_stats, so no record wording decides a match.",
+  "creator_request": "Quick reaction edit about my friend Taha. He's the one with brown hair, round glasses and the dark zip sweater (on the left in our selfie). Order: our selfie, the 0:0 scoreboard, the \"TOR\" on the big screen, then only the moments where Taha is celebrating in both goal clips. The kids at the start of the second goal clip are another family's children, so don't show them. Put Taha's scream in slow motion. Keep the stadium cheering on the goal clips. Label the selfie \"Taha 🤝 me\". Make it 12 seconds.",
+  "media": [
+    {
+      "media_id": "analysis-proxy-ios-3E88363F-BB1E-497D-B70A-99113022296E.mp4",
+      "file_name": "IMG_1037",
+      "kind": "video",
+      "duration_s": 9.866667,
+      "record": {
+        "subject": "football fans celebrating a goal in a stadium stand",
+        "summary": "Fans in a stadium stand jump and cheer after a goal; a man with round glasses and a dark zip sweater celebrates.",
+        "setting": "football stadium stand at night",
+        "activity": "celebrating a goal",
+        "content_type": "broll",
+        "audio_type": "crowd noise",
+        "notable_moments": [
+          {"start_s": 5.0, "end_s": 9.8, "description": "man with round glasses celebrating"}
+        ]
+      }
+    },
+    {
+      "media_id": "analysis-proxy-ios-C418D565-73A3-4329-80EF-8C5826E9EB83.mp4",
+      "file_name": "IMG_1039",
+      "kind": "video",
+      "duration_s": 18.333333,
+      "record": {
+        "subject": "football fans celebrating a second goal",
+        "summary": "Children stand in the stand, the crowd erupts with scarves, and a man with round glasses screams in celebration.",
+        "setting": "football stadium stand at night",
+        "activity": "celebrating a goal",
+        "content_type": "broll",
+        "audio_type": "crowd noise",
+        "notable_moments": [
+          {"start_s": 0.0, "end_s": 2.5, "description": "children in the stand"},
+          {"start_s": 12.0, "end_s": 13.8, "description": "man screaming in celebration"}
+        ]
+      }
+    },
+    {
+      "media_id": "asset-ace2d46a-ee5c-41cc-9e7d-c524523efe40",
+      "file_name": "selfie",
+      "kind": "image",
+      "duration_s": null,
+      "record": {
+        "kind": "image",
+        "subject": "two friends taking a selfie in a stadium",
+        "summary": "Two young men smile at the camera in a football stadium; the one on the left wears round glasses and a dark zip sweater.",
+        "setting": "football stadium",
+        "content_type": "selfie"
+      }
+    },
+    {
+      "media_id": "asset-84e812d6-2552-4295-ad85-f0b6523f813d",
+      "file_name": "scoreboard",
+      "kind": "image",
+      "duration_s": null,
+      "record": {
+        "kind": "image",
+        "subject": "stadium scoreboard",
+        "summary": "A stadium scoreboard shows the score 0:0 before kick-off.",
+        "setting": "football stadium",
+        "on_screen_text": "0:0",
+        "content_type": "broll"
+      }
+    }
+  ],
+  "turns": {
+    "1a0a5b16": {
+      "message": "It's already there, in the goal clip with the kids at the start, about 6 seconds in. The big screen shows TOR.",
+      "intent_stats": [
+        "order_selfie_first:n=1:min=1.00:max=1.00:nv=0:q=0",
+        "order_scoreboard_second:n=1:min=1.00:max=1.00:nv=0:q=0",
+        "order_tor_screen_third:n=0:min=0.00:max=0.00:nv=3:q=0",
+        "order_taha_celebrating_fourth:n=2:min=0.80:max=0.80:nv=0:q=0",
+        "exclude_kids:n=0:min=0.00:max=0.00:nv=1:q=0",
+        "label_selfie:n=1:min=1.00:max=1.00:nv=0:q=0"
+      ],
+      "vision_calls": 2,
+      "vision_cached": 0,
+      "response": "I couldn't tell which of your clips show \"the \"TOR\" on the big screen\". Tap the clips that do, or tell me there aren't any. I couldn't tell which of your clips to leave out for \"the kids at the start of the second goal clip\". Tap the ones to leave out, or tell me none.",
+      "clip_question": {
+        "categories": [
+          {
+            "op": "order",
+            "key": "order:the-tor-on-the-big-screen",
+            "label": "the \"TOR\" on the big screen",
+            "intent_id": "order_tor_screen_third",
+            "candidate_media_ids": [
+              "analysis-proxy-ios-3E88363F-BB1E-497D-B70A-99113022296E.mp4",
+              "asset-ace2d46a-ee5c-41cc-9e7d-c524523efe40",
+              "asset-84e812d6-2552-4295-ad85-f0b6523f813d"
+            ],
+            "suggested_media_ids": [
+              "analysis-proxy-ios-3E88363F-BB1E-497D-B70A-99113022296E.mp4",
+              "asset-84e812d6-2552-4295-ad85-f0b6523f813d"
+            ]
+          },
+          {
+            "op": "exclude",
+            "key": "exclude:the-kids-at-the-start-of-the-second-goal-clip",
+            "label": "the kids at the start of the second goal clip",
+            "intent_id": "exclude_kids",
+            "candidate_media_ids": ["asset-84e812d6-2552-4295-ad85-f0b6523f813d"],
+            "suggested_media_ids": []
+          }
+        ]
+      }
+    },
+    "befdbf7e": {
+      "message": "Taha's scream is the close-up of Taha shouting near the end of the goal clip with the kids, play it in slow motion. From that clip, don't show the first 3 seconds where the kids are.",
+      "intent_stats": [
+        "order_selfie_first:n=1:min=1.00:max=1.00:nv=0:q=0",
+        "order_scoreboard:n=1:min=1.00:max=1.00:nv=0:q=0",
+        "order_tor_screen:n=0:min=0.00:max=0.00:nv=3:q=0",
+        "order_taha_celebrating:n=2:min=0.90:max=0.90:nv=0:q=0",
+        "exclude_kids:n=0:min=0.00:max=0.00:nv=2:q=0",
+        "label_selfie:n=1:min=1.00:max=1.00:nv=0:q=0"
+      ],
+      "vision_calls": 0,
+      "vision_cached": 2,
+      "response": "I couldn't tell which of your clips show \"the \"TOR\" on the big screen\". Tap the clips that do, or tell me there aren't any. I couldn't tell which of your clips to leave out for \"the kids at the start of the second goal clip\". Tap the ones to leave out, or tell me none.",
+      "clip_question": {
+        "categories": [
+          {
+            "op": "order",
+            "key": "order:the-tor-on-the-big-screen",
+            "label": "the \"TOR\" on the big screen",
+            "intent_id": "order_tor_screen",
+            "candidate_media_ids": [
+              "analysis-proxy-ios-3E88363F-BB1E-497D-B70A-99113022296E.mp4",
+              "asset-ace2d46a-ee5c-41cc-9e7d-c524523efe40",
+              "asset-84e812d6-2552-4295-ad85-f0b6523f813d"
+            ],
+            "suggested_media_ids": [
+              "analysis-proxy-ios-3E88363F-BB1E-497D-B70A-99113022296E.mp4",
+              "asset-84e812d6-2552-4295-ad85-f0b6523f813d"
+            ]
+          },
+          {
+            "op": "exclude",
+            "key": "exclude:the-kids-at-the-start-of-the-second-goal-clip",
+            "label": "the kids at the start of the second goal clip",
+            "intent_id": "exclude_kids",
+            "candidate_media_ids": [
+              "analysis-proxy-ios-3E88363F-BB1E-497D-B70A-99113022296E.mp4",
+              "analysis-proxy-ios-C418D565-73A3-4329-80EF-8C5826E9EB83.mp4",
+              "asset-ace2d46a-ee5c-41cc-9e7d-c524523efe40",
+              "asset-84e812d6-2552-4295-ad85-f0b6523f813d"
+            ],
+            "suggested_media_ids": [
+              "analysis-proxy-ios-3E88363F-BB1E-497D-B70A-99113022296E.mp4",
+              "analysis-proxy-ios-C418D565-73A3-4329-80EF-8C5826E9EB83.mp4"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

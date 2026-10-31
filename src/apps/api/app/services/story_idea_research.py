@@ -4,15 +4,17 @@ import hashlib
 import json
 from dataclasses import replace
 
+import structlog
 from pydantic import BaseModel, Field, field_validator
 
 from app.agents._model_client import default_client
-from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.agents._runtime import Agent, AgentError, AgentSpec, SchemaError
 from app.agents.camera_roll_stories import (
     CameraRollStoriesAgent,
     CameraRollStoriesInput,
     CameraRollStoriesOutput,
 )
+from app.schemas.media_collections import MAX_STORY_MOMENTS
 from app.schemas.research import same_claim
 from app.services.researched_text import (
     GroundedGeminiClient,
@@ -47,6 +49,9 @@ def story_content_digest(title, content_plan, moment_ids):
     ).hexdigest()
 
 
+log = structlog.get_logger()
+
+
 class StoryResearchReviewInput(BaseModel):
     request: CameraRollStoriesInput
     proposed: CameraRollStoriesOutput
@@ -54,7 +59,7 @@ class StoryResearchReviewInput(BaseModel):
 
 class StoryBeatCheck(BaseModel):
     story_index: int = Field(ge=0, le=2)
-    beat_index: int = Field(ge=0, le=7)
+    beat_index: int = Field(ge=0, le=MAX_STORY_MOMENTS - 1)
     supported: bool
     source_quote: str = Field(max_length=500)
     reason: str = Field(min_length=1, max_length=240)
@@ -65,7 +70,7 @@ class StoryResearchReviewOutput(BaseModel):
     approved: bool
     reason: str = Field(min_length=1, max_length=500)
     copy_supported: bool = False
-    beat_checks: list[StoryBeatCheck] = Field(default_factory=list, max_length=24)
+    beat_checks: list[StoryBeatCheck] = Field(default_factory=list, max_length=MAX_STORY_MOMENTS)
 
     @field_validator("reason", mode="before")
     @classmethod
@@ -78,7 +83,7 @@ class StoryResearchReviewOutput(BaseModel):
 class _SourceReviewChecks(BaseModel):
     # Source approval is computed from the checked evidence below. A second
     # free-form overall verdict can contradict those checks and adds no evidence.
-    beat_checks: list[StoryBeatCheck] = Field(min_length=1, max_length=24)
+    beat_checks: list[StoryBeatCheck] = Field(min_length=1, max_length=MAX_STORY_MOMENTS)
 
 
 class StoryResearchReviewAgent(Agent[StoryResearchReviewInput, StoryResearchReviewOutput]):
@@ -162,7 +167,8 @@ class StorySourceReviewAgent(StoryResearchReviewAgent):
         prompt_version="2026-10-21.4",
     )
 
-    max_output_tokens = 3072
+    # One check per beat of one idea, and an idea has no fixed beat cap.
+    max_output_tokens = 6144
 
     def render_prompt(self, input):  # noqa: A002
         # Deliberately omit the query, historical facts and creative copy. The
@@ -295,15 +301,26 @@ def research_story_ideas(input, topic, *, ctx, rejected=None):  # noqa: A002
         evidence = without_rejected(evidence, rejected)
     researched = input.model_copy(update={"public_research": evidence, "research_topic": topic})
     ideas = CameraRollStoriesAgent(default_client()).run(researched, ctx=ctx)
-    if ideas.stories:
-        source_review = StorySourceReviewAgent(default_client()).run(
-            StoryResearchReviewInput(request=researched, proposed=ideas), ctx=ctx
+    # Each idea is reviewed on its own, so one unsupported claim drops that idea instead of
+    # failing the whole request and throwing away the ideas that passed.
+    kept = [story for story in ideas.stories if _passes_review(researched, story, ctx)]
+    if len(kept) < len(ideas.stories):
+        log.info(
+            "story_research_review_drops", dropped=len(ideas.stories) - len(kept), kept=len(kept)
         )
-        if not source_review.approved:
-            raise ResearchUnavailable("Proposed source identities need correction")
-        review = StoryResearchReviewAgent(default_client()).run(
-            StoryResearchReviewInput(request=researched, proposed=ideas), ctx=ctx
+    return ideas.model_copy(update={"stories": kept})
+
+
+def _passes_review(researched, story, ctx):
+    review_input = StoryResearchReviewInput(
+        request=researched, proposed=CameraRollStoriesOutput(stories=[story])
+    )
+    try:
+        return (
+            StorySourceReviewAgent(default_client()).run(review_input, ctx=ctx).approved
+            and StoryResearchReviewAgent(default_client()).run(review_input, ctx=ctx).approved
         )
-        if not review.approved:
-            raise ResearchUnavailable("Researched ideas need correction")
-    return ideas
+    except AgentError:
+        # An unreviewed researched claim is never offered; the other ideas still are.
+        log.warning("story_research_review_failed", exc_info=True)
+        return False

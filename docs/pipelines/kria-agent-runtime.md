@@ -592,6 +592,20 @@ plans a guided fast montage and then runs the existing `_run_phone_guided_job`:
   alignment record (2026-10-08..27), only N1 would have been asked. Kill switch
   `KRIA_VOICEOVER_TIE_QUESTIONS_ENABLED` (default on; needs the picker flag). Guard:
   `tests/kria/test_kri962_voiceover_tie_question.py`.
+  *A named shot is never "missing" before Kria looks (Leverkusen M2)*:
+  `app/kria/missing_media.py`. The Main Creator reads two moments per clip, so "the TOR on
+  the big screen" (1.5 s inside an 18 s goal clip) got either a strategy (and a vision
+  check) or `AskUser(missing_media)` "Build without it / I'll upload it" on the same input.
+  Now an `AskUser` whose machine reason code says footage is missing (`missing_media`,
+  `shot_not_found`; never a voiceover/song code, never read from the ask's prose or
+  options, KRI-667), on an item with clips (not Talking/Subtitled) runs
+  the same planner, resolver and vision checks first (`_look_inside_clips_first`, sharing
+  `_plan_turn_clip_intents` with the strategy path; answers cached). Unsure or not found:
+  the clip picker. Budget stop: still checking. Every named shot found: a card saying where
+  ("found every shot you named ... Should I build the edit with them?"). No shot read: a
+  question naming the clips. The Main Creator's ask (upload included) stands only once
+  every clip was checked: the creator tapped "None" for it, or already answered that card.
+  On with `CLIP_INTENTS_ENABLED`. Guard: `tests/kria/test_leverkusen_m2_missing_shot.py`.
 - *Title*: confirmed strategy title > brief title literal > brief global literal
   (+ route) > facts ("20K Run · Arnavutköy → Eminönü", `title_from_facts`). With
   none of those sources, the visible opening title is omitted; `Montage` remains

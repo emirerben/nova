@@ -43,7 +43,8 @@ extension NativeEditorSession {
         let exactNewDuration = sourceSpan / rate
         guard exactNewDuration.isFinite, exactNewDuration >= 0.1,
               let newDuration = NativeEditorInteraction.sourcePreservingOutputDuration(
-            sourceStart: found.slot.inS, sourceEnd: sourceEndValue, rate: rate
+            sourceStart: found.slot.inS, sourceEnd: sourceEndValue, rate: rate,
+            renderedClock: found.slot.raw["timing_mode"]?.stringValue == "rendered"
         ) else { return false }
         let existingRate = found.slot.raw["playback_rate"]?.numberValue ?? 1
         let existingSourceEnd = found.slot.raw["source_end_s"]?.numberValue

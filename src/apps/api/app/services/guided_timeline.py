@@ -34,6 +34,8 @@ class GuidedTimelineError(ValueError):
 def effective_transitions(
     durations: Sequence[float],
     transitions: Sequence[tuple[str, float]],
+    *,
+    rendered_clock: bool = False,
 ) -> list[tuple[str, float]]:
     """Per-boundary (transition, overlap_s) after the 0.3 cap / 30%-of-neighbour rule.
 
@@ -47,7 +49,11 @@ def effective_transitions(
             continue
         requested = float(requested or 0.0) if transition != "cut" else 0.0
         overlap = min(requested, 0.3, durations[index] * 0.3, durations[index + 1] * 0.3)
-        out.append((transition, round(overlap, 3)) if overlap >= 0.1 else ("cut", 0.0))
+        out.append(
+            (transition, overlap if rendered_clock else round(overlap, 3))
+            if overlap >= 0.1
+            else ("cut", 0.0)
+        )
     return out
 
 
@@ -64,6 +70,7 @@ def build_guided_segments(
     ``slots`` are ``TimelineSlotEdit`` models (duck-typed). Raises
     :class:`GuidedTimelineError` with the same codes the route surfaced.
     """
+    rendered_clock = current_revision.get("timing_mode") == "rendered"
     sources = list(current_revision.get("sources") or [])
     if not slots:
         raise GuidedTimelineError("TIMELINE_EMPTY")
@@ -84,7 +91,9 @@ def build_guided_segments(
         requested_transitions.append(
             (transition, float(slot.transition_duration_s or 0.0) if transition != "cut" else 0.0)
         )
-    effective = effective_transitions(slot_durations, requested_transitions)
+    effective = effective_transitions(
+        slot_durations, requested_transitions, rendered_clock=rendered_clock
+    )
     current_segment_by_id = {
         str(segment.get("segment_id")): segment
         for segment in current_revision.get("segments") or []
@@ -191,7 +200,11 @@ def build_guided_segments(
                 or abs(exact_duration - duration) > 1 / GUIDED_FPS + 1e-6
             ):
                 raise GuidedTimelineError("TIMELINE_INVALID_DURATION")
-            duration = round(round(exact_duration * GUIDED_FPS) / GUIDED_FPS, 6)
+            duration = (
+                exact_duration
+                if rendered_clock
+                else round(round(exact_duration * GUIDED_FPS) / GUIDED_FPS, 6)
+            )
         if source.get("kind") == "video" and source_duration is not None:
             if slot.in_s < 0 or (
                 float(selected_end)
@@ -212,14 +225,14 @@ def build_guided_segments(
             else held_frame
             if freeze_hold
             else float(slot.in_s) + duration * playback_rate,
-            "duration_s": round(duration, 3),
+            "duration_s": duration if rendered_clock else round(duration, 3),
             "transition_after": transition,
             "transition_duration_s": transition_duration,
             "look_preset": slot.look_preset or "none",
             "look_adjustments": slot.look_adjustments.model_dump()
             if slot.look_adjustments
             else None,
-            "output_start_s": round(cursor, 3),
+            "output_start_s": cursor if rendered_clock else round(cursor, 3),
         }
         if preserve_window:
             segment["preserve_source_window"] = True
@@ -276,7 +289,20 @@ def build_guided_segments(
                 segment["layout"] = inherited_layout
         segments.append(segment)
         cursor += duration
-    if any(segment.get("preserve_source_window") for segment in segments):
+    if rendered_clock:
+        resolved_transitions = effective_transitions(
+            [segment["duration_s"] for segment in segments],
+            requested_transitions,
+            rendered_clock=True,
+        )
+        cursor = 0.0
+        for segment, (transition, overlap) in zip(segments, resolved_transitions, strict=True):
+            segment["output_start_s"] = cursor
+            segment["output_end_s"] = cursor + segment["duration_s"]
+            segment["transition_after"] = transition
+            segment["transition_duration_s"] = overlap
+            cursor = segment["output_end_s"] - overlap
+    if not rendered_clock and any(segment.get("preserve_source_window") for segment in segments):
         # Rebuilt editor slots are a continuous sequence. Snap each boundary
         # once using the same frame clock as normalization, avoiding stale
         # millisecond starts that become one-frame gaps after a speed change.

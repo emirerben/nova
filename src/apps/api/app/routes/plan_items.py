@@ -148,6 +148,7 @@ from app.routes.generative_jobs import (
     persist_variant_captions_enabled,
     prepare_editor_commit,
     require_editable_variant,
+    require_editor_clock_reader,
     require_guided_story_editor_commit,
     rollback_speech_cut_dispatch,
     speech_cut_director_context,
@@ -7679,6 +7680,7 @@ async def _editor_commit_item(
     # enforce the same compare-and-fail fence before creating its draft.
     if body.base_generation != variant_render_baseline(locked_variant):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+    require_editor_clock_reader(locked_job, locked_variant)
     initial_deletions = list(body.deletions)
     if is_empty_editor_variant(locked_variant) and any(
         deletion.kind == "clip" for deletion in initial_deletions

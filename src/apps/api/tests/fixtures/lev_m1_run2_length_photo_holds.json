@@ -1,0 +1,849 @@
+{
+ "_source": "Leverkusen M1 run 2 (2026-10-30, Fly eed794157, TestFlight 1819, protocol 25). Thread 1a2189cc, plan item 6f4f30ae, job 93f662a7 (job_t2.json, variants_ready). clip_assignments, visuals and brief = the approved binding's media snapshot and brief (analysis trimmed to the fields the length path reads; length_plan dropped so the replay rebuilds it). strategy = all_candidates.creator_strategy (rationale/story_structure dropped). The brief's r1/r5 were superseded by 'Make it without these'; the replay puts r5 back live as each turn had it.",
+ "clip_assignments": [
+  {
+   "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+   "kind": "video",
+   "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+   "storage_generation": "1793385165153027",
+   "duration_s": 8.533333,
+   "has_audio": true,
+   "upload_contract": {
+    "proxy": {
+     "width": 320,
+     "height": 568,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "fbedb1c35b3a85c62776f9c1aa37176716963f8a3e0df67278e71ced2710585f",
+      "has_audio": true,
+      "byte_count": 16378394,
+      "duration_s": 8.533333333333333,
+      "orientation_degrees": 90
+     },
+     "duration_s": 8.533333333333333,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "capture": {
+    "capture_time": "2026-10-28T19:49:47Z"
+   },
+   "analysis": {
+    "analysis_version": 8,
+    "source": "clip_metadata",
+    "duration_s": 8.533333,
+    "width": 320,
+    "height": 568,
+    "aspect": 0.5634,
+    "rotation_degrees": 0,
+    "display_width": 320,
+    "display_height": 568,
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 4.0,
+      "energy": 7.0,
+      "start_s": 0.0,
+      "description": "crowd cheers loudly, waving flags"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 7.5,
+      "start_s": 4.5,
+      "description": "fans continue chanting with flags waving"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+   "kind": "video",
+   "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+   "storage_generation": "1793385167689790",
+   "duration_s": 8.066667,
+   "has_audio": true,
+   "upload_contract": {
+    "proxy": {
+     "width": 320,
+     "height": 568,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "4a546b3edbe9a0ec857e8b14929c02ec01ff7e7fb9286875b14af37ec9d9aa60",
+      "has_audio": true,
+      "byte_count": 15397369,
+      "duration_s": 8.035,
+      "orientation_degrees": 90
+     },
+     "duration_s": 8.066666666666666,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "capture": {
+    "capture_time": "2026-10-28T19:33:14Z"
+   },
+   "analysis": {
+    "analysis_version": 8,
+    "source": "clip_metadata",
+    "duration_s": 8.066667,
+    "width": 320,
+    "height": 568,
+    "aspect": 0.5634,
+    "rotation_degrees": 0,
+    "display_width": 320,
+    "display_height": 568,
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 1.5,
+      "energy": 6.0,
+      "start_s": 0.0,
+      "description": "wide shot of football pitch and stadium lights"
+     },
+     {
+      "end_s": 7.5,
+      "energy": 8.0,
+      "start_s": 5.0,
+      "description": "crowd cheers with flags waving"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+   "kind": "video",
+   "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+   "storage_generation": "1793385171537916",
+   "duration_s": 9.866667,
+   "has_audio": true,
+   "upload_contract": {
+    "proxy": {
+     "width": 320,
+     "height": 568,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "d838faf6b0495b61e2d482733061374f88f5790fcbc9293e74ea118879bab7dc",
+      "has_audio": true,
+      "byte_count": 18712920,
+      "duration_s": 9.836666666666666,
+      "orientation_degrees": 90
+     },
+     "duration_s": 9.866666666666667,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "capture": {
+    "capture_time": "2026-10-28T20:25:46Z"
+   },
+   "analysis": {
+    "analysis_version": 8,
+    "source": "clip_metadata",
+    "duration_s": 9.866667,
+    "width": 320,
+    "height": 568,
+    "aspect": 0.5634,
+    "rotation_degrees": 0,
+    "display_width": 320,
+    "display_height": 568,
+    "transcript": "",
+    "best_moments": []
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+   "kind": "video",
+   "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+   "storage_generation": "1793385173232944",
+   "duration_s": 6.533333,
+   "has_audio": true,
+   "upload_contract": {
+    "proxy": {
+     "width": 320,
+     "height": 568,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "c800fd4afba9eb447b234e97cb3d41af4495fa0618c84c8fbf722e88b874b81b",
+      "has_audio": true,
+      "byte_count": 12583441,
+      "duration_s": 6.501666666666667,
+      "orientation_degrees": 90
+     },
+     "duration_s": 6.533333333333333,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "capture": {
+    "capture_time": "2026-10-28T19:16:50Z"
+   },
+   "analysis": {
+    "analysis_version": 8,
+    "source": "clip_metadata",
+    "duration_s": 6.533333,
+    "width": 320,
+    "height": 568,
+    "aspect": 0.5634,
+    "rotation_degrees": 0,
+    "display_width": 320,
+    "display_height": 568,
+    "transcript": "250. 250.",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 4.0,
+      "start_s": 0.0,
+      "description": "players standing on field during warm-up"
+     },
+     {
+      "end_s": 6.0,
+      "energy": 5.0,
+      "start_s": 3.0,
+      "description": "player bending over a ball on the pitch"
+     },
+     {
+      "end_s": 9.0,
+      "energy": 4.0,
+      "start_s": 6.0,
+      "description": "football players moving across the field"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+   "kind": "video",
+   "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+   "storage_generation": "1793385177218231",
+   "duration_s": 7.5,
+   "has_audio": true,
+   "upload_contract": {
+    "proxy": {
+     "width": 320,
+     "height": 568,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "1d19566cf509922f4f522ebcb903a08521b75e69d7b5b060b5931daa66b32343",
+      "has_audio": true,
+      "byte_count": 14469063,
+      "duration_s": 7.5,
+      "orientation_degrees": 90
+     },
+     "duration_s": 7.5,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "capture": {
+    "capture_time": "2026-10-28T21:47:37Z"
+   },
+   "analysis": {
+    "analysis_version": 8,
+    "source": "clip_metadata",
+    "duration_s": 7.5,
+    "width": 320,
+    "height": 568,
+    "aspect": 0.5634,
+    "rotation_degrees": 0,
+    "display_width": 320,
+    "display_height": 568,
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 5.0,
+      "energy": 7.0,
+      "start_s": 0.0,
+      "description": "crowd cheers loudly and waves flags"
+     },
+     {
+      "end_s": 7.0,
+      "energy": 6.0,
+      "start_s": 5.0,
+      "description": "players huddle on the pitch"
+     },
+     {
+      "end_s": 9.0,
+      "energy": 6.5,
+      "start_s": 7.0,
+      "description": "fans continue waving flags from stands"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+   "kind": "video",
+   "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+   "storage_generation": "1793385179190036",
+   "duration_s": 11.066667,
+   "has_audio": true,
+   "upload_contract": {
+    "proxy": {
+     "width": 320,
+     "height": 568,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "2a8bc07f26b13a0d1f1199753204317c7bb7a84b64978c0656afbe1c59378ed5",
+      "has_audio": true,
+      "byte_count": 21360586,
+      "duration_s": 11.035,
+      "orientation_degrees": 90
+     },
+     "duration_s": 11.066666666666666,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "capture": {
+    "capture_time": "2026-10-28T19:36:41Z"
+   },
+   "analysis": {
+    "analysis_version": 8,
+    "source": "clip_metadata",
+    "duration_s": 11.066667,
+    "width": 320,
+    "height": 568,
+    "aspect": 0.5634,
+    "rotation_degrees": 0,
+    "display_width": 320,
+    "display_height": 568,
+    "transcript": "Mit der Nummer 28, Janis. Mit der Nummer 2 spielt Facundo.",
+    "best_moments": [
+     {
+      "end_s": 3.0,
+      "energy": 6.0,
+      "start_s": 0.0,
+      "description": "announcer calls out player number 28 to a cheering crowd"
+     },
+     {
+      "end_s": 6.2,
+      "energy": 7.0,
+      "start_s": 3.7,
+      "description": "crowd cheers loudly as stadium lights flash red"
+     },
+     {
+      "end_s": 10.0,
+      "energy": 6.0,
+      "start_s": 7.2,
+      "description": "announcer calls out player number 2, Facundo"
+     },
+     {
+      "end_s": 11.5,
+      "energy": 6.0,
+      "start_s": 10.5,
+      "description": "crowd cheers as stadium lights flash red and white"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+   "kind": "video",
+   "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+   "storage_generation": "1793385181600028",
+   "duration_s": 7.866667,
+   "has_audio": true,
+   "upload_contract": {
+    "proxy": {
+     "width": 320,
+     "height": 568,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "d8ed7e9f0a7bb90e80ec095264ae6ebc6f1b1456125279856317f07255cd98ba",
+      "has_audio": true,
+      "byte_count": 12517648,
+      "duration_s": 7.835,
+      "orientation_degrees": 90
+     },
+     "duration_s": 7.866666666666666,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "capture": {
+    "capture_time": "2026-10-28T17:42:36Z"
+   },
+   "analysis": {
+    "analysis_version": 8,
+    "source": "clip_metadata",
+    "duration_s": 7.866667,
+    "width": 320,
+    "height": 568,
+    "aspect": 0.5634,
+    "rotation_degrees": 0,
+    "display_width": 320,
+    "display_height": 568,
+    "transcript": "Hauptbahnhof. Nächster Halt, Leverkusen Mitte.",
+    "best_moments": [
+     {
+      "end_s": 1.7,
+      "energy": 3.0,
+      "start_s": 0.0,
+      "description": "train interior window view"
+     },
+     {
+      "end_s": 4.5,
+      "energy": 4.0,
+      "start_s": 2.5,
+      "description": "train moving past lights"
+     },
+     {
+      "end_s": 8.0,
+      "energy": 3.0,
+      "start_s": 6.0,
+      "description": "pan to train cabin interior"
+     }
+    ]
+   }
+  },
+  {
+   "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+   "kind": "video",
+   "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/1a2189cc-a212-424f-8486-e721e4e483b3/analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+   "storage_generation": "1793385194279909",
+   "duration_s": 18.333333,
+   "has_audio": true,
+   "upload_contract": {
+    "proxy": {
+     "width": 320,
+     "height": 568,
+     "original": {
+      "kind": "video",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "a573b8d51b0542c6bccf1059326647b72c54760975332b21d54bfabc2c144678",
+      "has_audio": true,
+      "byte_count": 34943164,
+      "duration_s": 18.30666666666667,
+      "orientation_degrees": 90
+     },
+     "duration_s": 18.333333333333332,
+     "frame_rate": 30.0,
+     "timing_version": 1,
+     "orientation_degrees": 0
+    },
+    "purpose": "analysis_proxy"
+   },
+   "capture": {
+    "capture_time": "2026-10-28T21:35:40Z"
+   },
+   "analysis": {
+    "analysis_version": 8,
+    "source": "clip_metadata",
+    "duration_s": 18.333333,
+    "width": 320,
+    "height": 568,
+    "aspect": 0.5634,
+    "rotation_degrees": 0,
+    "display_width": 320,
+    "display_height": 568,
+    "transcript": "",
+    "best_moments": [
+     {
+      "end_s": 1.9,
+      "energy": 7.5,
+      "start_s": 0.0,
+      "description": "fans cheer and wave scarves"
+     },
+     {
+      "end_s": 5.4,
+      "energy": 6.0,
+      "start_s": 2.2,
+      "description": "camera pans to stadium interior"
+     },
+     {
+      "end_s": 10.4,
+      "energy": 8.0,
+      "start_s": 6.8,
+      "description": "crowd celebrates a goal"
+     },
+     {
+      "end_s": 13.9,
+      "energy": 9.0,
+      "start_s": 11.2,
+      "description": "man enthusiastically waves scarf"
+     },
+     {
+      "end_s": 18.9,
+      "energy": 7.0,
+      "start_s": 14.5,
+      "description": "wide shot of stadium crowd"
+     }
+    ]
+   }
+  }
+ ],
+ "visuals": [
+  {
+   "media_id": "asset-285921bd-b096-40a0-80b7-94733264c81b",
+   "kind": "image",
+   "capture": {
+    "capture_time": "2026-10-28T17:34:31Z"
+   },
+   "source_filename": "EAFAAE5C-9CA0-43BE-B002-23E069C8A973-IMG_0995.jpeg"
+  },
+  {
+   "media_id": "asset-f15de426-ab46-4604-9217-589ea3357ec3",
+   "kind": "image",
+   "capture": {
+    "capture_time": "2026-10-28T18:52:22Z"
+   },
+   "source_filename": "6D59B32B-2562-4A07-AC6E-D6E032934AC0-IMG_1019.jpeg"
+  },
+  {
+   "media_id": "asset-a5a3072b-1061-41d9-91d1-1e956ccdf38d",
+   "kind": "image",
+   "capture": {
+    "capture_time": "2026-10-28T20:33:20Z"
+   },
+   "source_filename": "4CD5216F-C415-407F-8086-4A739E352B92-IMG_1038.jpeg"
+  },
+  {
+   "media_id": "asset-3f1c6135-32db-4f0d-94da-b763893d867b",
+   "kind": "image",
+   "capture": {
+    "capture_time": "2026-10-28T17:35:12Z"
+   },
+   "source_filename": "73887973-1083-4462-9671-2A7783D417D0-IMG_1001.jpeg"
+  },
+  {
+   "media_id": "asset-f00148fa-f787-449f-9b65-415da83baad6",
+   "kind": "image",
+   "capture": {
+    "capture_time": "2026-10-28T18:52:13Z"
+   },
+   "source_filename": "7412C16A-90F3-49D6-A551-D61974F6812F-IMG_1017.jpeg"
+  }
+ ],
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "clip_intents": [
+   {
+    "op": "order",
+    "order_by": "capture_time",
+    "attribute": "everything",
+    "intent_id": "order_capture_time_all"
+   },
+   {
+    "op": "include",
+    "attribute": "one of the two photos of the view from our box",
+    "intent_id": "include_one_view_photo"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [
+    "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4"
+   ],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Pokalnacht in Leverkusen 🔴⚫",
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "target_duration_s": 25,
+  "creator_duration_s": 25,
+  "selected_media_ids": [
+   "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+   "asset-285921bd-b096-40a0-80b7-94733264c81b",
+   "asset-a5a3072b-1061-41d9-91d1-1e956ccdf38d",
+   "asset-f15de426-ab46-4604-9217-589ea3357ec3",
+   "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+   "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+   "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+   "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+   "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+   "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+   "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4"
+  ],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "order_by": "capture_time",
+    "attribute": "everything",
+    "intent_id": "order_capture_time_all",
+    "assignments": [
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-285921bd-b096-40a0-80b7-94733264c81b",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-f15de426-ab46-4604-9217-589ea3357ec3",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-a5a3072b-1061-41d9-91d1-1e956ccdf38d",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-3f1c6135-32db-4f0d-94da-b763893d867b",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "filming order",
+      "media_id": "asset-f00148fa-f787-449f-9b65-415da83baad6",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "include",
+    "status": "resolved",
+    "attribute": "one of the two photos of the view from our box",
+    "intent_id": "include_one_view_photo",
+    "assignments": [
+     {
+      "evidence": "A wide shot from inside a stadium luxury box, featuring red spectator seats in the foreground, a brightly lit green football field",
+      "media_id": "asset-f00148fa-f787-449f-9b65-415da83baad6",
+      "confidence": 0.9
+     }
+    ]
+   }
+  ],
+  "selected_music_section": null,
+  "target_duration_requested": true
+ },
+ "brief": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time"
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Put everything in the order I filmed it",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it all vertical, no black bars",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r3",
+    "kind": "select",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Skip the photo of the empty train seat, and use only one of the two photos of the view from our box",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Keep the sound only on the train clip with the announcement and mute everything else",
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   },
+   {
+    "id": "r5",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 21
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Make it 21 seconds instead",
+    "source_turn_id": "e7cac9df-08f9-4747-bc6f-4511a676ba5b"
+   },
+   {
+    "id": "r6",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Pokalnacht in Leverkusen 🔴⚫",
+    "description": null,
+    "source_turn_id": "78855290-993b-4696-ada2-dc121510ced2"
+   }
+  ]
+ },
+ "observed_on_prod": {
+  "readiness_r5": {
+   "25": "This draft is about 21.4s; you asked for 25s.",
+   "21": "This draft is about 17.4s; you asked for 21s."
+  },
+  "approved_length_plan_target_s": 17.4,
+  "approved_windows": [
+   {
+    "score": 7.5,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+    "source_end_s": 6.7,
+    "source_start_s": 4.5
+   },
+   {
+    "score": 8.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+    "source_end_s": 7.2,
+    "source_start_s": 5.0
+   },
+   {
+    "score": 0.0,
+    "reason": "analysis_fallback",
+    "media_id": "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+    "source_end_s": 2.2,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 5.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+    "source_end_s": 5.2,
+    "source_start_s": 3.0
+   },
+   {
+    "score": 7.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+    "source_end_s": 2.2,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 7.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+    "source_end_s": 5.9,
+    "source_start_s": 3.7
+   },
+   {
+    "score": 4.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+    "source_end_s": 4.5,
+    "source_start_s": 2.5
+   },
+   {
+    "score": 9.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4",
+    "source_end_s": 13.4,
+    "source_start_s": 11.2
+   }
+  ],
+  "rendered_edit_s": 21.0,
+  "rendered_clip_ids": [
+   "analysis-proxy-ios-E48B35C2-B46F-4C46-AB9E-721266FC38D2.mp4",
+   "analysis-proxy-ios-4B938DA3-405F-4215-9C87-D921D742DEDD.mp4",
+   "285921bd-b096-40a0-80b7-94733264c81b",
+   "analysis-proxy-ios-11B73C2A-9D21-4F28-84B8-D087BA25EB16.mp4",
+   "analysis-proxy-ios-1665EDCF-1846-4EF8-9040-0BEBA576D5F1.mp4",
+   "f15de426-ab46-4604-9217-589ea3357ec3",
+   "analysis-proxy-ios-78147631-EA83-47AA-B586-6F10AD10C592.mp4",
+   "analysis-proxy-ios-36F044C2-90C4-4172-8F60-FA3C25D09D71.mp4",
+   "a5a3072b-1061-41d9-91d1-1e956ccdf38d",
+   "analysis-proxy-ios-DBD2804F-D188-4EC4-9B9D-677FC1213F90.mp4",
+   "analysis-proxy-ios-762A97D6-97EB-48E7-8069-4EDA4AB95ED5.mp4"
+  ],
+  "rendered_visual_ids": [
+   "285921bd-b096-40a0-80b7-94733264c81b",
+   "f15de426-ab46-4604-9217-589ea3357ec3",
+   "a5a3072b-1061-41d9-91d1-1e956ccdf38d"
+  ],
+  "final_mp4_s": 22.6,
+  "outro_s": 1.6
+ }
+}
