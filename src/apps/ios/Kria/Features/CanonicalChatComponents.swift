@@ -457,6 +457,7 @@ private struct FormatVideoCard: View {
         switch format {
         case .montage: .bosphorus
         case .talkingToCamera: .talking
+        case .lipsync: .lipsync
         default: nil
         }
     }
