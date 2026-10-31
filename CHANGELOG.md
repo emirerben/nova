@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.38.0] - 2026-10-31
+
+### Changed
+- feat(kria): inspect source intervals for prompt-specific named moments (#1961) <!-- release-pr: 1961 -->
+
+## [0.83.37.0] - 2026-10-31
+
+### Fixed
+- fix(camera-roll): one flagged researched idea no longer fails the batch; never replay an empty first answer (#1986) <!-- release-pr: 1986 -->
+
 ## [0.83.36.0] - 2026-10-31
 
 ### Changed
