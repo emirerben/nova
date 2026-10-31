@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.25.0] - 2026-10-31
+
+### Changed
+- fix(kria): a skip inside a "start with" group can reach its clip (Leverkusen M1 run 2 #5) (#1972) <!-- release-pr: 1972 -->
+
 ## [0.83.24.0] - 2026-10-31
 
 ### Fixed
