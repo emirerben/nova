@@ -3185,6 +3185,7 @@
                 "singleWordText",
                 "freezeFrame",
                 "behindSubject",
+                "speakerBackground",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3310,6 +3311,7 @@
                 "singleWordText",
                 "freezeFrame",
                 "behindSubject",
+                "speakerBackground",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3336,6 +3338,11 @@
             ],
             "title": "Schema Version",
             "type": "integer"
+          },
+          "speaker_background": {
+            "$ref": "#/components/schemas/SpeakerBackgroundLayer",
+            "default": null,
+            "nullable": true
           },
           "text_layers": {
             "items": {
@@ -10912,6 +10919,51 @@
           "height"
         ],
         "title": "SourceCrop",
+        "type": "object"
+      },
+      "SpeakerBackgroundLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "loop": {
+            "default": true,
+            "title": "Loop",
+            "type": "boolean"
+          },
+          "media_kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "source_start": {
+            "default": 0.0,
+            "maximum": 1800.0,
+            "minimum": 0,
+            "title": "Source Start",
+            "type": "number"
+          },
+          "subject_track_id": {
+            "default": "subtitled",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Subject Track Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "media_kind"
+        ],
+        "title": "SpeakerBackgroundLayer",
         "type": "object"
       },
       "StaggeredContent": {
