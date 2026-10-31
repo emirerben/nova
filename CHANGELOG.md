@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.41.0] - 2026-10-31
+
+### Added
+- feat(kria): Talk-to-camera green-screen backgrounds, dark behind SPEAKER_BACKGROUND_ENABLED (KRI-1115..1119) (#2011) <!-- release-pr: 2011 -->
+
 ## [0.83.40.0] - 2026-10-31
 
 ### Changed
