@@ -2092,6 +2092,65 @@ def test_redelivery_finalizes_verified_guided_result_without_rerender(monkeypatc
     assert finalized == [[ready]]
 
 
+@pytest.mark.parametrize(
+    ("stamp", "switch_on", "matcher_asked"),
+    [
+        ({"creator_generation_id": "gen"}, True, False),  # Kria creator job: never matched
+        ({}, True, True),  # web generative job: unchanged
+        ({"creator_generation_id": "gen"}, False, True),  # kill switch off: byte-identical
+    ],
+)
+def test_guided_plan_never_pins_a_catalog_song_for_a_creator_job(
+    monkeypatch, stamp, switch_on, matcher_asked
+) -> None:
+    """Song rule: the guided plan's auto-matcher is skipped for a Kria creator job."""
+    from app.pipeline import guided_story
+
+    job = SimpleNamespace(id=uuid.uuid4(), status="processing", assembly_plan=dict(stamp))
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _model, _pk, *, with_for_update=False):
+            return job
+
+        def commit(self):
+            return None
+
+    asked: list[int] = []
+    pinned_tracks: list[object] = []
+    monkeypatch.setattr(gb, "_sync_session", _Session)
+    monkeypatch.setattr(gb, "_cancelled_job_write_rejected", lambda *_a, **_kw: False)
+    monkeypatch.setattr(
+        gb.settings, "creator_jobs_never_auto_match_catalog_song_enabled", switch_on
+    )
+    monkeypatch.setattr(
+        guided_story,
+        "validate_guided_snapshot",
+        lambda _raw: (3, "b" * 64, SimpleNamespace(narration=None, user_song=None)),
+    )
+    monkeypatch.setattr(guided_story, "matcher_clip_metas", lambda _snapshot: [])
+    monkeypatch.setattr(guided_story, "validate_execution_plan", lambda plan, _raw: plan)
+    monkeypatch.setattr(gb, "_match_best_track", lambda *_a, **_kw: asked.append(1))
+    monkeypatch.setattr(
+        guided_story,
+        "compile_execution_plan",
+        lambda _snapshot, track=None: (
+            pinned_tracks.append(track)
+            or {"compiler_version": 1, "proposal_version": 3, "media_digest": "b" * 64}
+        ),
+    )
+
+    gb._guided_execution_plan(str(job.id), {})
+
+    assert bool(asked) is matcher_asked
+    assert pinned_tracks == [None]
+
+
 def test_concurrent_first_delivery_uses_one_pinned_execution_plan(monkeypatch) -> None:
     shared_job = SimpleNamespace(
         id=uuid.uuid4(),

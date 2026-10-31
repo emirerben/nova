@@ -121,6 +121,7 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
+from app.services.creator_song_rule import catalog_song_match_blocked
 from app.services.generative_jobs import (
     CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
     CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
@@ -3836,6 +3837,9 @@ def _run_generative_job_impl(
                 fut_match = pool.submit(lambda: None)
             elif frozen_music_status == "selected":
                 fut_match = pool.submit(lambda: frozen_music_track)
+            elif catalog_song_match_blocked(immutable_job_plan):
+                # Song rule: a Kria creator job never gets an auto-matched catalog song.
+                fut_match = pool.submit(lambda: None)
             else:
                 fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
             tonemap_t0 = time.monotonic()
@@ -5748,7 +5752,17 @@ def _run_phone_voiceover_montage_job(
                 )
             else:
                 style_set_id = _select_generative_style_set(clip_metas, agent_text, job_id=job_id)
-            best_track = _match_best_track(clip_metas, job_id=job_id)
+            # Song rule: a phone job never plays a catalog song (only the creator's own upload).
+            # `phone_catalog_song_match_blocked` is the kill switch, default on.
+            from app.services.creator_song_rule import (  # noqa: PLC0415
+                phone_catalog_song_match_blocked,
+            )
+
+            best_track = (
+                None
+                if phone_catalog_song_match_blocked()
+                else _match_best_track(clip_metas, job_id=job_id)
+            )
 
             user_style_knobs: dict = {}
             if user_style:
@@ -12652,6 +12666,8 @@ def _guided_execution_plan(
         job_owner_id = getattr(job, "user_id", None)
         job_item_id = getattr(job, "content_plan_item_id", None)
         approved_length_plan = _approved_length_plan_envelope(job.assembly_plan or {})
+        # Song rule: a creator job's guided plan never pins an auto-matched catalog song.
+        catalog_match_blocked = catalog_song_match_blocked(job.assembly_plan)
 
     from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
     from app.services.guided_speech_cleanup import derivative_path_ok  # noqa: PLC0415
@@ -12989,6 +13005,7 @@ def _guided_execution_plan(
             None
             if (
                 frozen_status is not None
+                or catalog_match_blocked
                 or getattr(snapshot, "narration", None) is not None
                 or getattr(snapshot, "user_song", None) is not None
             )

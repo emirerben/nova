@@ -2399,6 +2399,14 @@ class Settings(BaseSettings):
     # When False: both agent routes return 404 — byte-identical to pre-M2 behavior.
     style_agent_enabled: bool = False
 
+    # Song rule (legal): only a creator-uploaded song ever plays on a Kria creator job. true = the
+    # render-time auto-matcher (`_match_best_track`) is never run for a creator job (a phone job,
+    # or a cloud/guided job stamped with the creator render contract), so no catalog track is
+    # picked for it; a track the creator approved (frozen licensed music) is a separate path and
+    # is unchanged. false = byte-identical to before. Rollback: `fly secrets set
+    # CREATOR_JOBS_NEVER_AUTO_MATCH_CATALOG_SONG_ENABLED=false` (api + worker) + restart.
+    creator_jobs_never_auto_match_catalog_song_enabled: bool = True
+
     # Chat-based full-editor copilot. When True,
     # POST /plan-items/{item}/variants/{variant}/copilot/turn is live and returns
     # proposed draft edit ops; it never writes Job/PlanItem rows. Frontend twin:
