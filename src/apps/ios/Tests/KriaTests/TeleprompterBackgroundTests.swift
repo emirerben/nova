@@ -9,6 +9,7 @@ import XCTest
 /// 5. a damaged choice file names a path outside `backgrounds/`: the store must still resolve inside it.
 @MainActor final class TeleprompterBackgroundTests: XCTestCase {
     private var root: URL!
+    private let selectionProject = UUID()
 
     override func setUp() async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("teleprompter-bg-\(UUID().uuidString)")
@@ -151,6 +152,93 @@ import XCTest
         flow.camera.onFinalized?(flow.store.fileURL(for: take), nil)
         XCTAssertEqual(flow.selectedTake?.speakerBackground, chosen)
         XCTAssertEqual(try flow.store.loadManifests().first?.speakerBackground, chosen)
+    }
+
+    // MARK: Use take (S25 spirit: the take never waits on, or fails because of, its background)
+
+    private final class Calls: @unchecked Sendable {
+        var order: [String] = []
+    }
+
+    private func finalizedFlow(enabled: Bool = true, withBackground: Bool = true, calls: Calls,
+                               background: @escaping BackgroundIntake) throws -> TeleprompterRecordingFlow {
+        let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: DiscardingSaver(),
+                                             speakerBackgroundEnabled: enabled, backgroundIntake: background)
+        if withBackground { flow.chooseBackground(from: try pickedFile(), kind: .image) }
+        let take = TeleprompterTakeManifest(script: flow.script.draft, slot: .pending)
+        try flow.store.save(manifest: take)
+        try FileManager.default.createDirectory(at: flow.store.takesDirectory, withIntermediateDirectories: true)
+        try Data("movie".utf8).write(to: flow.store.fileURL(for: take))
+        flow.seedActiveTakeForTesting(take)
+        flow.camera.seedFinalizedAudioCheckForTesting(TakeAudioCheck(verdict: .ok, peakDb: -12, activeFraction: 0.8))
+        flow.camera.onFinalized?(flow.store.fileURL(for: take), nil)
+        return flow
+    }
+
+    private func selection(for reference: SpeakerBackgroundReference) -> CameraBackgroundSelection {
+        CameraBackgroundSelection(projectID: selectionProject, itemID: "item", recordID: reference.id, kind: reference.kind, fileName: reference.fileName)
+    }
+
+    func testUseTakeHandsOverTheClipFirstThenTheBackgroundOnce() async throws {
+        let calls = Calls()
+        let flow = try finalizedFlow(calls: calls) { [self] _, reference, url in
+            calls.order.append("background:\(FileManager.default.fileExists(atPath: url.path))")
+            return .queued(selection(for: reference))
+        }
+        await flow.useTake { _, _ in calls.order.append("clip"); return .queued }
+        XCTAssertEqual(calls.order, ["clip", "background:true"], "the take is handed over before its background")
+        let reference = try XCTUnwrap(flow.selectedTake?.speakerBackground)
+        XCTAssertEqual(flow.queuedBackground, selection(for: reference))
+        XCTAssertEqual(flow.queuedBackground?.clientUploadID, "ios-\(reference.id.uuidString)")
+        XCTAssertEqual(flow.background?.uploaded, true)
+        XCTAssertNil(flow.backgroundNote)
+
+        await flow.uploadBackgroundIfNeeded()
+        XCTAssertEqual(calls.order.count, 2, "polling after attach must not upload the background a second time")
+    }
+
+    func testAFailedBackgroundUploadStillAttachesTheTakeAndSaysSo() async throws {
+        let calls = Calls()
+        let flow = try finalizedFlow(calls: calls) { _, _, _ in calls.order.append("background"); return .failed("No connection.") }
+        await flow.useTake { _, _ in .attached }
+        XCTAssertTrue(flow.attachmentFinished, "the take is attached whatever happens to the background")
+        XCTAssertEqual(flow.selectedTake?.status, .accepted)
+        XCTAssertEqual(flow.backgroundNote, "Your take was added, but its background couldn’t be uploaded. No connection.")
+        XCTAssertNotEqual(flow.background?.uploaded, true, "a failed upload is retried on the next call")
+
+        calls.order = []
+        await flow.uploadBackgroundIfNeeded()
+        XCTAssertEqual(calls.order, ["background"])
+    }
+
+    func testAFailedClipIntakeNeverTouchesTheBackground() async throws {
+        let calls = Calls()
+        let flow = try finalizedFlow(calls: calls) { _, _, _ in calls.order.append("background"); return .failed("x") }
+        await flow.useTake { _, _ in .failed("Couldn’t add this take.") }
+        XCTAssertEqual(calls.order, [])
+        XCTAssertEqual(flow.selectedTake?.status, .review, "retry stays possible and will do both")
+        XCTAssertNil(flow.queuedBackground)
+    }
+
+    func testNoBackgroundOrCapabilityOffMeansNoBackgroundUpload() async throws {
+        for (enabled, picked) in [(true, false), (false, true)] {
+            let calls = Calls()
+            let flow = try finalizedFlow(enabled: enabled, withBackground: picked, calls: calls) { _, _, _ in calls.order.append("background"); return .failed("x") }
+            await flow.useTake { _, _ in .queued }
+            XCTAssertEqual(calls.order, [], "enabled \(enabled), picked \(picked)")
+            XCTAssertNil(flow.backgroundNote)
+        }
+    }
+
+    func testAMissingBackgroundFileIsANoteNotAFailure() async throws {
+        let calls = Calls()
+        let flow = try finalizedFlow(calls: calls) { _, _, _ in calls.order.append("background"); return .failed("x") }
+        let reference = try XCTUnwrap(flow.selectedTake?.speakerBackground)
+        try FileManager.default.removeItem(at: flow.store.backgroundFileURL(for: reference))
+        await flow.useTake { _, _ in .attached }
+        XCTAssertEqual(calls.order, [])
+        XCTAssertTrue(flow.attachmentFinished)
+        XCTAssertNotNil(flow.backgroundNote)
     }
 
     // MARK: Capability gating
