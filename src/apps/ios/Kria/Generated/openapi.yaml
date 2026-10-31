@@ -157,6 +157,16 @@
             "title": "Output Orientation",
             "type": "string"
           },
+          "render_shape_origin": {
+            "default": null,
+            "enum": [
+              "explicit_pick",
+              "preselected"
+            ],
+            "nullable": true,
+            "title": "Render Shape Origin",
+            "type": "string"
+          },
           "speech_cleanup_analysis_id": {
             "default": null,
             "format": "uuid",

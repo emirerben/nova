@@ -451,7 +451,13 @@ def guided_music_raw(plan: dict[str, Any], track_meta: TrackMeta | None) -> dict
     return None
 
 
-def guided_look_raw(plan: dict[str, Any]) -> dict[str, Any] | None:
+# `guided_look_raw(font=PLAN_FONT)`: name the font the pinned plan carries.
+PLAN_FONT = object()
+
+
+def guided_look_raw(plan: dict[str, Any], *, font: Any = PLAN_FONT) -> dict[str, Any] | None:
+    """The look chips. ``font`` overrides the plan's own: the font the phone really burned,
+    or None for "not known yet" (no font chip rather than a wrong one)."""
     typography = plan.get("typography") if isinstance(plan.get("typography"), dict) else {}
     presets: list[str] = []
     for moment in _rows(plan.get("story_timeline")):
@@ -460,7 +466,7 @@ def guided_look_raw(plan: dict[str, Any]) -> dict[str, Any] | None:
             presets.append(preset)
     return look_raw(
         style_id=typography.get("style_id"),
-        font=typography.get("font"),
+        font=typography.get("font") if font is PLAN_FONT else font,
         look_presets=presets[:2],
     )
 
@@ -490,7 +496,10 @@ def guided_captions_raw(plan: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def guided_section_raw(
-    plan: dict[str, Any], section: str, track_meta: TrackMeta | None = None
+    plan: dict[str, Any],
+    section: str,
+    track_meta: TrackMeta | None = None,
+    look_font: Any = PLAN_FONT,
 ) -> dict[str, Any] | None:
     """One section's raw payload from a pinned guided plan (None = nothing to show)."""
     if section == "title":
@@ -510,7 +519,7 @@ def guided_section_raw(
             plan.get("editor_motion_scenes"),
         )
     if section == "look":
-        return guided_look_raw(plan)
+        return guided_look_raw(plan, font=look_font)
     if section == "post_caption":
         caption = plan.get("post_caption")
         if isinstance(caption, dict):

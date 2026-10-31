@@ -77,6 +77,9 @@ from app.kria.plan_blocks import (
     cloud_decision_blocks as _cloud_decision_blocks,
 )
 from app.kria.plan_blocks import (
+    decided_block as _decided_plan_block,
+)
+from app.kria.plan_blocks import (
     emit_phone_recipe_blocks as _emit_phone_plan_blocks,
 )
 from app.kria.plan_blocks import (
@@ -5340,6 +5343,8 @@ def _run_phone_guided_job(
         job.failure_reason = None
         db.commit()
 
+    # The look chip names the face the typography step really picked (not the plan default).
+    _emit_burned_look_block(job_id, raw_plan)
     # KRI-448: the pinned plan's blocks went out above with `post_caption` deciding; the
     # request is committed and no lock is held, so resolve it now (best-effort, <= 8 s).
     _emit_post_caption(job_id)
@@ -6499,6 +6504,7 @@ def _plan_phone_user_song_montage(
     font_covers: Any,
     creator_order: list[int],
     output_orientation: str | None = None,
+    output_orientation_reason: str | None = None,
     creator_text: str = "",
     plan_authority: bool = False,
     freeze_frames: bool = False,
@@ -6524,6 +6530,7 @@ def _plan_phone_user_song_montage(
         font_covers=font_covers,
         creator_order=creator_order,
         output_orientation=output_orientation,
+        output_orientation_reason=output_orientation_reason,
         freeze_frames=freeze_frames,
     )
     if not settings.song_captions_enabled:
@@ -6691,6 +6698,7 @@ def _plan_phone_user_song_core(
     font_covers: Any,
     creator_order: list[int],
     output_orientation: str | None = None,
+    output_orientation_reason: str | None = None,
     freeze_frames: bool = False,
 ) -> tuple[Any, Any]:
     """Plan a phone montage around the creator's own song (KRI-374).
@@ -6751,6 +6759,7 @@ def _plan_phone_user_song_core(
             song_plan_item_id=str(item_id),
             song_generation=generation,
             output_orientation=output_orientation,
+            output_orientation_reason=output_orientation_reason,
         )
 
     if sync == "background":
@@ -6790,6 +6799,7 @@ def _plan_phone_user_song_core(
                 plan_item_id=str(item_id),
                 font_covers=font_covers,
                 output_orientation=output_orientation,
+                output_orientation_reason=output_orientation_reason,
                 creator_choices=creator_choices,
                 freeze_frames=freeze_frames,
             ),
@@ -7086,6 +7096,7 @@ def _plan_phone_unified_montage(
         ],
         visuals=visuals,
         output_orientation=_creator_shape_orientation(all_candidates),
+        output_orientation_reason=_creator_shape_reason(all_candidates),
         creator_duration_proven=creator_duration_proven,
         approved_length_plan=approved_length_plan,
         # KRI-585: what the clips say orders them only where the approved plan
@@ -7267,6 +7278,7 @@ def _run_phone_unified_montage_job(
                     if isinstance(value, int) and not isinstance(value, bool)
                 ],
                 output_orientation=_creator_shape_orientation(all_candidates),
+                output_orientation_reason=_creator_shape_reason(all_candidates),
                 creator_text="" if plan_authority else _creator_request_text(all_candidates),
                 plan_authority=plan_authority,
                 # KRI-996: a held frame over song nobody filmed, only where the approving phone
@@ -12672,7 +12684,7 @@ def _guided_execution_plan(
         # This exact plan was frozen before approval and rechecked at dispatch.
         # Do not materialize labels, SFX or music from later planning inputs.
         if emit_decided:
-            _emit_plan_blocks(job_id, _blocks_from_guided_plan(frozen))
+            _emit_plan_blocks(job_id, _blocks_from_guided_plan(frozen, **_early_look_font()))
         return frozen, None
 
     def guided_resolved_clip_intents() -> list[Any]:
@@ -13099,7 +13111,7 @@ def _guided_execution_plan(
     # KRI-443: the plan is pinned and every lock above is released (each `with` block
     # committed), so the live feed may report all seven sections now. Best-effort.
     if emit_decided:
-        _emit_plan_blocks(job_id, _blocks_from_guided_plan(plan))
+        _emit_plan_blocks(job_id, _blocks_from_guided_plan(plan, **_early_look_font()))
 
     music = plan.get("music")
     if music is None:
@@ -25421,11 +25433,57 @@ def _best_parts_source_decisions(
     return decisions, receipt, []
 
 
+def _early_look_font() -> dict[str, Any]:
+    """`blocks_from_guided_plan` kwargs for a block emitted BEFORE the phone typography step.
+
+    While the phone text policy is active the plan's own font is only a pre-typography
+    default (the agent picks the burned face later), so the look chip must not name it;
+    `_emit_burned_look_block` follows up with the real face. Off, or no policy => {}.
+    """
+    if settings.look_chip_burned_font_enabled and current_phone_text_policy():
+        return {"look_font": None}
+    return {}
+
+
+def _emit_burned_look_block(job_id: str, plan: dict[str, Any]) -> None:
+    """Re-emit the look block with the font the phone typography step really burned.
+
+    Reads the final rows (`plan["text_elements"]`, after styling); the most used face names
+    the chip. Best-effort and never changes the render or the pinned plan.
+    """
+    if not (settings.look_chip_burned_font_enabled and current_phone_text_policy()):
+        return
+    try:
+        from collections import Counter  # noqa: PLC0415
+
+        fonts = Counter(
+            str(row["font_family"])
+            for row in plan.get("text_elements") or []
+            if isinstance(row, dict) and row.get("font_family") and not row.get("removed")
+        )
+        if not fonts:
+            return
+        _emit_plan_blocks(
+            job_id,
+            [_decided_plan_block(plan, "look", look_font=fonts.most_common(1)[0][0])],
+        )
+    except Exception as exc:  # noqa: BLE001 - the feed must never fail a render
+        log.warning("plan_blocks_look_font_failed", job_id=job_id, error=str(exc)[:200])
+
+
 def _creator_shape_orientation(all_candidates: dict | None) -> str | None:
     """KRI-306: the orientation the creator explicitly chose, else None (= default)."""
     from app.services.render_shape import shape_from_all_candidates  # noqa: PLC0415
 
     return (shape_from_all_candidates(all_candidates) or {}).get("output_orientation")
+
+
+def _creator_shape_reason(all_candidates: dict | None) -> str | None:
+    """Why the output shape is what it is: the creator's pick, or an echoed server default
+    (the app sends the preselected shape back untouched). None = the original wording."""
+    from app.services.render_shape import orientation_reason  # noqa: PLC0415
+
+    return orientation_reason(all_candidates)
 
 
 def _decide_generative_variant(

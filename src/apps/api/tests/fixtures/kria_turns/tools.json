@@ -60,6 +60,22 @@
           "default": null,
           "title": "Output Orientation"
         },
+        "render_shape_origin": {
+          "anyOf": [
+            {
+              "enum": [
+                "explicit_pick",
+                "preselected"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Render Shape Origin"
+        },
         "speech_cleanup_analysis_id": {
           "anyOf": [
             {

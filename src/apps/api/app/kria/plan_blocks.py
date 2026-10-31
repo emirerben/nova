@@ -1090,11 +1090,20 @@ def with_payload(entry: dict[str, Any], payload: dict[str, Any] | None) -> dict[
     return entry
 
 
-def decided_block(plan: dict[str, Any], section: str, *, track_meta: Any = None) -> dict[str, Any]:
-    """One section `decided` from a pinned guided plan. Only fields the plan carries."""
+def decided_block(
+    plan: dict[str, Any],
+    section: str,
+    *,
+    track_meta: Any = None,
+    look_font: Any = plan_payloads.PLAN_FONT,
+) -> dict[str, Any]:
+    """One section `decided` from a pinned guided plan. Only fields the plan carries.
+
+    ``look_font`` replaces the plan's typography font in the look chips: the font the phone
+    really burned, or None while it is not decided yet."""
     entry = _summary_block(plan, section)
     if enabled() and not entry["skipped"]:
-        raw = plan_payloads.guided_section_raw(plan, section, track_meta)
+        raw = plan_payloads.guided_section_raw(plan, section, track_meta, look_font)
         with_payload(entry, plan_payloads.finalize_payload(section, raw))
     return entry
 
@@ -1108,12 +1117,16 @@ def pending_post_caption(plan: dict[str, Any] | None = None) -> dict[str, Any]:
     return _skipped("post_caption")
 
 
-def blocks_from_guided_plan(plan: dict[str, Any]) -> list[dict[str, Any]]:
+def blocks_from_guided_plan(
+    plan: dict[str, Any], *, look_font: Any = plan_payloads.PLAN_FONT
+) -> list[dict[str, Any]]:
     """Every section from a pinned guided execution plan (phone path: the render happens on
     the device, so the cloud decisions are the whole story). `post_caption` stays
     `deciding` for `emit_post_caption` unless the plan already carries one."""
     return [
-        pending_post_caption(plan) if section == "post_caption" else decided_block(plan, section)
+        pending_post_caption(plan)
+        if section == "post_caption"
+        else decided_block(plan, section, look_font=look_font)
         for section in SECTION_ORDER
     ]
 

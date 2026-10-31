@@ -2207,6 +2207,18 @@ class Settings(BaseSettings):
     # client_update_required. Apply: `fly secrets set SLIDE_POST_STICKERS_ENABLED=false
     # --app nova-video` (api + worker) + restart. Never roll the CODE back once stickers exist.
     slide_post_stickers_enabled: bool = True
+    # Prompt-fidelity honesty (a): an approval body that carries a shape is not proof the
+    # creator picked it (the app echoes the preselected default). On => the plan says "The
+    # creator selected this output format." only for an explicit pick. Off => byte-identical
+    # to before. Apply: `fly secrets set RENDER_SHAPE_ORIGIN_HONEST_ENABLED=false` (api +
+    # worker) + restart.
+    render_shape_origin_honest_enabled: bool = True
+    # Prompt-fidelity honesty (b): the live "look" chip names the font the phone actually
+    # burned, not the plan's pre-typography default. Off => the pre-fix chip.
+    look_chip_burned_font_enabled: bool = True
+    # Prompt-fidelity honesty (c): a phone export whose on-screen text check was rejected
+    # (it still ships) leaves a creator-facing render note. Off => no note.
+    export_text_note_enabled: bool = True
     slide_post_sticker_min_client_protocol: int = 8
     # KRI-557: provider-marked Gemini thought summaries for native creation and
     # slide-post calls. Deploy dark; enable after production canary with

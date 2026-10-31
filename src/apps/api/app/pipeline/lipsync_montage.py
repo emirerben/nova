@@ -852,6 +852,7 @@ def plan_lipsync_montage(
     plan_item_id: str,
     font_covers: Callable[[str, str], bool] | None = None,
     output_orientation: str | None = None,
+    output_orientation_reason: str | None = None,
     creator_choices: Mapping[str, Mapping[str, Any]] | None = None,
     freeze_frames: bool = False,
 ) -> UnifiedMontagePlan:
@@ -1108,7 +1109,9 @@ def plan_lipsync_montage(
         snapshot_kwargs["opening_title_duration_s"] = hold
     if output_orientation in ("portrait", "landscape"):
         snapshot_kwargs["output_orientation"] = output_orientation
-        snapshot_kwargs["output_orientation_reason"] = CREATOR_SELECTED_ORIENTATION_REASON
+        snapshot_kwargs["output_orientation_reason"] = (
+            output_orientation_reason or CREATOR_SELECTED_ORIENTATION_REASON
+        )
     style: dict[str, Any] = {}
     if family is not None:
         style["font_family"] = family
