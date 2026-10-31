@@ -1,0 +1,987 @@
+{
+ "source": {
+  "bug": "Leverkusen M3 run 1 turn 3 (KRI-1110): 'Text landed on 2 of 6 clips.'",
+  "thread": "83f2dcaa-9a05-42bc-a5f2-fa898d243e17",
+  "plan_item": "b04e62bd-0607-4720-ba81-86eb4f285cef",
+  "turn": "f2db16e9-4c73-4816-8dd5-6cc4c3ea3e38",
+  "server": "Fly main 7b5504165, TestFlight 1819 (protocol 25), 2026-10-31 13:22:58-13:24:00Z",
+  "message": "Leave the names and minutes out, just write “TOR!” on both goal clips. The goals are IMG_1037 and IMG_1039.",
+  "recorded": [
+   "brief_v3: creative_brief_versions row v3 (prod DB, read-only); r8 = per_clip text, literal 'TOR!', description 'both goal clips (IMG_1037 and IMG_1039)'",
+   "media_snapshot: the snapshot the 13:41 approval pinned (job 3c415e0e creator_brief_binding); account id in paths scrubbed, capture places dropped, library ids dropped. Same 5 clips + 1 Visual (ticket) as at 13:24",
+   "resolved_order_1324: the 13:24 clip_request_resolver output (proposal trace, full I/O), aliases m001..m006 mapped to media ids in upload order",
+   "turn 3 readiness: r8 disposition needs_choice 'Text landed on 2 of 6 clips.', policy_problem null; r8 receipt partial/checked with no inferred labels",
+   "strategy_base: the approved draft's creator_strategy (13:41) minus rationale/story/intents/selection: format, audio, title and length fields are unchanged between 13:24 and 13:41"
+  ],
+  "reconstructed": [
+   "the 13:24 Main Creator and clip-intent planner output are redacted. The resolver received only the three order intents, so the TOR! placement reached the strategy without the resolver. The test builds it with the real KRI-614 file-name settlement (apply_file_name_references) from an intent naming 'IMG_1037 and IMG_1039' (the creator's own words), the only server path that settles a label before the resolver on a first ask",
+   "strategy_base.selected_media_ids = all six media (13:24's order_ticket_first seated the ticket, KRI-1111)"
+  ]
+ },
+ "aliases": {
+  "m001": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+  "m002": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+  "m003": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+  "m004": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+  "m005": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+  "m006": "asset-18868513-34e4-4336-a0cb-428f4709c6c5"
+ },
+ "brief_v3": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "last_clip": "the trophy celebration",
+     "first_clip": "my ticket"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "chronological from kick-off to the end",
+    "source_turn_id": "fea9a92c-ca82-4cab-a3a8-36bb2797cce0"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "all vertical",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {},
+    "scope": "clip:asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "status": "superseded",
+    "literal": null,
+    "description": "blur the QR code",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Leverkusen 5:2 Nürnberg",
+    "description": "Title: “Leverkusen 5:2 Nürnberg”",
+    "source_turn_id": "fea9a92c-ca82-4cab-a3a8-36bb2797cce0"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": null,
+    "description": "who scored and in which minute on each goal clip",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r6",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "the two goals"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Mute everything except the two goals",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r7",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 15
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 15 seconds",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "TOR!",
+    "description": "both goal clips (IMG_1037 and IMG_1039)",
+    "source_turn_id": "f2db16e9-4c73-4816-8dd5-6cc4c3ea3e38"
+   },
+   {
+    "id": "r9",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4"
+      },
+      {
+       "sound_media": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Mute everything except the two goals (IMG_1037 and IMG_1039)",
+    "source_turn_id": "f2db16e9-4c73-4816-8dd5-6cc4c3ea3e38"
+   }
+  ]
+ },
+ "strategy_base": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "media_scope": "selected",
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "opening_title": "Leverkusen 5:2 Nürnberg",
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "target_duration_s": 15,
+  "creator_duration_s": 15,
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "selected_music_section": null,
+  "target_duration_requested": true,
+  "selected_media_ids": [
+   "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+   "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+   "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+   "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+   "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+   "asset-18868513-34e4-4336-a0cb-428f4709c6c5"
+  ]
+ },
+ "resolved_order_1324": [
+  {
+   "op": "order",
+   "status": "resolved",
+   "attribute": "Montage of the match",
+   "intent_id": "order_match_chrono",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+     "evidence": "football stadium crowd and pitch",
+     "confidence": 0.9
+    },
+    {
+     "media_id": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+     "evidence": "stadium crowd and football pitch",
+     "confidence": 0.9
+    },
+    {
+     "media_id": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+     "evidence": "football stadium crowd and match",
+     "confidence": 0.9
+    },
+    {
+     "media_id": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+     "evidence": "stadium crowd",
+     "confidence": 0.9
+    },
+    {
+     "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+     "evidence": "stadium crowd and football players",
+     "confidence": 0.9
+    }
+   ]
+  },
+  {
+   "op": "order",
+   "status": "resolved",
+   "attribute": "my ticket",
+   "intent_id": "order_ticket_first",
+   "assignments": [
+    {
+     "media_id": "asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+     "evidence": "Bayer Leverkusen DFB Pokal ticket",
+     "confidence": 1.0
+    }
+   ],
+   "position": "first"
+  },
+  {
+   "op": "order",
+   "status": "resolved",
+   "attribute": "the trophy celebration",
+   "intent_id": "order_celebration_last",
+   "assignments": [
+    {
+     "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+     "evidence": "players gather on the pitch after a match. Confetti or similar debris is thrown from the stands.",
+     "confidence": 0.9
+    }
+   ],
+   "position": "last"
+  }
+ ],
+ "media_snapshot": {
+  "visuals": [
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "source_filename": "1971C5D6-9660-4100-8BAC-987B6CB92696-M3_06_visual.webp"
+   }
+  ],
+  "song_path": null,
+  "voiceover": null,
+  "best_parts": [
+   {
+    "score": 0.0,
+    "reason": "analysis_fallback",
+    "media_id": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+    "source_end_s": 6.387,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 7.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+    "source_end_s": 7.5,
+    "source_start_s": 4.5
+   },
+   {
+    "score": 7.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+    "source_end_s": 1.9,
+    "source_start_s": 0.82
+   },
+   {
+    "score": 8.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+    "source_end_s": 8.533,
+    "source_start_s": 6.5
+   },
+   {
+    "score": 6.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+    "source_end_s": 2.5,
+    "source_start_s": 0.0
+   }
+  ],
+  "clip_paths": [
+   "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+   "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+   "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+   "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+   "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4"
+  ],
+  "length_plan": {
+   "owner": "creator",
+   "sources": [
+    {
+     "kind": "video",
+     "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+     "media_id": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+     "duration_s": 18.30666666666667,
+     "generation": null,
+     "storage_generation": "1793452382265652"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+     "media_id": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+     "duration_s": 11.035,
+     "generation": null,
+     "storage_generation": "1793452387819006"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+     "media_id": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+     "duration_s": 9.836666666666666,
+     "generation": null,
+     "storage_generation": "1793452388220696"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+     "media_id": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+     "duration_s": 8.533333333333333,
+     "generation": null,
+     "storage_generation": "1793452389360722"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+     "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+     "duration_s": 7.5,
+     "generation": null,
+     "storage_generation": "1793452389467867"
+    }
+   ],
+   "version": 1,
+   "windows": [
+    {
+     "score": 0.0,
+     "reason": "analysis_fallback",
+     "media_id": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+     "source_end_s": 6.387,
+     "source_start_s": 0.0
+    },
+    {
+     "score": 7.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+     "source_end_s": 7.5,
+     "source_start_s": 4.5
+    },
+    {
+     "score": 7.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+     "source_end_s": 1.9,
+     "source_start_s": 0.82
+    },
+    {
+     "score": 8.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+     "source_end_s": 8.533,
+     "source_start_s": 6.5
+    },
+    {
+     "score": 6.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+     "source_end_s": 2.5,
+     "source_start_s": 0.0
+    }
+   ],
+   "conflicts": [],
+   "capacity_s": 26.92,
+   "natural_owner": "footage",
+   "capacity_raw_s": 55.212,
+   "window_eligible": true,
+   "max_source_count": 80,
+   "target_duration_s": 15.0,
+   "natural_duration_s": null
+  },
+  "song_analysis": null,
+  "song_alignment": null,
+  "voiceover_path": null,
+  "song_duration_s": null,
+  "song_generation": null,
+  "clip_assignments": [
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T21:35:40Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "football stadium crowd and pitch",
+     "exposure": {
+      "frames": 20,
+      "version": 1,
+      "mean_luma": 115.9,
+      "near_black_share": 0.0
+     },
+     "duration_s": 18.333333,
+     "transcript": "",
+     "description": "",
+     "video_codec": "h264",
+     "best_moments": [],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "black and red striped scarf"
+      ],
+      "brands": [],
+      "people": {
+       "note": "football fans of all ages cheering",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "people waving scarves",
+       "stadium crowd cheering"
+      ],
+      "setting": "indoor football stadium",
+      "subject": "football stadium crowd and pitch",
+      "summary": "The video captures the excitement of a football match from a stadium box, showing fans cheering, waving scarves, and a wide view of the pitch and the packed stadium with red lights flashing after a goal.",
+      "activity": "watching a football match and celebrating a goal",
+      "audio_type": "ambient",
+      "content_type": "action",
+      "on_screen_text": "",
+      "visual_quality": "shaky handheld, stays sharp",
+      "notable_moments": []
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+    "media_id": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+    "has_audio": true,
+    "duration_s": 18.333333,
+    "source_filename": "4D8ED9A9-ABE9-4060-A4D7-BFE3EB8A12C3-IMG_1039.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "b180ff7553a93280cab10f42d4caee87d831e9136ff9c4cda1d56f3430c8b947",
+       "has_audio": true,
+       "byte_count": 34944918,
+       "duration_s": 18.30666666666667,
+       "orientation_degrees": 90
+      },
+      "duration_s": 18.333333333333332,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "manifest_identity": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+    "storage_generation": "1793452382265652"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T19:36:41Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "answers": {
+      "does this clip match this description: \"the two goal clips\"? answer only \"yes\" or \"no\".": {
+       "answer": "no",
+       "evidence": "stadium view, no goals scored",
+       "confidence": 1.0,
+       "generation": "1793452387819006"
+      }
+     },
+     "pix_fmt": "yuv420p",
+     "subject": "stadium crowd and football pitch",
+     "exposure": {
+      "frames": 12,
+      "version": 1,
+      "mean_luma": 89.0,
+      "near_black_share": 0.0
+     },
+     "duration_s": 11.066667,
+     "transcript": "Es war Nummer 28. Janek. Mit der Nummer 2 spielt Facundo.",
+     "description": "stadium lights illuminate crowd in red crowd cheers as red lights flash stadium lights illuminate pitch and crowd",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 3.0,
+       "energy": 6.0,
+       "start_s": 0.0,
+       "description": "stadium lights illuminate crowd in red"
+      },
+      {
+       "end_s": 7.5,
+       "energy": 7.0,
+       "start_s": 4.5,
+       "description": "crowd cheers as red lights flash"
+      },
+      {
+       "end_s": 11.5,
+       "energy": 6.0,
+       "start_s": 8.5,
+       "description": "stadium lights illuminate pitch and crowd"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "brands": [],
+      "people": {
+       "note": "a large crowd of spectators and a few players on the pitch",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "language": "hawaiian",
+       "segments": [
+        {
+         "text": "Der Torhüter Nr.",
+         "end_s": 2.36,
+         "start_s": 0.0
+        },
+        {
+         "text": "28 Jannis",
+         "end_s": 4.96,
+         "start_s": 2.66
+        },
+        {
+         "text": "Mit der Nr.",
+         "end_s": 7.42,
+         "start_s": 5.82
+        },
+        {
+         "text": "2 spielt Fakulto",
+         "end_s": 9.48,
+         "start_s": 7.42
+        }
+       ],
+       "to_camera": false,
+       "has_speech": true,
+       "transcript": "Es war Nummer 28. Janek. Mit der Nummer 2 spielt Facundo."
+      },
+      "setting": "football stadium at night",
+      "subject": "stadium crowd and football pitch",
+      "summary": "The video shows a wide shot of a football stadium at night, with red lights illuminating the stands and the crowd cheering. An announcer introduces players by their numbers and names.",
+      "activity": "attending a football match, watching player introductions",
+      "audio_type": "mixed",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": [
+       {
+        "end_s": 3.0,
+        "start_s": 0.0,
+        "description": "stadium lights illuminate crowd in red"
+       },
+       {
+        "end_s": 7.5,
+        "start_s": 4.5,
+        "description": "crowd cheers as red lights flash"
+       },
+       {
+        "end_s": 11.5,
+        "start_s": 8.5,
+        "description": "stadium lights illuminate pitch and crowd"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "Es war Nummer 28. Janek. Mit der Nummer 2 spielt Facundo.",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+    "media_id": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+    "has_audio": true,
+    "duration_s": 11.066667,
+    "source_filename": "3C4C34C3-D4DB-41BD-A8EA-90B60720CA28-IMG_1028.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "3d0aff401b54299a7ff31f80ad69dc6932f6a009344ed12e0117a5832358527e",
+       "has_audio": true,
+       "byte_count": 21360586,
+       "duration_s": 11.035,
+       "orientation_degrees": 90
+      },
+      "duration_s": 11.066666666666666,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "manifest_identity": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+    "storage_generation": "1793452387819006"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T20:25:46Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "football stadium crowd and match",
+     "exposure": {
+      "frames": 11,
+      "version": 1,
+      "mean_luma": 111.7,
+      "near_black_share": 0.0
+     },
+     "duration_s": 9.866667,
+     "transcript": "",
+     "description": "stadium view with ongoing match person waves scarf and cheers",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 1.9,
+       "energy": 7.0,
+       "start_s": 0.82,
+       "description": "stadium view with ongoing match"
+      },
+      {
+       "end_s": 9.94,
+       "energy": 7.0,
+       "start_s": 7.25,
+       "description": "person waves scarf and cheers"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "dark patterned scarf"
+      ],
+      "brands": [],
+      "people": {
+       "note": "large crowd of spectators and football players",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "camera pans across stadium",
+       "person waves scarf"
+      ],
+      "setting": "indoor football stadium at night",
+      "subject": "football stadium crowd and match",
+      "summary": "The video shows a wide view of a football stadium during a match, with spectators in the stands. One person in the foreground waves a scarf, cheering for their team.",
+      "activity": "watching a football match, cheering for a team",
+      "audio_type": "ambient",
+      "content_type": "action",
+      "on_screen_text": "",
+      "visual_quality": "shaky handheld, stays sharp",
+      "notable_moments": [
+       {
+        "end_s": 1.9,
+        "start_s": 0.82,
+        "description": "stadium view with ongoing match"
+       },
+       {
+        "end_s": 9.94,
+        "start_s": 7.25,
+        "description": "person waves scarf and cheers"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+    "media_id": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+    "has_audio": true,
+    "duration_s": 9.866667,
+    "source_filename": "94675A31-3866-4B20-91ED-1D8AA65817A4-IMG_1037.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "002a86162cf2dab32fd6ff96eb5936f134f880401cbde69f44fda606cbcd3d3e",
+       "has_audio": true,
+       "byte_count": 18711378,
+       "duration_s": 9.836666666666666,
+       "orientation_degrees": 90
+      },
+      "duration_s": 9.866666666666667,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "manifest_identity": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+    "storage_generation": "1793452388220696"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T19:49:47Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "stadium crowd",
+     "exposure": {
+      "frames": 9,
+      "version": 1,
+      "mean_luma": 104.7,
+      "near_black_share": 0.0
+     },
+     "duration_s": 8.533333,
+     "transcript": "",
+     "description": "crowd chanting and waving flags stadium lights glow red as crowd waves flags",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 5.0,
+       "energy": 7.5,
+       "start_s": 0.0,
+       "description": "crowd chanting and waving flags"
+      },
+      {
+       "end_s": 9.5,
+       "energy": 8.0,
+       "start_s": 6.5,
+       "description": "stadium lights glow red as crowd waves flags"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "red and black flags",
+       "large banner with text 'DEINER VEREIN SEIT 1900'"
+      ],
+      "brands": [],
+      "people": {
+       "note": "large crowd of fans in a stadium",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "crowd members wave flags"
+      ],
+      "setting": "indoor sports stadium",
+      "subject": "stadium crowd",
+      "summary": "The clip shows a large crowd of football fans inside a stadium, waving flags and cheering. A large banner is displayed across a section of the upper stands, and the stadium lights glow red.",
+      "activity": "football fans cheering and waving flags",
+      "audio_type": "ambient",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": [
+       {
+        "end_s": 5.0,
+        "start_s": 0.0,
+        "description": "crowd chanting and waving flags"
+       },
+       {
+        "end_s": 9.5,
+        "start_s": 6.5,
+        "description": "stadium lights glow red as crowd waves flags"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+    "media_id": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+    "has_audio": true,
+    "duration_s": 8.533333,
+    "source_filename": "858ECB5F-F112-4D1F-A47F-42E3A710164C-IMG_1036.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "5a4f44f16dcd466300a2380db27e9dbe8e4ee46d2c5687e734fe690741779d79",
+       "has_audio": true,
+       "byte_count": 16348719,
+       "duration_s": 8.533333333333333,
+       "orientation_degrees": 90
+      },
+      "duration_s": 8.533333333333333,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "manifest_identity": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+    "storage_generation": "1793452389360722"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "capture_time": "2026-10-28T21:47:37Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "pix_fmt": "yuv420p",
+     "subject": "stadium crowd and football players",
+     "exposure": {
+      "frames": 8,
+      "version": 1,
+      "mean_luma": 113.3,
+      "near_black_share": 0.0
+     },
+     "duration_s": 7.5,
+     "transcript": "",
+     "description": "crowd cheers loudly as confetti falls players gather on pitch while crowd continues cheering",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 2.5,
+       "energy": 6.0,
+       "start_s": 0.0,
+       "description": "crowd cheers loudly as confetti falls"
+      },
+      {
+       "end_s": 7.0,
+       "energy": 5.0,
+       "start_s": 3.0,
+       "description": "players gather on pitch while crowd continues cheering"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "red stadium seats",
+       "white football net",
+       "green football pitch"
+      ],
+      "brands": [],
+      "people": {
+       "note": "large crowd of fans in the stands, football players and staff on the pitch, security personnel along the sideline",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "crowd cheers",
+       "confetti falls from stands",
+       "football players gather on pitch",
+       "security personnel walk along sideline"
+      ],
+      "setting": "indoor football stadium",
+      "subject": "stadium crowd and football players",
+      "summary": "A large crowd in a football stadium cheers while players gather on the pitch after a match. Confetti or similar debris is thrown from the stands.",
+      "activity": "crowd cheering, players gathering",
+      "audio_type": "ambient",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "sharp and steady",
+      "notable_moments": [
+       {
+        "end_s": 2.5,
+        "start_s": 0.0,
+        "description": "crowd cheers loudly as confetti falls"
+       },
+       {
+        "end_s": 7.0,
+        "start_s": 3.0,
+        "description": "players gather on pitch while crowd continues cheering"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0
+    },
+    "gcs_path": "users/00000000-0000-4000-8000-00000000c0de/creation-threads/83f2dcaa-9a05-42bc-a5f2-fa898d243e17/analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+    "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+    "has_audio": true,
+    "duration_s": 7.5,
+    "source_filename": "85302456-A18F-44F1-84CE-6A6B3C101200-IMG_1043.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "51e218b5367b3544b6566cd8c81e6d0e58d633734c1f2dd0656368f96dab9712",
+       "has_audio": true,
+       "byte_count": 14469063,
+       "duration_s": 7.5,
+       "orientation_degrees": 90
+      },
+      "duration_s": 7.5,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "manifest_identity": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+    "storage_generation": "1793452389467867"
+   }
+  ],
+  "best_parts_conflicts": [],
+  "voiceover_duration_s": null,
+  "voiceover_generation": null,
+  "best_parts_capacity_s": 26.92
+ }
+}
