@@ -3569,6 +3569,8 @@ Undo use existing revision/idempotency-protected `/me/memory` operations. Accoun
 rules require the existing creator-memory rollout gate; no TikTok style derivation
 flag needs enabling. Observation-derived styles are not confirmed preferences.
 
+`GET /me/memory` also returns `text_style_defaults` (built by `text_style_defaults()` in `pipeline/phone_text_style.py` from the resolver's own constants, only when `text_preferences_available`); the iPhone Text preferences screen shows it as what each text type does when nothing is saved. `position_anchors` are nominal spots, the fitted row lands near them (e.g. left text at x about 0.06, block centre a little above y 0.78).
+
 Guided/unified plans share the proxy face sampler and persist resolved text rows
 for preview/export. Recorded voiceover intros are materialized into real text rows
 before jointly fitting them with pins. Native frame bounds use the real wordmark;
