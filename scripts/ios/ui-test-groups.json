@@ -149,6 +149,8 @@
       "KriaUITests/AccountPrivacyUITests/testTextPreferenceDraftSurvivesRoleSwitch",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
+      "KriaUITests/AccountPrivacyUITests/testEachTextRoleExplainsItselfAndKeepsThePreview",
+      "KriaUITests/AccountPrivacyUITests/testEnlargedPreviewShowsTheSelectedTypeAndClosesWithDone",
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningConsentAcceptAndDisableKeepsApprovedPreference",
       "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
       "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss",
