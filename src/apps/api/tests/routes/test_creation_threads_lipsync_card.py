@@ -38,6 +38,15 @@ def test_native_picker_lists_lipsync_last(song_lane, native_mode) -> None:
     )
 
 
+@pytest.mark.parametrize("native_mode", ["pilot", "strict"])
+def test_lipsync_is_hidden_from_a_client_without_the_song_affordance(
+    song_lane, native_mode
+) -> None:
+    """/capabilities passes its own song gate (web in device-only mode reports `strict`)."""
+    assert "lipsync" in routes._available_formats(native_mode=native_mode, song_lane=True)
+    assert "lipsync" not in routes._available_formats(native_mode=native_mode, song_lane=False)
+
+
 def test_the_web_picker_never_lists_lipsync(song_lane) -> None:
     assert "lipsync" not in routes._available_formats()
 

@@ -830,7 +830,9 @@ def _client_id(value: str) -> str:
     return value.strip()
 
 
-def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web") -> dict[str, str]:
+def _available_formats(
+    *, native_mode: Literal["web", "pilot", "strict"] = "web", song_lane: bool = True
+) -> dict[str, str]:
     available = {"montage": "montage"}
     if settings.narrated_archetype_enabled:
         available["narrated"] = "narrated_planned"
@@ -841,7 +843,7 @@ def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web"
     # Song-lane cards (Lip-sync) are montages offered wherever an uploaded song can be used,
     # to a native client only: the web never sees `media.song`, so it never sees them.
     # They are listed last: Lip-sync is the far-right card.
-    if native_mode != "web":
+    if native_mode != "web" and song_lane:
         from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
 
         if phone_user_song_supported():
@@ -3846,7 +3848,9 @@ async def capabilities(
         if native_client and phone_enabled
         else "web"
     )
-    formats = _available_formats(native_mode=native_mode)
+    # The Lip-sync card needs the same song affordance `media.song` is gated on: a web client in
+    # device-only mode reports `strict`, and an old protocol cannot decode the song asset.
+    formats = _available_formats(native_mode=native_mode, song_lane=song_available)
     from app.routes.generated_media import generated_capabilities
 
     return {
