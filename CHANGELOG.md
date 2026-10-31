@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.29.0] - 2026-10-31
+
+### Fixed
+- fix(deploy): ignore stopped release_command machines in the Fly deploy guard (KRI-1092) (#1987) <!-- release-pr: 1987 -->
+
 ## [0.83.28.0] - 2026-10-31
 
 ### Fixed
