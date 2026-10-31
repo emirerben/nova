@@ -67,6 +67,7 @@ class GeneratedMediaRequest(BaseModel):
     capability: Literal["image", "image_edit", "narration"]
     prompt: str = Field(min_length=1, max_length=1500)
     editable_title: str = Field(default="", max_length=200)
+    transparent_background: bool = False
     source_asset_id: uuid.UUID | None = None
     source_generation: str | None = Field(default=None, max_length=100)
     script_id: str | None = Field(default=None, max_length=200)
@@ -75,6 +76,8 @@ class GeneratedMediaRequest(BaseModel):
 
     @model_validator(mode="after")
     def capability_inputs(self):
+        if self.transparent_background and self.capability != "image":
+            raise ValueError("Transparent backgrounds require image generation")
         source = self.source_asset_id is not None or self.source_generation is not None
         script = (
             self.script_id is not None
@@ -311,7 +314,9 @@ def execute_generated_media(
     request = (
         NarrationRequest(body.prompt)
         if body.capability == "narration"
-        else ImageRequest(body.prompt, body.editable_title)
+        else ImageRequest(
+            body.prompt, body.editable_title, transparent_background=body.transparent_background
+        )
     )
     if body.capability == "narration":
         narration_events(request)
@@ -321,9 +326,10 @@ def execute_generated_media(
             raise ValueError("Script changed; review the current script")
     else:
         image_payload(request)
-    digest = hashlib.sha256(
-        json.dumps(body.model_dump(mode="json"), sort_keys=True).encode()
-    ).hexdigest()
+    digest_payload = body.model_dump(mode="json")
+    if not body.transparent_background:
+        digest_payload.pop("transparent_background")
+    digest = hashlib.sha256(json.dumps(digest_payload, sort_keys=True).encode()).hexdigest()
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
         {"key": f"generated:{owner_id}:{item_id}:{body.client_event_id}"},
