@@ -502,6 +502,8 @@ def _enrich_best_parts_snapshot(
             kept_lines=kept,
             still_holds=still_holds,
             attached_visual_ids=attached_visual_ids,
+            # The Visuals play beside the windows whether or not they fit inside the total.
+            visual_budget_s=budget.total_s,
             pinned_moments=(
                 [pin.json() for pin in moment_pins.pins] if moment_pins is not None else None
             ),
