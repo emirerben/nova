@@ -211,8 +211,8 @@ def test_salvage_question_english_is_unchanged() -> None:
         'I understood 2 of your clip instructions. I couldn\'t safely verify "label: sport"; '
         '"group: pub". Please restate just those so I can add them.'
     )
-    assert salvage_question(16, [], 3) == (
-        "I understood 16 of your clip instructions. I can apply at most 16 clip "
+    assert salvage_question(40, [], 3) == (
+        "I understood 40 of your clip instructions. I can apply at most 40 clip "
         "instructions at a time, so 3 more weren't included. Please restate just those so "
         "I can add them."
     )
@@ -225,7 +225,7 @@ def test_salvage_question_in_turkish() -> None:
     assert text == (
         "Klip talimatlarından 2 tanesini anladım. Şunları güvenle doğrulayamadım: "
         '"label: sport"; "group: pub"; "order: park" (ve 1 tane daha); '
-        "Bir seferde en fazla 16 klip talimatı uygulayabiliyorum, bu yüzden 3 talimat daha "
+        "Bir seferde en fazla 40 klip talimatı uygulayabiliyorum, bu yüzden 3 talimat daha "
         "eklenmedi. Sadece bunları yeniden yazar mısın, ekleyeyim."
     )
     # The turn's bound language is used when the input carries none.
@@ -361,7 +361,7 @@ def test_resolver_prompt_gets_the_language_line_only_for_turkish() -> None:
 
 
 def test_prompt_versions_moved_with_the_new_prompt_tail() -> None:
-    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-30-hide-part"
+    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-31-cap-40"
     assert ClipRequestResolverAgent.spec.prompt_version == "2026-10-27-order-certainty"
 
 
