@@ -598,6 +598,7 @@ _PINNED_STRATEGY_FIELDS_ON_REFRESH: tuple[str, ...] = (
     "direction",
     "render_program",
     "pacing",
+    "pacing_requested",
     "target_duration_s",
     "opening_title",
     "closing_title",
@@ -1573,6 +1574,10 @@ def _apply_explicit_render_intent(
         updates["pacing"] = "balanced"
     elif turkish_pace := turkish_pacing(request):
         updates["pacing"] = turkish_pace
+    if "pacing" in updates:
+        # The creator's own words named a pace: a plain "balanced" is then a choice, not the
+        # default (``length_policy.effective_pace``).
+        updates["pacing_requested"] = True
 
     # The aggregate request is useful for recovering a scheduling target, but
     # only the current creator message can prove a duration requirement.  In

@@ -76,7 +76,12 @@ from app.kria.freeze_ask import (
 from app.kria.speed_ask import SpeedSpec, live_speeds
 from app.kria.text_sequence import is_text_sequence
 from app.kria.text_shape_ask import CURVED, CURVED_TEXT_BEND, text_shape
-from app.pipeline.best_parts import BestPart, BestPartsResult, select_best_parts
+from app.pipeline.best_parts import (
+    MAX_BEST_PARTS_DURATION_S,
+    BestPart,
+    BestPartsResult,
+    select_best_parts,
+)
 from app.pipeline.font_coverage import drop_color_emoji
 from app.pipeline.hidden_parts import (
     HiddenPart,
@@ -106,6 +111,7 @@ from app.schemas.edit_proposal import (
     StoryBeat,
     canonical_media_digest,
     mixed_media_hold_bounds,
+    pace_hold_bounds,
 )
 from app.schemas.text_style_intent import (
     normalize_label_position,
@@ -130,7 +136,13 @@ from app.services.clip_order_sequence import (
     unconfirmed_order_groups,
 )
 from app.services.creator_omissions import creator_omission_outcomes
-from app.services.length_policy import natural_length_owner
+from app.services.length_policy import (
+    direction_not_built,
+    effective_pace,
+    natural_length_owner,
+    route_direction,
+    stated_pace,
+)
 from app.services.order_mode import order_mode, seeded_permutation
 from app.services.order_mode import random_order_seed as order_seed_of
 from app.services.spoken_quotes import is_outro_hallucination
@@ -624,6 +636,10 @@ class UnifiedMontagePlan:
     # second any cut of that clip plays). Empty without such an ask, so every earlier record
     # is unchanged.
     hidden_parts: list[dict[str, Any]] = field(default_factory=list)
+    # The direction the strategy asked for when this route built a different one (it builds
+    # hard-cut fast montages only): the plan was built as ``snapshot.direction`` and a receipt
+    # may say so. None (every plan whose strategy direction was built) is not recorded.
+    requested_direction: str | None = None
 
     def record(self) -> dict[str, Any]:
         """The small, JSON-safe receipt persisted beside the guided snapshot."""
@@ -708,6 +724,9 @@ class UnifiedMontagePlan:
         hidden = (
             {"hidden_parts": [dict(row) for row in self.hidden_parts]} if self.hidden_parts else {}
         )
+        direction_asked = (
+            {"requested_direction": self.requested_direction} if self.requested_direction else {}
+        )
         record = {
             "version": 1,
             "brief_version": self.brief_version,
@@ -757,6 +776,7 @@ class UnifiedMontagePlan:
             **shown,
             **shapes,
             **hidden,
+            **direction_asked,
         }
 
         if self.snapshot.text_composition is not None:
@@ -1881,6 +1901,12 @@ def plan_unified_montage(
                 if not isinstance(row, Mapping) or row.get("op") not in {"caption", "label"}
             ],
         }
+    # The planner's pace sets how long a clip is held when nothing else does (a creator
+    # length, a label's reading time and an approved window all still win). None keeps the
+    # constants below byte for byte (silence, or ``PACE_DRIVES_CUTS_ENABLED`` off).
+    pace = effective_pace(strategy)
+    default_cut_s = pace_hold_bounds(pace).preferred_s if pace is not None else DEFAULT_CUT_S
+    growth_max_s = pace_hold_bounds(pace).maximum_s if pace is not None else READING_MAX_S
     if song_duration_s is not None and (song_plan_item_id is None or song_generation is None):
         raise ValueError("a song montage needs the song's plan item and generation")
     if not clips:
@@ -2185,6 +2211,23 @@ def plan_unified_montage(
             minimum_duration_s=minimums,
             maximum_duration_s=seat_maximums,
         )
+        if pace is not None:
+            # The same rule the approval-time plan applies (``paced_selection``): the planner's
+            # pace sets how long each clip is held, with no creator length stated.
+            from app.services.length_planning import paced_selection  # noqa: PLC0415
+
+            candidate = (
+                paced_selection(
+                    sources,
+                    pace,
+                    budget=None,
+                    extend_budget=False,
+                    cap_s=MAX_BEST_PARTS_DURATION_S,
+                    minimums=minimums,
+                    maximums=seat_maximums,
+                )
+                or candidate
+            )
         candidate = _frame_bound_best_parts(candidate)
         if candidate.ok and candidate.duration_s >= MIN_TOTAL_S:
             best_parts = candidate
@@ -2276,7 +2319,7 @@ def plan_unified_montage(
         elif clip.kind == "image" and (mixed_media_timing is not None or label is None):
             want_s = unheld_still_frames(mixed_media_timing) / FPS
         else:
-            want_s = label.min_display_s if label is not None else DEFAULT_CUT_S
+            want_s = label.min_display_s if label is not None else default_cut_s
         want = int(math.ceil(want_s * FPS - 1e-9))
         if clip.media_id in holds and not approved_parts:
             want = holds[clip.media_id].frames
@@ -2305,7 +2348,7 @@ def plan_unified_montage(
     # A creator-stated length is honoured even when it needs cuts longer than a
     # beat of attention (one long clip, a day vlog); a default fast montage is not.
     growth_ceiling = (
-        list(capacity) if target_s else [min(cap, int(READING_MAX_S * FPS)) for cap in capacity]
+        list(capacity) if target_s else [min(cap, int(growth_max_s * FPS)) for cap in capacity]
     )
     # A held photo is pinned like a labelled cut: never grown, never shrunk (``_shrink``
     # only takes frames from unlabelled cuts), never trimmed for a song below.
@@ -2718,12 +2761,16 @@ def plan_unified_montage(
     if isinstance(strategy.get("text_color"), str) and strategy.get("text_color"):
         style["text_color"] = strategy["text_color"]
 
+    # The strategy's direction where this route can build it; else fast_montage, and the plan
+    # records what was asked (the approval card's disclosure reads it).
+    built_direction = route_direction(strategy)
+
     def build(extra: Mapping[str, Any]) -> EditProposalSnapshot:
         return EditProposalSnapshot(
-            direction="fast_montage",
+            direction=built_direction,  # type: ignore[arg-type]
             goal=(editorial.get("viewer_goal", "") if editorial else ""),
             editorial_plan=editorial,
-            pace="fast",
+            pace=stated_pace(strategy) or "fast",
             duration_s=total_s,
             title=(title or SNAPSHOT_FALLBACK_TITLE)[:100],
             opening_title=title,
@@ -2810,6 +2857,7 @@ def plan_unified_montage(
         ),
         title_shown_as_label=title_shown_as_label,
         text_shapes=text_shapes,
+        requested_direction=direction_not_built(strategy),
         hidden_parts=[
             {
                 **part.json(),

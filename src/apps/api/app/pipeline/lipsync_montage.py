@@ -87,6 +87,7 @@ from app.schemas.user_song import (
     UserSongPlan,
     UserSongTake,
 )
+from app.services.length_policy import route_direction, stated_pace
 
 # A take is trusted this far inside its own ends.
 COVER_MARGIN_MS = 300
@@ -1129,9 +1130,11 @@ def plan_lipsync_montage(
 
     def build(extra: Mapping[str, Any]) -> EditProposalSnapshot:
         return EditProposalSnapshot(
-            direction="fast_montage",
+            # The strategy's direction and pace where this route can build them; the cut
+            # lengths here are the song's and the lyric blocks', so pace is an echo only.
+            direction=route_direction(strategy),  # type: ignore[arg-type]
             goal="",
-            pace="fast",
+            pace=stated_pace(strategy) or "fast",
             duration_s=total_s,
             title=(title or SNAPSHOT_FALLBACK_TITLE)[:100],
             opening_title=title,
