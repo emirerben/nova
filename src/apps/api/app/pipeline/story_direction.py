@@ -157,6 +157,19 @@ def fallback_note(reason: str, direction: str, *, future: bool = False) -> str:
     )
 
 
+def error_fields(exc: BaseException) -> dict[str, str]:
+    """What a story-direction fallback may log about ``exc``: its type, and a guided-story code.
+
+    Never the message: a validation error's text carries the creator's story lines and captions.
+    """
+    from app.pipeline.guided_story import GuidedStoryError  # noqa: PLC0415
+
+    fields = {"error_type": type(exc).__name__}
+    if isinstance(exc, GuidedStoryError):
+        fields["error_code"] = exc.code
+    return fields
+
+
 def story_lines(strategy: Mapping[str, Any]) -> list[str]:
     """The planner's chapter outline: non-empty, de-duplicated, whitespace-normalised."""
     raw = strategy.get("story_structure")
@@ -413,7 +426,7 @@ def build_story_plan(
             song=song,
         )
     except Exception as exc:  # noqa: BLE001 - a direction is never a reason to fail a render
-        log.warning("story_direction_build_failed", direction=direction, error=str(exc)[:300])
+        log.warning("story_direction_build_failed", direction=direction, **error_fields(exc))
         return None, "story_not_compilable"
 
 

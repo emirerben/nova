@@ -7173,6 +7173,7 @@ def _composed_plan(
         PhoneProposalRejected,
         validate_proposal_phone_compiles,
     )
+    from app.pipeline.story_direction import error_fields  # noqa: PLC0415
     from app.services.creation_text_composition import CreationTextTimeoutError  # noqa: PLC0415
 
     reason: str | None = None
@@ -7194,12 +7195,10 @@ def _composed_plan(
         raise
     except PhoneProposalRejected as exc:
         reason = "phone_rejected"
-        log.warning("story_direction_phone_rejected", error=str(exc)[:300])
+        log.warning("story_direction_phone_rejected", **error_fields(exc))
     except Exception as exc:  # noqa: BLE001 - a direction is never a reason to fail a render
         reason = "story_text_failed"
-        log.warning(
-            "story_direction_text_failed", error=str(exc)[:300], error_type=type(exc).__name__
-        )
+        log.warning("story_direction_text_failed", **error_fields(exc))
     fallback = replace(fast, direction_fallback=reason)
     fallback.snapshot = compose(fallback)
     return fallback

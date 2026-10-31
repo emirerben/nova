@@ -944,7 +944,9 @@ def _drop_unused_story_seeds(snapshot: EditProposalSnapshot) -> EditProposalSnap
         compile_proposal_execution_plan(cleaned)
         return cleaned
     except Exception as exc:  # noqa: BLE001 - report-only: placeholders may stay, never a failure
-        log.warning("story_seed_cleanup_skipped", error=str(exc)[:200])
+        from app.pipeline.story_direction import error_fields  # noqa: PLC0415
+
+        log.warning("story_seed_cleanup_skipped", **error_fields(exc))
         return snapshot
 
 
