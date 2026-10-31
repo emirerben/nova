@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -685,3 +687,61 @@ async def test_provider_deadline_context_keeps_supported_correction_on_the_edito
     assert result.plan.diagnostics["editor_recovery_basis"]["draft_id"] == str(case.draft_id)
     copilot.assert_awaited_once()
     creator.assert_not_called()
+
+
+# Leverkusen M2 run 3 (10-31): the failed render and the follow-up turn b2b5089b, verbatim.
+_KRI1103 = json.loads(
+    (Path(__file__).parent / "kri1103_leverkusen_m2_failed_render_followup.json").read_text()
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message", [_KRI1103["follow_up"]["creator_message"], "Selfie etiketini kaldır"]
+)
+async def test_failed_first_render_change_ask_replans_with_the_change(monkeypatch, message):
+    """A render that failed before it made any video leaves only the strategy draft:
+    nothing exists to correct in place and nothing is lost by re-planning. The creator's
+    change (here: drop the label that failed the phone text gate) must reach the planner,
+    not the "no current editable draft" refusal that tells them to resend the old request."""
+    from app.agents._schemas.creator_agent import AskUser
+    from tests.kria.test_creative_brief import _ASK
+
+    case, item_id = _seed(editor=False)
+    copilot, _ = _agents(monkeypatch, item_id)
+    with sync_session() as db:
+        job = db.get(Job, case.job_id)
+        assert not _KRI1103["failed_render"]["assembly_plan_has_variants_key"]
+        job.status = _KRI1103["failed_render"]["job_status"]
+        job.assembly_plan = {"native_device_only": True, "creator_generation_id": "approved"}
+        head = db.get(CreatorEditDraft, case.draft_id)
+        assert head.snapshot_json["kind"] == _KRI1103["failed_render"]["head_draft_kind"]
+        before = copy.deepcopy(head.snapshot_json)
+        db.commit()
+    runs = []
+
+    class Planner:
+        def __init__(self, client):
+            pass
+
+        def run(self, agent_input, **kwargs):
+            runs.append(agent_input)
+            return SimpleNamespace(action=AskUser(**_ASK), brief_updates=[], creative_decision=None)
+
+    monkeypatch.setattr(planner, "MainCreatorAgent", Planner)
+    async with session_factory() as db:
+        result = await planner.plan_live_turn(
+            db,
+            thread_id=case.thread_id,
+            item_id=item_id,
+            creator_id=case.user_id,
+            user_message=message,
+        )
+    assert result.plan.response != _KRI1103["follow_up"]["prod_reply"]
+    assert "editable draft" not in (result.plan.response or "")
+    assert "saved request" not in (result.plan.response or "")
+    assert len(runs) == 1
+    copilot.assert_not_awaited()
+    with sync_session() as db:
+        head = db.get(CreatorEditDraft, case.draft_id)
+        assert head.is_head and head.snapshot_json == before
