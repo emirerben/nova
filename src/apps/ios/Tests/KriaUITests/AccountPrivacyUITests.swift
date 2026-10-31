@@ -184,6 +184,27 @@ import XCTest
         }
     }
 
+    func testEnlargedPreviewShowsTheSelectedTypeAndClosesWithDone() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        let enlarge = app.buttons["text-preferences-preview-enlarge"]
+        XCTAssertTrue(enlarge.waitForExistence(timeout: 5))
+        enlarge.tap()
+        let done = app.buttons["text-preferences-preview-done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["text-preference-sheet-description"].label, "The big opening line in the first seconds.")
+        let large = app.otherElements["text-preferences-preview-large"]
+        XCTAssertTrue(large.exists)
+        XCTAssertGreaterThan(large.frame.width, 280, "The enlarged preview is big enough to read")
+        XCTAssertEqual(large.value as? String, "Title")
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["text-preferences-preview"].exists)
+    }
+
     func testTextPreferencesStaleWriteKeepsEditsAndOffersReload() {
         let app = launch(mode: "text-preferences-stale")
         let manage = app.buttons["Manage account"]

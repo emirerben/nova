@@ -32,6 +32,7 @@ struct TextRolePreview: View {
     let allTextPosition: String?
     let server: TextStyleDefaults?
     var width: CGFloat = 168
+    var identifier = "text-preferences-preview"
 
     private var size: CGSize { CGSize(width: width, height: width * 16 / 9) }
 
@@ -53,16 +54,14 @@ struct TextRolePreview: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Preview of your text on a video frame")
         .accessibilityValue(TextRoleSpec.spec(selected).label)
-        .accessibilityIdentifier("text-preferences-preview")
+        .accessibilityIdentifier(identifier)
     }
 
     private func element(for spec: TextRoleSpec) -> SlidePostTextElement {
         let rule = rules[spec.role] ?? TextPreferenceRule()
         var anchor = TextRoleSpec.anchor(role: spec.role, position: rule.position, server: server)
         if selected == "all_text", let placed = allTextPosition, rule.position == placed {
-            // One spot for every type would pile them up, so each keeps its own slot around it.
-            let slot = Double(TextRoleSpec.drawn.firstIndex { $0.role == spec.role } ?? 0) - 2
-            anchor = TextAnchor(x: anchor.x, y: min(0.94, max(0.06, anchor.y + slot * 0.075)), alignment: anchor.alignment)
+            anchor = Self.staggered(anchor, index: TextRoleSpec.drawn.firstIndex { $0.role == spec.role } ?? 0)
         }
         var element = SlidePostTextElement(id: spec.role, text: spec.sample)
         element.fontFamily = font(for: spec.role, rule: rule)
@@ -76,6 +75,14 @@ struct TextRolePreview: View {
         element.strokeWidth = Int((rule.strokeWidth ?? 0).rounded())
         element.shadowEnabled = rule.shadowEnabled ?? false
         return element
+    }
+
+    /// One spot for every type would pile them up, so the types stack in a column from that spot: downward
+    /// from a top spot, upward from a bottom spot, around the middle otherwise. The step clears a two-line title.
+    static func staggered(_ anchor: TextAnchor, index: Int) -> TextAnchor {
+        let step = 0.10, last = TextRoleSpec.drawn.count - 1
+        let offset: Double = anchor.y < 0.35 ? Double(index) : anchor.y > 0.65 ? Double(index - last) : Double(index) - Double(last) / 2
+        return TextAnchor(x: anchor.x, y: min(0.94, max(0.06, anchor.y + offset * step)), alignment: anchor.alignment)
     }
 
     private func font(for role: String, rule: TextPreferenceRule) -> String {

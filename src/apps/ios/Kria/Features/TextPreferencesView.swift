@@ -154,6 +154,7 @@ struct TextPreferencesView: View {
     @State private var role = "all_text"
     @State private var rule = TextPreferenceRule()
     @State private var drafts: [String: TextPreferenceRule] = [:]
+    @State private var enlarged = false
     init(api: any KriaAPIClient) { _model = StateObject(wrappedValue: TextPreferencesModel(api: api)) }
 
     private var isAllText: Bool { role == "all_text" }
@@ -260,12 +261,27 @@ struct TextPreferencesView: View {
                 .accessibilityIdentifier("text-preference-role")
             }
             HStack(alignment: .top, spacing: 16) {
-                TextRolePreview(selected: role, rules: previewRules, allTextPosition: allTextRule.position, server: server, width: 136)
+                preview(width: 136)
+                    .overlay {
+                        Button { enlarged = true } label: { Color.clear.contentShape(Rectangle()) }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Enlarge preview")
+                            .accessibilityIdentifier("text-preferences-preview-enlarge")
+                    }
                 VStack(alignment: .leading, spacing: 6) {
                     Text(spec.label).font(KriaFont.body(17).weight(.semibold)).foregroundStyle(KriaColor.ink)
                     Text(spec.blurb).font(KriaFont.body(14)).foregroundStyle(KriaColor.mutedInk)
                         .accessibilityIdentifier("text-preference-role-description")
                     lookSummary.padding(.top, 4)
+                    Button { enlarged = true } label: {
+                        Label("Tap to enlarge", systemImage: "arrow.up.left.and.arrow.down.right")
+                            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                            .padding(.horizontal, 12).frame(minHeight: 44)
+                            .background(KriaColor.fill, in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHidden(true)
                 }
                 Spacer(minLength: 0)
             }
@@ -277,6 +293,31 @@ struct TextPreferencesView: View {
         .shadow(color: .black.opacity(0.06), radius: 6, y: 4)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("text-preferences-header")
+        .sheet(isPresented: $enlarged) { enlargedPreview }
+    }
+
+    private func preview(width: CGFloat, identifier: String = "text-preferences-preview") -> TextRolePreview {
+        TextRolePreview(selected: role, rules: previewRules, allTextPosition: allTextRule.position, server: server,
+                        width: width, identifier: identifier)
+    }
+
+    private var enlargedPreview: some View {
+        let spec = TextRoleSpec.spec(role)
+        return ScrollView {
+            VStack(spacing: 14) {
+                Text(spec.label).font(KriaFont.body(20).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                Text(spec.blurb).font(KriaFont.body(15)).foregroundStyle(KriaColor.mutedInk).multilineTextAlignment(.center)
+                    .accessibilityIdentifier("text-preference-sheet-description")
+                preview(width: 300, identifier: "text-preferences-preview-large")
+                Button("Done") { enlarged = false }
+                    .buttonStyle(KriaPrimaryButtonStyle())
+                    .frame(width: 300)
+                    .accessibilityIdentifier("text-preferences-preview-done")
+            }
+            .padding(20).frame(maxWidth: .infinity)
+        }
+        .background(KriaColor.paper)
+        .presentationDetents([.large])
     }
 
     /// What the selected type looks like right now, defaults spelled out.
@@ -284,7 +325,7 @@ struct TextPreferencesView: View {
         let effective = isAllText ? rule : rule.inheriting(from: allTextRule)
         let rows: [(String, String)] = [
             ("Font", effective.fontFamily ?? defaults.font),
-            ("Spot", effective.position.map(TextRoleSpec.positionName) ?? defaults.placement),
+            ("Spot", effective.position.map(TextRoleSpec.positionName) ?? defaults.shortPlacement),
             ("Color", effective.color.map(colorName) ?? defaults.color),
             ("Outline", effective.strokeWidth.map { $0 == 0 ? "Off" : "On" } ?? defaults.outline),
             ("Shadow", effective.shadowEnabled.map { $0 ? "On" : "Off" } ?? defaults.shadow),
@@ -363,7 +404,7 @@ struct TextPreferencesView: View {
     }
 
     private var inheritedPlacement: String {
-        allTextRule.position.map(TextRoleSpec.positionName) ?? defaults.placement
+        allTextRule.position.map(TextRoleSpec.positionName) ?? defaults.shortPlacement
     }
 
     private var inheritedColor: String { allTextRule.color.map(colorName) ?? allTextDefaults.color }

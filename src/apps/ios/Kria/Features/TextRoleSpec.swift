@@ -79,7 +79,8 @@ struct TextRoleDefaults: Equatable, Sendable {
     let placement: String
     let usualPosition: String?
     let colorHint: String
-
+    /// The placement default in a few words, for the one-line summary beside the preview.
+    var shortPlacement: String { usualPosition != nil ? "Usual spot" : placement == "Kria picks the clearest spot" ? "Kria picks" : "Your corner" }
 }
 
 struct TextStyleDefaults: Decodable, Sendable {
