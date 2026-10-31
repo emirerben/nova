@@ -902,7 +902,10 @@ async def test_recommended_story_compiles_exact_source_windows_without_copy(
             await prepare_story_snapshot(db, owner.id, row, item)
 
 
-def test_real_targeted_read_crops_bytes_before_one_bounded_model_call(tmp_path, monkeypatch):
+@pytest.mark.parametrize("localizer", [False, True])
+def test_real_targeted_read_crops_bytes_before_one_bounded_model_call(
+    tmp_path, monkeypatch, localizer
+):
     import shutil
     import subprocess
     import time
@@ -1017,11 +1020,32 @@ def test_real_targeted_read_crops_bytes_before_one_bounded_model_call(tmp_path, 
         return ClipQuestionOutput(answer="yes", confidence=0.9, evidence="A cyan frame")
 
     monkeypatch.setattr(ClipQuestionAgent, "run", answer)
+    factory = None
+    if localizer:
+        from app.agents.source_moment_location import (
+            SourceMomentLocationAgent,
+            SourceMomentLocationOutput,
+        )
+
+        def locate(self, input, *, ctx):
+            answer(self, input, ctx=ctx)
+            return SourceMomentLocationOutput.model_validate(
+                {
+                    "status": "found",
+                    "matches": [
+                        {"start_s": 0, "end_s": 1, "confidence": 0.9, "evidence": "A cyan frame"}
+                    ],
+                }
+            )
+
+        monkeypatch.setattr(SourceMomentLocationAgent, "run", locate)
+        factory = SourceMomentLocationAgent
     result = inspect_interval(
         source,
         SimpleNamespace(start_s=2, end_s=3),
         "Is this cyan?",
         ctx=RunContext(deadline_monotonic=time.monotonic() + 45),
+        agent_factory=factory,
     )
     assert len(uploads) == len(calls) == 1
     assert result["sample_sha256"] == hashlib.sha256(uploads[0]).hexdigest()

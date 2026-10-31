@@ -530,6 +530,7 @@ def build_generative_job(
         incoming = dict(creator_strategy)
         for field in (
             "target_duration_requested",
+            "pacing_requested",
             "creator_duration_s",
             "choice_answers",
             "selected_music_section",

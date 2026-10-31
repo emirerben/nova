@@ -65,6 +65,7 @@ JOURNEY_POLICY_PATHS = (
     "scripts/ci/journey-manifest.json",
     "scripts/ci/test_journey_gate.py",
     "scripts/ci/test_select_tests.py",
+    "scripts/ci/wait-for-jobs.py",
 )
 
 
@@ -76,6 +77,13 @@ JOURNEY_POLICY_PATHS = (
 # missing here has no workflow step of its own and is proven by its named
 # unit tests on the unit leg. test_ci_throughput.py keeps this map and the
 # workflow's step conditions in agreement.
+#
+# Pull requests start only `unit`. Three Macs per iOS PR (~70 Mac minutes)
+# saturated the account's five concurrent macOS runners: from 2026-10-27 the
+# median PR waited 10-19 min for a Mac (p90 ~85) and took 67-87 min overall.
+# The creation and screens legs run in the nightly CI schedule and on manual
+# CI dispatch (run it on a branch for pre-merge native render evidence).
+PR_NATIVE_LEGS = ("unit",)
 LEG_JOURNEYS = {
     "creation": (
         "kri-524-creation",
@@ -93,14 +101,20 @@ LEG_JOURNEYS = {
 }
 
 
-def native_legs(ids):
-    """Matrix legs to start: `unit`, plus each leg owning a selected journey."""
+def native_legs(ids, event=None):
+    """Matrix legs to start: `unit`, plus each leg owning a selected journey.
+
+    Pull requests stop at PR_NATIVE_LEGS; nightly and manual runs start every
+    leg that owns a selected journey."""
     selected = set(ids)
     known = {journey["id"] for journey in JOURNEYS}
     if selected - known:
         raise ValueError(f"Unknown journey ids: {sorted(selected - known)}")
     return ["unit"] + [
-        leg for leg, journeys in LEG_JOURNEYS.items() if selected & set(journeys)
+        leg
+        for leg, journeys in LEG_JOURNEYS.items()
+        if selected & set(journeys)
+        and (event != "pull_request" or leg in PR_NATIVE_LEGS)
     ]
 
 
@@ -655,7 +669,7 @@ def main():
     )
     selected_ids = journey_ids.split(",") if journey_ids else ()
     native = journey_native_for_ids(selected_ids)
-    legs = native_legs(selected_ids)
+    legs = native_legs(selected_ids, event)
     output += (
         f"native_validation={str(native_validation(event, suites, native)).lower()}\n"
     )

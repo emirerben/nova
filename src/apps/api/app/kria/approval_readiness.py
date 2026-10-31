@@ -30,6 +30,7 @@ from app.kria.brief_checks import (
 from app.kria.order_replacement_receipts import with_verified_order_execution
 from app.kria.order_replacement_sources import OrderReplacementSourceContext
 from app.kria.reply_language import say
+from app.kria.route_disclosure import UNIFIED_MONTAGE, ask_declines
 from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime_v2
 from app.models import ContentPlan, Persona
 from app.services.creator_render_contract import (
@@ -45,7 +46,9 @@ READINESS_KEY = "approval_readiness"
 NOT_READY = "approval_requirements_not_ready"
 # The dispositions approval may go ahead with. KRI-983: `unverified` is an ask nothing can
 # settle before the video is made; it is named for the creator to look at after render.
-APPROVABLE = frozenset({"executable", "delegated", "unverified"})
+# `declined`: the route that renders this draft cannot do the ask; the draft says so plainly
+# (`route_disclosure`), and the creator approves the closest thing, never a dead end.
+APPROVABLE = frozenset({"executable", "delegated", "unverified", "declined"})
 
 
 def _json(value: Any) -> Any:
@@ -269,6 +272,12 @@ def _no_pre_render_checker(req: Any, facts: Any) -> bool:
         # one could answer, before the step that does it had run. An editor draft still
         # proves it from its own ops (the caller never reaches here for one).
         return True
+    from app.kria.brief_checks import asks_text_animation  # noqa: PLC0415
+
+    # A whole-video "with animations" has no words to check on a draft and its look is judged on
+    # the finished text lane: never a reason to hold approval (`unverified`, named after render).
+    if asks_text_animation(req) and req.scope == "global" and not req.literal:
+        return True
     if req.kind == "text" and text_look_facts(req):
         # KRI-1113 (thread 83f2dcaa, "Animate the title"): the words are checked on the draft;
         # once they are there, what is left is a look only the finished video shows (a strategy
@@ -471,6 +480,26 @@ def assess_readiness(
         if isinstance(answer, Mapping) and answer.get("source") == "creator_delegated"
         for req_id in answer.get("requirement_ids") or []
     }
+    # The unified montage draft says what its route cannot read (animated text outside the
+    # title) and approves the closest thing instead of holding the draft.
+    on_unified_montage = (
+        settings.kria_route_disclosure_enabled
+        and not policy_problem
+        and editor_payload is None
+        and _defers_to_unified_montage(strategy, media, manifest, creator_id)
+    )
+    declined = (
+        {
+            d.requirement_id: d
+            for d in ask_declines(
+                requirements,
+                strategy,
+                route=UNIFIED_MONTAGE if on_unified_montage else None,
+            )
+        }
+        if not policy_problem
+        else {}
+    )
     rows = []
     for req in requirements:
         receipt = receipts.get(req.id)
@@ -524,8 +553,14 @@ def assess_readiness(
             and _no_pre_render_checker(req, facts)
             else "evidence_missing"
         )
+        if req.id in declined and disposition in {"unverified", "evidence_missing"}:
+            # Nothing checked this ask, and the route cannot read it: said plainly, approvable.
+            # (A checker's own verdict, e.g. the words are missing, is never hidden by this.)
+            disposition = "declined"
         reason = policy_problem or (
-            receipt.reason
+            declined[req.id].text
+            if disposition == "declined"
+            else receipt.reason
             if checked
             else say(
                 en="I'll show these words one at a time when I prepare the video, then check.",
@@ -579,6 +614,10 @@ def assess_readiness(
             marks=protected_regions or [],
             media=media,
         )
+    if on_unified_montage:
+        # Only the route whose render judges the ask itself (the phone unified montage) may
+        # approve what no draft check can decide; every other route keeps its hold.
+        rows = _approve_undecidable(rows, requirements)
     report = {
         "schema_version": 1,
         "ready": not policy_problem and all(r["disposition"] in APPROVABLE for r in rows),
@@ -610,6 +649,73 @@ def assess_readiness(
     # Pydantic values in capability records are serialized without model text.
     report["digest"] = digest(_identity(report))
     return report
+
+
+def _defers_to_unified_montage(
+    strategy: Mapping[str, Any],
+    media: Mapping[str, Any],
+    manifest: ResolvedCreatorManifest | None,
+    creator_id: object,
+) -> bool:
+    """True when this strategy draft renders through the phone unified montage planner."""
+    from app.kria.brief_checks import defers_to_unified_montage  # noqa: PLC0415
+
+    return defers_to_unified_montage(
+        creator_id=creator_id,
+        edit_format=strategy.get("edit_format") or (manifest.edit_format if manifest else None),
+        audio_strategy=strategy.get("audio_strategy"),
+        clip_paths=[str(path) for path in media.get("clip_paths") or []],
+    )
+
+
+def _approve_undecidable(
+    rows: list[dict[str, Any]], requirements: list[Any]
+) -> list[dict[str, Any]]:
+    """On the unified montage, an ask a checker cannot decide before render is approvable.
+
+    A vague ask ("slow pace") has no checker and was already approved with a look-after line
+    (`unverified`), while an ask a checker did recognise but lacked the facts to decide held
+    the draft behind "I can't confirm this draft does it yet" (`evidence_missing`): the more
+    precise the ask, the harder the stop. Both now wait for the render's own verdict, named to
+    the creator. Researched-text and keep-text-off asks keep their own flows (the research
+    preview and the mark card), and a prepared story keeps its frozen-evidence rule."""
+    from app.kria.brief_checks import _has_duration_target  # noqa: PLC0415
+    from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
+    from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
+
+    by_id = {req.id: req for req in requirements}
+    out = []
+    for row in rows:
+        req = by_id.get(row["requirement_id"])
+        if (
+            row["disposition"] != "evidence_missing"
+            or row["evidence_owner"] != "brief_checks"
+            or req is None
+            # An order ask is judged on proof of who asked and what ran: a missing or wrong
+            # proof is held (the worker would refuse the render after approval).
+            or req.kind == "order"
+            # A quoted text is checked on the draft and the worker refuses a render whose
+            # confirmed text is missing from the plan: the creator fixes it before approval.
+            or (req.kind == "text" and bool(req.literal))
+            # A length ask whose evidence is missing stays unknown, never a pass.
+            or (req.kind == "timing" and _has_duration_target(req))
+            or "collection_story" in req.facts
+            or (req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping))
+            or _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY))
+        ):
+            out.append(row)
+            continue
+        out.append(
+            {
+                **row,
+                "disposition": "unverified",
+                "reason": say(
+                    en="I can't check this before the video is made; I'll point it out after.",
+                    tr="Bunu video hazırlanmadan önce kontrol edemiyorum; sonra sana göstereceğim.",
+                ),
+            }
+        )
+    return out
 
 
 def _with_protected_marks(

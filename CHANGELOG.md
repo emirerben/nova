@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.40.0] - 2026-10-31
+
+### Changed
+- fix(kria): the creator's prompt drives the phone montage (pace, direction, animation, honest approval card) (KRI-1097) (#2009) <!-- release-pr: 2009 -->
+
+## [0.83.39.0] - 2026-10-31
+
+### Changed
+- ci: get iOS PRs near 25 min: one Mac per PR, journey renders nightly (#1957) <!-- release-pr: 1957 -->
+
+## [0.83.38.0] - 2026-10-31
+
+### Changed
+- feat(kria): inspect source intervals for prompt-specific named moments (#1961) <!-- release-pr: 1961 -->
+
 ## [0.83.37.0] - 2026-10-31
 
 ### Fixed

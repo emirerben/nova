@@ -48,6 +48,7 @@ from tests.kria.test_kri945_global_text_journey import (
 
 NEW_HOOK = "Cunda after dark: sunsets over the Aegean"
 NOT_RENDERED = "I can't confirm this draft does it yet."
+CHECK_AFTER_RENDER = "I can't check this before the video is made; I'll point it out after."
 
 
 @pytest.fixture(autouse=True)
@@ -108,7 +109,9 @@ async def test_start_fresh_never_hands_the_old_hook_to_a_new_hook_ask(
     await chat.send("Make it about 20 seconds", _plain_draft())
     title = _title(chat)
     assert (title.description, title.literal) == ("a hook about the evening light", None)
-    assert chat.unready().get(title.id) == ("evidence_missing", NOT_RENDERED)
+    # Still no inherited words; on the phone unified montage the ask is approvable and named for
+    # a look after render (route disclosure: it used to hold the draft as NOT_RENDERED).
+    assert chat.unready().get(title.id) == ("unverified", CHECK_AFTER_RENDER)
 
 
 @pytest.mark.parametrize(

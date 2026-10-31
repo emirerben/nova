@@ -34,6 +34,8 @@ from app.agents._runtime import (
     ProviderQuotaExceededError,
     RunContext,
     TerminalError,
+    TerminalSchemaError,
+    TransientError,
 )
 from app.agents._schemas.brief_extractor import BriefExtractionOutput
 from app.agents._schemas.creator_agent import (
@@ -383,8 +385,10 @@ def _enrich_best_parts_snapshot(
     if not isinstance(media_snapshot, dict):
         return media_snapshot
     from app.kria.asset_holds import asset_holds, visual_budget  # noqa: PLC0415
+    from app.pipeline.story_direction import story_floor_for  # noqa: PLC0415
     from app.pipeline.unified_montage import (  # noqa: PLC0415
         MIN_READABLE_SHOT_S,
+        brief_view,
         unheld_still_frames,
     )
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
@@ -417,6 +421,16 @@ def _enrich_best_parts_snapshot(
     if recording is None and isinstance(media_snapshot.get("voiceover"), dict):
         recording = media_snapshot["voiceover"].get("duration_s")
     moments = brief_moment_ask(brief)
+    # A planner direction of text_explainer / guided_story holds every clip at least that
+    # direction's own minimum moment, so the approved windows already play as the story the
+    # render builds (and the length on the card is its length). Only where nothing the
+    # creator asked keeps the draft a fast montage; the worker decides the rest with the
+    # same rule (`story_direction.story_blocker`).
+    story_floor_s = (
+        story_floor_for(strategy, brief_view(brief))
+        if strategy.get("edit_format") == "montage" and recording is None
+        else None
+    )
     held = _held_closing_ids(closing_quote)
     grounded = {str(row.get("quote")): row for row in named_lines or () if isinstance(row, Mapping)}
     named = [
@@ -522,6 +536,7 @@ def _enrich_best_parts_snapshot(
             skipped_moments=(
                 [pin.json() for pin in moment_pins.skipped] if moment_pins is not None else None
             ),
+            story_floor_s=story_floor_s,
         )
 
     # KRI-585: the clips' words seat the welcome's line and a quiet ending. "Fast cuts" is
@@ -2733,6 +2748,43 @@ async def _call_main_creator(
         raise RuntimeError("Kria could not produce a reliable editorial plan") from exc
 
 
+# Prompt fidelity (errors unit): the extractor is read-only, so ONE bounded retry after a
+# provider/transport failure is safe. The agent runtime already spent its own attempts and
+# fallback models, so a short pause gives a transient outage a chance to pass.
+_EXTRACTOR_RETRY_BACKOFF_S = 1.0
+_EXTRACTOR_RETRY_MIN_BUDGET_S = 20.0
+
+
+def _error_honesty_enabled() -> bool:
+    return bool(settings.kria_error_honesty_enabled)
+
+
+def _is_provider_fault(exc: BaseException) -> bool:
+    """True when an agent failed for provider/transport reasons, not because its answer was bad.
+
+    ``TerminalSchemaError`` is the extractor producing output the schema rejects (a real
+    misread: the creator is asked to rephrase). Any other wrapped ``TerminalError`` (retries
+    exhausted on 5xx/429/timeouts, a truncated answer, a refusal) says nothing about the
+    creator's words, so the honest reply is "try again", not "I couldn't read your request".
+    """
+    cause = exc.__cause__
+    return isinstance(cause, TerminalError) and not isinstance(cause, TerminalSchemaError)
+
+
+def _extractor_retry_allowed(exc: TerminalError) -> bool:
+    if not _error_honesty_enabled():
+        return False
+    # Only an exhausted-transient failure; schema, refusal and fenced outcomes never retry.
+    if type(exc) is not TerminalError or not isinstance(exc.__cause__, TransientError):
+        return False
+    deadline = turn_deadline.get()
+    return (
+        deadline is None
+        or deadline - _POST_UNDERSTANDING_RESERVE_S - time.monotonic()
+        >= _EXTRACTOR_RETRY_MIN_BUDGET_S
+    )
+
+
 async def _call_brief_extractor(
     inputs: _CreatorInputs,
     *,
@@ -2753,12 +2805,12 @@ async def _call_brief_extractor(
         require_request_scope=True,
     )
 
-    def _run_agent():  # noqa: ANN202 - inferred BriefExtractionOutput
+    def _run_agent(request_id: str):  # noqa: ANN202 - inferred BriefExtractionOutput
         deadline = turn_deadline.get()
         return BriefExtractorAgent(default_client()).run(
             agent_input,
             ctx=RunContext(
-                request_id=str(thread_id),
+                request_id=request_id,
                 creator_id=str(creator_id),
                 plan_item_id=str(item_id),
                 creator_agent_session_id=(
@@ -2771,12 +2823,23 @@ async def _call_brief_extractor(
         )
 
     try:
-        return await asyncio.to_thread(_run_agent)
+        return await asyncio.to_thread(_run_agent, str(thread_id))
     except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
         # A spend cap is not a reading failure: the turn fails with its own code (A1).
         raise
     except TerminalError as exc:
-        raise RuntimeError("Kria could not extract the creative brief reliably") from exc
+        if not _extractor_retry_allowed(exc):
+            raise RuntimeError("Kria could not extract the creative brief reliably") from exc
+        log.warning("kria_extractor_retry", **_recovery_cause("followup_extraction", exc))
+        await asyncio.sleep(_EXTRACTOR_RETRY_BACKOFF_S)
+        try:
+            # A distinct request id: the paid-call reservation key is stable per request id
+            # and attempt number, so the retry must not collide with the failed run's.
+            return await asyncio.to_thread(_run_agent, f"{thread_id}:extractor-retry")
+        except (ProviderOutcomeUnknownError, ProviderQuotaExceededError, AiBudgetExceededError):
+            raise
+        except TerminalError as retry_exc:
+            raise RuntimeError("Kria could not extract the creative brief reliably") from retry_exc
 
 
 def _extraction_request_scope(
@@ -4745,6 +4808,11 @@ def _request_recovery(
             en="I couldn't prepare those edits this time.",
             tr="Bu sefer bu düzenlemeleri hazırlayamadım.",
         ),
+        # The reading step hit a provider/transport failure: not a misread request.
+        "request_extraction_provider_failed": say(
+            en="I couldn't prepare those edits this time.",
+            tr="Bu sefer bu düzenlemeleri hazırlayamadım.",
+        ),
     }.get(
         reason,
         say(
@@ -4757,7 +4825,12 @@ def _request_recovery(
             en="Try again, or tell me the most important change first.",
             tr="Tekrar dene ya da önce en önemli değişikliği söyle.",
         )
-        if reason in {"creator_planning_failed", "editor_planning_failed"}
+        if reason
+        in {
+            "creator_planning_failed",
+            "editor_planning_failed",
+            "request_extraction_provider_failed",
+        }
         else say(
             en="Which clip or part of the edit should I work on first?",
             tr="Önce düzenlemenin hangi klibi ya da bölümü üzerinde çalışayım?",
@@ -5389,12 +5462,49 @@ async def _gate_unresolved_choices(
     )
     # KRI-723: the creator's named moments of one take. Grounded ones are pinned; for the
     # rest an app that can answer is asked, before any approval card, to point at them.
+    inspections = None
+    if (
+        settings.kria_prompt_moment_inspection_enabled
+        and settings.clip_intents_enabled
+        and answers_moment_questions
+        and item_id is not None
+    ):
+        from app.services.length_planning import DEFAULT_MOMENT_S
+        from app.services.named_moments import MomentOrderError, named_moments
+        from app.services.prompt_moment_inspection import inspect_named_moments
+
+        ask = brief_moment_ask(brief)
+        try:
+            moment_set = named_moments(
+                strategy,
+                planned.media_snapshot,
+                moment_count=ask.count if ask is not None else None,
+            )
+        except MomentOrderError:
+            moment_set = None
+        if moment_set is not None:
+            turn_end = turn_deadline.get()
+            inspections = await inspect_named_moments(
+                db,
+                creator_id=creator_id,
+                item_id=item_id,
+                moment_set=moment_set,
+                events=events,
+                allow_provider=settings.kria_prompt_moment_inspection_allow_provider,
+                max_window_s=ask.each_s if ask is not None and ask.each_s else DEFAULT_MOMENT_S,
+                budget_s=(
+                    turn_end - _POST_UNDERSTANDING_RESERVE_S - time.monotonic()
+                    if turn_end is not None
+                    else None
+                ),
+            )
     moments = _moment_decision(
         strategy,
         planned.media_snapshot,
         brief,
         events,
         can_ask=answers_moment_questions and settings.clip_intents_enabled,
+        inspections=inspections,
     )
     if moments.recovery is not None:
         return replace(
@@ -5609,6 +5719,7 @@ def _moment_decision(
     events: Sequence[tuple[str, Any]],
     *,
     can_ask: bool,
+    inspections: Any = None,
 ) -> Any:
     """KRI-723: the named moments' pins, or the question that gets them (no model call)."""
     from app.services.length_planning import DEFAULT_MOMENT_S  # noqa: PLC0415
@@ -5635,6 +5746,7 @@ def _moment_decision(
         events,
         can_ask=can_ask,
         default_window_s=(ask.each_s if ask is not None and ask.each_s else DEFAULT_MOMENT_S),
+        inspections=inspections,
     )
 
 
@@ -6350,6 +6462,8 @@ async def _plan_live_turn(
                 updates=pre_extracted_updates if extraction_complete else (),
                 reason="editor_planning_failed"
                 if extraction_complete
+                else "request_extraction_provider_failed"
+                if _error_honesty_enabled() and _is_provider_fault(exc)
                 else "request_extraction_failed",
                 cause=cause,
             )

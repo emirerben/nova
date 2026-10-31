@@ -180,6 +180,7 @@ class MomentSet:
     analysis: Mapping[str, Any]
     moments: tuple[NamedMoment, ...]
     visual_rows: tuple[int, ...]
+    source_path: str | None = None
 
     @property
     def keys(self) -> tuple[str, ...]:
@@ -299,6 +300,7 @@ def named_moments(
         analysis=analysis,
         moments=tuple(moments),
         visual_rows=tuple(visual_rows),
+        source_path=str(row.get("gcs_path") or "") or None,
     )
 
 
@@ -311,6 +313,7 @@ class Interval:
     end_s: float
     description: str
     kind: str
+    evidence: Mapping[str, Any] | None = None
 
     def json(self) -> dict[str, Any]:
         return {
@@ -318,6 +321,7 @@ class Interval:
             "source_end_s": self.end_s,
             "description": self.description,
             "kind": self.kind,
+            **({"evidence": dict(self.evidence)} if self.evidence else {}),
         }
 
 
@@ -584,17 +588,40 @@ class MomentDecision:
     total: int = 0
 
 
+@dataclass(frozen=True)
+class InspectedGroundings:
+    moment_set_digest: str
+    groundings: Mapping[str, Grounding]
+
+
 def decide(
     moment_set: MomentSet | None,
     events: Iterable[tuple[str, Any]],
     *,
     can_ask: bool,
     default_window_s: float,
+    inspections: InspectedGroundings | None = None,
 ) -> MomentDecision:
     if moment_set is None:
         return MomentDecision()
     fold = fold_moment_orders(events)
     groundings = ground_all(moment_set)
+    if inspections is not None and inspections.moment_set_digest == moment_set.digest:
+        for key, result in inspections.groundings.items():
+            if key in groundings:
+                groundings[key] = result
+        located = [(key, result.found) for key, result in groundings.items() if result.found]
+        conflicts = set()
+        for index, (key, interval) in enumerate(located):
+            for other_key, other in located[index + 1 :]:
+                if (
+                    interval.start_s < other.end_s - 0.001
+                    and interval.end_s > other.start_s + 0.001
+                ):
+                    conflicts.update((key, other_key))
+        for key, interval in located:
+            if key in conflicts:
+                groundings[key] = Grounding("ambiguous", suggestions=(interval,))
     by_key = {moment.key: moment for moment in moment_set.moments}
     answered = {key: fold.answers[key] for key in by_key if key in fold.answers}
     found = sum(1 for g in groundings.values() if g.status == "grounded")
