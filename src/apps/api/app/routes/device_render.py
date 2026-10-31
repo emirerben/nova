@@ -279,6 +279,50 @@ async def _refuse_publication(
     await asyncio.to_thread(_nudge_kria_observer, job.id)
 
 
+def _export_text_notes(job: Job, verification_report: dict | None) -> list[str]:
+    """A creator-facing note when the export's on-screen text could not be confirmed.
+
+    The phone's export check can reject a text layer (the OCR read too few of its words)
+    while the finished video still ships. That stays advisory: nothing is withheld or
+    retried, but the creator is told instead of left to find it. Says "couldn't confirm",
+    never "is wrong" (the check reads pixels, it does not see the video). No failed text
+    check, or the switch off => no note.
+    """
+    if not settings.export_text_note_enabled or not isinstance(verification_report, dict):
+        return []
+    if verification_report.get("status") not in {"rejected", "partial"}:
+        return []
+    times = [
+        float(row["at_s"])
+        for row in verification_report.get("checks", [])
+        if isinstance(row, dict)
+        and row.get("kind") == "text"
+        and row.get("status") == "failed"
+        and row.get("expected_visible") is True
+        and isinstance(row.get("at_s"), int | float)
+    ]
+    if not times:
+        return []
+    from app.kria.reply_language import reply_language_for, say  # noqa: PLC0415
+
+    language = (job.assembly_plan or {}).get("creator_reply_language")
+    at = min(times)
+    with reply_language_for(language if isinstance(language, str) else None):
+        return [
+            say(
+                en=(
+                    f"I couldn't confirm all the on-screen text in the finished video was "
+                    f"readable (around {at:.0f}s). If a line looks off, tell me and I'll fix it."
+                ),
+                tr=(
+                    f"Bitmiş videodaki ekran yazılarının hepsinin okunaklı olduğunu "
+                    f"doğrulayamadım (yaklaşık {at:.0f}. saniye). Bir satır yanlış görünüyorsa "
+                    f"söyle, düzelteyim."
+                ),
+            )
+        ]
+
+
 def _record_export_advisory(
     job_id: uuid.UUID, identity: DeviceRenderIdentity, warning: dict
 ) -> None:
@@ -1981,6 +2025,7 @@ async def _complete_device_export(
         or cleanup.retention_expires_at <= datetime.now(UTC)
     ):
         raise HTTPException(409, "Upload reservation expired")
+    export_text_notes = _export_text_notes(job, verification_report)
     status.phase = "published"
     record.update(
         status=status.model_dump(mode="json"),
@@ -1992,7 +2037,13 @@ async def _complete_device_export(
     assembly["variants"] = [
         {
             # Cloud evidence describes the cloud file this export replaces.
-            **{key: value for key, value in v.items() if key != "cloud_evidence"},
+            **{
+                key: value
+                for key, value in v.items()
+                # A note from an earlier export must not outlive a clean re-export.
+                if key not in ("cloud_evidence", "export_check_notes")
+            },
+            **({"export_check_notes": export_text_notes} if export_text_notes else {}),
             "ok": True,
             "render_status": "ready",
             "render_generation_id": attempt_id,

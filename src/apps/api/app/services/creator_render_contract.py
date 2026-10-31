@@ -380,6 +380,12 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "editorial_plan.beats[].text_goal",
         note="Writing purposes accompany footage windows; compiled text is pinned for replay.",
     ),
+    **_rules(
+        "upstream_resolved",
+        "pace_policy:provenance",
+        "pacing_requested",
+        note="server-owned: the creator's own words named a pace (cut-length pace unit)",
+    ),
     # Hard requirements projected by build_render_contract.
     **_rules(
         "upstream_resolved",

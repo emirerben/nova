@@ -170,9 +170,12 @@ log = structlog.get_logger()
 # (creator context, footage, manifest, conversation, message) moved to
 # prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
 # v105 (KRI-1077): title animation names come from the vocab registry (all designed edges).
-# v106 (KRI-1117): `background_media` (a photo / looping video behind the Talking speaker), taught
+# v106 (prompt fidelity, animation): an UNNAMED animation ask ("with animations", "animated
+# text") is a `text` requirement carrying `animation: "any"`, not prose only; a named one
+# keeps its id. One fact for both: the disclosure unit's interim `animated: true` fact is gone.
+# v107 (KRI-1117): `background_media` (a photo / looping video behind the Talking speaker), taught
 # only where the manifest advertises `speaker_background`; every other prompt is byte-identical.
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-31-v106"
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-31-v107"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -638,7 +641,12 @@ adding or ending on a clip keeps `last_clip` as above. How on-screen text should
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
 for "bottom left"; `placeholder` true when they ask for placeholder text to fill in later
-("placeholder location").
+("placeholder location"). Animation asked WITHOUT a name ("with animations", "animated text",
+"make the text animate") is still a `text` requirement carrying the fact, never description
+alone: {"kind": "text", "scope": "global", "facts": {"animation": "any"}} ("any" lets the
+server pick the entrance; "explain why people should visit Assos, with animations" => that
+text requirement for the explanation, animation "any"). A named one keeps its id ("fade in the
+captions" => animation "fade"). Record it only when the creator asked for animation.
 For requested heading stacks, preserve `heading_level` (1 title, 2 smaller subtitle,
 3 subordinate detail), `stack_id` (shared only by explicitly connected lines), `below_text`
 (exact predecessor words) and `smaller_than` (exact larger text words when smaller is asked)
@@ -1187,6 +1195,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                             True if requested_duration_s is not None else None
                         ),
                         "creator_duration_s": requested_duration_s,
+                        # Pace provenance is server-owned too; the route re-stamps it from
+                        # the creator's words (`_apply_explicit_render_intent`).
+                        "pacing_requested": None,
                         "selected_music_section": None,
                         # Preserve the actual requested target rather than a
                         # conflicting model-selected duration.

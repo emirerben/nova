@@ -96,6 +96,13 @@ from app.kria.reply_language import (
     say,
     thread_reply_language,
 )
+from app.kria.route_disclosure import (
+    UNIFIED_MONTAGE,
+    card_disclosures,
+    card_text,
+    planned_card_length,
+    with_route_declines,
+)
 from app.kria.select_asks import exclusion_facts, only_video_ask
 from app.kria.voiceover_script import event_content as voiceover_script_content
 from app.models import (
@@ -168,6 +175,7 @@ from app.services.kria_editor_ops import (
     unknown_editor_render_query,
 )
 from app.services.kria_editor_ops_diff import describe_diff
+from app.services.length_policy import creator_duration
 from app.services.phone_rollout import stamped_client_protocol
 from app.services.phone_speaker_background import (
     BACKGROUND_REFUSALS,
@@ -1806,6 +1814,8 @@ def _complete_draft_turn(
         )
         brief = None
         speed_notice: str | None = None  # KRI-689
+        route_name: str | None = None  # the render route this strategy draft lands on
+        route_disclosures: list = []  # route_disclosure: what that route does not read
         phone_blockers: list = []  # KRI-775
         draft_research = None  # KRI-881
         if planned.brief_route is not None:
@@ -1962,6 +1972,41 @@ def _complete_draft_turn(
                             creator_id=thread.creator_id,
                         ),
                     )
+                    if facts.phone_montage and settings.kria_route_disclosure_enabled:
+                        route_name = UNIFIED_MONTAGE
+                        # The length on the draft is the length the plan renders.
+                        _card_media = (
+                            planned.media_snapshot
+                            if planned.media_snapshot is not None
+                            else _draft_media(item)
+                        )
+                        # Research prepared for the planner's strategy is pinned to its digest
+                        # (`research_preview.basis_digest`), so that strategy stays as planned.
+                        # A length the creator stated (message, brief, answer) is theirs.
+                        _card_source = db.get(CreationThreadEvent, turn.source_event_id)
+                        _stated = creator_duration(
+                            creator_texts=[_card_source.content or ""] if _card_source else [],
+                            brief=brief,
+                            authoritative_answers=(document.strategy or {}).get("choice_answers")
+                            or (),
+                        )
+                        _card_length = (
+                            None
+                            if planned.prepared_research is not None or _stated is not None
+                            else planned_card_length(
+                                document.strategy or {}, _card_media, route=route_name
+                            )
+                        )
+                        if _card_length is not None:
+                            document = document.model_copy(
+                                update={
+                                    "strategy": {
+                                        **(document.strategy or {}),
+                                        "target_duration_s": _card_length,
+                                    }
+                                }
+                            )
+                            snapshot, snapshot_hash = canonical_snapshot(document)
                     checked = brief.live()
                     # KRI-190: the unified montage planner writes the per-clip text,
                     # order and title at render time and reports on them then. Judging
@@ -2088,6 +2133,11 @@ def _complete_draft_turn(
                         else receipt
                         for receipt in receipts
                     ]
+                    if route_name is not None and readiness_required and not editor_turn:
+                        # An ask the render route does not read is answered plainly now.
+                        receipts = with_route_declines(
+                            receipts, checked, document.strategy, route=route_name
+                        )
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
                         try:
@@ -2146,6 +2196,18 @@ def _complete_draft_turn(
             from app.kria import research_preview  # noqa: PLC0415
 
             reply_text = f"{reply_text}\n{research_preview.preview_lines(draft_research.prepared)}"
+        if route_name is not None and brief is not None and readiness_required:
+            route_disclosures = card_disclosures(
+                brief.live(),
+                document.strategy,
+                route=route_name,
+                research_previewed=draft_research is not None and draft_research.ready,
+                # The pinned length plan: whether a story direction's holds fit the length.
+                media=_card_media,
+            )
+        route_notice = card_text(route_disclosures) if route_disclosures else None
+        if route_notice:
+            reply_text = f"{reply_text}\n{route_notice}"
         if brief is not None:
             # A repeated offer can have no new updates to persist in the response
             # transaction. Its receipts still name the revision it checked.
@@ -2476,7 +2538,9 @@ def _complete_draft_turn(
                 else ""
             )
             reply_text = "\n".join(
-                part for part in (lead, _with_left_out(kept, omissions), speed_notice) if part
+                part
+                for part in (lead, _with_left_out(kept, omissions), speed_notice, route_notice)
+                if part
             )
         mark_gate = _protected_region_gate_sync(
             db,
@@ -3016,6 +3080,7 @@ def _complete_draft_turn(
                 for part in (
                     f"Render this draft: {approval_summary}",
                     speed_notice if speed_notice and speed_notice not in approval_summary else None,
+                    route_notice if route_notice and route_notice not in approval_summary else None,
                 )
                 if part
             ),
@@ -3059,6 +3124,11 @@ def _complete_draft_turn(
                 "receipt_ids": [str(draft_execution.id)],
                 **_state_event_fields(state_id, state_trace),
                 **({"requirement_receipts": requirement_receipts} if requirement_receipts else {}),
+                **(
+                    {"not_applied": [item.as_record() for item in route_disclosures]}
+                    if route_disclosures
+                    else {}
+                ),
                 **_receipt_lead_fields(reply_lead, also_changed, requirement_receipts),
                 **(
                     {"research_preview": _research_preview_payload(draft_research)}

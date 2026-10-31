@@ -51,6 +51,7 @@ def _sanitize_strategy_duration_provenance(
     *,
     authoritative_answers: list[dict[str, Any]] | None = None,
     authoritative_duration_s: float | None = None,
+    authoritative_pacing_requested: bool | None = None,
     brief_binding: BriefBinding | None = None,
 ) -> dict[str, Any]:
     """Persist only server-derived duration approval provenance.
@@ -82,6 +83,7 @@ def _sanitize_strategy_duration_provenance(
                 "creator_duration_s",
                 "choice_answers",
                 "selected_music_section",
+                "pacing_requested",
             )
         }
     )
@@ -89,6 +91,8 @@ def _sanitize_strategy_duration_provenance(
         "target_duration_requested": True if proven_duration_s is not None else None,
         "creator_duration_s": proven_duration_s,
         "choice_answers": authoritative_answers or None,
+        # Server-owned like the duration marker: only the head draft's own stamp survives.
+        "pacing_requested": True if authoritative_pacing_requested is True else None,
     }
     if brief_binding is not None:
         length_plan = brief_binding.media_snapshot.get("length_plan")
@@ -580,6 +584,9 @@ async def write_draft(
                 if isinstance(head_strategy, dict)
                 and isinstance(head_strategy.get("creator_duration_s"), (int, float))
                 else None
+            ),
+            authoritative_pacing_requested=(
+                head_strategy.get("pacing_requested") if isinstance(head_strategy, dict) else None
             ),
             brief_binding=(
                 BriefBinding.model_validate(binding) if isinstance(binding, dict) else None
