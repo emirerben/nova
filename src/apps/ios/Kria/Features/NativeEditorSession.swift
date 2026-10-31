@@ -7204,8 +7204,9 @@ struct NativeEditorTemporaryVideo {
         case .captions, .captionMeta: return canEditCaptions
         case .mix, .music, .backgroundMusic: return canEditMix
         // KRI-589: only the per-operation `drawings.*` capabilities open drawings.
+        // KRI-1118: only the server's `speaker_background` capability opens the background.
         case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects, .drawings,
-             .carouselMoment, .lyrics, .title: return false
+             .speakerBackground, .carouselMoment, .lyrics, .title: return false
         // KRI-306: the server capability decides; with no capability the section stays closed.
         case .orientation, .landscapeFit: return false
         // KRI-428: only the per-operation `user_song.*` capabilities open it.
@@ -7238,6 +7239,7 @@ struct NativeEditorTemporaryVideo {
             case .motionScenes: differs = document.motionScenes != cleanDocument.motionScenes || document.motionRuntimeHash != cleanDocument.motionRuntimeHash
             case .cameraEffects: differs = document.cameraEffects != cleanDocument.cameraEffects
             case .drawings: differs = document.drawings != cleanDocument.drawings
+            case .speakerBackground: differs = document.speakerBackground != cleanDocument.speakerBackground
             case .carouselMoment: differs = document.carouselMoment != cleanDocument.carouselMoment
             case .title: differs = document.title != cleanDocument.title
             case .userSong: differs = document.userSong != cleanDocument.userSong
@@ -7394,6 +7396,7 @@ struct NativeEditorTemporaryVideo {
         let backgroundObject = Self.object(value["background_music"])
         let lyricsObject = Self.object(value["lyrics"])
         let carouselObject = Self.object(value["carousel_moment"])
+        let speakerBackgroundObject = Self.object(value["speaker_background"])
         var captionMeta = object("caption_meta", .captionMeta)
         if let y = captionMeta?["y_frac"]?.numberValue, !(0.30...0.90).contains(y),
            captionMeta?["appearance"]?.objectValue?["position_y_frac"] != nil {
@@ -7428,6 +7431,7 @@ struct NativeEditorTemporaryVideo {
             cameraEffects: array("camera_effects", .cameraEffects),
             drawings: array("drawings", .drawings),
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
+            speakerBackground: changedSections.contains(.speakerBackground) ? (speakerBackgroundObject.map(EditorSpeakerBackgroundPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
             editorStateVersion: 2,
@@ -7463,6 +7467,9 @@ struct NativeEditorTemporaryVideo {
         if sections.mediaOverlays { result.insert(.mediaOverlays) }; if sections.visualBlocks { result.insert(.visualBlocks) }
         if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }; if sections.drawings { result.insert(.drawings) }
         if sections.carouselMoment { result.insert(.carouselMoment) }; if sections.title { result.insert(.title) }
+        // KRI-1118: an accepted background is saved even if the server does not echo the section (a rejected
+        // one answers 422 and never reaches here), the same stance as the song.
+        if sections.speakerBackground || submittedSections.contains(.speakerBackground) { result.insert(.speakerBackground) }
         // KRI-428: a user_song the server accepted is saved even if it does not echo the section
         // (a rejected one answers 422 and never reaches here).
         if sections.userSong || submittedSections.contains(.userSong) { result.insert(.userSong) }
@@ -7553,6 +7560,7 @@ struct NativeEditorTemporaryVideo {
             baseline.motionRuntimeHash = submitted.motionRuntimeHash
         case .cameraEffects: baseline.cameraEffects = submitted.cameraEffects
         case .drawings: baseline.drawings = submitted.drawings
+        case .speakerBackground: baseline.speakerBackground = submitted.speakerBackground
         case .carouselMoment: baseline.carouselMoment = submitted.carouselMoment
         case .title: baseline.title = submitted.title
         case .userSong: baseline.userSong = submitted.userSong
