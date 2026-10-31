@@ -31,11 +31,13 @@ from app.schemas.edit_proposal import (
     MIN_PROPOSAL_DURATION_S,
     MixedMediaTimingProfile,
     mixed_media_hold_bounds,
+    pace_selection_limits,
     uses_quick_photo_long_video_timing,
 )
 from app.services.length_policy import (
     DurationBound,
     creator_duration_satisfied,
+    effective_pace,
     length_owner,
     natural_length_owner,
 )
@@ -274,6 +276,93 @@ def _editorial_reading_floors(
     return conflicts
 
 
+def _field(source: Any, name: str) -> Any:
+    return source.get(name) if isinstance(source, Mapping) else getattr(source, name, None)
+
+
+PACE_MIN_HEADROOM_S = 0.1
+
+
+def paced_selection(
+    sources: Sequence[Any],
+    pace: str | None,
+    *,
+    budget: float | None,
+    extend_budget: bool,
+    cap_s: float,
+    minimums: Mapping[str, float],
+    maximums: Mapping[str, float],
+    story_floor_s: float | None = None,
+) -> BestPartsResult | None:
+    """The source windows with the planner's pace applied, or None to keep the plain ones.
+
+    Used by approval-time planning and by the render, so a pre-approval plan and the worker's
+    plan follow one rule (``schemas.edit_proposal.pace_selection_limits``). Pace is a
+    preference, never a reason to fail: it changes how long each VIDEO clip is held (photos
+    keep their own hold rules), never drops a clip, and the result is used only when the
+    selector reports no conflict and the video is still long enough. The one place the total
+    may move is a relaxed pace over a catalog song section (``extend_budget``): that section
+    is a default nobody stated, so the clips' longer holds extend it by the least they need
+    rather than dropping a clip or ignoring the pace.
+
+    ``story_floor_s`` (text-explainer unit) is the shortest hold a story direction gives a clip
+    (``length_policy.story_hold_floor_s``); it rides the same rule, with ``pace`` None when the
+    planner said nothing about pace.
+    """
+
+    floor_s, ceiling_s = (
+        pace_selection_limits(pace, total_free=budget is None) if pace is not None else (None, None)
+    )
+    if story_floor_s is not None:
+        floor_s = max(floor_s or 0.0, story_floor_s)
+    if floor_s is None and ceiling_s is None:
+        return None
+    paced_min: dict[str, float] = dict(minimums)
+    paced_max: dict[str, float] = dict(maximums)
+    videos = [source for source in sources if _field(source, "kind") != "image"]
+    for source in videos:
+        media_id = str(_field(source, "media_id"))
+        if floor_s is not None:
+            paced_min[media_id] = max(paced_min.get(media_id, 0.0), floor_s)
+        if ceiling_s is not None:
+            # Never below a floor another rule set (a quoted sentence, a reading time).
+            current = paced_max.get(media_id)
+            ceiling = ceiling_s if current is None else min(current, ceiling_s)
+            paced_max[media_id] = max(ceiling, paced_min.get(media_id, 0.0))
+    paced_budget = budget
+    if budget is not None and extend_budget and floor_s is not None:
+        needed = round(
+            sum(
+                min(paced_min[str(_field(s, "media_id"))], float(_field(s, "duration_s") or 0.0))
+                for s in videos
+            )
+            + sum(
+                paced_min.get(str(_field(s, "media_id")), 0.0)
+                for s in sources
+                if _field(s, "kind") == "image"
+            ),
+            3,
+        )
+        if budget < needed <= cap_s:
+            paced_budget = needed
+    result = select_best_parts(
+        list(sources),
+        target_duration_s=paced_budget,
+        minimum_total_duration_s=MIN_PROPOSAL_DURATION_S if paced_budget is None else None,
+        minimum_duration_s=paced_min,
+        maximum_duration_s=paced_max,
+        cap_duration_s=cap_s,
+    )
+    if result.conflicts or result.duration_s < MIN_PROPOSAL_DURATION_S:
+        return None
+    if paced_budget is None and result.duration_s < MIN_PROPOSAL_DURATION_S + PACE_MIN_HEADROOM_S:
+        # A free total that lands exactly on the minimum is 2.967 s after whole-frame rounding
+        # and the montage is refused (KRI-993 steak edit): keep the plain windows. Here, not in
+        # the render alone, so the approval-time plan and the worker's follow one rule.
+        return None
+    return result
+
+
 def build_length_plan(
     strategy: Mapping[str, Any],
     media_snapshot: Mapping[str, Any],
@@ -297,6 +386,7 @@ def build_length_plan(
     skipped_moments: Sequence[Mapping[str, Any]] | None = None,
     attached_visual_ids: Collection[str] = (),
     visual_budget_s: float = 0.0,
+    story_floor_s: float | None = None,
 ) -> dict[str, Any]:
     """Build the approved, serializable source-window plan.
 
@@ -348,6 +438,13 @@ def build_length_plan(
     what is left, and a floor the creator's length can't hold shrinks to what fits (the receipt
     then says the sentence isn't whole). Each record rides on the plan as ``kept_lines`` with
     ``held`` true when its clip's window holds the sentence.
+
+    ``story_floor_s`` (text-explainer unit, ``length_policy.story_hold_floor_s``): the planner's
+    direction is a story and nothing the creator asked keeps it a fast montage, so every video
+    clip is held at least this long. It rides the pace rule: with no creator length a catalog
+    song section nobody stated is extended by the least the holds need; a creator's length is
+    never moved (when the holds do not fit it the plain windows stand and the render cuts a fast
+    montage and says so). Recorded as ``story`` only when it changed the windows.
     """
 
     natural_owner = natural_length_owner(strategy)
@@ -386,6 +483,8 @@ def build_length_plan(
     ]
     ordered_sources.extend(source for source in sources if source not in ordered_sources)
     result: BestPartsResult | None = None
+    pace_record: dict[str, Any] | None = None
+    story_record: dict[str, Any] | None = None
     audio = strategy.get("audio_strategy")
     section = strategy.get("selected_music_section")
     section_duration = None
@@ -591,22 +690,53 @@ def build_length_plan(
         coverage_floor = round(sum(source["minimum_duration_s"] for source in ordered_sources), 3)
         if budget is not None and budget < coverage_floor <= budget * 1.1:
             budget = coverage_floor
+        minimums = {source["media_id"]: source["minimum_duration_s"] for source in ordered_sources}
+        maximums = {
+            source["media_id"]: source["maximum_duration_s"]
+            if source["maximum_duration_s"] is not None
+            else source["quiet_ceiling_s"]
+            for source in ordered_sources
+            if source["maximum_duration_s"] is not None or source["quiet_ceiling_s"] is not None
+        }
         result = select_best_parts(
             ordered_sources,
             target_duration_s=budget,
             minimum_total_duration_s=3 if budget is None else None,
-            minimum_duration_s={
-                source["media_id"]: source["minimum_duration_s"] for source in ordered_sources
-            },
-            maximum_duration_s={
-                source["media_id"]: source["maximum_duration_s"]
-                if source["maximum_duration_s"] is not None
-                else source["quiet_ceiling_s"]
-                for source in ordered_sources
-                if source["maximum_duration_s"] is not None or source["quiet_ceiling_s"] is not None
-            },
+            minimum_duration_s=minimums,
+            maximum_duration_s=maximums,
             cap_duration_s=cap_s,
         )
+        # A creator-stated length always wins over pace; without one, the planner's pace sets
+        # how long each clip is held (``pace_selection_limits``).
+        pace = effective_pace(strategy) if creator_target_s is None else None
+        if pace is not None or story_floor_s is not None:
+            paced = paced_selection(
+                ordered_sources,
+                pace,
+                budget=budget,
+                extend_budget=natural_owner == "song" and creator_target_s is None,
+                cap_s=cap_s,
+                minimums=minimums,
+                maximums=maximums,
+                story_floor_s=story_floor_s,
+            )
+            if paced is not None and (paced.duration_s, paced.parts) != (
+                result.duration_s,
+                result.parts,
+            ):
+                result = paced
+                moved = {
+                    "total_s": paced.duration_s,
+                    **(
+                        {"natural_duration_s": round(budget, 3)}
+                        if budget is not None and paced.duration_s > budget + 0.001
+                        else {}
+                    ),
+                }
+                if pace is not None:
+                    pace_record = {"pace": pace, **moved}
+                if story_floor_s is not None:
+                    story_record = {"floor_s": story_floor_s, **moved}
     if hidden and result is not None:
         result, unplaceable = _kept_out_of_hidden(result, by_id, hidden)
         if unplaceable:
@@ -750,6 +880,12 @@ def build_length_plan(
     }
     if visual_budget_s > 0:
         plan["visual_budget_s"] = round(float(visual_budget_s), 3)
+    if pace_record is not None:
+        # Present only when pace changed the windows, so every other plan is unchanged.
+        plan["pace"] = pace_record
+    if story_record is not None:
+        # Likewise for a story direction's minimum hold.
+        plan["story"] = story_record
     if missing_ids:
         # KRI-989: the ids that are genuinely gone, so the question can offer to leave them out.
         plan["missing_source_ids"] = sorted(missing_ids)

@@ -77,6 +77,9 @@ from app.kria.plan_blocks import (
     cloud_decision_blocks as _cloud_decision_blocks,
 )
 from app.kria.plan_blocks import (
+    decided_block as _decided_plan_block,
+)
+from app.kria.plan_blocks import (
     emit_phone_recipe_blocks as _emit_phone_plan_blocks,
 )
 from app.kria.plan_blocks import (
@@ -118,6 +121,7 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
+from app.services.creator_song_rule import catalog_song_match_blocked
 from app.services.generative_jobs import (
     CONTENT_PLAN_ORIGINAL_VARIANT_POLICY,
     CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
@@ -3833,6 +3837,9 @@ def _run_generative_job_impl(
                 fut_match = pool.submit(lambda: None)
             elif frozen_music_status == "selected":
                 fut_match = pool.submit(lambda: frozen_music_track)
+            elif catalog_song_match_blocked(immutable_job_plan):
+                # Song rule: a Kria creator job never gets an auto-matched catalog song.
+                fut_match = pool.submit(lambda: None)
             else:
                 fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
             tonemap_t0 = time.monotonic()
@@ -5340,6 +5347,8 @@ def _run_phone_guided_job(
         job.failure_reason = None
         db.commit()
 
+    # The look chip names the face the typography step really picked (not the plan default).
+    _emit_burned_look_block(job_id, raw_plan)
     # KRI-448: the pinned plan's blocks went out above with `post_caption` deciding; the
     # request is committed and no lock is held, so resolve it now (best-effort, <= 8 s).
     _emit_post_caption(job_id)
@@ -5743,7 +5752,17 @@ def _run_phone_voiceover_montage_job(
                 )
             else:
                 style_set_id = _select_generative_style_set(clip_metas, agent_text, job_id=job_id)
-            best_track = _match_best_track(clip_metas, job_id=job_id)
+            # Song rule: a phone job never plays a catalog song (only the creator's own upload).
+            # `phone_catalog_song_match_blocked` is the kill switch, default on.
+            from app.services.creator_song_rule import (  # noqa: PLC0415
+                phone_catalog_song_match_blocked,
+            )
+
+            best_track = (
+                None
+                if phone_catalog_song_match_blocked()
+                else _match_best_track(clip_metas, job_id=job_id)
+            )
 
             user_style_knobs: dict = {}
             if user_style:
@@ -6499,6 +6518,7 @@ def _plan_phone_user_song_montage(
     font_covers: Any,
     creator_order: list[int],
     output_orientation: str | None = None,
+    output_orientation_reason: str | None = None,
     creator_text: str = "",
     plan_authority: bool = False,
     freeze_frames: bool = False,
@@ -6524,6 +6544,7 @@ def _plan_phone_user_song_montage(
         font_covers=font_covers,
         creator_order=creator_order,
         output_orientation=output_orientation,
+        output_orientation_reason=output_orientation_reason,
         freeze_frames=freeze_frames,
     )
     if not settings.song_captions_enabled:
@@ -6691,6 +6712,7 @@ def _plan_phone_user_song_core(
     font_covers: Any,
     creator_order: list[int],
     output_orientation: str | None = None,
+    output_orientation_reason: str | None = None,
     freeze_frames: bool = False,
 ) -> tuple[Any, Any]:
     """Plan a phone montage around the creator's own song (KRI-374).
@@ -6751,6 +6773,7 @@ def _plan_phone_user_song_core(
             song_plan_item_id=str(item_id),
             song_generation=generation,
             output_orientation=output_orientation,
+            output_orientation_reason=output_orientation_reason,
         )
 
     if sync == "background":
@@ -6790,6 +6813,7 @@ def _plan_phone_user_song_core(
                 plan_item_id=str(item_id),
                 font_covers=font_covers,
                 output_orientation=output_orientation,
+                output_orientation_reason=output_orientation_reason,
                 creator_choices=creator_choices,
                 freeze_frames=freeze_frames,
             ),
@@ -7086,6 +7110,7 @@ def _plan_phone_unified_montage(
         ],
         visuals=visuals,
         output_orientation=_creator_shape_orientation(all_candidates),
+        output_orientation_reason=_creator_shape_reason(all_candidates),
         creator_duration_proven=creator_duration_proven,
         approved_length_plan=approved_length_plan,
         # KRI-585: what the clips say orders them only where the approved plan
@@ -7120,6 +7145,63 @@ def _approved_research(snapshot: Mapping[str, Any]) -> Any:
     binding = BriefBinding.model_validate(raw)
     research = PreparedResearch.model_validate(binding.prepared_research)
     return research if research.status == "ready" else None
+
+
+def _composed_plan(
+    plan: Any, assignments: list, all_candidates: dict, compose: Callable[[Any], Any]
+) -> Any:
+    """``plan`` with its text composed; a story direction that cannot be falls back, never fails.
+
+    A plan that is not a story is composed as always. A plan built as a story direction
+    (text_explainer / guided_story) is composed too, and the phone's own dry run must accept it;
+    if the text step cannot place the story's text (a research window or a copy rule the beat
+    layout cannot meet) or the phone cannot draw the layout, the fast montage the route always
+    made is composed instead, with ``direction_fallback`` saying why. A provider timeout, quota
+    or budget failure is not the story's doing (the fast montage would hit it too) and is raised
+    as before.
+    """
+    fast = getattr(plan, "story_fallback", None)
+    if fast is None:
+        plan.snapshot = compose(plan)
+        return plan
+    from app.agents._runtime import (  # noqa: PLC0415
+        AiBudgetExceededError,
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+    )
+    from app.pipeline.phone_plan_repair import (  # noqa: PLC0415
+        PhoneProposalRejected,
+        validate_proposal_phone_compiles,
+    )
+    from app.pipeline.story_direction import error_fields  # noqa: PLC0415
+    from app.services.creation_text_composition import CreationTextTimeoutError  # noqa: PLC0415
+
+    reason: str | None = None
+    try:
+        plan.snapshot = compose(plan)
+        validate_proposal_phone_compiles(
+            plan.snapshot,
+            assignments,
+            landscape_fit="fit" if _creator_landscape_fit(all_candidates) == "fit" else "fill",
+        )
+        return plan
+    except (
+        ProviderOutcomeUnknownError,
+        ProviderQuotaExceededError,
+        AiBudgetExceededError,
+        CreationTextTimeoutError,
+        SoftTimeLimitExceeded,
+    ):
+        raise
+    except PhoneProposalRejected as exc:
+        reason = "phone_rejected"
+        log.warning("story_direction_phone_rejected", **error_fields(exc))
+    except Exception as exc:  # noqa: BLE001 - a direction is never a reason to fail a render
+        reason = "story_text_failed"
+        log.warning("story_direction_text_failed", **error_fields(exc))
+    fallback = replace(fast, direction_fallback=reason)
+    fallback.snapshot = compose(fallback)
+    return fallback
 
 
 @phone_text_generation
@@ -7267,6 +7349,7 @@ def _run_phone_unified_montage_job(
                     if isinstance(value, int) and not isinstance(value, bool)
                 ],
                 output_orientation=_creator_shape_orientation(all_candidates),
+                output_orientation_reason=_creator_shape_reason(all_candidates),
                 creator_text="" if plan_authority else _creator_request_text(all_candidates),
                 plan_authority=plan_authority,
                 # KRI-996: a held frame over song nobody filmed, only where the approving phone
@@ -7305,16 +7388,32 @@ def _run_phone_unified_montage_job(
         if isinstance(all_candidates.get("brief"), dict)
         else ""
     )
-    plan.snapshot = compose_creation_text(
-        plan.snapshot,
-        creator_request=str(request or ""),
-        ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
-        copy_constraints=snapshot_copy_constraints(plan.snapshot),
-        text_requirements=brief.live() if brief is not None else None,
-        # KRI-881: sourced wording the creator approved, replayed without a new search.
-        prepared_research=_approved_research(snapshot),
-    )
+
+    def compose(candidate: Any) -> Any:
+        return compose_creation_text(
+            candidate.snapshot,
+            creator_request=str(request or ""),
+            ctx=RunContext(job_id=job_id, request_id=f"creation-text:{generation}"),
+            copy_constraints=snapshot_copy_constraints(candidate.snapshot),
+            text_requirements=brief.live() if brief is not None else None,
+            # KRI-881: sourced wording the creator approved, replayed without a new search.
+            prepared_research=_approved_research(snapshot),
+        )
+
+    # A planner direction built as a story (text_explainer / guided_story) never costs the
+    # creator their video: if the text step cannot place its text, or the phone cannot draw the
+    # layout, the fast montage the route always made is composed instead and the note says why.
+    plan = _composed_plan(plan, assignments, all_candidates, compose)
     record = plan.record()
+    from app.pipeline.story_direction import fallback_note, says_fallback  # noqa: PLC0415
+
+    if (requested := (strategy or {}).get("direction")) and says_fallback(
+        plan.direction_fallback, str(requested)
+    ):
+        # The planner's story direction was cut as a fast montage: one line, with the finished
+        # video, saying why (`story_direction.fallback_note`).
+        with _worker_reply_language(snapshot):
+            record["repair_notes"] = [fallback_note(plan.direction_fallback, str(requested))]
     # KRI-544: which copies left the edit, readable by a requirement checker. Absent
     # (byte-identical record) when nothing was collapsed.
     record.update(montage_record_fields(duplicate_aliases))
@@ -7383,7 +7482,7 @@ def _run_phone_unified_montage_job(
                 },
             )
             if notes:
-                record["repair_notes"] = notes
+                record["repair_notes"] = [*record.get("repair_notes", []), *notes]
 
     with _sync_session() as db:
         entry_row = _lock_owned_entry_job(db, job_id)
@@ -12640,6 +12739,8 @@ def _guided_execution_plan(
         job_owner_id = getattr(job, "user_id", None)
         job_item_id = getattr(job, "content_plan_item_id", None)
         approved_length_plan = _approved_length_plan_envelope(job.assembly_plan or {})
+        # Song rule: a creator job's guided plan never pins an auto-matched catalog song.
+        catalog_match_blocked = catalog_song_match_blocked(job.assembly_plan)
 
     from app.services.creator_execution_contract import validate_execution_binding  # noqa: PLC0415
     from app.services.guided_speech_cleanup import derivative_path_ok  # noqa: PLC0415
@@ -12672,7 +12773,7 @@ def _guided_execution_plan(
         # This exact plan was frozen before approval and rechecked at dispatch.
         # Do not materialize labels, SFX or music from later planning inputs.
         if emit_decided:
-            _emit_plan_blocks(job_id, _blocks_from_guided_plan(frozen))
+            _emit_plan_blocks(job_id, _blocks_from_guided_plan(frozen, **_early_look_font()))
         return frozen, None
 
     def guided_resolved_clip_intents() -> list[Any]:
@@ -12977,6 +13078,7 @@ def _guided_execution_plan(
             None
             if (
                 frozen_status is not None
+                or catalog_match_blocked
                 or getattr(snapshot, "narration", None) is not None
                 or getattr(snapshot, "user_song", None) is not None
             )
@@ -13099,7 +13201,7 @@ def _guided_execution_plan(
     # KRI-443: the plan is pinned and every lock above is released (each `with` block
     # committed), so the live feed may report all seven sections now. Best-effort.
     if emit_decided:
-        _emit_plan_blocks(job_id, _blocks_from_guided_plan(plan))
+        _emit_plan_blocks(job_id, _blocks_from_guided_plan(plan, **_early_look_font()))
 
     music = plan.get("music")
     if music is None:
@@ -25421,11 +25523,57 @@ def _best_parts_source_decisions(
     return decisions, receipt, []
 
 
+def _early_look_font() -> dict[str, Any]:
+    """`blocks_from_guided_plan` kwargs for a block emitted BEFORE the phone typography step.
+
+    While the phone text policy is active the plan's own font is only a pre-typography
+    default (the agent picks the burned face later), so the look chip must not name it;
+    `_emit_burned_look_block` follows up with the real face. Off, or no policy => {}.
+    """
+    if settings.look_chip_burned_font_enabled and current_phone_text_policy():
+        return {"look_font": None}
+    return {}
+
+
+def _emit_burned_look_block(job_id: str, plan: dict[str, Any]) -> None:
+    """Re-emit the look block with the font the phone typography step really burned.
+
+    Reads the final rows (`plan["text_elements"]`, after styling); the most used face names
+    the chip. Best-effort and never changes the render or the pinned plan.
+    """
+    if not (settings.look_chip_burned_font_enabled and current_phone_text_policy()):
+        return
+    try:
+        from collections import Counter  # noqa: PLC0415
+
+        fonts = Counter(
+            str(row["font_family"])
+            for row in plan.get("text_elements") or []
+            if isinstance(row, dict) and row.get("font_family") and not row.get("removed")
+        )
+        if not fonts:
+            return
+        _emit_plan_blocks(
+            job_id,
+            [_decided_plan_block(plan, "look", look_font=fonts.most_common(1)[0][0])],
+        )
+    except Exception as exc:  # noqa: BLE001 - the feed must never fail a render
+        log.warning("plan_blocks_look_font_failed", job_id=job_id, error=str(exc)[:200])
+
+
 def _creator_shape_orientation(all_candidates: dict | None) -> str | None:
     """KRI-306: the orientation the creator explicitly chose, else None (= default)."""
     from app.services.render_shape import shape_from_all_candidates  # noqa: PLC0415
 
     return (shape_from_all_candidates(all_candidates) or {}).get("output_orientation")
+
+
+def _creator_shape_reason(all_candidates: dict | None) -> str | None:
+    """Why the output shape is what it is: the creator's pick, or an echoed server default
+    (the app sends the preselected shape back untouched). None = the original wording."""
+    from app.services.render_shape import orientation_reason  # noqa: PLC0415
+
+    return orientation_reason(all_candidates)
 
 
 def _decide_generative_variant(

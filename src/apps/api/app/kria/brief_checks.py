@@ -25,7 +25,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, get_args
 
 from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS
-from app.agents._schemas.text_animation_phases import TextAnimationEdge
+from app.agents._schemas.text_animation_phases import TEXT_ANIMATION_VOCAB, TextAnimationEdge
+from app.kria.animation_ask import animation_ask
 from app.kria.asset_holds import HOLD_TOLERANCE_S, hold_seconds
 from app.kria.brief import BriefRequirement, CreativeBrief, normalize_style_intent
 from app.kria.brief_route import (
@@ -51,6 +52,7 @@ from app.kria.narrated_clip_sound_ask import AFTER_VOICE, ClipSoundAsk, requirem
 from app.kria.noise_reduction_ask import wants_engine_noise_reduction
 from app.kria.order_replacement_receipts import VerifiedOrderExecution
 from app.kria.reply_language import current_reply_language, say
+from app.kria.route_disclosure import is_route_decline_reason
 from app.kria.select_asks import ExclusionFact, only_video_ask
 from app.kria.speech_cut_ask import SpeechCutAsk, requirement_speech_cut
 from app.kria.speed_ask import asks_clip_speed
@@ -4828,8 +4830,10 @@ _FORMAT_LIMIT_REASON_PREFIXES: tuple[str, ...] = (
 
 def is_format_limit(reason: str | None) -> bool:
     """True for a receipt reason the creator cannot plan around (see above)."""
-    return bool(reason) and any(
-        str(reason).startswith(prefix) for prefix in _FORMAT_LIMIT_REASON_PREFIXES
+    return bool(reason) and (
+        any(str(reason).startswith(prefix) for prefix in _FORMAT_LIMIT_REASON_PREFIXES)
+        # The route that will render this draft does not read the ask (route_disclosure).
+        or is_route_decline_reason(reason)
     )
 
 
@@ -6613,6 +6617,85 @@ def _look_rows(req: BriefRequirement, facts: PlanFacts) -> list[TextStyleRow]:
     return rows
 
 
+def asks_text_animation(req: BriefRequirement) -> bool:
+    """A live text ask for animation, named or not ("with animations"), with the switch on."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.text_animation_ask_enabled and animation_ask(req) is not None)
+
+
+_ANIMATION_PLANNED = "the text will animate in as it appears; I'll check it in the finished video"
+_ANIMATION_UNAVAILABLE = (
+    "animated text isn't available on this phone build yet, so the text will appear "
+    "without animation"
+)
+_REASON_TR[_ANIMATION_PLANNED] = (
+    "yazı belirirken animasyonlu girecek; bitmiş videoda kontrol edeceğim"
+)
+_REASON_TR[_ANIMATION_UNAVAILABLE] = (
+    "animasyonlu yazı bu telefon sürümünde henüz yok, bu yüzden yazı animasyonsuz görünecek"
+)
+
+
+def _animation_plan_receipt(req: BriefRequirement) -> RequirementReceipt:
+    """What a draft can honestly say about an animation ask before the text is drawn.
+
+    The text lane does not exist yet (the creation text pass lays it out at render), so this
+    states what the render WILL do, or that this phone build cannot, and leaves the verdict to
+    the finished video. ``unchecked`` on purpose: it is an answer for the creator to read, never
+    a block on approval, and never a claim the animation is already on screen.
+    """
+    from app.kria.animation_ask import text_entrance_form  # noqa: PLC0415
+
+    ask = animation_ask(req)
+    named = ask.edge if ask is not None and ask.named else None
+    if text_entrance_form() is None:
+        return _receipt(req, "not_possible", _ANIMATION_UNAVAILABLE, verification="unchecked")
+    if named:
+        label = TEXT_ANIMATION_VOCAB[named].label  # type: ignore[index]
+        reason = say(
+            en=f"the text will play the {label} entrance; I'll check it in the finished video",
+            tr=f"yazı {label} girişiyle oynayacak; bitmiş videoda kontrol edeceğim",
+        )
+    else:
+        reason = _ANIMATION_PLANNED
+    return _receipt(req, "met", reason, verification="unchecked")
+
+
+def _check_text_animation(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
+    """A whole-video "with animations" ask: judged on the finished text lane, else planned."""
+    if facts.text_styles is None:
+        if facts.phone_text or facts.phone_montage:
+            return _animation_plan_receipt(req)
+        return _receipt(req, "partial", _NO_CHECKER)
+    judged = check_text_look(req, facts)
+    return judged if judged is not None else _receipt(req, "partial", _NO_CHECKER)
+
+
+def _research_with_animation(
+    req: BriefRequirement, facts: PlanFacts, researched: RequirementReceipt
+) -> RequirementReceipt:
+    """One text ask that carries researched facts AND "with animations" (the Assos shape).
+
+    The research verdict alone must not stand for the animation nobody checked: the receipt
+    keeps the research met but is only ``checked`` when the finished text lane also shows an
+    entrance. Before that it is ``unchecked`` and says what the render will do (or that this
+    phone cannot); a miss or decline on the animation is reported as such. Report-only.
+    """
+    animation = _check_text_animation(req, facts)
+    if animation.status == "met" and animation.verification == "checked":
+        return researched
+    if animation.status in ("met", "partial"):
+        return _receipt(
+            req,
+            "met",
+            animation.reason if animation.status == "met" else None,
+            verification="unchecked",
+            stage=researched.stage,
+        )
+    return animation
+
+
 def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt | None:
     """Judge a TEXT requirement's look facts (title animation, label corner, font, colour).
 
@@ -6620,6 +6703,9 @@ def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
     has no text lane never judges (and never blocks a render) on a look it cannot see.
     """
     look = text_look_facts(req)
+    if asks_text_animation(req):
+        # An unnamed ask has no fact to read; the typed ask carries the edge or the sentinel.
+        look = {**look, "animation": animation_ask(req).value}  # type: ignore[union-attr]
     if not look or facts.text_styles is None:
         return None
     rows = _look_rows(req, facts)
@@ -6682,6 +6768,9 @@ def check_text_look(req: BriefRequirement, facts: PlanFacts) -> RequirementRecei
             haves = [row.entrance for row in rows]
             label = ("animation", "animasyon")
             fails = [h != wanted for h in haves] if wanted else []
+            if not wanted and asks_text_animation(req):
+                # "Animated text" with no edge named: any entrance is the ask.
+                fails = [h == "none" for h in haves]
         elif key == "position":
             spot = normalize_label_position(value)
             if spot is None:
@@ -6785,7 +6874,7 @@ def _with_text_look(
     """Add the look check to a text requirement's presence check (KRI-558)."""
     base = _with_title_face(req, facts, base)
     base = _with_spoken_text_face(req, facts, base)
-    if text_look_facts(req) and base.status == "met":
+    if (text_look_facts(req) or asks_text_animation(req)) and base.status == "met":
         look = check_text_look(req, facts)
         # The words are there; whether they look as asked is not visible here (a record or
         # a draft). A presence check alone never certifies the look (KRI-524).
@@ -9245,6 +9334,8 @@ def judged_at_render(req: BriefRequirement) -> bool:
         # KRI-558: a look (title animation, label corner, font, colour) and a per-clip length
         # are read off the finished text lane and timeline, which a plan record never has.
         or bool(text_look_facts(req))
+        # Prompt fidelity: "with animations" is a look too, named or not.
+        or asks_text_animation(req)
         or clip_length_ask(req) is not None
         # KRI-689: a planned rate counts only when the finished timeline still plays it
         # (`_rendered_speeds`), and the review re-words it in the chat's language.
@@ -10428,6 +10519,8 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
     if req.kind == "text":
         researched = None if req.literal else _check_research(req, facts)
         if researched is not None:
+            if researched.status == "met" and asks_text_animation(req):
+                return _research_with_animation(req, facts, researched)
             return researched
         if req.scope == "per_clip" or req.scope.startswith("clip:"):
             return _with_text_look(req, facts, _check_per_clip_text(req, facts))
@@ -10435,6 +10528,9 @@ def _check_requirement(req: BriefRequirement, facts: PlanFacts) -> RequirementRe
             return _with_text_look(req, facts, _check_literal_text(req, facts))
         if req.scope == "title":
             return _with_text_look(req, facts, _check_title(req, facts))
+        if asks_text_animation(req):
+            # "With animations, explain ...": a whole-video text ask with no words to match.
+            return _check_text_animation(req, facts)
     elif req.kind == "order":
         return _check_order(req, facts)
     elif req.kind == "timing":
@@ -10781,6 +10877,10 @@ def is_judged(req: BriefRequirement | None, receipt: RequirementReceipt) -> bool
     stored before these stopped being written still exist, so every reader of
     stored receipts filters through this too.
     """
+    if receipt.status == "not_possible" and is_route_decline_reason(receipt.reason):
+        # An ask the render route does not read is a plain answer ("I can't animate..."),
+        # though no checker owns it (route_disclosure).
+        return True
     if (
         req is not None
         and receipt.status in {"partial", "not_possible"}
