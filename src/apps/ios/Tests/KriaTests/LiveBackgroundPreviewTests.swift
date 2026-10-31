@@ -116,6 +116,8 @@ final class LiveBackgroundPreviewTests: XCTestCase {
 
     private final class Still: LiveBackgroundProviding, @unchecked Sendable {
         var active: [Bool] = []
+        var restarts = 0
+        func restart() { restarts += 1 }
         func frame() -> CIImage? { CIImage(color: .blue).cropped(to: CGRect(origin: .zero, size: LiveSpeakerMatteConfig.previewSize)) }
         func setActive(_ active: Bool) { self.active.append(active) }
         func stop() {}
@@ -241,6 +243,45 @@ final class LiveBackgroundPreviewTests: XCTestCase {
         let wrapped = zip(samples, samples.dropFirst()).contains { $1 < $0 - 0.2 }
         XCTAssertTrue(wrapped, "a 0.5 s video must wrap back to the start within 2.4 s: \(samples)")
         XCTAssertNotNil(video.frame(), "still delivering after the loop")
+    }
+
+    func testRestartSeeksAVideoBackToItsFirstFrameAndItKeepsLooping() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await writeVideo(seconds: 3, to: url)
+        let video = try await LoopingVideoBackground(url: url)
+        defer { video.stop() }
+        for _ in 0..<80 where video.playbackSeconds < 0.8 { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertGreaterThanOrEqual(video.playbackSeconds, 0.8, "it was well into the clip when Record started")
+        video.restart()
+        var restartedAt = Double.infinity
+        for _ in 0..<40 { restartedAt = min(restartedAt, video.playbackSeconds); try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertLessThan(restartedAt, 0.3, "restart lands on the first frame")
+        let after = video.playbackSeconds
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertGreaterThan(video.playbackSeconds, after, "and it plays on afterwards")
+    }
+
+    func testRestartOnAPhotoBackgroundChangesNothing() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jpg")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeImage(width: 40, height: 80, orientation: nil, redLeftHalf: true, to: url)
+        let photo = try StillBackground(url: url)
+        let before = photo.frame()
+        photo.restart()
+        XCTAssertEqual(photo.frame()?.extent, before?.extent)
+    }
+
+    func testThePreviewForwardsARestartOnlyToTheCurrentBackground() {
+        let preview = LiveBackgroundPreview(segmenter: FullSegmenter())
+        let first = Still(), second = Still()
+        preview.restartBackground()
+        preview.setBackground(first)
+        preview.restartBackground()
+        preview.setBackground(second)
+        preview.restartBackground()
+        XCTAssertEqual(first.restarts, 1, "a replaced background is never restarted again")
+        XCTAssertEqual(second.restarts, 1)
     }
 
     func testAVideoBackgroundWithNoVideoTrackIsRefused() async throws {

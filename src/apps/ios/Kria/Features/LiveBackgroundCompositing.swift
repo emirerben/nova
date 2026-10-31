@@ -142,6 +142,9 @@ protocol LiveBackgroundProviding: Sendable {
     func frame() -> CIImage?
     /// Pauses or resumes decoding while the camera session is stopped or running again.
     func setActive(_ active: Bool)
+    /// A video begins again from its first frame (source time 0) and keeps looping. A photo ignores it. Called at the moment
+    /// a recording really starts, so what the creator sees while filming is how the edit plays it.
+    func restart()
     /// Final: releases the player and its observers.
     func stop()
 }
@@ -167,5 +170,6 @@ final class StillBackground: LiveBackgroundProviding, @unchecked Sendable {
 
     func frame() -> CIImage? { image }
     func setActive(_ active: Bool) {}
+    func restart() {}
     func stop() {}
 }
