@@ -1,0 +1,78 @@
+{
+  "view": "customer",
+  "second": {
+    "role": "fix",
+    "label": "PR fix",
+    "lacks": []
+  },
+  "modelStates": 98,
+  "modelTransitions": 138,
+  "chartStates": 36,
+  "chartTransitions": 40,
+  "chartStatus": {
+    "works": 31,
+    "wrong": 0,
+    "fixed": 5
+  },
+  "chartGroups": [
+    {
+      "name": "Working",
+      "color": "#fdf2d0",
+      "states": 13
+    },
+    {
+      "name": "Error shown",
+      "color": "#f8d7da",
+      "states": 8
+    },
+    {
+      "name": "Nothing new shown",
+      "color": "#e2e3e5",
+      "states": 8
+    },
+    {
+      "name": "Ideas shown",
+      "color": "#d1f2eb",
+      "states": 4
+    },
+    {
+      "name": "Before ideas",
+      "color": "#ffffff",
+      "states": 3
+    }
+  ],
+  "mixedGroups": [],
+  "regions": {
+    "drawn": false,
+    "why": "\"Research on: more ideas on screen, “Kria hit a problem”\" is \"Fixed or new with PR fix\", and its two region states would show \"Works on the PR branch\""
+  },
+  "classes": [
+    {
+      "n": 1,
+      "end": "Research on: no ideas yet, “Kria hit a problem”",
+      "invariant": "UsableIdeaNeverShownAsProblem",
+      "rule": "\"When the AI came up with an idea that passes the checks, I never see 'Kria hit a problem'.\"",
+      "cause": "with Research on, the fact checker rejects the whole batch when it flags one idea, so good ideas are thrown away and the request fails",
+      "readerSteps": 6,
+      "modelSteps": 7,
+      "counterexamples": 3,
+      "fix": "Research on: Find ideas, dropping repeats"
+    },
+    {
+      "n": 2,
+      "end": "Research off: no ideas yet, “No idea found yet”",
+      "invariant": "NoIdeaYetMeansAsked",
+      "rule": "\"'No idea found yet' means the AI actually looked this time, not a replay.\"",
+      "cause": "an empty first answer is saved, so tapping Find ideas again with the same direction replays it without asking the AI",
+      "readerSteps": 9,
+      "modelSteps": 10,
+      "counterexamples": 2,
+      "fix": "Research off: Find ideas, checking saved answers"
+    }
+  ],
+  "codeLike": [],
+  "uncited": {
+    "EventIdeas.tla": [],
+    "EventIdeasFixed.tla": []
+  }
+}

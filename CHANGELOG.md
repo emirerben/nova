@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.39.0] - 2026-10-31
+
+### Changed
+- ci: get iOS PRs near 25 min: one Mac per PR, journey renders nightly (#1957) <!-- release-pr: 1957 -->
+
+## [0.83.38.0] - 2026-10-31
+
+### Changed
+- feat(kria): inspect source intervals for prompt-specific named moments (#1961) <!-- release-pr: 1961 -->
+
+## [0.83.37.0] - 2026-10-31
+
+### Fixed
+- fix(camera-roll): one flagged researched idea no longer fails the batch; never replay an empty first answer (#1986) <!-- release-pr: 1986 -->
+
+## [0.83.36.0] - 2026-10-31
+
+### Changed
+- feat(ios): show text types on a video frame and the real defaults in Text preferences (#1988) <!-- release-pr: 1988 -->
+
+## [0.83.35.0] - 2026-10-31
+
+### Fixed
+- feat(camera-roll): steer event ideas on every request; no fixed clip cap per idea (KRI-1062) (#1982) <!-- release-pr: 1982 -->
+
 ## [0.83.34.0] - 2026-10-31
 
 ### Changed

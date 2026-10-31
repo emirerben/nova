@@ -2,6 +2,21 @@
   "schema_version": 1,
   "journeys": [
     {
+      "id": "kri-1052-prompt-interval-inspection",
+      "needs_native": false,
+      "api_tests": "tests/services/test_prompt_moment_inspection.py tests/integration/test_prompt_moment_inspection.py tests/kria/test_prompt_moment_inspection_gate.py tests/kria/test_cabildo_named_moment_gate.py tests/kria/test_kri723_moment_authority_m2.py tests/integration/test_media_collections.py",
+      "paths": [
+        "src/apps/api/app/agents/source_moment_location.py",
+        "src/apps/api/app/services/prompt_moment_inspection.py",
+        "src/apps/api/prompts/source_moment_location.txt",
+        "src/apps/api/app/services/media_moment_inspection.py",
+        "src/apps/api/app/services/named_moments.py",
+        "src/apps/api/tests/services/test_prompt_moment_inspection.py",
+        "src/apps/api/tests/integration/test_prompt_moment_inspection.py",
+        "src/apps/api/tests/kria/test_prompt_moment_inspection_gate.py"
+      ]
+    },
+    {
       "id": "kri-1052-confirmed-order-readers",
       "needs_native": false,
       "api_tests": "tests/agents/test_order_replacement_schema_import.py tests/kria/test_order_replacement.py tests/kria/test_order_replacement_persistence.py tests/kria/test_order_replacement_persistence_postgres.py tests/kria/test_order_replacement_preflight.py tests/kria/test_order_replacement_reader_compatibility.py tests/kria/test_order_replacement_receipt_callers.py tests/kria/test_order_replacement_receipts.py tests/kria/test_order_replacement_sources.py",

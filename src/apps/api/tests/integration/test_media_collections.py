@@ -902,7 +902,10 @@ async def test_recommended_story_compiles_exact_source_windows_without_copy(
             await prepare_story_snapshot(db, owner.id, row, item)
 
 
-def test_real_targeted_read_crops_bytes_before_one_bounded_model_call(tmp_path, monkeypatch):
+@pytest.mark.parametrize("localizer", [False, True])
+def test_real_targeted_read_crops_bytes_before_one_bounded_model_call(
+    tmp_path, monkeypatch, localizer
+):
     import shutil
     import subprocess
     import time
@@ -1017,11 +1020,32 @@ def test_real_targeted_read_crops_bytes_before_one_bounded_model_call(tmp_path, 
         return ClipQuestionOutput(answer="yes", confidence=0.9, evidence="A cyan frame")
 
     monkeypatch.setattr(ClipQuestionAgent, "run", answer)
+    factory = None
+    if localizer:
+        from app.agents.source_moment_location import (
+            SourceMomentLocationAgent,
+            SourceMomentLocationOutput,
+        )
+
+        def locate(self, input, *, ctx):
+            answer(self, input, ctx=ctx)
+            return SourceMomentLocationOutput.model_validate(
+                {
+                    "status": "found",
+                    "matches": [
+                        {"start_s": 0, "end_s": 1, "confidence": 0.9, "evidence": "A cyan frame"}
+                    ],
+                }
+            )
+
+        monkeypatch.setattr(SourceMomentLocationAgent, "run", locate)
+        factory = SourceMomentLocationAgent
     result = inspect_interval(
         source,
         SimpleNamespace(start_s=2, end_s=3),
         "Is this cyan?",
         ctx=RunContext(deadline_monotonic=time.monotonic() + 45),
+        agent_factory=factory,
     )
     assert len(uploads) == len(calls) == 1
     assert result["sample_sha256"] == hashlib.sha256(uploads[0]).hexdigest()
@@ -1257,8 +1281,10 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
     assert changed.json()["research"]["review_current"] is False
     assert changed.json()["research"]["evidence"] == story["research"]["evidence"]
     approved = False
-    failed = await client.post(f"{path}/stories", json={**body, "query": "A different direction"})
-    assert failed.status_code == 503 and "stories" not in failed.json()
+    rejected = await client.post(f"{path}/stories", json={**body, "query": "A different direction"})
+    assert rejected.status_code == 200 and rejected.json()["stories"] == [], (
+        "an idea the review rejects is dropped, and the creator sees no idea, not a server error"
+    )
     assert len(calls) == 8
     invalid = await client.post(
         f"{path}/stories", json={**body, "research_topic": "https://private.local/x"}
@@ -1268,11 +1294,97 @@ async def test_research_ideas_keep_public_search_private_and_reuse_reviewed_evid
     unsupported = await client.post(
         f"{path}/stories", json={**body, "query": "Another source selection"}
     )
-    assert unsupported.status_code == 503 and len(calls) == 11
+    assert unsupported.status_code == 200 and unsupported.json()["stories"] == []
+    assert len(calls) == 11
     assert [row[0] for row in calls[-3:]] == ["search", "ideas", "source_review"]
     source_url = "https://travel-blog.example/terminal"
     ungrounded = await client.post(f"{path}/stories", json={**body, "query": "A third direction"})
     assert ungrounded.status_code == 503 and len(calls) == 12
+
+
+async def test_one_rejected_research_idea_never_costs_the_creator_the_others(
+    collection_world, monkeypatch
+):
+    """Failure catalogue: one flagged idea rejecting the whole researched batch, so the
+    creator sees "Kria hit a problem" although other ideas passed; a reviewer timeout
+    failing the request instead of dropping only the unreviewed idea."""
+    from app.agents._runtime import ProviderDeadlineExceededError
+    from app.agents.camera_roll_stories import CameraRollStoriesAgent
+    from app.services import story_idea_research as research
+    from app.services.researched_text import GroundedResearchAgent, ResearchEvidence
+
+    client, assets, sources, _owner, _app = collection_world
+    path = f"/me/media-collections/{uuid.uuid4()}"
+    await client.put(path, json=selection(assets, sources))
+    await client.post(f"{path}/index", json={"expected_revision": 1})
+
+    def search(self, value, *, ctx):
+        return ResearchEvidence(
+            facts=[
+                dict(
+                    id="fact-0",
+                    text="The terminal was rebuilt after a fire.",
+                    sources=[dict(title="Public archive", url="https://si.edu/terminal")],
+                )
+            ],
+            retrieved_at="2026-10-21T00:00:00+00:00",
+            search_entry_html="<div>Recorded provider attribution</div>",
+        )
+
+    def idea(title, opening):
+        return {
+            "title": title,
+            "moment_ids": ["m1"],
+            "research_fact_ids": ["fact-0"],
+            "content_plan": {
+                "form": "factual_story",
+                "audience": "Ferry passengers",
+                "angle": f"{title} angle",
+                "why_it_works": "History gives this crossing a point.",
+                "opening_text": opening,
+                "caption": f"{title} caption.",
+                "beat_reasons": ["Crossing footage supplies atmosphere"],
+            },
+        }
+
+    def ideas(self, value, *, ctx):
+        return self.parse(
+            json.dumps(
+                {
+                    "stories": [
+                        idea("Supported", "This terminal was rebuilt after a fire"),
+                        idea("Flagged", "This museum holds the fire's records"),
+                        idea("Unreviewed", "The ferry crossing after the rebuild"),
+                    ]
+                }
+            ),
+            value,
+        )
+
+    def review(self, value, *, ctx):
+        title = value.proposed.stories[0].title
+        if title == "Unreviewed":
+            raise ProviderDeadlineExceededError("review timed out")
+        return research.StoryResearchReviewOutput(
+            approved=title != "Flagged", reason="Recorded review"
+        )
+
+    monkeypatch.setattr(GroundedResearchAgent, "run", search)
+    monkeypatch.setattr(CameraRollStoriesAgent, "run", ideas)
+    monkeypatch.setattr(research.StoryResearchReviewAgent, "run", review)
+    monkeypatch.setattr(research.StorySourceReviewAgent, "run", review)
+    response = await client.post(
+        f"{path}/stories",
+        json=dict(
+            expected_revision=1,
+            query="A ferry outing",
+            research_topic="History of the public ferry terminal",
+        ),
+    )
+    assert response.status_code == 200, response.text
+    assert [s["title"] for s in response.json()["stories"]] == ["Supported"], (
+        "only the flagged and the unreviewed ideas are dropped"
+    )
 
 
 async def test_place_in_query_suggests_a_topic_and_only_the_confirmed_topic_reaches_search(
@@ -2642,6 +2754,15 @@ async def test_an_empty_another_idea_answer_is_not_cached_and_retries_use_fresh_
     again = await client.post(f"{path}/stories", json=exclude)
     assert [s["title"] for s in again.json()["stories"]] == ["Fresh"], (
         "the earlier empty answer must not replay from the cache"
+    )
+
+    state["step"] = "empty"
+    other = {**EVENT_QUERY, "group": "Market"}
+    assert (await client.post(f"{path}/stories", json=other)).json()["stories"] == []
+    state["step"] = "fresh"
+    retried = (await client.post(f"{path}/stories", json=other)).json()["stories"]
+    assert [s["title"] for s in retried] == ["Fresh"], (
+        "tapping Find ideas again after 'No idea found' asks the model, not the cached []"
     )
 
     state["step"] = "repeats"

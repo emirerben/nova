@@ -14,7 +14,14 @@ from functools import lru_cache
 from typing import Any
 
 from app.pipeline.canvas import PORTRAIT, Canvas
-from app.schemas.phone_text_style import CURATED_PHONE_FONTS, effective_text_rule
+from app.schemas.phone_text_style import (
+    CAPTION_PREFERRED_FONT,
+    CURATED_PHONE_FONTS,
+    DEFAULT_SHADOW_ENABLED,
+    DEFAULT_STROKE_WIDTH,
+    TEXT_STYLE_ROLES,
+    effective_text_rule,
+)
 
 _MEASUREMENTS: ContextVar[dict | None] = ContextVar("phone_text_measurements", default=None)
 
@@ -474,6 +481,10 @@ _TITLE_FIT_CASCADE: tuple[_FitStrategy, ...] = (
 )
 _SINGLE_FIT = _TITLE_FIT_CASCADE[:1]
 
+# Roles that choose their own spot; label and pinned keep the spot their lane gave the row.
+AUTO_PLACED_ROLES = frozenset({"title", "caption", "lyric"})
+PLACEMENT_CASCADE = ("bottom_left", "top_left", "middle", "top_right")
+
 
 def _place(
     row: dict, *, role: str, wanted: dict, obstacles: list, canvas: Canvas, block_rows=None
@@ -494,13 +505,9 @@ def _place(
         )
         zone = "top" if float(row.get("y_frac") or 0.5) < 0.5 else "bottom"
         wanted = {**wanted, "position": zone + ("_" + side if side else "")}
-    if role not in {"title", "caption", "lyric"} and "position" not in wanted:
+    if role not in AUTO_PLACED_ROLES and "position" not in wanted:
         return row
-    positions = (
-        [wanted["position"]]
-        if "position" in wanted
-        else ["bottom_left", "top_left", "middle", "top_right"]
-    )
+    positions = [wanted["position"]] if "position" in wanted else list(PLACEMENT_CASCADE)
     pinned_position = bool(authored & {"position", "x_frac", "y_frac", "alignment"})
     if pinned_position:
         positions = ["authored"]
@@ -646,6 +653,42 @@ def _fit_with(
     return False
 
 
+def text_style_defaults() -> dict:
+    """What each text role looks like when the creator has saved nothing (GET /me/memory).
+
+    Built from the constants the resolver and caption path read, so the Text preferences
+    screen cannot advertise a default the renderer no longer applies.
+    """
+    from app.schemas.text_style_intent import LABEL_ANCHORS, LABEL_DEFAULT_POSITION
+
+    def toggle(on: bool) -> str:
+        return "on" if on else "off"
+
+    def role_defaults(role: str) -> dict:
+        auto_placed = role == "all_text" or role in AUTO_PLACED_ROLES
+        return {
+            "outline": toggle(bool(DEFAULT_STROKE_WIDTH)),
+            "shadow": toggle(DEFAULT_SHADOW_ENABLED),
+            "color": "auto",
+            "font": "auto",
+            "font_hint": CAPTION_PREFERRED_FONT if role == "caption" else None,
+            "placement": "auto" if auto_placed else "usual",
+            "placement_order": list(PLACEMENT_CASCADE) if auto_placed else [],
+            # Labels sit at the montage's default label spot. A corner text has no
+            # account-wide default: the creator names its corner on each pin.
+            "usual_position": LABEL_DEFAULT_POSITION if role == "label" else None,
+        }
+
+    return {
+        "roles": {role: role_defaults(role) for role in TEXT_STYLE_ROLES},
+        "position_anchors": {
+            name: {"x": x, "y": y, "alignment": alignment}
+            for name, (x, y, alignment) in LABEL_ANCHORS.items()
+        },
+        "color_hint": "White, black or gray, whichever reads best on each shot.",
+    }
+
+
 def resolve_phone_text_style(
     rows: list[dict],
     *,
@@ -725,8 +768,8 @@ def resolve_phone_text_style(
                 "phone_text_style_version": 1,
             }
             row["font_family"] = family
-            row["stroke_width"] = wanted.get("stroke_width", 0)
-            row["shadow_enabled"] = wanted.get("shadow_enabled", False)
+            row["stroke_width"] = wanted.get("stroke_width", DEFAULT_STROKE_WIDTH)
+            row["shadow_enabled"] = wanted.get("shadow_enabled", DEFAULT_SHADOW_ENABLED)
             if "color" in wanted:
                 row["color"] = wanted["color"]
             source_fields = (row.get("source_params") or {}).get("creator_style_fields") or []

@@ -31,7 +31,10 @@ Use the strongest applicable label in every handoff:
 
 Bind evidence to the tested revision. After relevant code or fixture changes,
 rerun the affected check on the final SHA and mark superseded evidence stale. A PR
-is blocked when its required render evidence is missing. A narrower local fix
+is blocked when its required render evidence is missing. PR CI replays journeys
+offline and runs the iPhone unit leg; the fixture-driven iPhone renders run in
+nightly CI, so render evidence for a PR comes from a manual CI dispatch on its
+branch at the final SHA. A narrower local fix
 may proceed when its own acceptance checks pass, with honest limits and the parent
 journey remaining open; narrowing a claim does not waive a required gate. The
 live evaluation budget is capped at **$2** for this baseline; paid runs still

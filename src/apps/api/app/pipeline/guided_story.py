@@ -72,7 +72,11 @@ from app.schemas.edit_proposal import (
     mixed_media_hold_bounds,
     uses_quick_photo_long_video_timing,
 )
-from app.schemas.text_style_intent import LABEL_ANCHORS, TITLE_ANIMATION_SPEED
+from app.schemas.text_style_intent import (
+    LABEL_ANCHORS,
+    LABEL_DEFAULT_POSITION,
+    TITLE_ANIMATION_SPEED,
+)
 from app.schemas.user_song import MIN_PLAYABLE_SONG_S, UserSongPlan
 
 log = structlog.get_logger()
@@ -1759,7 +1763,7 @@ def _base_text_elements(
         label_x, label_y, label_alignment = (
             LABEL_ANCHORS[snapshot.label_position]
             if snapshot.label_position is not None
-            else (0.5, 0.78, "center")
+            else LABEL_ANCHORS[LABEL_DEFAULT_POSITION]
         )
         if snapshot.opening_title:
             title_elements.append(

@@ -8,7 +8,10 @@ from contextvars import ContextVar
 from functools import wraps
 
 from app.schemas.phone_text_style import (
+    CAPTION_PREFERRED_FONT,
     CURATED_PHONE_FONTS,
+    DEFAULT_SHADOW_ENABLED,
+    DEFAULT_STROKE_WIDTH,
     PHONE_TEXT_STYLE_VERSION,
     TextStyleRule,
     effective_text_rule,
@@ -357,7 +360,7 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                 [
                     selected.get("caption"),
                     *rule.get("favorite_fonts", []),
-                    "TikTok Sans Bold",
+                    CAPTION_PREFERRED_FONT,
                     *CURATED_PHONE_FONTS,
                 ]
             )
@@ -381,8 +384,8 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     resolved = replace(
         PhoneCaptionLook(),
         font_family=font,
-        outline_px=rule.get("stroke_width", 0),
-        shadow_enabled=rule.get("shadow_enabled", False),
+        outline_px=rule.get("stroke_width", DEFAULT_STROKE_WIDTH),
+        shadow_enabled=rule.get("shadow_enabled", DEFAULT_SHADOW_ENABLED),
         text_color=rule.get("color", "#FFFFFF"),
         max_width_frac=0.68,
         shape_text=True,
