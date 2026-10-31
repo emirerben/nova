@@ -68,6 +68,27 @@ like `ending_clip`.
 | Resolve | `_run_phone_subtitled_job` (`_resolve_strategy_background`) | Looks the id up in the job's ready pool, builds `SubtitledBackground`, runs `strip_unsupported_background`, and binds it like a lane-request background. A hand-written lane request's background wins (`lane_request_background_wins`). A miss is a `phone_lane_receipt.dropped` entry (`not_in_ready_pool`, `missing_generation`, `multi_clip_talking`), never a failed job. |
 | Reserve | same function | The resolved photo is excluded from the generic card / full-screen grounding (`used_media_ids`). A closed gate reserves nothing: the render equals one for a strategy that never asked. |
 
+## Chat: copilot ops (S18, S19, S20)
+
+`set_background {asset_id, source_start_s?}` and `remove_background` (lane
+`app/agents/editor_ops_v2/background.py`, prompt `prompts/edit_copilot_ops/speaker_background.txt`,
+`EDIT_COPILOT_PROMPT_VERSION` v97). They compile into the editor Save's `speaker_background` section.
+
+| Piece | Rule |
+| --- | --- |
+| Snapshot | `snapshot["background"]`: `{"available": true, "current": {...} \| null, "pool": [{id, kind, label?, duration_s?, context?}]}` while the lane is open, `{"available": false, "reason": "..."}` for a Talking edit that cannot take one (cloud, customised timeline, gate closed). Absent, with `allowed_op_families` and every prompt byte-identical, while `SPEAKER_BACKGROUND_ENABLED` is off or the variant is not a Talking edit. |
+| Pool | The item's own `ready` photos and videos (`planner._background_pool_rows`, one scoped query). `set_background` accepts only an id in it; an empty pool fails closed. It is a section of its own, never `overlays.asset_pool`, which would also open `add_overlay` on a Talking edit. |
+| Apply | Both chat paths (async copilot edit, approval task) call `pin_background_for_commit[_sync]` before `prepare_editor_commit`: the same pin the HTTP Save route does, only for a Save the validator can accept, and the plan is restored if the Save is refused. |
+| Draft | A cleared background is an explicit `speaker_background: null`; `editor_payload_dump` keeps it through the draft's None filter and `merge_editor_draft`. Untouched means absent. |
+| Receipts | A refused Save answers `Couldn't ...` with the reason in English and Turkish (`BACKGROUND_REFUSALS`); a gate the model was told about answers as an unmet request with the snapshot's reason; an op the family never offered is `capability_unavailable` ("Not done: put that behind you ..."). |
+| Parity | Group `speaker_background` in `kria/editor_capability_parity.py` maps `setSpeakerBackground` and `removeSpeakerBackground`. The scanner counts only `func` declarations, so the session's computed properties and the `static` `backgroundChoices(from:)` need no row. |
+
+Not covered by chat in v1: a background chosen in the editor but not yet Saved reaches a turn only
+through the editor's `client_state` if the app sends a `speaker_background` lane (the server reads a
+draft's `speaker_background`; `EditorStateIn.lanes` carries no such lane yet), and the brief-receipt
+ledger (`brief_checks`) does not judge a background the worker later drops; that drop is on
+`phone_lane_receipt.dropped`.
+
 ## Client contract: camera pick
 
 The camera picks the background before the take exists as a job, so the pick is thread state,
