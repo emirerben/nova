@@ -29,6 +29,9 @@ struct TeleprompterTakeManifest: Codable, Equatable, Sendable, Identifiable {
     var audioCheck: TakeAudioCheck?
     /// Whether the raw take reached the Photos library. Optional so older manifests still decode.
     var savedToPhotos: Bool?
+    /// KRI-1119: the background the creator filmed in front of. The movie is still the raw camera. Optional so
+    /// older manifests decode unchanged, and omitted from the JSON when nil.
+    var speakerBackground: SpeakerBackgroundReference?
 
     init(id: UUID = UUID(), fileName: String? = nil, status: TeleprompterTakeStatus = .capturing,
          interrupted: Bool = false, capturedAt: Date = .now, script: TeleprompterScriptDraft, intakeID: UUID = UUID(),

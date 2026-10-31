@@ -32,6 +32,9 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostStickers: Bool? = nil
     /// KRI-646: text Bend (curved text). The server advertises it only to a build that speaks protocol 9. Missing = off (no Bend slider).
     var textBend: Bool? = nil
+    /// KRI-1119: Talk-to-camera green screen. The camera offers a live background picker only when the server advertises
+    /// it (a build that speaks protocol 27 with the feature on for this account). Missing = off (no Background control).
+    var speakerBackground: Bool? = nil
     /// KRI-742: the chat composers show a mic button (talk instead of type). Missing = off (no mic).
     var voiceDictation: Bool? = nil
     /// KRI-756: the server offers footage-aware suggestion chips to this account. Missing = off (the old fixed chips stay).
@@ -88,6 +91,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
     var slidePostDrawingEnabled: Bool { slidePostDrawing == true }
     var slidePostStickersEnabled: Bool { slidePostStickers == true }
     var textBendEnabled: Bool { textBend == true }
+    var speakerBackgroundEnabled: Bool { speakerBackground == true }
     var voiceDictationEnabled: Bool { voiceDictation == true }
     var suggestionChipsEnabled: Bool { suggestionChips == true }
     var clipSelectionQuestionsEnabled: Bool { clipSelectionQuestions == true }
@@ -127,6 +131,7 @@ struct CreationCapabilities: Codable, Equatable, Sendable {
         case slidePostDrawing = "slide_post_drawing"
         case slidePostStickers = "slide_post_stickers"
         case textBend = "text_bend"
+        case speakerBackground = "speaker_background"
         case voiceDictation = "voice_dictation"
         case suggestionChips = "suggestion_chips"
         case requestOutcomeContext = "request_outcome_context"
@@ -172,6 +177,7 @@ extension CreationCapabilities {
         slidePostDrawing = try container.decodeIfPresent(Bool.self, forKey: .slidePostDrawing)
         slidePostStickers = try container.decodeIfPresent(Bool.self, forKey: .slidePostStickers)
         textBend = try container.decodeIfPresent(Bool.self, forKey: .textBend)
+        speakerBackground = try container.decodeIfPresent(Bool.self, forKey: .speakerBackground)
         voiceDictation = try container.decodeIfPresent(Bool.self, forKey: .voiceDictation)
         suggestionChips = try container.decodeIfPresent(Bool.self, forKey: .suggestionChips)
         requestOutcomeContext = try container.decodeIfPresent(Bool.self, forKey: .requestOutcomeContext)
