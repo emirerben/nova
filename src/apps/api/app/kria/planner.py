@@ -5462,12 +5462,49 @@ async def _gate_unresolved_choices(
     )
     # KRI-723: the creator's named moments of one take. Grounded ones are pinned; for the
     # rest an app that can answer is asked, before any approval card, to point at them.
+    inspections = None
+    if (
+        settings.kria_prompt_moment_inspection_enabled
+        and settings.clip_intents_enabled
+        and answers_moment_questions
+        and item_id is not None
+    ):
+        from app.services.length_planning import DEFAULT_MOMENT_S
+        from app.services.named_moments import MomentOrderError, named_moments
+        from app.services.prompt_moment_inspection import inspect_named_moments
+
+        ask = brief_moment_ask(brief)
+        try:
+            moment_set = named_moments(
+                strategy,
+                planned.media_snapshot,
+                moment_count=ask.count if ask is not None else None,
+            )
+        except MomentOrderError:
+            moment_set = None
+        if moment_set is not None:
+            turn_end = turn_deadline.get()
+            inspections = await inspect_named_moments(
+                db,
+                creator_id=creator_id,
+                item_id=item_id,
+                moment_set=moment_set,
+                events=events,
+                allow_provider=settings.kria_prompt_moment_inspection_allow_provider,
+                max_window_s=ask.each_s if ask is not None and ask.each_s else DEFAULT_MOMENT_S,
+                budget_s=(
+                    turn_end - _POST_UNDERSTANDING_RESERVE_S - time.monotonic()
+                    if turn_end is not None
+                    else None
+                ),
+            )
     moments = _moment_decision(
         strategy,
         planned.media_snapshot,
         brief,
         events,
         can_ask=answers_moment_questions and settings.clip_intents_enabled,
+        inspections=inspections,
     )
     if moments.recovery is not None:
         return replace(
@@ -5682,6 +5719,7 @@ def _moment_decision(
     events: Sequence[tuple[str, Any]],
     *,
     can_ask: bool,
+    inspections: Any = None,
 ) -> Any:
     """KRI-723: the named moments' pins, or the question that gets them (no model call)."""
     from app.services.length_planning import DEFAULT_MOMENT_S  # noqa: PLC0415
@@ -5708,6 +5746,7 @@ def _moment_decision(
         events,
         can_ask=can_ask,
         default_window_s=(ask.each_s if ask is not None and ask.each_s else DEFAULT_MOMENT_S),
+        inspections=inspections,
     )
 
 

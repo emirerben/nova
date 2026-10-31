@@ -1,0 +1,54 @@
+---
+title: "Event ideas, bug 1"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): PR fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#fdf2d0,stroke:#7f7968,color:#1b2631
+  classDef group0Path fill:#fdf2d0,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  classDef group1 fill:#f8d7da,stroke:#7c6c6d,color:#1b2631
+  classDef group1Fixed fill:#f8d7da,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group4 fill:#ffffff,stroke:#808080,color:#1b2631
+  classDef group4Path fill:#ffffff,stroke:#1f3a93,stroke-width:4px,color:#1b2631
+  state "Legend" as legend {
+    state "Working" as legendGroup0
+    state "Error shown" as legendGroup1
+    state "Before ideas" as legendGroup4
+    state "Fixed or new with PR fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendGroup4 group4
+  class legendFixed plainFixed
+  state "Research off" as g0 {
+    state "direction panel open" as s0
+    state "no ideas yet" as s1
+  }
+  state "Research on" as g1 {
+    state "Find ideas, AI is writing<br/>ideas" as s2
+    state "Find ideas, checking saved<br/>answers" as s3
+    state "Find ideas, dropping<br/>repeats" as s4
+    state "Find ideas, fact checker<br/>reviewing ideas" as s5
+    state "direction panel open" as s6
+    state "no ideas yet, “Kria hit a<br/>problem”" as s7
+  }
+  [*] --> s1
+  s1 --> s0 : 1. tap Find ideas
+  s0 --> s6 : 2. toggle Research
+  s6 --> s3 : 3. tap Find ideas from N ready
+  s3 --> s2 : 4. no saved answer, AI asked
+  s2 --> s5 : 5. AI answers with usable<br/>ideas
+  s5 --> s7 : 6. fact checker flags one idea
+  s5 --> s4 : with PR fix, fact checker<br/>flags one idea
+  class s0 group4Path
+  class s1 group4Path
+  class s2 group0Path
+  class s3 group0Path
+  class s4 group0Path
+  class s5 group0Path
+  class s6 group4Path
+  class s7 group1Fixed

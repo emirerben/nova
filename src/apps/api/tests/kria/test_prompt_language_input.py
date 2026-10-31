@@ -64,6 +64,9 @@ LANGUAGE_NEUTRAL: dict[str, str] = {
     "agents/shot_ranker.py::ShotRankerAgent": "ranks moments",
     "agents/song_classifier.py::SongClassifierAgent": "labels from a fixed vocabulary",
     "agents/song_sections.py::SongSectionsAgent": "song section timing",
+    "agents/source_moment_location.py::SourceMomentLocationAgent": (
+        "source timestamps and internal evidence; creator labels copy request words"
+    ),
     "agents/style_observation.py::StyleObservationAgent": "semantic style vocabulary",
     "agents/template_recipe.py::TemplateRecipeAgent": "template analysis",
     "agents/template_text.py::TemplateTextAgent": "reads template text as written",

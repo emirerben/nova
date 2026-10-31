@@ -1286,6 +1286,8 @@ class Settings(BaseSettings):
     # See docs/pipelines/clip-understanding.md. Apply: `fly secrets set
     # CLIP_INTENTS_ENABLED=true --app nova-video` + restart api + worker.
     clip_intents_enabled: bool = False
+    kria_prompt_moment_inspection_enabled: bool = False
+    kria_prompt_moment_inspection_allow_provider: bool = False
     # KRI-680: measure each analysed video's brightness (mean luma + share of near-black
     # frames, subprocess FFmpeg on the analysis copy; app/services/clip_exposure.py) and
     # put it in the clip record as words ("very dark, almost nothing visible (...)") so

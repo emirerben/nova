@@ -14,6 +14,7 @@ from app.pipeline.best_parts import (
     BestPartsConflict,
     BestPartsResult,
     edit_cap_s,
+    is_fixed_moment,
     select_best_parts,
     select_moment_windows,
     select_pinned_moment_windows,
@@ -1077,9 +1078,9 @@ def _pinned_moment_windows(
     fixed = sum(
         (_number(pin.get("source_end_s")) or 0.0) - (_number(pin.get("source_start_s")) or 0.0)
         for pin in pins
-        if pin.get("origin") == "creator_answer"
+        if is_fixed_moment(pin)
     )
-    flexible = sum(1 for pin in pins if pin.get("origin") != "creator_answer")
+    flexible = sum(1 for pin in pins if not is_fixed_moment(pin))
     # The creator's own length for each moment wins; else what the total leaves.
     width = each_s or DEFAULT_MOMENT_S
     if each_s is None and target_s is not None and flexible and target_s - fixed > 0:
@@ -1131,8 +1132,8 @@ def _moments_record(
         if window.get("reason") not in _MOMENT_WINDOW_REASONS.get(str(pin.get("origin")), ()):
             return None
         row = {**dict(pin), "media_id": window["media_id"], "window_index": index}
-        if pin.get("origin") == "creator_answer":
-            # The window that plays IS the creator's interval (ends at the take's end).
+        if is_fixed_moment(pin):
+            # The played window keeps the fixed source interval.
             row["source_start_s"] = window["source_start_s"]
             row["source_end_s"] = window["source_end_s"]
         out.append(row)
@@ -1166,7 +1167,7 @@ def _check_moments(envelope: Mapping[str, Any], windows: Sequence[Any]) -> None:
             raise ValueError("length plan moment window changed")
         if window.get("reason") not in _MOMENT_WINDOW_REASONS[str(moment["origin"])]:
             raise ValueError("length plan moment window changed")
-        if moment["origin"] == "creator_answer":
+        if is_fixed_moment(moment):
             for key in ("source_start_s", "source_end_s"):
                 got, want = _number(window.get(key)), _number(moment.get(key))
                 if got is None or want is None or abs(got - want) > 0.001:
