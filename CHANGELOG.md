@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.33.0] - 2026-10-31
+
+### Fixed
+- fix(deploy): wait-timeout for release machine prep, sweep never-started release machines, quieter drift check (KRI-1096) (#1989) <!-- release-pr: 1989 -->
+
 ## [0.83.32.0] - 2026-10-31
 
 ### Changed
