@@ -6193,13 +6193,13 @@ async def _plan_live_turn(
         and not answers_clip_question
         and _fast_path_eligible(user_message)
     )
-    failed_editor_correction = correction_candidate and _is_text_edit_ask(user_message)
-    if (
-        correction_candidate
-        and not failed_editor_correction
-        and any(
-            row.get("render_status") in {"failed", "needs_attention"} for row in latest_variants
-        )
+    text_correction = correction_candidate and _is_text_edit_ask(user_message)
+    failed_variant = any(
+        row.get("render_status") in {"failed", "needs_attention"} for row in latest_variants
+    )
+    saved_heads = []
+    if (text_correction and not latest_variants) or (
+        correction_candidate and not text_correction and failed_variant
     ):
         saved_heads = (
             (
@@ -6216,6 +6216,20 @@ async def _plan_live_turn(
             .scalars()
             .all()
         )
+    # A text ask corrects the failed render (staged on its editor head, or refused honestly)
+    # only when that render left something to correct: a variant, or editor work built on the
+    # job. A render that failed before making any video (Leverkusen M2 10-31: phone plan
+    # refused, no `variants` key) leaves only the strategy draft, so the change re-plans like
+    # every other follow-up to a failed first render.
+    failed_editor_correction = text_correction and (
+        bool(latest_variants)
+        or any(
+            isinstance(head, CreatorEditDraft)
+            and (head.snapshot_json or {}).get("kind") == "editor"
+            for head in saved_heads
+        )
+    )
+    if correction_candidate and not text_correction and failed_variant:
         failed_editor_correction = any(
             failed_editor_draft_basis(
                 head, latest_job, row, thread_id=thread_id, creator_id=creator_id, item_id=item.id
