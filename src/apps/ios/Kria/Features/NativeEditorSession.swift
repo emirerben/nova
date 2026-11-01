@@ -1469,6 +1469,24 @@ struct NativeEditorTemporaryVideo: Sendable {
             itemID = "fixture-drawing-item"
             variantKey = "initial"
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt") {
+            // KRI-1136: a device-rendered montage whose server opens `clips.tilt`; Save commits through the stub transport
+            // and the first clip's saved tilt comes back on the next launch (`-ui-testing-editor-tilt-reset` starts upright).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-tilt-item"
+            variantKey = "initial"
+            rendersOnDevice = true
+            let defaults = UserDefaults.standard
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt-reset") {
+                defaults.removeObject(forKey: NativeEditorUITestFixtures.savedTiltKey)
+            }
+            if let data = defaults.data(forKey: NativeEditorUITestFixtures.savedTiltKey),
+               let saved = try? JSONDecoder().decode(JSONValue.self, from: data), !document.clips.isEmpty {
+                document.clips[0].raw["tilt"] = saved
+            }
+            document.capabilities["clips.tilt"] = EditorCapability(editable: true)
+            cleanDocument = document
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
             // KRI-1118: same stub commit transport; the pool visuals are canned (see `refreshVisualLibrary`).
             api = NativeEditorUITestCommitTransport.api()

@@ -158,6 +158,8 @@ enum NativeEditorUITestFixtures {
 
     /// The drawings the stub commit transport last saved (UserDefaults, so a relaunch "reopens" them).
     static let savedDrawingsKey = "kria.ui-test.saved-drawings.v1"
+    /// KRI-1136: the first timeline slot's saved `tilt`, kept across relaunches by the stub commit transport.
+    static let savedTiltKey = "kria.ui-test.saved-tilt.v1"
 
     /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
     static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
@@ -920,6 +922,13 @@ enum NativeEditorUITestCommitTransport {
                 }
                 if let drawings = fields["drawings"], let saved = try? JSONEncoder().encode(drawings) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedDrawingsKey)
+                }
+                if let slots = fields["timeline_slots"]?.arrayValue, let first = slots.first?.objectValue {
+                    if let tilt = first["tilt"], tilt != .null, let saved = try? JSONEncoder().encode(tilt) {
+                        UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedTiltKey)
+                    } else if first["tilt"] != nil {
+                        UserDefaults.standard.removeObject(forKey: NativeEditorUITestFixtures.savedTiltKey)
+                    }
                 }
                 if let lane = fields["speaker_background"], let saved = try? JSONEncoder().encode(lane) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedSpeakerBackgroundKey)

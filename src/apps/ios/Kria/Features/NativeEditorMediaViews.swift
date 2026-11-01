@@ -435,7 +435,7 @@ struct NativeVideoPreview: View {
             guard radius > 1 else { return }
             let scale = baseline.scale * hypot(next.dx, next.dy) / radius
             scaleHandler(for: baseline)?(scale)
-            let rotation = baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi
+            let rotation = NativeTextRotationSnap.angle(baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi)
             liveMediaScale = scale / max(0.001, baseline.scale)
             liveMediaRotation = rotation - baseline.rotation
             session.setVisualEditorStyle(baseline.item.selection, key: "rotation_deg", value: .number(max(-360, min(360, rotation))))
