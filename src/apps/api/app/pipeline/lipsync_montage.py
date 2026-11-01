@@ -73,6 +73,7 @@ from app.pipeline.unified_montage import (
     _story_beats,
     _title,
     _window_start_s,
+    brief_view,
 )
 from app.schemas.edit_proposal import (
     CREATOR_SELECTED_ORIENTATION_REASON,
@@ -861,6 +862,51 @@ def _title_entrance(planned: object, requirements: Sequence[Any] | None) -> str 
     return normalize_title_animation(planned) or (asks[0].resolved_edge() if asks else None)
 
 
+def _entrance_plays(titled: bool) -> bool:
+    """A title entrance reaches the screen: the lane switch is on, the plan has an opening or
+    closing title to play it on, and the phone has verified a text-entrance form
+    (`animation_ask.text_entrance_form`). Otherwise both titles stay static, nothing is stamped
+    and the card says so (`route_capabilities.lipsync_song`)."""
+    if not titled or not settings.lipsync_route_follows_prompt_enabled:
+        return False
+    from app.kria.animation_ask import text_entrance_form  # noqa: PLC0415
+
+    return text_entrance_form() is not None
+
+
+@dataclass(frozen=True)
+class _Asks:
+    """Live asks in the shape `brief_view` reads a brief in."""
+
+    asks: tuple[Any, ...]
+
+    @property
+    def requirements(self) -> list[Any]:
+        return list(self.asks)
+
+    def live(self) -> list[Any]:
+        return list(self.asks)
+
+
+def planned_title_entrance(
+    strategy: Mapping[str, Any] | None, requirements: Sequence[Any] | None
+) -> str | None:
+    """The entrance `plan_lipsync_montage` gives this plan's titles, else None, read before the
+    plan exists by the approval card (`route_capabilities.lipsync_song`).
+
+    The titles are found the way the planner finds them: `_title` over the asks, then the
+    strategy's closing title. Typography never drops either (`_fit_typography`).
+    """
+    strategy = strategy or {}
+    asks = tuple(requirements or ())
+    if not settings.lipsync_route_follows_prompt_enabled:
+        return None
+    title, _source = _title(strategy, brief_view(_Asks(asks)))
+    if not _entrance_plays(bool(title or _nfc(strategy.get("closing_title")))):
+        return None
+    return _title_entrance(strategy.get("title_animation"), asks)
+
+
 def plan_lipsync_montage(
     clips: Sequence[UnifiedClip],
     alignment: SongAlignment,
@@ -889,8 +935,9 @@ def plan_lipsync_montage(
     ``position_basis="creator_stack"``) and B-roll. ``strategy``/``view`` supply only the
     creator's title, closing title and typography; with
     ``LIPSYNC_ROUTE_FOLLOWS_PROMPT_ENABLED`` the strategy and the brief's live
-    ``requirements`` also give both titles their entrance (`_title_entrance`). The song
-    still sets the cuts and the length. ``output_orientation`` is the
+    ``requirements`` also give both titles their entrance (`_title_entrance`), only when a
+    title is there to play it and the phone can (`_entrance_plays`). The song still sets the
+    cuts and the length. ``output_orientation`` is the
     creator's explicit finished-video shape (KRI-306); without it the snapshot
     infers one from the footage. ``freeze_frames`` (``freeze_frame_planned_for``: the phone
     that approved can hold a frame) lets a short stretch of song nobody filmed be covered by
@@ -1133,7 +1180,7 @@ def plan_lipsync_montage(
         snapshot_kwargs["opening_title_duration_s"] = hold
     entrance = (
         _title_entrance(strategy.get("title_animation"), requirements)
-        if settings.lipsync_route_follows_prompt_enabled
+        if _entrance_plays(bool(title or closing))
         else None
     )
     if entrance is not None:

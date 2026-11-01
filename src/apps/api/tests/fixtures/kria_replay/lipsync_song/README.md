@@ -51,10 +51,10 @@ names; hashes; media ids (`analysis-proxy-lipsync_song-NN`).
 | 2.story_structure | disclosed_ok | VERIFIED (card line) | |
 | 2.caption_style (`karaoke`) | disclosed_ok | VERIFIED (card line) | |
 | 2.target_duration_s (stated 30 s) | disclosed_ok | VERIFIED (length line) | |
-| 2.title_animation | disclosed_ok | VERIFIED (card line + r3 decline) | L4: VERIFIED (applied in the render) |
+| 2.title_animation | disclosed_ok | VERIFIED (card line + r3 decline) | L4: VERIFIED (same card line: no title to play it on) |
 | 3.r2 keep it 30 seconds | disclosed_ok | VERIFIED (the card's length line) | |
-| 3.r3 animation ask | disclosed_ok | VERIFIED (route decline) | L4: VERIFIED (honored in the render) |
-| 4.title_animation, 5.r3 | honored | NOT VERIFIED (no render replay yet) | L4: VERIFIED (`snapshot.title_animation`, replay controls valid) |
+| 3.r3 animation ask | disclosed_ok | VERIFIED (route decline) | L4: VERIFIED (same decline: no title to play it on) |
+| 4.title_animation, 5.r3 | honored | NOT VERIFIED (no render replay yet) | L4: NOT VERIFIED, lane target kept (the entry stamps no entrance: this plan has no title) |
 | 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
@@ -79,6 +79,8 @@ at these in the video: lip sync to the uploaded song".
 
 The field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no wording quality, no native
 render. Honored checks come from `scripts/kria/route_replays/lipsync_song.py`, which calls the
-route's `RENDER_ENTRY` (`plan_lipsync_montage`) with this fixture's own plan and asks. The fixture
-has no title words, so the entrance it records plays on no text here; with a title and a closing
-title both enter that way (agents/DECISIONS.md "Prompt fidelity wave 2: lipsync").
+route's `RENDER_ENTRY` (`plan_lipsync_montage`) with this fixture's own plan and asks. This plan has
+no opening or closing title, so nothing could play "animate the title in": the entry stamps no
+entrance, the card keeps the title-animation line and the r3 decline, and 4/5 stay lane targets.
+With a title (or closing title) and a phone that plays text entrances, both titles enter the asked
+way and the line and the decline go (agents/DECISIONS.md "Prompt fidelity wave 2: lipsync").

@@ -3341,42 +3341,62 @@ watermark as hard obstacles, then raised.
 
 Lane L4 of KRI-1097 wave 2 (creator-song lip-sync montage, `pipeline/lipsync_montage.py`).
 
-**Decision:** the lip-sync titles enter the way the creator asked. `plan_lipsync_montage` takes the
-bound brief's live asks (`requirements`, a plan parameter the render-entry pin allows) and stamps
-`snapshot.title_animation` (`_title_entrance`): a named animation ask on the title or on all the
-text wins (a `style` ask such as "animate the title in" counts: `animation_ask(styles=True)`),
-then the plan's own `title_animation`, then an unnamed ask's plain fade. `guided_story` plays it on
-the lip-sync opening and closing titles (`_lipsync_title_motion`) in the form the phone verified
-(`text_entrance_form` / `entrance_patch`: phases with `authoredText`, the legacy effect with
-`animatedText`, static otherwise). The runner passes the asks: `_run_phone_unified_montage_job` ->
-`_plan_phone_user_song_montage` -> `_plan_phone_user_song_core` -> the entry. Table:
-`title_animation` is `Applied(via=plan_lipsync_montage)`; the animation decline now fires only for
-an ask the titles cannot play (per-clip, one clip, "none"), so the card no longer says the title
-won't animate when it will.
+**Decision:** the lip-sync titles enter the way the creator asked, only where an entrance can
+actually play. `plan_lipsync_montage` takes the bound brief's live asks (`requirements`, a plan
+parameter the render-entry pin allows) and resolves the entrance (`_title_entrance`): a named
+animation ask on the title or on all the text wins (a `style` ask such as "animate the title in"
+counts: `animation_ask(styles=True)`), then the plan's own `title_animation`, then an unnamed ask's
+plain fade. It stamps `snapshot.title_animation` only when `_entrance_plays`: the lane switch is
+on, the plan has an opening or closing title, and the phone verified a text-entrance form
+(`text_entrance_form`), as the unified montage stamps only with a title. `guided_story` plays it on
+both titles (`_lipsync_title_motion`: phases with `authoredText`, the legacy effect with
+`animatedText`). The runner passes the asks: `_run_phone_unified_montage_job` ->
+`_plan_phone_user_song_montage` -> `_plan_phone_user_song_core` -> the entry.
+
+**Card:** `title_animation` stays `NotApplied`, with a line that disappears only when the titles do
+enter (`WithAsks(_title_animation)` over `planned_title_entrance`, which finds the titles the way
+the planner does: `_title` over the asks, then the closing title). This is the unified montage's
+pacing rule ("not applied unless it is"), not `Applied`: the route honors the field only on titled
+plans and phones that play entrances, and an `Applied` entry can never disclose the other cases.
+The r3-style decline (`_animation_not_played`) stays for per-clip, one-clip and "none" asks and,
+new, for any ask with no title to play on or no verified entrance form (the unified montage keeps
+its decline when nothing moves). A decline sees only its own ask, so a title that exists only as
+another ask's literal reads as no title there: the card can say less than the render does, never
+more. Any error in the check keeps the line.
+
+**Fix round (reviewer, 2026-11-01).** (1) Grader frame-walk escape: real, in
+`scripts/kria/score_route.py`, foundation-owned, not used by this lane; left to the foundation (the
+lane module imports only `lipsync_montage`, `unified_montage` and `schemas.user_song`, and this lane
+now turns no honored check green). (2) Switch-off card: was missing the title-animation line; now
+byte-identical. (3) Phone without `authoredText`/`animatedText`: no stamp, line and decline kept.
+(4) No title (the fixture): no stamp, line and decline kept, so 4.title_animation and 5.r3 stay lane
+targets; closing them needs a fixture whose plan has a title (foundation call). (5) Composer call:
+the stamp still makes `creation_text_composition` read the request when a titled plan's entrance
+plays (guard from #1706: an entrance match does not prove segmentation or per-word timing). That is
+the unified montage's behavior for the same snapshot; untitled plans and closed phone gates call the
+composer exactly as before.
 
 **Still disclosed, not honored:** a stated length (the song span owns the length), the pace
 (`RecordedOnly`: cuts follow the song), the song section (no typed ask exists), a story direction
 (`creator_song`) and a caption style with no lyric captions.
 
 **Kill switch:** `LIPSYNC_ROUTE_FOLLOWS_PROMPT_ENABLED` (default true). `false` + restart api and
-worker: no entrance is stamped, the projection ignores one already stamped, and every animation
-ask is declined again. Proof: the fixture's recipe (snapshot, plan record and compiled text
-elements, with and without an opening and closing title) dumped on the foundation and on this lane
-with the switch off is byte-identical; with it on the only differences are `title_animation` and
-the two title rows' `animation_phases`.
+worker: no entrance is stamped, the projection ignores one already stamped, and the card shows the
+title-animation line and every animation decline word for word as before the lane. Proof: a probe of
+21 plans (the fixture; title, closing-only, pinned-only, literal-title, ask and plan variants; pace
+and length moved) with the phone gate open and closed, lane vs foundation with the switch off:
+snapshot, plan record, compiled text rows, rows after the creation text pass, card records, card
+text and whether the composer is called are identical in all 42 cases.
 
-**Limits:** (1) `FIELD_HANDLING` is static, so with the switch off the plan-field line "I can't
-animate the title" does not come back (the typed-ask decline does). (2) A plan with no title words
-records the entrance and nothing plays it, and the card says nothing; the unified montage has the
-same gap. The `lipsync_song` fixture is this case (r3 is honored at `snapshot.title_animation`, the
-grader's recipe path). (3) With an entrance stamped and title words present, the creation text pass
-runs the composer instead of skipping it (`creation_text_composition`: an entrance match does not
-prove segmentation), as on the unified montage. (4) The fixture's `replay_inputs` (song analysis,
-take positions) are reconstructed; the fixture builder does not carry them. (5) No native iPhone
-render or export was checked.
+**Limits:** (1) The decline's one-ask view (above). (2) Two conflicting named asks (title "pop",
+all text "fade"): the title ask plays and the other is not declined. (3) The fixture's
+`replay_inputs` (song analysis, take positions) are reconstructed; the fixture builder does not
+carry them. (4) No native iPhone render or export was checked.
 
-**Verified:** `make kria-replay FIXTURE=lipsync_song` 15/15 VERIFIED with valid controls (4.title_animation
-and 5.r3 turned green and left `lane_targets.json`); the other seven fixtures report what they did on
-the foundation. A two-take lip-sync plan with a title, a closing title and a typed "typewriter"
-style ask, compiled to the phone recipe with production features: both title layers enter with
-typewriter and the dispatch capability gate accepts the recipe; switch off, both are static.
+**Verified:** `make kria-replay FIXTURE=lipsync_song` exits 0: 13 verified, 4.title_animation and
+5.r3 expected red with render evidence (the entry returns no entrance for this untitled plan),
+every control ok, `lane_targets.json` equal to the foundation, golden lines changed only on the
+titled probe (`every_field`, both languages). The other seven fixtures match the foundation output.
+Probe with the switch on and production features: titled plans stamp the asked entrance and both
+title rows play it, with no line or decline; untitled, pinned-only and closed-gate plans match the
+foundation.
