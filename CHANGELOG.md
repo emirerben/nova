@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.48.0] - 2026-11-01
+
+### Changed
+- fix(kria): file names said for a subject bind its later clip asks; a new order basis drops the replaced ends (KRI-1112 3/3) (#2001) <!-- release-pr: 2001 -->
+
 ## [0.83.47.0] - 2026-11-01
 
 ### Changed
