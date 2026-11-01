@@ -256,6 +256,8 @@ class _Recorded(ModelClient):
         search_failures: int = 0,
         copy_unmet: list[str] | None = None,
         review_demands_style: bool = False,
+        copy_truncations: int = 0,
+        review_rejections: int = 0,
     ) -> None:
         self.calls = calls
         self.grounding = grounding
@@ -263,6 +265,9 @@ class _Recorded(ModelClient):
         self.search_failures = search_failures
         self.copy_unmet = copy_unmet or []
         self.review_demands_style = review_demands_style
+        self.copy_truncations = copy_truncations
+        self.review_rejections = review_rejections
+        self.corrections: list[str] = []
 
     def invoke(self, *, model: str, prompt: str, **_: object) -> ModelInvocation:  # noqa: ARG002
         if prompt.startswith("Research this public topic"):
@@ -281,7 +286,11 @@ class _Recorded(ModelClient):
             return ModelInvocation(raw_text=raw)
         if prompt.startswith("Write SHORT researched"):
             self.calls["copy"] += 1
+            if self.calls["copy"] <= self.copy_truncations:
+                # The model spent its whole output budget thinking (finish_reason MAX_TOKENS).
+                return ModelInvocation(raw_text="", finish_status="truncated")
             data = json.loads(prompt.split("Data:\n", 1)[1])
+            self.corrections.append(data.get("correction", ""))
             windows = data["snapshot"]["research_windows"]
             captions = []
             for keyword, label, text, fact, quote in (
@@ -312,6 +321,12 @@ class _Recorded(ModelClient):
         if prompt.startswith("Review proposed on-screen captions"):
             self.calls["review"] += 1
             context = json.loads(prompt.split("Data:\n", 1)[1])["context"]
+            if self.calls["review"] <= self.review_rejections:
+                return ModelInvocation(
+                    raw_text=json.dumps(
+                        {"approved": False, "reason": "Two explanations overlap the same footage."}
+                    )
+                )
             if (
                 self.review_demands_style
                 and "animation" in context["request"].lower()
@@ -351,12 +366,16 @@ class _Recorded(ModelClient):
         raise AssertionError("unexpected model call: " + prompt[:80])
 
 
+_LAST_CLIENT: dict[str, _Recorded] = {}
+
+
 def _record(monkeypatch, grounding, **behaviour) -> dict[str, int]:  # noqa: ANN001, ANN003
     calls = {"search": 0, "copy": 0, "review": 0, "composer": 0}
     client = _Recorded(calls, grounding, **behaviour)
     monkeypatch.setattr(researched_text, "GroundedGeminiClient", lambda: client)
     monkeypatch.setattr(researched_text, "default_client", lambda: client)
     monkeypatch.setattr(text_lane, "default_client", lambda: client)
+    _LAST_CLIENT["client"] = client
     return calls
 
 
@@ -876,6 +895,61 @@ async def test_research_with_any_look_fact_is_never_held_once_the_research_is_pr
     content = str(_reply(thread_id).content)
     assert "I can't make this yet" not in content
     assert "Sourced on-screen explanations" in content
+
+
+@pytest.mark.asyncio
+async def test_a_writer_that_runs_out_of_output_budget_is_retried_not_refused(monkeypatch) -> None:
+    """Live local run on main 2026-11-01 (the Assos prompt): the copy writer thought past its
+    output budget (finish_reason MAX_TOKENS), had no retry, and the preview reported "no usable
+    cited facts from institutional sources" and held the draft back. A truncation is the
+    model's budget, not a fact about the sources: the runtime's retry at low thinking runs."""
+    calls = _record(monkeypatch, INSTITUTIONAL, copy_truncations=1)
+    result, accepted, thread_id = await _turn(monkeypatch)
+
+    assert result["status"] == "awaiting_approval", result
+    assert calls["copy"] == 2  # the truncated call, then the retry
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    assert "no usable cited facts" not in str(_reply(thread_id).content)
+    assert binding is not None and binding.prepared_research["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_draft_is_corrected_once_before_the_draft_is_held_back(
+    monkeypatch,
+) -> None:
+    """Live local run on main 2026-11-01: "Research explanations overlap" / the reviewer asking
+    for a correction ended the turn in "I can't make this yet" on the first miss, though the
+    writer was never told what to fix. One correction round, with the reason, before giving up."""
+    calls = _record(monkeypatch, INSTITUTIONAL, review_rejections=1)
+    result, accepted, thread_id = await _turn(monkeypatch)
+
+    assert result["status"] == "awaiting_approval", result
+    assert (calls["copy"], calls["review"]) == (2, 2)
+    corrections = _LAST_CLIENT["client"].corrections
+    assert corrections[0] == "" and "overlap" in corrections[1]
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    assert binding is not None and binding.prepared_research["status"] == "ready"
+
+
+def test_a_truncated_model_answer_is_never_filed_as_a_source_limit() -> None:
+    """A truncation cannot be cached for an hour as "no institutional source": it says nothing
+    about the sources. A malformed answer still is that limit."""
+    from app.agents._runtime import (
+        SchemaError,
+        TerminalOutputTruncatedError,
+        TerminalSchemaError,
+        _OutputTruncatedError,
+    )
+    from app.kria import research_preview
+
+    truncated = TerminalOutputTruncatedError("writer: output truncated")
+    truncated.__cause__ = _OutputTruncatedError("model truncated output")
+    assert research_preview._schema_failure(truncated) is None
+    malformed = TerminalSchemaError("writer: schema")
+    malformed.__cause__ = SchemaError("not well formed")
+    assert research_preview._schema_failure(malformed) is not None
 
 
 @pytest.mark.asyncio
