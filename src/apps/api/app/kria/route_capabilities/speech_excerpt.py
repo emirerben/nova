@@ -1,8 +1,9 @@
 """Phone spoken-excerpt montage (`services/phone_speech_montage_job.py`, KRI-282).
 
 Excerpts of what the clips say, cut to the speaker and back to fast cuts in between; the cut
-length is the planner's ``cut_s`` or a fixed default. It plays the clips' own sound, draws the
-confirmed texts from the render contract and refuses a licensed sound effect (KRI-608).
+length is the planner's ``cut_s``, else the plan's pace (KRI-1097), else a fixed default. It
+plays the clips' own sound, draws the confirmed texts from the render contract and refuses a
+licensed sound effect (KRI-608).
 """
 
 from __future__ import annotations
@@ -33,6 +34,22 @@ def _music(value: Any, _s: Mapping[str, Any]) -> str | None:
     )
 
 
+def _pace_applied(value: Any, strategy: Mapping[str, Any]) -> bool:
+    """The default cut between spoken lines is already a fast cut; any other pace sets that
+    cut when it changes cut lengths (`paced_cut_bounds`: not a silent "balanced", not with
+    ``SPEECH_EXCERPT_ROUTE_FOLLOWS_PROMPT_ENABLED`` off).
+
+    Judged on the plan the job carries: `generative_jobs.build_generative_job` erases
+    ``pacing_requested`` and nothing restores it, so a "balanced" the creator said reaches the
+    cut as the silent default and keeps its line."""
+    if value == "fast":
+        return True
+    from app.pipeline.phone_speech_montage_plan import paced_cut_bounds  # noqa: PLC0415
+
+    carried = {key: item for key, item in strategy.items() if key != "pacing_requested"}
+    return paced_cut_bounds(carried) is not None
+
+
 def _sfx(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
@@ -45,10 +62,9 @@ def _sfx(value: Any, _s: Mapping[str, Any]) -> str | None:
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
-    # The default cut between excerpts is already a fast cut.
     "pacing": NotApplied(
         lines.pacing_line(
-            lambda value, _s: value == "fast",
+            _pace_applied,
             "the cuts between spoken lines keep a fixed length",
             "konuşmalar arasındaki kesimler sabit uzunlukta",
         )
@@ -93,6 +109,9 @@ READERS = RouteReaders(
 RENDER_ENTRY = RenderEntry(
     "pipeline/phone_speech_montage_plan.py:compile_phone_speech_montage_plan",
     {
+        # Every muted picture cut: the fast cuts between spoken lines and any b-roll under a
+        # line (a cutaway holds 2.4 s whatever the pace). The speaker's own excerpts play at 1.
+        "pace": "0.tracks[kind=video].clips[volume=0.0].source_duration",
         "length_s": "0.duration",
     },
 )

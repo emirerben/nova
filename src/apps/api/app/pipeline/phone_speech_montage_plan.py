@@ -58,12 +58,13 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.config import settings
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -84,6 +85,7 @@ from app.pipeline.phone_recipe_shared import (
     refit_source_window,
     voice_tail_slack_s,
 )
+from app.schemas.edit_proposal import MixedMediaHoldBounds, pace_hold_bounds
 from app.services.phone_sources import PhoneSourceBinding
 
 _STORY_CANVAS = Canvas(width=1080, height=1920)
@@ -242,13 +244,50 @@ class _BrollPool:
         )
 
 
-def _cut_scale(sections: tuple[PhoneSpeechSection, ...]) -> float:
+def paced_cut_bounds(strategy: Any) -> MixedMediaHoldBounds | None:
+    """The hold each fast cut keeps to when the plan's pace changes cut lengths, else None.
+
+    The pace counts when `length_policy.effective_pace` says it does: "fast" and "relaxed",
+    and "balanced" only when the creator said it (a silent default keeps the fixed cut).
+    A section's own ``cut_s`` (a cut length the request gave) still wins. None with
+    ``SPEECH_EXCERPT_ROUTE_FOLLOWS_PROMPT_ENABLED`` off, so every cut is as before.
+    """
+    if not settings.speech_excerpt_route_follows_prompt_enabled:
+        return None
+    if not isinstance(strategy, Mapping):
+        return None
+    from app.services.length_policy import effective_pace  # noqa: PLC0415
+
+    if effective_pace(strategy) is None:
+        return None
+    return pace_hold_bounds(str(strategy.get("pacing")))
+
+
+def _default_cut_s(bounds: MixedMediaHoldBounds | None) -> float:
+    """The cut of a section the request gave no ``cut_s``: the fixed default when no pace
+    applies or when it already sits inside the pace (it is a fast cut), else the pace's
+    preferred hold."""
+    if bounds is None or bounds.minimum_s <= _DEFAULT_CUT_S <= bounds.maximum_s:
+        return _DEFAULT_CUT_S
+    return bounds.preferred_s
+
+
+def _paced_count(duration_s: float, count: int, bounds: MixedMediaHoldBounds) -> int:
+    """``count``, or fewer cuts when that many equal cuts would each be shorter than the pace
+    allows (0.75 s cuts for a fast pace that starts at 0.8 s). Never more cuts, so the
+    track budget `_cut_scale` set still holds."""
+    if count > 1 and duration_s / count < bounds.minimum_s:
+        return max(1, math.floor(duration_s / bounds.minimum_s))
+    return count
+
+
+def _cut_scale(sections: tuple[PhoneSpeechSection, ...], default_cut_s: float) -> float:
     """A global factor >= 1 that lengthens every fast cut until the main track fits.
 
     Applies to explicit per-section cut lengths too: a request for 0.4s cuts over
     80 seconds would need 200 clips, and the track holds 100.
     """
-    cuts = sum(s.duration_s / (s.cut_s or _DEFAULT_CUT_S) for s in sections if s.kind == "montage")
+    cuts = sum(s.duration_s / (s.cut_s or default_cut_s) for s in sections if s.kind == "montage")
     cutaway_s = sum(s.length_s for s in sections if s.kind == "speech" and s.visual == "cutaways")
     speaker_n = sum(1 for s in sections if s.kind == "speech" and s.visual == "speaker")
     fixed = speaker_n + math.ceil(cutaway_s / CUTAWAY_HOLD_S) + len(sections)
@@ -267,6 +306,7 @@ def compile_phone_speech_montage_plan(
     clip_labels: Sequence[PhoneClipLabel] = (),
     pinned_texts: Sequence[Any] | None = None,
     pinned_font_family: str | None = None,
+    strategy: Mapping[str, Any] | None = None,
 ) -> tuple[EditRecipeV2, SpeechMontageReceipt]:
     """Compile ordered, grounded sections into a schema-v2 recipe plus its receipt.
 
@@ -278,6 +318,9 @@ def compile_phone_speech_montage_plan(
     ``opening_title`` / ``clip_labels`` are the approved on-screen words (KRI-939): the
     title from 0 s, each label on every cut of its clip. Before this the excerpt recipe
     carried no text at all and the contract verifier refused it after approval.
+
+    ``strategy`` is the confirmed plan: its pace sets the cut of a montage section the
+    request gave no ``cut_s`` (`paced_cut_bounds`, KRI-1097).
     """
     if not sections:
         raise UnsupportedPhonePlan("the spoken-excerpt montage has no sections")
@@ -317,7 +360,9 @@ def compile_phone_speech_montage_plan(
             "to show. Add the clips to cut between"
         )
     pool = _BrollPool(pool_bindings)
-    cut_scale = _cut_scale(sections)
+    pace_bounds = paced_cut_bounds(strategy)
+    default_cut_s = _default_cut_s(pace_bounds)
+    cut_scale = _cut_scale(sections, default_cut_s)
 
     registry = _Assets()
     receipt = SpeechMontageReceipt()
@@ -356,8 +401,10 @@ def compile_phone_speech_montage_plan(
         section_start = cursor
         row: dict[str, Any] = {"index": index, "kind": section.kind, "start_s": round(cursor, 3)}
         if section.kind == "montage":
-            cut_s = (section.cut_s or _DEFAULT_CUT_S) * cut_scale
+            cut_s = (section.cut_s or default_cut_s) * cut_scale
             count = max(1, round(section.duration_s / cut_s))
+            if pace_bounds is not None and section.cut_s is None:
+                count = _paced_count(section.duration_s, count, pace_bounds)
             each = section.duration_s / count
             for _ in range(count):
                 binding, start, length = pool.take(each)

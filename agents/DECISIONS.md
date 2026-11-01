@@ -3336,3 +3336,60 @@ watermark as hard obstacles, then raised.
 - Guard: `tests/pipeline/test_phone_text_fit_never_fails.py` (roles x saved positions x obstacle
   sets, text groups, replay of job 07efa44c conditions). No burn-dict field changed, so the
   renderer-parity guard `test_both_renderers_honor_text_anchor_left` is untouched.
+
+## Prompt fidelity wave 2: speech
+
+2026-11-01, KRI-1097 lane L5 (spoken-excerpt montage, `pipeline/phone_speech_montage_plan.py`).
+
+**Decision:** the plan's pace sets the cut between spoken lines when the speech planner gave a
+montage section no `cut_s`. `compile_phone_speech_montage_plan(..., strategy=)` reads it through
+`paced_cut_bounds` (`length_policy.effective_pace` + `edit_proposal.pace_hold_bounds`): relaxed
+cuts at the pace's preferred 2.5 s, a creator-stated balanced at 1.8 s, fast keeps the route's
+0.8 s default (already inside the fast bounds). The count of equal cuts is lowered when rounding
+would make them shorter than the pace's minimum (a 3 s fast section: 3 x 1.0 s, not 4 x 0.75 s);
+never raised, so the track budget `_cut_scale` set holds (it now uses the paced default too). A
+section's own `cut_s` (a cut length the request gave) still wins, a silent "balanced" default
+keeps 0.8 s, and `PACE_DRIVES_CUTS_ENABLED=false` keeps 0.8 s. `run_phone_speech_montage_job`
+hands the confirmed `creator_strategy` to the entry.
+
+**Card:** `pacing` stays `NotApplied` with a value predicate (the unified montage's
+`_pace_applied` pattern), not `Applied`, because what the render does depends on the value: the
+line disappears for relaxed (and fast, as before) and stays for every "balanced" and for every
+non-fast pace with the switch off, so nothing is dropped silently. The predicate judges the plan
+the job carries: `generative_jobs.build_generative_job` erases `pacing_requested` and neither it
+nor the BriefBinding rebuild in `content_plan_build` restores it, so a "balanced" the creator said
+reaches every route's render as the silent default (0.8 s here). Checked through the real job
+runner (`run_phone_speech_montage_job` with its test seams, scratch run): relaxed pins
+[2.25, 2.25, 3.0], balanced/off/no strategy 0.75 s. Restoring the marker in the factory is a
+cross-route fix (KRI-1097 follow-up); when it lands, drop the filter in `_pace_applied`.
+Captions, music, hook, story, direction and title animation keep their lines and declines.
+Golden lines re-recorded for `speech_excerpt` only: the every_field probe (relaxed) loses its
+pacing line.
+
+**Failure modes checked first, then verified** (before/after dumps of the entry's recipe, receipt
+and card for 7 plans x 6 section layouts, scratch script, foundation tree exported from
+15c03a51b): switch off differs from the foundation (byte-identical, 42 cases plus cards); a
+stated `cut_s` overridden by the pace (unchanged at 0.5 s and 1.2 s); a silent balanced or no
+strategy changing cuts (unchanged); holds outside the pace's bounds from rounding (fixed by the
+lowered count; a section shorter than the pace's minimum stays one cut, and a fast 1.55 s section
+has no whole count inside 0.8 to 1.5 s); more cuts than the track holds (count only lowered);
+the total length moving (same, but 1 ms of 4-decimal rounding on 11 cuts of 20 s / 11, the class
+a stated `cut_s` already had); a non-mapping strategy (default cut).
+
+**Replay:** `scripts/kria/route_replays/speech_excerpt.py` calls the entry once with the
+fixture's plan; `replay_inputs` hold only the grounded layout (three speaker excerpts after three
+montage runs, no `cut_s`) and the b-roll ids. Recipe path `pace` =
+`0.tracks[kind=video].clips[volume=0.0].source_duration` (pin edited). Holds: relaxed
+[3.0, 2.25, 2.25, 3.5], medians fast 0.9 < balanced 1.75 < relaxed 3.0, switch off the
+foundation's 0.75/0.875 s for every move; `4.pacing` VERIFIED, controls valid, the other 7
+fixtures' scorecards identical to the foundation's.
+
+**Limits (not changed):** b-roll under a line (`visual: cutaways`) holds 2.4 s whatever the pace
+(inside balanced and relaxed, slower than fast), and the path counts it, so a fixture with
+cutaways would show a fast pace unmet. A paced cut longer than a short b-roll clip is cut at the
+clip's end and the section ends early (the montage loop does not refill, unlike cutaways); 0.8 s
+cuts rarely hit this. The speech planner may still write a `cut_s` the creator never said (its
+prompt's example shows 0.8); the route cannot tell, and treats any `cut_s` as stated.
+
+**Kill switch:** `SPEECH_EXCERPT_ROUTE_FOLLOWS_PROMPT_ENABLED` (default true, reserved by the
+foundation). `false` + restart api and worker: every cut and every card line as before this lane.

@@ -7,8 +7,9 @@ decides whether the creator asked to use what they say, and if so:
 1. transcribes the speech clips (cached whisper) and asks the planner agent to
    choose excerpts and lay out speech / montage sections;
 2. grounds every quoted excerpt to real word timings;
-3. compiles the sections (``phone_speech_montage_plan``) and pins the device
-   recipe as variant ``speech_montage`` (``resolved_archetype`` of the same name).
+3. compiles the sections (``phone_speech_montage_plan``) with the confirmed plan,
+   whose pace sets the cut a section without its own ``cut_s`` gets, and pins the
+   device recipe as variant ``speech_montage`` (``resolved_archetype`` of the same name).
 
 Returns ``False`` whenever the creator did not ask (or the kill switch is off),
 and the caller continues with the ordinary montage, byte-identically. It raises
@@ -23,6 +24,8 @@ phone-render only. A creator whose account cannot phone-render never reaches
 this job.
 
 Kill switch: ``SPEECH_EXCERPT_MONTAGE_ENABLED=false`` + worker restart.
+``SPEECH_EXCERPT_ROUTE_FOLLOWS_PROMPT_ENABLED=false`` + worker restart keeps the
+fixed default cut whatever the pace (KRI-1097).
 """
 
 from __future__ import annotations
@@ -338,6 +341,7 @@ def run_phone_speech_montage_job(
         pinned_font_family=(strategy or {}).get("font_family")
         if isinstance(strategy, dict)
         else None,
+        strategy=strategy,
     )
     recipe, pin_rows, pins_drawn, pin_notes = _with_creator_pins(recipe, strategy)
     validate_phone_pilot_recipe(recipe)
