@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-25-research-19",
+  "version": "2026-11-01-research-20",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -346,6 +346,62 @@
         "engagement_rate": 0.098051,
         "view_index": 4.7359,
         "sampled_at": "2026-10-25"
+      }
+    },
+    {
+      "id": "return-to-beloved-spot-01",
+      "niche": "city lifestyle & food",
+      "pillar": "curated food guides",
+      "idea": "revisit a spot you always return to in [your city] — frame it as ritual rather than discovery. The caption names the place and the habit; the clip is a quiet endorsement.",
+      "hook_pattern": "i always come back to [place]",
+      "filming_context": "10-15s at the spot itself — the counter, the window seat, your usual order — natural light, unhurried; the familiarity is the point",
+      "source": "tiktok:@allexmarielle (2026-11)",
+      "performance": {
+        "engagement_rate": 0.116,
+        "view_index": 3.86,
+        "sampled_at": "2026-11-01"
+      }
+    },
+    {
+      "id": "unexpected-candid-abroad-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "core memories",
+      "idea": "a candid beautiful moment that just happened while traveling — a spontaneous photoshoot, a perfect light, an unplanned detour. Caption frames it as a surprise.",
+      "hook_pattern": "this just transpired in [destination]",
+      "filming_context": "candid or portrait footage from the moment it happened — the unplanned energy shows; 15-30s or longer as a travel-day diary if warranted",
+      "source": "tiktok:@izzsiomoi (2026-11)",
+      "performance": {
+        "engagement_rate": 0.200,
+        "view_index": 2.81,
+        "sampled_at": "2026-11-01"
+      }
+    },
+    {
+      "id": "product-review-hope-it-helps-01",
+      "niche": "lifestyle & product reviews",
+      "pillar": "honest personal-use product reviews",
+      "idea": "an honest, warm review of a product you actually use — test it in your real life, share what you found, end with 'hope it helps'. The warmth converts reach without needing high comment volume.",
+      "hook_pattern": "[product] review — hope it helps",
+      "filming_context": "using the product in your real space (kitchen, bathroom, living room), natural light, conversational pace; 60-90s works well for this format",
+      "source": "tiktok:@nermozdemir (2026-11)",
+      "performance": {
+        "engagement_rate": 0.022,
+        "view_index": 4.42,
+        "sampled_at": "2026-11-01"
+      }
+    },
+    {
+      "id": "desire-one-liner-lifestyle-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "mindset & growth",
+      "idea": "a short clip captioned with a pure 'just wanna [universal desire]' statement — strip away all explanation; the desire is the hook",
+      "hook_pattern": "just wanna [universal desire, e.g. 'wear cute clothes & travel the world']",
+      "filming_context": "6-10s of a beautiful lifestyle or travel moment — the clip is the aspiration; the caption is the only text needed",
+      "source": "tiktok:@izzsiomoi (2026-11)",
+      "performance": {
+        "engagement_rate": 0.107,
+        "view_index": 2.67,
+        "sampled_at": "2026-11-01"
       }
     }
   ]

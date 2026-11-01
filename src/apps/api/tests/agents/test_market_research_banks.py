@@ -226,8 +226,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-10-21-language: creator-language line (KRI-784); banks untouched.
     # Bump 2026-10-25-research-19: weekly refresh — added seasonal-culture-lens-01
     #                  (allexmarielle pop-culture season filter, vi=3.92x).
-    assert archetypes_version() == "2026-10-25-research-19"
-    assert PERSONA_PROMPT_VERSION == "2026-10-25-research-19"
+    # Bump 2026-11-01-research-20: weekly refresh — added personal-product-reviewer-01
+    #                  (nermozdemir honest product review lane, vi=4.42x).
+    assert archetypes_version() == "2026-11-01-research-20"
+    assert PERSONA_PROMPT_VERSION == "2026-11-01-research-20"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -252,8 +254,11 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-10-21-language: creator-language line (KRI-784); banks untouched.
     # Bump 2026-10-25-research-19: weekly refresh — added season-culture-lens-01,
     #                  minimal-verdict-aesthetic-01.
-    assert content_ideas_version() == "2026-10-25-research-19"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-25-research-19"
+    # Bump 2026-11-01-research-20: weekly refresh — added return-to-beloved-spot-01,
+    #                  unexpected-candid-abroad-01, product-review-hope-it-helps-01,
+    #                  desire-one-liner-lifestyle-01.
+    assert content_ideas_version() == "2026-11-01-research-20"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-11-01-research-20"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -275,10 +280,13 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     #                  (success-factor bank unchanged; overlay bank moved separately).
     # Persona/content plan bumped to 2026-10-21-language (KRI-784); banks untouched.
     # Bump 2026-10-25-research-19: dated two-word caption reference; causal effect unmeasured.
-    assert success_factors_version() == "2026-10-25-research-19"
-    assert PERSONA_PROMPT_VERSION == "2026-10-25-research-19"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-10-25-research-19"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-29-research-19-grounded-hook-v3"
+    # Bump 2026-11-01-research-20: added honest-review-warm-cta-corpus-14 (vi=4.4x reach,
+    #                  low-er "hope it helps" pattern) and ritual-return-beloved-spot-corpus-15
+    #                  (vi=3.9x, 0.116 er — ritual vs discovery framing).
+    assert success_factors_version() == "2026-11-01-research-20"
+    assert PERSONA_PROMPT_VERSION == "2026-11-01-research-20"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-11-01-research-20"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-01-research-20"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -314,9 +322,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  and series-comeback-fadein-01; bumped both consuming agents.
     # Bump 2026-10-25-research-19: weekly refresh — added minimal-verdict-static-01
     #                  (2-word aesthetic verdict form, "kinda chic" pattern).
-    assert library_version() == "2026-10-25-research-19"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-10-29-research-19-grounded-hook-v3"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-10-25-research-19"
+    # Bump 2026-11-01-research-20: weekly refresh — added product-review-warm-fadein-01
+    #                  (warm "hope it helps" product review hook form).
+    assert library_version() == "2026-11-01-research-20"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-11-01-research-20"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-11-01-research-20"
 
 
 @pytest.mark.parametrize(
