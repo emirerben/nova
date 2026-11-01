@@ -248,13 +248,14 @@ _DESCRIBED_TEXT_EXCEPTION = (
 # `licensed_sfx` evidence line (the `$boundary_evidence_keys` slot) only with
 # PLANNER_BOUNDARY_HONEST_ENABLED; "" off, so that prompt is byte-identical.
 _BOUNDARY_EVIDENCE_KEYS = (
-    ',\n      "mixed_media_timing": "the creator\'s whole sentence or clause, word for word in'
-    " their language, asking for the photo and video timing you set (seconds as they wrote"
-    ' them), or null",'
-    '\n      "montage_cadence": "the creator\'s whole sentence or clause, word for word in their'
-    ' language, asking for the alternating cut and its seconds, or null",'
-    '\n      "video_reuse_policy": "the creator\'s whole sentence or clause, word for word in'
-    ' their language, asking to repeat, loop or alternate footage, or null"'
+    ',\n      "mixed_media_timing": "the creator\'s whole sentence, first word to end mark, word'
+    " for word in their language, asking for the photo and video timing you set (seconds and"
+    ' their unit as they wrote them), or null",'
+    '\n      "montage_cadence": "the creator\'s whole sentence, first word to end mark, word for'
+    " word in their language, asking for the alternating cut and its seconds (repeating"
+    ' footage needs its own video_reuse_policy sentence), or null",'
+    '\n      "video_reuse_policy": "the creator\'s whole sentence, first word to end mark, word'
+    ' for word in their language, asking to repeat, loop or alternate footage, or null"'
 )
 
 # KRI-118 item 1: guidance for the chat-picked "shape" layered on top of
@@ -1209,10 +1210,10 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if media.kind == "video" and media.duration_s is not None
                 ]
                 cadence = None
+                reuse_policy = recognize_explicit_cadence_reuse_policy(
+                    input.user_message
+                ) or recognize_cadence_reuse_policy(combined_request)
                 if cadence_cut_s is not None and len(videos) == 2:
-                    reuse_policy = recognize_explicit_cadence_reuse_policy(
-                        input.user_message
-                    ) or recognize_cadence_reuse_policy(combined_request)
                     cadence = MontageCadenceConstraint(
                         source_media_ids=[media.media_id for media in videos],
                         cut_duration_s=cadence_cut_s,
@@ -1239,6 +1240,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     "regex_cadence": cadence,
                     "reuse_messages": [request_contract, *user_messages, input.user_message],
                     "latest_message": input.user_message,
+                    "cadence_reuse": reuse_policy,
                 }
                 server_reads = _timing_cadence_reuse(action.strategy, **boundary_kwargs)
                 reads = (
@@ -1459,6 +1461,7 @@ def _timing_cadence_reuse(
     regex_cadence: MontageCadenceConstraint | None,
     reuse_messages: list[str],
     latest_message: str,
+    cadence_reuse: Literal["no_repeat", "allow_repeat"],
     quoted: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     """`mixed_media_timing`, `montage_cadence` and `video_reuse_policy` at the parse boundary.
@@ -1469,11 +1472,21 @@ def _timing_cadence_reuse(
     recognizers are silent and the model's quote of the creator's words grounds it
     (`_creator_quote`), the rule `media_scope` follows (KRI-129 part C). An ungrounded value is
     no creator ask, so the model still cannot grant itself repeats or a timing nobody asked for.
-    A latest-turn "stop alternating" keeps any cadence out.
+    A quote grounds only its own field: a timing quote keeps the photo and video holds, never
+    grouping the model read elsewhere, and a cadence quote keeps the cut, never the model's
+    permission to repeat footage (``cadence_reuse``, the server's reading, stands unless the
+    repeat ask is grounded by its own quote). A latest-turn "stop alternating" keeps any cadence
+    out.
     """
     keep = quoted or (lambda _field: False)
     if timing is None and strategy.mixed_media_timing is not None and keep("mixed_media_timing"):
-        timing = strategy.mixed_media_timing
+        model_timing = strategy.mixed_media_timing
+        timing = MixedMediaTimingProfile(
+            image_hold=model_timing.image_hold,
+            image_hold_s=model_timing.image_hold_s,
+            video_hold=model_timing.video_hold,
+            boundary_style=model_timing.boundary_style,
+        )
     cadence = regex_cadence
     if (
         cadence is None
@@ -1482,6 +1495,8 @@ def _timing_cadence_reuse(
         and keep("montage_cadence")
     ):
         cadence = strategy.montage_cadence
+        if not keep("video_reuse_policy"):
+            cadence = cadence.model_copy(update={"reuse_policy": cadence_reuse})
     reuse = (strategy.video_reuse_policy if keep("video_reuse_policy") else None) or "once"
     for message in reuse_messages:
         reuse = resolve_video_reuse_policy(message, reuse)
@@ -1505,12 +1520,45 @@ def _timing_cadence_reuse(
 # off they stay, and the evidence model refuses them as unknown keys, as the foundation did.
 _BOUNDARY_QUOTE_FIELDS = ("mixed_media_timing", "montage_cadence", "video_reuse_policy")
 
-# Characters that end a clause in any script. A boundary quote starts and ends at one of them
-# (or at the edge of a message), so it never leaves out words of its own clause. Punctuation,
-# not words: what the clause means is the model's reading (the language policy, KRI-773).
-_CLAUSE_MARKS = frozenset(".,;:!?\n。，、；：！？،؛؟")
-# Quotation marks, brackets and opening marks stepped over on the way to a clause edge.
-_CLAUSE_WRAPPERS = frozenset("\"'«»“”„‘’‚()[]¿¡ ")
+# Characters that end a sentence in any script. A boundary quote starts and ends at one of them
+# (or at the edge of a message), so it never leaves out words of its own sentence: a negation
+# before it reaches the quoted words across commas, colons and asides ("No quiero que, como la
+# última vez, las fotos ..."), and a later clause can turn them around. Punctuation, not words:
+# what the sentence means is the model's reading (the language policy, KRI-773).
+_SENTENCE_MARKS = frozenset(".;!?\n…。；！？؛؟।")
+# Quotation marks, brackets and opening marks stepped over on the way to a sentence edge.
+_SENTENCE_WRAPPERS = frozenset("\"'«»“”„‘’‚()[]¿¡ ")
+# How a seconds unit is written right after the digits ("2 s", "1.5-second", "2 segundos",
+# "2 saniyede"): notation read like the digits themselves, never what a sentence asks for.
+_SECOND_UNITS = frozenset(
+    {
+        "s",
+        "sec",
+        "secs",
+        "second",
+        "seconds",
+        "seg",
+        "segs",
+        "segundo",
+        "segundos",
+        "seconde",
+        "secondes",
+        "secondo",
+        "secondi",
+        "sek",
+        "sekunde",
+        "sekunden",
+        "sn",
+        "sny",
+        "saniye",
+        "saniyede",
+        "saniyelik",
+        "saniyeden",
+        "saniyeye",
+        "saniyeyi",
+        "saniyesi",
+    }
+)
 
 
 def _take_boundary_quotes(raw_action: object) -> tuple[object, dict[str, str]]:
@@ -1530,54 +1578,62 @@ def _take_boundary_quotes(raw_action: object) -> tuple[object, dict[str, str]]:
     return {**raw_action, "render_intent_evidence": rest}, quotes
 
 
-def _clause_edge(text: str, index: int, step: int) -> bool:
-    """Whether the slice boundary ``index`` of ``text`` is a clause edge, looking left
-    (``step`` -1) or right (+1): the edge of the text, or a clause mark past only wrappers. A
-    mark between two digits is a decimal point ("0.5"), not an edge."""
+def _sentence_edge(text: str, index: int, step: int) -> bool:
+    """Whether the slice boundary ``index`` of ``text`` is a sentence edge, looking left
+    (``step`` -1) or right (+1): the edge of the text, or a sentence mark past only wrappers. A
+    point between two digits is a decimal point ("0.5"), not an edge."""
     at = index - 1 if step < 0 else index
-    while 0 <= at < len(text) and text[at] in _CLAUSE_WRAPPERS:
+    while 0 <= at < len(text) and text[at] in _SENTENCE_WRAPPERS:
         at += step
     if not 0 <= at < len(text):
         return True
     mark = text[at]
-    if mark not in _CLAUSE_MARKS:
+    if mark not in _SENTENCE_MARKS:
         return False
-    decimal = mark in ".," and 0 < at < len(text) - 1
+    decimal = mark == "." and 0 < at < len(text) - 1
     return not (decimal and text[at - 1].isdecimal() and text[at + 1].isdecimal())
 
 
-def _whole_clauses_in(source: str, quote: str) -> bool:
-    """Whether ``quote`` is found in ``source`` (spacing aside) as one or more whole clauses.
-    A quote that carries its own closing mark ("... 2 segundos.") ends a clause."""
+def _whole_sentences_in(source: str, quote: str) -> bool:
+    """Whether ``quote`` is found in ``source`` (spacing aside) as one or more whole
+    sentences. A quote that carries its own closing mark ("... 2 segundos.") ends one."""
     lines = [" ".join(line.split()) for line in source.splitlines()]
     text = "\n".join(line for line in lines if line)
     flat = text.replace("\n", " ")
     start = flat.find(quote)
     while start >= 0:
         end = start + len(quote)
-        closed = _clause_edge(text, end, 1) or _clause_edge(text, end, -1)
-        if closed and _clause_edge(text, start, -1):
+        closed = _sentence_edge(text, end, 1) or _sentence_edge(text, end, -1)
+        if closed and _sentence_edge(text, start, -1):
             return True
         start = flat.find(quote, start + 1)
     return False
 
 
-def _numbers(text: str) -> list[float]:
-    """The numbers written with digits in ``text`` ("2", "0,5", "1.5")."""
+def _unit_after(text: str, index: int) -> str:
+    """The word starting at ``index`` past spaces and hyphens, casefolded ("" for none)."""
+    while index < len(text) and text[index] in " -\u00a0":
+        index += 1
+    end = index
+    while end < len(text) and text[end].isalpha():
+        end += 1
+    return text[index:end].casefold()
+
+
+def _seconds_written(text: str) -> list[float]:
+    """The numbers written with digits and a seconds unit right after them in ``text`` ("2
+    segundos", "0,5 s", "1.5-second"); the 2 of "Somos 2 amigos" is none."""
     out: list[float] = []
     run = ""
-    for index, char in enumerate(text):
+    for index, char in enumerate(f"{text} "):
         if char.isdecimal():
             run += char
-            continue
-        if char in ".," and run and text[index + 1 : index + 2].isdecimal() and "." not in run:
+        elif char in ".," and run and text[index + 1 : index + 2].isdecimal() and "." not in run:
             run += "."
-            continue
-        if run:
-            out.append(float(run))
+        elif run:
+            if _unit_after(text, index) in _SECOND_UNITS:
+                out.append(float(run))
             run = ""
-    if run:
-        out.append(float(run))
     return out
 
 
@@ -1601,11 +1657,13 @@ def _creator_quote(
     words):
     - the quote is the creator's own words, two words or more found verbatim (spacing aside)
       in what they wrote, the rule the title and pinned-text quotes follow;
-    - it is whole clauses of that text, never a fragment, so it cannot leave out words of its
-      own clause ("las fotos pasen muy rápido" out of "No quiero que las fotos pasen muy
-      rápido", "montaje lento" out of "Crea un montaje lento del verano en Madrid");
+    - it is whole sentences of that text, never a part, so it cannot leave out words of its own
+      sentence, even across commas and asides ("las fotos pasen muy rápido" out of "No quiero
+      que, como la última vez, las fotos pasen muy rápido", "montaje lento" out of "Crea un
+      montaje lento del verano en Madrid");
     - each number of seconds the model wrote (a cadence's cut, a photo hold) is written in it
-      with digits: "cada 2 segundos" grounds no 1 s cut, and no photo hold nobody gave.
+      with digits and a seconds unit right after them: "cada 2 segundos" grounds no 1 s cut,
+      and "Somos 2 amigos" no 2 s photo hold.
     Each check fails toward the server's own reading, the foundation's behaviour.
     """
 
@@ -1613,13 +1671,13 @@ def _creator_quote(
         quote = " ".join(str(quotes.get(field) or "").split())
         if len(quote.split()) < 2:
             return False
-        written = _numbers(quote)
+        written = _seconds_written(quote)
         if any(
             all(abs(value - number) > 0.02 for number in written)
             for value in _value_seconds(field, strategy)
         ):
             return False
-        return any(_whole_clauses_in(str(text or ""), quote) for text in creator_texts)
+        return any(_whole_sentences_in(str(text or ""), quote) for text in creator_texts)
 
     return quoted
 

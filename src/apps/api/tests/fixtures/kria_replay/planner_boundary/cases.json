@@ -19,22 +19,6 @@
    }
   }
  },
- "decline_lines": {
-  "en": {
-   "planner_title_animation": "I don't have a \"bounce\" animation for the title yet, so it won't be used",
-   "planner_label_position": "I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them",
-   "planner_mixed_media_timing": "I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing",
-   "planner_montage_cadence": "I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage",
-   "planner_video_reuse_policy": "I can't repeat or loop your footage on this edit, so no moment of it plays twice"
-  },
-  "tr": {
-   "planner_title_animation": "Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak",
-   "planner_label_position": "Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar",
-   "planner_mixed_media_timing": "Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor",
-   "planner_montage_cadence": "Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor",
-   "planner_video_reuse_policy": "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
-  }
- },
  "cases": [
   {
    "id": "es_timing",
@@ -791,7 +775,7 @@
   },
   {
    "id": "negation_elsewhere",
-   "about": "F12 control: a whole clause is quoted; a 'no' in the next clause leaves the timing kept",
+   "about": "F12/F16 control: the whole sentence is quoted; a 'no' in its later clause is the model's reading, never a word the server judges, so the timing stays",
    "message": "Las fotos tienen que pasar muy rápido y los videos un poco más largos, no pongas texto",
    "conversation": [],
    "manifest": "guided",
@@ -823,7 +807,7 @@
      },
      "summary": "A quick Lisbon montage.",
      "render_intent_evidence": {
-      "mixed_media_timing": "Las fotos tienen que pasar muy rápido y los videos un poco más largos"
+      "mixed_media_timing": "Las fotos tienen que pasar muy rápido y los videos un poco más largos, no pongas texto"
      }
     }
    },
@@ -1047,6 +1031,440 @@
     },
     "off": {
      "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   }
+  },
+  {
+   "id": "negated_across_aside",
+   "about": "F16: 'No quiero que' reaches the quoted words across a comma aside; the quote starts mid-sentence",
+   "message": "No quiero que, como la última vez, las fotos pasen muy rápido",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "las fotos pasen muy rápido"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   }
+  },
+  {
+   "id": "negated_across_parenthesis",
+   "about": "F16: the negation reaches the quoted words across a parenthetical aside",
+   "message": "No quiero (como la última vez) que las fotos pasen muy rápido",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "que las fotos pasen muy rápido"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   }
+  },
+  {
+   "id": "turned_by_later_clause",
+   "about": "F16: a later clause of the same sentence turns the quoted words around; the quote stops at the comma",
+   "message": "Las fotos pasan muy rápido, y eso no me gusta",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Las fotos pasan muy rápido"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   }
+  },
+  {
+   "id": "timing_keeps_only_holds",
+   "about": "F17: a timing quote keeps the photo and video holds, never photo runs or sport groups the model added",
+   "message": "Las fotos tienen que pasar muy rápido y los videos un poco más largos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut",
+       "image_grouping": "runs",
+       "sequence_grouping": "sport_context",
+       "sequence_group_order": [
+        "football",
+        "tennis"
+       ]
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Las fotos tienen que pasar muy rápido y los videos un poco más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+     },
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   }
+  },
+  {
+   "id": "digit_is_not_seconds",
+   "about": "F17: the 2 of 'Somos 2 amigos' has no seconds unit, so it grounds no 2 s photo hold",
+   "message": "Somos 2 amigos, las fotos muy rápido y los videos más largos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut",
+       "image_hold_s": 2.0
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Somos 2 amigos, las fotos muy rápido y los videos más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   }
+  },
+  {
+   "id": "unit_attached_seconds",
+   "about": "F17 control: a photo hold written with the unit attached ('1,5s') is the creator's",
+   "message": "Cada foto 1,5s y los videos un poco más largos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "standard",
+       "video_hold": "longer",
+       "boundary_style": "cut",
+       "image_hold_s": 1.5
+      }
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Cada foto 1,5s y los videos un poco más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": {
+      "image_hold": "standard",
+      "video_hold": "longer",
+      "boundary_style": "cut",
+      "image_hold_s": 1.5
+     },
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   }
+  },
+  {
+   "id": "cadence_quote_grants_no_repeat",
+   "about": "F15: a quoted cadence keeps its cut but not the model's permission to repeat footage; nobody asked for repeats, so the windows stay distinct",
+   "message": "Alterna entre los dos videos cada 2 segundos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "allow_repeat"
+      },
+      "video_reuse_policy": "allow_repeat"
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada 2 segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 2.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "direction": "fast_montage",
+     "render_program": "guided",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   }
+  },
+  {
+   "id": "cadence_and_repeat_quoted",
+   "about": "F15 control: repeats asked in their own quoted sentence keep the cadence's repeat permission",
+   "message": "Alterna entre los dos videos cada 2 segundos. Repite los videos en bucle hasta el final.",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "allow_repeat"
+      },
+      "video_reuse_policy": "allow_repeat"
+     },
+     "summary": "A quick Lisbon montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada 2 segundos.",
+      "video_reuse_policy": "Repite los videos en bucle hasta el final."
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 2.0,
+      "reuse_policy": "allow_repeat"
+     },
+     "video_reuse_policy": "allow_repeat",
+     "direction": "fast_montage",
+     "render_program": "guided",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden,propose_"
     }
    }
   }

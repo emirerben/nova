@@ -766,11 +766,19 @@ class CreativeStrategy(_CreatorModel):
         """A model never writes ``planner_declines``. When the Main Creator parse validates a
         model output it sets ``PLANNER_BOUNDARY_DECLINES_CONTEXT`` to the switch: on, the
         model's copy is dropped before anything reads it; off, it is refused as the unknown key
-        it was on the foundation. Without the context (a stored strategy) the server's value
-        stays."""
+        it was on the foundation.
+
+        Without the context it is a strategy the server stored, or a client draft that
+        `drafts.write_draft` already gave the head draft's value (a client's own copy never
+        survives). On, that value stays; off, it is dropped, so the strategy validates to what
+        the foundation made of it without the key. Refusing it instead would make every draft
+        stored while the switch was on unreadable after a rollback."""
         context = info.context if isinstance(info.context, dict) else {}
         if PLANNER_BOUNDARY_DECLINES_CONTEXT not in context:
-            return value
+            # Imported here: this schema loads before the settings can (the replay CLI).
+            from app.config import settings  # noqa: PLC0415
+
+            return value if settings.planner_boundary_honest_enabled else None
         if not context[PLANNER_BOUNDARY_DECLINES_CONTEXT]:
             raise PydanticKnownError("extra_forbidden")
         return None

@@ -26,18 +26,27 @@ F13 the model writes seconds the creator never wrote (a 1 s cut for "cada 2 segu
     hold nobody gave) and the quote keeps them.
 F14 a decline sentence is reworded into a claim ("I kept the photo timing you asked for") in
     either language and nothing fails.
+F15 a quoted cadence carries the model's own ``reuse_policy: allow_repeat``, so the plan loops
+    footage the creator never allowed.
+F16 a negation earlier in the sentence escapes the check because a comma or an aside sits
+    between it and the quote ("No quiero que, como la última vez, las fotos pasen muy rápido"),
+    or a later clause of the sentence turns the quoted words around.
+F17 a timing quote keeps grouping the model read elsewhere (photo runs, sport groups and their
+    order), or a digit that is not seconds ("Somos 2 amigos") grounds a photo hold.
+F18 a client draft save writes ``planner_declines`` (a forged card line), or with the switch off
+    a strategy carrying it validates to anything but the foundation's strategy.
 
-The checks behind F12 and F13 are language-neutral (punctuation and digits): the language policy
-(KRI-773/786) leaves what a clause means to the model's reading. Each case in
-``tests/fixtures/kria_replay/planner_boundary/cases.json`` names the modes it covers; the
-recorded corpus (``tests/fixtures/agent_evals/main_creator``) and the Assos draft cover F2 and
-F10 on real responses; ``decline_lines`` there is the recorded golden for F14.
+The checks behind F12, F13, F16 and F17 are language-neutral (sentence marks, digits and the
+seconds unit written after them): the language policy (KRI-773/786) leaves what a sentence means
+to the model's reading. Each case in ``tests/fixtures/kria_replay/planner_boundary/cases.json``
+names the modes it covers; the recorded corpus (``tests/fixtures/agent_evals/main_creator``) and
+the Assos draft cover F2 and F10 on real responses. F14 is the route card golden
+(``tests/kria/test_route_lines_golden.py``, probe ``planner_declines``).
 """
 
 from __future__ import annotations
 
 import copy
-import importlib.util
 import json
 from pathlib import Path
 
@@ -48,23 +57,15 @@ from app.agents._schemas.creator_agent import CreativeStrategy
 from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, MainCreatorAgent
 from app.config import settings
 from app.kria import route_disclosure
+from app.kria.drafts import _sanitize_strategy_duration_provenance
 from app.kria.reply_language import reply_language_for
-from app.kria.route_capabilities import ROUTE_TABLES
 from app.kria.strategy_policy import CheckedStrategy, check_strategy_for_runtime_v2
 
-REPO = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 CASES = json.loads((FIXTURES / "kria_replay/planner_boundary/cases.json").read_text())
 CORPUS = sorted((FIXTURES / "agent_evals/main_creator").glob("*.json"))
 BASE_INPUT = json.loads((FIXTURES / "agent_evals/main_creator/montage_strategy.json").read_text())[
     "input"
-]
-EVERY_DECLINE = [
-    {"field": "title_animation", "value": "bounce"},
-    {"field": "label_position", "value": "upper middle"},
-    {"field": "mixed_media_timing"},
-    {"field": "montage_cadence"},
-    {"field": "video_reuse_policy"},
 ]
 
 
@@ -103,15 +104,6 @@ def _card(strategy: dict, route: str, language: str) -> tuple[list, str]:
     with reply_language_for(language):
         lines = route_disclosure.strategy_notices(strategy, route=route)
         return lines, route_disclosure.card_text(lines)
-
-
-def _scorecard():
-    spec = importlib.util.spec_from_file_location(
-        "score_route", REPO / "scripts" / "kria" / "score_route.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 @pytest.mark.parametrize("case", CASES["cases"], ids=lambda case: case["id"])
@@ -158,19 +150,40 @@ def test_planner_boundary_case(monkeypatch, case: dict) -> None:
         assert {k: v for k, v in on_strategy.items() if k != "planner_declines"} == off_strategy
 
 
-def test_decline_lines_are_the_recorded_golden_and_say_not(monkeypatch) -> None:
-    """F14: every decline sentence, both languages, on every route, equals the recorded golden
-    and carries the scorecard's "not" word for its language (`score_route.NEGATION`)."""
-    monkeypatch.setattr(settings, "planner_boundary_honest_enabled", True)
-    negation = _scorecard().NEGATION
-    golden = CASES["decline_lines"]
-    for language in ("en", "tr"):
-        for route in ROUTE_TABLES:
-            lines, _text = _card({"planner_declines": EVERY_DECLINE}, str(route), language)
-            got = {line.subject: line.text for line in lines if line.subject.startswith("planner_")}
-            assert got == golden[language], (route, language)
-        for subject, text in golden[language].items():
-            assert negation[language].search(text), (language, subject, text)
+@pytest.mark.parametrize("on", [True, False], ids=["on", "off"])
+def test_a_client_draft_save_keeps_only_the_head_drafts_declines(monkeypatch, on: bool) -> None:
+    """F18: `drafts.write_draft` takes the strategy from the client; its `planner_declines`
+    never survive, the head draft's (the parse wrote them) do, and with the switch off neither
+    does, so the saved strategy is the foundation's."""
+    monkeypatch.setattr(settings, "planner_boundary_honest_enabled", on)
+    case = next(c for c in CASES["cases"] if c["id"] == "forged_declines")
+    clean = {k: v for k, v in case["raw"]["action"]["strategy"].items() if k != "planner_declines"}
+    forged = {**clean, "planner_declines": [{"field": "title_animation", "value": "spin"}]}
+    head = [{"field": "mixed_media_timing"}]
+
+    assert "planner_declines" not in _sanitize_strategy_duration_provenance(forged)
+    saved = _sanitize_strategy_duration_provenance(forged, authoritative_planner_declines=head)
+    assert saved.get("planner_declines") == (head if on else None)
+    if not on:
+        assert saved == _sanitize_strategy_duration_provenance(clean)
+
+
+def test_switch_off_a_stored_decline_validates_to_the_strategy_without_it(monkeypatch) -> None:
+    """F18: a strategy stored (or echoed by a client) while the switch was on stays readable
+    after a rollback and validates to exactly what the foundation made of it without the key;
+    a model output carrying the key is still refused (``forged_declines``, off)."""
+    for case in CASES["cases"]:
+        if not case["expect"]["on"].get("planner_declines"):
+            continue
+        stored = _parse(monkeypatch, json.dumps(case["raw"]), _input(case), on=True)["action"][
+            "strategy"
+        ]
+        monkeypatch.setattr(settings, "planner_boundary_honest_enabled", False)
+        bare = {k: v for k, v in stored.items() if k != "planner_declines"}
+        want = CreativeStrategy.model_validate(bare).model_dump(mode="json")
+        for value in (stored["planner_declines"], None, []):
+            got = CreativeStrategy.model_validate({**bare, "planner_declines": value})
+            assert got.model_dump(mode="json") == want, (case["id"], value)
 
 
 def test_switch_off_runs_report_the_v108_prompt(monkeypatch) -> None:

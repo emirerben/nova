@@ -3313,17 +3313,25 @@ reads were not available).
 `mixed_media_timing`, `montage_cadence` and `video_reuse_policy` follow the `media_scope` rule
 (KRI-129 part C): the English/Turkish recognizers' explicit reading still wins, and where they
 are silent the model's own value now stays, but only when the model's quote for it grounds it.
-Prompt v109 asks for the three quotes in `render_intent_evidence` (the creator's whole sentence
-or clause, word for word); the parse takes them out of the raw action before validation and only
+Prompt v109 asks for the three quotes in `render_intent_evidence` (the creator's whole sentence,
+word for word); the parse takes them out of the raw action before validation and only
 `_creator_quote` reads them. A quote grounds a value when (a) it is two words or more found
 verbatim in what the creator wrote (the rule titles and pinned texts already follow), (b) it is
-whole clauses of that text, starting and ending at punctuation or the edge of a message, never a
-fragment that leaves out words of its own clause, and (c) every number of seconds the model wrote
-(a cadence's cut, a photo hold) is written in it with digits. The checks read punctuation and
-digits, never words: the language policy (KRI-773/786, `test_kri667_no_new_intent_regexes`)
-leaves what a clause means to the model that read it. Every check fails toward the server's own
-reading, which is what the foundation kept. A latest-turn "stop alternating" still keeps any
-cadence out. A grounded ask the manifest cannot render (no guided proposals, a voiceover beside a
+whole sentences of that text, starting and ending at a sentence mark (`. ; ! ? …`, a line break,
+their CJK/Arabic forms) or the edge of a message, never a part that leaves out words of its own
+sentence: a negation before the quote reaches it across commas, colons and asides ("No quiero
+que, como la última vez, las fotos ..."), and a later clause can turn it around, and (c) every
+number of seconds the model wrote (a cadence's cut, a photo hold) is written in it with digits
+and a seconds unit right after them ("2 segundos", "1,5s"; "Somos 2 amigos" grounds nothing). A
+quote grounds only its own field: a timing quote keeps the photo and video holds
+(`image_hold`, `image_hold_s`, `video_hold`, `boundary_style`), never photo runs or sport groups
+the model added; a cadence quote keeps the cut, while the cadence's `reuse_policy` is the
+recognizers' reading (no repeats unless the creator's English/Turkish words grant them) unless
+`video_reuse_policy` is grounded by its own quote, so the model cannot grant repeats through a
+cadence. The checks read sentence marks, digits and the unit written after them, never what a
+sentence asks for: the language policy (KRI-773/786, `test_kri667_no_new_intent_regexes`) leaves
+that to the model that read it. Every check fails toward the server's own reading, which is what
+the foundation kept. A latest-turn "stop alternating" still keeps any cadence out. A grounded ask the manifest cannot render (no guided proposals, a voiceover beside a
 cadence) no longer costs a retry: the parse falls back to the server's own reading. A title
 animation or label position the renderer has no name for ("bounce", "upper middle") used to
 become None in the strategy validators and vanish. Both cases are now recorded on the strategy as
@@ -3341,9 +3349,10 @@ provider cannot grant itself permission to loop footage"),
 `test_main_creator_drops_model_invented_timing_for_unrelated_request`, and the recorded
 `video_reuse_default` response (very fast photo timing written for "Create a slow Summer in
 Madrid montage"). Keeping those values would put the model's guess ahead of the creator's prompt.
-The fix round tightened the rule after review: a verbatim fragment ("montaje lento" out of "Crea
+The fix rounds tightened the rule after review: a verbatim fragment ("montaje lento" out of "Crea
 un montaje lento del verano en Madrid", "las fotos pasen muy rápido" out of "No quiero que las
-fotos pasen muy rápido") let an invention back in. A first try at word lists (photo nouns,
+fotos pasen muy rápido") let an invention back in, and so did a clause cut at a comma (round 2:
+whole sentences, seconds units, per-field quotes). A first try at word lists (photo nouns,
 "no"/"nicht" negation words) was dropped: it broke the language policy guard and still guessed
 meaning.
 
@@ -3361,11 +3370,20 @@ creator's clause grounds a value, so the words it leaves out turn the ask around
 subject ("No quiero que ...", "Crea un montaje lento ...", Turkish "geçmesin" left off); F13
 seconds the creator never wrote are kept (a 1 s cut for "cada 2 segundos", an invented photo
 hold); F14 a decline sentence is reworded into a claim in either language and nothing fails
-(`decline_lines` golden plus the scorecard's `NEGATION` words). Mutation check: accepting
-fragments fails four F12 cases; skipping the seconds check fails both F13 cases; counting every
-quote fails F2/F6/F12; counting none fails F1/F5 and the controls; turning the timing line into
-"I kept the photo and video timing you asked for" fails F14; accepting a model-written
-`planner_declines` or reporting v109 with the switch off fails F10.
+(probe `planner_declines` in the route card golden `tests/fixtures/kria_replay/golden_lines.json`,
+`tests/kria/test_route_lines_golden.py`, plus the scorecard's `NEGATION` words); F15 a quoted
+cadence carries the model's own repeat permission; F16 a negation earlier in the sentence escapes
+across a comma or an aside, or a later clause turns the quoted words around; F17 a timing quote
+keeps grouping nobody asked for, or a digit that is not seconds grounds a hold; F18 a client draft
+save writes `planner_declines`, or with the switch off a strategy carrying it validates to
+anything but the foundation's strategy. Mutation check: accepting fragments fails four F12 cases;
+treating a comma as a sentence edge fails F16; skipping the seconds check fails both F13 cases and
+counting any digit as seconds fails F17; keeping the model's grouping or the cadence's repeat
+permission fails F17/F15; counting every quote fails F2/F6/F12; counting none fails F1/F5 and the
+controls; rewording the English timing or reuse line, or the Turkish cadence line, fails the
+route card golden (F14); keeping a client's `planner_declines` or a stored one with the switch
+off fails F18; accepting a model-written `planner_declines` or reporting v109 with the switch off
+fails F10.
 
 **Wipes left as they are (justified):** `pacing_requested`, `selected_music_section`,
 `song_captions`, `resolved_song_takes`, `choice_answers`, `selection_reconciliation` and
@@ -3382,13 +3400,22 @@ mechanisms and model plans, not creator asks; their visible consequences are alr
 one is refused as an unknown key, and `CreativeStrategy._planner_declines_are_server_owned`
 refuses a model-written `planner_declines` the same way (the same `SchemaError`, error class and
 retry feedback as the foundation). The card shows no planner line even for a stored strategy
-that carries one. Apply: `fly secrets set PLANNER_BOUNDARY_HONEST_ENABLED=false --app nova-video`
+that carries one. Outside the parse, `CreativeStrategy` with the switch off drops a carried
+`planner_declines` instead of refusing it, so the strategy validates to exactly the foundation's
+strategy without the key: refusing would make every draft stored (or echoed by a client) while
+the switch was on unreadable after a rollback. That is the one schema-level difference from the
+foundation, and no client can use it: the only client-writable strategy path,
+`drafts.write_draft`, drops the client's copy in both switch states and keeps only the head
+draft's, which the parse wrote (`_sanitize_strategy_duration_provenance`, like `choice_answers`);
+every other `CreativeStrategy.model_validate` reads a strategy the server stored. Apply: `fly secrets set PLANNER_BOUNDARY_HONEST_ENABLED=false --app nova-video`
 (api + worker) + restart.
 
-**Verification:** with the switch off, all 19 cases and the 89 recorded Main Creator responses
-give the same parse output or the same exception text, error class and retry feedback as a
-`git archive` of the foundation, the same prompt hashes and the same card lines on all seven
+**Verification:** with the switch off, all 27 cases and the 89 recorded Main Creator responses
+give the same parse output or the same exception text, error class and retry feedback as the
+foundation worktree (15c03a51b), the same prompt hashes and the same card lines on all seven
 routes in both languages; the model and typed-wire schemas hash the same in both switch states.
+The only difference in that dump is the schema-level one above (`forged_declines` validated as a
+bare strategy: the foundation refuses the key, the switch-off lane drops it).
 With the switch on the recorded responses parse as off. Through the real recipe
 (`plan_unified_montage` after `check_strategy_for_runtime_v2`): a quoted Spanish very fast photo
 timing gives a 0.667 s photo hold, a fragment, an invented hold or no quote gives the 1.2 s
@@ -3404,8 +3431,11 @@ checks provenance, not meaning. A model that misreads a whole clause and quotes 
 its value: "No quiero que las fotos pasen muy rápido" quoted whole beside very fast photos, or
 "Create a slow Summer in Madrid montage" quoted whole beside the recorded `video_reuse_default`
 invention, both keep the timing. Only the live eval in (1) can measure how often. Seconds written
-as words ("dos segundos") ground no number, so such a hold or cut is dropped as on the
-foundation; CJK quotes fail the two-word rule. (3) The web-only v1 route
+as words ("dos segundos"), or with a unit outside the English, Spanish, Portuguese, French,
+Italian, German and Turkish spellings in `_SECOND_UNITS`, ground no number, so such a hold or
+cut is dropped as on the foundation; an abbreviation point ("p. ej.") counts as a sentence end;
+CJK quotes fail the two-word rule. A grouping ask (photo runs, sport groups) in words the
+recognizers do not read stays dropped, as on the foundation: no quote covers it. (3) The web-only v1 route
 (`routes/creator_agent._apply_explicit_render_intent`) still re-derives `mixed_media_timing` from
 the recognizer; Kria (iOS) does not run it. (4) A fallback reverts all three fields together.
 (5) With the switch off, a strategy that carries both an unknown key and `planner_declines`
