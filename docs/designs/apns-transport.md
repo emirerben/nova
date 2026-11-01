@@ -8,9 +8,10 @@ written in the terminal-result transaction. This adapter has no delivery ledger.
 
 `APNsTarget` holds a sandbox or production environment, a validated bundle topic,
 and a `SecretStr` device token. `ActivityNotification` holds activity and
-notification UUIDs. The only custom payload field is `activity_id`; the alert is
-always `Open Kria to see an update.` No caller can provide a title, URL, media,
-user identifier, or arbitrary payload. Results are `Accepted`, `Rejected`, or
+notification UUIDs plus a closed `kind` (`video_ready` or `action_required`). The
+only custom payload field is `activity_id`; the alert is a generic English
+`{title, body}` pair chosen from the `ALERT_COPY` table by `kind` (KRI-1087). No
+caller can provide a title, URL, media, user identifier, or arbitrary payload. Results are `Accepted`, `Rejected`, or
 `TransportUncertain`. Accepted means APNs accepted a request, never receipt.
 
 The parent selected this isolated typed transport over a database delivery ledger.

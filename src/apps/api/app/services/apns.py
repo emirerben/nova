@@ -3,8 +3,9 @@
 import asyncio
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal
 from uuid import UUID
 
@@ -30,7 +31,15 @@ Code = Literal[
     "InvalidRequest",
     "UnknownResponse",
 ]
+ActivityKind = Literal["video_ready", "action_required"]
 _HOSTS = {"sandbox": "api.sandbox.push.apple.com", "production": "api.push.apple.com"}
+# Generic English copy chosen by the closed kind. Never user data (no titles, media or text).
+ALERT_COPY: Mapping[ActivityKind, tuple[str, str]] = MappingProxyType(
+    {
+        "video_ready": ("Your video is ready", "Open it to watch and share."),
+        "action_required": ("Your video needs a look", "Open Kria to see what to do next."),
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -56,9 +65,15 @@ class APNsTarget:
 class ActivityNotification:
     activity_id: UUID
     notification_id: UUID
+    kind: ActivityKind
 
     def __post_init__(self) -> None:
-        if not isinstance(self.activity_id, UUID) or not isinstance(self.notification_id, UUID):
+        if (
+            not isinstance(self.activity_id, UUID)
+            or not isinstance(self.notification_id, UUID)
+            or not isinstance(self.kind, str)
+            or self.kind not in ALERT_COPY
+        ):
             raise ValueError("Invalid activity notification")
 
 
@@ -122,6 +137,7 @@ class APNsTransport:
             )
         ):
             return Rejected("provider", "InvalidBearer")
+        title, body = ALERT_COPY[notification.kind]
         request = httpx.Request(
             "POST",
             f"https://{_HOSTS[target.environment]}/3/device/{target.token.get_secret_value()}",
@@ -136,7 +152,7 @@ class APNsTransport:
                 "content-type": "application/json",
             },
             json={
-                "aps": {"alert": "Open Kria to see an update."},
+                "aps": {"alert": {"title": title, "body": body}},
                 "activity_id": str(notification.activity_id),
             },
             extensions={"timeout": dict(connect=5.0, read=5.0, write=5.0, pool=5.0)},
