@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.91.0] - 2026-11-01
+
+### Fixed
+- fix(ios): fit the Kria outro card instead of zooming it on wide videos (KRI-1154) (#2047) <!-- release-pr: 2047 -->
+
 ## [0.83.90.0] - 2026-11-01
 
 ### Fixed
