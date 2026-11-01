@@ -709,7 +709,7 @@ class PlanFacts:
     phone_montage: bool = False
     clip_sound_toggles: Mapping[str, Any] | None = None
     # KRI-1150: the clips a finished phone Talking render played as muted cutaways over the
-    # speaker (the writer's own roles receipt). None = not a finished Talking render.
+    # speaker, by phone media id (its placed cutaways). None = not a finished Talking render.
     talking_footage_ids: tuple[str, ...] | None = None
     # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): whether the edit can draw one
     # at all (None = not checked), and the cards as approval keeps them (a draft, repaired
@@ -2275,24 +2275,19 @@ def plan_facts_from_phone_variant(variant: Mapping[str, Any] | None) -> PlanFact
 
 
 def _talking_footage_ids(variant: Mapping[str, Any]) -> tuple[str, ...] | None:
-    """The clips a finished phone Talking render played muted over the speaker, off its own
-    receipts: the roles of the multi-clip writer, else the cutaways of the one-speaker head."""
-    multi = variant.get("phone_talking_multi_clip")
-    if isinstance(multi, Mapping) and isinstance(multi.get("clips"), list):
-        return tuple(
-            str(row["clip_id"])
-            for row in multi["clips"]
-            if isinstance(row, Mapping) and row.get("role") == "footage" and row.get("clip_id")
-        )
-    head = variant.get("phone_talking_head")
-    if isinstance(head, Mapping) and isinstance(head.get("cutaways"), list):
-        return tuple(
-            dict.fromkeys(
-                str(row["media_id"])
-                for row in head["cutaways"]
-                if isinstance(row, Mapping) and row.get("media_id")
+    """The clips a finished phone Talking render played muted over the speaker, by phone
+    media id: the placed cutaways of the multi-clip writer, else those of the one-speaker head.
+    A footage clip the writer left out never played, so it is not listed."""
+    for field in ("phone_talking_multi_clip", "phone_talking_head"):
+        receipt = variant.get(field)
+        if isinstance(receipt, Mapping) and isinstance(receipt.get("cutaways"), list):
+            return tuple(
+                dict.fromkeys(
+                    str(row["media_id"])
+                    for row in receipt["cutaways"]
+                    if isinstance(row, Mapping) and row.get("media_id")
+                )
             )
-        )
     return None
 
 
