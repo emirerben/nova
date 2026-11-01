@@ -659,3 +659,141 @@ def test_matching_references_validate_the_final_speech_start(reverse):
         prompt="",
     )
     assert rows[0].start_s == 1.25
+
+
+def _voiceover_montage(**changes):
+    import uuid
+    from types import SimpleNamespace
+
+    from app.services.overlay_generation import OverlayPlanRequest
+
+    slots = [
+        dict(slot_id="a", clip_index=0, in_s=0, duration_s=5, transition_after="cut"),
+        dict(slot_id="b", clip_index=1, in_s=0, duration_s=5, transition_after="cut"),
+    ]
+    variant = dict(
+        variant_id="voiceover_only",
+        render_generation_id="g1",
+        duration_s=10,
+        resolved_archetype="voiceover",
+        user_timeline={"slots": slots},
+        text_elements=[
+            dict(id="voiceover-intro-1", role="generative_intro", start_s=3.0, end_s=9.5),
+        ],
+        **changes,
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        mode="generative",
+        assembly_plan={"variants": [variant]},
+        all_candidates={},
+    )
+    body = OverlayPlanRequest(
+        job_id=job.id,
+        variant_id="voiceover_only",
+        base_generation="g1",
+        document_fingerprint="fingerprint",
+        mode="automatic",
+        prompt="",
+        editor_snapshot={
+            "editor_payload": {"base_generation": "g1", "sections": {"timeline_slots": slots}}
+        },
+    )
+    item = SimpleNamespace(clip_assignments=[], voiceover_gcs_path="voiceovers/me.m4a")
+    return job, variant, item, body
+
+
+def test_recorded_voiceover_montage_plans_from_the_spoken_narration(monkeypatch):
+    from app.pipeline.transcribe import Word
+    from app.services import overlay_generation
+    from app.services.overlay_generation import plan_context
+
+    words = [
+        Word(text="Fresh", start_s=1.0, end_s=1.4, confidence=0.9),
+        Word(text="coffee", start_s=1.4, end_s=2.0, confidence=0.9),
+        Word(text="wakes", start_s=2.1, end_s=2.5, confidence=0.9),
+        Word(text="me", start_s=2.5, end_s=2.7, confidence=0.9),
+        Word(text="up.", start_s=2.7, end_s=3.1, confidence=0.9),
+    ]
+    monkeypatch.setattr(overlay_generation, "voiceover_words", lambda path: words)
+    job, variant, item, body = _voiceover_montage()
+    context = plan_context(job, variant, item, body, [])
+    speech = [row for row in context.evidence if row["kind"] == "speech"]
+    assert speech and speech[0]["words"][1] == dict(quote="coffee", start_s=1.4, end_s=2.0)
+
+
+def test_unreadable_voiceover_degrades_to_no_speech_not_an_error(monkeypatch):
+    from app.services import overlay_generation
+    from app.services.overlay_generation import plan_context
+
+    def boom(path):
+        raise OSError("gone")
+
+    monkeypatch.setattr(overlay_generation, "voiceover_words", boom)
+    job, variant, item, body = _voiceover_montage()
+    assert not [
+        r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"
+    ]
+
+
+def test_whole_video_title_does_not_reserve_every_moment():
+    from app.services.overlay_generation import occupied_intervals
+
+    persistent = dict(id="voiceover-intro-1", role="generative_intro", start_s=3.0, end_s=9.5)
+    short_card = dict(id="card", start_s=5.0, end_s=6.0)
+    result = occupied_intervals(dict(text_elements=[persistent, short_card]), duration_s=10)
+    assert [(r["start_s"], r["end_s"]) for r in result] == [(5.0, 6.0)]
+
+
+def test_overlay_route_passes_paid_call_attribution_to_the_agent(monkeypatch):
+    import uuid
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.auth import get_current_user, is_native_client, kria_client_protocol
+    from app.models import User
+    from app.routes import overlay_generation
+
+    app = FastAPI()
+    app.include_router(overlay_generation.router, prefix="/plan-items")
+    app.dependency_overrides[get_current_user] = lambda: User(id=uuid.uuid4(), email="a@b.test")
+    app.dependency_overrides[is_native_client] = lambda: True
+    app.dependency_overrides[kria_client_protocol] = lambda: 99
+    monkeypatch.setattr(
+        overlay_generation, "generated_capabilities", lambda *a: {"generated_images": True}
+    )
+    seen = {}
+
+    def planned(db, **kwargs):
+        seen["ctx"] = kwargs["ctx"]
+        return overlay_generation.OverlayPlanResponse(
+            document_fingerprint="f", base_generation="g1", message="ok"
+        )
+
+    monkeypatch.setattr(overlay_generation, "generate_overlay_plan", planned)
+    monkeypatch.setattr(
+        overlay_generation, "sync_session", lambda: __import__("contextlib").nullcontext()
+    )
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ai_usage_environment", "development")
+    body = dict(
+        job_id=str(uuid.uuid4()),
+        variant_id="v",
+        mode="automatic",
+        prompt="",
+        base_generation="g1",
+        document_fingerprint="f",
+        editor_snapshot={},
+    )
+    headers = {
+        "x-nova-usage-purpose": "live_eval",
+        "x-nova-test-run-id": "run-1",
+        "x-nova-estimated-max-cost-usd": "0.5",
+        "x-nova-reservation-approved": "true",
+    }
+    TestClient(app).post(f"/plan-items/{uuid.uuid4()}/overlay-plan", json=body, headers=headers)
+    assert seen["ctx"].usage_purpose == "live_eval"
+    assert seen["ctx"].test_run_id == "run-1"

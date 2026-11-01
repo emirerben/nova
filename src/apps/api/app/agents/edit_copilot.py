@@ -34,6 +34,7 @@ from app.agents.length_options import length_options
 from app.agents.music_matcher import _sanitize_text
 from app.config import settings
 from app.kria.brief_route import fold_text, loose_text
+from app.kria.clip_tilt import ClipTilt
 from app.kria.reply_language import prompt_language_line, say
 from app.pipeline.prompt_loader import load_prompt
 from app.schemas.edit_proposal import MAX_PROPOSAL_DURATION_S
@@ -70,7 +71,10 @@ log = structlog.get_logger()
 # where the snapshot offers the `background` family; every other prompt is byte-identical.
 # v98 (KRI-1138): set_slide_tilt in the slides fragment, taught only on the slide-post surface and
 # only where `post.tilt_enabled`; video and gate-closed slide prompts are otherwise unchanged.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v98"
+# v98 (KRI-1137): CLIP TILT: patch_slots "tilt" (rotation_deg clockwise-positive, rotation_delta_deg
+# for relative asks, a blank|color|blur backdrop, null to straighten), taught only where the
+# snapshot's timeline_patch_capabilities opens `tilt`; every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v99"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1281,6 +1285,16 @@ def _format_slot_facts(facts: object, clean: Any) -> str:
     return f" facts=[{'; '.join(parts)}]" if parts else ""
 
 
+def _format_slot_tilt(raw: object) -> str:
+    """` tilt=(rotation_deg=10, backdrop=blur)` for a tilted clip row, else nothing."""
+    tilt = ClipTilt.from_row(raw)
+    if tilt.row() is None:
+        return ""
+    backdrop = tilt.backdrop
+    behind = "" if backdrop is None else f", backdrop={backdrop.color or backdrop.kind}"
+    return f" tilt=(rotation_deg={_fmt_num(tilt.rotation_deg)}{behind})"
+
+
 def _format_snapshot(snapshot: dict) -> str:
     if not isinstance(snapshot, dict) or not snapshot:
         return "(empty snapshot)"
@@ -1573,6 +1587,7 @@ def _format_snapshot(snapshot: dict) -> str:
                 f"look_preset={look_preset!r} "
                 f"transition_after={transition!r} "
                 f"transition_duration_s={_fmt_num(_first_number(slot, ('transition_duration_s',)))}"
+                f"{_format_slot_tilt(slot.get('tilt'))}"
                 f"{facts_text}"
                 f"{_context_row_suffix(slot, component_context_enabled)}"
             )
@@ -5218,6 +5233,17 @@ def _coerce_payload(
     if name == "patch_overlay":
         patch = out.get("patch")
         if not isinstance(patch, dict):
+            return None
+        if "rotation_deg" in patch and _v2.is_v2_snapshot(snapshot):
+            # KRI-1137: a card's rotation is not part of what the phone Talking compile keeps
+            # (`SubtitledOverlayCard` has no angle and Save drops `editor_style`), so the angle
+            # would be silently lost. Refuse the whole patch instead of applying the rest.
+            unavailable = say(
+                en="I can't rotate a picture on this edit yet.",
+                tr="Bu videoda bir görseli henüz döndüremiyorum.",
+            )
+            state.reject(op=name, reason="capability_unavailable", detail=unavailable)
+            state.reply_notes.append(unavailable)
             return None
         clean_patch = _coerce_overlay_patch(patch, state)
         if not clean_patch:

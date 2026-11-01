@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.75.0] - 2026-11-01
+
+### Fixed
+- fix(overlays): generate media works on a voiceover montage (KRI-1142) (#2020) <!-- release-pr: 2020 -->
+
+## [0.83.74.0] - 2026-11-01
+
+### Changed
+- feat(kria): chat can tilt clips through patch_slots, dark (KRI-1137) (#2018) <!-- release-pr: 2018 -->
+
+## [0.83.73.0] - 2026-11-01
+
+### Changed
+- feat(ios): declare the push entitlement for notification registration (KRI-1087) (#2021) <!-- release-pr: 2021 -->
+
+## [0.83.72.0] - 2026-11-01
+
+### Changed
+- fix(ios): one Save persists every edited text type and the screen shows what each type inherits (#2016) <!-- release-pr: 2016 -->
+
+## [0.83.71.0] - 2026-11-01
+
+### Changed
+- fix(kria): the research writer retries on truncation and a rejected draft gets one correction round (#2017) <!-- release-pr: 2017 -->
+
 ## [0.83.70.0] - 2026-11-01
 
 ### Changed

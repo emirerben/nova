@@ -231,6 +231,8 @@ class ResearchCopyInput(BaseModel):
     # Parts of the creator request another step applies ("animation", "text position"). The
     # agents read the whole request, so they are told, as data, not to ask research for them.
     handled_elsewhere: list[str] = Field(default_factory=list, max_length=8)
+    # Why the previous answer was rejected (one correction round); empty on the first call.
+    correction: str = Field(default="", max_length=500)
 
 
 class ResearchCopyOutput(BaseModel):
@@ -240,20 +242,28 @@ class ResearchCopyOutput(BaseModel):
     unmet_requests: list[str] = Field(default_factory=list, max_length=12)
 
 
+# A rejected writer answer is corrected once, with the reason, before research gives up.
+_CORRECTION_ROUNDS = 1
+
+
 class ResearchCopyAgent(Agent[ResearchCopyInput, ResearchCopyOutput]):
     spec = AgentSpec(
         name="nova.research.caption_binding",
         prompt_id="research_caption_binding",
-        prompt_version="v9-handled-elsewhere",
+        prompt_version="v10-correction-round",
         model=settings.edit_copilot_model,
-        max_attempts=1,
+        # Gemini 3 counts thinking against the output budget. Assos (live run, 2026-11-01): at
+        # "high" the writer ran out of its 8,192 tokens and, with one attempt, the draft was
+        # refused. A second attempt lets the runtime's KRI-542 retry at "low" run, and the
+        # budget is doubled so the first attempt rarely needs it.
+        max_attempts=2,
         timeout_s=60,
         thinking_level="high",
-        enable_clarification_retries=False,
+        enable_clarification_retries=True,
     )
     Input = ResearchCopyInput
     Output = ResearchCopyOutput
-    max_output_tokens = 8192
+    max_output_tokens = 16384
 
     def render_prompt(self, input: ResearchCopyInput) -> str:
         payload = input.model_dump(mode="json")
@@ -285,7 +295,9 @@ class ResearchCopyAgent(Agent[ResearchCopyInput, ResearchCopyOutput]):
             "limitations is ONE string (empty if none), never an array. unmet_requests is a list "
             "of explicitly requested explanations you could not deliver. Animation, look, "
             "position, timing and music asks are applied by other steps: never list them, "
-            "and never list anything named in handled_elsewhere. An unconfirmed "
+            "and never list anything named in handled_elsewhere. When correction is not empty, "
+            "your previous answer was rejected for that reason: return a corrected answer that "
+            "fixes it, not the same one. An unconfirmed "
             "individual identity is only a limitation when the creator requested general "
             "collection context; it is unmet when they explicitly requested that identity/date. "
             "Return JSON matching this schema: "
@@ -832,19 +844,32 @@ def run_researched_revision(
         "copy_constraints": snapshot.get("copy_constraints") or {},
     }
     bound["research_windows"] = windows
-    copy_input = ResearchCopyInput(
-        request=utterance,
-        snapshot=bound,
-        evidence=evidence,
-        handled_elsewhere=list(handled_elsewhere),
-    )
-    result = ResearchCopyAgent(default_client()).run(copy_input, ctx=research_ctx)
-    ops = research_operations(result.captions, evidence, snapshot, utterance, look=look)
-    review = ResearchReviewAgent(default_client()).run(
-        ResearchReviewInput(context=copy_input, proposed=result), ctx=research_ctx
-    )
-    if not review.approved:
-        raise ResearchUnavailable("Research needs correction: " + review.reason)
+    correction = ""
+    for attempt in range(_CORRECTION_ROUNDS + 1):
+        copy_input = ResearchCopyInput(
+            request=utterance,
+            snapshot=bound,
+            evidence=evidence,
+            handled_elsewhere=list(handled_elsewhere),
+            correction=correction,
+        )
+        result = ResearchCopyAgent(default_client()).run(copy_input, ctx=research_ctx)
+        try:
+            ops = research_operations(result.captions, evidence, snapshot, utterance, look=look)
+            review = ResearchReviewAgent(default_client()).run(
+                ResearchReviewInput(context=copy_input, proposed=result), ctx=research_ctx
+            )
+            if not review.approved:
+                raise ResearchUnavailable("Research needs correction: " + review.reason)
+        except ResearchUnavailable as exc:
+            # The writer answered, but its answer was rejected (overlap, timing, evidence, the
+            # reviewer): tell it why and ask once more before giving up (live Assos runs,
+            # 2026-11-01, ended on the first miss).
+            if attempt >= _CORRECTION_ROUNDS or not settings.research_correction_round_enabled:
+                raise
+            correction = str(exc)[:500]
+            continue
+        break
     return EditCopilotOutput(
         intent="edit",
         ops=ops,

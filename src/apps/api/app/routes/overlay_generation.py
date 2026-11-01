@@ -9,6 +9,7 @@ from app.agents._runtime import RunContext
 from app.auth import CurrentUser, KriaClientProtocol, NativeClient
 from app.database import sync_session
 from app.routes.generated_media import _native, generated_capabilities
+from app.services.ai_usage_headers import paid_call_headers
 from app.services.overlay_generation import (
     OverlayPlanRequest,
     OverlayPlanResponse,
@@ -33,6 +34,8 @@ async def overlay_plan(
     if not generated_capabilities(user.id, native_client, client_protocol)["generated_images"]:
         raise HTTPException(404, "Generated media is unavailable")
 
+    attribution = paid_call_headers(request).as_kwargs()
+
     def run():
         try:
             with sync_session() as db:
@@ -47,6 +50,7 @@ async def overlay_plan(
                         plan_item_id=str(item_id),
                         job_id=str(body.job_id),
                         request_id=str(uuid.uuid4()),
+                        **attribution,
                     ),
                 )
         except ValueError as exc:

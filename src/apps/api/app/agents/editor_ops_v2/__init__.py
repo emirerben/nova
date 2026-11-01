@@ -46,6 +46,10 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     # KRI-1117: only while the snapshot offers the background family (the capability is open).
     "background": "speaker_background.txt",
 }
+# KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
+# patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
+# byte-identical.
+FIELD_FRAGMENTS: dict[str, str] = {"tilt": "clip_tilt.txt"}
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 
@@ -149,10 +153,12 @@ def family_fragments(snapshot: object) -> str:
     allowed = snapshot.get("allowed_op_families") if isinstance(snapshot, dict) else None
     if not isinstance(allowed, list):
         return ""
+    fields = snapshot.get("timeline_patch_capabilities") if "clip" in allowed else None
+    names = [name for family, name in FAMILY_FRAGMENTS.items() if family in allowed]
+    if isinstance(fields, dict):
+        names += [name for key, name in FIELD_FRAGMENTS.items() if fields.get(key) is True]
     parts: list[str] = []
-    for family, name in FAMILY_FRAGMENTS.items():
-        if family not in allowed:
-            continue
+    for name in names:
         try:
             text = read_fragment(name)
         except OSError:
@@ -188,6 +194,7 @@ __all__ = [
     "REGISTRY",
     "SURFACE_ONLY_LANES",
     "FAMILY_FRAGMENTS",
+    "FIELD_FRAGMENTS",
     "CoerceFn",
     "MergedRegistry",
     "OpSpec",

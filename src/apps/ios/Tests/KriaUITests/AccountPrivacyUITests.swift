@@ -119,13 +119,130 @@ import XCTest
         let manage = app.buttons["Manage account"]
         reveal(manage, app: app); manage.tap()
         app.buttons["account-text-preferences"].tap()
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app); shadow.buttons["On"].tap()
         selectRole("title", app: app)
         XCTAssertTrue(app.staticTexts["The big opening line in the first seconds."].waitForExistence(timeout: 5))
         selectRole("all_text", app: app)
         reveal(shadow, app: app)
         XCTAssertTrue(shadow.buttons["On"].isSelected, "Changing scope must retain the unsaved draft")
+    }
+
+    func testOneSavePersistsEveryEditedTextTypeAcrossReopen() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        let shadow = app.otherElements["text-preference-shadow"]
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        selectRole("label", app: app)
+        let outline = app.otherElements["text-preference-outline"]
+        reveal(outline, app: app); outline.buttons["On"].tap()
+        let save = app.buttons["text-preferences-save"]
+        reveal(save, app: app); save.tap()
+        XCTAssertTrue(app.staticTexts["Saved for future videos."].waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Title shadow must survive one Save and reopening")
+        selectRole("label", app: app)
+        reveal(outline, app: app)
+        XCTAssertTrue(outline.buttons["On"].isSelected, "Label outline must survive one Save and reopening")
+    }
+
+    func testATypeFollowsAllTextUntilItIsChangedByHand() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let shadow = app.otherElements["text-preference-shadow"]
+        let source = app.descendants(matching: .any)["text-preference-shadow-source"]
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        XCTAssertFalse(source.exists, "All text is the base and carries no tag")
+
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Title shows what All text gives it")
+        XCTAssertFalse(shadow.buttons["Same"].exists)
+        XCTAssertEqual(source.label, "Shadow from All text")
+        attach("Title following All text shadow")
+
+        shadow.buttons["Off"].tap()
+        XCTAssertTrue(shadow.buttons["Off"].isSelected)
+        XCTAssertEqual(source.label, "Shadow changed on this type")
+        XCTAssertTrue(app.buttons["text-preference-shadow-source"].exists, "Changed is a button")
+        attach("Title shadow changed by hand")
+
+        app.buttons["text-preference-shadow-source"].tap()
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Undoing the change follows All text again")
+        XCTAssertEqual(source.label, "Shadow from All text")
+
+        shadow.buttons["Off"].tap()
+        selectRole("label", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["On"].isSelected)
+        selectRole("all_text", app: app)
+        reveal(shadow, app: app); shadow.buttons["Off"].tap()
+        selectRole("label", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["Off"].isSelected, "Label follows the new All text value")
+        XCTAssertEqual(source.label, "Shadow from All text")
+        selectRole("all_text", app: app)
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["Off"].isSelected, "Title was changed by hand, so All text no longer moves it")
+        XCTAssertEqual(source.label, "Shadow changed on this type")
+    }
+
+    private func attach(_ name: String) {
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = name; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    func testUnsavedTextTypesAreMarkedAndLeavingAsksBeforeDiscarding() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let shadow = app.otherElements["text-preference-shadow"]
+        selectRole("title", app: app)
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        selectRole("label", app: app)
+        let outline = app.otherElements["text-preference-outline"]
+        reveal(outline, app: app); outline.buttons["On"].tap()
+        XCTAssertEqual(app.buttons["text-preference-role-title"].value as? String, "unsaved changes")
+        XCTAssertEqual(app.buttons["text-preference-role-label"].value as? String, "unsaved changes")
+        XCTAssertNotEqual(app.buttons["text-preference-role-caption"].value as? String, "unsaved changes")
+        XCTAssertTrue(app.staticTexts["Unsaved changes in 2 types"].exists)
+        let marked = XCTAttachment(screenshot: app.screenshot())
+        marked.name = "Two types with unsaved changes"; marked.lifetime = .keepAlways; add(marked)
+
+        app.buttons["text-preferences-back"].tap()
+        XCTAssertTrue(app.buttons["Discard changes"].waitForExistence(timeout: 5))
+        let dialog = XCTAttachment(screenshot: app.screenshot())
+        dialog.name = "Leave with unsaved changes"; dialog.lifetime = .keepAlways; add(dialog)
+        // Anchored to the toolbar the dialog is a popover: it has no Cancel button, a tap outside keeps editing.
+        let keepEditing = app.buttons["Keep editing"]
+        if keepEditing.exists { keepEditing.tap() } else { app.otherElements["PopoverDismissRegion"].firstMatch.tap() }
+        XCTAssertTrue(app.staticTexts["Unsaved changes in 2 types"].waitForExistence(timeout: 5), "Keep editing stays on the screen with the edits")
+
+        app.buttons["text-preferences-back"].tap()
+        app.buttons["Discard changes"].tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["Off"].isSelected, "Discarding must not save the edit")
+        XCTAssertEqual(app.descendants(matching: .any)["text-preference-shadow-source"].label, "Shadow from All text")
+        shadow.buttons["On"].tap()
+        app.buttons["text-preferences-back"].tap()
+        app.buttons["Save and leave"].tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Save and leave must persist the edit")
     }
 
     func testTextPreferencesSaveOffEffectsAndReopen() {
@@ -138,12 +255,12 @@ import XCTest
         let font = app.buttons["text-preference-font"]
         reveal(font, app: app)
         XCTAssertTrue(font.label.contains("Kria picks"))
-        let outline = app.segmentedControls["text-preference-outline"]
+        let outline = app.otherElements["text-preference-outline"]
         reveal(outline, app: app)
         XCTAssertTrue(outline.buttons["Off"].isSelected, "Outline shows its real default before anything is saved")
         outline.buttons["On"].tap()
         outline.buttons["Off"].tap()
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app)
         XCTAssertTrue(shadow.buttons["Off"].isSelected, "Shadow shows its real default before anything is saved")
         shadow.buttons["On"].tap()
@@ -156,10 +273,10 @@ import XCTest
         app.buttons["account-text-preferences"].tap()
         reveal(app.buttons["text-preference-font"], app: app)
         XCTAssertTrue(app.buttons["text-preference-font"].label.contains("Kria picks"))
-        reveal(app.segmentedControls["text-preference-outline"], app: app)
-        XCTAssertTrue(app.segmentedControls["text-preference-outline"].buttons["Off"].isSelected)
-        reveal(app.segmentedControls["text-preference-shadow"], app: app)
-        XCTAssertTrue(app.segmentedControls["text-preference-shadow"].buttons["Off"].isSelected)
+        reveal(app.otherElements["text-preference-outline"], app: app)
+        XCTAssertTrue(app.otherElements["text-preference-outline"].buttons["Off"].isSelected)
+        reveal(app.otherElements["text-preference-shadow"], app: app)
+        XCTAssertTrue(app.otherElements["text-preference-shadow"].buttons["Off"].isSelected)
     }
 
     func testEachTextRoleExplainsItselfAndKeepsThePreview() {
@@ -235,7 +352,7 @@ import XCTest
         reveal(manage, app: app)
         manage.tap()
         app.buttons["account-text-preferences"].tap()
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app)
         shadow.buttons["On"].tap()
         let save = app.buttons["text-preferences-save"]
@@ -272,7 +389,7 @@ import XCTest
         for _ in 0..<10 where !placement.exists { scrollForm(app, down: true) }
         reveal(placement, app: app)
         XCTAssertTrue(placement.label.contains("Top Left"))
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app)
         XCTAssertTrue(shadow.buttons["Off"].isSelected)
     }

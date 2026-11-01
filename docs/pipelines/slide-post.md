@@ -587,7 +587,7 @@ separate. This section is slide posts only.
   draw nothing). The gate is `MEDIA_TILT_ENABLED` and a protocol-28 build (`run_slide_post_chat_edit(tilt_enabled=...)`).
   Closed, the snapshot and CURRENT POST carry no tilt and the op is refused with `capability_unavailable`.
   `compile_slide_post_ops` carries the tilt across text, look, framing and fit changes. Replay goldens:
-  `tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_*.json`. Prompt version `2026-11-01-v98`.
+  `tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_*.json`. Prompt version `2026-11-01-v99`.
 - **Rollout.** Merge dark and deploy api + worker FIRST (an older worker that re-dumps a tilted draft through its older
   `SlideEdits` would drop the tilt). Then `fly secrets set MEDIA_TILT_ENABLED=true` (api + worker) + restart, with a
   protocol-28 TestFlight build out. **Rollback is the flag only**: never roll the CODE back once a tilt exists (draft
