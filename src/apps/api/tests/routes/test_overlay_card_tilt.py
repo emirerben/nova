@@ -340,3 +340,36 @@ def test_the_card_clip_the_compile_writes_is_the_one_the_device_parity_fixture_p
     clip = next(t for t in recipe.tracks if t.id == "subtitled-overlays").clips[0]
     assert clip.model_dump(mode="json") == case["clip"]
     assert ("clipTilt" in recipe.required_capabilities) is case["clip_tilt"]
+
+
+def test_a_video_card_turns_like_a_photo_card():
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+    from tests.pipeline.test_phone_subtitled_plan import (
+        VIDEO_ID,
+        VIDEO_PATH,
+        _binding,
+        _overlay_card,
+        _pool_video_visual,
+    )
+
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),),
+        caption_cues=[],
+        visuals=(_pool_video_visual(duration_s=2.0),),
+        lanes=PhoneSubtitledLanes(
+            overlays=[
+                _overlay_card(
+                    media_id=VIDEO_ID,
+                    gcs_path=VIDEO_PATH,
+                    generation="88",
+                    kind="video",
+                    rotation_deg=-20,
+                )
+            ]
+        ),
+    )
+
+    clip = next(t for t in recipe.tracks if t.id == "subtitled-overlays").clips[0]
+    assert clip.transform.rotation_degrees == -20
+    assert clip.visual_placement.width_fraction is not None
+    assert {"clipTilt", "visualVideos"} <= recipe.required_capabilities
