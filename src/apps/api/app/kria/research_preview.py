@@ -406,9 +406,9 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
             )
         raise ResearchNotFinished(str(exc)) from exc
     unmet = [str(row.get("reason") or "") for row in output.unmet_requests if row.get("reason")]
-    if unmet:
-        return _failed(request, requirement.id, basis, "; ".join(unmet))
     texts_out = prepared_research_texts(output.ops)
+    if unmet and not (texts_out and settings.research_unmet_is_note_enabled):
+        return _failed(request, requirement.id, basis, "; ".join(unmet))
     if not texts_out:
         return _failed(
             request,
@@ -419,6 +419,10 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
     first = next(op["research"] for op in output.ops if isinstance(op.get("research"), dict))
     # `run_researched_revision` prefixes its own note; only the copy writer's limits remain.
     limitations = output.reply_notes.removeprefix("Sources are attached to the explanations.")
+    if unmet:
+        # Sourced wording exists: the part the writer could not source is shown to the creator
+        # next to it before they approve, instead of holding the whole draft back.
+        limitations = f"{limitations.strip()} Not covered: {'; '.join(unmet)}"
     return PreparedResearch(
         status="ready",
         requirement_id=requirement.id,
