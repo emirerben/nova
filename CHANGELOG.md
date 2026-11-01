@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.61.0] - 2026-11-01
+
+### Changed
+- fix(kria): a resolver match whose evidence names another clip's file is not kept (KRI-1112 part 2/3) (#2000) <!-- release-pr: 2000 -->
+
 ## [0.83.60.0] - 2026-11-01
 
 ### Added
