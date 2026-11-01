@@ -3189,3 +3189,41 @@ CLAUDE.md was 37,989/38,000 chars. Two lines were shortened; their previous text
 - `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED` — default **`false`**; gate the SFX/overlay lane routes in `routes/plan_items.py` (404 off). **Dual-flag trap:** `NEXT_PUBLIC_` twins on Vercel; frontend on + backend off ⇒ saves 404. Fly first, then Vercel; restart api + worker. Detail: `docs/pipelines/generative.md`, DECISIONS.md "CLAUDE.md flag detail".
 
 - **Pre-PR text-overlay verify (`make verify-overlays`):** before any PR touching the Skia renderer, overlay layout, or the burn dict. Renders the REAL Skia path in the prod image, asserts overlays un-clipped, writes `.overlay-verify/{montage.png,report.json}`. Library: `app/pipeline/overlay_verify.py`; CLI: `app.cli.verify_overlays`; guard: `tests/pipeline/test_overlay_verify.py`. **Agent pre-PR gate:** run it, read both files, fix any FAIL, then `/ship`.
+
+## [2026-11-01] Research: an unmet part of the ask no longer holds back sourced wording
+
+Prod, "With animations, explain why people should visit Assos, Turkey" (new chat, after the
+prompt-fidelity train): the reply was "I can't make this yet: ... Sources could not be
+confirmed before approval: animations". The research copy writer listed the creator's
+"animations" under `unmet_requests` next to its sourced captions, and
+`research_preview.prepare` treated any unmet entry as a failed research result, which the
+approval-readiness gate turned into a hold-back. Animation is applied by another step.
+
+- `research_preview.prepare`: when sourced wording exists, unmet entries are shown as
+  "Not covered: ..." in the preview note before approval and no longer fail the research.
+  With no sourced wording the result still fails with the reason.
+- Copy-writer prompt (`nova.research.caption_binding`) v8: animation, look, position,
+  timing and music asks are never `unmet_requests`.
+- Kill switch: `RESEARCH_UNMET_IS_NOTE_ENABLED` (default true). `false` + restart api and
+  worker restores the hold-back.
+- Not changed: at render time (no pinned research) an unmet entry still stops the text
+  composition (`creation_text_composition`, pinned by
+  `test_initial_creation_research_replays_without_searching_again[True]`). Prod renders use
+  the pinned preview, so this only bites a render without a preview.
+
+## [2026-11-01] Research agents are told which asks another step applies
+
+Second refusal of the same Assos prompt, after the unmet-list fix (#2012): the claim reviewer
+(`nova.research.claim_review`) rejected the sourced captions with "The request explicitly
+asked to include animations ... not listed in unmet_requests", so research failed with
+"Research needs correction" and the draft was held back. The research writer and reviewer read
+the whole creator request, so a style ask in it looked like a research ask nobody covered.
+
+- `ResearchCopyInput.handled_elsewhere` (default empty) carries the live asks another step
+  applies: "animation" (any live animation ask) and "text position". Set by
+  `research_preview._handled_elsewhere` before approval and by the text composer at render.
+  The writer (v9) and the reviewer (v4) prompts say never to list or reject for them.
+- No new flag: the field is empty unless an animation/position ask is live, so every other
+  request sends the same data as before. Prompt versions bumped; replay evals pass.
+- Verified offline with a reviewer that rejects when the data does not name the ask. The real
+  Gemini reviewer has not been run against this prompt (paid live runs need an approved ledger).

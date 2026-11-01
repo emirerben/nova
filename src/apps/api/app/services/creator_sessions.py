@@ -24,6 +24,7 @@ from app.agents._schemas.creator_agent import (
     canonical_context_hash,
     creator_strategies_equal,
 )
+from app.agents._schemas.edit_format import GUIDED_EDIT_FORMATS
 from app.agents._writing_context import writing_voice
 from app.config import settings
 from app.kria.creator_cues import SFX_NOUN_PATTERN_TR
@@ -41,6 +42,7 @@ from app.models import (
     PlanItemAsset,
     SoundEffect,
 )
+from app.schemas.creation_formats import SONG_SYNC_DEFAULT_BY_FORMAT
 from app.schemas.edit_proposal import parse_edit_proposal
 from app.services.clip_facts import assignment_facts, facts_for_prompt
 from app.services.clip_file_names import clip_display_name
@@ -345,6 +347,32 @@ def creator_context(persona: Persona, item: PlanItem) -> tuple[str, str]:
     )
 
 
+async def _chosen_song_default_format(db: AsyncSession, item: PlanItem, user_id: Any) -> str | None:
+    """The picker card the item's latest chat was started from, when it carries a song default.
+
+    Lip-sync is a montage underneath, so the card exists only in the thread's
+    ``state.format``. Read here, once, so every caller of ``resolve_item_creator_context``
+    builds the same manifest (a plan-time and a confirm-time manifest must hash alike).
+    Only a montage-family item with creator songs on can use it; anything else costs no query.
+    """
+
+    if not (
+        settings.user_song_montage_enabled
+        and (item.edit_format or "montage") in GUIDED_EDIT_FORMATS
+    ):
+        return None
+    card = await db.scalar(
+        select(CreationThread.state["format"].as_string())
+        .where(
+            CreationThread.creator_id == user_id,
+            CreationThread.active_plan_item_id == item.id,
+        )
+        .order_by(CreationThread.updated_at.desc())
+        .limit(1)
+    )
+    return card if isinstance(card, str) and card in SONG_SYNC_DEFAULT_BY_FORMAT else None
+
+
 async def resolve_item_creator_context(
     db: AsyncSession,
     item: PlanItem,
@@ -403,6 +431,7 @@ async def resolve_item_creator_context(
         native_device_only = any(
             has_native_device_only_intent(thread_state) for thread_state in thread_states
         )
+    chosen_format = await _chosen_song_default_format(db, item, persona.user_id)
     if phone_visuals_only:
         phone_source_media_ids = []
     # KRI-1117: the background the creator picked in the camera lives on the thread. No query
@@ -668,6 +697,7 @@ async def resolve_item_creator_context(
             else guided_capability_enabled
         ),
         runs_guided_voiceover=runs_guided_voiceover,
+        chosen_format=chosen_format,
         speaker_background_pick=speaker_background_pick,
     )
     return manifest, media_context

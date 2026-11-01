@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.60.0] - 2026-11-01
+
+### Added
+- feat(kria): Lip-sync card in the new-video picker (KRI-1093) (#1990) <!-- release-pr: 1990 -->
+
+## [0.83.59.0] - 2026-11-01
+
+### Changed
+- fix(kria): the research reviewer is told which asks another step applies (#2013) <!-- release-pr: 2013 -->
+
+## [0.83.58.0] - 2026-11-01
+
+### Changed
+- fix(kria): an end/start pin on a clip that doesn't show it asks instead of seating it (KRI-1108) (#1997) <!-- release-pr: 1997 -->
+
+## [0.83.57.0] - 2026-11-01
+
+### Changed
+- fix(order): a first/last pin takes its clip out of a general order group (KRI-1109) (#1995) <!-- release-pr: 1995 -->
+
+## [0.83.56.0] - 2026-11-01
+
+### Changed
+- fix(kria): an unmet part of the ask no longer holds back sourced wording before approval (#2012) <!-- release-pr: 2012 -->
+
 ## [0.83.55.0] - 2026-11-01
 
 ### Changed

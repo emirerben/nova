@@ -1308,8 +1308,9 @@
     {
       "id": "kri-679-song-length-mood",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri679_song_length.py tests/kria/test_kri679_music_mood.py tests/kria/test_music_section_fit.py tests/evals/test_music_matcher_evals.py",
+      "api_tests": "tests/kria/test_kri679_song_length.py tests/kria/test_kri679_music_mood.py tests/kria/test_music_section_fit.py tests/evals/test_music_matcher_evals.py tests/services/test_creator_lipsync_card.py tests/routes/test_creation_threads_lipsync_card.py",
       "paths": [
+        "src/apps/api/app/schemas/creation_formats.py",
         "src/apps/api/prompts/match_music.txt",
         "src/apps/api/tests/kria/test_kri679_song_length.py",
         "src/apps/api/tests/kria/test_kri679_music_mood.py"

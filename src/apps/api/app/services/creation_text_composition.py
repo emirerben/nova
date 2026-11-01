@@ -1155,6 +1155,7 @@ def _compose_creation_text(
             # The creator's "with animations" reaches the explanations that replace the
             # composer's output (None unless they asked, so the ops stay byte-identical).
             look=_research_entrance_patch(research_look),
+            handled_elsewhere=("animation",) if research_look else (),
         )
     if (
         output.needs_clarification

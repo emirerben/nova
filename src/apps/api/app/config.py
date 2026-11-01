@@ -2490,6 +2490,9 @@ class Settings(BaseSettings):
     # before. Rollback: `fly secrets set STORY_DIRECTIONS_ON_MONTAGE_ENABLED=false --app
     # nova-video` + restart api+worker.
     story_directions_on_montage_enabled: bool = True
+    # A part of the ask the research writer cannot source is a disclosed note next to the
+    # sourced wording, not a hold-back. False restores the old hold-back (restart api + worker).
+    research_unmet_is_note_enabled: bool = True
     # KRI-808: a clip's timed words are kept only when whisper's language agrees with the
     # clip's Gemini transcript; a pass that disagrees (whisper TRANSLATED accented speech) is
     # re-transcribed in the language Gemini or the chat heard, else stored as no words. Also
