@@ -34,6 +34,16 @@ FIT_CHOICES: tuple[str, ...] = ("fit", "fill")
 # `all_candidates` key the Job carries; written ONLY when the creator chose.
 CREATOR_RENDER_SHAPE_KEY = "creator_render_shape"
 
+# Optional key inside the stored shape: who made the pick. "creator" = the app sent an
+# explicit pick (or the value differs from the offered default, which an app that only
+# echoes the preselected shape could not have produced); "default" = the preselected
+# server default echoed back. Absent = older record, read as "default" when the
+# `RENDER_SHAPE_ORIGIN_HONEST_ENABLED` switch is on (see `shape_is_creator_pick`).
+SHAPE_ORIGIN_KEY = "origin"
+ORIGIN_CREATOR = "creator"
+ORIGIN_DEFAULT = "default"
+_ORIGINS = (ORIGIN_CREATOR, ORIGIN_DEFAULT)
+
 # The same aspect thresholds as `infer_story_output_orientation`.
 _LANDSCAPE_ASPECT = 1.05
 _PORTRAIT_ASPECT = 0.95
@@ -337,8 +347,45 @@ def resolve_choice(
     return {"output_orientation": orientation, "landscape_fit": fit}
 
 
+def origin_honest_enabled() -> bool:
+    """Kill switch for the creator-pick vs echoed-default distinction (read per call)."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.render_shape_origin_honest_enabled)
+
+
+def stamp_origin(
+    offer: RenderShapeOffer,
+    chosen: dict[str, str],
+    client_origin: str | None,
+) -> dict[str, str]:
+    """``chosen`` plus who made the pick, so no later stage calls an echoed default a choice.
+
+    The app sends the preselected shape back when the creator never touches the picker, so
+    a body that carries a shape is not proof of a pick. A newer client says which it is
+    (``explicit_pick`` / ``preselected``); for an older one the only proof is a value that
+    differs from the offered default. Switch off => ``chosen`` unchanged (no origin key).
+    """
+    if not origin_honest_enabled():
+        return chosen
+    if client_origin == "explicit_pick":
+        origin = ORIGIN_CREATOR
+    elif client_origin == "preselected":
+        origin = ORIGIN_DEFAULT
+    else:
+        differs = chosen["output_orientation"] != offer.default_orientation or (
+            chosen["output_orientation"] == "portrait"
+            and chosen["landscape_fit"] != offer.default_fit
+        )
+        origin = ORIGIN_CREATOR if differs else ORIGIN_DEFAULT
+    return {**chosen, SHAPE_ORIGIN_KEY: origin}
+
+
 def shape_from_all_candidates(all_candidates: Mapping[str, Any] | None) -> dict[str, str] | None:
-    """The creator's explicit choice carried on a Job, validated, else None."""
+    """The creator's explicit choice carried on a Job, validated, else None.
+
+    Carries the optional ``origin`` stamp through when it is a known value.
+    """
     raw = (all_candidates or {}).get(CREATOR_RENDER_SHAPE_KEY)
     if not isinstance(raw, Mapping):
         return None
@@ -346,7 +393,35 @@ def shape_from_all_candidates(all_candidates: Mapping[str, Any] | None) -> dict[
     fit = raw.get("landscape_fit")
     if orientation not in ORIENTATIONS or fit not in FIT_CHOICES:
         return None
-    return {"output_orientation": str(orientation), "landscape_fit": str(fit)}
+    shape = {"output_orientation": str(orientation), "landscape_fit": str(fit)}
+    if raw.get(SHAPE_ORIGIN_KEY) in _ORIGINS:
+        shape[SHAPE_ORIGIN_KEY] = str(raw[SHAPE_ORIGIN_KEY])
+    return shape
+
+
+def shape_is_creator_pick(shape: Mapping[str, Any] | None) -> bool:
+    """Whether the stored shape records a real creator pick.
+
+    Switch off => every stored shape reads as the creator's (the pre-fix behaviour).
+    On => only an ``origin == "creator"`` stamp does; a missing stamp is an echoed or
+    unknown default, which the plan must not call the creator's choice.
+    """
+    if not origin_honest_enabled():
+        return True
+    return isinstance(shape, Mapping) and shape.get(SHAPE_ORIGIN_KEY) == ORIGIN_CREATOR
+
+
+DEFAULTED_ORIENTATION_REASON = "Set automatically: no output format was picked."
+
+
+def orientation_reason(all_candidates: Mapping[str, Any] | None) -> str:
+    """The honest ``output_orientation_reason`` for the shape this Job carries."""
+    from app.schemas.edit_proposal import CREATOR_SELECTED_ORIENTATION_REASON  # noqa: PLC0415
+
+    raw = (all_candidates or {}).get(CREATOR_RENDER_SHAPE_KEY)
+    if shape_is_creator_pick(raw if isinstance(raw, Mapping) else None):
+        return CREATOR_SELECTED_ORIENTATION_REASON
+    return DEFAULTED_ORIENTATION_REASON
 
 
 # ── device editor ────────────────────────────────────────────────────────────

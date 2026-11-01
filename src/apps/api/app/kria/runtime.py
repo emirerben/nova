@@ -2281,7 +2281,8 @@ async def _validated_render_shape(
             phase="approval",
             recovery="ask_user",
         )
-    return chosen
+    # An echoed server default is not a creator pick: record which it was.
+    return render_shape.stamp_origin(offer, chosen, body.render_shape_origin)
 
 
 async def _mint_prepared_execution(

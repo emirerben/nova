@@ -195,6 +195,17 @@ class ThroughputTests(unittest.TestCase):
         self.assertEqual(ci.native_legs(everything), ["unit", "creation", "screens"])
         with self.assertRaises(ValueError):
             ci.native_legs(["not-a-journey"])
+        # Nightly and manual CI keep every journey leg.
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertEqual(
+                ci.native_legs(everything, event), ["unit", "creation", "screens"]
+            )
+        # PRs start one Mac: build, unit tests, UI smoke and named-unit gate.
+        # Fixture-driven journeys still run portably on Linux for the PR.
+        self.assertEqual(ci.native_legs(everything, "pull_request"), ["unit"])
+        self.assertEqual(ci.native_legs(["kri-524-creation"], "pull_request"), ["unit"])
+        with self.assertRaises(ValueError):
+            ci.native_legs(["not-a-journey"], "pull_request")
         changes = (
             Path(__file__).resolve().parents[2] / ".github/workflows/ci-changes.yml"
         ).read_text()

@@ -811,7 +811,11 @@ def test_t04_full_inventory_with_a_group_per_chapter_fits_the_cap() -> None:
 def test_groups_duplicating_a_caption_collapse_before_the_cap_asks() -> None:
     """A caption already holds its chapter together (exactly like a group), so a
     same-named group is dropped before Kria asks the creator to restate anything."""
-    lines = [f"Line number {n} of the story" for n in range(1, 10)]  # 18 intents > 16
+    from app.schemas.clip_intents import MAX_CLIP_INTENTS
+
+    # A group + a caption per chapter is over the cap; the captions alone fit.
+    chapters = MAX_CLIP_INTENTS // 2 + 1
+    lines = [f"Line number {n} of the story" for n in range(1, chapters + 1)]
     request = " ".join(f'Chapter {n} · "{line}"' for n, line in enumerate(lines, 1))
     intents = []
     for n, line in enumerate(lines, 1):
@@ -822,7 +826,7 @@ def test_groups_duplicating_a_caption_collapse_before_the_cap_asks() -> None:
         ClipIntentPlannerInput(creator_request=request),
     )
     assert out.salvage_question is None
-    assert [i.op for i in out.intents] == ["caption"] * 9
+    assert [i.op for i in out.intents] == ["caption"] * chapters
     assert [i.creator_text for i in out.intents] == lines
 
 
@@ -928,9 +932,9 @@ def test_caption_copy_over_the_creator_bound_is_still_rejected() -> None:
 def test_cap_fits_a_six_chapter_story_and_the_prompt_says_so() -> None:
     from app.schemas.clip_intents import MAX_CLIP_INTENTS
 
-    assert MAX_CLIP_INTENTS == 16
+    assert MAX_CLIP_INTENTS == 40
     prompt = _agent().render_prompt(_t04_input())
-    assert "fits in 16 operations" in prompt
+    assert "fits in 40 operations" in prompt
     assert '`position` is exactly "first", "last", or null' in prompt
 
 
@@ -2549,10 +2553,19 @@ def _without_hide_part(prompt: str) -> str:
     return prompt
 
 
+def _with_cap_16(prompt: str) -> str:
+    """KRI-1122 raised the operation cap the prompt states; the baseline said 16."""
+    from app.schemas.clip_intents import MAX_CLIP_INTENTS
+
+    for phrase in ("fits in {} operations", "If more than {} distinct operations"):
+        prompt = prompt.replace(phrase.format(MAX_CLIP_INTENTS), phrase.format(16))
+    return prompt
+
+
 def test_kri993_kill_switch_off_prompt_is_byte_identical_to_before() -> None:
     import hashlib
 
-    off = _without_hide_part(_agent().render_prompt(_input()))
+    off = _with_cap_16(_without_hide_part(_agent().render_prompt(_input())))
     start = off.index(_29EKIM_START)
     end = off.index(_29EKIM_END, start) + len(_29EKIM_END)
     before_29ekim = off[:start] + "\n" + off[end:]

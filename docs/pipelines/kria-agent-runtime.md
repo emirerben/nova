@@ -862,6 +862,9 @@ not refused, asked about or re-planned.
   `nova.creator.main` call; `replace_text_sequence` is on the fast path. A job that FAILED before
   producing any variant has no editable lanes (prod job debug: no `variants` key), so its follow-up
   is still a re-plan; the fix for that case is that the render no longer fails (title fit, lane A).
+  This includes text-shaped asks ("skip the selfie label", KRI-1103): a text ask is a failed-render
+  correction (staged on the editor head, or refused honestly) only when the failed job has a variant
+  or an editor draft built on it; the pre-render strategy draft alone re-plans.
   The re-plan cues are unchanged.
 - Readability floor: an op authored with `weight` gives every piece at least 0.25 s
   (`_MIN_PIECE_S`). When the source window is too short the compiler lengthens it, up to the end of

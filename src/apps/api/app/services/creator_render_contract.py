@@ -59,6 +59,7 @@ from app.services.choice_questions import (
 )
 from app.services.clip_file_names import clip_display_name
 from app.services.clip_order_sequence import (
+    SequenceRow,
     apply_sequence,
     sequence_rows,
     stated_anchors,
@@ -380,6 +381,12 @@ FIELD_MATRIX: dict[str, FieldRule] = {
         "editorial_plan.beats[].text_goal",
         note="Writing purposes accompany footage windows; compiled text is pinned for replay.",
     ),
+    **_rules(
+        "upstream_resolved",
+        "pace_policy:provenance",
+        "pacing_requested",
+        note="server-owned: the creator's own words named a pace (cut-length pace unit)",
+    ),
     # Hard requirements projected by build_render_contract.
     **_rules(
         "upstream_resolved",
@@ -679,6 +686,19 @@ FIELD_MATRIX: dict[str, FieldRule] = {
             "KRI-841: kept or dropped by creator_capabilities.repair_creator_ending_clip; the "
             "phone Talking worker appends it and records variant['phone_ending_clip'], which "
             "the brief receipts judge. The contract itself does not verify it"
+        ),
+    ),
+    **_rules(
+        "upstream_resolved",
+        "speaker_background_repair",
+        "background_media",
+        "background_media.media_id",
+        "background_media.source_start_s",
+        note=(
+            "KRI-1117: kept, filled from the creator's camera pick, or dropped by "
+            "creator_capabilities.repair_creator_speaker_background; the phone Talking worker "
+            "resolves it into the lane request's background and records the drop in "
+            "phone_lane_receipt. The contract itself does not verify it"
         ),
     ),
     **_rules(
@@ -1067,6 +1087,34 @@ _SEQUENCE_BASES = frozenset({"capture_time", "attachment_order"})
 _SEQUENCE_UNRESOLVED = (
     "I couldn't tell which clips you want first or last, so I can't confirm their order."
 )
+
+
+# KRI-1112: the order a creator listed clip by clip ("Use exactly this order: IMG_1028, ..."),
+# when the list states every shown item's place (`_creator_listed_order`).
+CREATOR_LIST_ORDER_BASIS = "creator_list"
+
+
+def _creator_listed_order(
+    sequence: Sequence[SequenceRow], shown: Sequence[str], stated: Mapping[str, str]
+) -> tuple[str, ...]:
+    """KRI-1112: the whole order a creator listed one clip at a time, else ``()``.
+
+    Every item the edit shows sits in exactly one resolved single-clip row of the stated
+    sequence and no row names anything else, so the montage writer's own seating
+    (`apply_sequence`) leaves nothing to a basis order: the list is the order. A first / last
+    clip the brief still states that no row seats is not that list (it is asked about).
+    """
+    if (
+        not shown
+        or len(set(shown)) != len(shown)
+        or any(status != "resolved" or len(members) != 1 for _p, _n, members, status in sequence)
+        or not set(stated) <= {position for position, _n, _m, _s in sequence}
+    ):
+        return ()
+    named = [members[0] for _p, _n, members, _s in sequence]
+    if len(set(named)) != len(named) or set(named) != set(shown):
+        return ()
+    return tuple(apply_sequence(list(shown), sequence))
 
 
 def _pin_not_found(words: str) -> str:
@@ -1473,6 +1521,7 @@ def build_render_contract(
         str(item) for item in clip_order if str(item).strip() and str(item) not in hidden_ids
     )
     order_basis = "confirmed" if order_ids else None
+    placed_rule = False
     unresolved: list[str] = []
     # Leverkusen M2: parts of clips the creator asked never to show. `strategy` is already
     # collapsed onto the kept copy of a byte-identical upload. One nobody settled (no clip,
@@ -1665,7 +1714,9 @@ def build_render_contract(
                     # strict model takes no new field (old workers must read every
                     # contract): the brief receipt proves where each described group
                     # landed (`brief_checks._check_order`), and a checked receipt that is
-                    # not met blocks the unified montage before anything renders.
+                    # not met blocks the unified montage before anything renders. A list that
+                    # places every shown clip is pinned below (KRI-1112).
+                    placed_rule = True
                     continue
                 if (
                     one_clip
@@ -1789,6 +1840,21 @@ def build_render_contract(
                 else tuple(sorted(shown, key=lambda media_id: dates[media_id]))
             )
             order_basis = "capture_time"
+    if placed_rule and not order_required:
+        # KRI-1112 (prod thread 83f2dcaa, 13:39): "Use exactly this order: IMG_1028, IMG_1036,
+        # IMG_1037, IMG_1039, IMG_1043" placed every clip by its file name, but a rule with no
+        # basis pinned nothing, so approval could never confirm it. A complete list is the
+        # whole order: pin it, so the phone verifier refuses a render that plays another.
+        listed = _creator_listed_order(
+            sequence,
+            [
+                *(str(row.get("media_id") or "") for row in edit_rows if isinstance(row, Mapping)),
+                *(str(row["media_id"]) for row in _edit_visuals(media_snapshot, raw, hidden_ids)),
+            ],
+            stated_anchors(brief),
+        )
+        if listed:
+            order_required, order_ids, order_basis = True, listed, CREATOR_LIST_ORDER_BASIS
     if (
         order_required
         and order_ids
@@ -2434,6 +2500,16 @@ def creator_length_note(
     return f"The video runs about {actual} seconds; you asked for {requested:g}"
 
 
+def _contract_media_id(asset: object) -> str | None:
+    """The contract's id for a recipe source: an original's media id, or ``asset-<id>`` for
+    a Visuals photo or video (KRI-1069, KRI-1102). ``None`` for anything else."""
+    if isinstance(asset, OriginalRenderAsset):
+        return asset.media_id
+    if isinstance(asset, VisualRenderAsset):
+        return f"asset-{asset.visual_id}"
+    return None
+
+
 def _verify_hidden_parts(
     contract: CreatorRenderContract, recipe: EditRecipeV2, manifest: Mapping[str, Any]
 ) -> None:
@@ -2451,12 +2527,8 @@ def _verify_hidden_parts(
     lengths = {asset.id: asset.duration for asset in recipe.assets}
     for track in recipe.tracks:
         for clip in track.clips:
-            asset = manifest.get(clip.source_asset_id)
-            if isinstance(asset, OriginalRenderAsset):
-                media_id = asset.media_id
-            elif isinstance(asset, VisualRenderAsset):
-                media_id = f"asset-{asset.visual_id}"
-            else:
+            media_id = _contract_media_id(manifest.get(clip.source_asset_id))
+            if media_id is None:
                 continue
             parts = by_media.get(media_id)
             if not parts:
@@ -2707,11 +2779,12 @@ def verify_phone_recipe(
             if requirement.shot_index is not None:
                 targets = picture[requirement.shot_index : requirement.shot_index + 1]
             elif requirement.media_id:
+                # KRI-1102: a label on a Visuals photo is looked for on that photo's shot.
                 targets = [
                     clip
                     for clip in picture
-                    if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
-                    and manifest[clip.source_asset_id].media_id == requirement.media_id
+                    if _contract_media_id(manifest.get(clip.source_asset_id))
+                    == requirement.media_id
                 ]
             group = text_source_group(contract.exact_texts, requirement)
             if group:
@@ -2721,14 +2794,15 @@ def verify_phone_recipe(
                     media_id=requirement.media_id or "",
                     spans=[
                         (
-                            manifest[clip.source_asset_id].media_id,
+                            source,
                             clip.timeline_start,
                             clip.timeline_start
                             + clip.source_duration / clip.rate
                             + (clip.hold_duration or 0),
                         )
                         for clip in picture
-                        if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+                        if (source := _contract_media_id(manifest.get(clip.source_asset_id)))
+                        is not None
                     ],
                     tolerance_s=frame,
                     minimum_overlap_s=frame,
@@ -2755,13 +2829,9 @@ def verify_phone_recipe(
     if contract.order_required:
         actual: list[str] = []
         for clip in picture:
-            asset = manifest.get(clip.source_asset_id)
-            if isinstance(asset, OriginalRenderAsset):
-                media_id = asset.media_id
-            elif isinstance(asset, VisualRenderAsset):
-                # KRI-1069: a Visuals photo or video sits in the order under its manifest id.
-                media_id = f"asset-{asset.visual_id}"
-            else:
+            # KRI-1069: a Visuals photo or video sits in the order under its manifest id.
+            media_id = _contract_media_id(manifest.get(clip.source_asset_id))
+            if media_id is None:
                 raise _phone_decline(
                     "order_required",
                     "This edit has an unverified picture source in the confirmed order.",

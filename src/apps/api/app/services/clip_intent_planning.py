@@ -577,7 +577,10 @@ def apply_file_name_references(
     "first ımg_7382 then ımg_7820" names clips the resolver cannot see: its records carry
     what a clip shows, never its file name, so it used to ask "which of your clips match
     ımg_7382?". An intent whose attribute is nothing but file names, each naming exactly
-    one clip (``services.clip_file_names``), is settled here like a tapped answer.
+    one clip (``services.clip_file_names``), is settled here like a tapped answer. So is
+    one whose words the creator tied to file names in a sentence of their own ("The goals
+    are IMG_1037 and IMG_1039." for "the two goal clips", KRI-1112:
+    ``ClipNameIndex.subject_references``).
 
     Returns ``(settled, remaining, split)``. An ``order`` intent naming several clips is a
     sequence: ``split`` maps its id to one order intent per clip, in the order named, each
@@ -596,6 +599,11 @@ def apply_file_name_references(
         refs, others = index.references(intent.attribute)
         if refs and names_only(others) and all(ref.media_id for ref in refs):
             named[intent.intent_id] = refs
+        elif not refs:
+            # KRI-1112: "the two goal clips" after "The goals are IMG_1037 and IMG_1039."
+            bound = index.subject_references(creator_request, intent.attribute)
+            if bound is not None:
+                named[intent.intent_id] = bound
     pinned: set[str] = set()
     for intent in intents:
         refs = named.get(intent.intent_id, [])
@@ -773,7 +781,7 @@ def with_brief_labels(
 
 
 def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) -> list[ClipIntent]:
-    """Add the first / last clip a filming-order brief names that no planned row places (KRI-1067).
+    """Seat the first / last clip a filming-order brief names that no planned row places (KRI-1067).
 
     Leverkusen M1 (2026-10-29): "chronological order from arrival to the final whistle" kept
     ``last_clip: "the final whistle"`` on the brief, but the planner wrote no ``last`` pin for
@@ -784,23 +792,43 @@ def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) ->
     (KRI-282, KRI-1025). Its id and attribute come from the brief's words alone, so the answer
     still binds on the next turn, when the planner may leave it out again.
 
-    A spot the planner already pinned (in any words), or words it already wrote as an order
-    row (a second row for them would argue with it), are left as they are.
+    A spot the planner already pinned (in any words) is left as it is. Words it already wrote
+    as a plain order row are that row's spot, not a second row's (two rows for the same words
+    would argue, KRI-764), so that row takes the position in place (KRI-1123). Leverkusen M4
+    (2026-10-31): "tell the evening as a story, in this order: the stadium from outside, ...
+    the Nürnberg players thanking their fans at the end" was planned as one plain row per beat,
+    so the brief's ``first_clip`` / ``last_clip`` each had a row and neither was seated; the
+    contract refused by name, and the readiness gate copied the refusal onto every requirement.
+    A row for the same words pinned to the other spot or ordered by a fact (``order_by``) is
+    left alone.
     """
     rows = [i for i in intents if i.op == "order" and not i.order_by]
     pinned = {i.position for i in rows if i.position}
     have = {label_key(i.attribute) for i in rows}
     taken = {intent.intent_id for intent in intents}
+    seated = list(intents)
     added: list[ClipIntent] = []
     for position in ("first", "last"):
         words = " ".join(str(anchors.get(position) or "").split())
         key = label_key(words)
-        if (
-            not key
-            or position in pinned
-            or key in have
-            or len(intents) + len(added) >= MAX_CLIP_INTENTS
-        ):
+        if not key or position in pinned:
+            continue
+        same = next(
+            (
+                n
+                for n, intent in enumerate(seated)
+                if intent.op == "order"
+                and not intent.order_by
+                and intent.position is None
+                and label_key(intent.attribute) == key
+            ),
+            None,
+        )
+        if same is not None:
+            seated[same] = seated[same].model_copy(update={"position": position})
+            pinned.add(position)
+            continue
+        if key in have or len(intents) + len(added) >= MAX_CLIP_INTENTS:
             continue
         intent_id, n = fit_intent_id(f"order-{position}-{key.replace(' ', '-')}"), 2
         while intent_id in taken:
@@ -813,7 +841,7 @@ def with_brief_anchors(intents: list[ClipIntent], anchors: Mapping[str, str]) ->
             continue
         have.add(key)
         taken.add(intent_id)
-    return [*intents, *added] if added else intents
+    return [*seated, *added]
 
 
 def with_filming_end_ticks(

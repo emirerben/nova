@@ -49,7 +49,12 @@ async def test_a_valid_choice_resolves():
     shape = await _confirm_render_shape(
         db, item, plan, _body(output_orientation="landscape"), user, strict=True
     )
-    assert shape == {"output_orientation": "landscape", "landscape_fit": "fill"}
+    # Landscape is not the offered default (portrait), so only a real pick could send it.
+    assert shape == {
+        "output_orientation": "landscape",
+        "landscape_fit": "fill",
+        "origin": "creator",
+    }
 
 
 @pytest.mark.asyncio
@@ -63,7 +68,12 @@ async def test_a_talking_edit_can_pick_landscape_on_the_device():
         user,
         strict=True,
     )
-    assert shape == {"output_orientation": "landscape", "landscape_fit": "fill"}
+    # Landscape is not the offered default (portrait), so only a real pick could send it.
+    assert shape == {
+        "output_orientation": "landscape",
+        "landscape_fit": "fill",
+        "origin": "creator",
+    }
 
 
 @pytest.mark.asyncio
