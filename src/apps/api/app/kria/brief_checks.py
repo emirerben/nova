@@ -347,6 +347,10 @@ class PlanFacts:
     # KRI-296: the clips the creator described and gave text for. When set, "text
     # on each shot" is judged against these clips, not every clip in the plan.
     label_scope_clip_ids: tuple[str, ...] = ()
+    # KRI-1110: before a render, the clips each creator-worded shot text was placed on (its
+    # settled label/caption intent), keyed by `_placement_key` of the words. A dictated shot
+    # text is judged on its own placement, never on every upload.
+    shot_text_clip_ids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     duration_s: float | None = None
     ordering_basis: str | None = None
     ordering_fallback_clip_ids: tuple[str, ...] = ()
@@ -920,6 +924,49 @@ def _pinned_text_values(pins: object) -> list[str]:
     ]
 
 
+def _placement_key(text: object) -> str:
+    # The render contract's own text match (`creator_render_contract._normal`).
+    return " ".join(unicodedata.normalize("NFC", str(text)).split())
+
+
+def _shot_text_placements(resolved_intents: object) -> dict[str, tuple[str, ...]]:
+    """KRI-1110: the clips a resolved label/caption intent prints each set of words on.
+
+    The same placement the render contract pins for a dictated shot text (its label intent,
+    else its creator-worded caption), so the draft's receipt judges the clips the phone will.
+    """
+    from app.services.creator_render_contract import (  # noqa: PLC0415 - imports this module
+        _caption_intent_media_ids,
+        _label_intent_media_ids,
+    )
+
+    words: list[object] = []
+    for intent in resolved_intents if isinstance(resolved_intents, list) else ():
+        if not isinstance(intent, Mapping):
+            continue
+        if intent.get("op") == "caption":
+            words.append(intent.get("caption_text"))
+        elif intent.get("op") == "label":
+            words.append(intent.get("creator_text"))
+            words.extend(
+                row.get("value")
+                for row in intent.get("assignments") or []
+                if isinstance(row, Mapping)
+            )
+    placements: dict[str, tuple[str, ...]] = {}
+    for text in words:
+        if not isinstance(text, str) or not text.strip():
+            continue
+        key = _placement_key(text)
+        if key not in placements:
+            placed = _label_intent_media_ids(resolved_intents, text) or _caption_intent_media_ids(
+                resolved_intents, text
+            )
+            if placed:
+                placements[key] = placed
+    return placements
+
+
 def plan_facts_from_strategy(
     strategy: Mapping[str, Any] | None,
     *,
@@ -1015,6 +1062,7 @@ def plan_facts_from_strategy(
         per_clip_text=per_clip,
         inferred_text=inferred,
         positional_labels=labels,
+        shot_text_clip_ids=_shot_text_placements(strategy.get("resolved_clip_intents")),
         # A strategy target is a proposal, even when a creator proved the target.
         # Only a rendered output or a separately validated execution plan supplies
         # duration evidence for a receipt.
@@ -2757,6 +2805,10 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
         return _receipt(req, "met", None, [g.text for g in guessed], guessed)
 
     scope = set(facts.label_scope_clip_ids)
+    if not scope and req.is_shot_text:
+        # KRI-1110: words dictated for described shots belong on the clips they were placed
+        # on, not on every upload. A rule for every clip (no words) keeps judging them all.
+        scope = set(facts.shot_text_clip_ids.get(_placement_key(req.literal), ()))
     judged_ids = [(i, clip) for i, clip in enumerate(ids) if not scope or clip in scope]
     total = len(judged_ids)
     if ids:
