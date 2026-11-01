@@ -255,12 +255,14 @@ final class ClipTiltCompositionTests: XCTestCase {
         XCTAssertEqual(try json(.blank), ##"{"kind":"blank"}"##)
         XCTAssertEqual(try json(.blur), ##"{"kind":"blur"}"##)
         XCTAssertEqual(try json(.color("#E91E8C")), ##"{"color":"#E91E8C","kind":"color"}"##)
-        for value in [ClipBackdrop.blank, .blur, .color("#e91e8c")] {
+        XCTAssertEqual(try json(.media("pool-1")), ##"{"asset_id":"pool-1","kind":"media"}"##)
+        for value in [ClipBackdrop.blank, .blur, .color("#e91e8c"), .media("pool-1")] {
             XCTAssertEqual(try RecipeJSON.decoder().decode(ClipBackdrop.self, from: encoder.encode(value)), value)
         }
         for bad in [##"{"kind":"color"}"##, ##"{"kind":"blur","color":"#000000"}"##, ##"{"kind":"blank","color":"#000000"}"##,
                     ##"{"kind":"color","color":"red"}"##, ##"{"kind":"color","color":"#12345"}"##, ##"{"kind":"color","color":"#+12345"}"##,
-                    ##"{"kind":"media","asset_id":"x"}"##, ##"{"kind":"blur","extra":1}"##, ##"{"color":"#000000"}"##] {
+                    ##"{"kind":"media"}"##, ##"{"kind":"media","asset_id":"x","color":"#000000"}"##, ##"{"kind":"blur","asset_id":"x"}"##,
+                    ##"{"kind":"blur","extra":1}"##, ##"{"color":"#000000"}"##] {
             XCTAssertThrowsError(try RecipeJSON.decoder().decode(ClipBackdrop.self, from: Data(bad.utf8)), bad)
         }
     }

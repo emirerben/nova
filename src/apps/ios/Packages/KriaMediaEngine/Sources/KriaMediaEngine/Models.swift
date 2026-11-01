@@ -166,6 +166,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 try backdrop.validate()
                 guard tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
                       clip.visualPlacement == nil else { throw RecipeError.invalidTimeline }
+                if case .media = backdrop {
+                    guard schemaVersion == 2, backdrop.mediaAsset(in: assetManifest) != nil else { throw RecipeError.missingAssetReference }
+                }
             }
             for fade in [clip.audioFadeIn, clip.audioFadeOut].compactMap({ $0 }) {
                 guard fade.isFinite, (0...60).contains(fade) else { throw RecipeError.invalidTimeline }
@@ -245,6 +248,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
         if clips.contains(where: { $0.transform.rotationDegrees != 0 || $0.backdrop != nil }) { result.insert(.clipTilt) }
+        if clips.contains(where: { if case .media? = $0.backdrop { true } else { false } }) { result.insert(.clipBackdropMedia) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
@@ -519,7 +523,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
-         behindSubject, speakerBackground, clipTilt
+         behindSubject, speakerBackground, clipTilt, clipBackdropMedia
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }
