@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.63.0] - 2026-11-01
+
+### Changed
+- fix(kria): a named moment decides its clip's window; "clip 2" grounds slow motion before approval (Leverkusen M2 run 3, KRI-1106/1107) (#2008) <!-- release-pr: 2008 -->
+
 ## [0.83.62.0] - 2026-11-01
 
 ### Changed
