@@ -172,3 +172,10 @@ asks:
   - id: descriptive-captions-tr
     ask: "her klibede neler olduğunu kısaca yaz"
     expect_ops: [add_text]
+  # KRI-1137: tilt is dark by default (MEDIA_TILT_ENABLED off), so the honest answer is a refusal.
+  # The open-gate asks live in tilt_asks.yaml and need the flag, the clipTilt token and a build
+  # at protocol 28 behind the seeded thread.
+  - id: tilt-closed-gate
+    ask: "tilt the second clip 10 degrees to the right"
+    expect_ops: []
+    expect_error: "tilt"

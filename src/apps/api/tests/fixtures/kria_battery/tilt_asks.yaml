@@ -1,0 +1,31 @@
+# KRI-1137 tilt asks: python -m app.cli.kria_ask --thread <id> --battery <this file>
+# Seed a guided thread first: python -m app.cli.kria_dev seed --guided
+# Run it only where the tilt capability is OPEN for the seeded variant (MEDIA_TILT_ENABLED on, the
+# clipTilt token verified, a device-rendered edit, a build at protocol 28); with the gate closed
+# every ask below is refused, which asks.yaml (`tilt-closed-gate`) pins. Live model only.
+# expect_ops: every listed v2 op name must appear in the copilot's ops (all-of).
+asks:
+  - id: tilt-second-clip-right
+    ask: "tilt the second clip 10 degrees to the right"
+    expect_ops: [patch_slots]
+  - id: tilt-photos-blur
+    ask: "make all the photos slightly crooked with a blurred background"
+    expect_ops: [patch_slots]
+  - id: tilt-a-bit-more
+    ask: "tilt it a bit more"
+    turns:
+      - {role: user, content: "tilt the second clip 10 degrees to the right"}
+      - {role: assistant, content: "Tilted clip 2 ten degrees to the right."}
+    expect_ops: [patch_slots]
+  - id: tilt-straighten
+    ask: "straighten the second clip"
+    turns:
+      - {role: user, content: "tilt the second clip 10 degrees to the right"}
+      - {role: assistant, content: "Tilted clip 2 ten degrees to the right."}
+    expect_ops: [patch_slots]
+  - id: tilt-turkish
+    ask: "ikinci klibi 10 derece sağa yatır"
+    expect_ops: [patch_slots]
+  - id: tilt-upside-down
+    ask: "turn the first clip upside down"
+    expect_ops: [patch_slots]

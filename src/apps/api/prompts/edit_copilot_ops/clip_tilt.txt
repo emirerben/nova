@@ -1,0 +1,24 @@
+CLIP TILT (this edit can tilt clips and photos)
+
+Tilt turns a whole clip or photo to an angle. It is the "tilt" field of patch_slots. It is NOT a text op: a tilted text bar keeps using rotation_deg in patch_text.
+- {"op":"patch_slots","selector":{...},"patch":{"tilt":{"rotation_deg":10,"backdrop":{"kind":"blur"}}}}
+- rotation_deg is degrees, CLOCKWISE on screen is POSITIVE. To the right / clockwise is positive (10 = ten degrees to the right). To the left / counter-clockwise is NEGATIVE (-10). 0 is upright. Range -180 to 180; a bigger turn wraps ("turn it 270 degrees" is -90, "upside down" is 180). Never send more than a full turn (360) either way.
+- Size words when no number is given: "slightly" is 2-4 degrees, "a little" 3-5, "crooked" or "playful" 4-8, "sideways" is 90. When no side is named, tilt to the right (positive).
+- RELATIVE asks ("a bit more", "a little less", "tilt it five more degrees", "even more"): use "rotation_delta_deg", the degrees to ADD to each clip's own current angle (negative turns it further left). The current angle is on the clip's row in CLIP SLOTS as tilt=(rotation_deg=...); a row with no tilt is upright. "A bit more" is about 3, "more" about 5, "a lot more" about 10, in the direction the clip already leans. Never answer a relative ask with rotation_deg: that REPLACES the angle instead of adding to it.
+- backdrop is what shows in the corners the tilted clip leaves empty: {"kind":"blank"} (plain black, the default), {"kind":"blur"} (a blurred copy of the same clip), {"kind":"color","color":"#RRGGBB"}. Send a backdrop only when the creator asks for one. Use a colour only when they name it (write it as #RRGGBB); never invent a colour they did not ask for. "No background" or "plain" is blank. Leave "backdrop" out to keep whatever the clip has. A patch with only a backdrop ({"tilt":{"backdrop":{...}}}) changes the corners and keeps the angle.
+- Straighten, reset, "undo the tilt", "back to normal": {"tilt":null} puts the clips upright with a plain background.
+- Targets are the same selectors as the rest of patch_slots. slot_indexes are the 0-based `slots` indexes shown in CURRENT DRAFT, so "the second clip" is [1] and "clip 3" is [2]. "All the photos" is {"media_kind":"image"}, "every clip" is {"all":true}.
+- A clip whose look_preset is not "none" cannot be tilted. Do not emit the op for it; say which clips have a look and that the look has to come off first. A photo shown as a card can turn, but its background cannot be changed.
+- If the edit refuses the tilt, say so plainly. Never tell the creator a clip is tilted unless the op was emitted.
+
+Examples (JSON ops only):
+- "tilt the second clip 10 degrees to the right" -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"rotation_deg":10}}}
+- "ikinci klibi 10 derece sağa yatır" -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"rotation_deg":10}}}
+- "tilt clip 3 a little to the left" -> {"op":"patch_slots","selector":{"slot_indexes":[2]},"patch":{"tilt":{"rotation_deg":-4}}}
+- "make all the photos slightly crooked with a blurred background" -> {"op":"patch_slots","selector":{"media_kind":"image"},"patch":{"tilt":{"rotation_deg":5,"backdrop":{"kind":"blur"}}}}
+- "fotoğrafları hafifçe eğ, arka plan bulanık olsun" -> {"op":"patch_slots","selector":{"media_kind":"image"},"patch":{"tilt":{"rotation_deg":3,"backdrop":{"kind":"blur"}}}}
+- "tilt it a bit more" (the clip you just tilted is slot 1) -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"rotation_delta_deg":3}}}
+- "biraz daha eğ" (same clip, it leans right) -> {"op":"patch_slots","selector":{"slot_indexes":[1]},"patch":{"tilt":{"rotation_delta_deg":3}}}
+- "turn the first clip upside down" -> {"op":"patch_slots","selector":{"slot_indexes":[0]},"patch":{"tilt":{"rotation_deg":180}}}
+- "put a pink background behind the tilted clips" -> {"op":"patch_slots","selector":{"all":true},"patch":{"tilt":{"backdrop":{"kind":"color","color":"#FF69B4"}}}}
+- "straighten everything" / "hepsini düzelt" -> {"op":"patch_slots","selector":{"all":true},"patch":{"tilt":null}}

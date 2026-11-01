@@ -2302,6 +2302,26 @@ def _permissive_editor_settings(mp: Any) -> None:
     mp.setattr(gj, "signed_get_url", lambda p, ttl=None: f"https://eval.invalid/{p}", raising=False)
 
 
+def _open_clip_tilt(mp: Any) -> None:
+    """Open ``clips.tilt`` on the synthetic variant, as the recorded snapshot says it was.
+
+    The capability is a device-render gate (flag, client protocol, verified token) that a
+    path-free snapshot cannot rebuild, so a golden whose snapshot carries
+    ``timeline_patch_capabilities.tilt`` compiles with it open (KRI-1137).
+    """
+    from app.services import kria_editor_ops
+
+    real = kria_editor_ops._editor_capabilities
+
+    def opened(job: Any, variant: dict) -> dict:
+        capabilities = real(job, variant)
+        clips = dict(capabilities.get("clips") or {})
+        clips["tilt"] = {"editable": True, "reason": None}
+        return {**capabilities, "clips": clips}
+
+    mp.setattr(kria_editor_ops, "_editor_capabilities", opened)
+
+
 def check_edit_copilot_compiles(
     output: Any,
     input: Any,  # noqa: A002
@@ -2360,6 +2380,8 @@ def check_edit_copilot_compiles(
         # -> `settings.visual_blocks_enabled`), so the permissive patch has to be
         # in place before compiling too, not just before `prepare_editor_commit`.
         _permissive_editor_settings(mp)
+        if (snapshot.get("timeline_patch_capabilities") or {}).get("tilt") is True:
+            _open_clip_tilt(mp)
 
         try:
             compiled = compile_editor_ops(job, variant, output.ops)

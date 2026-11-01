@@ -22,11 +22,12 @@ from app.agents.edit_copilot import (
     _OP_FIELDS,
     _VALID_OPS,
 )
+from app.agents.editor_ops_v2.timeline import _PATCH_KEYS as _PATCH_SLOTS_KEYS
 from app.kria.editor_capability_parity import PARITY_GROUPS, grouped_actions
 from app.services.kria_editor_ops import COPILOT_EDITOR_CAPABILITIES
 
 # The fields inside an op's `patch` that the copilot parser keeps.
-_PATCH_FIELDS = {"set_caption_meta": _CAPTION_META_FIELDS}
+_PATCH_FIELDS = {"set_caption_meta": _CAPTION_META_FIELDS, "patch_slots": _PATCH_SLOTS_KEYS}
 # Patch fields the parser keeps only where the snapshot carries an editor capability.
 _GATED_FIELDS = {"set_caption_meta": _CAPTION_META_FIELD_GATES}
 

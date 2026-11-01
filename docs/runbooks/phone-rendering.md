@@ -3783,3 +3783,22 @@ protocol 28. A build below 28 polling a pinned recipe that carries a tilt gets
 hides the authoring surface and never rewrites a pinned recipe, so rollback is `MEDIA_TILT_ENABLED=false`
 (+ restart), never a code revert. This train's PR A is the engine and wire contract; the editor surface, Save
 routes, phone writers, AI ops and slides land in the follow-up PRs of the same project.
+
+### Chat tilt (KRI-1137, PR C)
+
+The chat copilot tilts clips through `patch_slots.tilt` (no new op): `{"rotation_deg": 10, "backdrop":
+{"kind": "blur"}}`, `{"rotation_delta_deg": 3}` for "a bit more" (each clip adds to its own angle), or `null`
+to straighten. An absolute angle up to a full turn either way is wrapped into -180..180 (270 is -90);
+anything past 360 is refused in a plain sentence. The row value is `clips[i]["tilt"]`
+(`app/kria/clip_tilt.py`: the angle plus a `ClipBackdrop`, absent when upright on a blank backdrop).
+
+The parser, the prompt and the snapshot open only while the editor capability map carries
+`clips.tilt` editable (`timeline_patch_capabilities.tilt`, present only while open). A closed gate leaves
+every snapshot and prompt byte-identical; a tilt asked for anyway is refused with "I can't tilt clips on this
+edit". The prompt fragment is `prompts/edit_copilot_ops/clip_tilt.txt` (`EDIT_COPILOT_PROMPT_VERSION` v98).
+A clip with a look, or a card photo asked for a new backdrop, is refused by the compiler in a sentence
+(`editor_ops_v2/timeline.py::_tilted`).
+
+Picture cards cannot be rotated from chat: the phone Talking compile drops `editor_style`
+(`SubtitledOverlayCard` has no angle), so `patch_overlay` with `rotation_deg` is refused on every edit
+that offers the overlay family. Teach the angle to the card op only after that compile keeps it.
