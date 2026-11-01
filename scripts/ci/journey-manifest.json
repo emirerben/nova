@@ -2785,8 +2785,10 @@
       "needs_native": true,
       "api_tests": "tests/kria/test_clip_tilt_writers.py tests/routes/test_clip_tilt_editor_save.py tests/routes/test_editor_save_code_catalog.py",
       "xctests": [
-        "KriaTests/ClipTiltTests",
-        "KriaTests/ClipTiltRenderTests"
+        "KriaTests/ClipTiltTests/testSharedFixtureValidTiltsNormalizeAndMapToRecipeFields",
+        "KriaTests/ClipTiltTests/testSettingATiltStoresTheRowAndResetRestoresAByteIdenticalRow",
+        "KriaTests/ClipTiltTests/testCompilerComposesTheTiltWithTheLetterboxInsteadOfReplacingIt",
+        "KriaTests/ClipTiltRenderTests/testARowTiltRendersClockwiseOverTheColourAndBlurBackdrops"
       ],
       "paths": [
         "src/apps/api/app/kria/clip_tilt_row.py",
