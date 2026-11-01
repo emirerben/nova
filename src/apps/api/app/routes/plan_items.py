@@ -6277,6 +6277,72 @@ _COPILOT_STALE_REPLY = "That edit is based on an older draft. Refresh the editor
 _COPILOT_FAST_MONTAGE_REPLY = (
     "I built a fast, music-led replacement draft from the strongest analyzed moments."
 )
+_COPILOT_DIRECTION_GOALS = {
+    "fast_montage": "Show the strongest visual moments quickly.",
+    "text_explainer": "Explain the idea one clear point at a time, with a readable line on each "
+    "moment.",
+    "guided_story": "Tell the story moment by moment, with a short thought on each.",
+}
+_COPILOT_DIRECTION_WORDS = {
+    "fast_montage": ("montage", "montaj"),
+    "text_explainer": ("text explainer", "metinli anlatım"),
+    "guided_story": ("guided story", "hikâye anlatımı"),
+}
+_COPILOT_PACE_WORDS = {
+    "fast": ("fast", "hızlı"),
+    "balanced": ("balanced", "dengeli"),
+    "relaxed": ("relaxed", "sakin"),
+}
+
+
+def _copilot_direction_request(
+    request_op: dict, approved: EditProposalSnapshot
+) -> tuple[str, str, bool, str | None]:
+    """``(direction, pace, pace_applied, note)`` for a Copilot direction op (KRI-1097 wave 2).
+
+    The direction is the creator's (the Copilot parser only lets through the ones the planner
+    builds). A stated pace reaches the planner through `length_policy.effective_pace`; with none
+    stated the direction keeps its own pace: a fast montage cuts fast, a story keeps the approved
+    story's pace. ``note`` is the registry's pacing line when a stated pace is not applied
+    (``PACE_DRIVES_CUTS_ENABLED`` off), so it is said, never dropped.
+    """
+    from app.kria.route_capabilities import _lines as lines  # noqa: PLC0415
+    from app.services.length_policy import STORY_DIRECTIONS, effective_pace  # noqa: PLC0415
+
+    direction = str(request_op["direction"])
+    own = (
+        "fast"
+        if direction == "fast_montage"
+        else approved.pace
+        if approved.direction in STORY_DIRECTIONS
+        else "balanced"
+    )
+    stated = request_op.get("pace")
+    if not stated:
+        return direction, own, False, None
+    pace = effective_pace({"pacing": stated, "pacing_requested": True})
+    if pace is not None:
+        return direction, pace, True, None
+    own_en, own_tr = _COPILOT_PACE_WORDS[own]
+    note = lines.pacing_line(
+        lambda value, _strategy: value == own,
+        f"it keeps the {own_en} pace",
+        f"{own_tr} tempoda kalıyor",
+    )(stated, {})
+    return direction, own, False, note
+
+
+def _copilot_direction_reply(direction: str, pace: str) -> str:
+    from app.kria.reply_language import say  # noqa: PLC0415
+
+    if direction == "fast_montage" and pace == "fast":
+        return _COPILOT_FAST_MONTAGE_REPLY
+    direction_en, direction_tr = _COPILOT_DIRECTION_WORDS[direction]
+    pace_en, pace_tr = _COPILOT_PACE_WORDS[pace]
+    return say(
+        en=f"I built a {pace_en} {direction_en} replacement draft from your analyzed footage.",
+        tr=f"Analiz edilen görüntülerinden {pace_tr} bir {direction_tr} taslağı hazırladım.",
+    )
 
 
 @router.post(
@@ -6387,13 +6453,18 @@ async def plan_item_copilot_turn(
             (job.assembly_plan or {}).get("guided_edit")
         )
         item = await _load_owned_item(item_id, user.id, db)
+        direction, pace, pace_applied, pace_note = (
+            _copilot_direction_request(request_op, approved)
+            if settings.copilot_direction_follows_request_enabled
+            else ("fast_montage", "fast", False, None)
+        )
         planned = await asyncio.to_thread(
             plan_direction_snapshot,
             approved,
-            direction="fast_montage",
-            goal="Show the strongest visual moments quickly.",
+            direction=direction,
+            goal=_COPILOT_DIRECTION_GOALS[direction],
             creator_request=body.message,
-            pace="fast",
+            pace=pace,
             duration_s=approved.duration_s,
             idea=str(item.idea or ""),
             theme=str(item.theme or ""),
@@ -6401,8 +6472,10 @@ async def plan_item_copilot_turn(
             plan_item_id=item_id,
         )
         cuts = planned.fast_cuts or []
-        if not cuts:
+        if direction == "fast_montage" and not cuts:
             raise ValueError("fast montage planner returned no cuts")
+        if direction != "fast_montage" and not planned.story_beats:
+            raise ValueError("story planner returned no beats")
     except Exception as exc:  # noqa: BLE001 - model/planner failure is honest + retryable
         log.warning("edit_copilot.direction_planner_failed", job_id=str(job.id), exc_info=True)
         return await record(
@@ -6426,49 +6499,74 @@ async def plan_item_copilot_turn(
             )
         )
 
+    # A fast montage stages hard cuts and clears the untouched AI thoughts; a story direction
+    # (only for a client that lists `story_direction`) stages the planned beats with their text.
+    staged = (
+        {
+            "cuts": [
+                {
+                    "media_id": cut.media_id,
+                    "start_s": cut.source_start_s,
+                    "duration_s": cut.output_duration_s,
+                }
+                for cut in cuts
+            ],
+            "clear_text": [
+                {"id": text_id, "expected_text": str(approved_text.get("text") or "")}
+                for text_id, approved_text in {
+                    str(row.get("id")): row
+                    for row in (
+                        (job.assembly_plan or {})
+                        .get("guided_story_execution_plan", {})
+                        .get("text_elements")
+                        or []
+                    )
+                    if isinstance(row, dict)
+                    and str(row.get("id") or "").startswith("guided-thought-")
+                }.items()
+                if any(
+                    isinstance(current_text, dict)
+                    and str(current_text.get("id") or "") == text_id
+                    and str(current_text.get("text") or "") == str(approved_text.get("text") or "")
+                    for current_text in revision.get("text_elements") or []
+                )
+            ],
+            "hard_cuts": True,
+            "minimal_text": True,
+        }
+        if direction == "fast_montage"
+        else {
+            "beats": [
+                {
+                    "beat_id": beat.beat_id,
+                    "media_ids": list(beat.media_ids),
+                    "duration_s": beat.duration_s,
+                    "thought": beat.thought,
+                    "layout": beat.layout,
+                }
+                for beat in planned.story_beats
+            ],
+            "hard_cuts": pace == "fast",
+            "minimal_text": False,
+        }
+    )
     server_op = {
         "op": "set_edit_direction",
-        "direction": "fast_montage",
+        "direction": direction,
+        **({"pace": pace} if pace_applied else {}),
         "revision_number": int(revision["revision_number"]),
         "base_generation": current_generation,
         "server_planned": True,
-        "cuts": [
-            {
-                "media_id": cut.media_id,
-                "start_s": cut.source_start_s,
-                "duration_s": cut.output_duration_s,
-            }
-            for cut in cuts
-        ],
-        "clear_text": [
-            {"id": text_id, "expected_text": str(approved_text.get("text") or "")}
-            for text_id, approved_text in {
-                str(row.get("id")): row
-                for row in (
-                    (job.assembly_plan or {})
-                    .get("guided_story_execution_plan", {})
-                    .get("text_elements")
-                    or []
-                )
-                if isinstance(row, dict) and str(row.get("id") or "").startswith("guided-thought-")
-            }.items()
-            if any(
-                isinstance(current_text, dict)
-                and str(current_text.get("id") or "") == text_id
-                and str(current_text.get("text") or "") == str(approved_text.get("text") or "")
-                for current_text in revision.get("text_elements") or []
-            )
-        ],
-        "hard_cuts": True,
-        "minimal_text": True,
+        **staged,
     }
+    reply = _copilot_direction_reply(direction, pace)
     return await record(
         response.model_copy(
             update={
                 "ops": [server_op],
                 "outcome": "applied",
                 "needs_clarification": False,
-                "reply": _COPILOT_FAST_MONTAGE_REPLY,
+                "reply": f"{reply} {pace_note}." if pace_note else reply,
                 "rejection_reasons": [],
             }
         )
