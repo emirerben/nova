@@ -119,7 +119,7 @@ import XCTest
         let manage = app.buttons["Manage account"]
         reveal(manage, app: app); manage.tap()
         app.buttons["account-text-preferences"].tap()
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app); shadow.buttons["On"].tap()
         selectRole("title", app: app)
         XCTAssertTrue(app.staticTexts["The big opening line in the first seconds."].waitForExistence(timeout: 5))
@@ -134,10 +134,10 @@ import XCTest
         reveal(manage, app: app); manage.tap()
         app.buttons["account-text-preferences"].tap()
         selectRole("title", app: app)
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app); shadow.buttons["On"].tap()
         selectRole("label", app: app)
-        let outline = app.segmentedControls["text-preference-outline"]
+        let outline = app.otherElements["text-preference-outline"]
         reveal(outline, app: app); outline.buttons["On"].tap()
         let save = app.buttons["text-preferences-save"]
         reveal(save, app: app); save.tap()
@@ -157,11 +157,11 @@ import XCTest
         let manage = app.buttons["Manage account"]
         reveal(manage, app: app); manage.tap()
         app.buttons["account-text-preferences"].tap()
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         selectRole("title", app: app)
         reveal(shadow, app: app); shadow.buttons["On"].tap()
         selectRole("label", app: app)
-        let outline = app.segmentedControls["text-preference-outline"]
+        let outline = app.otherElements["text-preference-outline"]
         reveal(outline, app: app); outline.buttons["On"].tap()
         XCTAssertEqual(app.buttons["text-preference-role-title"].value as? String, "unsaved changes")
         XCTAssertEqual(app.buttons["text-preference-role-label"].value as? String, "unsaved changes")
@@ -204,12 +204,12 @@ import XCTest
         let font = app.buttons["text-preference-font"]
         reveal(font, app: app)
         XCTAssertTrue(font.label.contains("Kria picks"))
-        let outline = app.segmentedControls["text-preference-outline"]
+        let outline = app.otherElements["text-preference-outline"]
         reveal(outline, app: app)
         XCTAssertTrue(outline.buttons["Off"].isSelected, "Outline shows its real default before anything is saved")
         outline.buttons["On"].tap()
         outline.buttons["Off"].tap()
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app)
         XCTAssertTrue(shadow.buttons["Off"].isSelected, "Shadow shows its real default before anything is saved")
         shadow.buttons["On"].tap()
@@ -222,10 +222,10 @@ import XCTest
         app.buttons["account-text-preferences"].tap()
         reveal(app.buttons["text-preference-font"], app: app)
         XCTAssertTrue(app.buttons["text-preference-font"].label.contains("Kria picks"))
-        reveal(app.segmentedControls["text-preference-outline"], app: app)
-        XCTAssertTrue(app.segmentedControls["text-preference-outline"].buttons["Off"].isSelected)
-        reveal(app.segmentedControls["text-preference-shadow"], app: app)
-        XCTAssertTrue(app.segmentedControls["text-preference-shadow"].buttons["Off"].isSelected)
+        reveal(app.otherElements["text-preference-outline"], app: app)
+        XCTAssertTrue(app.otherElements["text-preference-outline"].buttons["Off"].isSelected)
+        reveal(app.otherElements["text-preference-shadow"], app: app)
+        XCTAssertTrue(app.otherElements["text-preference-shadow"].buttons["Off"].isSelected)
     }
 
     func testEachTextRoleExplainsItselfAndKeepsThePreview() {
@@ -301,7 +301,7 @@ import XCTest
         reveal(manage, app: app)
         manage.tap()
         app.buttons["account-text-preferences"].tap()
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app)
         shadow.buttons["On"].tap()
         let save = app.buttons["text-preferences-save"]
@@ -338,7 +338,7 @@ import XCTest
         for _ in 0..<10 where !placement.exists { scrollForm(app, down: true) }
         reveal(placement, app: app)
         XCTAssertTrue(placement.label.contains("Top Left"))
-        let shadow = app.segmentedControls["text-preference-shadow"]
+        let shadow = app.otherElements["text-preference-shadow"]
         reveal(shadow, app: app)
         XCTAssertTrue(shadow.buttons["Off"].isSelected)
     }
