@@ -23,7 +23,7 @@ extension TextPreferenceRule {
 /// creator's current rule at full strength; the others are ghosted so the creator sees where each one sits.
 /// Text goes through `SlidePostTextLayerView`, the layer the on-device exporter uses for slide text.
 struct TextRolePreview: View {
-    static let ghostOpacity = 0.42
+    static let ghostOpacity = 0.55
     static let frameName = "featured-bosphorus"
 
     let selected: String
