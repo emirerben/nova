@@ -30,7 +30,7 @@ import XCTest
         }
         let api = NativeEditorTestSupport.api(tokenStore: store)
         let owner = try XCTUnwrap(api.mediaLibraryOwner)
-        do { let _: NativeActivityPage = try await api.request(path: "me/activities", method: "GET", bodyData: nil, decode: NativeActivityPage.self, expectedOwner: owner) } catch {}
+        do { _ = try await api.nativeActivity(id: UUID(), owner: owner) } catch {}
         XCTAssertEqual(try store.read(), next)
         XCTAssertEqual(store.interleavings, 1)
     }

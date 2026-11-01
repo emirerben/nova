@@ -204,7 +204,6 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     /// One page of chats, newest first. `nextCursor` is nil on the last page.
     func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
-    func nativeActivities(before: String?) async throws -> NativeActivityPage
     func nativeActivity(id: UUID) async throws -> NativeActivity
     func readNativeActivity(id: UUID) async throws -> NativeActivity
     func nativeActivity(id: UUID, owner: String) async throws -> NativeActivity
