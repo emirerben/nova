@@ -25,6 +25,15 @@ from app.schemas.phone_text_style import (
 
 _MEASUREMENTS: ContextVar[dict | None] = ContextVar("phone_text_measurements", default=None)
 
+# One placement may spend this many fresh measurements probing for a clear spot. The allowance is
+# per placement so a block that needs many probes cannot starve the rows styled after it.
+_PLACE_PROBE_BUDGET = 8192
+_MEASUREMENT_CACHE_ENTRIES = 16384
+
+
+class _ProbeBudgetSpent(Exception):
+    """A placement used its probe allowance; it falls through to best-effort placement."""
+
 
 @contextmanager
 def phone_text_measurement_scope():
@@ -232,14 +241,11 @@ def measure_box(
         cached = budget["cache"].get(key) if budget else None
         if cached is None:
             if budget:
-                if floor is not None and budget["count"] >= 8192:
-                    raise _style_decline(
-                        "This video has too many complex text layouts. "
-                        "Simplify a text lane and retry."
-                    )
+                if floor is not None and budget["count"] >= budget.get("probe_limit", float("inf")):
+                    raise _ProbeBudgetSpent
                 budget["count"] += 1
             cached = measure_text_overlay_box(overlay, render_canvas=canvas, resolved_size=True)
-            if budget and len(budget["cache"]) < 2048:
+            if budget and len(budget["cache"]) < _MEASUREMENT_CACHE_ENTRIES:
                 budget["cache"][key] = cached
         boxes.append(cached)
     rendered_size = min(box.get("size_px", float(row.get("size_px") or 76)) for box in boxes)
@@ -444,24 +450,49 @@ def record_text_fit_relaxed(
     )
 
 
-def _place_connected_stacks(rows, rules, obstacles_for, canvas):
+def _place_connected_stacks(rows, rules, obstacles_for, canvas, requested=None):
     """Reflow the selected face as a group; never independently refit headings.
 
     A saved corner is a preference: a group that cannot sit clear there is laid out again at
-    the corner its own rows asked for. A group that fits nowhere is kept, with a receipt."""
+    the corner its own rows asked for, then at each other corner, and the layout that gives way
+    only the least important obstacles is kept (with a receipt). A corner the creator named
+    this turn is never abandoned."""
     saved = deepcopy(rows)
-    fitted, strained = _lay_out_stacks(rows, rules, obstacles_for, canvas, honor_preferences=True)
-    if strained:
-        preferred = deepcopy(rows)
-        _restore(rows, saved)
-        own_fitted, own_strained = _lay_out_stacks(
-            rows, rules, obstacles_for, canvas, honor_preferences=False
+    held = any(position_requested(requested, text_role(row)) for row in rows)
+
+    def rule_corner(row):
+        return rules[text_role(row)].get("position")
+
+    attempts = [rule_corner]
+    if not held:
+        tried = {rule_corner(row) for row in rows}
+        attempts.append(lambda _row: None)
+        attempts.extend(
+            (lambda _row, corner=corner: corner)
+            for corner in PLACEMENT_CASCADE
+            if corner not in tried
         )
-        if len(own_strained) <= len(strained):
-            fitted, strained = own_fitted, own_strained
-        else:
-            _restore(rows, preferred)
-    for row, reason, obstacles, overlaps in strained:
+    best = None
+    for index, wanted_for in enumerate(attempts):
+        _restore(rows, saved)
+        fitted, strained = _lay_out_stacks(rows, rules, obstacles_for, canvas, wanted_for)
+        key = (
+            sum(not in_frame for *_rest, in_frame in strained),
+            max(
+                (_sacrifice_rank(kind) for _r, _w, _o, kinds, _f in strained for kind in kinds),
+                default=-1,
+            ),
+            len(strained),
+            index,
+        )
+        if best is None or key < best[0]:
+            best = (key, deepcopy(rows), fitted, strained)
+        if not strained:
+            break
+    _key, kept, fitted, strained = best
+    _restore(rows, kept)
+    for row, reason, obstacles, overlaps, _in_frame_ in strained:
+        wanted = rule_corner(row)
         record_text_fit_relaxed(
             row,
             role=text_role(row),
@@ -469,8 +500,8 @@ def _place_connected_stacks(rows, rules, obstacles_for, canvas):
             rung="text_group",
             obstacles=obstacles,
             overlaps=overlaps,
-            wanted_position=rules[text_role(row)].get("position"),
-            requested_position=None,
+            wanted_position=wanted,
+            requested_position=wanted if position_requested(requested, text_role(row)) else None,
         )
     return fitted
 
@@ -481,7 +512,7 @@ def _restore(rows, snapshot) -> None:
         row.update(deepcopy(kept))
 
 
-def _lay_out_stacks(rows, rules, obstacles_for, canvas, *, honor_preferences: bool):
+def _lay_out_stacks(rows, rules, obstacles_for, canvas, wanted_for):
     from app.pipeline.text_stack_layout import (
         STACK_LAYOUT_PARAM,
         layout_corner_stack,
@@ -494,7 +525,7 @@ def _lay_out_stacks(rows, rules, obstacles_for, canvas, *, honor_preferences: bo
         if not (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM):
             continue
         authored = set(row["source_params"].get("creator_style_fields") or [])
-        wanted = rules[text_role(row)].get("position") if honor_preferences else None
+        wanted = wanted_for(row)
         corner = row["source_params"][STACK_LAYOUT_PARAM].get("corner")
         zone = (
             corner.split("_", 1)[0]
@@ -571,8 +602,9 @@ def _lay_out_stacks(rows, rules, obstacles_for, canvas, *, honor_preferences: bo
                 ),
             ]
             hit = [o for o in obstacles if _overlap(box, o.box)]
-            if not _in_frame(box) or hit:
-                strained.append((row, reason, obstacles, [o.kind for o in hit]))
+            in_frame = _in_frame(box)
+            if not in_frame or hit:
+                strained.append((row, reason, obstacles, [o.kind for o in hit], in_frame))
         fitted.extend(members)
     return fitted, strained
 
@@ -590,7 +622,8 @@ class _FitStrategy:
     extra_positions: tuple[str, ...] = ()
 
 
-_EVERY_ANCHOR = ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
+# The anchors a title could already reach come first, so text that found a spot before keeps it.
+_EVERY_ANCHOR = ("top", "bottom", "bottom_right", "top_left", "top_right", "middle", "bottom_left")
 
 # Tried in order; the first rung is the original behaviour so text that already fits is untouched.
 # The widest wrap stays inside the safe box (swept x 0.05..0.84 after the anchor shift), the
@@ -657,7 +690,9 @@ def _place(
     authored = set((row.get("source_params") or {}).get("creator_style_fields") or [])
     # Pins/captions retain their lane's established anchors unless the creator
     # asks otherwise. Reserve their complete measured rectangles for titles.
+    lane_fixed = False
     if role in {"pinned", "label"} and "position" not in wanted:
+        lane_fixed = True
         side = (
             "left"
             if float(row.get("x_frac") or 0.5) <= 0.3
@@ -673,27 +708,34 @@ def _place(
     pinned_position = bool(authored & {"position", "x_frac", "y_frac", "alignment"})
     if pinned_position:
         positions = ["authored"]
-    fixed = pinned_position or position_fixed
+    fixed = pinned_position or position_fixed or lane_fixed
 
     def spots(strategy: _FitStrategy) -> list[str]:
         if fixed:
             return positions
         return [*positions, *(p for p in strategy.extra_positions if p not in positions)]
 
-    for strategy in _FIT_CASCADE:
-        if _fits_clear(
-            row,
-            original=original,
-            authored=authored,
-            role=role,
-            positions=spots(strategy),
-            strategy=strategy,
-            obstacles=obstacles,
-            canvas=canvas,
-            block_rows=block_rows,
-            anchors=LABEL_ANCHORS,
-        ):
-            return row
+    scope = _MEASUREMENTS.get()
+    if scope is not None:
+        scope["probe_limit"] = scope["count"] + _PLACE_PROBE_BUDGET
+    reason = "no_clear_placement"
+    try:
+        for strategy in _FIT_CASCADE:
+            if _fits_clear(
+                row,
+                original=original,
+                authored=authored,
+                role=role,
+                positions=spots(strategy),
+                strategy=strategy,
+                obstacles=obstacles,
+                canvas=canvas,
+                block_rows=block_rows,
+                anchors=LABEL_ANCHORS,
+            ):
+                return row
+    except _ProbeBudgetSpent:
+        reason = "measurement_budget"
     overlaps = _fit_least_bad(
         row,
         original=original,
@@ -709,7 +751,7 @@ def _place(
     record_text_fit_relaxed(
         row,
         role=role,
-        reason="no_clear_placement",
+        reason=reason,
         rung=_RELAXED_FIT.name,
         obstacles=obstacles,
         overlaps=overlaps,
@@ -947,6 +989,7 @@ def resolve_phone_text_style(
             )
     rows = deepcopy(rows)
     original_rows = deepcopy(rows)
+    relaxed_before = len(_MEASUREMENTS.get().get("relaxed", []))
     preferences, requested, selected_fonts = (
         preferences or {},
         requested or {},
@@ -1060,7 +1103,7 @@ def resolve_phone_text_style(
         ]
 
     fixed = [row for row in rows if text_role(row) != "title"]
-    fitted = _place_connected_stacks(fixed, rules, obstacles_for, canvas)
+    fitted = _place_connected_stacks(fixed, rules, obstacles_for, canvas, requested)
     for row in fixed:
         if (row.get("source_params") or {}).get("text_stack_v1"):
             continue
@@ -1114,7 +1157,7 @@ def resolve_phone_text_style(
             "roles": sorted(rules),
             "row_count": len(rows),
             "measurement_count": _MEASUREMENTS.get()["count"],
-            "text_fit_relaxed_ids": list(_MEASUREMENTS.get().get("relaxed", [])),
+            "text_fit_relaxed_ids": _MEASUREMENTS.get().get("relaxed", [])[relaxed_before:],
             "font_fallback_roles": sorted(
                 {
                     text_role(row)

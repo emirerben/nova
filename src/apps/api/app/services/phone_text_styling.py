@@ -816,6 +816,7 @@ def style_guided_generation(plan, bindings, *, job_id: str) -> dict:
                         "start_s": r.start_s,
                         "end_s": r.end_s,
                         "box": (r.box.left, r.box.top, r.box.right, r.box.bottom),
+                        "kind": "face",
                     }
                     for r in regions
                 ]
