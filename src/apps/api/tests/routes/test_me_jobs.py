@@ -1575,6 +1575,20 @@ def test_recorder_diagnostics_logs_every_finished_take_with_its_stop_reason() ->
     db.execute.assert_not_awaited()
 
 
+def test_recorder_diagnostics_a_take_the_creator_stopped_is_not_a_warning() -> None:
+    """KRI-1149: only takes that ended against the creator's intent are warning-level triage."""
+    _override(_user(), _db([]))
+
+    def level_for(stop_reason: str) -> str:
+        body = {**_RECORDER_DIAGNOSTIC, "kind": "take_finished", "stop_reason": stop_reason}
+        with structlog.testing.capture_logs() as logs:
+            assert client.post("/me/recorder-diagnostics", json=body).status_code == 204
+        return next(e for e in logs if e["event"] == "recorder_take_finished")["log_level"]
+
+    assert level_for("user") == "info"
+    assert level_for("backgrounded") == "warning"
+
+
 def test_recorder_diagnostics_silent_take_keeps_its_event_name_and_accepts_a_stop_reason() -> None:
     user = _user()
     _override(user, _db([]))

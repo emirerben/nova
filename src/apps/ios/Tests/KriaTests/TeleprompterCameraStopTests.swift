@@ -105,6 +105,17 @@ import XCTest
         XCTAssertEqual(camera.stopReason, .mediaServicesReset)
     }
 
+    func testInterruptionBeforeAnyTakeDoesNotClaimARecordingStopped() async {
+        let camera = TeleprompterCamera()
+        camera.seedPreviewReadyForTesting()
+        interruption(.began)
+        for _ in 0..<40 where camera.phase == .ready { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(camera.phase, .failed)
+        let message = camera.error ?? ""
+        XCTAssertFalse(message.isEmpty)
+        XCTAssertFalse(message.contains("Recording stopped"), "nothing was recording: \(message)")
+    }
+
     func testCreatorStopIsNotAnInterruption() {
         let camera = recordingCamera()
         camera.stopRecording(reason: .user)

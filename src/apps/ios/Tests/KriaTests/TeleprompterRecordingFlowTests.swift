@@ -66,6 +66,13 @@ import XCTest
         XCTAssertNil(flow.camera.stopReason)
     }
 
+    func testSceneInactiveDuringCountdownCancelsItSoTheTakeNeverStartsOnAStaleGraph() throws {
+        let flow = try recordingFlow()
+        flow.stage = .countdown
+        flow.scenePhaseChanged(.inactive)
+        XCTAssertEqual(flow.stage, .camera)
+    }
+
     func testBackgroundingWhileRecordingStopsTheTakeAsBackgrounded() throws {
         let flow = try recordingFlow()
         flow.scenePhaseChanged(.inactive)

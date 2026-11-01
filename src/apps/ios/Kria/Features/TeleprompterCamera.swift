@@ -447,6 +447,7 @@ import UIKit
         recordingStartedAt = ProcessInfo.processInfo.systemUptime
     }
     var phaseLabelsForTesting: [String] { phaseHistory.map(\.label) }
+    func seedPreviewReadyForTesting() { phase = .ready }
     #endif
 
     // MARK: Live microphone meter (KRI-653)
