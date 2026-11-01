@@ -80,6 +80,7 @@ from app.schemas.edit_proposal import (
     FastMontageCut,
     MediaRef,
 )
+from app.schemas.text_style_intent import normalize_title_animation
 from app.schemas.user_song import (
     SongAlignment,
     SongAnalysis,
@@ -842,6 +843,24 @@ def _window_blocks(blocks: list[_Block]) -> tuple[list[_Block], bool]:
     return kept, True
 
 
+def _title_entrance(planned: object, requirements: Sequence[Any] | None) -> str | None:
+    """The entrance the opening and closing titles play, else None (KRI-1097 wave 2).
+
+    The creator's named animation ask on the title or on all the text wins (a ``style`` ask
+    such as "animate the title in" counts: `animation_ask` with ``styles=True``), then the
+    plan's own ``title_animation``, then an unnamed ask's plain fade. A per-clip or one-clip
+    ask has no text to play on here: this route draws no labels, and the card declines it.
+    """
+    from app.kria.animation_ask import animation_targets  # noqa: PLC0415
+
+    targets = dict(animation_targets(list(requirements or ()), styles=True))
+    asks = [targets[target] for target in ("title", "all") if target in targets]
+    named = next((ask for ask in asks if ask.named), None)
+    if named is not None:
+        return named.edge
+    return normalize_title_animation(planned) or (asks[0].resolved_edge() if asks else None)
+
+
 def plan_lipsync_montage(
     clips: Sequence[UnifiedClip],
     alignment: SongAlignment,
@@ -856,6 +875,7 @@ def plan_lipsync_montage(
     output_orientation_reason: str | None = None,
     creator_choices: Mapping[str, Mapping[str, Any]] | None = None,
     freeze_frames: bool = False,
+    requirements: Sequence[Any] | None = None,
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan that lays ``clips`` on the song's clock.
 
@@ -867,7 +887,10 @@ def plan_lipsync_montage(
     ``creator_choices`` (``apply_resolved_song_takes``) carries the positions that
     answer already resolved, including stacked takes (``place="stack"``,
     ``position_basis="creator_stack"``) and B-roll. ``strategy``/``view`` supply only the
-    creator's title, closing title and typography. ``output_orientation`` is the
+    creator's title, closing title and typography; with
+    ``LIPSYNC_ROUTE_FOLLOWS_PROMPT_ENABLED`` the strategy and the brief's live
+    ``requirements`` also give both titles their entrance (`_title_entrance`). The song
+    still sets the cuts and the length. ``output_orientation`` is the
     creator's explicit finished-video shape (KRI-306); without it the snapshot
     infers one from the footage. ``freeze_frames`` (``freeze_frame_planned_for``: the phone
     that approved can hold a frame) lets a short stretch of song nobody filmed be covered by
@@ -1108,6 +1131,13 @@ def plan_lipsync_montage(
     hold = strategy.get("opening_title_duration_s")
     if isinstance(hold, (int, float)) and not isinstance(hold, bool):
         snapshot_kwargs["opening_title_duration_s"] = hold
+    entrance = (
+        _title_entrance(strategy.get("title_animation"), requirements)
+        if settings.lipsync_route_follows_prompt_enabled
+        else None
+    )
+    if entrance is not None:
+        snapshot_kwargs["title_animation"] = entrance
     if output_orientation in ("portrait", "landscape"):
         snapshot_kwargs["output_orientation"] = output_orientation
         snapshot_kwargs["output_orientation_reason"] = (

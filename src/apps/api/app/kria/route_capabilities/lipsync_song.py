@@ -3,6 +3,8 @@
 Takes are placed where the song says them; the plan's pace is recorded but the song sets where
 the cuts fall, and a story direction is always cut as the fast montage (``creator_song``).
 Captions are the song's lyrics, pinned at plan time from the caption style (``song_captions``).
+With ``LIPSYNC_ROUTE_FOLLOWS_PROMPT_ENABLED`` the opening and closing titles enter the way the
+plan or a typed title or all-text animation ask says (`lipsync_montage._title_entrance`).
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from app.config import settings
 from app.kria.brief import BriefRequirement
 from app.kria.route_capabilities import _lines as lines
 from app.kria.route_capabilities._types import (
@@ -23,6 +26,7 @@ from app.kria.route_capabilities._types import (
 )
 
 CREATOR_SONG = "creator_song"
+_PLAN = "pipeline/lipsync_montage.py:plan_lipsync_montage"
 
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
@@ -41,7 +45,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "target_duration_s": NotApplied(
         lines.stated_length("its length follows your song", "uzunluğu şarkını takip ediyor")
     ),
-    "title_animation": NotApplied(lines.title_animation),
+    "title_animation": Applied(via=_PLAN),
     "label_position": NotApplied(lines.label_position),
     "optional_treatments": NotApplied(lines.treatments),
     "archetype": NotApplied(lines.archetype),
@@ -73,12 +77,24 @@ RENDER_ENTRY = RenderEntry(
     },
 )
 
+
+def _animation_not_played(req: BriefRequirement, _strategy: Mapping[str, Any]) -> bool:
+    """A typed animation ask the titles do not play: every one with the lane switch off; with
+    it on, one on the clip labels or on one clip (this route draws no labels), or one whose
+    value names no animation ("none"), as before. An ask on the title or on all the text
+    reaches both titles (`lipsync_montage._title_entrance`)."""
+    if not lines.asks_text_animation(req):
+        return False
+    if not settings.lipsync_route_follows_prompt_enabled:
+        return True
+    from app.kria.animation_ask import animation_ask  # noqa: PLC0415
+
+    ask = animation_ask(req, styles=True)
+    return ask is None or ask.scope == "per_clip" or ask.scope.startswith("clip:")
+
+
 ASK_DECLINES: tuple[AskDecline, ...] = (
-    AskDecline(
-        "text_animation",
-        lambda req, _s: lines.asks_text_animation(req),
-        lines.animation_decline,
-    ),
+    AskDecline("text_animation", _animation_not_played, lines.animation_decline),
 )
 
 

@@ -29,6 +29,12 @@ Offline and free: socket guard, no model, JSON only, no media.
   the route drops. The animation ask is the lip-sync lane's (L4) render target.
 - the approval card is assembled offline from the real pure functions; manifest and proxy paths are
   synthetic
+- `replay_inputs` (lane L4): the song analysis and take alignment the render entry needs, which
+  the recording does not hold. A 271 s song; a beat every 0.5 s and a lyric line every 4 s are
+  synthetic. The takes sit in the song order prod placed them (`prod_outcome.render.song_windows_s`,
+  matched by length: 04, 03, 02, 01), the first at the recorded window start 62.945 s, each
+  overlapping the next by about half a second. No plan or ask value. The fixture builder does not
+  carry this key: re-add it after a rebuild.
 
 ## Scrubbed
 
@@ -45,10 +51,10 @@ names; hashes; media ids (`analysis-proxy-lipsync_song-NN`).
 | 2.story_structure | disclosed_ok | VERIFIED (card line) | |
 | 2.caption_style (`karaoke`) | disclosed_ok | VERIFIED (card line) | |
 | 2.target_duration_s (stated 30 s) | disclosed_ok | VERIFIED (length line) | |
-| 2.title_animation | disclosed_ok | VERIFIED (card line + r3 decline) | |
+| 2.title_animation | disclosed_ok | VERIFIED (card line + r3 decline) | L4: VERIFIED (applied in the render) |
 | 3.r2 keep it 30 seconds | disclosed_ok | VERIFIED (the card's length line) | |
-| 3.r3 animation ask | disclosed_ok | VERIFIED (route decline) | |
-| 4.title_animation, 5.r3 | honored | NOT VERIFIED (no render replay yet) | L4 |
+| 3.r3 animation ask | disclosed_ok | VERIFIED (route decline) | L4: VERIFIED (honored in the render) |
+| 4.title_animation, 5.r3 | honored | NOT VERIFIED (no render replay yet) | L4: VERIFIED (`snapshot.title_animation`, replay controls valid) |
 | 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
@@ -72,5 +78,7 @@ at these in the video: lip sync to the uploaded song".
 ## What the checks do not prove
 
 The field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no wording quality, no native
-render. Honored checks need `scripts/kria/route_replays/lipsync_song.py`, which calls the
-route's `RENDER_ENTRY` with this fixture's own plan and asks.
+render. Honored checks come from `scripts/kria/route_replays/lipsync_song.py`, which calls the
+route's `RENDER_ENTRY` (`plan_lipsync_montage`) with this fixture's own plan and asks. The fixture
+has no title words, so the entrance it records plays on no text here; with a title and a closing
+title both enter that way (agents/DECISIONS.md "Prompt fidelity wave 2: lipsync").

@@ -34,6 +34,50 @@
     "I filmed from 0:00 to 4:31"
   ],
   "client_protocol": 22,
+  "replay_inputs": {
+    "about": "Reconstructed, not recorded: the entry needs the song analysis and the take alignment, which the recording does not hold. Song length 271 s (the attached song); a beat every 0.5 s from 0.25 s and a lyric line every 4 s from 2 s are synthetic. Takes in the song order prod placed them (prod_outcome.render.song_windows_s, matched by length: 04, 03, 02, 01), the first at the recorded window start 62.945 s, each overlapping the next by about half a second. No plan or ask value.",
+    "plan_item_id": "synthetic-plan-item",
+    "song": {
+      "generation": 1,
+      "duration_s": 271.0,
+      "first_beat_s": 0.25,
+      "beat_step_s": 0.5,
+      "first_line_s": 2.0,
+      "line_step_s": 4.0,
+      "line_length_s": 3.0,
+      "line_text": "la la"
+    },
+    "takes": [
+      {
+        "media_id": "analysis-proxy-lipsync_song-04",
+        "status": "confident",
+        "delta_s": 62.645,
+        "confidence": 0.95,
+        "peak_z": 14.0
+      },
+      {
+        "media_id": "analysis-proxy-lipsync_song-03",
+        "status": "confident",
+        "delta_s": 84.0,
+        "confidence": 0.95,
+        "peak_z": 14.0
+      },
+      {
+        "media_id": "analysis-proxy-lipsync_song-02",
+        "status": "confident",
+        "delta_s": 91.2,
+        "confidence": 0.95,
+        "peak_z": 14.0
+      },
+      {
+        "media_id": "analysis-proxy-lipsync_song-01",
+        "status": "confident",
+        "delta_s": 110.9,
+        "confidence": 0.95,
+        "peak_z": 14.0
+      }
+    ]
+  },
   "planner_summary": "I'll lip-sync your takes to your song, placing each one where it fits the music.",
   "brief": {
     "version": 1,

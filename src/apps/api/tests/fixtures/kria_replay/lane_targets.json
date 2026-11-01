@@ -77,16 +77,6 @@
       }
     },
     "lipsync_song": {
-      "4.title_animation": {
-        "lane": "L4",
-        "kind": "honored",
-        "why": "the planned title animation reaches the lip-sync titles"
-      },
-      "5.r3": {
-        "lane": "L4",
-        "kind": "honored",
-        "why": "animate the title in: the animation ask reaches the lip-sync titles"
-      }
     },
     "speech_excerpt": {
       "4.pacing": {
