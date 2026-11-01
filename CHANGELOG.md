@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.55.0] - 2026-11-01
+
+### Changed
+- fix(kria): clip text the creator took back is no longer planned or locked as copy (KRI-1124) (#2005) <!-- release-pr: 2005 -->
+
 ## [0.83.54.0] - 2026-11-01
 
 ### Changed
