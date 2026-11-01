@@ -20,7 +20,8 @@ each gap into a typed, creator-readable disclosure the draft shows BEFORE approv
 * ``planned_card_length``: the length shown on the draft is the length the plan renders.
 
 ``draft_route`` picks the table. With ``ROUTE_REGISTRY_ENABLED`` off only the unified montage
-has one and its lines need approval readiness, byte-identical to before the registry.
+has one, the frozen pre-registry copy (`route_capabilities._legacy_unified`), and its lines need
+approval readiness, byte-identical to before the registry.
 
 Owner rule: nothing here refuses a render, raises to the creator or blocks approval. Every
 function is pure and fail-open; the switch is ``settings.kria_route_disclosure_enabled``.
@@ -41,11 +42,12 @@ from app.kria.route_capabilities import (
     NotApplied,
     RecordedOnly,
     RouteId,
+    WithAsks,
     registry_enabled,
     resolve_route_id,
     table_for,
-    unified_montage,
 )
+from app.kria.route_capabilities import _legacy_unified as legacy_unified
 from app.kria.route_capabilities import _lines as lines
 
 NOT_APPLIED = "not_applied_on_route"
@@ -72,16 +74,16 @@ class Disclosure:
 
 # --- strategy fields a route does not read ---------------------------------------------------
 #
-# Source of truth: each route's ``FIELD_HANDLING`` (`app.kria.route_capabilities`). The unified
-# montage's is the original table, moved without changing a line of its output.
+# Source of truth: each route's ``FIELD_HANDLING`` (`app.kria.route_capabilities`).
 
 
 def _table(route: str | None) -> ModuleType | None:
-    """The route's table; with the registry off, only the unified montage has one."""
+    """The route's table; with the registry off, only the unified montage has one: the frozen
+    pre-registry copy, so nothing a lane adds to `unified_montage` reaches a switch-off card."""
     if route is None:
         return None
     if not registry_enabled():
-        return unified_montage if route == UNIFIED_MONTAGE else None
+        return legacy_unified if route == UNIFIED_MONTAGE else None
     return table_for(route)
 
 
@@ -156,12 +158,17 @@ def strategy_notices(
                     out.append(Disclosure(NOT_APPLIED, field, text))
                 continue
         try:
-            text = handling.build(strategy.get(field), strategy)
+            build = handling.build
+            text = (
+                build.build(strategy.get(field), strategy, list(requirements or ()))
+                if isinstance(build, WithAsks)
+                else build(strategy.get(field), strategy)
+            )
         except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
             text = None
         if text:
             out.append(Disclosure(NOT_APPLIED, field, text))
-    for subject, notice in (getattr(table, "NOTICES", {}) if registry_enabled() else {}).items():
+    for subject, notice in getattr(table, "NOTICES", {}).items():
         try:
             text = notice(strategy)
         except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
@@ -192,7 +199,7 @@ def ask_declines(
     table = _table(route)
     if not enabled() or table is None:
         return []
-    asks = table.ASK_DECLINES if registry_enabled() else unified_montage.LEGACY_ASK_DECLINES
+    asks = table.ASK_DECLINES
     strategy = strategy or {}
     out: list[Disclosure] = []
     for req in requirements:
@@ -254,6 +261,27 @@ def with_route_declines(
                 )
             )
     return out
+
+
+def requirements_with_route_declines(
+    checked: Sequence[BriefRequirement],
+    live: Iterable[BriefRequirement],
+    strategy: Mapping[str, Any] | None,
+    *,
+    route: str | None,
+) -> list[BriefRequirement]:
+    """``checked`` plus each live ask the route cannot do that the draft check left out.
+
+    A first draft leaves some asks to the render (`requirements_to_check_at_draft`: the
+    unified montage's text, order and timing asks). An ask the route cannot do at all is not
+    the render's to settle, so its decline reaches the card now, for every account. Nothing
+    else is checked or receipted differently. Registry off: ``checked`` as it is."""
+    if not decoupled_from_readiness():
+        return list(checked)
+    live = list(live)
+    ids = {req.id for req in checked}
+    declined = {d.requirement_id for d in ask_declines(live, strategy, route=route)}
+    return [*checked, *(req for req in live if req.id in declined and req.id not in ids)]
 
 
 # --- research after approval -----------------------------------------------------------------
@@ -319,21 +347,38 @@ def card_disclosures(
     )
 
 
-def card_text(disclosures: Sequence[Disclosure], *, limit: int = 640) -> str:
-    """The disclosures as card lines under a plain heads-up, within ``limit`` characters (whole
-    lines only)."""
-    lines: list[str] = []
+def card_layout(
+    disclosures: Sequence[Disclosure], *, limit: int = 640
+) -> tuple[list[Disclosure], list[Disclosure]]:
+    """``(whole, rest)``: the disclosures whose whole sentence fits ``limit`` characters, in
+    order, and the ones after the first that does not."""
+    whole: list[Disclosure] = []
     used = 0
-    for item in disclosures:
+    for index, item in enumerate(disclosures):
         extra = len(item.text) + 3
-        if lines and used + extra > limit:
-            break
-        lines.append(f"- {item.text}")
+        if whole and used + extra > limit:
+            return whole, list(disclosures[index:])
+        whole.append(item)
         used += extra
-    if not lines:
+    return whole, []
+
+
+def card_text(disclosures: Sequence[Disclosure], *, limit: int = 640) -> str:
+    """The disclosures as card lines under a plain heads-up: whole sentences within ``limit``
+    characters, then one compact line naming every disclosure that did not fit (never cut
+    silently). A subject with no short name keeps its whole sentence. With the registry off
+    the lines past the budget are dropped, as before it."""
+    whole, rest = card_layout(disclosures, limit=limit)
+    out = [f"- {item.text}" for item in whole]
+    if rest and registry_enabled():
+        named = [item.subject for item in rest if lines.subject_label(item.subject)]
+        if named:
+            out.append(f"- {lines.compact_line(named)}")
+        out += [f"- {item.text}" for item in rest if not lines.subject_label(item.subject)]
+    if not out:
         return ""
     heads_up = say(en="Heads-up for this video:", tr="Bu video için not:")
-    return "\n".join([heads_up, *lines])
+    return "\n".join([heads_up, *out])
 
 
 # --- length -----------------------------------------------------------------------------------

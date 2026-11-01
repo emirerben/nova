@@ -30,8 +30,9 @@
   },
   "network_attempts_blocked": 0,
   "registry": true,
-  "passed": 5,
-  "failed": 5,
+  "pre_registry": false,
+  "passed": 9,
+  "failed": 2,
   "all_green": false,
   "by_kind": {
     "route": {
@@ -39,31 +40,20 @@
       "failed": 0
     },
     "disclosed_ok": {
-      "passed": 4,
-      "failed": 3
+      "passed": 7,
+      "failed": 0
     },
     "honored": {
       "passed": 0,
       "failed": 2
+    },
+    "gate": {
+      "passed": 1,
+      "failed": 0
     }
   },
   "inconclusive": [],
   "lane_targets": {
-    "2.pacing": {
-      "lane": "L3",
-      "kind": "disclosed_ok",
-      "why": "disclosure gap: as on Talking, a default balanced pace on the card chip is treated as silence while the cuts follow the voiceover"
-    },
-    "2.story_structure": {
-      "lane": "L3",
-      "kind": "disclosed_ok",
-      "why": "disclosure gap: the narrated table has no story_structure entry and the writer does not read it (consumer gate lists it), so the planned story order is dropped silently"
-    },
-    "3.r1": {
-      "lane": "L3",
-      "kind": "disclosed_ok",
-      "why": "disclosure gap: the creator's 'at most 120 s' ask has an unchecked receipt (left out of a first draft) and lines.stated_length reads only the strategy's provenance (creator_duration_s, target_duration_requested), which this plan lacks; prod rendered 134.5 s under a log_only length policy"
-    },
     "4.title_animation": {
       "lane": "L3",
       "kind": "honored",
@@ -76,9 +66,6 @@
     }
   },
   "expected_red": [
-    "2.pacing",
-    "2.story_structure",
-    "3.r1",
     "4.title_animation",
     "5.r3"
   ],
@@ -89,20 +76,28 @@
     "target_duration_s": "graded through r1, the creator's length ask: the strategy carries 120 s without the server's length provenance (creator_duration_s, target_duration_requested)",
     "caption_style": "auto, the schema default: the planner chose no caption style"
   },
+  "exclusions": {
+    "count": 1,
+    "fields": [
+      "opening_title"
+    ],
+    "asks": [],
+    "unexplained": []
+  },
   "report_only": [
     10
   ],
   "controls_ok": true,
   "negative_controls": [
     {
-      "name": "2 the card names the pace without saying it is dropped must FAIL",
+      "name": "2 a card that names the pace without its registry line must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "2 the card says the pace is not applied must PASS",
+      "name": "2 the card's pacing registry line must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
@@ -112,6 +107,13 @@
       "name": "2 render evidence applies the field must PASS",
       "expected_pass": true,
       "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 render evidence that is not a literal True must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
       "ok": true,
       "detail": ""
     },
@@ -137,55 +139,6 @@
       "detail": ""
     },
     {
-      "name": "2 an unchecked hedge on the card is not a disclosure must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 a typed decline that names the field must PASS",
-      "expected_pass": true,
-      "got_pass": true,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 a line about subtitles does not name the title must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 another field's line that names the word does not disclose this field must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 a line past the card's budget is not read must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "3 a length ask with no receipt and a card line that keeps the length must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "3 a length ask with the card line saying the length is not applied must PASS",
-      "expected_pass": true,
-      "got_pass": true,
-      "ok": true,
-      "detail": ""
-    },
-    {
       "name": "4 no render evidence for a lane target must FAIL",
       "expected_pass": false,
       "got_pass": false,
@@ -194,6 +147,137 @@
     },
     {
       "name": "4 render evidence that applies the lane target must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: another field's card line does not disclose this one must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: the field's own card line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a decline about another ask (title position) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a text-animation decline discloses the title animation must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a route decline no receipt carries is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: an opposite-meaning free-text line naming the field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line with another code (not the route's table) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a recorded line the reply does not carry is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with only another field's line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with the length registry line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with an opposite-meaning free-text line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a line the compact card line names is on the card must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 an assembly step's target_duration_s is not a strategy read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "        if step.in_s is None or step.target_duration_s is None:",
+        "    plan = {\"target_duration_s\": 3}",
+        "    seconds = row[\"target_duration_s\"]",
+        "    target = view.target_duration_s"
+      ]
+    },
+    {
+      "name": "10 strategy.get('target_duration_s') is a strategy read must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier that is free text is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier in a file that does not exist must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a real symbol that never names the field is not its carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a real symbol that reads the field is its carrier must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
@@ -216,17 +300,44 @@
       "detail": [
         "zz_claimed_field"
       ]
+    },
+    {
+      "name": "10 an Applied claim read only as step.<field> must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "montage_audio",
+        "opening_title",
+        "target_duration_s"
+      ]
+    },
+    {
+      "name": "10 an Applied claim with a free-text carrier must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "'the captions just work' is not <path under app/>:<symbol>"
+    },
+    {
+      "name": "replay: no route replay, so no render claim to control",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
     }
   ],
   "replay": {
     "fields": {},
     "asks": {},
-    "source": null
+    "source": null,
+    "recipe": null,
+    "route_code_calls": 0
   },
   "card": {
     "route": "narrated",
     "lines_shown": true,
-    "reply": "Not everything you asked for made it in:\n- Done: a hook that matches the video (\"Fenerbahçe matchday\")\n- Couldn't: make the hook type in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- The native direction isn't applied on this video yet: the video follows your voiceover\n- I can't animate the title (typewriter) on this video yet, so it shows without motion",
+    "reply": "Not everything you asked for made it in:\n- Done: a hook that matches the video (\"Fenerbahçe matchday\")\n- Couldn't: make the hook type in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- I can't follow the planned story structure (Fenerbahçe fans marching and chanting i…, Arrival at the stadium with pyrotechnics, Exciting match moments and crowd reacti…) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: the cuts follow your voiceover\n- The native direction isn't applied on this video yet: the video follows your voiceover\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (typewriter) on this video yet, so it shows without motion",
     "changes": [
       "Balanced pacing",
       "Narrated Planned format"
@@ -260,8 +371,26 @@
     "not_applied": [
       {
         "code": "not_applied_on_route",
+        "subject": "story_structure",
+        "text": "I can't follow the planned story structure (Fenerbahçe fans marching and chanting i…, Arrival at the stadium with pyrotechnics, Exciting match moments and crowd reacti…) on this video yet, so it won't change the order of the clips",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "pacing",
+        "text": "The balanced pacing isn't applied on this video yet: the cuts follow your voiceover",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
         "subject": "direction",
         "text": "The native direction isn't applied on this video yet: the video follows your voiceover",
+        "on_card": true
+      },
+      {
+        "code": "not_applied_on_route",
+        "subject": "target_duration_s",
+        "text": "I can't make this video the length you asked for yet: its length follows your voiceover",
         "on_card": true
       },
       {
@@ -271,8 +400,15 @@
         "on_card": true
       }
     ],
-    "text": "Not everything you asked for made it in:\n- Done: a hook that matches the video (\"Fenerbahçe matchday\")\n- Couldn't: make the hook type in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- The native direction isn't applied on this video yet: the video follows your voiceover\n- I can't animate the title (typewriter) on this video yet, so it shows without motion\n\nI can't animate on-screen text on this video yet, so the text shows without motion",
-    "disclosure_text": "The native direction isn't applied on this video yet: the video follows your voiceover\nI can't animate the title (typewriter) on this video yet, so it shows without motion\nI can't animate on-screen text on this video yet, so the text shows without motion"
+    "declines": [
+      {
+        "requirement_id": "r3",
+        "subject": "text_animation",
+        "field": "title_animation",
+        "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+        "on_card": true
+      }
+    ]
   },
   "checks": [
     {
@@ -306,15 +442,13 @@
     {
       "id": "2.pacing",
       "name": "pacing: honored in the render or disclosed before approval",
-      "pass": false,
-      "verdict": "NOT VERIFIED",
-      "why_it_fails": [
-        "the plan chose pacing='balanced'; no render evidence applies it and the card does not say it is not applied"
-      ],
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
       "evidence": {
-        "pass": false,
+        "pass": true,
         "applied": false,
-        "disclosed_on_card": false,
+        "disclosed_on_card": true,
         "value": "balanced",
         "render_evidence": null
       },
@@ -323,15 +457,13 @@
     {
       "id": "2.story_structure",
       "name": "story_structure: honored in the render or disclosed before approval",
-      "pass": false,
-      "verdict": "NOT VERIFIED",
-      "why_it_fails": [
-        "the plan chose story_structure=['Fenerbahçe fans marching and chanting in the streets', 'Arrival at the stadium with pyrotechnics', 'Exciting match moments and crowd reactions']; no render evidence applies it and the card does not say it is not applied"
-      ],
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
       "evidence": {
-        "pass": false,
+        "pass": true,
         "applied": false,
-        "disclosed_on_card": false,
+        "disclosed_on_card": true,
         "value": [
           "Fenerbahçe fans marching and chanting in the streets",
           "Arrival at the stadium with pyrotechnics",
@@ -359,16 +491,15 @@
     {
       "id": "3.r1",
       "name": "r1: the ask is honored or declined before approval",
-      "pass": false,
-      "verdict": "NOT VERIFIED",
-      "why_it_fails": [
-        "'use a shorter voiceover / limit duration' has receipt {'status': None, 'verification': None, 'reason': None}: neither met nor a typed decline, and the card has no target_duration_s line"
-      ],
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
       "evidence": {
-        "pass": false,
+        "pass": true,
         "met": false,
         "declined_before_approval": false,
-        "disclosed_on_card": false,
+        "disclosed_on_card": true,
+        "card_line": "I can't make this video the length you asked for yet: its length follows your voiceover",
         "honored_at_render": false,
         "receipt": {
           "status": null,
@@ -387,8 +518,7 @@
           "literal": null,
           "description": "use a shorter voiceover / limit duration",
           "source_turn_id": "synthetic-turn"
-        },
-        "card_line": null
+        }
       },
       "kind": "disclosed_ok"
     },
@@ -403,6 +533,7 @@
         "met": true,
         "declined_before_approval": false,
         "disclosed_on_card": false,
+        "card_line": null,
         "honored_at_render": false,
         "receipt": {
           "status": "met",
@@ -423,8 +554,7 @@
           "literal": "Fenerbahçe matchday",
           "description": "a hook that matches the video",
           "source_turn_id": "synthetic-turn"
-        },
-        "card_line": null
+        }
       },
       "kind": "disclosed_ok"
     },
@@ -439,6 +569,7 @@
         "met": false,
         "declined_before_approval": true,
         "disclosed_on_card": false,
+        "card_line": null,
         "honored_at_render": false,
         "receipt": {
           "status": "not_possible",
@@ -456,8 +587,7 @@
           },
           "source_turn_id": "synthetic-turn",
           "status": "open"
-        },
-        "card_line": null
+        }
       },
       "kind": "disclosed_ok"
     },
@@ -505,12 +635,32 @@
       "kind": "honored"
     },
     {
+      "id": "10.claims",
+      "name": "registry claims: every field the table marks applied is read by the route's code",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "claimed_applied_unread": [],
+        "bad_carriers": {},
+        "carriers": {
+          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "font_family": "services/phone_text_styling.py:requested_style",
+          "text_color": "services/phone_text_styling.py:requested_style",
+          "audio_strategy": "services/creator_render_contract.py:build_render_contract",
+          "media_scope": "tasks/content_plan_build.py:_creator_selected_clip_paths",
+          "selected_media_ids": "tasks/content_plan_build.py:_creator_selected_clip_paths"
+        }
+      },
+      "kind": "gate"
+    },
+    {
       "id": 10,
       "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
       "pass": false,
       "verdict": "REPORT (gaps)",
       "why_it_fails": [
-        "the narrated route reads none of ['archetype', 'hero_media_id', 'execution_contract', 'story_structure', 'editorial_plan', 'caption_style', 'opening_title_duration_s', 'shot_labels', 'closing_title', 'label_position', 'image_layout', 'pacing', 'target_duration_s', 'render_program', 'optional_treatments', 'overlay_display', 'licensed_sfx', 'mixed_media_timing', 'video_reuse_policy', 'montage_cadence'] and the approval card does not say they are not applied"
+        "the narrated route reads none of ['archetype', 'hero_media_id', 'execution_contract', 'editorial_plan', 'caption_style', 'intro_hook', 'opening_title_duration_s', 'shot_labels', 'closing_title', 'label_position', 'image_layout', 'render_program', 'optional_treatments', 'overlay_display', 'licensed_sfx', 'mixed_media_timing', 'video_reuse_policy', 'montage_cadence'] and the approval card does not say they are not applied"
       ],
       "evidence": {
         "registry_drift": {
@@ -525,13 +675,13 @@
             "opening_title_duration_s",
             "render_program",
             "shot_labels",
-            "story_structure",
             "video_reuse_policy"
           ]
         },
         "pass": false,
         "settable_fields": 32,
         "claimed_applied_unread": [],
+        "bad_carriers": {},
         "unconsumed": [
           "direction",
           "archetype",
@@ -561,16 +711,14 @@
           "archetype",
           "hero_media_id",
           "execution_contract",
-          "story_structure",
           "editorial_plan",
           "caption_style",
+          "intro_hook",
           "opening_title_duration_s",
           "shot_labels",
           "closing_title",
           "label_position",
           "image_layout",
-          "pacing",
-          "target_duration_s",
           "render_program",
           "optional_treatments",
           "overlay_display",
@@ -581,19 +729,22 @@
         ],
         "disclosed": [
           "direction",
-          "intro_hook",
-          "title_animation"
+          "story_structure",
+          "title_animation",
+          "pacing",
+          "target_duration_s"
         ],
         "exempt": {
           "rationale": "explanatory prose shown to the creator, nothing to apply"
         },
-        "indirect_consumers": [
-          "audio_strategy",
-          "font_family",
-          "media_scope",
-          "selected_media_ids",
-          "text_color"
-        ]
+        "carriers": {
+          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "font_family": "services/phone_text_styling.py:requested_style",
+          "text_color": "services/phone_text_styling.py:requested_style",
+          "audio_strategy": "services/creator_render_contract.py:build_render_contract",
+          "media_scope": "tasks/content_plan_build.py:_creator_selected_clip_paths",
+          "selected_media_ids": "tasks/content_plan_build.py:_creator_selected_clip_paths"
+        }
       },
       "report_only": true,
       "kind": "report"

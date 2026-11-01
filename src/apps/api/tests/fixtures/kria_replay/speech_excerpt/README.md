@@ -31,14 +31,15 @@ Nothing.
 
 ## Checks
 
-| Check | Kind | Foundation (cf4bd7575) | Lane |
+| Check | Kind | Foundation | Lane |
 | --- | --- | --- | --- |
 | 1 route resolves to `speech_excerpt` | route | VERIFIED | |
 | 2.direction, 2.pacing, 2.intro_hook, 2.story_structure, 2.caption_style | disclosed_ok | VERIFIED (card lines) | |
-| 2.title_animation | disclosed_ok | VERIFIED through the r1 decline (its own line is past the budget) | |
-| 2.audio_strategy (`licensed_music`) | disclosed_ok | NOT VERIFIED: the table's music line exists but falls past the card's 640-character budget behind five longer lines | L5 |
+| 2.title_animation | disclosed_ok | VERIFIED (named on the card's compact line, and the r1 decline) | |
+| 2.audio_strategy (`licensed_music`) | disclosed_ok | VERIFIED (named on the card's compact line) | |
 | 3.r1 animate the text, 3.r2 clean captions | disclosed_ok | VERIFIED (route declines) | |
 | 4.pacing | honored | NOT VERIFIED (no render replay yet; today the cut is the fixed `_DEFAULT_CUT_S`) | L5 |
+| 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
 Not graded: `target_duration_s` (no stated length; the table marks it Applied and check 10 holds
@@ -47,5 +48,5 @@ the claim).
 ## What the checks do not prove
 
 A synthetic plan shows what the card says for these choices, not that a planner would make them.
-Card text within the 640-character budget plus typed declines; no native render. Honored checks
+The field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no native render. Honored checks
 need `scripts/kria/route_replays/speech_excerpt.py`.

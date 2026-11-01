@@ -20,7 +20,7 @@
     ]
   },
   "network_attempts_blocked": 0,
-  "passed": 10,
+  "passed": 11,
   "failed": 0,
   "all_green": true,
   "report_only": [
@@ -499,6 +499,7 @@
         "pass": false,
         "settable_fields": 32,
         "claimed_applied_unread": [],
+        "bad_carriers": {},
         "unconsumed": [
           "archetype",
           "hero_media_id",
@@ -522,23 +523,23 @@
         "exempt": {
           "rationale": "explanatory prose shown to the creator, nothing to apply"
         },
-        "indirect_consumers": [
-          "audio_strategy",
-          "closing_title",
-          "edit_format",
-          "execution_contract",
-          "font_family",
-          "media_scope",
-          "montage_audio",
-          "opening_title",
-          "opening_title_duration_s",
-          "render_program",
-          "selected_media_ids",
-          "shot_labels",
-          "target_duration_s",
-          "text_color",
-          "video_reuse_policy"
-        ]
+        "carriers": {
+          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "render_program": "agents/_schemas/creator_policy.py:effective_render_program",
+          "audio_strategy": "services/creator_render_contract.py:build_render_contract",
+          "media_scope": "pipeline/unified_montage.py:selected_visual_ids",
+          "selected_media_ids": "pipeline/unified_montage.py:selected_visual_ids",
+          "target_duration_s": "pipeline/unified_montage.py:plan_unified_montage",
+          "font_family": "pipeline/unified_montage.py:plan_unified_montage",
+          "text_color": "pipeline/unified_montage.py:plan_unified_montage",
+          "opening_title": "pipeline/unified_montage.py:_title",
+          "opening_title_duration_s": "pipeline/unified_montage.py:plan_unified_montage",
+          "closing_title": "pipeline/unified_montage.py:plan_unified_montage",
+          "shot_labels": "pipeline/unified_montage.py:plan_unified_montage",
+          "video_reuse_policy": "tasks/generative_build.py:_run_generative_job_impl",
+          "montage_audio": "pipeline/unified_montage.py:_keeps_source_audio",
+          "execution_contract": "agents/_schemas/creator_policy.py:effective_render_program"
+        }
       },
       "report_only": true
     },
@@ -561,6 +562,35 @@
         ],
         "frozen_catalog_section_in_strategy": true
       }
+    },
+    {
+      "id": 12,
+      "name": "registry claims: every field the table marks applied is read by the route's code",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "claimed_applied_unread": [],
+        "bad_carriers": {},
+        "carriers": {
+          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "render_program": "agents/_schemas/creator_policy.py:effective_render_program",
+          "audio_strategy": "services/creator_render_contract.py:build_render_contract",
+          "media_scope": "pipeline/unified_montage.py:selected_visual_ids",
+          "selected_media_ids": "pipeline/unified_montage.py:selected_visual_ids",
+          "target_duration_s": "pipeline/unified_montage.py:plan_unified_montage",
+          "font_family": "pipeline/unified_montage.py:plan_unified_montage",
+          "text_color": "pipeline/unified_montage.py:plan_unified_montage",
+          "opening_title": "pipeline/unified_montage.py:_title",
+          "opening_title_duration_s": "pipeline/unified_montage.py:plan_unified_montage",
+          "closing_title": "pipeline/unified_montage.py:plan_unified_montage",
+          "shot_labels": "pipeline/unified_montage.py:plan_unified_montage",
+          "video_reuse_policy": "tasks/generative_build.py:_run_generative_job_impl",
+          "montage_audio": "pipeline/unified_montage.py:_keeps_source_audio",
+          "execution_contract": "agents/_schemas/creator_policy.py:effective_render_program"
+        }
+      },
+      "kind": "gate"
     }
   ]
 }

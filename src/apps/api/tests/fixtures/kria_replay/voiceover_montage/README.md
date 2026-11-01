@@ -32,14 +32,15 @@ Nothing.
 
 ## Checks
 
-| Check | Kind | Foundation (cf4bd7575) | Lane |
+| Check | Kind | Foundation | Lane |
 | --- | --- | --- | --- |
 | 1 route resolves to `voiceover_montage` | route | VERIFIED | |
 | 2.direction, 2.pacing, 2.intro_hook, 2.story_structure, 2.caption_style, 2.target_duration_s | disclosed_ok | VERIFIED (card lines) | |
-| 2.title_animation | disclosed_ok | VERIFIED through the r2 decline (its own line is past the card's 640-character budget) | |
+| 2.title_animation | disclosed_ok | VERIFIED (named on the card's compact line, and the r2 decline) | |
 | 3.r1 about 30 seconds | disclosed_ok | VERIFIED (the card's length line) | |
 | 3.r2 animate the text, 3.r3 kinetic captions | disclosed_ok | VERIFIED (route declines) | |
 | 4.pacing, 4.target_duration_s, 4.title_animation, 5.r1, 5.r2 | honored | NOT VERIFIED (no render replay yet) | L1 |
+| 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
 Not graded: a skipped opening title ("no text", `omitted_copy_targets`). Its intro text conflicts
@@ -48,5 +49,5 @@ with this fixture's animation ask; the voiceover lane adds a fixture of its own 
 ## What the checks do not prove
 
 A synthetic plan shows what the card says for these choices, not that a planner would make them.
-Card text within the 640-character budget plus typed declines; no native render. Honored checks
+The field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no native render. Honored checks
 need `scripts/kria/route_replays/voiceover_montage.py`.

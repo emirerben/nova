@@ -37,7 +37,7 @@ names; hashes; media ids (`analysis-proxy-lipsync_song-NN`).
 
 ## Checks
 
-| Check | Kind | Foundation (cf4bd7575) | Lane |
+| Check | Kind | Foundation | Lane |
 | --- | --- | --- | --- |
 | 1 route resolves to `lipsync_song` | route | VERIFIED | |
 | 2.direction (`native`) | disclosed_ok | VERIFIED (card line: "it is cut to your song") | |
@@ -49,6 +49,7 @@ names; hashes; media ids (`analysis-proxy-lipsync_song-NN`).
 | 3.r2 keep it 30 seconds | disclosed_ok | VERIFIED (the card's length line) | |
 | 3.r3 animation ask | disclosed_ok | VERIFIED (route decline) | |
 | 4.title_animation, 5.r3 | honored | NOT VERIFIED (no render replay yet) | L4 |
+| 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
 Not graded: r1 (lip sync is the route itself; check 1), the song section (see below).
@@ -70,5 +71,5 @@ at these in the video: lip sync to the uploaded song".
 
 ## What the checks do not prove
 
-Card text within the 640-character budget plus typed declines; no wording quality, no native
+The field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no wording quality, no native
 render. Honored checks need `scripts/kria/route_replays/lipsync_song.py`.

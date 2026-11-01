@@ -20,8 +20,6 @@ from app.kria.route_capabilities._types import (
     RouteReaders,
 )
 
-_DISPATCH_SELECTION = "dispatch hands only the selected clips (_creator_selected_clip_paths)"
-
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
@@ -53,14 +51,14 @@ FIELD_HANDLING: dict[str, Handling] = {
     "hero_media_id": NotApplied(lines.hero),
     "overlay_display": NotApplied(lines.overlay),
     "licensed_sfx": NotApplied(lines.sfx),
-    "edit_format": Applied(),
+    "edit_format": Applied(via=lines.DISPATCH),
     "opening_title": Applied(),
     "font_family": Applied(),
     "text_color": Applied(),
     "video_reuse_policy": Applied(),
-    "audio_strategy": Applied(via="dispatch picks this writer for a recorded voiceover"),
-    "media_scope": Applied(via=_DISPATCH_SELECTION),
-    "selected_media_ids": Applied(via=_DISPATCH_SELECTION),
+    "audio_strategy": Applied(via=lines.CONTRACT),
+    "media_scope": Applied(via=lines.SELECTION),
+    "selected_media_ids": Applied(via=lines.SELECTION),
 }
 
 READERS = RouteReaders(

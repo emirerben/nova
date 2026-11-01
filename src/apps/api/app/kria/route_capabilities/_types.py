@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,7 +12,8 @@ from app.kria.brief import BriefRequirement
 
 def registry_enabled() -> bool:
     """Every route reads its own table (``ROUTE_REGISTRY_ENABLED``). False: only the unified
-    montage discloses, only with approval readiness, exactly as before the registry."""
+    montage discloses, from the frozen pre-registry table (`_legacy_unified`), only with
+    approval readiness, exactly as before the registry."""
     return bool(settings.route_registry_enabled)
 
 
@@ -24,12 +25,21 @@ Notice = Callable[[Mapping[str, Any]], str | None]
 
 
 @dataclass(frozen=True)
+class WithAsks:
+    """A builder that also reads the brief's live asks, typed facts only (KRI-667):
+    ``(value, strategy, requirements) -> creator sentence | None``."""
+
+    build: Callable[[Any, Mapping[str, Any], Sequence[BriefRequirement]], str | None]
+
+
+@dataclass(frozen=True)
 class Applied:
     """The route reads the field and the render follows it.
 
-    ``via`` names the carrier when the route reads it somewhere the read scan of
-    ``READERS`` cannot see (dispatch, the render contract). The consumer gate
-    (`scripts/kria/score_route.py`) flags an ``Applied`` field with no reader and no ``via``.
+    ``via`` names the carrier when the route reads it outside the read scan of ``READERS``
+    (dispatch, the render contract), as ``"<path under app/>:<symbol>"``. The consumer gate
+    (`scripts/kria/score_route.py`) checks that the symbol is defined in that file and reads
+    the field, and flags an ``Applied`` field with neither a reader nor such a carrier.
     """
 
     via: str = ""
@@ -39,14 +49,14 @@ class Applied:
 class RecordedOnly:
     """The route stores the value (the plan records it) but the render does not follow it."""
 
-    build: Builder
+    build: Builder | WithAsks
 
 
 @dataclass(frozen=True)
 class NotApplied:
     """The route ignores the value; ``build`` is the line the approval card shows instead."""
 
-    build: Builder
+    build: Builder | WithAsks
 
 
 Handling = Applied | RecordedOnly | NotApplied

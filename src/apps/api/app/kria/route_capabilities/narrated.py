@@ -15,15 +15,13 @@ from app.kria.route_capabilities._types import (
     RouteReaders,
 )
 
-_DISPATCH_SELECTION = "dispatch hands only the selected clips (_creator_selected_clip_paths)"
-# Every phone writer styles its text through the shared pass (KRI-1024).
-_TEXT_STYLE = "phone text style policy (requested_style)"
-
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
+    # The cuts follow the voiceover's alignment, never the planned story order.
+    "story_structure": NotApplied(lines.story),
     "pacing": NotApplied(
         lines.pacing_line(
-            lines.no_pace_chosen,
+            lines.pace_not_followed,
             "the cuts follow your voiceover",
             "kesimler seslendirmeni izliyor",
         )
@@ -48,14 +46,15 @@ FIELD_HANDLING: dict[str, Handling] = {
     "hero_media_id": NotApplied(lines.hero),
     "overlay_display": NotApplied(lines.overlay),
     "licensed_sfx": NotApplied(lines.sfx),
-    "edit_format": Applied(),
+    "edit_format": Applied(via=lines.DISPATCH),
     "opening_title": Applied(),
-    "font_family": Applied(via=_TEXT_STYLE),
-    "text_color": Applied(via=_TEXT_STYLE),
+    # Every phone writer styles its text through the shared pass (KRI-1024).
+    "font_family": Applied(via=lines.TEXT_STYLE),
+    "text_color": Applied(via=lines.TEXT_STYLE),
     "montage_audio": Applied(),
-    "audio_strategy": Applied(via="dispatch picks this writer for a recorded voiceover"),
-    "media_scope": Applied(via=_DISPATCH_SELECTION),
-    "selected_media_ids": Applied(via=_DISPATCH_SELECTION),
+    "audio_strategy": Applied(via=lines.CONTRACT),
+    "media_scope": Applied(via=lines.SELECTION),
+    "selected_media_ids": Applied(via=lines.SELECTION),
 }
 
 READERS = RouteReaders(

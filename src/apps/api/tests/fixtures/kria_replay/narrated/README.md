@@ -35,17 +35,18 @@ ids (`analysis-proxy-narrated-NN`).
 
 ## Checks
 
-| Check | Kind | Foundation (cf4bd7575) | Lane |
+| Check | Kind | Foundation | Lane |
 | --- | --- | --- | --- |
 | 1 route resolves to `narrated` | route | VERIFIED | |
 | 2.direction (`native`) | disclosed_ok | VERIFIED (card line) | |
-| 2.pacing (`balanced`) | disclosed_ok | NOT VERIFIED: default balanced treated as silence while the cuts follow the voiceover | L3 |
-| 2.story_structure | disclosed_ok | NOT VERIFIED: the narrated table has no entry for it and the writer does not read it | L3 |
+| 2.pacing (`balanced`) | disclosed_ok | VERIFIED (card line: every pace is named, the cuts follow the voiceover) | |
+| 2.story_structure | disclosed_ok | VERIFIED (card line: the narrated table now lists it) | |
 | 2.title_animation | disclosed_ok | VERIFIED (card line) | |
-| 3.r1 at most 120 s | disclosed_ok | NOT VERIFIED: unchecked receipt (left out of a first draft) and no length line, because the strategy carries 120 s without the server's length provenance | L3 |
+| 3.r1 at most 120 s | disclosed_ok | VERIFIED (the card's length line, which now fires from the creator's typed length ask as well as from the server's provenance) | |
 | 3.r2 approved opening title | disclosed_ok | VERIFIED (checked met) | |
 | 3.r3 animation ask | disclosed_ok | VERIFIED (route decline) | |
 | 4.title_animation, 5.r3 | honored | NOT VERIFIED (no render replay yet) | L3 |
+| 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
 Not graded: `opening_title` (Applied in the table; check 10 holds the claim), `target_duration_s`
@@ -63,6 +64,6 @@ title nor that it drew it.
 
 ## What the checks do not prove
 
-As for every route fixture: card text within the 640-character budget plus typed declines, no
+As for every route fixture: the field's own registry line (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines, no
 wording quality, no native render. Honored checks need
 `scripts/kria/route_replays/narrated.py`.

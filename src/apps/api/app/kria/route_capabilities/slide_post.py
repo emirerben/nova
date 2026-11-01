@@ -52,7 +52,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "hero_media_id": NotApplied(lines.hero),
     "overlay_display": NotApplied(lines.overlay),
     "licensed_sfx": NotApplied(lines.sfx),
-    "edit_format": Applied(via="dispatch renders the slide post from it"),
+    "edit_format": Applied(via=lines.DISPATCH),
 }
 
 _SLIDE_PIPELINE = Path(__file__).resolve().parents[2] / "pipeline" / "slide_post"

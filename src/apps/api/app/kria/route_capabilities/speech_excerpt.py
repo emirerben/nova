@@ -20,9 +20,6 @@ from app.kria.route_capabilities._types import (
     RouteReaders,
 )
 
-_DISPATCH_SELECTION = "dispatch hands only the selected clips (_creator_selected_clip_paths)"
-_CONTRACT_TEXT = "the render contract's exact texts (_confirmed_text)"
-
 
 def _music(value: Any, _s: Mapping[str, Any]) -> str | None:
     if value != "licensed_music":
@@ -75,12 +72,13 @@ FIELD_HANDLING: dict[str, Handling] = {
     "text_color": Applied(),
     "target_duration_s": Applied(),
     "montage_audio": Applied(),
-    "opening_title": Applied(via=_CONTRACT_TEXT),
-    "opening_title_duration_s": Applied(via=_CONTRACT_TEXT),
-    "shot_labels": Applied(via=_CONTRACT_TEXT),
-    "edit_format": Applied(via="dispatch picks the montage family from it"),
-    "media_scope": Applied(via=_DISPATCH_SELECTION),
-    "selected_media_ids": Applied(via=_DISPATCH_SELECTION),
+    # The render contract's exact texts (`_confirmed_text`).
+    "opening_title": Applied(via=lines.CONTRACT),
+    "opening_title_duration_s": Applied(via=lines.CONTRACT),
+    "shot_labels": Applied(via=lines.CONTRACT),
+    "edit_format": Applied(via=lines.DISPATCH),
+    "media_scope": Applied(via=lines.SELECTION),
+    "selected_media_ids": Applied(via=lines.SELECTION),
 }
 
 READERS = RouteReaders(

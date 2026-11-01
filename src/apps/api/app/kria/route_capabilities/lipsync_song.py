@@ -22,7 +22,6 @@ from app.kria.route_capabilities._types import (
 )
 
 CREATOR_SONG = "creator_song"
-_DISPATCH_SELECTION = "dispatch hands only the selected clips (_creator_selected_clip_paths)"
 
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
@@ -48,15 +47,15 @@ FIELD_HANDLING: dict[str, Handling] = {
     "hero_media_id": NotApplied(lines.hero),
     "overlay_display": NotApplied(lines.overlay),
     "licensed_sfx": NotApplied(lines.sfx),
-    "opening_title": Applied(via="lipsync_montage._title"),
+    "opening_title": Applied(via="pipeline/unified_montage.py:_title"),
     "opening_title_duration_s": Applied(),
     "closing_title": Applied(),
     "font_family": Applied(),
     "text_color": Applied(),
-    "edit_format": Applied(via="dispatch picks the montage family from it"),
-    "audio_strategy": Applied(via="dispatch picks the song writer (with song_sync)"),
-    "media_scope": Applied(via=_DISPATCH_SELECTION),
-    "selected_media_ids": Applied(via=_DISPATCH_SELECTION),
+    "edit_format": Applied(via=lines.DISPATCH),
+    "audio_strategy": Applied(via=lines.CONTRACT),
+    "media_scope": Applied(via=lines.SELECTION),
+    "selected_media_ids": Applied(via=lines.SELECTION),
 }
 
 READERS = RouteReaders(

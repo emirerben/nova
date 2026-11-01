@@ -103,6 +103,7 @@ from app.kria.route_disclosure import (
     decoupled_from_readiness,
     draft_route,
     planned_card_length,
+    requirements_with_route_declines,
     with_route_declines,
 )
 from app.kria.select_asks import exclusion_facts, only_video_ask
@@ -2146,15 +2147,28 @@ def _complete_draft_turn(
                     facts = replace(facts, anaphora_rows=compiled.diff.changed_text_ids())
                     checked = [req for req in brief.live() if req.source_turn_id == str(turn.id)]
                 editor_turn = apply_intent.tool_name == "draft.apply_editor_ops"
-                if checked:
+                # An ask the route cannot do is declined on this card even where the draft
+                # check leaves it to the render (registry on: every account).
+                answered = (
+                    requirements_with_route_declines(
+                        checked, brief.live(), document.strategy, route=route_name
+                    )
+                    if route_name is not None and not readiness_required and not editor_turn
+                    else checked
+                )
+                if answered:
                     bound_writer = settings.brief_binding_for(thread.creator_id)
-                    receipts = build_receipts(
-                        checked,
-                        facts,
-                        include_unchecked=editor_turn or bound_writer or facts.phone_talking,
-                        # Listing unchecked asks must not switch on the strict order verdicts
-                        # of a creator whose writer is not brief-bound.
-                        strict_order=bound_writer,
+                    receipts = (
+                        build_receipts(
+                            checked,
+                            facts,
+                            include_unchecked=editor_turn or bound_writer or facts.phone_talking,
+                            # Listing unchecked asks must not switch on the strict order
+                            # verdicts of a creator whose writer is not brief-bound.
+                            strict_order=bound_writer,
+                        )
+                        if checked
+                        else []
                     )
                     if phone_blockers:
                         from app.services.phone_montage_preflight import (  # noqa: PLC0415
@@ -2179,7 +2193,7 @@ def _complete_draft_turn(
                     ):
                         # An ask the render route does not read is answered plainly now.
                         receipts = with_route_declines(
-                            receipts, checked, document.strategy, route=route_name
+                            receipts, answered, document.strategy, route=route_name
                         )
                     bound = False
                     if editor_turn and not compiled.diff.unavailable:
@@ -2219,7 +2233,7 @@ def _complete_draft_turn(
                         if not editor_turn and not readiness_required and not facts.phone_talking:
                             receipts = [r for r in receipts if r.verification != "unchecked"]
                         reply_text = reply_from_receipts(
-                            CreativeBrief(version=brief.version, requirements=checked),
+                            CreativeBrief(version=brief.version, requirements=answered),
                             receipts,
                             summary=arguments.summary,
                             notices=planned.policy_notices,

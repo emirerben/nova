@@ -30,7 +30,8 @@
   },
   "network_attempts_blocked": 0,
   "registry": true,
-  "passed": 9,
+  "pre_registry": false,
+  "passed": 10,
   "failed": 2,
   "all_green": false,
   "by_kind": {
@@ -45,6 +46,10 @@
     "honored": {
       "passed": 0,
       "failed": 2
+    },
+    "gate": {
+      "passed": 1,
+      "failed": 0
     }
   },
   "inconclusive": [],
@@ -70,20 +75,28 @@
     "r1": "lip sync to the uploaded song is the route itself: check 1 verifies the draft resolves to lipsync_song",
     "song_section": "the recorded song range (0:00 to 4:31) is the filming range the aligner searched, and the takes were placed inside it (62.9 to 123.8 s). No typed song-section ask exists in the brief or the strategy for a creator song, so a section the route ignores cannot be graded offline yet"
   },
+  "exclusions": {
+    "count": 1,
+    "fields": [],
+    "asks": [
+      "r1"
+    ],
+    "unexplained": []
+  },
   "report_only": [
     10
   ],
   "controls_ok": true,
   "negative_controls": [
     {
-      "name": "2 the card names the pace without saying it is dropped must FAIL",
+      "name": "2 a card that names the pace without its registry line must FAIL",
       "expected_pass": false,
       "got_pass": false,
       "ok": true,
       "detail": ""
     },
     {
-      "name": "2 the card says the pace is not applied must PASS",
+      "name": "2 the card's pacing registry line must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
@@ -93,6 +106,13 @@
       "name": "2 render evidence applies the field must PASS",
       "expected_pass": true,
       "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 render evidence that is not a literal True must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
       "ok": true,
       "detail": ""
     },
@@ -118,55 +138,6 @@
       "detail": ""
     },
     {
-      "name": "2 an unchecked hedge on the card is not a disclosure must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 a typed decline that names the field must PASS",
-      "expected_pass": true,
-      "got_pass": true,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 a line about subtitles does not name the title must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 another field's line that names the word does not disclose this field must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "2 a line past the card's budget is not read must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "3 a length ask with no receipt and a card line that keeps the length must FAIL",
-      "expected_pass": false,
-      "got_pass": false,
-      "ok": true,
-      "detail": ""
-    },
-    {
-      "name": "3 a length ask with the card line saying the length is not applied must PASS",
-      "expected_pass": true,
-      "got_pass": true,
-      "ok": true,
-      "detail": ""
-    },
-    {
       "name": "4 no render evidence for a lane target must FAIL",
       "expected_pass": false,
       "got_pass": false,
@@ -175,6 +146,137 @@
     },
     {
       "name": "4 render evidence that applies the lane target must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: another field's card line does not disclose this one must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: the field's own card line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a decline about another ask (title position) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a text-animation decline discloses the title animation must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a route decline no receipt carries is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: an opposite-meaning free-text line naming the field must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 check_field: a line with another code (not the route's table) must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a recorded line the reply does not carry is not on the card must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with only another field's line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with the length registry line must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3 check_ask: a length ask with an opposite-meaning free-text line must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "2 on_card: a line the compact card line names is on the card must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 an assembly step's target_duration_s is not a strategy read must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "        if step.in_s is None or step.target_duration_s is None:",
+        "    plan = {\"target_duration_s\": 3}",
+        "    seconds = row[\"target_duration_s\"]",
+        "    target = view.target_duration_s"
+      ]
+    },
+    {
+      "name": "10 strategy.get('target_duration_s') is a strategy read must PASS",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier that is free text is not a carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a carrier in a file that does not exist must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a real symbol that never names the field is not its carrier must FAIL",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "10 a real symbol that reads the field is its carrier must PASS",
       "expected_pass": true,
       "got_pass": true,
       "ok": true,
@@ -197,12 +299,41 @@
       "detail": [
         "zz_claimed_field"
       ]
+    },
+    {
+      "name": "10 an Applied claim read only as step.<field> must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": [
+        "closing_title",
+        "font_family",
+        "opening_title_duration_s",
+        "target_duration_s",
+        "text_color"
+      ]
+    },
+    {
+      "name": "10 an Applied claim with a free-text carrier must be flagged",
+      "expected_pass": false,
+      "got_pass": false,
+      "ok": true,
+      "detail": "'the captions just work' is not <path under app/>:<symbol>"
+    },
+    {
+      "name": "replay: no route replay, so no render claim to control",
+      "expected_pass": true,
+      "got_pass": true,
+      "ok": true,
+      "detail": ""
     }
   ],
   "replay": {
     "fields": {},
     "asks": {},
-    "source": null
+    "source": null,
+    "recipe": null,
+    "route_code_calls": 0
   },
   "card": {
     "route": "lipsync_song",
@@ -264,8 +395,15 @@
         "on_card": true
       }
     ],
-    "text": "Not everything you asked for made it in:\n- Couldn't: animate the title in (I can't animate on-screen text on this video yet, so the text shows without motion)\nHeads-up for this video:\n- I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips\n- The balanced pacing isn't applied on this video yet: your song sets where the cuts fall\n- The native direction isn't applied on this video yet: it is cut to your song\n- I can't apply the karaoke caption style on this video yet, so it won't be used\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't animate the title (pop) on this video yet, so it shows without motion\nI can't animate on-screen text on this video yet, so the text shows without motion",
-    "disclosure_text": "I can't follow the planned story structure (Establish the singer looking into the c…, Cut between takes to match the energy o…) on this video yet, so it won't change the order of the clips\nThe balanced pacing isn't applied on this video yet: your song sets where the cuts fall\nThe native direction isn't applied on this video yet: it is cut to your song\nI can't apply the karaoke caption style on this video yet, so it won't be used\nI can't make this video the length you asked for yet: its length follows your song\nI can't animate the title (pop) on this video yet, so it shows without motion\nI can't animate on-screen text on this video yet, so the text shows without motion"
+    "declines": [
+      {
+        "requirement_id": "r3",
+        "subject": "text_animation",
+        "field": "title_animation",
+        "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+        "on_card": true
+      }
+    ]
   },
   "checks": [
     {
@@ -385,6 +523,7 @@
         "met": false,
         "declined_before_approval": false,
         "disclosed_on_card": true,
+        "card_line": "I can't make this video the length you asked for yet: its length follows your song",
         "honored_at_render": false,
         "receipt": {
           "status": null,
@@ -402,8 +541,7 @@
           },
           "source_turn_id": "synthetic-turn",
           "status": "open"
-        },
-        "card_line": "I can't make this video the length you asked for yet: its length follows your song"
+        }
       },
       "kind": "disclosed_ok"
     },
@@ -418,6 +556,7 @@
         "met": false,
         "declined_before_approval": true,
         "disclosed_on_card": false,
+        "card_line": null,
         "honored_at_render": false,
         "receipt": {
           "status": "not_possible",
@@ -435,8 +574,7 @@
           },
           "source_turn_id": "synthetic-turn",
           "status": "open"
-        },
-        "card_line": null
+        }
       },
       "kind": "disclosed_ok"
     },
@@ -484,6 +622,25 @@
       "kind": "honored"
     },
     {
+      "id": "10.claims",
+      "name": "registry claims: every field the table marks applied is read by the route's code",
+      "pass": true,
+      "verdict": "VERIFIED",
+      "why_it_fails": [],
+      "evidence": {
+        "claimed_applied_unread": [],
+        "bad_carriers": {},
+        "carriers": {
+          "opening_title": "pipeline/unified_montage.py:_title",
+          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "audio_strategy": "services/creator_render_contract.py:build_render_contract",
+          "media_scope": "tasks/content_plan_build.py:_creator_selected_clip_paths",
+          "selected_media_ids": "tasks/content_plan_build.py:_creator_selected_clip_paths"
+        }
+      },
+      "kind": "gate"
+    },
+    {
       "id": 10,
       "name": "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
       "pass": false,
@@ -509,6 +666,7 @@
         "pass": false,
         "settable_fields": 32,
         "claimed_applied_unread": [],
+        "bad_carriers": {},
         "unconsumed": [
           "direction",
           "archetype",
@@ -562,13 +720,13 @@
         "exempt": {
           "rationale": "explanatory prose shown to the creator, nothing to apply"
         },
-        "indirect_consumers": [
-          "audio_strategy",
-          "edit_format",
-          "media_scope",
-          "opening_title",
-          "selected_media_ids"
-        ]
+        "carriers": {
+          "opening_title": "pipeline/unified_montage.py:_title",
+          "edit_format": "tasks/generative_build.py:_run_generative_job_impl",
+          "audio_strategy": "services/creator_render_contract.py:build_render_contract",
+          "media_scope": "tasks/content_plan_build.py:_creator_selected_clip_paths",
+          "selected_media_ids": "tasks/content_plan_build.py:_creator_selected_clip_paths"
+        }
       },
       "report_only": true,
       "kind": "report"

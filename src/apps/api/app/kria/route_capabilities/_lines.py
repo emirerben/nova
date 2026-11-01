@@ -6,12 +6,19 @@ video yet") unless a factory takes the route's own behaviour ("it is cut as a fa
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any
 
 from app.kria.brief import BriefRequirement
 from app.kria.reply_language import say
-from app.kria.route_capabilities._types import Builder
+from app.kria.route_capabilities._types import Builder, WithAsks
+
+# Carriers for ``Applied(via=...)``: the symbol that reads a field outside a route's own files.
+DISPATCH = "tasks/generative_build.py:_run_generative_job_impl"
+CONTRACT = "services/creator_render_contract.py:build_render_contract"
+SELECTION = "tasks/content_plan_build.py:_creator_selected_clip_paths"
+TEXT_STYLE = "services/phone_text_styling.py:requested_style"
+OVERLAY_CANDIDATE = "services/generative_jobs.py:build_generative_job"
 
 
 def clip(value: object, limit: int = 70) -> str:
@@ -201,22 +208,33 @@ def text_look(value: Any, _s: Mapping[str, Any]) -> str | None:
     )
 
 
-def stated_length(instead_en: str, instead_tr: str) -> Builder:
+def length_stated(strategy: Mapping[str, Any], requirements: Sequence[BriefRequirement]) -> bool:
+    """The creator stated a length: the server's provenance on the strategy, or a typed length
+    ask in the brief (`length_policy.creator_duration`, which leaves out a moment's seconds)."""
+    if strategy.get("creator_duration_s") is not None or strategy.get("target_duration_requested"):
+        return True
+    from app.kria.brief import CreativeBrief  # noqa: PLC0415
+    from app.services.length_policy import creator_duration  # noqa: PLC0415
+
+    brief = CreativeBrief(version=1, requirements=list(requirements))
+    return creator_duration(brief=brief) is not None
+
+
+def stated_length(instead_en: str, instead_tr: str) -> WithAsks:
     """A length the creator stated that the route does not render to. Says no number: the
     card's other lengths are the plan's, and a second figure would contradict them."""
 
-    def build(_value: Any, strategy: Mapping[str, Any]) -> str | None:
-        stated = strategy.get("creator_duration_s") is not None or bool(
-            strategy.get("target_duration_requested")
-        )
-        if not stated:
+    def build(
+        _value: Any, strategy: Mapping[str, Any], requirements: Sequence[BriefRequirement]
+    ) -> str | None:
+        if not length_stated(strategy, requirements):
             return None
         return say(
             en=f"I can't make this video the length you asked for yet: {instead_en}",
             tr=f"Bu videoyu henüz istediğin uzunlukta yapamıyorum: {instead_tr}",
         )
 
-    return build
+    return WithAsks(build)
 
 
 def direction_line(own: str | None, instead_en: str, instead_tr: str) -> Builder:
@@ -250,12 +268,11 @@ def pacing_line(
     return build
 
 
-def no_pace_chosen(_value: Any, strategy: Mapping[str, Any]) -> bool:
-    """For a writer that follows a voice, not a pace: only a pace someone chose (the creator,
-    or the planner picking relaxed or fast) is worth a line, never the silent default."""
-    from app.services.length_policy import effective_pace  # noqa: PLC0415
-
-    return effective_pace(strategy) is None
+def pace_not_followed(_value: Any, _s: Mapping[str, Any]) -> bool:
+    """For a writer that follows a voice, not a pace. The card always shows the plan's pace as
+    a chip (`kria_runtime._strategy_changes`: "Balanced pacing" for the default too), so every
+    pace is named, never only one the creator chose."""
+    return False
 
 
 def slide_audio(value: Any, _s: Mapping[str, Any]) -> str | None:
@@ -343,3 +360,44 @@ DECLINE_PREFIXES: tuple[str, ...] = (
     TITLE_POSITION_DECLINE_EN,
     TITLE_POSITION_DECLINE_TR,
 )
+
+
+# --- the card's compact line ------------------------------------------------------------------
+#
+# What each disclosure subject is called when the card has no room for its whole sentence
+# (`route_disclosure.card_text`): the line names it, so no disclosure is cut silently.
+SUBJECT_LABELS: dict[str, tuple[str, str]] = {
+    "intro_hook": ("the opening hook idea", "açılış kanca fikri"),
+    "story_structure": ("the planned story structure", "planlanan hikâye yapısı"),
+    "pacing": ("the planned pacing", "planlanan tempo"),
+    "direction": ("the planned direction", "planlanan yön"),
+    "caption_style": ("the caption style", "altyazı stili"),
+    "optional_treatments": ("the treatments", "efektler"),
+    "archetype": ("the story archetype", "hikâye kalıbı"),
+    "hero_media_id": ("one featured hero clip", "öne çıkan ana klip"),
+    "overlay_display": ("the overlay display", "katman gösterimi"),
+    "licensed_sfx": ("sound effects", "ses efektleri"),
+    "title_animation": ("the title animation", "başlık animasyonu"),
+    "label_position": ("the clip label position", "klip etiketi konumu"),
+    "opening_title": ("the opening title", "açılış başlığı"),
+    "closing_title": ("the closing title", "kapanış başlığı"),
+    "shot_labels": ("a label on each shot", "her çekimdeki etiket"),
+    "target_duration_s": ("the length you asked for", "istediğin uzunluk"),
+    "audio_strategy": ("the planned music or voiceover", "planlanan müzik ya da seslendirme"),
+    "font_family": ("the planned text font", "planlanan yazı tipi"),
+    "text_color": ("the planned text color", "planlanan yazı rengi"),
+    "music_bed": ("music under your voiceover", "seslendirmenin altındaki müzik"),
+    "transitions": ("crossfades between clips", "klipler arası yumuşak geçiş"),
+}
+COMPACT_PREFIX_EN = "Also not applied on this video yet:"
+COMPACT_PREFIX_TR = "Bu videoda henüz uygulanmayanlar:"
+
+
+def subject_label(subject: str) -> str | None:
+    pair = SUBJECT_LABELS.get(subject)
+    return say(en=pair[0], tr=pair[1]) if pair else None
+
+
+def compact_line(subjects: Sequence[str]) -> str:
+    labels = [subject_label(s) for s in subjects]
+    return f"{say(en=COMPACT_PREFIX_EN, tr=COMPACT_PREFIX_TR)} {', '.join(filter(None, labels))}"

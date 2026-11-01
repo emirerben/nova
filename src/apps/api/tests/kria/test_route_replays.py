@@ -116,6 +116,10 @@ def test_lane_targets_are_current(reports, route, record_property) -> None:
         "lane targets that now pass: remove them from lane_targets.json",
         report["unexpected_green"],
     )
+    assert not report["exclusions"]["unexplained"], (
+        "fields or asks the fixture's lists leave out with no reason in checks.not_graded",
+        report["exclusions"]["unexplained"],
+    )
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -125,3 +129,191 @@ def test_consumer_gate_is_report_only(reports, route) -> None:
     assert gate["verdict"].startswith("REPORT"), gate["why_it_fails"]
     assert isinstance(gate["evidence"]["undisclosed"], list)
     json.dumps(gate["evidence"])
+
+
+# The route each draft shape renders through, read off the worker's dispatch
+# (`generative_build._run_generative_job_impl`, `_run_phone_subtitled_job`,
+# `creator_render_contract.job_requires_camera_speech`), never off `resolve_route_id`. None: the
+# worker refuses the shape, or it is a writer with no table (`voice_behind_footage`).
+_KEPT = {"preserve_source_audio": True, "source_media_ids": ["c0", "c1"]}
+_KEPT_ONE = {"preserve_source_audio": True, "source_media_ids": ["c0"]}
+DISPATCH_MATRIX = (
+    (
+        "montage, music",
+        {"edit_format": "montage", "audio_strategy": "licensed_music"},
+        4,
+        {},
+        "unified_montage",
+    ),
+    (
+        "montage, no audio strategy (schema default)",
+        {"edit_format": "montage"},
+        4,
+        {},
+        "unified_montage",
+    ),
+    (
+        "day vlog, music",
+        {"edit_format": "day_vlog", "audio_strategy": "licensed_music"},
+        4,
+        {},
+        "unified_montage",
+    ),
+    (
+        "creator song in the background",
+        {"edit_format": "montage", "audio_strategy": "user_song", "song_sync": "background"},
+        4,
+        {},
+        "unified_montage",
+    ),
+    (
+        "creator song, lip sync",
+        {"edit_format": "montage", "audio_strategy": "user_song", "song_sync": "lipsync"},
+        4,
+        {},
+        "lipsync_song",
+    ),
+    (
+        "kept camera sound, excerpts",
+        {
+            "edit_format": "montage",
+            "audio_strategy": "licensed_music",
+            "montage_audio": _KEPT,
+            "voice_mode": "excerpts",
+        },
+        4,
+        {},
+        "speech_excerpt",
+    ),
+    (
+        "kept camera sound per clip, stamped job",
+        {
+            "edit_format": "montage",
+            "audio_strategy": "licensed_music",
+            "montage_audio": _KEPT,
+            "voice_mode": "per_clip",
+        },
+        4,
+        {},
+        "unified_montage",
+    ),
+    (
+        "kept camera sound per clip, plan authority off (unstamped: voice_mode ignored)",
+        {
+            "edit_format": "montage",
+            "audio_strategy": "licensed_music",
+            "montage_audio": _KEPT,
+            "voice_mode": "per_clip",
+        },
+        4,
+        {"kria_plan_authority_enabled": False},
+        "speech_excerpt",
+    ),
+    (
+        "one clip's voice straight through, stamped job (voice_behind_footage)",
+        {
+            "edit_format": "montage",
+            "audio_strategy": "original_audio",
+            "montage_audio": _KEPT_ONE,
+            "voice_mode": "continuous",
+        },
+        4,
+        {},
+        None,
+    ),
+    (
+        "one clip's voice straight through, plan authority off",
+        {
+            "edit_format": "montage",
+            "audio_strategy": "original_audio",
+            "montage_audio": _KEPT_ONE,
+            "voice_mode": "continuous",
+        },
+        4,
+        {"kria_plan_authority_enabled": False},
+        "speech_excerpt",
+    ),
+    (
+        "montage with a recorded voiceover",
+        {"edit_format": "montage", "audio_strategy": "voiceover"},
+        4,
+        {},
+        "voiceover_montage",
+    ),
+    (
+        "subtitled, one clip",
+        {"edit_format": "subtitled", "audio_strategy": "original_audio"},
+        1,
+        {},
+        "talking_head",
+    ),
+    (
+        "subtitled, three clips, multi-clip Talking off",
+        {"edit_format": "subtitled", "audio_strategy": "original_audio"},
+        3,
+        {"talking_multi_clip_enabled": False},
+        None,
+    ),
+    (
+        "narrated with a recorded voiceover",
+        {"edit_format": "narrated", "audio_strategy": "voiceover"},
+        6,
+        {},
+        "narrated",
+    ),
+    (
+        "narrated self-narration, one clip",
+        {"edit_format": "narrated", "audio_strategy": "original_audio"},
+        1,
+        {},
+        "talking_head",
+    ),
+    (
+        "narrated self-narration, three clips, phone Talking head on",
+        {"edit_format": "narrated", "audio_strategy": "original_audio"},
+        3,
+        {"phone_talking_head_rendering_enabled": True},
+        "talking_head",
+    ),
+    (
+        "narrated self-narration, three clips, phone Talking head off",
+        {"edit_format": "narrated", "audio_strategy": "original_audio"},
+        3,
+        {"phone_talking_head_rendering_enabled": False},
+        None,
+    ),
+    (
+        "talking_head format (no phone writer)",
+        {"edit_format": "talking_head", "audio_strategy": "original_audio"},
+        2,
+        {},
+        None,
+    ),
+    ("slides", {"edit_format": "slides", "audio_strategy": "licensed_music"}, 5, {}, "slide_post"),
+)
+
+
+@pytest.mark.parametrize(
+    ("strategy", "clips", "flags", "dispatched"),
+    [case[1:] for case in DISPATCH_MATRIX],
+    ids=[case[0] for case in DISPATCH_MATRIX],
+)
+def test_the_card_reads_the_route_the_worker_dispatches(strategy, clips, flags, dispatched) -> None:
+    from unittest.mock import patch
+
+    from app.config import settings
+    from app.kria.route_capabilities import resolve_route_id
+
+    card = _scorecard()
+    paths = [f"users/synthetic/threads/synthetic/analysis-proxy-ios-c{i}.mp4" for i in range(clips)]
+    with (
+        card._prod_flags(),
+        patch.multiple(settings, **flags) if flags else card.contextlib.nullcontext(),
+    ):
+        route = resolve_route_id(
+            creator_id=card.CREATOR_ID,
+            edit_format=strategy["edit_format"],
+            strategy=strategy,
+            clip_paths=paths,
+        )
+    assert (None if route is None else str(route)) == dispatched

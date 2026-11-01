@@ -1,5 +1,5 @@
 {
-  "about": "KRI-1097 wave 2: route scorecard checks expected NOT VERIFIED on the foundation (cf4bd7575), with the lane that turns each green. kind honored = the field or ask is applied in the render (render evidence from scripts/kria/route_replays/<route>.py). kind disclosed_ok = a disclosure the foundation card does not make yet. tests/kria/test_route_replays.py fails on a red check missing here and on a listed check that turned green: a lane that lands removes its entries.",
+  "about": "KRI-1097 wave 2: route scorecard checks expected NOT VERIFIED on the foundation, with the lane that turns each green. kind honored = the field or ask is applied in the render (render evidence from scripts/kria/route_replays/<route>.py, under the contract in score_route.py). kind disclosed_ok = a disclosure the foundation card does not make yet; kind gate = a field the route's table marks applied with no reader (10.claims). make kria-replay exits 1 and tests/kria/test_route_replays.py fails on a red check missing here; the test also fails on a listed check that turned green: a lane that lands removes its entries.",
   "targets": {
     "voiceover_montage": {
       "4.pacing": {
@@ -29,11 +29,6 @@
       }
     },
     "talking_head": {
-      "2.pacing": {
-        "lane": "L2",
-        "kind": "disclosed_ok",
-        "why": "disclosure gap: the card shows the 'Balanced pacing' chip, the Talking writer follows the speech, and the Talking table treats a default balanced as silence (lines.no_pace_chosen), so nothing says the pace is not applied"
-      },
       "4.title_animation": {
         "lane": "L2",
         "kind": "honored",
@@ -46,21 +41,6 @@
       }
     },
     "narrated": {
-      "2.pacing": {
-        "lane": "L3",
-        "kind": "disclosed_ok",
-        "why": "disclosure gap: as on Talking, a default balanced pace on the card chip is treated as silence while the cuts follow the voiceover"
-      },
-      "2.story_structure": {
-        "lane": "L3",
-        "kind": "disclosed_ok",
-        "why": "disclosure gap: the narrated table has no story_structure entry and the writer does not read it (consumer gate lists it), so the planned story order is dropped silently"
-      },
-      "3.r1": {
-        "lane": "L3",
-        "kind": "disclosed_ok",
-        "why": "disclosure gap: the creator's 'at most 120 s' ask has an unchecked receipt (left out of a first draft) and lines.stated_length reads only the strategy's provenance (creator_duration_s, target_duration_requested), which this plan lacks; prod rendered 134.5 s under a log_only length policy"
-      },
       "4.title_animation": {
         "lane": "L3",
         "kind": "honored",
@@ -85,32 +65,10 @@
       }
     },
     "speech_excerpt": {
-      "2.audio_strategy": {
-        "lane": "L5",
-        "kind": "disclosed_ok",
-        "why": "disclosure gap: the table's music line exists but falls past the card's 640-character budget (route_disclosure.card_text keeps whole lines in order) behind five longer lines, so the creator never reads it"
-      },
       "4.pacing": {
         "lane": "L5",
         "kind": "honored",
         "why": "the stated relaxed pace sets the cut length between spoken lines when the plan gives no cut_s; today it is the fixed _DEFAULT_CUT_S"
-      }
-    },
-    "slide_post": {
-      "2.opening_title": {
-        "lane": "L6",
-        "kind": "disclosed_ok",
-        "why": "disclosure gap: the table's opening-title line falls past the card's 640-character budget, so the creator never reads it"
-      },
-      "2.target_duration_s": {
-        "lane": "L6",
-        "kind": "disclosed_ok",
-        "why": "disclosure gap: the table's length line falls past the card's 640-character budget, so the creator never reads it"
-      },
-      "3.r2": {
-        "lane": "L6",
-        "kind": "disclosed_ok",
-        "why": "disclosure gap: keep it 20 seconds has no receipt on a first draft (unchecked) and its card length line is past the budget"
       }
     }
   }

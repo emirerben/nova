@@ -37,15 +37,16 @@ User, thread, item, job, turn and draft ids; storage paths; signed URLs; the lib
 
 ## Checks
 
-| Check | Kind | Foundation (cf4bd7575) | Lane |
+| Check | Kind | Foundation | Lane |
 | --- | --- | --- | --- |
 | 1 route resolves to `talking_head` | route | VERIFIED | |
 | 2.direction (`native`) | disclosed_ok | VERIFIED (card line) | |
-| 2.pacing (`balanced`) | disclosed_ok | NOT VERIFIED: the card chip says "Balanced pacing", the writer follows the speech, and the table treats a default balanced as silence | L2 |
+| 2.pacing (`balanced`) | disclosed_ok | VERIFIED (card line: the card chip shows every pace, so the table names a default balanced too) | |
 | 2.story_structure | disclosed_ok | VERIFIED (card line) | |
 | 2.title_animation | disclosed_ok | VERIFIED (card line + r6 decline) | |
 | 3.r6 animation ask | disclosed_ok | VERIFIED (route decline) | |
 | 4.title_animation, 5.r6 | honored | NOT VERIFIED (no render replay yet) | L2 |
+| 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
 Not graded (each with its reason in `fixture.json` `checks.not_graded`): r1 start/end lines, r2
@@ -65,7 +66,7 @@ as not graded here rather than silently dropped.
 
 ## What the checks do not prove
 
-A disclosure check reads the card text the creator sees (whole lines within the 640-character
-budget, plus typed declines); it does not prove the line is the best wording. Honored checks need a
+A disclosure check reads the card the creator sees (the field's own registry line, whole lines within the 640-character budget, then one compact line naming every line that did not fit,
+plus typed route declines); it does not prove the line is the best wording. Honored checks need a
 route replay module (`scripts/kria/route_replays/talking_head.py`) that runs the writer's planning
 code on this fixture. The native iPhone render is not covered.

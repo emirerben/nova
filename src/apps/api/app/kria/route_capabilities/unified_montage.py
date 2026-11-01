@@ -20,7 +20,6 @@ from app.kria.route_capabilities._types import (
     Handling,
     NotApplied,
     RouteReaders,
-    registry_enabled,
 )
 
 ROUTE_DIRECTION = "fast_montage"
@@ -39,10 +38,12 @@ def _pace_applied(value: Any, strategy: Mapping[str, Any]) -> bool:
 
 
 def _caption_style(value: Any, strategy: Mapping[str, Any]) -> str | None:
-    if registry_enabled() and strategy.get("audio_strategy") == "user_song":
+    if strategy.get("audio_strategy") == "user_song":
         return lines.song_caption_style(value, strategy)
     return lines.caption_style(value, strategy)
 
+
+_PLAN = "pipeline/unified_montage.py:plan_unified_montage"
 
 # Source of truth for "unread": `scripts/kria/score_route.py` (consumer gate) scans ``READERS``
 # for reads of every CreativeStrategy field. The entries that disclose come first, in card order.
@@ -75,21 +76,24 @@ FIELD_HANDLING: dict[str, Handling] = {
     "image_layout": Applied(),
     "mixed_media_timing": Applied(),
     "montage_cadence": Applied(),
-    "edit_format": Applied(via="dispatch picks the writer from it"),
-    "render_program": Applied(via="dispatch picks the guided program from it"),
-    "audio_strategy": Applied(via="read through the contract and the montage audio resolver"),
-    "media_scope": Applied(via="selected_visual_ids / normalize_creator_strategy_media"),
-    "selected_media_ids": Applied(via="selected_visual_ids / the contract order"),
-    "target_duration_s": Applied(via="gated by creator proof in length_policy, partial by design"),
-    "font_family": Applied(via="phone text style policy (requested_style)"),
-    "text_color": Applied(via="phone text style policy (requested_style)"),
-    "opening_title": Applied(via="brief_view / contract"),
-    "opening_title_duration_s": Applied(via="brief_view / contract"),
-    "closing_title": Applied(via="brief_view / contract"),
-    "shot_labels": Applied(via="brief_view / contract"),
-    "video_reuse_policy": Applied(via="length_planning window planner"),
-    "montage_audio": Applied(via="montage audio resolver"),
-    "execution_contract": Applied(via="creator_render_contract"),
+    # Read outside the route's files (the dispatch, the contract) or through a helper the
+    # read scan does not see: each names the symbol that reads it, which the gate checks.
+    "edit_format": Applied(via=lines.DISPATCH),
+    "render_program": Applied(via="agents/_schemas/creator_policy.py:effective_render_program"),
+    "audio_strategy": Applied(via=lines.CONTRACT),
+    "media_scope": Applied(via="pipeline/unified_montage.py:selected_visual_ids"),
+    "selected_media_ids": Applied(via="pipeline/unified_montage.py:selected_visual_ids"),
+    # Gated by creator proof (`length_policy`): partial by design.
+    "target_duration_s": Applied(via=_PLAN),
+    "font_family": Applied(via=_PLAN),
+    "text_color": Applied(via=_PLAN),
+    "opening_title": Applied(via="pipeline/unified_montage.py:_title"),
+    "opening_title_duration_s": Applied(via=_PLAN),
+    "closing_title": Applied(via=_PLAN),
+    "shot_labels": Applied(via=_PLAN),
+    "video_reuse_policy": Applied(via=lines.DISPATCH),
+    "montage_audio": Applied(via="pipeline/unified_montage.py:_keeps_source_audio"),
+    "execution_contract": Applied(via="agents/_schemas/creator_policy.py:effective_render_program"),
 }
 
 READERS = RouteReaders(
@@ -144,7 +148,7 @@ def story_verdict(
         from app.pipeline.unified_montage import brief_view  # noqa: PLC0415
 
         view = brief_view(CreativeBrief(version=1, requirements=list(requirements or [])))
-        song = registry_enabled() and strategy.get("audio_strategy") == "user_song"
+        song = strategy.get("audio_strategy") == "user_song"
         reason = (
             (CREATOR_SONG if song else None)
             or story_blocker(strategy, view)
@@ -231,7 +235,6 @@ TITLE_POSITION = AskDecline(
     lines.title_position_decline,
 )
 
-LEGACY_ASK_DECLINES: tuple[AskDecline, ...] = (TEXT_ANIMATION,)
 ASK_DECLINES: tuple[AskDecline, ...] = (TEXT_ANIMATION, CAPTIONS_ON, TITLE_POSITION)
 
 

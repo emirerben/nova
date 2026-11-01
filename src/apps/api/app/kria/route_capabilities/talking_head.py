@@ -16,17 +16,12 @@ from app.kria.route_capabilities._types import (
     RouteReaders,
 )
 
-_DISPATCH_SELECTION = "dispatch hands only the selected clips (_creator_selected_clip_paths)"
-# Every phone writer styles its text through the shared pass (KRI-1024).
-_TEXT_STYLE = "phone text style policy (requested_style)"
-
-
 FIELD_HANDLING: dict[str, Handling] = {
     "intro_hook": NotApplied(lines.hook),
     "story_structure": NotApplied(lines.story),
     "pacing": NotApplied(
         lines.pacing_line(
-            lines.no_pace_chosen, "the video follows your speech", "video konuşmanı izliyor"
+            lines.pace_not_followed, "the video follows your speech", "video konuşmanı izliyor"
         )
     ),
     "direction": NotApplied(
@@ -44,16 +39,18 @@ FIELD_HANDLING: dict[str, Handling] = {
     "archetype": NotApplied(lines.archetype),
     "hero_media_id": NotApplied(lines.hero),
     "licensed_sfx": NotApplied(lines.sfx),
-    "edit_format": Applied(),
+    "edit_format": Applied(via=lines.DISPATCH),
     "opening_title": Applied(),
     "opening_title_duration_s": Applied(),
     "closing_title": Applied(),
-    "overlay_display": Applied(),
-    "font_family": Applied(via=_TEXT_STYLE),
-    "text_color": Applied(via=_TEXT_STYLE),
-    "audio_strategy": Applied(via="dispatch picks this writer for the clip's own speech"),
-    "media_scope": Applied(via=_DISPATCH_SELECTION),
-    "selected_media_ids": Applied(via=_DISPATCH_SELECTION),
+    # The full-screen choice reaches the writer as a flat job key (KRI-297).
+    "overlay_display": Applied(via=lines.OVERLAY_CANDIDATE),
+    # Every phone writer styles its text through the shared pass (KRI-1024).
+    "font_family": Applied(via=lines.TEXT_STYLE),
+    "text_color": Applied(via=lines.TEXT_STYLE),
+    "audio_strategy": Applied(via=lines.CONTRACT),
+    "media_scope": Applied(via=lines.SELECTION),
+    "selected_media_ids": Applied(via=lines.SELECTION),
 }
 
 READERS = RouteReaders(

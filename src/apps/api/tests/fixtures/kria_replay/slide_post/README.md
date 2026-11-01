@@ -31,15 +31,16 @@ Nothing.
 
 ## Checks
 
-| Check | Kind | Foundation (cf4bd7575) | Lane |
+| Check | Kind | Foundation | Lane |
 | --- | --- | --- | --- |
 | 1 route resolves to `slide_post` | route | VERIFIED | |
 | 2.direction, 2.pacing, 2.intro_hook, 2.story_structure, 2.caption_style, 2.audio_strategy | disclosed_ok | VERIFIED (card lines) | |
-| 2.title_animation | disclosed_ok | VERIFIED through the r1 decline (its own line is past the budget) | |
-| 2.opening_title | disclosed_ok | NOT VERIFIED: the opening-title line falls past the card's 640-character budget | L6 |
-| 2.target_duration_s (stated 20 s) | disclosed_ok | NOT VERIFIED: the length line falls past the card's 640-character budget | L6 |
+| 2.title_animation | disclosed_ok | VERIFIED (named on the card's compact line, and the r1 decline) | |
+| 2.opening_title | disclosed_ok | VERIFIED (named on the card's compact line) | |
+| 2.target_duration_s (stated 20 s) | disclosed_ok | VERIFIED (named on the card's compact line) | |
 | 3.r1 animate the title in, 3.r3 kinetic captions | disclosed_ok | VERIFIED (route declines) | |
-| 3.r2 keep it 20 seconds | disclosed_ok | NOT VERIFIED: no receipt on a first draft and the length line is past the budget | L6 |
+| 3.r2 keep it 20 seconds | disclosed_ok | VERIFIED (the card's length line, on the compact line) | |
+| 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
 No honored checks: the slide lane (L6) discloses every video-only field and changes the planner
@@ -48,5 +49,5 @@ prompt, which an offline replay of a written strategy cannot show.
 ## What the checks do not prove
 
 A synthetic plan shows what the card says for these choices, not that a planner would make them
-(L6 stops it choosing direction, pace and music for slides). Card text within the 640-character
-budget plus typed declines; no native render.
+(L6 stops it choosing direction, pace and music for slides). The field's own registry line
+(whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no native render.

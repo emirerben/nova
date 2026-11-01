@@ -32,9 +32,14 @@ Checks:
 10. consumer gate (REPORT ONLY, owner rule: the product never fails a user for these gaps):
     reads the unified montage's registry table (`app.kria.route_capabilities.unified_montage`,
     shared gate in `score_route.py`): lists every CreativeStrategy field the route does not read
-    and the card does not disclose, and every field the table marks applied that no reader in
-    the route's code touches. It never fails the wrapper, CI or exit status.
+    and the card does not disclose (its own registry line, `score_route.field_disclosed`). It
+    never fails the wrapper, CI or exit status.
 11. song rule: no catalog music is mixed on the phone route for this job (green control).
+12. registry claims: every field the unified table marks applied is read off the strategy in
+    the route's code, or names a ``file:symbol`` carrier that reads it (`score_route`
+    ``10.claims``). Scored.
+
+Checks 3 and 4 accept the card only through that field's own registry line, never free text.
 
 Negative controls (mandatory): checks 1 and 2 each get a synthetic output that ignores the ask
 (the check must FAIL) and one that honours it (the check must PASS); check 10 gets a synthetic
@@ -455,6 +460,7 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
     from app.kria.drafts import _sanitize_strategy_duration_provenance
     from app.kria.route_disclosure import (
         UNIFIED_MONTAGE,
+        ask_declines,
         card_disclosures,
         card_text,
         planned_card_length,
@@ -520,27 +526,28 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
     if shown_length is not None:
         draft_strategy = {**draft_strategy, "target_duration_s": shown_length}
     consequence = f"Render this draft: {reply}"
+    receipt_records = [r.model_dump(mode="json") for r in receipts]
     return {
         "reply": reply,
         "changes": changes,
         "consequence_summary": consequence,
-        "receipts": [r.model_dump(mode="json") for r in receipts],
+        "receipts": receipt_records,
         "ready": bool(report["ready"]),
-        "not_applied": [d.as_record() for d in disclosures],
+        "not_applied": _ROUTE.card_records(disclosures, reply),
+        "declines": _ROUTE.decline_records(
+            ask_declines(checked, strategy, route=route), receipt_records, reply
+        ),
         "draft_target_duration_s": draft_strategy.get("target_duration_s"),
         "text": "\n".join([reply, consequence, *changes, *[str(r.reason or "") for r in receipts]]),
     }
 
 
 _LENGTH = re.compile(r"(\d+(?:\.\d+)?)\s*(?:s\b|sec\b|secs\b|seconds?\b)", re.I)
-_NOT_APPLIED = _ROUTE._NOT_APPLIED
 _RESEARCH_WORDS = re.compile(
     r"research|web\s*search|search(?:es|ed|ing)?\s+the\s+web|look(?:s|ed|ing)?\s+up|"
     r"fact[- ]check|sources?\b|google",
     re.I,
 )
-FIELD_WORDS = _ROUTE.FIELD_WORDS
-discloses_not_applied = _ROUTE.discloses_not_applied
 
 
 # ------------------------------------------------------------------------- recipe readers
@@ -728,7 +735,7 @@ def check_3_hook(fx: dict, base: dict) -> dict:
     ]
     best = max((_hook_overlap(hook, t) for t in texts), default=0.0)
     rendered = best >= 0.75
-    declined = discloses_not_applied(base["card"]["text"], "intro_hook")
+    declined = _ROUTE.field_disclosed(base["card"], "intro_hook")
     ok = rendered or declined
     return _result(
         3,
@@ -755,7 +762,7 @@ def check_4_story(fx: dict, base: dict, rs: dict) -> dict:
     strategy["story_structure"] = list(reversed(strategy["story_structure"]))
     other = replay(build_job(fx, strategy=strategy), rs)
     applied = base["order"] != other["order"] or base["cuts"] != other["cuts"]
-    declined = discloses_not_applied(base["card"]["text"], "story_structure")
+    declined = _ROUTE.field_disclosed(base["card"], "story_structure")
     ok = applied or declined
     return _result(
         4,
@@ -1010,18 +1017,23 @@ def check_9_provider_failure(fx: dict) -> dict:
 
 
 def consumer_gate(
-    card_text: str,
+    card: dict,
     extra_fields: tuple[str, ...] = (),
     extra_handling: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The unified montage's registry table against its code and the card (`score_route`)."""
     return _ROUTE.consumer_gate(
-        "unified_montage", card_text, extra_fields=extra_fields, extra_handling=extra_handling
+        "unified_montage", card, extra_fields=extra_fields, extra_handling=extra_handling
     )
 
 
+def check_12_registry_claims(base: dict) -> dict:
+    claims = _ROUTE.claims_result("unified_montage", base["card"])
+    return {**claims, "id": 12}
+
+
 def check_10_consumer_gate(base: dict) -> dict:
-    gate = consumer_gate(base["card"]["text"])
+    gate = consumer_gate(base["card"])
     result = _result(
         10,
         "consumer gate (REPORT ONLY): fields the route ignores and the card does not disclose",
@@ -1157,7 +1169,7 @@ def negative_controls() -> list[dict]:
         ),
         row("2 honours the strategy must PASS", True, pace_verdict(honouring)["pass"], ""),
     ]
-    card = "Have a look at these in the video:\n- animated on-screen text"
+    card = {"not_applied": [], "declines": []}
     gate = consumer_gate(card, extra_fields=("zz_new_unconsumed_field",))
     controls.append(
         row(
@@ -1418,6 +1430,7 @@ def run_offline(fixture_dir: Path = FIXTURE_DIR) -> dict:
                 "report_only": True,
             },
             _guarded(11, "song rule", lambda: check_11_song_rule(fx, base())),
+            _guarded(12, "registry claims", lambda: check_12_registry_claims(base())),
         ]
         try:
             repro = reproduction(fx, base())
