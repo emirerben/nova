@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.80.0] - 2026-11-01
+
+### Changed
+- fix(notifications): push alert copy depends on the activity kind (KRI-1087) (#2022) <!-- release-pr: 2022 -->
+
 ## [0.83.79.0] - 2026-11-01
 
 ### Changed
