@@ -66,9 +66,18 @@ def _expressible(ask: SoundToggleAsk) -> bool:
 
 
 def _media_match(ref: str, media_ids: Sequence[str]) -> str | None:
+    """The clip ``ref`` names. Behind the show-when-mentioned switch, a brief scope that is
+    the phone's file name also names the edit's analysis-proxy id that ends with it (thread
+    6fa36e51: ``clip:134CD...B33B.mp4`` against ``analysis-proxy-ios-134CD...B33B.mp4``);
+    without it only the montage lane's exact / id-part match applies, as before."""
     from app.pipeline.clip_sound_toggle import _media_match as match  # noqa: PLC0415
+    from app.pipeline.phone_talking_mentions import match_media_id  # noqa: PLC0415
+    from app.services.phone_rollout import phone_talking_mention_cutaways_supported  # noqa: PLC0415
 
-    return match(ref, media_ids)
+    found = match(ref, media_ids)
+    if found is None and phone_talking_mention_cutaways_supported():
+        found = match_media_id(ref, media_ids)
+    return found
 
 
 def plan_cutaway_sound(

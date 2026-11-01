@@ -194,7 +194,7 @@ def test_flag_on_the_creators_take_is_the_only_speaker_and_lanes_stay_on(monkeyp
     assert "lanes_skipped" not in receipt
     main = _tracks(recipe)["subtitled"].clips
     assert [c.source_asset_id for c in main] == [CREATOR]
-    assert recipe.duration == pytest.approx(58.5)
+    assert recipe.duration == pytest.approx(57.97)
     assert {row["media_id"] for row in receipt["cutaways"]} == {*TALKS, STADIUM}
     assert receipt["unplaced"] == []
 
@@ -209,7 +209,7 @@ def test_flag_on_each_talk_covers_the_creator_where_he_talks_about_it(monkeypatc
     assert 14.5 <= windows[FINAL_TALK][0] <= 17.0
     # No window starts before the hook is over, ends in the last second, or overlaps another.
     spans = sorted(windows.values())
-    assert all(start >= 2.5 - 1e-6 and end <= 57.5 + 1e-6 for start, end in spans)
+    assert all(start >= 2.5 - 1e-6 and end <= 56.97 + 1e-6 for start, end in spans)
     assert all(a_end <= b_start + 1e-6 for (_, a_end), (b_start, _) in zip(spans, spans[1:]))
     assert all(end - start <= 4.0 + 1e-6 for start, end in spans)
 
@@ -281,3 +281,38 @@ def test_flag_on_without_a_full_screen_ask_nothing_changes(monkeypatch):
     assert len(receipt["speaker_media_ids"]) == 4
     assert "mention_cutaways" not in receipt
     assert len(_tracks(recipe)["subtitled"].clips) == 4
+
+
+def test_flag_off_is_byte_identical_to_flag_on_without_an_ask_and_adds_no_field(monkeypatch):
+    """The kill switch off and the flag on with no full-screen ask take the same path: the
+    pinned recipe and the variant's multi-clip receipt are equal, and neither carries the
+    new `mention_cutaways` field."""
+    brief = _brief(drop=("r1", "r3"))
+    _j, off_recipe, off_variant = _run(monkeypatch, mention=False, brief=brief)
+    _j, on_recipe, on_variant = _run(monkeypatch, mention=True, brief=brief)
+    assert off_recipe.model_dump(mode="json") == on_recipe.model_dump(mode="json")
+    assert (
+        off_variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+        == on_variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+    )
+    assert "mention_cutaways" not in off_variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+
+
+def test_flag_off_with_the_full_screen_ask_still_adds_no_field(monkeypatch):
+    _j, _recipe, variant = _run(monkeypatch, mention=False)
+    assert "mention_cutaways" not in variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD]
+
+
+def test_the_creator_is_told_what_was_matched_what_was_spread_and_that_sound_was_not_applied(
+    monkeypatch,
+):
+    from app.services.nova_steps import render_notes_from_talking_multi_clip_receipt
+
+    _j, _recipe, variant = _run(monkeypatch, mention=True, sound=False)
+    notes = render_notes_from_talking_multi_clip_receipt(variant[gb.PHONE_TALKING_MULTI_CLIP_FIELD])
+    assert notes == [
+        "Showed your 4 other clips full screen while you talk",
+        "Showed 2 clips right where you mention them",
+        "Couldn't tell where you mention 2 other clips, so I spread them across the video",
+        "Their own sound isn't available on this edit yet, so the clips play silent",
+    ]

@@ -1328,6 +1328,14 @@ def phone_talking_cutaway_sound_supported() -> bool:
     )
 
 
+def phone_talking_mention_cutaways_supported() -> bool:
+    """May a multi-clip phone Talking edit show clips full screen where the creator mentions
+    them right now (parent KRI-1151)? The kill switch alone: the cutaway track is the one
+    `phone_talking_multi_clip_supported()` already requires, and a cutaway's own sound has its
+    own gate (`phone_talking_cutaway_sound_supported`)."""
+    return bool(getattr(settings, "phone_talking_mention_cutaways_enabled", False))
+
+
 def phone_timed_video_cards_supported() -> bool:
     """`phone_timed_cards_supported()` AND the device plays Visuals videos
     (`visualVideos` verified): a timed card may then bind a video, played muted

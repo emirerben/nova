@@ -971,9 +971,9 @@ window with the speaker muted under it.
   window AND the speaker is muted across it; sound but no mute = partial). The render-ready review
   re-judges the pinned recipe (`rendered_cutaway_receipt`, editor Saves included).
 - **Known gaps**: the in-app editor preview does not play the cutaway's sound or mute the
-  speaker (it previews cutaways from the receipt, silent); a clip the classifier files as an extra
-  *speaker* (it has clear speech, e.g. the thread 6fa36e51 "talks") plays back to back on the main
-  track with its own sound and is never a cutaway, so "show it when I mention it" is not built.
+  speaker (it previews cutaways from the receipt, silent). A clip the classifier files as an extra
+  *speaker* (clear speech, e.g. the thread 6fa36e51 "talks") plays back to back on the main track
+  unless `PHONE_TALKING_MENTION_CUTAWAYS_ENABLED` is on (next section).
 - **Evidence** (real `KriaMediaEngine` exporter, macOS host, not a physical iPhone):
   `python scripts/ios/phone-audio-parity.py prepare OUT --cases talking_cutaway_sound`, then
   `(cd src/apps/ios/Packages/KriaMediaEngine && KRIA_AUDIO_PARITY_DIR=OUT swift test --filter
@@ -983,6 +983,62 @@ window with the speaker muted under it.
   `tests/pipeline/test_phone_talking_cutaway_sound.py`,
   `tests/kria/test_kri1151_talking_cutaway_sound_checks.py` (replay of thread 6fa36e51),
   `tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py`.
+
+#### Talks shown full screen where the creator mentions them (parent KRI-1151, `PHONE_TALKING_MENTION_CUTAWAYS_ENABLED`)
+
+"Show the talks full screen when I mention them" on a multi-clip Talking (`subtitled`) edit
+(thread 6fa36e51, job 8cb3fc21). Before, `classify_talking_clips` filed the three podium clips as
+speakers from Whisper pace alone (24/26/30 words at 1.7-2.5 words/s, while their Gemini records
+said `speaks_to_camera: false`), played them back to back ahead of the creator, and set
+`lanes_skipped: multiple_speakers` (overlay grounding, beats, video overlays off). Footage was
+then spread mechanically, never at a mention.
+
+- **Request**: the one typed fact the brief already carries, a live `style`/`select`/`timing`
+  requirement with `facts.display_mode = fullscreen` (`app/kria/cutaway_show_ask.py`; no wording is
+  matched, KRI-667). `clip:<id>` scope names a clip; `global` names none. A live `order`
+  requirement means the creator also arranged the clips, so nothing moves (`kept:
+  clip_order_asked`). No full-screen ask, or the flag off: today's behavior, byte-identical.
+- **Roles** (`phone_talking_mentions.demote_speakers_to_cutaways`, runs right after the pace
+  classifier): a named clip becomes footage; for a global ask a clip whose analysis says it is NOT
+  the creator speaking to camera becomes footage when another clip does speak to camera. A failed or
+  degraded analysis is "unknown", never evidence. The creator's take must remain (`kept:
+  no_creator_take_left` otherwise). The ending clip (KRI-841) keeps its own rule.
+- **Placement** (`schedule_mention_cutaways`, called from `_schedule_talking_footage`): each footage
+  clip's words (its own Whisper words plus its analysis: transcript, hook, summary, subject, brands,
+  props) are compared with the creator's spoken-pass word timeline. Words are folded, split at
+  letter/digit seams ("Euro2032"), cut to a 5-letter stem (Turkish endings) and weighted by rarity
+  (1 / times the creator says it / clips that carry it). A mention needs two distinct shared words
+  within 6 s and a weighted total of 1.0. The window starts at the first matched word, runs up to 4 s
+  (6 s when the clip's own sound plays, `PHONE_TALKING_CUTAWAY_SOUND_ENABLED`), stops where the next
+  clip's mention starts, keeps the 2.5 s hook and the last second clear, and shifts at most 3 s to
+  find room. No match or no room: the mechanical spread, with `reason`
+  `no_mention_found` / `no_room_at_mention`. Only timing comes from the analysis; none of it reaches
+  the screen. A cut take (speech cleanup) has no uncut word timeline, so every clip is spread.
+- **Sound**: nothing new. With the sound lane off a cutaway is muted and
+  `mention_cutaways.sound = {asked: true, applied: false, reason: sound_not_enabled}` says so (the
+  creator-facing note reads "Their own sound isn't available on this edit yet"). The sound lane
+  also matches a brief scope written as the phone's file name to the edit's `analysis-proxy-ios-`
+  id, but only behind this flag (without it the old exact match applies, so the sound lane's
+  behavior is unchanged while this is off).
+- **Receipt**: `variants[i].phone_talking_multi_clip.mention_cutaways` = `{version, demoted[{clip_id,
+  media_id, reason}], kept, placements[{media_id, basis: mention|spread, start_s, end_s, at_s?,
+  reason?}], sound?}` (only with the flag on and a full-screen ask); the roles receipt `clips` marks
+  a moved clip `{role: footage, was: speaker, reason}`. `render_notes` (nova_steps) says how many
+  clips sit at a mention, how many were spread, and a missing sound.
+- **Gate / apply**: `phone_rollout.phone_talking_mention_cutaways_supported()` = the flag, on top of
+  `TALKING_MULTI_CLIP_ENABLED`. Apply: `fly secrets set PHONE_TALKING_MENTION_CUTAWAYS_ENABLED=true
+  --app nova-video` + restart api + worker (Fly only, no Vercel twin, no app build: recipe-only, no
+  new protocol). Rollback: `=false` the same way. To hear the talks' own audio also set
+  `PHONE_TALKING_CUTAWAY_SOUND_ENABLED` and `PHONE_CLIP_SOUND_WINDOWS_ENABLED` (above).
+- **Known gaps**: the signal is the display fact plus the clip analysis; a creator who says "when I
+  mention them" without a full-screen word gets today's behavior (a typed "show when mentioned" fact
+  would need a brief-extractor prompt bump and live evals). Matching is lexical on the clip's own
+  speech and analysis against the creator's words, so a clip about something the creator never
+  names (the congress talk, a drone shot) is spread, and a different language between clip and
+  creator matches only names and numbers.
+- **Evidence**: `tests/tasks/test_talking_show_when_mentioned.py` replays the prod job's clips,
+  words and analyses (`tests/fixtures/talking_show_when_mentioned_6fa36e51.json`) through
+  `_run_generative_job`; `tests/pipeline/test_phone_talking_mentions.py` lists the failure modes.
 
 #### Phase 2: PiP cards grounded from the transcript (KRI-176)
 

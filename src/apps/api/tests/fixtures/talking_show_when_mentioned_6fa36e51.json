@@ -1,13 +1,13 @@
 {
 "thread_id": "6fa36e51-80a1-4a78-8373-65a9fba04dbf",
 "job_id": "8cb3fc21-e982-4650-9d6d-f8926ca92a27",
-"note": "Prod job 8cb3fc21 (2026-11-01): clips in upload order; words are each clip's own Whisper words re-based to the clip's start (the prod render played the three talks first, so the creator's words were shifted by 44.04 s there); meta is the clip analysis Gemini returned. The talks' speaks_to_camera is false, the creator's true.",
+"note": "Prod job 8cb3fc21 (2026-11-01): clips in upload order; words are each clip's own Whisper words re-based to the clip's start (the prod render played the three talks first, so the creator's words were shifted by 44.04 s there); meta is the clip analysis Gemini returned. The talks' speaks_to_camera is false, the creator's true. Durations are the phone-measured originals from the job's media snapshot.",
 "clips": [
 {
 "role": "creator",
 "media_id": "analysis-proxy-ios-8F66E4F4-87E5-4B4D-B608-E37E79D9C07B.mp4",
 "clip_id": "files/hy0d7xtovqvw",
-"duration_s": 58.5,
+"duration_s": 57.97,
 "words": [
 [
 "Devlet",
@@ -547,7 +547,7 @@
 "role": "talk",
 "media_id": "analysis-proxy-ios-93211221-EEFC-4475-BF34-7D23F63894F6.mp4",
 "clip_id": "files/smba6yqy3adx",
-"duration_s": 16.62,
+"duration_s": 15.0,
 "words": [
 [
 "O",
@@ -709,7 +709,7 @@
 "role": "talk",
 "media_id": "analysis-proxy-ios-05866D5C-5C1D-4E1F-B1EF-3C341AE14577.mp4",
 "clip_id": "files/3d0mpvir0ez8",
-"duration_s": 14.42,
+"duration_s": 15.0,
 "words": [
 [
 "Menfaatleri",
@@ -1042,7 +1042,7 @@
 "role": "stadium",
 "media_id": "analysis-proxy-ios-134CDBD9-2781-4407-921B-57D663D2B33B.mp4",
 "clip_id": "files/bcz62gqk2uy7",
-"duration_s": 16.0,
+"duration_s": 10.0,
 "words": [],
 "meta": {
 "speaks_to_camera": false,
