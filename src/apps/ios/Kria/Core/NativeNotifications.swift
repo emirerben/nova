@@ -54,6 +54,12 @@ struct SystemNotificationPermissionClient: NativeNotificationPermissionClient {
     func unregister() { UIApplication.shared.unregisterForRemoteNotifications() }
 }
 
+/// What the Account screen offers for notifications. A failed server cleanup gets its own retry
+/// because `enable()` refuses to run until the old registration is revoked.
+enum NativeNotificationControl: Equatable, Sendable {
+    case hidden, off, on, retryCleanup
+}
+
 @MainActor final class NativeNotificationCoordinator: ObservableObject {
     @Published private(set) var available = false
     @Published private(set) var optedIn = false
@@ -78,6 +84,12 @@ struct SystemNotificationPermissionClient: NativeNotificationPermissionClient {
         self.permission = permission
         self.defaults = defaults
         self.client = client
+    }
+
+    var control: NativeNotificationControl {
+        guard available else { return .hidden }
+        if needsRevocation { return .retryCleanup }
+        return optedIn ? .on : .off
     }
 
     func configure(api: any KriaAPIClient) {
@@ -228,10 +240,10 @@ struct SystemNotificationPermissionClient: NativeNotificationPermissionClient {
             do {
                 let opened = try await openActivity(id, owner)
                 guard let self, self.epoch == captured, !Task.isCancelled else { return }
-                if !opened { self.message = String(localized: "This activity is no longer available.") }
+                if !opened { self.message = String(localized: "This project is no longer available.") }
             } catch {
                 guard let self, self.epoch == captured, !Task.isCancelled else { return }
-                self.message = String(localized: "This activity is no longer available. Open Activity to see the latest status.")
+                self.message = String(localized: "This project is no longer available.")
             }
         }
         tapTask = task
