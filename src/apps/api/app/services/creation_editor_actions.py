@@ -35,6 +35,10 @@ from app.services.kria_editor_ops import (
     build_editor_snapshot,
     compile_editor_ops,
 )
+from app.services.phone_speaker_background import (
+    BACKGROUND_REFUSALS,
+    pin_background_for_commit,
+)
 
 log = structlog.get_logger()
 
@@ -408,6 +412,12 @@ def _rejection_reply(exc: Exception) -> str:
     written for creators; bare strings and codes are internal and stay generic.
     """
     if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
+        refusal = BACKGROUND_REFUSALS.get(str(exc.detail.get("code") or ""))
+        if refusal is not None:
+            # KRI-1117 (S18): the honest "Couldn't ..." for a background the Save refused.
+            return say(en=f"{refusal[0]}. ", tr=f"{refusal[1]}. ") + say(
+                en="Nothing was changed.", tr="Hiçbir şey değişmedi."
+            )
         message = str(exc.detail.get("message") or "").strip()
         if message and not _mixes_languages(message):
             return f"{message} " + say(en="Nothing was changed.", tr="Hiçbir şey değişmedi.")
@@ -467,11 +477,15 @@ _OP_PHRASES = {
     "set_edit_direction": "change the edit direction",
     "set_clip_label": "label the clips",
     "apply_custom_effect": "add that effect",
+    "set_background": "put that behind you",
+    "remove_background": "remove the background behind you",
 }
 _OP_PHRASES_TR = {
     "set_edit_direction": "kurgunun yönünü değiştirmek",
     "set_clip_label": "kliplere etiket vermek",
     "apply_custom_effect": "o efekti eklemek",
+    "set_background": "onu arkana koymak",
+    "remove_background": "arkandaki arka planı kaldırmak",
 }
 
 
@@ -765,6 +779,7 @@ async def execute_copilot_edit(
         raise HTTPException(status_code=409, detail="Editor target changed")
 
     prep = None
+    plan_before_background_pin = job.assembly_plan
     try:
         compiled = compile_editor_ops(job, variant, response.ops)
         payload = EditorCommitRequest.model_validate(compiled.payload)
@@ -809,6 +824,11 @@ async def execute_copilot_edit(
                 raise ValueError("The guided source is stale.") from exc
             if not media_current:
                 raise ValueError("The guided source is stale.")
+        # KRI-1117: a chat edit that sets a Talking background pins its pool visual first,
+        # like the HTTP Save route (never any other Save).
+        await pin_background_for_commit(
+            db, job, variant_id, payload, plan_item_id=thread.active_plan_item_id
+        )
         prep = prepare_editor_commit(
             job,
             variant_id,
@@ -841,6 +861,8 @@ async def execute_copilot_edit(
         # baseline into a misleading assistant response.
         if isinstance(exc, HTTPException) and exc.status_code == 409:
             raise
+        # A refused Save leaves no pinned receipt behind.
+        job.assembly_plan = plan_before_background_pin
         prep = None
         receipt["outcome"] = "unsupported"
         receipt["rejection"] = _rejection_detail(exc)

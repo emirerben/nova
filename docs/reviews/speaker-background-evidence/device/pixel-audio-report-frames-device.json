@@ -1,0 +1,313 @@
+{
+  "on_photo_60": {
+    "5.5": {
+      "regions": {
+        "wall_top_strip(ceiling)": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.29
+        },
+        "wall_left_strip": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.32
+        },
+        "corner_tl": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.0
+        },
+        "corner_tr": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.0
+        },
+        "face_cheeks_nose": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 2.82
+        },
+        "torso_shirt": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 2.1
+        }
+      },
+      "coverage": {
+        "background_frac": 0.5379,
+        "person_like_frac(not checker)": 0.4621,
+        "matches_source_frac": 0.4599,
+        "neither(blend/edge)_frac": 0.0022,
+        "whole_frame_mad_vs_source": 57.92
+      }
+    },
+    "20.5": {
+      "regions": {
+        "wall_top_strip(ceiling)": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.26
+        },
+        "wall_left_strip": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.32
+        },
+        "corner_tl": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.0
+        },
+        "corner_tr": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.0
+        },
+        "face_cheeks_nose": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 3.61
+        },
+        "torso_shirt": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 1.95
+        }
+      },
+      "coverage": {
+        "background_frac": 0.5369,
+        "person_like_frac(not checker)": 0.4631,
+        "matches_source_frac": 0.4608,
+        "neither(blend/edge)_frac": 0.0023,
+        "whole_frame_mad_vs_source": 57.86
+      }
+    },
+    "40.5": {
+      "regions": {
+        "wall_top_strip(ceiling)": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.26
+        },
+        "wall_left_strip": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.32
+        },
+        "corner_tl": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.0
+        },
+        "corner_tr": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.0
+        },
+        "face_cheeks_nose": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 2.29
+        },
+        "torso_shirt": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 2.87
+        }
+      },
+      "coverage": {
+        "background_frac": 0.5359,
+        "person_like_frac(not checker)": 0.4641,
+        "matches_source_frac": 0.4609,
+        "neither(blend/edge)_frac": 0.0032,
+        "whole_frame_mad_vs_source": 57.85
+      }
+    },
+    "59.0": {
+      "regions": {
+        "wall_top_strip(ceiling)": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.37
+        },
+        "wall_left_strip": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.36
+        },
+        "corner_tl": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.0
+        },
+        "corner_tr": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 1.0
+        },
+        "face_cheeks_nose": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 6.87
+        },
+        "torso_shirt": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 3.83
+        }
+      },
+      "coverage": {
+        "background_frac": 0.5026,
+        "person_like_frac(not checker)": 0.4974,
+        "matches_source_frac": 0.4825,
+        "neither(blend/edge)_frac": 0.0149,
+        "whole_frame_mad_vs_source": 55.73
+      }
+    },
+    "_summary": {
+      "mean_background_frac": 0.5283,
+      "min_wall_checker_frac": 1.0,
+      "max_face_checker_frac": 0.0,
+      "max_face_mad": 6.87,
+      "max_torso_mad": 3.83
+    }
+  },
+  "on_video_60": {
+    "5.5": {
+      "regions": {
+        "wall_top_strip(ceiling)": {
+          "checker_color_frac": 0.9998,
+          "mean_abs_diff_vs_bg_png": 159.16
+        },
+        "wall_left_strip": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 159.22
+        },
+        "corner_tl": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 162.32
+        },
+        "corner_tr": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 162.33
+        },
+        "face_cheeks_nose": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 2.83
+        },
+        "torso_shirt": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 2.11
+        }
+      },
+      "coverage": {
+        "background_frac": 0.5377,
+        "person_like_frac(not checker)": 0.4623,
+        "matches_source_frac": 0.4599,
+        "neither(blend/edge)_frac": 0.0025,
+        "whole_frame_mad_vs_source": 52.23
+      }
+    },
+    "20.5": {
+      "regions": {
+        "wall_top_strip(ceiling)": {
+          "checker_color_frac": 0.9998,
+          "mean_abs_diff_vs_bg_png": 159.19
+        },
+        "wall_left_strip": {
+          "checker_color_frac": 0.9974,
+          "mean_abs_diff_vs_bg_png": 159.27
+        },
+        "corner_tl": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 162.33
+        },
+        "corner_tr": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 162.33
+        },
+        "face_cheeks_nose": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 3.61
+        },
+        "torso_shirt": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 1.96
+        }
+      },
+      "coverage": {
+        "background_frac": 0.5365,
+        "person_like_frac(not checker)": 0.4635,
+        "matches_source_frac": 0.4608,
+        "neither(blend/edge)_frac": 0.0027,
+        "whole_frame_mad_vs_source": 52.17
+      }
+    },
+    "40.5": {
+      "regions": {
+        "wall_top_strip(ceiling)": {
+          "checker_color_frac": 0.9998,
+          "mean_abs_diff_vs_bg_png": 159.22
+        },
+        "wall_left_strip": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 159.26
+        },
+        "corner_tl": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 162.33
+        },
+        "corner_tr": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 162.33
+        },
+        "face_cheeks_nose": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 2.3
+        },
+        "torso_shirt": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 2.89
+        }
+      },
+      "coverage": {
+        "background_frac": 0.5357,
+        "person_like_frac(not checker)": 0.4643,
+        "matches_source_frac": 0.4609,
+        "neither(blend/edge)_frac": 0.0034,
+        "whole_frame_mad_vs_source": 52.18
+      }
+    },
+    "59.0": {
+      "regions": {
+        "wall_top_strip(ceiling)": {
+          "checker_color_frac": 0.9998,
+          "mean_abs_diff_vs_bg_png": 12.02
+        },
+        "wall_left_strip": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 11.65
+        },
+        "corner_tl": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 13.0
+        },
+        "corner_tr": {
+          "checker_color_frac": 1.0,
+          "mean_abs_diff_vs_bg_png": 13.01
+        },
+        "face_cheeks_nose": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 6.85
+        },
+        "torso_shirt": {
+          "checker_color_frac": 0.0,
+          "mean_abs_diff_vs_source": 3.87
+        }
+      },
+      "coverage": {
+        "background_frac": 0.5024,
+        "person_like_frac(not checker)": 0.4976,
+        "matches_source_frac": 0.4825,
+        "neither(blend/edge)_frac": 0.0151,
+        "whole_frame_mad_vs_source": 50.42
+      }
+    },
+    "_summary": {
+      "mean_background_frac": 0.5281,
+      "min_wall_checker_frac": 0.9974,
+      "max_face_checker_frac": 0.0,
+      "max_face_mad": 6.85,
+      "max_torso_mad": 3.87
+    }
+  },
+  "audio": {
+    "speaker_source": {
+      "samples": 240745,
+      "rms": 0.0881,
+      "peak": 0.1304,
+      "amp_440Hz": 0.1224,
+      "amp_1000Hz": 0.0
+    },
+    "speaker_source_durations": {
+      "video": 5.0,
+      "audio": 5.0
+    }
+  }
+}

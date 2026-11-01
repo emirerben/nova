@@ -244,6 +244,13 @@ if [[ "$MODE" == "unit" ]]; then
   BUILD_TEST_ARGS+=(-skip-testing:KriaUITests)
 fi
 RUN_TEST_ARGS+=(-skip-testing:KriaUITests)
+# PRs that leave render, export and text code alone skip the slow export/OCR
+# proofs listed in render_evidence.py; main pushes and nightly run them all.
+if [[ "${KRIA_IOS_SKIP_RENDER_EVIDENCE:-0}" == "1" ]]; then
+  while IFS= read -r argument; do RUN_TEST_ARGS+=("$argument"); done \
+    < <(python3 "$REPO_ROOT/scripts/ios/render_evidence.py" skip-args)
+  echo "Skipping export/OCR unit proofs (no render code changed); main runs them" | tee -a "$RESULT_DIR/timings.log"
+fi
 timed "Compilation" xcodebuild "${BUILD_TEST_ARGS[@]}" build-for-testing 2>&1 | tee "$RESULT_DIR/build.log"
 timed "Simulator wait after compilation" wait "$BOOT_PID"
 trap - EXIT

@@ -575,9 +575,34 @@ STICKY_FACTS = frozenset(
 )
 
 
+def _order_basis_key(facts: Mapping[str, Any]) -> str:
+    key = str(facts.get("key") or "").strip().casefold()
+    return "capture_time" if key in _CAPTURE_ORDER_KEYS else key
+
+
+def _replaces_order(target: BriefRequirement, update: BriefUpdate) -> bool:
+    """KRI-1112: an order change from one stated basis to another is a new order.
+
+    Leverkusen M3 (13:38): "Use exactly this order: IMG_1028, ... IMG_1043. This replaces my
+    earlier order and ending requests." became ``key: exact_sequence`` over
+    ``capture_time``, yet v5 kept the old ``first_clip`` / ``last_clip``, which held the
+    creator's complete list back. The "start with" / "end on" words were said of the old
+    order; the new one keeps only the ends its own change restates. A reworded order on the
+    same basis (KRI-522), or the first basis given to a pin-only "start with X", keeps them.
+    """
+    if target.kind != "order" or update.kind != "order":
+        return False
+    old, new = _order_basis_key(target.facts), _order_basis_key(update.facts)
+    return bool(old) and bool(new) and old != new
+
+
 def _carry_sticky_facts(target: BriefRequirement, update: BriefUpdate) -> dict[str, Any]:
     facts = update.facts
-    if update.kind == target.kind and update.scope == target.scope:
+    if (
+        update.kind == target.kind
+        and update.scope == target.scope
+        and not _replaces_order(target, update)
+    ):
         kept = {
             k: v for k, v in target.facts.items() if k in STICKY_FACTS and k not in update.facts
         }

@@ -8064,6 +8064,7 @@ async def _editor_commit_item(
                 motion_scenes=section_flags.get("motion_scenes", False),
                 camera_effects=section_flags.get("camera_effects", False),
                 drawings=section_flags.get("drawings", False),
+                speaker_background=section_flags.get("speaker_background", False),
                 carousel_moment=section_flags.get("carousel_moment", False),
                 title=cleaned_title is not None,
             ),
@@ -8084,6 +8085,16 @@ async def _editor_commit_item(
             db, locked_job, _find_variant(locked_job, variant_id) or {}
         ),
     }
+    if draft_baseline is None:
+        from app.services.phone_speaker_background import (  # noqa: PLC0415
+            pin_background_for_commit,
+        )
+
+        # KRI-1117: a Save that sets a Talking background pins the pool visual first (only
+        # one the validator can accept; every other case gets its own refusal there).
+        await pin_background_for_commit(
+            db, locked_job, variant_id, commit_body, plan_item_id=item.id
+        )
     if draft_baseline is not None:
         from app.services.authored_editor import prepare_authored_editor_commit  # noqa: PLC0415
 
@@ -8258,6 +8269,7 @@ async def _editor_commit_item(
             motion_scenes=prep["sections"].get("motion_scenes", False),
             camera_effects=prep["sections"].get("camera_effects", False),
             drawings=prep["sections"].get("drawings", False),
+            speaker_background=prep["sections"].get("speaker_background", False),
             carousel_moment=prep["sections"].get("carousel_moment", False),
             title=cleaned_title is not None,
         ),

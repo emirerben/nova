@@ -600,7 +600,7 @@ async def test_skip_the_hallway_clip_never_plays_it(prod_profile, monkeypatch) -
     # 9: the phone montage plans, compiles and verifies with only those clips.
     clips = _unified_clips(dispatched)
     plan = plan_unified_montage(clips, None, strategy=strategy, clip_intents_enabled=True)
-    assert HALLWAY not in {cut.media_id for cut in plan.snapshot.fast_cuts}
+    assert HALLWAY not in {cut.media_id for cut in plan.cuts}
     contract = build_render_contract(strategy, generation_id="gen")
     assert _verify(contract, plan, clips)
     # The exclusion stays on the draft as the creator's resolved ask.

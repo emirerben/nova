@@ -30,6 +30,7 @@ from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
     MAX_REACTION_BEATS,
     MAX_TIMED_CARDS,
+    BackgroundMedia,
     ClosingMedia,
     EndingClip,
     ReactionBeat,
@@ -264,6 +265,12 @@ class ResolvedCreatorManifest(_CreatorModel):
     # a manifest with no song is byte-identical to before this field existed.
     has_user_song: bool = Field(default=False, exclude_if=lambda value: not value)
     user_song: UserSongFacts | None = Field(default=None, exclude_if=lambda value: value is None)
+    # KRI-1117: the creator's explicit background picked in the camera (a manifest media id).
+    # Omitted from every serialization unless the `speaker_background` capability is open and a
+    # pick exists, so every other manifest, hash and prompt is byte-identical.
+    speaker_background_pick: str | None = Field(
+        default=None, max_length=200, exclude_if=lambda value: value is None
+    )
     narration: CreatorNarrationIdentity | None = None
     current_edit: CreatorEditSnapshot | None = None
     media: list[CreatorMediaRef] = Field(default_factory=list, max_length=MAX_CREATOR_MEDIA_REFS)
@@ -512,6 +519,10 @@ class CreativeStrategy(_CreatorModel):
     # tool schema stays byte-identical), omitted from serialization when None, taught in the
     # creator prompt only where the manifest can render it.
     ending_clip: SkipJsonSchema[EndingClip | None] = Field(default=None)
+    # KRI-1117: a photo / looping video shown behind the speaker of a phone Talking edit. Same
+    # pattern as `ending_clip`: out of every derived JSON schema, omitted when None, taught in
+    # the creator prompt only where the manifest advertises `speaker_background`.
+    background_media: SkipJsonSchema[BackgroundMedia | None] = Field(default=None)
     # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED): a Visuals photo/video shown
     # picture-in-picture at a stated second or a stated clip of a phone Montage / Voiceover
     # edit. Same pattern as `reaction_beats`: out of every derived JSON schema, omitted from
@@ -621,6 +632,7 @@ class CreativeStrategy(_CreatorModel):
             "reaction_beats",
             "closing_media",
             "ending_clip",
+            "background_media",
             "timed_cards",
             "song_sync",
             "resolved_song_takes",
@@ -640,6 +652,14 @@ class CreativeStrategy(_CreatorModel):
         ),
     )
     pacing: CreativePace = "balanced"
+    # Server-owned provenance for ``pacing``, mirroring ``target_duration_requested``: the
+    # default "balanced" is otherwise indistinguishable from the creator saying it. True only
+    # where the creator's own words name a pace; absent (None) otherwise, so stored strategies
+    # stay byte-identical. A non-default pacing is honored without it (see
+    # ``services.length_policy.effective_pace``).
+    pacing_requested: SkipJsonSchema[bool | None] = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     target_duration_s: ProposalDuration = Field(default=24, exclude_if=lambda value: value == 24)
     # Server-owned provenance for the duration field.  The public/default 24s
     # value is deliberately omitted from stored strategies, but a creator may
@@ -1622,6 +1642,7 @@ __all__ = [
     "ChoiceAnswer",
     "ClosingMedia",
     "EndingClip",
+    "BackgroundMedia",
     "MAX_REACTION_BEATS",
     "ReactionBeat",
     "CreatorEditPlan",

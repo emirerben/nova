@@ -99,6 +99,10 @@ def test_voiceover_montage_emits_decided_blocks(monkeypatch, sent) -> None:
 
 
 def test_voiceover_montage_with_a_matched_track_names_it(monkeypatch, sent) -> None:
+    # A catalog track reaches a phone job only with the song rule's kill switch off
+    # (`CREATOR_JOBS_NEVER_AUTO_MATCH_CATALOG_SONG_ENABLED=false`): this pins the block wording
+    # for that legacy path.
+    monkeypatch.setattr(settings, "creator_jobs_never_auto_match_catalog_song_enabled", False)
     job, snapshot, candidates, _cloud = montage._voiceover_with_track_setup(
         monkeypatch,
         verified_features=[

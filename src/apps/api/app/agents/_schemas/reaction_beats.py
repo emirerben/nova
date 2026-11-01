@@ -145,6 +145,31 @@ class EndingClip(BaseModel):
     keep_audio: bool = True
 
 
+class BackgroundMedia(BaseModel):
+    """The photo or looping video shown BEHIND the speaker for the whole edit (KRI-1117).
+
+    "Put this photo behind me" / the creator's pick in the camera: a green-screen style
+    background on a phone Talking edit. ``media_id`` is an opaque manifest media id of a
+    Visuals-pool photo or video (``asset-*``), never one of the speaker's own clips. The
+    server repair (``app.services.creator_capabilities.repair_creator_speaker_background``)
+    keeps it only where the phone can composite it and canonicalizes the id; the worker
+    resolves it into the lane request's ``background``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    media_id: str = Field(min_length=1, max_length=200)
+    # Video only: where the looping background starts playing (a photo ignores it).
+    source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
+
+    @model_serializer(mode="wrap")
+    def _omit_default_start(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if data.get("source_start_s") == 0.0:
+            data.pop("source_start_s", None)
+        return data
+
+
 MAX_TIMED_CARDS = 12
 
 
@@ -208,5 +233,6 @@ __all__ = [
     "ReactionBeat",
     "ClosingMedia",
     "EndingClip",
+    "BackgroundMedia",
     "TimedCard",
 ]

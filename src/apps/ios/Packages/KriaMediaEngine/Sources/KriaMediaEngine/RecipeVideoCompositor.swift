@@ -29,7 +29,12 @@ struct RecipeVideoLayer: @unchecked Sendable {
     /// Set only for an overlay clip with `overlayFadeIn`/`overlayFadeOut`.
     /// It scales opacity alone; positioning keeps using `transform`.
     var overlayFade: OverlayFadeWindow? = nil
+    /// Set only when the recipe has a `speakerBackground` (KRI-1116).
+    var speakerRole: SpeakerBackgroundRole? = nil
 }
+
+/// The two layers the speaker matte composes: the background replaces the speaker's room.
+enum SpeakerBackgroundRole: Sendable { case background, speaker }
 
 /// An overlay clip's fade across the window its layer actually occupies,
 /// evaluated with the same curve as `VisualMediaPlacement` (see `fadeEnvelope`).
@@ -142,12 +147,15 @@ final class RecipeVideoInstruction: NSObject, AVVideoCompositionInstructionProto
     /// Text behind people: one per composition (shared across the compositor instances the player,
     /// exporter and image generator each create), present only when a text layer is flagged.
     let subjectMatte: NativeSubjectMatte?
+    /// Talk-to-camera green screen: one per composition, present only when the recipe has a background.
+    let speakerMatte: SpeakerMatte?
     let canvas: CGRect
     let transparentBackground: Bool
-    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil) {
+    init(timeRange: CMTimeRange, layers: [RecipeVideoLayer], text: [RecipeTextLayer], canvas: CGSize, cameraPulses: [CameraPulse] = [], motionScenes: NativeMotionPainter? = nil, textStore: NativeTextLayerStore? = nil, drawings: NativeDrawingStore? = nil, transparentBackground: Bool = false, subjectMatte: NativeSubjectMatte? = nil, speakerMatte: SpeakerMatte? = nil) {
         self.transparentBackground = transparentBackground
         self.drawings = drawings
         self.subjectMatte = subjectMatte
+        self.speakerMatte = speakerMatte
         self.cameraPulses = cameraPulses
         self.motionScenes = motionScenes
         self.timeRange = timeRange
@@ -196,10 +204,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 }
                 let time = request.compositionTime.seconds
                 var frame = CIImage(color: instruction.transparentBackground ? .clear : .black).cropped(to: instruction.canvas)
-                for layer in instruction.layers where time >= layer.start && time < layer.end && !layer.overlayAboveText {
-                    do { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
-                    catch { request.finish(with: error); return }
-                }
+                let belowText = instruction.layers.filter { time >= $0.start && time < $0.end && !$0.overlayAboveText }
+                do { frame = try composeBelowText(belowText, onto: frame, instruction: instruction, request: request, time: time) }
+                catch { request.finish(with: error); return }
                 if let motion = instruction.motionScenes {
                     do { frame = try motion.image(at: time).composited(over: frame) }
                     catch { request.finish(with: error); return }
@@ -221,6 +228,39 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             }
         }
     }
+    /// The layers under the text. With a speaker background the order is: layers sorted below the first
+    /// speaker layer, the background, the speaker layer(s) times the person mask, then every other layer
+    /// (cutaways, fullscreen and overlay cards, fills) exactly as without a background, so nothing above the
+    /// speaker is ever matted (S8). The background shows only under an active speaker clip, so an ending
+    /// clip on the same track is untouched.
+    private func composeBelowText(_ layers: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
+                                  request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage {
+        var frame = canvas
+        func compose(_ layer: RecipeVideoLayer) throws { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
+        guard let matte = instruction.speakerMatte, let background = layers.first(where: { $0.speakerRole == .background }),
+              let first = layers.firstIndex(where: { $0.speakerRole == .speaker }) else {
+            for layer in layers where layer.speakerRole != .background { try compose(layer) }
+            return frame
+        }
+        for layer in layers[..<first] where layer.speakerRole == nil { try compose(layer) }
+        let speakers = layers[first...].filter { $0.speakerRole == .speaker }
+        var speaker = CIImage(color: .clear).cropped(to: instruction.canvas)
+        for layer in speakers { speaker = try composeVideoLayer(layer, onto: speaker, instruction: instruction, request: request, time: time) }
+        let key = speakers.map { $0.clipID ?? String($0.trackID ?? -1) }.joined(separator: "|")
+        switch matte.answer(for: speaker, at: time, canvas: instruction.canvas, clipKey: key) {
+        case .cutout(let mask):
+            try compose(background)
+            let cut = SpeakerMatte.cutOut(speaker, mask: mask, canvas: instruction.canvas, config: matte.config) ?? speaker
+            frame = cut.composited(over: frame).cropped(to: instruction.canvas)
+        case .backgroundOnly:
+            try compose(background)
+        case .original:
+            for layer in speakers { try compose(layer) }
+        }
+        for layer in layers[first...] where layer.speakerRole == nil { try compose(layer) }
+        return frame
+    }
+
     private func composeVideoLayer(_ layer: RecipeVideoLayer, onto background: CIImage,
                                    instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
                                    time: Double) throws -> CIImage {
