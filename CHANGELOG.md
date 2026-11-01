@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.66.0] - 2026-11-01
+
+### Changed
+- Project resolver creator requests before observability storage (#1980) <!-- release-pr: 1980 -->
+
 ## [0.83.65.0] - 2026-11-01
 
 ### Changed
