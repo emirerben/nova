@@ -221,21 +221,22 @@ struct SlidePostWorkspaceView: View {
         let slideCanvas = session.selectedSlide.map { SlidePostFraming.canvas(for: $0, profile: profile, aspect: aspect) } ?? postCanvas
         let slideCrop = session.selectedSlide.flatMap { SlidePostFraming.effectiveCrop(for: $0) }
         let slideFit = session.selectedSlide.flatMap { SlidePostFraming.effectiveFit(for: $0) }
+        let slideTilt = session.selectedSlide.flatMap { SlidePostFraming.effectiveTilt(for: $0) }
         let playerKey = "\(session.selectedID ?? "")|\(asset?.id ?? "")|\(profile)|\(aspect ?? "")|\(preset)|\(videoRetry)"
         return ZStack {
             if let asset, let url = previewURL {
                 if asset.kind == "video" {
                     // The poster is the cached thumbnail, so the frame is never blank while the player spins up.
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: asset.previewMediaURL, onExpired: { await refresh() }, showsSpinner: false,
-                                         lookPreset: preset, lookCanvas: postCanvas)
-                    SlidePostVideoPicture(playback: videoPlayback, assetID: asset.id)
+                                         lookPreset: preset, lookCanvas: postCanvas, tilt: slideTilt)
+                    SlidePostVideoPicture(playback: videoPlayback, assetID: asset.id, tilt: slideTilt)
                     if previewLookFailed {
                         Text("Look preview unavailable").font(KriaFont.body(12)).padding(8).background(KriaColor.paper, in: Capsule())
                     }
                 } else {
                     SlidePostCachedImage(assetID: asset.id, variant: .preview, url: url, onExpired: { await refresh() },
                                          loadingIdentifier: "slidepost-preview-loading", showsRetry: true, reportsState: true,
-                                         lookPreset: preset, lookCanvas: slideCanvas, crop: slideCrop, fit: slideFit)
+                                         lookPreset: preset, lookCanvas: slideCanvas, crop: slideCrop, fit: slideFit, tilt: slideTilt)
                 }
             } else { Image(systemName: "photo.on.rectangle").font(.largeTitle).foregroundStyle(KriaColor.zinc) }
         }
@@ -292,6 +293,7 @@ struct SlidePostWorkspaceView: View {
     private var framingOn: Bool { effectiveCapabilities?.slidePostFramingEnabled == true }
     private var sizesOn: Bool { effectiveCapabilities?.slidePostSizesEnabled == true }
     private var drawingOn: Bool { effectiveCapabilities?.slidePostDrawingEnabled == true }
+    private var tiltOn: Bool { effectiveCapabilities?.slidePostTiltEnabled == true }
     private var stickersOn: Bool { effectiveCapabilities?.slidePostStickersEnabled == true }
     /// KRI-460: what a picture paste needs. UI tests swap the storage upload for a fixture one (see `SlidePostFixtureStickerUploader`).
     private var stickerPaste: SlidePostStickerPaste? {
@@ -373,12 +375,13 @@ struct SlidePostWorkspaceView: View {
         let subtitle: String
         if mode == .text { subtitle = "Slide \(slideNumber) · Text" }
         else if mode == .look { subtitle = "Slide \(slideNumber) · Look" }
+        else if mode == .tilt { subtitle = "Slide \(slideNumber) · Tilt" }
         else if mode == .crop { subtitle = "Slide \(slideNumber) · Crop" }
         else if mode == .draw { subtitle = "Slide \(slideNumber) · Draw" }
         else if session.hasUnsavedChanges { subtitle = "Unsaved changes" }
         else { subtitle = "\(platformName(draft)) · \(draft.size.rawValue) · \(draft.slides.count) slide\(draft.slides.count == 1 ? "" : "s")" }
         return SlidePostTransportRow(
-            subtitle: subtitle, unsaved: session.hasUnsavedChanges && mode != .text && mode != .look,
+            subtitle: subtitle, unsaved: session.hasUnsavedChanges && mode != .text && mode != .look && mode != .tilt,
             canUndo: session.canUndoEdit || session.canUndo, canRedo: session.canRedoEdit,
             onUndo: { if session.canUndoEdit { session.undoEdit() } else { Task { await undo() } } },
             onRedo: { session.redoEdit() },
@@ -424,7 +427,7 @@ struct SlidePostWorkspaceView: View {
     @ViewBuilder private func richWorkspace(_ draft: SlidePostDraft) -> some View {
         let slide = session.selectedSlide
         // Draw mode is not a panel: its toolbar is a fixed height and the stage takes the rest, so the canvas stays as big as it can.
-        let panelOpen = mode == .text || mode == .look
+        let panelOpen = mode == .text || mode == .look || mode == .tilt
         let height = max(rootSize.height, 640)
         if mode == .crop, let slide {
             VStack(spacing: 0) {
@@ -461,6 +464,10 @@ struct SlidePostWorkspaceView: View {
             } else if mode == .text, let slide {
                 SlidePostTextPanel(session: session, slideID: slide.id, tab: $textTab, compact: keyboardUp, focusToken: focusToken, bendAvailable: bendOn, onDone: finishEditing)
                     .id(slide.id)
+                    .frame(maxHeight: .infinity)
+                    .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
+            } else if mode == .tilt, let slide {
+                SlidePostTiltPanel(session: session, slideID: slide.id, onDone: finishEditing)
                     .frame(maxHeight: .infinity)
                     .padding(.horizontal, 12).padding(.bottom, NativeEditorIslandMetrics.bottomPadding)
             } else if mode == .look, let slide {
@@ -600,7 +607,7 @@ struct SlidePostWorkspaceView: View {
             .frame(width: size.width, height: size.height)
             if let asset = session.selectedAsset, asset.kind == "video" {
                 SlidePostVideoControls(
-                    playback: videoPlayback, assetID: asset.id, showsToggle: mode == .browse || mode == .look,
+                    playback: videoPlayback, assetID: asset.id, showsToggle: mode == .browse || mode == .look || mode == .tilt,
                     onRetry: { Task { await refresh(); videoRetry += 1 } }
                 )
                 .frame(width: size.width, height: size.height)
@@ -646,6 +653,7 @@ struct SlidePostWorkspaceView: View {
                 mode: mode, canCover: slide != nil, canRemove: draft.slides.count > 1 && slide != nil,
                 canDuplicateText: hasTexts && (slide?.edits?.effectiveTexts.count ?? 0) < SlidePostEdits.maxTexts,
                 showsCrop: framingOn && slide?.kind == "image", onCrop: { session.selectedTextID = nil; mode = .crop },
+                showsTilt: tiltOn, onTilt: { session.selectedTextID = nil; mode = .tilt },
                 showsSize: sizesOn, onSize: { session.selectedTextID = nil; showsSize = true },
                 showsDraw: drawingOn, onDraw: beginDrawing,
                 canClearDrawing: slide?.edits?.drawing != nil, onClearDrawing: { if let id = slide?.id { session.clearDrawing(slideID: id) } },

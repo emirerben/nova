@@ -28,6 +28,8 @@ struct SlidePostCachedImage: View {
     var crop: NormalizedSourceRect? = nil
     /// KRI-606: show the whole (cropped) photo with these bars instead of covering the frame. nil = fill.
     var fit: SlidePostFit? = nil
+    /// KRI-1138: the media turned about the canvas centre over a backdrop. nil = upright.
+    var tilt: SlidePostTilt? = nil
 
     @State private var tick = 0
     @State private var failed = false
@@ -40,7 +42,7 @@ struct SlidePostCachedImage: View {
 
     var body: some View {
         let full = resolved()
-        let lookIdentity = "\(assetID)|\(lookPreset)|\(fit?.rawValue ?? "fill")|\(lookCanvas.width)x\(lookCanvas.height)|\(crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-")|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
+        let lookIdentity = "\(assetID)|\(lookPreset)|\(fit?.rawValue ?? "fill")|\(tilt.map { "\($0.rotationDeg)|\($0.backdrop)" } ?? "-")|\(lookCanvas.width)x\(lookCanvas.height)|\(crop.map { "\($0.x),\($0.y),\($0.width),\($0.height)" } ?? "-")|\(full.map { ObjectIdentifier($0).debugDescription } ?? "missing")"
         ZStack {
             if let full {
                 if lookedIdentity == lookIdentity, let lookedImage {
@@ -71,23 +73,26 @@ struct SlidePostCachedImage: View {
         .task(id: taskID) { await load() }
         .task(id: lookIdentity) {
             lookedImage = nil; lookedIdentity = lookIdentity; lookFailed = false
-            guard lookPreset != "none" || fit != nil, let full else { return }
+            guard lookPreset != "none" || fit != nil || tilt != nil, let full else { return }
             do {
-                let canvas = lookCanvas, preset = lookPreset, framing = crop, bars = fit
+                let canvas = lookCanvas, preset = lookPreset, framing = crop, bars = fit, turn = tilt
                 let image = try await Task.detached(priority: .userInitiated) {
-                    try SlidePostOnDeviceRender.lookedImage(full, pixels: canvas, preset: preset, crop: framing, fit: bars)
+                    try SlidePostOnDeviceRender.lookedImage(full, pixels: canvas, preset: preset, crop: framing, fit: bars, tilt: turn)
                 }.value
                 guard !Task.isCancelled else { return }
                 lookedImage = image
             } catch { if !Task.isCancelled { lookFailed = true } }
         }
         .modifier(PreviewStateReport(enabled: reportsState,
-                                    value: "\(assetID)|\(full != nil ? "full" : "blur")" + (lookedImage != nil && lookedIdentity == lookIdentity ? "|look:\(lookPreset)" : ""),
+                                    value: "\(assetID)|\(full != nil ? "full" : "blur")" + (lookedImage != nil && lookedIdentity == lookIdentity ? "|look:\(lookPreset)" : "")
+                                        + (tilt.map { "|tilt:\(Int($0.rotationDeg.rounded()))" } ?? ""),
                                     blurred: full == nil && variant == .preview && cache.cachedImage(assetID: assetID, variant: .thumb) != nil))
     }
 
     @ViewBuilder private func framed(_ image: UIImage) -> some View {
-        if crop != nil || fit != nil {
+        if let tilt, !tilt.isUpright {
+            tiltedFrame(image, tilt: tilt)
+        } else if crop != nil || fit != nil {
             GeometryReader { proxy in
                 let rect = SlidePostFraming.placement(imageSize: image.size, crop: crop, canvas: proxy.size, fit: fit != nil)
                 // With bars, only the cropped region is the photo; the rest of the source never shows in the bars.
@@ -104,6 +109,30 @@ struct SlidePostCachedImage: View {
             .clipped()
         } else {
             Image(uiImage: image).resizable().scaledToFill()
+        }
+    }
+
+    /// KRI-1138: instant SwiftUI stand-in for `SlidePostOnDeviceRender.tiltedBase` while the exact Core Image pass computes, so
+    /// a dial drag never shows the upright photo. Same geometry (the region scaled like the slide frames it, turned
+    /// clockwise about the canvas centre); the blur backdrop is approximate.
+    private func tiltedFrame(_ image: UIImage, tilt: SlidePostTilt) -> some View {
+        GeometryReader { proxy in
+            let whole = SlidePostFraming.placement(imageSize: image.size, crop: crop, canvas: proxy.size, fit: fit != nil)
+            let cover = SlidePostFraming.placement(imageSize: image.size, crop: crop, canvas: proxy.size, fit: false)
+            let region: CGRect? = crop.map {
+                CGRect(x: whole.minX + $0.x * whole.width, y: whole.minY + $0.y * whole.height, width: $0.width * whole.width, height: $0.height * whole.height)
+            }
+            ZStack {
+                SlidePostTiltBackdrop(backdrop: tilt.backdrop, image: image, cover: cover, canvas: proxy.size)
+                Image(uiImage: image).resizable()
+                    .frame(width: whole.width, height: whole.height)
+                    .offset(x: whole.minX, y: whole.minY)
+                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+                    .clipShape(SlidePostRegionClip(region: region, clipsToView: false))
+                    .rotationEffect(.degrees(tilt.rotationDeg))
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
         }
     }
 
@@ -142,7 +171,35 @@ struct SlidePostCachedImage: View {
 /// Clips to `region` (top-left, in the view's coordinates) when there is one, else leaves the frame whole.
 private struct SlidePostRegionClip: Shape {
     let region: CGRect?
-    func path(in rect: CGRect) -> Path { Path(region.map { $0.intersection(rect) } ?? rect) }
+    /// False for a turned photo: the region may extend past the view and must keep its overflow so the turn can reveal it.
+    var clipsToView = true
+    func path(in rect: CGRect) -> Path { Path(region.map { clipsToView ? $0.intersection(rect) : $0 } ?? rect) }
+}
+
+/// What shows behind a turned slide (KRI-1138): black, a colour, or a blurred cover-fit copy of the same photo.
+struct SlidePostTiltBackdrop: View {
+    let backdrop: ClipBackdrop
+    var image: UIImage? = nil
+    var cover: CGRect = .zero
+    let canvas: CGSize
+
+    var body: some View {
+        switch backdrop {
+        case .blank:
+            Color.black
+        case .color(let hex):
+            Color(slideHex: hex)
+        case .blur:
+            if let image {
+                Image(uiImage: image).resizable()
+                    .frame(width: cover.width, height: cover.height)
+                    .offset(x: cover.minX, y: cover.minY)
+                    .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
+                    .blur(radius: SlidePostFit.blurSigmaPx * canvas.width / 1080)
+                    .clipped()
+            } else { Color.black }
+        }
+    }
 }
 
 private struct PreviewStateReport: ViewModifier {

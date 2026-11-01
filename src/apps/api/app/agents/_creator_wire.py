@@ -215,6 +215,8 @@ def copilot_schema():
     def field(name):
         if name == "gap_policy":
             return enum("scale", "close", "fixed")
+        if name == "backdrop":
+            return enum("blank", "color", "blur")
         if name in bools:
             return boolean
         if name == "base_generation":

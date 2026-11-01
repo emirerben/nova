@@ -49,7 +49,8 @@ import UIKit
             try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: outputURL.path) { try FileManager.default.removeItem(at: outputURL) }
             let asset = AVURLAsset(url: source.url)
-            let prepared = try await prepare(asset: asset, profile: profile, aspect: aspect, lookPreset: slide.edits?.lookPreset ?? "none")
+            let prepared = try await prepare(asset: asset, profile: profile, aspect: aspect, lookPreset: slide.edits?.lookPreset ?? "none",
+                                             tilt: SlidePostFraming.effectiveTilt(for: slide))
             let overlay = try staticOverlay(texts: slide.edits?.effectiveTexts ?? [], drawing: slide.edits?.drawing, stickers: stickers, pixels: prepared.pixels)
             let composition = videoComposition(prepared: prepared, overlay: overlay)
             guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
@@ -89,9 +90,11 @@ import UIKit
         let pixels: CGSize
         let duration: CMTime
         let lookPreset: String
+        /// KRI-1138: the slide's turn; the video is turned per frame, over its backdrop, before the look.
+        var tilt: SlidePostTilt? = nil
     }
 
-    private static func prepare(asset: AVAsset, profile: String, aspect: String?, lookPreset: String) async throws -> Prepared {
+    private static func prepare(asset: AVAsset, profile: String, aspect: String?, lookPreset: String, tilt: SlidePostTilt? = nil) async throws -> Prepared {
         guard profile == "instagram_carousel", SlidePostLookRenderer.supports(lookPreset),
               let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw RenderError.missingVideoTrack
@@ -108,12 +111,16 @@ import UIKit
         return Prepared(asset: asset,
                         pixels: pixels,
                         duration: CMTime(seconds: min(seconds, maximumDuration), preferredTimescale: 60_000),
-                        lookPreset: lookPreset)
+                        lookPreset: lookPreset,
+                        tilt: tilt)
     }
 
     private static func videoComposition(prepared: Prepared, overlay: CIImage?) -> AVMutableVideoComposition {
         let pixels = prepared.pixels
         let preset = prepared.lookPreset
+        let tilt = prepared.tilt
+        // The blur backdrop is the Fit blur's strength at the export scale, like the photo slides.
+        let blurSigma = SlidePostFit.blurSigmaPx * SlidePostOnDeviceRender.outputScale
         let context = SlidePostOnDeviceRender.lookContext
         // The modern asynchronous factory requires sending AVAsset across its completion boundary;
         // AVAsset remains Objective-C non-Sendable in the iOS SDK. This synchronous framework factory
@@ -121,7 +128,7 @@ import UIKit
         let composition = AVMutableVideoComposition(asset: prepared.asset, applyingCIFiltersWithHandler: { request in
             // AVFoundation has already applied the track's preferred transform to sourceImage. Applying
             // it again rotates portrait phone footage a second time, so cover-fit from this upright extent.
-            let covered = cover(request.sourceImage, into: pixels)
+            let covered = tilt.map { tiltedCover(request.sourceImage, into: pixels, tilt: $0, blurSigma: blurSigma) } ?? cover(request.sourceImage, into: pixels)
             do {
                 let graded = try SlidePostLookRenderer.apply(covered, preset: preset)
                 request.finish(with: overlay.map { $0.composited(over: graded) } ?? graded,
@@ -151,6 +158,19 @@ import UIKit
             .transformed(by: .init(translationX: (canvas.width - scaledSize.width) / 2,
                                   y: (canvas.height - scaledSize.height) / 2))
             .cropped(to: CGRect(origin: .zero, size: canvas))
+    }
+
+    /// KRI-1138: the same cover-fit frame, but not trimmed to the canvas before it turns, so the pixels the video has
+    /// beyond the frame rotate into view; the server's `_tilt_frame_filter` with a video input.
+    nonisolated private static func tiltedCover(_ image: CIImage, into canvas: CGSize, tilt: SlidePostTilt, blurSigma: CGFloat) -> CIImage {
+        let extent = image.extent
+        let scale = max(canvas.width / max(extent.width, 1), canvas.height / max(extent.height, 1))
+        let size = CGSize(width: extent.width * scale, height: extent.height * scale)
+        let media = image
+            .transformed(by: .init(translationX: -extent.minX, y: -extent.minY))
+            .transformed(by: .init(scaleX: scale, y: scale))
+            .transformed(by: .init(translationX: (canvas.width - size.width) / 2, y: (canvas.height - size.height) / 2))
+        return SlidePostOnDeviceRender.turned(media, over: media.cropped(to: CGRect(origin: .zero, size: canvas)), tilt: tilt, pixels: canvas, blurSigma: blurSigma)
     }
 
     /// Text, then the slide's drawing (KRI-589), then its pasted pictures (KRI-460), then the watermark, rasterized once into the CIImage every frame composites.
