@@ -1,0 +1,99 @@
+{
+  "about": "KRI-1097 wave 2: route scorecard checks expected NOT VERIFIED on the foundation, with the lane that turns each green. kind honored = the value at the route table's RENDER_ENTRY recipe path, in what that render entry returns when a lane's scripts/kria/route_replays/<route>.py calls it with the fixture's own plan and asks, meets what the field or typed ask asked, and the module passes the grader's replay controls (every other value, field alone, ask alone, drop, switch off in a fresh interpreter, no reads of the plan or the switch by the module; see the score_route.py docstring). kind disclosed_ok = a disclosure the foundation card does not make yet; kind gate = a registry gate (10.claims, 10.lines, 10.entry, 10.pin). make kria-replay exits 1 and tests/kria/test_route_replays.py fails on a red check missing here; the test also fails on a listed check that turned green: a lane that lands removes its entries from targets. must_grade lists every render target a fixture must keep grading, red or green: a lane never removes it, and a fixture that stops grading one exits 1. Both lists only move toward green from lane_targets.foundation.json: must_grade grows, targets shrink, and a removed target must be VERIFIED (score_route.py target_drift, tests/kria/test_lane_targets_guard.py).",
+  "must_grade": {
+    "voiceover_montage": [
+      "4.pacing",
+      "4.target_duration_s",
+      "4.title_animation",
+      "5.r1",
+      "5.r2"
+    ],
+    "talking_head": [
+      "4.title_animation",
+      "5.r6"
+    ],
+    "narrated": [
+      "4.title_animation",
+      "5.r3"
+    ],
+    "lipsync_song": [
+      "4.title_animation",
+      "5.r3"
+    ],
+    "speech_excerpt": [
+      "4.pacing"
+    ]
+  },
+  "targets": {
+    "voiceover_montage": {
+      "4.pacing": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "the balanced pace the creator said reaches the slot lengths (length_policy.effective_pace counts a requested balanced; pace_hold_bounds sizes the slots); today creator_pacing keeps only fast and relaxed"
+      },
+      "4.target_duration_s": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "the stated length is passed to the voiceover plan; today the length follows the voiceover"
+      },
+      "4.title_animation": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "the planned title animation reaches the intro text; today it is drawn with cluster_style None"
+      },
+      "5.r1": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "about 30 seconds: the render meets the stated length"
+      },
+      "5.r2": {
+        "lane": "L1",
+        "kind": "honored",
+        "why": "animate the text: animation_ask reaches the intro"
+      }
+    },
+    "talking_head": {
+      "4.title_animation": {
+        "lane": "L2",
+        "kind": "honored",
+        "why": "the planned title animation reaches the Talking title rows"
+      },
+      "5.r6": {
+        "lane": "L2",
+        "kind": "honored",
+        "why": "animate the big text in: the animation ask reaches the title rows"
+      }
+    },
+    "narrated": {
+      "4.title_animation": {
+        "lane": "L3",
+        "kind": "honored",
+        "why": "the planned title animation reaches the narrated title"
+      },
+      "5.r3": {
+        "lane": "L3",
+        "kind": "honored",
+        "why": "make the hook type in: the animation ask reaches the narrated title"
+      }
+    },
+    "lipsync_song": {
+      "4.title_animation": {
+        "lane": "L4",
+        "kind": "honored",
+        "why": "the planned title animation reaches the lip-sync titles"
+      },
+      "5.r3": {
+        "lane": "L4",
+        "kind": "honored",
+        "why": "animate the title in: the animation ask reaches the lip-sync titles"
+      }
+    },
+    "speech_excerpt": {
+      "4.pacing": {
+        "lane": "L5",
+        "kind": "honored",
+        "why": "the stated relaxed pace sets the cut length between spoken lines when the plan gives no cut_s; today it is the fixed _DEFAULT_CUT_S"
+      }
+    }
+  }
+}

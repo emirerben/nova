@@ -1,0 +1,159 @@
+{
+  "fixture_id": "speech_excerpt",
+  "route": "speech_excerpt",
+  "schema_version": 1,
+  "source": {
+    "kind": "synthetic",
+    "what": "Synthetic spoken-excerpt montage (phone speech montage). The scout pulled /debug for 48 recent prod jobs (14 newest variants_ready, all 8 awaiting_device, variants_ready 15 to 40): none carried a speech_montage trace.",
+    "captured": "hand-written 2026-11-01 (no prod thread found by the KRI-1097 fixture scout)",
+    "recorded": [],
+    "reconstructed": [
+      "everything: creator message, Creative Brief, planner strategy and summary, clips",
+      "the planner's choices are written as the planner returns them for this request (post-parse strategy, with the server's provenance flags where the creator states a pace or a length); no model is replayed",
+      "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
+      "phone source bindings: synthetic proxy paths (score_route.media_rows)"
+    ],
+    "redacted": [],
+    "see": "tests/fixtures/kria_replay/speech_excerpt/README.md"
+  },
+  "message": "Make a montage of the best things I say in these coffee-tour clips. Cut slowly between my lines, open with the hook 'Nobody tells you this about Turkish coffee', keep the order roastery, sand pot, first sip, clean captions, animate the text, and put music under it.",
+  "messages": [
+    "Make a montage of the best things I say in these coffee-tour clips. Cut slowly between my lines, open with the hook 'Nobody tells you this about Turkish coffee', keep the order roastery, sand pot, first sip, clean captions, animate the text, and put music under it."
+  ],
+  "client_protocol": 25,
+  "planner_summary": "I'll cut your best lines from the coffee tour in order, roastery to first sip, with slow cuts between them and music underneath.",
+  "brief": {
+    "version": 1,
+    "requirements": [
+      {
+        "id": "r1",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "animate the text",
+        "facts": {
+          "animation": "any"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      },
+      {
+        "id": "r2",
+        "kind": "style",
+        "scope": "global",
+        "literal": null,
+        "description": "clean captions",
+        "facts": {
+          "captions": "on"
+        },
+        "source_turn_id": "synthetic-turn",
+        "status": "open"
+      }
+    ]
+  },
+  "strategy": {
+    "edit_format": "montage",
+    "render_program": "guided",
+    "audio_strategy": "licensed_music",
+    "voice_mode": "excerpts",
+    "montage_audio": {
+      "preserve_source_audio": true,
+      "preview_source_beds": false,
+      "source_media_ids": [
+        "analysis-proxy-speech_excerpt-01",
+        "analysis-proxy-speech_excerpt-02",
+        "analysis-proxy-speech_excerpt-03"
+      ]
+    },
+    "direction": "text_explainer",
+    "pacing": "relaxed",
+    "pacing_requested": true,
+    "intro_hook": "Nobody tells you this about Turkish coffee",
+    "story_structure": [
+      "The roastery",
+      "The sand pot",
+      "The first sip"
+    ],
+    "caption_style": "clean",
+    "title_animation": "slide",
+    "media_scope": "all",
+    "selected_media_ids": [],
+    "video_reuse_policy": "once",
+    "optional_treatments": [],
+    "rationale": "Spoken lines first, slow cuts between them, music under the montage parts."
+  },
+  "clips": [
+    {
+      "id": "analysis-proxy-speech_excerpt-01",
+      "kind": "video",
+      "duration_s": 24.0,
+      "has_audio": true,
+      "source_filename": "clip-01.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-speech_excerpt-02",
+      "kind": "video",
+      "duration_s": 31.5,
+      "has_audio": true,
+      "source_filename": "clip-02.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-speech_excerpt-03",
+      "kind": "video",
+      "duration_s": 18.2,
+      "has_audio": true,
+      "source_filename": "clip-03.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-speech_excerpt-04",
+      "kind": "video",
+      "duration_s": 6.0,
+      "has_audio": true,
+      "source_filename": "clip-04.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-speech_excerpt-05",
+      "kind": "video",
+      "duration_s": 7.4,
+      "has_audio": true,
+      "source_filename": "clip-05.mp4",
+      "analysis": {}
+    },
+    {
+      "id": "analysis-proxy-speech_excerpt-06",
+      "kind": "video",
+      "duration_s": 5.1,
+      "has_audio": true,
+      "source_filename": "clip-06.mp4",
+      "analysis": {}
+    }
+  ],
+  "checks": {
+    "fields": [
+      "direction",
+      "pacing",
+      "intro_hook",
+      "story_structure",
+      "caption_style",
+      "title_animation",
+      "audio_strategy"
+    ],
+    "asks": [
+      "r1",
+      "r2"
+    ],
+    "honored": {
+      "fields": {
+        "pacing": "pace"
+      },
+      "asks": {}
+    },
+    "not_graded": {
+      "target_duration_s": "no stated length; the table marks the length Applied (the consumer gate holds that claim)"
+    }
+  }
+}
