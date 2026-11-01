@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.67.0] - 2026-11-01
+
+### Changed
+- Apply typed skip answers without repeating the picker (#1979) <!-- release-pr: 1979 -->
+
 ## [0.83.66.0] - 2026-11-01
 
 ### Changed
