@@ -4753,6 +4753,23 @@ def _require_sticker_capable_client(slides: list[SlideRef], client_protocol: int
         )
 
 
+def _require_tilt_capable_client(slides: list[SlideRef], client_protocol: int | None) -> None:
+    """426 when a save carries a tilt from a build that cannot decode it (KRI-1138).
+
+    A build below ``media_tilt_min_client_protocol`` neither sends nor round-trips ``tilt``
+    (an unknown key is dropped), so a tilt in its save means something forged or replayed it.
+    Same ``client_update_required`` shape the sticker lane uses. A build that DOES understand it
+    while the flag is off is not refused: the merge ignores its value and keeps the stored one.
+    """
+    if not any(ref.edits is not None and ref.edits.tilt is not None for ref in slides):
+        return
+    if client_protocol is None or client_protocol < settings.media_tilt_min_client_protocol:
+        raise HTTPException(
+            status_code=status.HTTP_426_UPGRADE_REQUIRED,
+            detail={"code": "client_update_required", "feature": "slide_tilt"},
+        )
+
+
 async def _validate_slide_stickers(
     item: PlanItem,
     user_id: uuid.UUID,
@@ -4861,6 +4878,7 @@ async def put_slide_post_draft(
     )
     _validate_slide_ref_ownership(body.slides, owned_assets)
     _require_sticker_capable_client(body.slides, client_protocol)
+    _require_tilt_capable_client(body.slides, client_protocol)
     platform_profile = coerce_platform_profile(_require_slide_post_profile(body.platform_profile))
     try:
         # Old clients omit `texts`; keep the stored rich text (KRI-299).
@@ -4884,6 +4902,11 @@ async def put_slide_post_draft(
         # SLIDE_POST_STICKERS_ENABLED is off.
         body.slides = merge_stored_edit_key(
             current, body.slides, "stickers", accept_incoming=settings.slide_post_stickers_enabled
+        )
+        # ...and for a tilted photo or video (KRI-1138): same three states, ignored while
+        # MEDIA_TILT_ENABLED is off.
+        body.slides = merge_stored_edit_key(
+            current, body.slides, "tilt", accept_incoming=settings.media_tilt_enabled
         )
         await _validate_slide_stickers(item, user.id, current, body.slides, db)
         aspect = (
@@ -5129,7 +5152,7 @@ def _backfill_slide_post_sizes(draft: SlidePostDraft, stored: SlidePostDraft) ->
         # Omitted keys (older app, web) mean "unchanged": backfill Fit and the
         # slide drawing (KRI-589) from the stored draft.
         fill: dict[str, object] = {}
-        for key in ("fit", "drawing", "stickers"):
+        for key in ("fit", "drawing", "stickers", "tilt"):
             stored_value = getattr(old_edits, key) if old_edits is not None else None
             sent = ref.edits is not None and key in ref.edits.model_fields_set
             if not sent and stored_value is not None:
@@ -5379,6 +5402,7 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         SLIDES_FRAMING_RENDERER_VERSION,
         SLIDES_SIZES_RENDERER_VERSION,
         SLIDES_STICKER_RENDERER_VERSION,
+        SLIDES_TILT_RENDERER_VERSION,
     )
     from app.pipeline.slide_post.build import (  # noqa: PLC0415
         SLIDE_IMAGE_NORMALIZER_VERSION,
@@ -5412,6 +5436,11 @@ def _slide_post_export_is_current(draft: SlidePostDraft | None, variant: dict | 
         # A worker older than the sticker compositor silently omits them (KRI-647).
         stamped = slide_post.get("renderer_version")
         if not isinstance(stamped, int) or stamped < SLIDES_STICKER_RENDERER_VERSION:
+            return False
+    if any(ref.edits is not None and ref.edits.tilt is not None for ref in draft.slides):
+        # A worker older than the tilt renderer exports the media upright (KRI-1138).
+        stamped = slide_post.get("renderer_version")
+        if not isinstance(stamped, int) or stamped < SLIDES_TILT_RENDERER_VERSION:
             return False
     expected_ids = [str(ref.asset_id) for ref in draft.slides]
     rendered_ids = [str(row.get("asset_id")) for row in rendered if isinstance(row, dict)]
