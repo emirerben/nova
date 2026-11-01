@@ -6381,6 +6381,12 @@ def _toggle_missed(ask: SoundToggleAsk, row: Mapping[str, Any]) -> str:
             "That clip isn't in this edit",
             "O klip bu düzenlemede yok",
         ),
+        "cutaway_only": (
+            "In a Talking edit, clip sound can be turned on for a whole cutaway clip, not for "
+            "seconds, a spoken line or the first or last clip",
+            "Konuşmalı düzenlemede klip sesi, saniyeler, söylenen bir cümle ya da ilk veya son "
+            "klip için değil, yalnızca tam bir araya giren klip için açılabilir",
+        ),
         "clip_mismatch": (
             "That clip isn't in that spot in this edit",
             "O klip bu düzenlemede o sırada değil",
@@ -6459,6 +6465,9 @@ def _check_sound_toggle(
             req, "partial" if status == "partial" else "not_possible", _toggle_missed(ask, row)
         )
     if facts.phone_talking and not (facts.voiceover_edit or facts.phone_narrated):
+        talking = _draft_talking_cutaway_sound(req, ask, facts)
+        if talking is not None:
+            return talking
         muted = _talking_muted_cutaway_receipt(req, ask, facts)
         if muted is not None:
             return muted
@@ -6524,6 +6533,44 @@ def _talking_muted_cutaway_receipt(
         say(
             en="That clip plays without its own sound, so your voice keeps playing over it",
             tr="O klip kendi sesi olmadan oynuyor, sesin üzerinde çalmaya devam ediyor",
+        ),
+    )
+
+
+def _draft_talking_cutaway_sound(
+    req: BriefRequirement, ask: SoundToggleAsk, facts: PlanFacts
+) -> RequirementReceipt | None:
+    """What a Talking draft will do with a clip-sound ask for its footage cutaways (KRI-1151).
+
+    None (the caller's older answer stands) while the lane is switched off, once a render or an
+    editor turn exists without the worker's record, or for an ask this lane does not own. Which
+    clips cut away is decided at render from each clip's speech, so before it every clip may.
+    """
+    from app.pipeline.phone_clip_sound import video_media_ids  # noqa: PLC0415
+    from app.pipeline.phone_talking_cutaway_sound import plan_cutaway_sound  # noqa: PLC0415
+    from app.services.phone_rollout import phone_talking_cutaway_sound_supported  # noqa: PLC0415
+
+    if facts.editor or facts.rendered_output or facts.rendered_variant:
+        return None
+    if not phone_talking_cutaway_sound_supported():
+        return None
+    videos = video_media_ids(facts.media_snapshot) or list(facts.clip_ids)
+    if len(videos) < 2:
+        return None
+    plan = plan_cutaway_sound([ask], cutaway_media_ids=videos, speaker_media_ids=())
+    if not plan.rows:
+        return None
+    row = plan.rows[0]
+    if row["status"] != "built":
+        return _receipt(req, "not_possible", _toggle_missed(ask, row))
+    if ask.state == "off":
+        return _receipt(req, "met", _toggle_summary(ask))
+    return _receipt(
+        req,
+        "met",
+        say(
+            en="Clips shown full screen play their own sound, with your voice muted under them",
+            tr="Tam ekran gösterilen klipler kendi sesiyle çalıyor, senin sesin altta kapalı",
         ),
     )
 

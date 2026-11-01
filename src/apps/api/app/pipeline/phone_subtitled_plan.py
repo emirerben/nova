@@ -63,7 +63,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.kria.portable_speaker_background import SpeakerBackgroundLayer
-from app.kria.portable_visual import VisualMediaPlacement
+from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
 from app.kria.recipes import (
     AssetFingerprint,
     AudioMixRecipe,
@@ -170,6 +170,11 @@ _MIN_TEXT_LAYER_S = 1 / 30
 # ``subtitled-overlays`` (same ``order`` range, later track) always draws on
 # top of a cutaway, never under it.
 CUTAWAY_TRACK_ID = "talking-head-cutaways"
+# KRI-1151: the `audio` track that plays a sound cutaway's own file while the speaker is
+# muted under it (the same audio-track-from-a-video-asset shape the speech-excerpt montage
+# uses, so the device needs nothing new).
+CUTAWAY_AUDIO_TRACK_ID = "talking-head-cutaway-audio"
+CUTAWAY_SOUND_CLIP_PREFIX = "cutaway-sound-"
 # Mirrors `talking_head_assembler._MIN_WINDOW_S`: a shorter cutaway reads as
 # a flicker, not a cut.
 _MIN_CUTAWAY_S = 0.5
@@ -179,7 +184,9 @@ class PhoneCutaway(BaseModel):
     """One multi-clip Talking-head cutaway (KRI-136): ``binding``'s picture
     replaces the speaker's between ``start_s`` and ``end_s`` (final timeline
     seconds -- the CUT timeline when a speech-cleanup cut applies), reading
-    the cutaway clip from ``source_start_s``. Its audio is never heard."""
+    the cutaway clip from ``source_start_s``. Its audio is never heard unless ``sound``
+    (KRI-1151): then the cutaway's own file plays for the window and the speaker is muted
+    under it."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
@@ -187,6 +194,7 @@ class PhoneCutaway(BaseModel):
     source_start_s: float = Field(default=0.0, ge=0)
     start_s: float = Field(ge=0, le=1800)
     end_s: float = Field(gt=0, le=1800)
+    sound: bool = False
 
     @model_validator(mode="after")
     def _window(self) -> PhoneCutaway:
@@ -522,6 +530,7 @@ def compile_phone_subtitled_plan(
         raise
     except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
         raise UnsupportedPhonePlan(f"unable to compile captions: {exc}") from exc
+    caption_layer_ids = {layer.id for layer in layers}
 
     for font_id, font_asset in caption_font_assets(layers).items():
         manifest[font_id] = font_asset
@@ -591,8 +600,10 @@ def compile_phone_subtitled_plan(
 
     tracks = [TimelineTrack(id="subtitled", kind="video", clips=main_clips)]
 
+    mute_windows: list[AudioMuteWindow] = []
+    cutaway_sound = TimelineTrack(id=CUTAWAY_AUDIO_TRACK_ID, kind="audio", clips=[])
     if cutaways:
-        cutaway_track = _compile_cutaway_track(
+        cutaway_track, cutaway_sound = _compile_cutaway_track(
             cutaways,
             speaker_media_ids=frozenset(seen_speakers),
             speaker_end=speaker_end,
@@ -601,6 +612,9 @@ def compile_phone_subtitled_plan(
         )
         if cutaway_track.clips:
             tracks.append(cutaway_track)
+            if cutaway_sound.clips:
+                mute_windows = _cutaway_mute_windows(cutaway_sound, main_clips)
+                layers = _without_muted_captions(layers, caption_layer_ids, mute_windows)
             # Native derives `alphaOverlay` from every non-empty overlay
             # track, including opaque full-frame Talking-head cutaways. Keep
             # the server declaration aligned so a device never routes cloud
@@ -681,6 +695,11 @@ def compile_phone_subtitled_plan(
             tracks.append(sfx_track)
             required_capabilities |= {"soundEffects", "audioMix"}
 
+    if mute_windows:
+        # After every picture and sfx track, so the visual draw order is the one a
+        # soundless cutaway recipe has.
+        tracks.append(cutaway_sound)
+
     speaker_background: SpeakerBackgroundLayer | None = None
     if lanes is not None and lanes.background is not None:
         try:
@@ -698,7 +717,7 @@ def compile_phone_subtitled_plan(
         asset_manifest=RenderAssetManifest(assets=tuple(manifest.values())),
         tracks=tracks,
         text_layers=layers,
-        audio=AudioMixRecipe(original_volume=1.0),
+        audio=AudioMixRecipe(original_volume=1.0, mute_windows=mute_windows),
         required_capabilities=required_capabilities,
         # `None` is omitted from the recipe wire, so a recipe without a background
         # keeps its exact bytes and digest.
@@ -1217,9 +1236,10 @@ def _compile_cutaway_track(
     speaker_end: float,
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
-) -> TimelineTrack:
+) -> tuple[TimelineTrack, TimelineTrack]:
     """Compile KRI-136 cutaways onto the muted, full-frame `CUTAWAY_TRACK_ID`
-    overlay track.
+    overlay track, and (KRI-1151) every ``sound`` cutaway's own audio onto the
+    `CUTAWAY_AUDIO_TRACK_ID` audio track (empty when none asks for sound).
 
     Each window is clamped to the speaker's own timeline (a cutaway never
     extends the video -- the speech is the spine), and shortened to the
@@ -1227,9 +1247,11 @@ def _compile_cutaway_track(
     freezes a clip; the speaker simply shows through again, like the cloud
     `eof_action=pass`). A window left shorter than `_MIN_CUTAWAY_S` is
     dropped. Rejects (`UnsupportedPhonePlan`) a cutaway over the speaker clip
-    itself, a non-video cutaway, or two overlapping windows.
+    itself, a non-video cutaway, a sound cutaway whose file has no audio, or two
+    overlapping windows.
     """
     clips: list[TimelineClip] = []
+    sound_clips: list[TimelineClip] = []
     previous_end = 0.0
     for index, cutaway in enumerate(sorted(cutaways, key=lambda c: (c.start_s, c.end_s))):
         cut_binding = cutaway.binding
@@ -1240,6 +1262,8 @@ def _compile_cutaway_track(
             raise UnsupportedPhonePlan("a Talking-head cutaway requires a video clip")
         if cutaway.start_s < previous_end - 1e-6:
             raise UnsupportedPhonePlan("Talking-head cutaways must not overlap")
+        if cutaway.sound and original.has_audio is False:
+            raise UnsupportedPhonePlan("a Talking-head cutaway with no sound has none to play")
         window_start = cutaway.start_s
         window_end = min(cutaway.end_s, speaker_end)
         available = float(original.duration_s) - cutaway.source_start_s
@@ -1273,8 +1297,59 @@ def _compile_cutaway_track(
                 ),
             )
         )
+        if cutaway.sound:
+            sound_clips.append(
+                TimelineClip(
+                    id=f"{CUTAWAY_SOUND_CLIP_PREFIX}{index}",
+                    source_asset_id=asset.id,
+                    source_start=cutaway.source_start_s,
+                    source_duration=window_end - window_start,
+                    timeline_start=window_start,
+                    rate=1,
+                )
+            )
         previous_end = window_end
-    return TimelineTrack(id=CUTAWAY_TRACK_ID, kind="overlay", clips=clips)
+    return (
+        TimelineTrack(id=CUTAWAY_TRACK_ID, kind="overlay", clips=clips),
+        TimelineTrack(id=CUTAWAY_AUDIO_TRACK_ID, kind="audio", clips=sound_clips),
+    )
+
+
+def _cutaway_mute_windows(
+    sound: TimelineTrack, main_clips: list[TimelineClip]
+) -> list[AudioMuteWindow]:
+    """One speaker mute window per sound cutaway, over every main-track clip it overlaps."""
+    windows: list[AudioMuteWindow] = []
+    for clip in sound.clips:
+        start = clip.timeline_start
+        end = start + clip.source_duration
+        covered = [
+            main.id
+            for main in main_clips
+            if main.timeline_start < end - 1e-6
+            and main.timeline_start + main.source_duration / main.rate > start + 1e-6
+        ]
+        if covered:
+            windows.append(AudioMuteWindow(clip_ids=covered, start=start, end=end))
+    return windows
+
+
+def _without_muted_captions(
+    layers: list[Any], caption_layer_ids: set[str], mute_windows: list[AudioMuteWindow]
+) -> list[Any]:
+    """Drop each caption whose words the viewer cannot hear: more than half of it sits inside a
+    speaker mute window. Titles and other text stay."""
+
+    def muted_s(layer: Any) -> float:
+        return sum(
+            max(0.0, min(layer.end, w.end) - max(layer.start, w.start)) for w in mute_windows
+        )
+
+    return [
+        layer
+        for layer in layers
+        if layer.id not in caption_layer_ids or muted_s(layer) * 2 <= layer.end - layer.start
+    ]
 
 
 def cutaways_from_recipe(
@@ -1289,6 +1364,11 @@ def cutaways_from_recipe(
     if track is None:
         return ()
     by_media_id = {b.media_id: b for b in bindings}
+    sound_track = next((t for t in recipe.tracks if t.id == CUTAWAY_AUDIO_TRACK_ID), None)
+    with_sound = {
+        clip.id.removeprefix(CUTAWAY_SOUND_CLIP_PREFIX)
+        for clip in (sound_track.clips if sound_track else [])
+    }
     cutaways: list[PhoneCutaway] = []
     for clip in track.clips:
         cut_binding = by_media_id.get(clip.source_asset_id)
@@ -1300,6 +1380,7 @@ def cutaways_from_recipe(
                 source_start_s=clip.source_start,
                 start_s=clip.timeline_start,
                 end_s=clip.timeline_start + clip.source_duration,
+                sound=clip.id.removeprefix("cutaway-") in with_sound,
             )
         )
     return tuple(cutaways)

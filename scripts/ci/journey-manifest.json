@@ -2181,6 +2181,18 @@
       ]
     },
     {
+      "id": "kri-1151-talking-cutaway-sound",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_talking_cutaway_sound.py tests/kria/test_kri1151_talking_cutaway_sound_checks.py tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py tests/pipeline/test_phone_subtitled_plan.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_talking_cutaway_sound.py",
+        "src/apps/api/tests/fixtures/kri1151_thread_6fa36e51.json",
+        "src/apps/api/tests/pipeline/test_phone_talking_cutaway_sound.py",
+        "src/apps/api/tests/kria/test_kri1151_talking_cutaway_sound_checks.py",
+        "src/apps/api/tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py"
+      ]
+    },
+    {
       "id": "kri-215-creative-copy-skills",
       "needs_native": false,
       "api_tests": "tests/evals/test_runtime_creative_skills.py tests/evals/test_platform_copy_evals.py tests/evals/test_intro_writer_evals.py tests/evals/test_sequence_quote_writer_evals.py tests/agents/test_intro_writer.py tests/agents/test_sequence_quote_writer.py tests/services/test_creator_sessions.py tests/kria/test_plan_snapshot_postgres.py",

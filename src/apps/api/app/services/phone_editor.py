@@ -91,6 +91,7 @@ from app.services.phone_rollout import (
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
     phone_subtitled_title_supported,
+    phone_talking_cutaway_sound_supported,
     phone_timed_cards_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
@@ -1297,6 +1298,8 @@ def _compile_subtitled_editor_commit(
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
         cutaways = cutaways_from_recipe(previous.recipe, bindings)
+        if not phone_talking_cutaway_sound_supported():
+            cutaways = tuple(c.model_copy(update={"sound": False}) for c in cutaways)
         additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
     elif len(bindings) != 1:
         raise ValueError("multi-clip phone Talking edits need a pinned recipe")

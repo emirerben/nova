@@ -1215,6 +1215,24 @@ def phone_clip_sound_windows_supported() -> bool:
     )
 
 
+def phone_talking_cutaway_sound_supported() -> bool:
+    """Can a phone Talking edit play a footage cutaway's own sound right now (KRI-1151)?
+
+    True iff `phone_talking_cutaway_sound_enabled` AND `phone_clip_sound_windows_supported()`
+    (the speaker is muted under the cutaway with a recipe mute window) AND the cutaway
+    track's own features (`audioMix`, `visualVideos`, `alphaOverlay`) are verified. Read by the
+    draft check (whether the ask is met), the subtitled worker (whether it builds the sound)
+    and nothing else: the recipe itself needs no capability beyond what the cutaway track
+    already declares.
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        getattr(settings, "phone_talking_cutaway_sound_enabled", False)
+        and phone_clip_sound_windows_supported()
+        and {"audioMix", "visualVideos", "alphaOverlay"} <= verified
+    )
+
+
 def phone_timed_video_cards_supported() -> bool:
     """`phone_timed_cards_supported()` AND the device plays Visuals videos
     (`visualVideos` verified): a timed card may then bind a video, played muted

@@ -275,6 +275,16 @@ class Settings(BaseSettings):
     # audible; the receipt says so. Apply: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=
     # true --app nova-video` + restart api + worker; rollback with `=false` the same way.
     phone_clip_sound_windows_enabled: bool = False
+    # KRI-1151: lets a phone Talking (`subtitled`) edit play a footage cutaway's OWN sound
+    # for its window ("use their audio") with the speaker muted under it. Recipe-only: an
+    # `audio` track clip of the cutaway's file plus a speaker mute window per cutaway, so it
+    # needs no new device capability or protocol; `phone_rollout.phone_talking_cutaway_sound_
+    # supported()` also needs `phone_clip_sound_windows_supported()` and `audioMix`,
+    # `visualVideos`, `alphaOverlay` verified. False (default): the draft says clip sound by
+    # clip works on a montage (as before) and no cutaway gets sound. Apply: `fly secrets set
+    # PHONE_TALKING_CUTAWAY_SOUND_ENABLED=true --app nova-video` + restart api + worker, Fly
+    # only (no Vercel twin); rollback with `=false` the same way.
+    phone_talking_cutaway_sound_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.
