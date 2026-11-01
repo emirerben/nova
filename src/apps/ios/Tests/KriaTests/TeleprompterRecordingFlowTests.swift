@@ -104,6 +104,58 @@ import XCTest
         XCTAssertFalse(FileManager.default.fileExists(atPath: movie.path), "removed once the save finished")
     }
 
+    // MARK: KRI-1119 — S25: the matte never gates the take
+
+    private struct ThrowingSegmenter: PersonSegmenting {
+        struct Failure: Error {}
+        func mask(for frame: CVPixelBuffer) throws -> CVPixelBuffer { throw Failure() }
+    }
+
+    private func solidFrame() -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 36, 64, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer)
+        return buffer!
+    }
+
+    func testRecordingDoesNotDependOnMatte() async throws {
+        let png = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: png) }
+        let space = CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 0, space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        try XCTUnwrap(UIImage(cgImage: context.makeImage()!).pngData()).write(to: png)
+
+        func finish(withMatte: Bool) async throws -> (TeleprompterRecordingFlow, TeleprompterTakeManifest) {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+            let flow = TeleprompterRecordingFlow(accountID: "test", projectID: UUID(), root: root, photoSaver: RecordingSaver(),
+                                                 speakerBackgroundEnabled: withMatte,
+                                                 makeLivePreview: { LiveBackgroundPreview(segmenter: ThrowingSegmenter()) })
+            if withMatte {
+                flow.chooseBackground(from: png, kind: .image)
+                for _ in 0..<100 where flow.livePreview == nil { try await Task.sleep(for: .milliseconds(20)) }
+                let preview = try XCTUnwrap(flow.livePreview, "the background loaded and the live preview is on")
+                for _ in 0..<10 { preview.consume(solidFrame(), mirrored: true) }
+                XCTAssertEqual(preview.statistics.framesRaw, 10, "every frame fell back to the raw camera")
+                XCTAssertEqual(preview.statistics.framesMatted, 0)
+            }
+            flow.stage = .recording
+            flow.cameraChanged(.finalizing)
+            let take = try seedFinalizedTake(flow, check: TakeAudioCheck(verdict: .ok, peakDb: -12, activeFraction: 0.8))
+            return (flow, take)
+        }
+
+        let (withMatte, _) = try await finish(withMatte: true)
+        let (without, _) = try await finish(withMatte: false)
+        XCTAssertEqual(withMatte.stage, without.stage)
+        XCTAssertEqual(withMatte.stage, .review)
+        XCTAssertEqual(withMatte.selectedTake?.status, .review)
+        XCTAssertEqual(withMatte.selectedTake?.status, without.selectedTake?.status)
+        XCTAssertEqual(withMatte.selectedTake?.audioCheck, without.selectedTake?.audioCheck)
+        XCTAssertNil(withMatte.error, "a failed matte is not a take error")
+        XCTAssertEqual(withMatte.camera.phase, without.camera.phase)
+        XCTAssertNotNil(withMatte.selectedTake?.speakerBackground, "the choice is recorded, the movie stays raw")
+    }
+
     func testDeniedPhotosPermissionIsANoteNotABlocker() async throws {
         let saver = RecordingSaver(failure: PhotoLibraryError.notAuthorized)
         let (flow, _) = try makeFlow(saver: saver)

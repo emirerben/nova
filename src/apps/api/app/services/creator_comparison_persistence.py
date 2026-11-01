@@ -78,7 +78,11 @@ async def verify_saved_candidate(case, output, *, execution_context=None):
     )
     from app.kria.runtime import RuntimeFailure
     from app.models import ContentPlan, CreationThread, Job, Persona, PlanItem, User
-    from app.services.kria_editor_ops import compile_editor_ops, merge_editor_draft
+    from app.services.kria_editor_ops import (
+        compile_editor_ops,
+        editor_payload_dump,
+        merge_editor_draft,
+    )
 
     agent = case.get("agent")
     variant = None
@@ -179,7 +183,7 @@ async def verify_saved_candidate(case, output, *, execution_context=None):
                 edit_format=initial.snapshot["edit_format"],
                 editor_payload=merge_editor_draft(
                     initial.snapshot["editor_payload"],
-                    compiled.payload.model_dump(mode="json", exclude_none=True),
+                    editor_payload_dump(compiled.payload),
                 ),
                 editor_text_diff=compiled.text_diff,
                 changes=compiled.changes,

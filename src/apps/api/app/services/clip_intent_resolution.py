@@ -921,6 +921,21 @@ def picker_eligible(intent: ClipIntent) -> bool:
     return False
 
 
+def _hidden_part_fields(intent: ClipIntent) -> dict[str, Any]:
+    """A ``hide_part``'s edge, seconds and content, carried onto its resolved row.
+
+    Leverkusen M2 run 2: the resolver settles WHICH clip, never the part. Rebuilt without
+    these, every hidden part reached the turn empty and "at the start, the first 3 seconds"
+    was asked "start or end?" again, forever. Unset on every other op, and omitted from
+    dumps when unset, so their rows stay byte-identical.
+    """
+    return {
+        "part_edge": intent.part_edge,
+        "part_s": intent.part_s,
+        "part_attribute": intent.part_attribute,
+    }
+
+
 def _only_video(clips: list[IntentClip]) -> IntentClip | None:
     """The project's one video, or None when there are none or several."""
     videos = [c for c in clips if c.kind == "video"]
@@ -1446,6 +1461,7 @@ async def resolve_clip_intents_for_turn(
                     ordered_members=i.ordered_members,
                     exclusive=i.exclusive,
                     requirement_id=i.requirement_id,
+                    **_hidden_part_fields(i),
                     status="needs_creator",
                     assignments=[],
                     question=_generic_question(),
@@ -2357,6 +2373,7 @@ async def resolve_clip_intents_for_turn(
                     ordered_members=intent.ordered_members,
                     exclusive=intent.exclusive,
                     requirement_id=intent.requirement_id,
+                    **_hidden_part_fields(intent),
                     status="needs_creator",
                     assignments=work.kept,
                     question=None,  # set on the turn-level question below
@@ -2378,6 +2395,7 @@ async def resolve_clip_intents_for_turn(
                     ordered_members=intent.ordered_members,
                     exclusive=intent.exclusive,
                     requirement_id=intent.requirement_id,
+                    **_hidden_part_fields(intent),
                     status="resolved",
                     assignments=work.kept,
                     caption_text=work.caption_text,

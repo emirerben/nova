@@ -81,8 +81,11 @@ ResolutionStatus = Literal["resolved", "needs_creator"]
 
 # A word-for-word story edit is one caption per chapter plus its orders and
 # include: a 6-chapter request is 8+ operations on its own, 16 with a group per
-# chapter. Same bound as the Creative Brief's per-clip text lane.
-MAX_CLIP_INTENTS = 16
+# chapter. KRI-1122 (Leverkusen M4): a 10-beat story with labels, one skip, one
+# keep and one sound rule is ~18 operations, and at 16 every "restate just those"
+# re-read the same request and hit the cap again. 40 holds a 10-beat story with a
+# label, an order and a group per beat.
+MAX_CLIP_INTENTS = 40
 INTENT_ID_MAX_CHARS = 40
 # KRI-282: the generic stand-in printed on every clip a "placeholder" label
 # targets. System-chosen on purpose: the fence's invariant is that model or

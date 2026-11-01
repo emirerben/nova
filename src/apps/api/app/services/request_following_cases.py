@@ -105,7 +105,12 @@ def failed_pre_job_turns(source):
             event.get("actor") == "assistant"
             and event.get("kind") == "assistant_response"
             and coverage.get("reason")
-            in {"creator_planning_failed", "editor_planning_failed", "request_extraction_failed"}
+            in {
+                "creator_planning_failed",
+                "editor_planning_failed",
+                "request_extraction_failed",
+                "request_extraction_provider_failed",
+            }
             and turn_id in turns
             and not turns[turn_id].get("job_ids")
         ):
