@@ -7199,7 +7199,7 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// timeline is open (an authored Talking edit), in which case the ordinary timeline gate decides and a
     /// leaf an older server still sent must not close it.
     private var talkingRangeLeaf: EditorCapability? {
-        canEditTimeline ? nil : document.capabilities[NativePhoneTalkingSource.rangeCapabilityKey]
+        canEdit("timeline") ? nil : document.capabilities[NativePhoneTalkingSource.rangeCapabilityKey]
     }
 
     /// A closed Talking Range answers a tap with its reason instead of a greyed-out dead end.
