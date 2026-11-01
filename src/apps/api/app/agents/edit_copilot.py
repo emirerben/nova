@@ -69,11 +69,11 @@ log = structlog.get_logger()
 # where CAPTIONS shows `caption_animation: available`; otherwise an honest "can't animate yet".
 # v97 (KRI-1117): set_background / remove_background and the BACKGROUND section, taught only
 # where the snapshot offers the `background` family; every other prompt is byte-identical.
-# v98 (KRI-1138): set_slide_tilt in the slides fragment, taught only on the slide-post surface and
-# only where `post.tilt_enabled`; video and gate-closed slide prompts are otherwise unchanged.
 # v98 (KRI-1137): CLIP TILT: patch_slots "tilt" (rotation_deg clockwise-positive, rotation_delta_deg
 # for relative asks, a blank|color|blur backdrop, null to straighten), taught only where the
 # snapshot's timeline_patch_capabilities opens `tilt`; every other prompt is byte-identical.
+# v99 (KRI-1138): set_slide_tilt in the slides fragment, taught only on the slide-post surface and
+# only where `post.tilt_enabled`; video and gate-closed slide prompts are otherwise unchanged.
 EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v99"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
