@@ -850,6 +850,12 @@ class Settings(BaseSettings):
     # already pinned keep their tilt.
     media_tilt_enabled: bool = False
     media_tilt_min_client_protocol: int = 28
+    # KRI-1141: tilting a phone Talking edit's picture card rides the same `clipTilt` capability,
+    # kill switch and verified token as a clip tilt, but a card is a placed clip
+    # (`visual_placement`) whose `transform.rotation_degrees` only builds declaring protocol >= 30
+    # turn: a 28/29 build knows the token and would draw the card upright. So a pinned recipe
+    # that carries a tilted card answers 426 `client_update_required` (`card_tilt`) below this.
+    media_card_tilt_min_client_protocol: int = 30
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
