@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.65.0] - 2026-11-01
+
+### Changed
+- Preserve explicit order withdrawal across waiver and fresh-start flows (#1981) <!-- release-pr: 1981 -->
+
 ## [0.83.64.0] - 2026-11-01
 
 ### Changed
