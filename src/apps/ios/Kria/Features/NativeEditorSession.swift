@@ -8239,7 +8239,10 @@ struct NativeEditorTemporaryVideo: Sendable {
         // alive so the seek handoff cannot strand a scrub still over the player.
         if status == .waitingToPlayAtSpecifiedRate { return }
         if status == .paused && playbackHandoffInFlight { return }
-        let nextIsPlaying = status == .playing
+        // The KVO hop reads `timeControlStatus` on a later main-actor turn, and AVPlayer can still say
+        // `.playing` for a beat after `pause()` has zeroed `rate` (KRI-1087). `rate` is the intent, so a
+        // .playing report at rate 0 is stale: it must not turn an explicit pause back into playback.
+        let nextIsPlaying = status == .playing && (player?.rate ?? 0) != 0
         if nextIsPlaying && !playbackHandoffInFlight { playbackSeekTarget = nil }
         if nextIsPlaying, scrubPreviewFrame != nil {
             scrubPreviewFrame = nil
