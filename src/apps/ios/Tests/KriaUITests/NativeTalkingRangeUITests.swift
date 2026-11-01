@@ -69,13 +69,16 @@ final class NativeTalkingRangeUITests: XCTestCase {
 
     func testClosedLeafKeepsRangeVisibleAndSaysWhy() {
         let app = launch(reset: true, closed: true)
-        let notice = app.descendants(matching: .any)["native-editor-range-unavailable"].firstMatch
-        XCTAssertTrue(notice.waitForExistence(timeout: 20), "a closed Range is explained, never a silent dead end")
-        XCTAssertTrue(notice.label.contains("single-clip talking videos"), notice.label)
         selectMiddleSegment(app)
+        XCTAssertFalse(app.descendants(matching: .any)["native-editor-range-unavailable"].firstMatch.exists,
+                       "a closed Range is not a permanent banner on the editor")
         let range = app.buttons["native-editor-clip-range"]
-        XCTAssertTrue(range.waitForExistence(timeout: 5))
-        XCTAssertFalse(range.isEnabled)
-        attach(app, "Talking edit with Range closed and the reason shown")
+        XCTAssertTrue(range.waitForExistence(timeout: 20))
+        XCTAssertTrue(range.isEnabled, "tapping a closed Range explains it instead of a silent dead end")
+        range.tap()
+        let reason = app.descendants(matching: .any)["kria-source-window-unavailable"].firstMatch
+        XCTAssertTrue(reason.waitForExistence(timeout: 10), "the reason shows when the creator asks for Range")
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS 'single-clip talking videos'")).firstMatch.exists)
+        attach(app, "Talking edit with Range closed and the reason shown after tapping Range")
     }
 }

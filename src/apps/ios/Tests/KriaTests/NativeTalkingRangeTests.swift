@@ -15,8 +15,8 @@ final class NativeTalkingRangeTests: XCTestCase {
     private static let removed: [(Double, Double)] = [(1.0, 1.5), (3.0, 3.5)]
     private static let ids = ["native-phone-talking-source", "native-phone-talking-source-1", "native-phone-talking-source-2"]
 
-    private static func capabilities(leaf: JSONValue?) -> JSONValue {
-        var values: [String: JSONValue] = ["timeline": .bool(false), "text_elements": .bool(false), "caption_cues": .bool(true),
+    private static func capabilities(leaf: JSONValue?, timeline: Bool = false) -> JSONValue {
+        var values: [String: JSONValue] = ["timeline": .bool(timeline), "text_elements": .bool(false), "caption_cues": .bool(true),
                                            "mix": .bool(false), "overlays": .bool(true), "sfx": .bool(true)]
         if let leaf { values["clips"] = .object(["source_window": leaf]) }
         return .object(values)
@@ -34,7 +34,7 @@ final class NativeTalkingRangeTests: XCTestCase {
 
     /// `savedRows`: the rows the server projects back as `user_timeline.slots` after a Range Save, with their
     /// captions already on the new clock and the new render generation.
-    private static func session(leaf: JSONValue?, savedRows: [JSONValue]? = nil, cues: [JSONValue]? = nil,
+    private static func session(leaf: JSONValue?, timeline: Bool = false, savedRows: [JSONValue]? = nil, cues: [JSONValue]? = nil,
                                 extraVariant: [String: JSONValue] = [:]) async throws -> (NativeEditorSession, EditorCommitSpy) {
         let threadID = UUID(), jobID = UUID()
         let project = BackgroundUploadCoordinator.projectDirectory(threadID)
@@ -54,7 +54,7 @@ final class NativeTalkingRangeTests: XCTestCase {
             "render_destination": .string("device"),
             "resolved_archetype": .string("subtitled"),
             "output_url": .string("file:///tmp/kria-editor-test.mp4"),
-            "editor_capabilities": capabilities(leaf: leaf),
+            "editor_capabilities": capabilities(leaf: leaf, timeline: timeline),
             "silence_cut": .object(["removed": .array(removed.map { .object(["start_s": .number($0.0), "end_s": .number($0.1)]) })]),
             "caption_cues": .array(cues ?? [cue("a", "one", 0.1, 0.9), cue("b", "two", 1.2, 2.4), cue("c", "three", 2.6, 3.5)]),
         ]
@@ -148,7 +148,7 @@ final class NativeTalkingRangeTests: XCTestCase {
             ("talking_range_word_cuts", "Range isn’t available after removing words from this video yet."),
             ("talking_range_processed_audio", "Range isn’t available after cleaning up this video’s sound yet."),
             ("talking_range_cut_mismatch", "This video’s cut changed. Make the video again to choose a range."),
-            ("client_update_required", "Update Kria to choose which part of your take plays."),
+            ("client_update_required", "Range isn’t available for this video yet."),
             ("talking_range_disabled", "Range isn’t available for this video yet."),
             ("something_new", "Range isn’t available for this video yet."),
             (nil, "Range isn’t available for this video yet."),
@@ -190,6 +190,38 @@ final class NativeTalkingRangeTests: XCTestCase {
         XCTAssertFalse(session.setSourceWindow(for: last, .init(start: 3.5, length: 1.4), rate: 1, sourceDuration: duration), "past the end of the take")
         XCTAssertFalse(session.setSourceWindow(for: last, .init(start: -0.5, length: 1.5), rate: 1, sourceDuration: duration), "before the start of the take")
         XCTAssertEqual(session.document.clips.map(\.id), Self.ids)
+    }
+
+    /// A segment may not jump over its neighbours either: the server answers `talking_range_order` when the
+    /// windows no longer run in the order the take was cut, so the app refuses the staged swap up front.
+    func testRangeRefusesAWindowThatReordersTalkingSegments() async throws {
+        let (session, _) = try await Self.session(leaf: Self.open)
+        let first = select(session, 0)
+        XCTAssertFalse(session.setSourceWindow(for: first, .init(start: 3.2, length: 0.2), rate: 1, sourceDuration: Self.sourceDuration),
+                       "starts after the second segment although it touches nothing")
+        let last = select(session, 2)
+        XCTAssertFalse(session.setSourceWindow(for: last, .init(start: 0.0, length: 0.5), rate: 1, sourceDuration: Self.sourceDuration),
+                       "starts before the first segment")
+        XCTAssertFalse(session.hasUnsavedChanges)
+        XCTAssertEqual(session.document.clips.map(\.inS), [0, 1.5, 3.5])
+    }
+
+    /// A Talking edit that became authored (a clip delete) has an OPEN timeline. A leaf the server still sent for
+    /// it (an older API) must not close Range, nor block the ordinary timeline path.
+    func testOpenTimelineWinsOverAClosedLeaf() throws {
+        let clip = EditorClip(id: UUID(), assetID: UUID(), sourceClipIndex: 0, start: 0, end: 3, trimIn: 0, trimOut: 3, sourceDuration: 10,
+                              slotID: Self.ids[0])
+        let closed: JSONValue = .object(["editable": .bool(false), "reason": .string("talking_range_cut_mismatch")])
+        let snapshot: [String: JSONValue] = [
+            "editor_capabilities": Self.capabilities(leaf: closed, timeline: true),
+            "editor_payload": .object(["sections": .object(["timeline_slots": .array([
+                .object(["slot_id": .string(Self.ids[0]), "clip_index": .number(0), "in_s": .number(0), "duration_s": .number(3), "source_duration_s": .number(10)])])])]),
+        ]
+        let session = NativeEditorSession(draft: EditorDraft(projectID: UUID(), clips: [clip], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0, serverSnapshot: snapshot))
+        XCTAssertTrue(session.canEditTimeline)
+        let selection = EditorSelection(kind: .clip, id: session.timelineClips[0].id.uuidString)
+        XCTAssertNil(session.sourceWindowBlockedReason(for: selection), "the open timeline decides, not the stale leaf")
+        XCTAssertTrue(session.setSourceWindow(for: selection, .init(start: 1, length: 3), rate: 1, sourceDuration: 10))
     }
 
     /// A Montage-style clip with the timeline closed stays blocked exactly as before, leaf or no leaf.
