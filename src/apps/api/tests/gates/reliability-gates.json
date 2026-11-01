@@ -4230,6 +4230,56 @@
         "iPhone re-send of Leverkusen M3 after deploy"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "leverkusen-m2-run3-moment-window",
+      "tickets": [
+        "Leverkusen M2 run 3",
+        "KRI-1106",
+        "KRI-1107"
+      ],
+      "symptom": "Leverkusen M2 run 3 (thread d1ac7437, job ad2587a7, 2026-10-31, prod 355a33dae): \"Order: our selfie, the 0:0 scoreboard, the \\\"TOR\\\" on the big screen, then only the moments where Taha is celebrating in both goal clips\" (clip 2 tapped for the TOR) and \"put Taha's scream at the end of clip 2 in slow motion\". Clip 2 played its first 5.6 s (analysis_fallback: its record had no moments), no TOR, no scream; the review said \"Done: Order\". The slow motion was not_grounded (\"which clip?\") although clip 2 was named, and with approval readiness on the card said \"have a look\"; only the finished video said \"Couldn't\".",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "Leverkusen M2 run 3",
+      "journey": "leverkusen-m2-run3-moment-window",
+      "paths": [
+        "src/apps/api/app/services/named_moments.py",
+        "src/apps/api/app/kria/speed_ask.py",
+        "src/apps/api/tests/kria/leverkusen_m2_run3.json"
+      ],
+      "regression_tests": [
+        "tests/kria/test_leverkusen_m2_run3_moment_window.py",
+        "tests/kria/test_kri689_clip_speed_ask.py",
+        "tests/kria/test_kri775_phone_montage_preflight.py"
+      ],
+      "harness": "real_pipeline",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "Prod's approved brief v3, strategy and media snapshot (clip records + length plan) through the real planner length step, approval readiness and the worker's own phone montage plan (preflight_montage_plan); no model call. Red on the base commit (r1 met, r3 not_grounded 'which clip?', readiness r3 unverified), green after: r1 partial naming the TOR in clip 2, r3 'couldn't find that moment in clip 2' held back before the card under readiness and without it. Right-content cases put the kit answer key's times into clip 2's record: the TOR seats the window and the order is met; the same times described as a pan stay partial (wrong-content control); the scream slows only a cut that shows it.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; no device export (receipt/plan change; the recipe for a placed speed is KRI-689's).",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "photo rows (selfie, scoreboard) stay met",
+        "a row the resolver matched from the clip record keeps its clip-level verdict",
+        "a clip that plays whole shows any moment in it",
+        "two moments of one clip under reuse once: never both met",
+        "\"put clip 2 in slow motion\" lands on clip 2's cut; readiness unchanged there (approval re-check digest equal)",
+        "no verified variableSpeed stays a readiness note, not a hold-back",
+        "Turkish receipts and notice; \"2. klip\", \"klip 2\"; \"2 clips\" / \"2 klip\" / \"2x\" / seconds never read as clip 2"
+      ],
+      "neighbours_gap": [
+        "No model localizes a moment the clip record omits (IMG_1039 had best_moments: []); the creator cannot point at a moment inside one of several clips (KRI-723's card is one-take only).",
+        "A slowed moment window is not budgeted in the length plan: 0.5x on an approved window grows the output.",
+        "KRI-775 order/length blockers still skip approval readiness; only speed asks are folded in."
+      ],
+      "follow_ups": [
+        "KRI-1106",
+        "KRI-1107"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }

@@ -287,7 +287,9 @@ class SpeedSpec:
     footage ("river", "walking"): they only choose WHICH cuts change (matched against the
     moments the plan located and the clips' analysed moments), never on-screen text. Empty
     words with no ``position`` and no ``media_id`` is a whole-edit ask ("speed up the
-    footage"). ``ramp`` marks a speed ramp, which no renderer does.
+    footage"). ``ramp`` marks a speed ramp, which no renderer does. ``clip_number`` is the
+    clip the creator named by the number the app shows on it ("the end of clip 2"); the target
+    words then say WHERE in that clip (Leverkusen M2 run 3).
     """
 
     requirement_id: str
@@ -298,6 +300,7 @@ class SpeedSpec:
     position: str | None = None
     media_id: str | None = None
     ramp: bool = False
+    clip_number: int | None = None
 
 
 def _clamped(rate: float) -> float:
@@ -360,6 +363,58 @@ def _is_number_word(token: str) -> bool:
     )
 
 
+# Leverkusen M2 run 3: "at the end of clip 2" names a clip by the number the app shows on it
+# ("Clip 2", "2. klip", the clip picker's own words). Singular nouns only: "2 clips" / "2 klip"
+# (Turkish counts with a singular noun) are a count, never a clip.
+_CLIP_NUMBER_NOUNS = frozenset({"clip", "video", "shot"})
+_CLIP_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+
+def _small_number(token: str) -> int | None:
+    if token.isdigit() and 0 < int(token) <= 99:
+        return int(token)
+    return _CLIP_NUMBER_WORDS.get(token)
+
+
+def _clip_noun_tr(token: str) -> bool:
+    return token.startswith(("klip", "klib", "video")) and not token.startswith(
+        ("klipler", "videolar")
+    )
+
+
+def _clip_number(text: str) -> int | None:
+    """The clip the words name by its number: "clip 2" / "video two" / "2. klip" / "klip 2".
+    Two different numbers name none (nothing is guessed)."""
+    words = loose_text(text).replace("×", "x").split()
+    bare = ["".join(ch for ch in word if ch.isalnum()) for word in words]
+    found: set[int] = set()
+    for index, token in enumerate(bare):
+        english = token in _CLIP_NUMBER_NOUNS
+        if not english and not _clip_noun_tr(token):
+            continue
+        nxt = bare[index + 1] if index + 1 < len(bare) else ""
+        number = _small_number(nxt) if english or nxt.isdigit() else None
+        if number is None and index > 0 and _clip_noun_tr(token):
+            # "2. klip": only the ordinal dot makes it one clip ("2 klip" is two clips).
+            prev = words[index - 1]
+            if prev.endswith(".") and prev[:-1].isdigit():
+                number = _small_number(prev[:-1])
+        if number is not None:
+            found.add(number)
+    return next(iter(found)) if len(found) == 1 else None
+
+
 def _target_words(tokens: Sequence[str]) -> tuple[str, ...]:
     """The creator's words for the footage: everything that is not the ask itself."""
     return tuple(
@@ -393,16 +448,19 @@ def speed_spec(req: BriefRequirement) -> SpeedSpec | None:
     position, used = _position(tokens)
     words = _target_words([token for index, token in enumerate(tokens) if index not in used])
     media_id = req.scope.split(":", 1)[1] if req.scope.startswith("clip:") else None
+    clip_number = None if media_id else _clip_number(req.description or "")
     return SpeedSpec(
         requirement_id=req.id,
         rate=_clamped(requested),
         rate_requested=round(requested, 3),
         rate_stated=stated,
         target_words=words,
-        # A moment the creator described wins over a position in the same words.
-        position=None if words else position,
+        # A moment the creator described wins over a position in the same words, and a clip
+        # they named by its number decides the clip ("the end of clip 2" is inside clip 2).
+        position=None if words or clip_number is not None else position,
         media_id=media_id or None,
         ramp=bool(_RAMP_WORDS.intersection(tokens)),
+        clip_number=clip_number,
     )
 
 

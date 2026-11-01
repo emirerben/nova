@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import math
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
@@ -1326,6 +1326,21 @@ def _group_first(
     return result
 
 
+def _tapped_members(strategy: Mapping[str, Any]) -> frozenset[tuple[str, str]]:
+    """(folded order-row words, clip ref) for each clip the creator tapped in the clip picker
+    for that row (evidence ``creator selected``): nothing in the clip's record matched it."""
+    from app.schemas.clip_intents import CREATOR_SELECTED_EVIDENCE  # noqa: PLC0415
+
+    return frozenset(
+        (fold_text(_nfc(intent.get("attribute"))), str(assignment.get("media_id")))
+        for intent in strategy.get("resolved_clip_intents") or []
+        if isinstance(intent, Mapping) and intent.get("op") == "order"
+        for assignment in intent.get("assignments") or []
+        if isinstance(assignment, Mapping)
+        and assignment.get("evidence") == CREATOR_SELECTED_EVIDENCE
+    )
+
+
 def _sequence_intents(
     strategy: Mapping[str, Any], enabled: bool
 ) -> list[tuple[str | None, str, list[str], str]]:
@@ -1388,6 +1403,8 @@ def _sequence_outcomes(
     moment_record: Sequence[Mapping[str, Any]] | None = None,
     unconfirmed_groups: frozenset[SequenceGroupKey] = frozenset(),
     seated_visuals: frozenset[str] = frozenset(),
+    tapped: frozenset[tuple[str, str]] = frozenset(),
+    clip_numbers: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """Did each described group land where the creator said? Read off the finished order.
 
@@ -1416,8 +1433,16 @@ def _sequence_outcomes(
     ``seated_visuals`` (KRI-1069) are the refs of the dated Visuals a filming-order montage
     seats in the chronology like clips ("open on the lineup sheet" names a photo): they are
     judged like clips. Empty (the default), every Visual is left out as before.
+
+    Leverkusen M2 run 3: a row that landed still names a MOMENT inside its videos ("then the
+    TOR on the big screen"). Where the clip record places it, the row is met only when a cut
+    shows it; where it doesn't and the creator's tap (``tapped``: (row words, clip ref)) is
+    the only evidence the clip has it, a cut that plays part of the clip is an honest
+    ``not_found_in_clip`` (``_clip_moment_miss``). ``clip_numbers`` name the clip as the app
+    numbers it.
     """
     seated = [c for c in ordered if c.lane == "clip" or c.ref_id in seated_visuals]
+    by_ref = {clip.ref_id: clip for clip in ordered}
     spot = {clip.ref_id: i for i, clip in enumerate(seated)}
     visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"} - seated_visuals
     # The row that seats each clip, by ``apply_sequence``'s own rule: a first / last row
@@ -1484,6 +1509,14 @@ def _sequence_outcomes(
         met = _group_landed(position, index, mine, spot, owner, rows)
         if met:
             landed_clips.update(mine)
+        miss = (
+            _clip_moment_miss(name, mine, by_ref, spans, tapped, clip_numbers)
+            if met and seats is None
+            else None
+        )
+        if miss is not None:
+            out.append({**row, **miss})
+            continue
         out.append(
             {
                 **row,
@@ -1498,6 +1531,64 @@ def _sequence_outcomes(
                 status="partial", code="member_order_unknown", reason=UNCONFIRMED_MEMBER_ORDER
             )
     return out
+
+
+# Leverkusen M2 run 3: a named moment inside one of a multi-clip edit's videos, not shown.
+MOMENT_NOT_FOUND_IN_CLIP = "not_found_in_clip"
+MOMENT_NOT_SHOWN_IN_CLIP = "not_shown_in_clip"
+
+
+def _clip_moment_miss(
+    words: str,
+    members: Sequence[str],
+    by_ref: Mapping[str, UnifiedClip],
+    spans: Sequence[tuple[str, float, float]],
+    tapped: frozenset[tuple[str, str]],
+    clip_numbers: Sequence[str],
+) -> dict[str, Any] | None:
+    """The first video of a landed row whose cut can't be shown to hold the moment the row's
+    words name, as outcome fields, else None.
+
+    Shown: a cut plays (nearly) the whole clip, or one overlaps the moment the clip record
+    places (``named_moments.shows``). Not shown although placed: ``not_shown_in_clip``. Not
+    placed: ``not_found_in_clip`` only when the creator's tap is the clip's sole evidence; a
+    clip the resolver matched by its own record keeps the clip-level verdict it had.
+    """
+    from app.services.named_moments import (  # noqa: PLC0415
+        WHOLE_CLIP_SLACK_S,
+        locate_in_clip,
+        moment_terms,
+        shows,
+    )
+
+    if not moment_terms(words):
+        return None
+    folded = fold_text(words)
+    for ref in members:
+        clip = by_ref.get(ref)
+        if clip is None or clip.lane != "clip" or clip.kind != "video":
+            continue
+        played = [(start, end) for r, start, end in spans if r == ref]
+        if any(end - start >= clip.duration_s - WHOLE_CLIP_SLACK_S for start, end in played):
+            continue
+        found = locate_in_clip(words, clip.analysis, float(clip.duration_s))
+        if found.found is not None:
+            if any(shows(start, end, found.found) for start, end in played):
+                continue
+            code = MOMENT_NOT_SHOWN_IN_CLIP
+        elif (folded, ref) in tapped:
+            code = MOMENT_NOT_FOUND_IN_CLIP
+        else:
+            continue
+        number = clip_numbers.index(clip.media_id) + 1 if clip.media_id in clip_numbers else None
+        return {
+            "status": "partial",
+            "code": code,
+            "reason": MOMENT_NOT_LOCATED,
+            "moment_words": words,
+            "clip_number": number,
+        }
+    return None
 
 
 # KRI-723: what a named moment's row says when the plan cannot show it is that action. Each
@@ -1865,6 +1956,7 @@ def plan_unified_montage(
     freeze_frames: bool = False,
     clip_speed: bool = False,
     text_bend: bool = False,
+    clip_numbers: Sequence[str] = (),
 ) -> UnifiedMontagePlan:
     """Build the guided fast-montage plan for ``clips`` (attachment order).
 
@@ -1918,6 +2010,10 @@ def plan_unified_montage(
     window keeps its exact source edges and its output length follows the rate. Off, the asks
     are recorded as locked so the receipt says why. With no speed ask, the plan is
     byte-identical.
+
+    ``clip_numbers`` (Leverkusen M2 run 3) are the project's own clips' media ids as the app
+    numbers them ("clip 2" is the second), so a speed ask that names a clip by its number
+    lands on that clip whatever order the montage plays in. Empty, no ask is read that way.
 
     ``text_bend`` (KRI-1029) says the phone that approved can draw bent text
     (``phone_rollout.text_bend_planned_for``). Then every text the creator asked curved
@@ -2710,6 +2806,7 @@ def plan_unified_montage(
                 # Only a creator-approved window keeps its edges; a selector's pick is a
                 # planned cut whose output length matters more than its exact footage.
                 creator_windows=approved_windows,
+                clip_numbers=clip_numbers,
             )
     if hidden:
         # A freeze ends on its creator's frame and a retimed cut shows more or less footage:
@@ -2890,6 +2987,7 @@ def plan_unified_montage(
             spans=[(ref_of[cut.media_id], cut.source_start_s, cut.source_end_s) for cut in cuts],
             moment_record=moment_record,
             seated_visuals=frozenset(v.ref_id for v in timed_visuals),
+            clip_numbers=clip_numbers,
         )
         + creator_omissions,
         ordering_choice=choice,
@@ -3168,25 +3266,77 @@ def _locked_speed(spec: SpeedSpec, reason: str) -> dict[str, Any]:
     return {**_speed_row(spec), "status": "locked", "reason": reason, "cut_indexes": []}
 
 
+def app_clip_numbers(assignments: Iterable[Any]) -> tuple[str, ...]:
+    """The project's own clips' media ids as the app numbers them: the item's clip rows in
+    order, Visuals (``asset-*``) never counted (``strategy_policy._clip_numbers``'s rule)."""
+    ids = (
+        str(row.get("media_id") or "")
+        for row in assignments
+        if isinstance(row, Mapping) and row.get("media_id")
+    )
+    return tuple(dict.fromkeys(media_id for media_id in ids if not media_id.startswith("asset-")))
+
+
+# Leverkusen M2 run 3: why a speed ask on a clip the creator named by its number moves no cut.
+SPEED_CLIP_NOT_IN_EDIT = "clip_not_in_edit"  # no clip with that number plays in this edit
+SPEED_MOMENT_NOT_FOUND = "moment_not_found"  # the clip's record doesn't place the moment
+SPEED_MOMENT_NOT_SHOWN = "moment_not_shown"  # located, but the planned window doesn't show it
+_SPEED_MISSES = frozenset({SPEED_CLIP_NOT_IN_EDIT, SPEED_MOMENT_NOT_FOUND, SPEED_MOMENT_NOT_SHOWN})
+
+
+def _numbered_clip_targets(
+    spec: SpeedSpec,
+    spans: Sequence[tuple[str, float, float, bool]],
+    by_id: Mapping[str, UnifiedClip],
+    clip_numbers: Sequence[str],
+) -> tuple[list[int] | None, str]:
+    """ "Put Taha's scream at the end of clip 2 in slow motion": the cuts of clip 2 that show the
+    moment the words name (``named_moments.locate_in_clip``, the clip's stored moments only),
+    every cut of clip 2 when the words name no moment, else ``(None, why)``. A cut of clip 2
+    that doesn't show the scream is never slowed in its place."""
+    from app.services.named_moments import locate_in_clip, moment_terms, shows  # noqa: PLC0415
+
+    number = spec.clip_number or 0
+    media_id = clip_numbers[number - 1] if 0 < number <= len(clip_numbers) else None
+    clip = by_id.get(media_id) if media_id is not None else None
+    hits = [k for k, (media, *_rest) in enumerate(spans) if media == media_id]
+    if clip is None or not hits:
+        return None, SPEED_CLIP_NOT_IN_EDIT
+    words = " ".join(spec.target_words)
+    if not moment_terms(words):
+        return hits, "clip_number"  # "put clip 2 in slow motion": the whole clip
+    found = locate_in_clip(words, clip.analysis, float(clip.duration_s))
+    if found.found is None:
+        return None, SPEED_MOMENT_NOT_FOUND
+    shown = [k for k in hits if shows(spans[k][1], spans[k][2], found.found)]
+    return (shown, "clip_moment") if shown else (None, SPEED_MOMENT_NOT_SHOWN)
+
+
 def _speed_targets(
     spec: SpeedSpec,
     spans: Sequence[tuple[str, float, float, bool]],
     by_id: Mapping[str, UnifiedClip],
     pinned: Sequence[tuple[int, str]],
+    clip_numbers: Sequence[str] = (),
 ) -> tuple[list[int] | None, str]:
-    """(cut indexes the ask names, how they were found), or ``(None, "")`` when the creator's
+    """(cut indexes the ask names, how they were found), or ``(None, why)`` when the creator's
     words name no clip of this edit (or more than one): nothing is guessed (KRI-900's rule).
+    ``why`` is ``""`` or one of ``_SPEED_MISSES``.
 
-    In order: a ``clip:<id>`` scope; the creator's words against the moments they pointed at
-    before approval (KRI-723, same matcher as a freeze); those words against the clips'
-    analysed moments (exactly one clip); a cut position ("the last clip"); nothing named =
-    every cut (a whole-edit ask).
+    In order: a ``clip:<id>`` scope; a clip named by its number (``clip_numbers``: the
+    project's own clips as the app numbers them), narrowed to the cuts that show the moment
+    the words name there; the creator's words against the moments they pointed at before
+    approval (KRI-723, same matcher as a freeze); those words against the clips' analysed
+    moments (exactly one clip); a cut position ("the last clip"); nothing named = every cut (a
+    whole-edit ask).
     """
     if spec.media_id is not None:
         ref_to_media = {clip.ref_id: clip.media_id for clip in by_id.values()}
         media_id = ref_to_media.get(spec.media_id, spec.media_id)
         hits = [k for k, (media, *_rest) in enumerate(spans) if media == media_id]
         return (hits or None), "scope"
+    if spec.clip_number is not None:
+        return _numbered_clip_targets(spec, spans, by_id, clip_numbers)
     if spec.target_words:
         from app.services.named_moments import pointed_match  # noqa: PLC0415
 
@@ -3226,6 +3376,7 @@ def _ground_speeds(
     pinned: Sequence[tuple[int, str]] = (),
     freeze_holds: Mapping[int, float] | None = None,
     creator_windows: bool = True,
+    clip_numbers: Sequence[str] = (),
 ) -> tuple[list[tuple[str, float, float, bool]], dict[int, float], list[dict[str, Any]]]:
     """KRI-689: every speed ask the creator made, each on the cuts it names.
 
@@ -3251,8 +3402,19 @@ def _ground_speeds(
         if spec.ramp:
             rows.append({**row, "status": "ramp", "cut_indexes": []})
             continue
-        targets, grounding = _speed_targets(spec, spans, by_id, pinned)
+        targets, grounding = _speed_targets(spec, spans, by_id, pinned, clip_numbers)
         if targets is None:
+            if grounding in _SPEED_MISSES:
+                rows.append(
+                    {
+                        **row,
+                        "status": grounding,
+                        "clip_number": spec.clip_number,
+                        "moment_words": " ".join(spec.target_words),
+                        "cut_indexes": [],
+                    }
+                )
+                continue
             rows.append({**row, "status": "not_grounded", "cut_indexes": []})
             continue
         videos = [
@@ -4171,6 +4333,7 @@ def _intent_outcomes(
     spans: Sequence[tuple[str, float, float]] = (),
     moment_record: Sequence[Mapping[str, Any]] | None = None,
     seated_visuals: frozenset[str] = frozenset(),
+    clip_numbers: Sequence[str] = (),
 ) -> list[dict[str, Any]]:
     """What each requested group / sport label / chapter text did in this plan (KRI-282).
 
@@ -4189,6 +4352,8 @@ def _intent_outcomes(
         moment_record=moment_record,
         unconfirmed_groups=unconfirmed_order_groups(strategy.get("resolved_clip_intents")),
         seated_visuals=seated_visuals,
+        tapped=_tapped_members(strategy),
+        clip_numbers=clip_numbers,
     )
     position = {clip.ref_id: i for i, clip in enumerate(ordered)}
     printed = {
