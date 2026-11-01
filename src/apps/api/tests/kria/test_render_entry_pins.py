@@ -5,8 +5,10 @@ renders from that entry.
 The route replays grade the value at the table's recipe paths in what its render entry returns,
 and the table is the one file a lane owns. The pin keeps that choice in a grader-owned file: a
 lane that moves its entry or a path edits the pin in the same commit and the diff is what review
-reads, like the card-line golden. The pinned runner must import the entry, call it and use its
-value, and a function of the worker module must call the runner, so an echo function no
+reads, like the card-line golden. The entry's parameters are pinned too (a lane adds only the
+plan parameters on its own), so no override parameter can carry an asked value. The pinned
+runner must import the entry, call it with the job's own plan in those plan parameters and use
+its value, and a function of the worker module must call the runner, so an echo function no
 production path renders from cannot stand in for the entry.
 """
 
