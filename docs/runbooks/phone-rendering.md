@@ -3759,3 +3759,27 @@ byte-identical to today's. Builds below protocol 27 get `426 client_update_requi
 carries a background. The app reads `capabilities.speaker_background` (creation) and
 `editor_capabilities.speaker_background` (per variant). Rollback is the kill switch, never a
 code revert. Detail: `docs/pipelines/speaker-background.md`.
+
+
+## Clip tilt (KRI-1134)
+
+| Capability | Recipe field | Gate | Detail |
+|---|---|---|---|
+| `clipTilt` | `transform.rotation_degrees` (non-zero) and `backdrop` on a main-track clip | `MEDIA_TILT_ENABLED` (default off) + `clipTilt` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `MEDIA_TILT_MIN_CLIENT_PROTOCOL` (28) | `KriaMediaEngine` turns the clip and draws the backdrop on device; the server only stores and passes both through |
+
+Wire: `rotation_degrees` is CLOCKWISE on screen, the same sense as the editor's `tilt.rotation_deg` and
+sticker/text `rotation_deg` (the engine negates it for Core Image's y-up space; proven by
+`ClipTiltCompositionTests`, which moves a red marker and reads the pixels). `backdrop` is
+`{"kind": "blank" | "color" | "blur", "color": "#RRGGBB"}` with `color` for `color` only, valid on the main video
+track and omitted when unused, so untilted recipes keep their bytes and digest. `blank` is black, `blur` is a
+blurred cover-fit copy of the same frame, and the corners a turn uncovers show it. A supporting-card photo turns
+inside its card and keeps its blurred cover upright; a `look` clip still refuses a non-identity transform. The
+parity fixture is `tests/fixtures/clip-tilt-parity/v1.json`.
+
+Rollout order: set the Fly secrets `MEDIA_TILT_ENABLED=true` and add `clipTilt` to
+`PHONE_RENDER_VERIFIED_FEATURES` (api + worker, restart) first, then ship the TestFlight build that declares
+protocol 28. A build below 28 polling a pinned recipe that carries a tilt gets
+`426 client_update_required` (`feature: "clip_tilt"`) instead of a recipe it cannot decode. The kill switch
+hides the authoring surface and never rewrites a pinned recipe, so rollback is `MEDIA_TILT_ENABLED=false`
+(+ restart), never a code revert. This train's PR A is the engine and wire contract; the editor surface, Save
+routes, phone writers, AI ops and slides land in the follow-up PRs of the same project.

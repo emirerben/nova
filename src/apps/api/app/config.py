@@ -837,6 +837,19 @@ class Settings(BaseSettings):
     # docs/pipelines/speaker-background.md.
     speaker_background_enabled: bool = False
     speaker_background_min_client_protocol: int = 27
+    # KRI-1134: tilt a clip or photo to any angle (`transform.rotation_degrees`, clockwise on
+    # screen) with a blank, colour or blurred backdrop behind it (`TimelineClip.backdrop`),
+    # drawn ON DEVICE by `KriaMediaEngine`. Capability `clipTilt` (derived from the clips). The
+    # authoring surface needs this flag on, `clipTilt` in PHONE_RENDER_VERIFIED_FEATURES (fly
+    # secret, set after a physical-device preview + export check) and an app build declaring
+    # `X-Kria-Client-Protocol` >= `media_tilt_min_client_protocol` (28: the first build that
+    # decodes `clipTilt`). A pinned recipe that already carries a tilt answers 426
+    # `client_update_required` (`clip_tilt`) to an older build. Default FALSE (dark ship).
+    # Apply: `fly secrets set MEDIA_TILT_ENABLED=true --app nova-video` (api + worker) + restart,
+    # AFTER the token is verified. Rollback = `...=false` + restart, never a code revert; recipes
+    # already pinned keep their tilt.
+    media_tilt_enabled: bool = False
+    media_tilt_min_client_protocol: int = 28
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

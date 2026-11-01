@@ -1236,7 +1236,11 @@ enum KriaClientProtocolContract {
     /// 27 (KRI-1115): decodes a recipe's `speaker_background` and the `speakerBackground` capability. This app
     /// skips 26: the server already uses 26 for `RENDERED_TIMELINE_CLOCK_PROTOCOL`, so 27 is set exactly to match
     /// the server's `SPEAKER_BACKGROUND_PROTOCOL`. A build declaring 27 also satisfies the server's `>= 26` check.
-    static let version = 27
+    /// 28 (KRI-1134): decodes the `clipTilt` capability and a clip's `backdrop`, and draws a clip turned by
+    /// `transform.rotation_degrees` (clockwise on screen). The server offers tilt only to this protocol (and only
+    /// with `MEDIA_TILT_ENABLED` + `clipTilt` verified) and answers 426 `client_update_required` (`clip_tilt`)
+    /// to an older build polling a recipe that already carries one.
+    static let version = 28
     static let header = "X-Kria-Client-Protocol"
 }
 

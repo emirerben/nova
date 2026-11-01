@@ -1,0 +1,31 @@
+{
+ "description": "Clip tilt wire contract (KRI-1134). Every `valid` backdrop must decode (Python ClipBackdrop, Swift ClipBackdrop) and equal its `normalized` form; every `invalid` entry must be rejected by both. Every `capability` case is a one-clip main-track recipe whose `clipTilt` requirement both sides must derive identically. `rotation_degrees` is clockwise on screen.",
+ "valid": [
+  {"name": "blank", "backdrop": {"kind": "blank"}, "normalized": {"kind": "blank"}},
+  {"name": "blur", "backdrop": {"kind": "blur"}, "normalized": {"kind": "blur"}},
+  {"name": "color-upper", "backdrop": {"kind": "color", "color": "#E91E8C"}, "normalized": {"kind": "color", "color": "#E91E8C"}},
+  {"name": "color-lower", "backdrop": {"kind": "color", "color": "#0a0b0c"}, "normalized": {"kind": "color", "color": "#0a0b0c"}}
+ ],
+ "invalid": [
+  {"name": "kind-missing", "backdrop": {"color": "#000000"}},
+  {"name": "kind-media", "backdrop": {"kind": "media", "asset_id": "visual-1"}},
+  {"name": "color-without-a-colour", "backdrop": {"kind": "color"}},
+  {"name": "blur-with-a-colour", "backdrop": {"kind": "blur", "color": "#000000"}},
+  {"name": "blank-with-a-colour", "backdrop": {"kind": "blank", "color": "#000000"}},
+  {"name": "colour-name", "backdrop": {"kind": "color", "color": "red"}},
+  {"name": "colour-too-short", "backdrop": {"kind": "color", "color": "#12345"}},
+  {"name": "colour-too-long", "backdrop": {"kind": "color", "color": "#1234567"}},
+  {"name": "colour-not-hex", "backdrop": {"kind": "color", "color": "#12345G"}},
+  {"name": "colour-with-a-sign", "backdrop": {"kind": "color", "color": "#+12345"}},
+  {"name": "colour-without-a-hash", "backdrop": {"kind": "color", "color": "E91E8C"}},
+  {"name": "unknown-key", "backdrop": {"kind": "blur", "radius": 12}}
+ ],
+ "capability": [
+  {"name": "upright-bare", "rotation_degrees": 0, "backdrop": null, "clip_tilt": false},
+  {"name": "tilted-clockwise", "rotation_degrees": 30, "backdrop": null, "clip_tilt": true},
+  {"name": "tilted-counter-clockwise", "rotation_degrees": -12.5, "backdrop": null, "clip_tilt": true},
+  {"name": "upright-with-blank-backdrop", "rotation_degrees": 0, "backdrop": {"kind": "blank"}, "clip_tilt": true},
+  {"name": "upright-with-colour-backdrop", "rotation_degrees": 0, "backdrop": {"kind": "color", "color": "#112233"}, "clip_tilt": true},
+  {"name": "tilted-with-blur", "rotation_degrees": 90, "backdrop": {"kind": "blur"}, "clip_tilt": true}
+ ]
+}

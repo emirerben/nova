@@ -99,8 +99,10 @@ from app.services.guided_speech_cleanup import (
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
+    clip_tilt_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
+    recipe_has_clip_tilt,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
     single_word_text_client_supported,
@@ -618,6 +620,14 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "speaker_background",
             "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+        }
+    if not clip_tilt_client_supported() and recipe_has_clip_tilt(recipe):
+        # KRI-1134: an older build cannot decode the `clipTilt` capability token, so the whole
+        # recipe would fail instead of rendering untilted. Tell it to update.
+        return {
+            "code": "client_update_required",
+            "feature": "clip_tilt",
+            "minimum_client_protocol": settings.media_tilt_min_client_protocol,
         }
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(recipe):
         # KRI-828: the worker planned a creator's freeze (a main-track hold, capability

@@ -924,6 +924,33 @@
         "title": "ChoiceSelectionIn",
         "type": "object"
       },
+      "ClipBackdrop": {
+        "additionalProperties": false,
+        "description": "What shows behind a main-track clip where the clip does not cover the canvas.\n\nMirrors ``KriaMediaEngine.ClipBackdrop``: ``{\"kind\": \"blank\" | \"color\" | \"blur\",\n\"color\": \"#RRGGBB\"}`` with ``color`` present for ``color`` only. ``blank`` is black\n(drawn as nothing); ``blur`` is a blurred cover-fit copy of the same clip frame.",
+        "properties": {
+          "color": {
+            "default": null,
+            "nullable": true,
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Color",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "blank",
+              "color",
+              "blur"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ClipBackdrop",
+        "type": "object"
+      },
       "ClipCapture": {
         "additionalProperties": false,
         "description": "Optional filming context for one original. Every part may be absent.",
@@ -3201,6 +3228,7 @@
                 "freezeFrame",
                 "behindSubject",
                 "speakerBackground",
+                "clipTilt",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3327,6 +3355,7 @@
                 "freezeFrame",
                 "behindSubject",
                 "speakerBackground",
+                "clipTilt",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -12502,6 +12531,11 @@
             "nullable": true,
             "title": "Audio Fade Out",
             "type": "number"
+          },
+          "backdrop": {
+            "$ref": "#/components/schemas/ClipBackdrop",
+            "default": null,
+            "nullable": true
           },
           "hold_duration": {
             "default": null,
