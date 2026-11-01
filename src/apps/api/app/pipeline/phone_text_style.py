@@ -205,7 +205,6 @@ def _glyph_overhang(family: str, size: int, text: str) -> float:
 
 
 _READABLE_FLOOR_PX = 40
-# Lowest size the title cascade may place; every later measurement of a title must accept it.
 _TITLE_FLOOR_PX = 30
 _CONNECTED_FLOOR_PX = 24
 
@@ -213,14 +212,14 @@ _CONNECTED_FLOOR_PX = 24
 def measure_box(
     row: dict, canvas: Canvas = PORTRAIT, *, floor: int | None = None
 ) -> tuple[float, float, float, float]:
+    """Measure the block `row` draws. A ``floor`` makes this a fit probe that raises a decline
+    when the block shrinks below it, misses a requested size, or the layout budget is spent;
+    without one it only measures, so re-measuring a placed row never fails a render."""
     import json
 
     from app.agents._schemas.text_element import TextElement
     from app.pipeline.generative_overlays import build_overlays_from_text_elements
     from app.pipeline.text_overlay_skia import measure_text_overlay_box
-
-    if floor is None:
-        floor = _TITLE_FLOOR_PX if text_role(row) == "title" else _READABLE_FLOOR_PX
 
     element = TextElement.model_validate({k: v for k, v in row.items() if k != "phone_text_style"})
     overlays = build_overlays_from_text_elements(
@@ -233,7 +232,7 @@ def measure_box(
         cached = budget["cache"].get(key) if budget else None
         if cached is None:
             if budget:
-                if budget["count"] >= 8192:
+                if floor is not None and budget["count"] >= 8192:
                     raise _style_decline(
                         "This video has too many complex text layouts. "
                         "Simplify a text lane and retry."
@@ -244,17 +243,20 @@ def measure_box(
                 budget["cache"][key] = cached
         boxes.append(cached)
     rendered_size = min(box.get("size_px", float(row.get("size_px") or 76)) for box in boxes)
-    connected = (row.get("source_params") or {}).get("text_stack_v1")
-    if rendered_size < (_CONNECTED_FLOOR_PX if connected else floor):
-        raise _style_decline(
-            "This text cannot wrap at a readable size. Choose another font or shorter text."
-        )
     authored = (row.get("source_params") or {}).get("creator_style_fields") or []
-    if "size_px" in authored and rendered_size < float(row["size_px"]):
-        raise _style_decline(
-            "This text cannot fit at the requested size. Choose another size or placement."
-        )
-    row["size_px"] = int(rendered_size)
+    keeps_requested_size = "size_px" in authored and rendered_size < float(row["size_px"])
+    if floor is not None:
+        connected = (row.get("source_params") or {}).get("text_stack_v1")
+        if rendered_size < (_CONNECTED_FLOOR_PX if connected else floor):
+            raise _style_decline(
+                "This text cannot wrap at a readable size. Choose another font or shorter text."
+            )
+        if keeps_requested_size:
+            raise _style_decline(
+                "This text cannot fit at the requested size. Choose another size or placement."
+            )
+    if not keeps_requested_size:
+        row["size_px"] = int(rendered_size)
     return (
         min(b["left"] for b in boxes),
         min(b["top"] for b in boxes),
@@ -355,8 +357,131 @@ def animation_box(row: dict, box, canvas: Canvas = PORTRAIT):
     return box[0] - dx, box[1] - dy, box[2] + dx, box[3] + dy
 
 
+@dataclass(frozen=True)
+class Obstacle:
+    """A box text should stay off. ``kind`` ranks what gives way first when nothing is clear."""
+
+    box: tuple[float, float, float, float]
+    kind: str = "other"
+
+
+# Given up first to last when no clear spot exists: earlier text, the caption lane,
+# unlabeled boxes, faces, the device watermark.
+SACRIFICE_ORDER = ("text", "caption", "other", "face", "watermark")
+
+
+def as_obstacle(item) -> Obstacle:
+    if isinstance(item, Obstacle):
+        return item
+    if isinstance(item, dict):
+        return Obstacle(tuple(item["box"]), item.get("kind", "other"))
+    return Obstacle(tuple(item))
+
+
+def position_requested(requested: dict | None, role: str) -> bool:
+    """True when the creator named a position for this role in the current turn."""
+    requested = requested or {}
+    return any("position" in (requested.get(scope) or {}) for scope in ("all_text", role))
+
+
+def _sacrifice_rank(kind: str) -> int:
+    return SACRIFICE_ORDER.index(kind if kind in SACRIFICE_ORDER else "other")
+
+
+def _overlap_area(a, b) -> float:
+    return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
+def _in_frame(swept) -> bool:
+    return swept[0] >= 0.05 and swept[2] <= 0.84 and swept[1] >= 0.095 and swept[3] <= 0.79
+
+
+def record_text_fit_relaxed(
+    row: dict,
+    *,
+    role: str,
+    reason: str,
+    rung: str,
+    obstacles: list[Obstacle],
+    overlaps: list[str],
+    wanted_position: str | None,
+    requested_position: str | None,
+) -> None:
+    """The receipt a best-effort placement leaves: the row, what it asked for, what blocked it."""
+    from app.services.pipeline_trace import record_pipeline_event
+
+    scope = _MEASUREMENTS.get()
+    if scope is not None:
+        scope.setdefault("relaxed", []).append(row.get("id"))
+    record_pipeline_event(
+        "text",
+        "text_fit_relaxed",
+        {
+            "version": 1,
+            "row_id": row.get("id"),
+            "role": role,
+            "text": str(row.get("text") or "")[:80],
+            "reason": reason,
+            "rung": rung,
+            "wanted_position": wanted_position,
+            "requested_position": requested_position,
+            "final": {
+                key: row.get(key)
+                for key in (
+                    "position",
+                    "x_frac",
+                    "y_frac",
+                    "alignment",
+                    "size_px",
+                    "max_width_frac",
+                )
+            },
+            "overlaps": sorted(set(overlaps), key=_sacrifice_rank),
+            "obstacles": [
+                {"kind": o.kind, "box": [round(float(v), 3) for v in o.box]} for o in obstacles[:16]
+            ],
+        },
+    )
+
+
 def _place_connected_stacks(rows, rules, obstacles_for, canvas):
-    """Reflow the selected face as a group; never independently refit headings."""
+    """Reflow the selected face as a group; never independently refit headings.
+
+    A saved corner is a preference: a group that cannot sit clear there is laid out again at
+    the corner its own rows asked for. A group that fits nowhere is kept, with a receipt."""
+    saved = deepcopy(rows)
+    fitted, strained = _lay_out_stacks(rows, rules, obstacles_for, canvas, honor_preferences=True)
+    if strained:
+        preferred = deepcopy(rows)
+        _restore(rows, saved)
+        own_fitted, own_strained = _lay_out_stacks(
+            rows, rules, obstacles_for, canvas, honor_preferences=False
+        )
+        if len(own_strained) <= len(strained):
+            fitted, strained = own_fitted, own_strained
+        else:
+            _restore(rows, preferred)
+    for row, reason, obstacles, overlaps in strained:
+        record_text_fit_relaxed(
+            row,
+            role=text_role(row),
+            reason=reason,
+            rung="text_group",
+            obstacles=obstacles,
+            overlaps=overlaps,
+            wanted_position=rules[text_role(row)].get("position"),
+            requested_position=None,
+        )
+    return fitted
+
+
+def _restore(rows, snapshot) -> None:
+    for row, kept in zip(rows, snapshot, strict=True):
+        row.clear()
+        row.update(deepcopy(kept))
+
+
+def _lay_out_stacks(rows, rules, obstacles_for, canvas, *, honor_preferences: bool):
     from app.pipeline.text_stack_layout import (
         STACK_LAYOUT_PARAM,
         layout_corner_stack,
@@ -369,7 +494,7 @@ def _place_connected_stacks(rows, rules, obstacles_for, canvas):
         if not (row.get("source_params") or {}).get(STACK_LAYOUT_PARAM):
             continue
         authored = set(row["source_params"].get("creator_style_fields") or [])
-        wanted = rules[text_role(row)].get("position")
+        wanted = rules[text_role(row)].get("position") if honor_preferences else None
         corner = row["source_params"][STACK_LAYOUT_PARAM].get("corner")
         zone = (
             corner.split("_", 1)[0]
@@ -385,12 +510,14 @@ def _place_connected_stacks(rows, rules, obstacles_for, canvas):
             zone = wanted.split("_", 1)[0]
         corners.setdefault((zone, alignment), []).append(row)
     fitted = []
+    strained = []
     for (zone, alignment), members in corners.items():
         authored_position = any(
             set(row["source_params"].get("creator_style_fields") or [])
             & {"position", "x_frac", "y_frac"}
             for row in members
         )
+        reason = "no_clear_placement"
         if not authored_position:
             for row in members:
                 authored = set(row["source_params"].get("creator_style_fields") or [])
@@ -404,53 +531,55 @@ def _place_connected_stacks(rows, rules, obstacles_for, canvas):
                     row["max_width_frac"] = min(float(row.get("max_width_frac") or 0.68), 0.68)
                 if alignment == "right":
                     row["x_frac"] = min(float(row["x_frac"]), 0.82)
-            try:
-                layout_corner_stack(
-                    members,
-                    bottom=zone == "bottom",
-                    canvas=canvas,
-                    safe_top_frac=0.102,
-                    safe_bottom_frac=0.78,
-                )
-                if zone == "middle":
-                    tops = [
-                        row["y_frac"] - measure_text_block(row)["height"] / canvas.height / 2
-                        for row in members
-                    ]
-                    bottoms = [
-                        row["y_frac"] + measure_text_block(row)["height"] / canvas.height / 2
-                        for row in members
-                    ]
-                    shift = 0.5 - (min(tops) + max(bottoms)) / 2
-                    for row in members:
-                        row["y_frac"] += shift
-            except ValueError as error:
-                raise _style_decline(str(error)) from error
+            before_layout = deepcopy(members)
+            laid_out = False
+            for safe_top, safe_bottom in ((0.102, 0.78), (0.02, 0.98)):
+                try:
+                    layout_corner_stack(
+                        members,
+                        bottom=zone == "bottom",
+                        canvas=canvas,
+                        safe_top_frac=safe_top,
+                        safe_bottom_frac=safe_bottom,
+                    )
+                    if zone == "middle":
+                        tops = [
+                            row["y_frac"] - measure_text_block(row)["height"] / canvas.height / 2
+                            for row in members
+                        ]
+                        bottoms = [
+                            row["y_frac"] + measure_text_block(row)["height"] / canvas.height / 2
+                            for row in members
+                        ]
+                        shift = 0.5 - (min(tops) + max(bottoms)) / 2
+                        for row in members:
+                            row["y_frac"] += shift
+                    laid_out = True
+                    break
+                except ValueError:
+                    _restore(members, before_layout)
+            if not laid_out:
+                reason = "text_group_unlaid"
         for row in members:
             box = animation_box(row, measure_box(row, canvas), canvas)
             obstacles = [
                 *obstacles_for(row),
                 *(
-                    animation_box(other, measure_box(other, canvas), canvas)
+                    Obstacle(animation_box(other, measure_box(other, canvas), canvas), "text")
                     for other in fitted
                     if _same_window(row, other)
                 ),
             ]
-            if (
-                box[0] < 0.05
-                or box[2] > 0.84
-                or box[1] < 0.095
-                or box[3] > 0.79
-                or any(_overlap(box, obstacle) for obstacle in obstacles)
-            ):
-                raise _style_decline("This text group cannot fit clearly in the requested area.")
+            hit = [o for o in obstacles if _overlap(box, o.box)]
+            if not _in_frame(box) or hit:
+                strained.append((row, reason, obstacles, [o.kind for o in hit]))
         fitted.extend(members)
-    return fitted
+    return fitted, strained
 
 
 @dataclass(frozen=True)
 class _FitStrategy:
-    """One rung of the title fit cascade. Rungs only ever relax limits the creator did not set."""
+    """One rung of the fit cascade. Rungs only ever relax limits the creator did not set."""
 
     name: str
     max_width_frac: float
@@ -461,11 +590,13 @@ class _FitStrategy:
     extra_positions: tuple[str, ...] = ()
 
 
-# Tried in order; the first rung is today's behaviour so text that already fits is untouched.
+_EVERY_ANCHOR = ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
+
+# Tried in order; the first rung is the original behaviour so text that already fits is untouched.
 # The widest wrap stays inside the safe box (swept x 0.05..0.84 after the anchor shift), the
-# floor is the smallest title that is still legible on a 1080x1920 frame, and the taller
+# floor is the smallest text that is still legible on a 1080x1920 frame, and the taller
 # block only opens once the text no longer fits at the normal height.
-_TITLE_FIT_CASCADE: tuple[_FitStrategy, ...] = (
+_FIT_CASCADE: tuple[_FitStrategy, ...] = (
     _FitStrategy("baseline", 0.68, _READABLE_FLOOR_PX, 0.18, keeps_authored_width=True),
     _FitStrategy("wider_box", 0.76, _READABLE_FLOOR_PX, 0.18),
     _FitStrategy("lower_floor", 0.76, _TITLE_FLOOR_PX, 0.18),
@@ -476,22 +607,53 @@ _TITLE_FIT_CASCADE: tuple[_FitStrategy, ...] = (
         _TITLE_FLOOR_PX,
         0.34,
         offsets=(0, 0.06, 0.12, 0.18),
-        extra_positions=("top", "bottom", "bottom_right"),
+        extra_positions=_EVERY_ANCHOR,
     ),
 )
-_SINGLE_FIT = _TITLE_FIT_CASCADE[:1]
+# Last resort: nothing is clear, so keep the text in frame and let it touch the least important
+# obstacle. The block may grow to the whole safe height.
+_RELAXED_FIT = _FitStrategy(
+    "relaxed",
+    0.76,
+    _TITLE_FLOOR_PX,
+    0.69,
+    offsets=(0, 0.06, 0.12, 0.18),
+    extra_positions=_EVERY_ANCHOR,
+)
 
 # Roles that choose their own spot; label and pinned keep the spot their lane gave the row.
 AUTO_PLACED_ROLES = frozenset({"title", "caption", "lyric"})
 PLACEMENT_CASCADE = ("bottom_left", "top_left", "middle", "top_right")
 
 
+@dataclass(frozen=True)
+class _Candidate:
+    swept: tuple[float, float, float, float]
+    height: float
+    in_frame: bool
+    order: int
+
+
 def _place(
-    row: dict, *, role: str, wanted: dict, obstacles: list, canvas: Canvas, block_rows=None
+    row: dict,
+    *,
+    role: str,
+    wanted: dict,
+    obstacles: list,
+    canvas: Canvas,
+    block_rows=None,
+    position_fixed: bool = False,
 ) -> dict:
+    """Place `row`; never raises for lack of room.
+
+    The saved position is a preference: when its spot is taken the row moves to the next
+    clear anchor. A position the creator asked for this turn (``position_fixed``) or authored
+    on the row stays put. When nothing is clear the text keeps its place and overlaps the
+    least important obstacle, with a ``text_fit_relaxed`` receipt."""
     from app.schemas.text_style_intent import LABEL_ANCHORS
 
     original = deepcopy(row)
+    obstacles = [as_obstacle(item) for item in obstacles]
     authored = set((row.get("source_params") or {}).get("creator_style_fields") or [])
     # Pins/captions retain their lane's established anchors unless the creator
     # asks otherwise. Reserve their complete measured rectangles for titles.
@@ -511,21 +673,20 @@ def _place(
     pinned_position = bool(authored & {"position", "x_frac", "y_frac", "alignment"})
     if pinned_position:
         positions = ["authored"]
-    cascade = _TITLE_FIT_CASCADE if role == "title" else _SINGLE_FIT
-    for strategy in cascade:
-        if _fit_with(
+    fixed = pinned_position or position_fixed
+
+    def spots(strategy: _FitStrategy) -> list[str]:
+        if fixed:
+            return positions
+        return [*positions, *(p for p in strategy.extra_positions if p not in positions)]
+
+    for strategy in _FIT_CASCADE:
+        if _fits_clear(
             row,
             original=original,
             authored=authored,
             role=role,
-            positions=[
-                *positions,
-                *(
-                    []
-                    if pinned_position
-                    else [p for p in strategy.extra_positions if p not in positions]
-                ),
-            ],
+            positions=spots(strategy),
             strategy=strategy,
             obstacles=obstacles,
             canvas=canvas,
@@ -533,13 +694,32 @@ def _place(
             anchors=LABEL_ANCHORS,
         ):
             return row
-    raise _style_decline(
-        "This text cannot fit clearly in the requested area. "
-        "Choose another placement or shorter text."
+    overlaps = _fit_least_bad(
+        row,
+        original=original,
+        authored=authored,
+        role=role,
+        positions=spots(_RELAXED_FIT),
+        obstacles=obstacles,
+        canvas=canvas,
+        block_rows=block_rows,
+        anchors=LABEL_ANCHORS,
     )
+    asked = original.get("position") if pinned_position else wanted.get("position")
+    record_text_fit_relaxed(
+        row,
+        role=role,
+        reason="no_clear_placement",
+        rung=_RELAXED_FIT.name,
+        obstacles=obstacles,
+        overlaps=overlaps,
+        wanted_position=wanted.get("position"),
+        requested_position=asked if fixed else None,
+    )
+    return row
 
 
-def _fit_with(
+def _candidates(
     row: dict,
     *,
     original: dict,
@@ -547,23 +727,27 @@ def _fit_with(
     role: str,
     positions: list,
     strategy: _FitStrategy,
-    obstacles: list,
     canvas: Canvas,
     block_rows,
     anchors: dict,
-) -> bool:
-    """Place `row` under one cascade rung; True (row mutated) when some anchor and size fit."""
+    probe: bool,
+):
+    """Yield each anchor, offset and size `strategy` allows, `row` mutated to that placement.
+
+    A ``probe`` measures with the strategy's floor, so a size the text cannot hold is skipped;
+    otherwise every size is measured and the text may render smaller than the floor."""
+    floor = strategy.size_floor if probe else None
 
     def measure(candidate):
         if not block_rows:
-            return measure_box(candidate, canvas, floor=strategy.size_floor)
+            return measure_box(candidate, canvas, floor=floor)
         peers = [{**candidate, "text": peer["text"]} for peer in block_rows]
-        boxes = [measure_box(peer, canvas, floor=strategy.size_floor) for peer in peers]
+        boxes = [measure_box(peer, canvas, floor=floor) for peer in peers]
         fitted_size = min(peer["size_px"] for peer in peers)
         if fitted_size < candidate["size_px"]:
             candidate["size_px"] = fitted_size
             boxes = [
-                measure_box({**candidate, "text": peer["text"]}, canvas, floor=strategy.size_floor)
+                measure_box({**candidate, "text": peer["text"]}, canvas, floor=floor)
                 for peer in peers
             ]
         return (
@@ -576,12 +760,13 @@ def _fit_with(
     # Pins, labels and captions stack within their corner; a title only does once the cascade
     # has reached a rung that offers offsets.
     stack = (0, 0.06, 0.12, 0.18) if role != "title" else strategy.offsets
-    candidates = [
+    spots = [
         (position, offset)
         for position in positions
         for offset in (stack if position.startswith(("top", "bottom")) else (0,))
     ]
-    for position, offset in candidates:
+    order = 0
+    for position, offset in spots:
         if position == "authored":
             if original.get("position") != "custom":
                 x, y, alignment = anchors.get(original.get("position"), anchors["middle"])
@@ -596,7 +781,7 @@ def _fit_with(
         if position in {"bottom_left", "bottom", "bottom_right"}:
             y = 0.70 - offset  # above the actual wordmark, stacking within the corner
             if role == "pinned":
-                y -= max(0.0, 0.86 - float(original.get("y_frac") or 0.86))
+                y = max(0.12, y - max(0.0, 0.86 - float(original.get("y_frac") or 0.86)))
         elif position.startswith("top"):
             y += offset
         if alignment == "right" and position != "authored":
@@ -622,35 +807,85 @@ def _fit_with(
         )
         for size in sizes:
             row["size_px"] = size
-            box = measure(row)
-            height = box[3] - box[1]
-            if position.startswith("bottom"):
-                row["y_frac"] = round(y - height / 2, 5)
+            try:
                 box = measure(row)
-            elif position.startswith("top"):
-                row["y_frac"] = round(y + height / 2, 5)
-                box = measure(row)
-            swept = animation_box(row, box, canvas)
-            if position != "authored" and alignment in {"left", "right"}:
-                shift = (
-                    max(0.0, 0.0501 - swept[0])
-                    if alignment == "left"
-                    else -max(0.0, swept[2] - 0.8399)
-                )
-                if shift:
-                    row["x_frac"] += shift
+                height = box[3] - box[1]
+                if position.startswith("bottom"):
+                    row["y_frac"] = round(y - height / 2, 5)
                     box = measure(row)
-                    swept = animation_box(row, box, canvas)
-            if (
-                swept[0] >= 0.05
-                and swept[2] <= 0.84
-                and swept[1] >= 0.095
-                and swept[3] <= 0.79
-                and height <= strategy.height_cap
-                and not any(_overlap(swept, b) for b in obstacles)
-            ):
-                return True
-    return False
+                elif position.startswith("top"):
+                    row["y_frac"] = round(y + height / 2, 5)
+                    box = measure(row)
+                swept = animation_box(row, box, canvas)
+                if position != "authored" and alignment in {"left", "right"}:
+                    shift = (
+                        max(0.0, 0.0501 - swept[0])
+                        if alignment == "left"
+                        else -max(0.0, swept[2] - 0.8399)
+                    )
+                    if shift:
+                        row["x_frac"] += shift
+                        box = measure(row)
+                        swept = animation_box(row, box, canvas)
+            except _fit_errors():
+                continue
+            order += 1
+            candidate = _Candidate(swept, height, _in_frame(swept), order)
+            yield candidate
+            if not probe and candidate.in_frame:
+                break
+
+
+def _fit_errors():
+    from app.services.creator_render_contract import CreatorRenderContractError
+
+    return CreatorRenderContractError
+
+
+def _fits_clear(row: dict, *, obstacles: list[Obstacle], strategy: _FitStrategy, **context) -> bool:
+    """Place `row` under one cascade rung; True (row mutated) when some anchor and size fit."""
+    return any(
+        candidate.in_frame
+        and candidate.height <= strategy.height_cap
+        and not any(_overlap(candidate.swept, o.box) for o in obstacles)
+        for candidate in _candidates(row, strategy=strategy, probe=True, **context)
+    )
+
+
+def _fit_least_bad(
+    row: dict, *, original: dict, positions: list, obstacles: list[Obstacle], **context
+) -> list[str]:
+    """Leave `row` on the in-frame spot that touches only the least important obstacles.
+
+    Returns the kinds it still overlaps. Measurement here never declines; if nothing can be
+    measured the row keeps the first anchor at its own size."""
+    best = None
+    for candidate in _candidates(
+        row, original=original, positions=positions, strategy=_RELAXED_FIT, probe=False, **context
+    ):
+        hit = [o for o in obstacles if _overlap(candidate.swept, o.box)]
+        key = (
+            not candidate.in_frame,
+            max((_sacrifice_rank(o.kind) for o in hit), default=-1),
+            sum(_overlap_area(candidate.swept, o.box) for o in hit),
+            candidate.order,
+        )
+        if best is None or key < best[0]:
+            best = (key, _placement(row), [o.kind for o in hit])
+        if key[:3] == (False, -1, 0.0):
+            break
+    if best is None:
+        row.update(original)
+        return []
+    row.update(best[1])
+    return best[2]
+
+
+def _placement(row: dict) -> dict:
+    return {
+        key: row.get(key)
+        for key in ("position", "x_frac", "y_frac", "alignment", "size_px", "max_width_frac")
+    }
 
 
 def text_style_defaults() -> dict:
@@ -816,9 +1051,9 @@ def resolve_phone_text_style(
 
     def obstacles_for(row):
         return [
-            watermark,
+            Obstacle(watermark, "watermark"),
             *(
-                other["box"] if isinstance(other, dict) else other
+                as_obstacle(other)
                 for other in excluded_boxes or []
                 if not isinstance(other, dict) or _same_window(row, other)
             ),
@@ -836,19 +1071,20 @@ def resolve_phone_text_style(
             obstacles=[
                 *obstacles_for(row),
                 *(
-                    animation_box(other, measure_box(other, canvas), canvas)
+                    Obstacle(animation_box(other, measure_box(other, canvas), canvas), "text")
                     for other in fitted
                     if _same_window(row, other)
                 ),
             ],
             canvas=canvas,
+            position_fixed=position_requested(requested, text_role(row)),
         )
         fitted.append(row)
     placed: list[dict] = []
     for row in rows:
         if text_role(row) == "title":
             occupied = [
-                animation_box(other, measure_box(other, canvas), canvas)
+                Obstacle(animation_box(other, measure_box(other, canvas), canvas), "text")
                 for other in [*fixed, *placed]
                 if _same_window(row, other)
             ]
@@ -858,6 +1094,7 @@ def resolve_phone_text_style(
                 wanted=rules["title"],
                 obstacles=[*obstacles_for(row), *occupied],
                 canvas=canvas,
+                position_fixed=position_requested(requested, "title"),
             )
             placed.append(row)
     from app.pipeline.phone_text_background import automatic_fill
@@ -877,6 +1114,7 @@ def resolve_phone_text_style(
             "roles": sorted(rules),
             "row_count": len(rows),
             "measurement_count": _MEASUREMENTS.get()["count"],
+            "text_fit_relaxed_ids": list(_MEASUREMENTS.get().get("relaxed", [])),
             "font_fallback_roles": sorted(
                 {
                     text_role(row)

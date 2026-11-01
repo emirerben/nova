@@ -3287,3 +3287,27 @@ reads were not available).
 - Verified: 3 of 3 fully live runs on the fixed code ended on the approval card with sourced
   wording (`scripts/kria/live_assos_turn.py --live`); the same code before the change refused or
   stalled 3 of 3. Small samples; the models vary run to run.
+
+## [2026-11-01] Phone text placement never fails a render (KRI-1152)
+
+Job 07efa44c failed `phone_plan_unsupported` ("This text cannot fit clearly in the requested area")
+after KRI-1035 (#1927) fixed the same message for long titles. KRI-1035 rested on the premise "only
+long titles fail to fit". Refuted: captions, labels, pinned text and lyrics got one attempt at the
+saved position (`bottom_left` from the creator's saved style) with faces, the caption lane and the
+watermark as hard obstacles, then raised.
+
+- `phone_text_style._place`: every role walks the fit cascade. A saved position is soft and moves to
+  the next clear anchor. A position requested this turn (`position_requested`) or authored on the
+  row stays fixed. Last resort keeps the text in frame and overlaps the least important obstacle
+  (`SACRIFICE_ORDER`: earlier text, caption lane, unlabeled, faces, watermark) and emits a
+  `text_fit_relaxed` pipeline event with the row id, role, text, requested position and obstacles.
+- `measure_box` only raises its fit declines when given a `floor` (a fit probe). Re-measuring a placed
+  row never fails a render.
+- Text groups (`text_stack_v1`) retry at their own corner when the saved corner is crowded, then are
+  kept with a receipt.
+- Kept: `needs_choice` stays for font coverage and outline-width declines; its chat copy is generic.
+  `phone_plan_repair._place_added_contract_text` (confirmed exact text) still declines and is not
+  covered here.
+- Guard: `tests/pipeline/test_phone_text_fit_never_fails.py` (roles x saved positions x obstacle
+  sets, text groups, replay of job 07efa44c conditions). No burn-dict field changed, so the
+  renderer-parity guard `test_both_renderers_honor_text_anchor_left` is untouched.

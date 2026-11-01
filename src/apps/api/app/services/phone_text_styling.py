@@ -272,6 +272,7 @@ def generation_style_rows(
             "start_s": row["start_s"],
             "end_s": row["end_s"],
             "box": animation_box(row, measure_box(row, canvas or PORTRAIT), canvas or PORTRAIT),
+            "kind": "text",
         }
         for key, row in resolved_rows.items()
         if key not in incoming_ids
@@ -403,7 +404,12 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
     if cues:
         from app.agents._schemas.text_element import TextElement
         from app.pipeline.canvas import PORTRAIT
-        from app.pipeline.phone_text_style import _place, measure_box
+        from app.pipeline.phone_text_style import (
+            Obstacle,
+            _place,
+            measure_box,
+            position_requested,
+        )
 
         canvas = canvas or PORTRAIT
         rows = [
@@ -442,16 +448,20 @@ def generation_caption_look(cues: list[dict], look=None, *, canvas=None):
                 block_rows=rows,
                 obstacles=[
                     *(
-                        face["box"] if isinstance(face, dict) else face
+                        Obstacle(face["box"] if isinstance(face, dict) else face, "face")
                         for face in policy.get("_face_boxes") or []
                     ),
-                    (
-                        mark[0] / canvas.width,
-                        mark[1] / canvas.height,
-                        mark[2] / canvas.width,
-                        mark[3] / canvas.height,
+                    Obstacle(
+                        (
+                            mark[0] / canvas.width,
+                            mark[1] / canvas.height,
+                            mark[2] / canvas.width,
+                            mark[3] / canvas.height,
+                        ),
+                        "watermark",
                     ),
                 ],
+                position_fixed=position_requested(policy.get("requested"), "caption"),
             )
             resolved = replace(
                 resolved,
@@ -519,6 +529,7 @@ def remember_caption_bounds(layers, *, canvas):
                         ),
                         canvas,
                     ),
+                    "kind": "caption",
                 }
             )
     policy["_caption_boxes"] = boxes
@@ -646,6 +657,7 @@ def _ensure_generation_environment(canvas):
                                         "start_s": window["start_s"],
                                         "end_s": window["end_s"],
                                         "box": box,
+                                        "kind": "face",
                                     }
                                 )
                 for window, at in observations:
