@@ -28,7 +28,7 @@ final class SpeakerBackgroundWireTests: XCTestCase {
         XCTAssertEqual(updated.revision, 6)
         XCTAssertEqual(seen?.method, "PUT")
         XCTAssertEqual(seen?.path, "/creation-threads/\(PreviewFixtures.projectID.uuidString)/speaker-background")
-        XCTAssertEqual(seen?.protocolHeader, "27")
+        XCTAssertEqual(seen?.protocolHeader, "28")
         XCTAssertEqual(seen?.body["client_upload_id"] as? String, "ios-ABC")
         XCTAssertEqual(seen?.body["client_event_id"] as? String, "evt-1")
         XCTAssertEqual(seen?.body["expected_revision"] as? Int, 5)
