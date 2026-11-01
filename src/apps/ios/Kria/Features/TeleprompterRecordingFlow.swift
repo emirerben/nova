@@ -70,6 +70,10 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
 
     /// Set when the background reached the visual upload. The seam for the server to learn which visual it is.
     @Published private(set) var queuedBackground: CameraBackgroundSelection?
+    /// KRI-1160: whether this iPhone can record Cinematic with the front camera, and the creator's choice (per device).
+    let cinematicAvailability: TeleprompterCinematic.Availability
+    @Published private(set) var cinematicEnabled: Bool
+    private let defaults: UserDefaults
     private var backgroundLoad: Task<Void, Never>?
     private var countdownTask: Task<Void, Never>?
     private var activeTake: TeleprompterTakeManifest?
@@ -89,6 +93,8 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
          backgroundIntake: BackgroundIntake? = nil,
          backgroundStatement: BackgroundStatement? = nil,
          makeBackgroundProvider: @escaping BackgroundProviderFactory = TeleprompterRecordingFlow.liveBackgroundProvider,
+         cinematicAvailability: TeleprompterCinematic.Availability? = nil,
+         defaults: UserDefaults = .standard,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         self.speakerBackgroundEnabled = speakerBackgroundEnabled
         self.makeLivePreview = makeLivePreview
@@ -99,6 +105,12 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         self.script = script
         self.viewRemovalGrace = viewRemovalGrace
         self.photoSaver = photoSaver
+        let availability = cinematicAvailability ?? TeleprompterCinematic.availability()
+        self.cinematicAvailability = availability
+        self.defaults = defaults
+        // A saved "on" only counts where Cinematic can actually record.
+        cinematicEnabled = availability == .available && defaults.bool(forKey: TeleprompterCinematic.preferenceKey)
+        camera.setCinematicRequested(cinematicEnabled)
         camera.reportDiagnostic = reportDiagnostic
         camera.onFinalized = { [weak self] url, message in self?.finalized(url: url, message: message) }
     }
@@ -125,6 +137,11 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
                 let valid = await Self.playable(store.fileURL(for: takes[index]))
                 takes[index].status = valid ? .review : .invalid
                 takes[index].interrupted = true
+                // KRI-1160: a take cut off before its Cinematic look was baked is baked now, so no raw Cinematic movie
+                // (depth tracks, no blur outside Apple's apps) ever reaches playback or upload.
+                if valid, let cinematic = await CinematicTakeFinisher.finish(movieAt: store.fileURL(for: takes[index])) {
+                    takes[index].cinematic = cinematic
+                }
                 if valid { takes[index].audioCheck = await TakeAudioMeasurement.measure(url: store.fileURL(for: takes[index])) }
                 do { try store.save(manifest: takes[index]) }
                 catch {
@@ -186,6 +203,17 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         }
     }
     private var autoScrollAfterStart = true
+
+    /// KRI-1160: refused where Cinematic cannot record, and never while a take is in flight. The open camera is
+    /// rebuilt for the new choice.
+    func setCinematic(_ on: Bool) {
+        guard !captureBusy else { return }
+        let value = on && cinematicAvailability == .available
+        cinematicEnabled = value
+        defaults.set(value, forKey: TeleprompterCinematic.preferenceKey)
+        camera.setCinematicRequested(value)
+        if stage == .camera, camera.phase != .preparing { Task { await camera.prepare() } }
+    }
 
     func cancelCountdown() {
         generation = UUID(); countdownTask?.cancel(); countdownTask = nil
@@ -273,6 +301,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         take.interrupted = camera.interrupted
         take.stopReason = camera.stopReason
         take.audioCheck = url == nil ? nil : camera.finalizedAudioCheck
+        take.cinematic = url == nil ? nil : camera.finalizedCinematic
         // The choice at the end of filming wins: the picker may change while recording.
         take.speakerBackground = speakerBackgroundEnabled ? background?.reference : nil
         finalizedTake = take

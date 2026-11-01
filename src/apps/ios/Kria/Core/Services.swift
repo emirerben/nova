@@ -2798,7 +2798,7 @@ extension DraftSnapshot {
                 "caption_margin_v", "caption_y_frac", "caption_animation_phases",
                 "music_track_id", "music_window", "background_music", "lyrics", "orientation", "landscape_fit",
                 "sound_effects", "media_overlays", "visual_blocks", "motion_scenes",
-                "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment",
+                "motion_runtime_hash", "camera_effects", "drawings", "carousel_moment", "speaker_background",
             ]
             // A chat-authored editor draft (kind `editor`, flat commit-shaped
             // lane keys) carries its edited lanes in `sections`. The rendered
@@ -2815,6 +2815,10 @@ extension DraftSnapshot {
             // must not bring it back.
             if !isIntentionalEmpty, authoritativeVariant["caption_animation_phases"] == nil {
                 sections["caption_animation_phases"] = nil
+            }
+            // Likewise a cleared Talk-to-camera background leaves the key off the variant (KRI-1165).
+            if !isIntentionalEmpty, authoritativeVariant["speaker_background"] == nil {
+                sections["speaker_background"] = nil
             }
             if !isIntentionalEmpty, sections["music_window"] == nil, let start = authoritativeVariant["music_preview_start_s"] {
                 sections["music_window"] = .object(["start_s": start, "alignment": .string("preserve_cuts")])
