@@ -25,7 +25,10 @@ struct DeviceRenderPanel: View {
                 // A fresh runtime export goes through chat approval only when the
                 // server really needs a new attempt; a phone-local failure (server
                 // still awaiting this iPhone) is retried right here (S1-k).
-                if let retryApproved, sessions.retryNeedsApproval(key), sessions.presentations[key]?.phase != .localReady {
+                if sessions.presentations[key]?.phase == .cancelled,
+                   sessions.presentations[key]?.reasonCode == DeviceRenderSessions.pausedReason {
+                    await sessions.resumeFromUser(key)
+                } else if let retryApproved, sessions.retryNeedsApproval(key), sessions.presentations[key]?.phase != .localReady {
                     await retryApproved()
                 } else { await retry() }
             } },
@@ -33,7 +36,7 @@ struct DeviceRenderPanel: View {
             retryNeedsAttention: {
                 if let retryApproved { await retryApproved() }
                 else {
-                    let ok = await sessions.retryNeedsAttention(key)
+                    let ok = await sessions.retryNeedsAttentionFromUser(key)
                     if ok { await retry() }
                 }
             },

@@ -14,6 +14,13 @@ enum AccountUITestTransport {
 final class AccountUITestTokenStore: TokenStore, @unchecked Sendable {
     private let lock = NSLock()
     private var session: MobileSession?
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        lock.withLock {
+            guard session == expected else { return SessionStoreUpdate(applied: false, current: session) }
+            session = replacement
+            return SessionStoreUpdate(applied: true, current: session)
+        }
+    }
     func read() throws -> MobileSession? { lock.lock(); defer { lock.unlock() }; return session }
     func write(_ session: MobileSession) throws { lock.lock(); defer { lock.unlock() }; self.session = session }
     func delete() throws { lock.lock(); defer { lock.unlock() }; session = nil }

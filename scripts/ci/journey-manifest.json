@@ -2565,6 +2565,199 @@
         "src/apps/api/tests/kria/leverkusen_m2_run3.json",
         "src/apps/api/tests/kria/test_leverkusen_m2_run3_moment_window.py"
       ]
+    },
+    {
+      "id": "native-activity-inbox",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_native_activity_postgres.py tests/routes/test_device_render.py tests/tasks/test_device_render_reaper.py tests/routes/test_background_export_verification.py",
+      "xctests": [
+        "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
+        "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
+        "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
+      ],
+      "paths": [
+        "src/apps/api/app/routes/native_activity.py",
+        "src/apps/api/app/services/native_activity.py",
+        "src/apps/api/app/migrations/versions/0128_native_activities.py",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/tasks/device_render_reaper.py",
+        "src/apps/api/app/tasks/export_verification.py",
+        "src/apps/api/tests/routes/test_native_activity_postgres.py",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Tests/KriaUITests/ActivityUITests.swift"
+      ]
+    },
+    {
+      "id": "native-activity-account-boundary",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/NotificationAtomicSessionTests/testSignOutInsideOldReadWriteGapCannotResurrectSession",
+        "KriaTests/NotificationAtomicSessionTests/testAccountBWriteInsideOldReadWriteGapCannotBeOverwritten",
+        "KriaTests/NotificationAtomicSessionTests/testConditionalExpiryCannotDeleteCompetingAccount",
+        "KriaTests/NotificationAtomicSessionTests/testUnreadableStoreDoesNotLetDelayedExpirySignOutNewAccount",
+        "KriaTests/NotificationAtomicSessionTests/testDelayedExpiryEventDoesNotSignOutNewAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testReadAcknowledgement401NeverReplaysUnderSwitchedAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject",
+        "KriaTests/SessionRefreshRaceTests/testTwoClientInstancesShareOneRefresh",
+        "KriaTests/SessionRefreshRaceTests/testRotationCompletedElsewhereIsAcceptedInsteadOfSigningOut",
+        "KriaTests/SessionRefreshRaceTests/testRefusedRefreshWithUnchangedStoreStillExpiresTheSession",
+        "KriaTests/KriaTests/testUnauthorizedRequestRefreshesOnceAndStoresRotation",
+        "KriaTests/KriaTests/testConcurrentUnauthorizedRequestsShareOneRefreshRotation"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
+        "src/apps/ios/Kria/Features/PerfFixtures.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/AIConsentTests.swift",
+        "src/apps/ios/Tests/KriaTests/KriaTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorTestSupport.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationAtomicSessionTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift"
+      ]
+    },
+    {
+      "id": "apns-transport-contract",
+      "needs_native": false,
+      "api_tests": "tests/services/test_apns.py",
+      "paths": [
+        "src/apps/api/app/services/apns.py",
+        "src/apps/api/tests/services/test_apns.py"
+      ]
+    },
+    {
+      "id": "native-continued-processing-admission",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/ContinuedProcessingExportTests/testAutomaticRecoveryAndBackgroundCallersNeverSubmit",
+        "KriaTests/ContinuedProcessingExportTests/testUnsupportedGPUResourcesNeverSubmit",
+        "KriaTests/ContinuedProcessingExportTests/testRejectionFallsBackOnceAndLateLaunchCannotStartWork",
+        "KriaTests/ContinuedProcessingExportTests/testLaunchStartsOnceAndCompletionIsExplicit",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationInterruptsOnceAndLateSuccessCannotWin",
+        "KriaTests/ContinuedProcessingExportTests/testCancellationBeforeLaunchClosesLateTaskWithoutFallback",
+        "KriaTests/ContinuedProcessingExportTests/testFailedExportAndInvalidProgressNeverReportSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationBeforeMainActorDeliveryPreventsRacingSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationDuringCompletionInterruptsWithoutReportingSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testReleasingActiveRunnerInterruptsAndFinishesUnsuccessfully",
+        "KriaTests/ContinuedProcessingExportTests/testFinishedRunnerReleasesExportClosuresWhileRegistrationRemains",
+        "KriaTests/ContinuedProcessingExportTests/testRetainedLaunchHandlerDoesNotRetainRunnerOrExport",
+        "KriaTests/ContinuedProcessingExportTests/testMissingOrIncompleteBuildConfigurationKeepsContinuedProcessingDisabled",
+        "KriaTests/ContinuedProcessingExportTests/testBuildConfigurationAdmitsOnlyTheExactBundleWildcard"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/ContinuedProcessingExport.swift",
+        "src/apps/ios/Tests/KriaTests/ContinuedProcessingExportTests.swift"
+      ]
+    },
+    {
+      "id": "native-notification-runtime",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_notification_delivery_postgres.py tests/routes/test_mobile_auth.py tests/routes/test_native_activity_postgres.py tests/services/test_apns.py tests/services/test_notification_runtime.py tests/test_maintenance_task_routes.py tests/test_worker_task_registry.py tests/test_beat_heartbeat_signal.py tests/tasks/test_task_time_limits.py",
+      "xctests": [
+        "KriaTests/NativeNotificationsTests/testUnavailableBackendNeverPromptsOrRegisters",
+        "KriaTests/NativeNotificationsTests/testDeniedPermissionNeverRegisters",
+        "KriaTests/NativeNotificationsTests/testTokenRotationAndDisableUseOneInstallationAndServerVersion",
+        "KriaTests/NativeNotificationsTests/testAccountSwitchDropsTokenAndUsesDifferentInstallation",
+        "KriaTests/NativeNotificationsTests/testAccountSwitchDuringPermissionRequestNeverRegistersForNextAccount",
+        "KriaTests/NativeNotificationsTests/testAccountSwitchDuringPendingCleanupStopsOldCapabilityRead",
+        "KriaTests/NativeNotificationsTests/testColdStartTapWaitsForAuthenticationAndAccountSwitchDropsPendingTap",
+        "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringPreflightRefreshNeverSendsInstallationOrOverwritesNewAccount",
+        "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuring401RefreshNeverReplaysAsNewAccount",
+        "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringFailedRefreshNeverClearsNewAccount",
+        "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringSuccessful401ReplayRejectsStaleReceipt",
+        "KriaTests/NotificationAccountBoundaryTests/testRegistrationBodyContainsOnlyTokenAndEnabledAndDecodesServerVersion",
+        "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testReadAcknowledgement401NeverReplaysUnderSwitchedAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject",
+        "KriaTests/NotificationAtomicSessionTests/testSignOutInsideOldReadWriteGapCannotResurrectSession",
+        "KriaTests/NotificationAtomicSessionTests/testAccountBWriteInsideOldReadWriteGapCannotBeOverwritten",
+        "KriaTests/NotificationAtomicSessionTests/testConditionalExpiryCannotDeleteCompetingAccount",
+        "KriaTests/NotificationAtomicSessionTests/testUnreadableStoreDoesNotLetDelayedExpirySignOutNewAccount",
+        "KriaTests/NotificationAtomicSessionTests/testDelayedExpiryEventDoesNotSignOutNewAccount",
+        "KriaTests/NativeEditorExportTests/testSaveAndShareScheduleTheActualPreviewExport",
+        "KriaTests/NativeEditorExportTests/testCancelledNativeEncoderDoesNotRetry",
+        "KriaTests/NativeEditorExportTests/testExpirationDuringCompletionCannotDeliverOutput",
+        "KriaTests/NativeEditorExportTests/testEncoderFailureNeverSavesOrShares",
+        "KriaTests/NativeEditorExportTests/testUnsupportedBackgroundAndRejectedSchedulingExportOnce",
+        "KriaTests/NativeEditorExportTests/testExpirationCancelsEncodingAndDiscardsLateOutput",
+        "KriaTests/NativeEditorExportTests/testCallerCancellationBeforeLaunchNeverStartsExport",
+        "KriaTests/NativeEditorExportTests/testCallerCancellationAlsoCancelsFallbackEncoding",
+        "KriaTests/NativeEditorExportTests/testDuplicateTapDoesNotStartAnotherExport",
+        "KriaTests/NativeEditorExportTests/testReadyLocalFileDoesNotSubmitOrEncode",
+        "KriaTests/SessionRefreshRaceTests/testTwoClientInstancesShareOneRefresh",
+        "KriaTests/SessionRefreshRaceTests/testRotationCompletedElsewhereIsAcceptedInsteadOfSigningOut",
+        "KriaTests/SessionRefreshRaceTests/testRefusedRefreshWithUnchangedStoreStillExpiresTheSession",
+        "KriaTests/KriaTests/testUnauthorizedRequestRefreshesOnceAndStoresRotation",
+        "KriaTests/KriaTests/testConcurrentUnauthorizedRequestsShareOneRefreshRotation"
+      ],
+      "paths": [
+        "src/apps/api/app/migrations/versions/0129_notification_delivery.py",
+        "src/apps/api/app/routes/notification_installations.py",
+        "src/apps/api/app/services/notification_delivery.py",
+        "src/apps/api/app/tasks/notification_delivery.py",
+        "src/apps/api/tests/routes/test_notification_delivery_postgres.py",
+        "src/apps/ios/Kria/Core/NativeNotifications.swift",
+        "src/apps/ios/Kria/Features/NativeEditorExport.swift",
+        "src/apps/ios/Tests/KriaTests/NativeNotificationsTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationAccountBoundaryTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationAtomicSessionTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorExportTests.swift",
+        "src/apps/api/app/auth.py",
+        "src/apps/api/app/main.py",
+        "src/apps/api/app/models.py",
+        "src/apps/api/app/routes/auth.py",
+        "src/apps/api/app/services/auth_locks.py",
+        "src/apps/api/app/worker.py",
+        "src/apps/api/tests/routes/test_mobile_auth.py",
+        "src/apps/api/tests/test_content_plan_schema.py",
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Core/ContinuedProcessingExport.swift",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Kria/Features/PerfFixtures.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/AIConsentTests.swift",
+        "src/apps/ios/Tests/KriaTests/KriaTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorTestSupport.swift",
+        "src/apps/api/app/services/notification_runtime.py",
+        "src/apps/api/tests/services/test_notification_runtime.py",
+        "src/apps/api/app/config.py"
+      ]
+    },
+    {
+      "id": "native-durable-render-intents",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/DeviceRenderExecutionTests/testStopDuringRetryCleanupPreventsGrantAndReplacement",
+        "KriaTests/DeviceRenderExecutionTests/testStopBeforeRetryAcknowledgementPausesReturnedIdentity",
+        "KriaTests/DeviceRenderExecutionTests/testFailedStopReportStillBlocksAutomaticRetryInThisSession",
+        "KriaTests/DeviceRenderExecutionTests/testCreatorResumeQueuedBehindAutomaticReadKeepsTypedConsent",
+        "KriaTests/DeviceRenderExecutionTests/testFailedStopWriteDoesNotLetRelinkRestartAfterStorageRecovers",
+        "KriaTests/DeviceRenderExecutionTests/testStopWithOnlyPersistedObservedTargetDoesNotInventAcknowledgement",
+        "KriaTests/DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/DeviceRenderIntentPersistence.swift",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderIntent.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DeviceRenderIntentTests.swift"
+      ]
     }
   ]
 }

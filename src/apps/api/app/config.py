@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 GUIDED_STORY_RENDERER_READY = True
@@ -2331,6 +2331,14 @@ class Settings(BaseSettings):
 
     # Security
     token_encryption_key: str = ""
+
+    native_notifications_enabled: bool = False
+    native_notifications_allowed_owner_ids: list[UUID] = Field(default_factory=list)
+    native_notifications_apns_environment: Literal["sandbox", "production"] = "sandbox"
+    native_notifications_apns_topic: str | None = None
+    native_notifications_apns_team_id: str | None = None
+    native_notifications_apns_key_id: str | None = None
+    native_notifications_apns_private_key: SecretStr | None = None
 
     # OAuth
     instagram_client_id: str = ""

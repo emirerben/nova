@@ -69,6 +69,13 @@ final class NativeEditorMemoryTokenStore: TokenStore, @unchecked Sendable {
         sessionValue = session
     }
 
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        lock.withLock {
+            guard sessionValue == expected else { return SessionStoreUpdate(applied: false, current: sessionValue) }
+            sessionValue = replacement
+            return SessionStoreUpdate(applied: true, current: sessionValue)
+        }
+    }
     func read() throws -> MobileSession? { lock.withLock { sessionValue } }
     func write(_ session: MobileSession) throws { lock.withLock { sessionValue = session } }
     func delete() throws { lock.withLock { sessionValue = nil } }

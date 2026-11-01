@@ -1114,6 +1114,13 @@ private final class MemoryTokenStore: TokenStore, @unchecked Sendable {
     private let lock = NSLock()
     private var session: MobileSession?
     init(_ session: MobileSession? = nil) { self.session = session }
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        lock.withLock {
+            guard session == expected else { return SessionStoreUpdate(applied: false, current: session) }
+            session = replacement
+            return SessionStoreUpdate(applied: true, current: session)
+        }
+    }
     func read() throws -> MobileSession? { lock.withLock { session } }
     func write(_ session: MobileSession) throws { lock.withLock { self.session = session } }
     func delete() throws { lock.withLock { session = nil } }

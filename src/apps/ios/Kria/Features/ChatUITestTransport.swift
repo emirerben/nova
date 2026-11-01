@@ -42,7 +42,18 @@ final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable
 /// UI fixtures must never read or rotate a developer's Keychain session.
 struct ChatUITestTokenStore: TokenStore {
     // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
-    func read() throws -> MobileSession? { PerfFixture.expiredToken ? PerfTokenState.shared.current : nil }
+    func read() throws -> MobileSession? {
+        if PerfFixture.expiredToken { return PerfTokenState.shared.current }
+        if ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil {
+            let payload = Data("{\"sub\":\"activity-ui-fixture\"}".utf8).base64EncodedString()
+            return MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "activity-fixture", expiresIn: 3600)
+        }
+        return nil
+    }
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        guard PerfFixture.expiredToken else { throw APIError.unsupported }
+        return PerfTokenState.shared.updateSession(replacement, ifCurrent: expected)
+    }
     func write(_ session: MobileSession) throws { if PerfFixture.expiredToken { PerfTokenState.shared.store(session) } }
     func delete() throws {}
 }
@@ -120,6 +131,7 @@ final class CreationChatFixture: @unchecked Sendable {
     static let shared = CreationChatFixture()
     private let lock = NSLock()
     private var threads: [String: [String: Any]] = [:]
+    private var activityTargetID: String?
     private var renders: [String: Int] = [:]
     private var preparations: [String: Int] = [:]
     /// `KRIA_CHAT_SPEECH_CLEANUP`: full reads since the approval, replaying the server's own dispatch shape
@@ -299,6 +311,15 @@ final class CreationChatFixture: @unchecked Sendable {
             let reply = AccountTextPreferenceFixture.shared.reply(request, stale: false, learning: true, initiallyEnabled: true)
             return (reply.0, Data(reply.1.utf8))
         }
+        if path.hasPrefix("/me/activities"), ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil {
+            guard let threadID = activityTargetID else { return response(["items": [], "next_before": NSNull()]) }
+            let activity: [String: Any] = ["id": "11111111-1111-4111-8111-111111111111", "thread_id": threadID,
+                "kind": "video_ready", "created_at": "2026-10-29T10:00:00Z", "read_at": NSNull()]
+            if path == "/me/activities" { return response(["items": [activity], "next_before": NSNull()]) }
+            if path.hasSuffix("/read"), ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] == "read_failure" { return response(["detail": "Try again"], status: 503) }
+            if ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] == "stale" { return response(["detail": "Activity not found"], status: 404) }
+            return response(activity)
+        }
         seedDeviceDeliveryThread()
         mirrorDeviceDelivery()
         if path == "/creation-threads/capabilities" {
@@ -448,8 +469,21 @@ final class CreationChatFixture: @unchecked Sendable {
                     (seededEvents, seededState) = Self.realShapeClipQuestionHistory(poolPhoto: true)
                 }
                 let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": seededEvents.count, "runtime_version": runtime, "state": seededState, "events": seededEvents, "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
-                threads[id] = thread
-                return response(thread, status: 201)
+                var activityThread = thread
+                if ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil {
+                    activityThread["events"] = [["id": UUID().uuidString, "sequence": 0, "revision": 1,
+                        "role": "user", "event_type": "user_message", "content": "My approved project",
+                        "payload": [:], "created_at": "2026-10-29T10:00:00Z"]]
+                    activityThread["revision"] = 1
+                    if activityTargetID == nil {
+                        activityTargetID = id
+                        activityThread["title"] = "Activity destination"
+                    } else {
+                        activityThread["title"] = "Current project"
+                    }
+                }
+                threads[id] = activityThread
+                return response(activityThread, status: 201)
             }
             return response(Array(threads.values))
         }

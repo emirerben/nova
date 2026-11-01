@@ -232,7 +232,10 @@
       "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced",
       "KriaUITests/SignInUITests/testExistingAccountRefusalIsReadableOnScreen",
       "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute",
-      "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam"
+      "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam",
+      "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
+      "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
+      "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
     ],
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
