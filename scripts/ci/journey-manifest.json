@@ -1126,6 +1126,18 @@
       ]
     },
     {
+      "id": "kri-1151-talking-show-when-mentioned",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_talking_mentions.py tests/tasks/test_talking_show_when_mentioned.py",
+      "paths": [
+        "src/apps/api/app/kria/cutaway_show_ask.py",
+        "src/apps/api/app/pipeline/phone_talking_mentions.py",
+        "src/apps/api/tests/fixtures/talking_show_when_mentioned_6fa36e51.json",
+        "src/apps/api/tests/pipeline/test_phone_talking_mentions.py",
+        "src/apps/api/tests/tasks/test_talking_show_when_mentioned.py"
+      ]
+    },
+    {
       "id": "kri-841-talking-ending-clip",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri841_talking_ending_clip.py tests/kria/test_kri841_ending_clip_ask.py tests/pipeline/test_phone_subtitled_plan.py tests/services/test_phone_subtitled_editor.py tests/routes/test_admin_plan_item_phone_lanes.py",
