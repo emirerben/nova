@@ -403,6 +403,11 @@ def _admit(
     except (TokenCryptoError, ValueError):
         _finish(row, "rejected", "token_unavailable", now)
         return None
+    try:
+        notification = ActivityNotification(row.activity_id, row.id, current[0].kind)
+    except ValueError:
+        _finish(row, "rejected", "activity_kind_unsupported", now)
+        return None
     row.attempts += 1
     row.status = "leased"
     row.lease_id = uuid.uuid4()
@@ -411,7 +416,7 @@ def _admit(
         row.id,
         row.lease_id,
         target,
-        ActivityNotification(row.activity_id, row.id),
+        notification,
         installation.last_seen_at,
     )
 

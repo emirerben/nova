@@ -401,6 +401,7 @@ struct AccountView: View {
                         AccountRowLabel(title: "Text preferences", trailingSymbol: "chevron.right")
                     }.accessibilityIdentifier("account-text-preferences")
                 }
+                AccountNotificationsSection()
                 AccountSection(title: "Privacy") {
                     AccountCaptureContextRow()
                 }
@@ -545,6 +546,47 @@ private struct AccountCaptureContextRow: View {
         }
         .frame(minHeight: 44)
         .padding(.vertical, 6)
+    }
+}
+
+/// The only place Kria asks for notifications, and only when the user flips it. Hidden while the server
+/// has push turned off.
+private struct AccountNotificationsSection: View {
+    @EnvironmentObject private var notifications: NativeNotificationCoordinator
+
+    var body: some View {
+        if notifications.control != .hidden {
+            AccountSection(title: "Notifications") {
+                VStack(alignment: .leading, spacing: 2) {
+                    if notifications.control == .retryCleanup {
+                        Button {
+                            Task { await notifications.disable() }
+                        } label: {
+                            AccountRowLabel(title: "Retry notification cleanup", trailingSymbol: "arrow.clockwise")
+                        }
+                        .disabled(notifications.isRequestingPermission)
+                        .accessibilityIdentifier("account-notifications-retry")
+                    } else {
+                        Toggle(isOn: Binding(
+                            get: { notifications.control == .on },
+                            set: { enabled in Task { if enabled { await notifications.enable() } else { await notifications.disable() } } }
+                        )) {
+                            Text("Notify me when a video is ready")
+                                .font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
+                        }
+                        .tint(KriaColor.sky)
+                        .disabled(notifications.isRequestingPermission)
+                        .accessibilityIdentifier("account-notifications-toggle")
+                    }
+                    if let status = notifications.message {
+                        Text(status).font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(minHeight: 44)
+                .padding(.vertical, 6)
+            }
+        }
     }
 }
 

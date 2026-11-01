@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.86.0] - 2026-11-01
+
+### Changed
+- feat(kria): a Talking edit plays a chosen footage cutaway's own sound under a muted speaker (KRI-1151) (#2032) <!-- release-pr: 2032 -->
+
+## [0.83.85.0] - 2026-11-01
+
+### Changed
+- fix(ios): a teleprompter take ends only when the creator stops it (KRI-1149) (#2028) <!-- release-pr: 2028 -->
+
+## [0.83.84.0] - 2026-11-01
+
+### Changed
+- feat(ios): notifications only, no Activity inbox; opt-in moves to Account (KRI-1087) (#2023) <!-- release-pr: 2023 -->
+
+## [0.83.83.0] - 2026-11-01
+
+### Changed
+- fix(kria): a Talking edit counts a muted cutaway as keeping the creator's audio (KRI-1150) (#2031) <!-- release-pr: 2031 -->
+
+## [0.83.82.0] - 2026-11-01
+
+### Changed
+- fix(kria): text placement never fails a render (KRI-1152) (#2029) <!-- release-pr: 2029 -->
+
+## [0.83.81.0] - 2026-11-01
+
+### Fixed
+- fix(overlays): narrated edit length excludes the brand tail (KRI-1142) (#2030) <!-- release-pr: 2030 -->
+
+## [0.83.80.0] - 2026-11-01
+
+### Changed
+- fix(notifications): push alert copy depends on the activity kind (KRI-1087) (#2022) <!-- release-pr: 2022 -->
+
 ## [0.83.79.0] - 2026-11-01
 
 ### Changed

@@ -330,6 +330,20 @@ def rendered_toggle_receipt(
         return None
     if not bindings:
         return None
+    from app.pipeline.phone_talking_cutaway_sound import rendered_cutaway_receipt  # noqa: PLC0415
+    from app.services.phone_rollout import phone_talking_cutaway_sound_supported  # noqa: PLC0415
+
+    talking = (
+        rendered_cutaway_receipt(
+            asks,
+            recipe,
+            silent_media_ids=[b.media_id for b in bindings if b.original.has_audio is False],
+        )
+        if phone_talking_cutaway_sound_supported()
+        else None
+    )
+    if talking is not None:
+        return talking
     asset_to_media = {b.render_asset().id: b.media_id for b in bindings}
     track_id = next(
         (t.id for t in recipe.tracks if t.kind == "video" and t.id == STORY_TRACK_ID),

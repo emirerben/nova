@@ -83,6 +83,28 @@ import XCTest
         XCTAssertFalse(runtime.needsRevocation)
     }
 
+    func testAccountControlFollowsCapabilityOptInAndFailedCleanup() async {
+        let api = NotificationAPIFake(); let permission = NotificationPermissionFake()
+        let runtime = runtime(api, permission)
+        XCTAssertEqual(runtime.control, .hidden)
+        api.available = false
+        await runtime.bind(owner: "account-a")
+        XCTAssertEqual(runtime.control, .hidden)
+        api.available = true
+        await runtime.bind(owner: "account-b")
+        XCTAssertEqual(runtime.control, .off)
+        XCTAssertEqual(permission.prompts, 0)
+        await runtime.enable()
+        XCTAssertEqual(runtime.control, .on)
+        api.revokeFails = true
+        await runtime.disable()
+        XCTAssertEqual(runtime.control, .retryCleanup)
+        api.revokeFails = false
+        await runtime.disable()
+        XCTAssertEqual(runtime.control, .off)
+        XCTAssertEqual(api.deleted.count, 1)
+    }
+
     func testColdStartTapWaitsForAuthenticationAndAccountSwitchDropsPendingTap() async {
         let api = NotificationAPIFake(); let permission = NotificationPermissionFake()
         let runtime = runtime(api, permission)

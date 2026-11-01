@@ -61,18 +61,9 @@ struct TeleprompterScreen: View {
             }
         }
         .onReceive(flow.camera.$phase) { phase in flow.cameraChanged(phase) }
-        .onChange(of: scenePhase) { _, phase in
-            // KRI-653: whatever happened to the audio session while we were away (Control Center, a
-            // call, the app switcher), the next prepare() must rebuild the capture graph.
-            if phase == .inactive { flow.camera.sceneBecameInactive() }
-            else if phase == .active { flow.camera.sceneBecameActive() }
-            // Privacy prompts briefly make the scene inactive. They must not
-            // cancel the prepare operation whose grant they are requesting.
-            if phase == .background || (phase == .inactive && flow.captureBusy) { flow.leaveCapture() }
-            else if phase == .inactive { flow.script.pause(); flow.persistDraft() }
-            else if flow.stage == .camera, flow.camera.phase != .preparing { Task { await flow.camera.prepare() } }
-        }
-        .onDisappear { flow.leaveCapture() }
+        .onChange(of: scenePhase) { _, phase in flow.scenePhaseChanged(phase) }
+        .onAppear { flow.viewAppeared() }
+        .onDisappear { flow.viewDisappeared() }
         .confirmationDialog("Discard this take?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
             Button("Discard take", role: .destructive) { flow.discardSelected() }
         } message: { Text("Your script and any previous take stay saved.") }
@@ -210,7 +201,7 @@ struct TeleprompterScreen: View {
                                 .font(KriaFont.body(18)).padding(24)
                         }
                         if take.interrupted, take.status != .invalid {
-                            Text("Recording was interrupted. Review this take before using it.").font(KriaFont.body(14))
+                            Text("\(take.stopReason?.creatorMessage ?? "Recording was interrupted.") Review this take before using it.").font(KriaFont.body(14))
                         }
                         if take.audioCheck?.verdict == .quiet {
                             Text(TeleprompterRecordingFlow.quietTakeMessage).font(KriaFont.body(14))
@@ -265,7 +256,7 @@ struct TeleprompterScreen: View {
     }
     private func closeCapture() {
         if flow.stage == .countdown { flow.cancelCountdown(); flow.editScript() }
-        else if flow.captureBusy { flow.stop(interrupted: true) }
+        else if flow.captureBusy { flow.stop() }
         else { flow.editScript() }
     }
     private func errorText(_ text: String) -> some View {

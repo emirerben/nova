@@ -271,7 +271,8 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
         "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason "
-        "tiltBackdropIsMissing",
+        "tiltBackdropIsMissing "
+        "canRotateVisual",
         reason="Read-only queries the UI uses to decide what to offer.",
     ),
 }

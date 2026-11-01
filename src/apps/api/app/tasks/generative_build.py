@@ -4715,7 +4715,7 @@ def _creator_landscape_fit(all_candidates: dict | None) -> str:
     return fit if fit in ("fill", "fit") else "fill"
 
 
-def _phone_pin_contract(snapshot: dict) -> Any:
+def _phone_pin_contract(snapshot: dict, variant_id: str = "guided_story") -> Any:
     """The contract ``pin_device_request`` will verify this variant against, or ``None``.
 
     Read here only so the compile can repair toward it; an unreadable contract is left to
@@ -4727,7 +4727,7 @@ def _phone_pin_contract(snapshot: dict) -> Any:
     from app.services.device_render import _contract_for_variant  # noqa: PLC0415
 
     try:
-        return _contract_for_variant(snapshot, "guided_story")
+        return _contract_for_variant(snapshot, variant_id)
     except CreatorRenderContractError:
         return None
 
@@ -8607,6 +8607,48 @@ def _run_phone_subtitled_job(
             # carry their own bindings (scheduled once the speaker is probed).
             speaker_bindings = (binding,)
             cutaways: tuple = ()
+            cutaway_sound_plans: list = []
+
+            def _with_cutaway_sound(found: tuple, speakers: list) -> tuple:
+                """KRI-1151: turn on the sound of each footage cutaway the approved brief
+                asked for, while the lane is switched on; ``found`` untouched otherwise.
+                Sound that would change the approved contract's camera-audio sources stays
+                off and the ask is recorded as a contract conflict."""
+                from app.pipeline.phone_talking_cutaway_sound import (  # noqa: PLC0415
+                    CONTRACT_CONFLICT,
+                    plan_cutaway_sound_for_snapshot,
+                    sound_breaks_contract,
+                    without_sound,
+                )
+                from app.services.phone_rollout import (  # noqa: PLC0415
+                    phone_talking_cutaway_sound_supported,
+                )
+
+                if not found or not phone_talking_cutaway_sound_supported():
+                    return found
+                plan = plan_cutaway_sound_for_snapshot(
+                    snapshot,
+                    cutaway_media_ids=[c.binding.media_id for c in found],
+                    speaker_media_ids=[b.media_id for b in speakers],
+                )
+                if not plan.rows:
+                    return found
+                sounding = tuple(
+                    c.model_copy(
+                        update={
+                            "sound": c.binding.media_id in plan.on_media_ids
+                            and c.binding.original.has_audio is not False
+                        }
+                    )
+                    for c in found
+                )
+                if sound_breaks_contract(
+                    _phone_pin_contract(snapshot, "subtitled"), speakers, sounding
+                ):
+                    cutaway_sound_plans[:] = [without_sound(plan, CONTRACT_CONFLICT)]
+                    return found
+                cutaway_sound_plans[:] = [plan]
+                return sounding
 
             probe = probe_video(clip_path)
             if float(probe.duration_s) > MAX_CLIP_DURATION_S:
@@ -8619,12 +8661,15 @@ def _run_phone_subtitled_job(
             if _silent_audio_status(clip_path, job_id=job_id) is not None:
                 raise SilentAudioPlanDeclined(" ".join(_SPEECH_FALLBACK_DECLINES["silent_audio"]))
             if multi_clip and not talking_multi:
-                cutaways = _phone_talking_head_cutaways(
-                    speaker_clip_id=clip_id,
-                    speaker_duration_s=float(probe.duration_s),
-                    clip_metas=clip_metas,
-                    clip_id_to_gcs=clip_id_to_gcs,
-                    binding_by_proxy=binding_by_proxy,
+                cutaways = _with_cutaway_sound(
+                    _phone_talking_head_cutaways(
+                        speaker_clip_id=clip_id,
+                        speaker_duration_s=float(probe.duration_s),
+                        clip_metas=clip_metas,
+                        clip_id_to_gcs=clip_id_to_gcs,
+                        binding_by_proxy=binding_by_proxy,
+                    ),
+                    [binding],
                 )
 
             # `required_v1`: bind the immutable preflight snapshot to THIS
@@ -9308,11 +9353,14 @@ def _run_phone_subtitled_job(
                     }
                     for row in unplaced
                 ]
-                return tuple(
-                    PhoneCutaway(
-                        binding=footage_bindings[w.clip_id], start_s=w.start_s, end_s=w.end_s
-                    )
-                    for w in windows
+                return _with_cutaway_sound(
+                    tuple(
+                        PhoneCutaway(
+                            binding=footage_bindings[w.clip_id], start_s=w.start_s, end_s=w.end_s
+                        )
+                        for w in windows
+                    ),
+                    [binding, *extra_speaker_bindings],
                 )
 
             sfx_duck: dict | None = None
@@ -10378,6 +10426,18 @@ def _run_phone_subtitled_job(
                     else {}
                 ),
             }
+        if cutaway_sound_plans:
+            from app.pipeline.phone_talking_cutaway_sound import (  # noqa: PLC0415
+                judge_cutaway_sound,
+            )
+
+            new_entry["clip_sound_toggles"] = judge_cutaway_sound(
+                cutaway_sound_plans[0],
+                recipe,
+                silent_media_ids={
+                    c.binding.media_id for c in cutaways if c.binding.original.has_audio is False
+                },
+            )
         if multi_clip and not talking_multi:
             # KRI-136: the phone Talking lane (and its editor) owns this
             # variant, so `resolved_archetype` stays "subtitled"; this receipt

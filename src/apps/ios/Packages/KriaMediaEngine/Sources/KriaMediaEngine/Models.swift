@@ -150,6 +150,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             if let placement = clip.visualPlacement {
                 guard schemaVersion == 2, tracks.contains(where: { $0.kind == .overlay && $0.clips.contains(where: { $0.id == clip.id }) }), clip.volume == 0 else { throw RecipeError.invalidTimeline }
                 try placement.validate()
+                guard abs(clip.transform.rotationDegrees) <= 360 else { throw RecipeError.invalidTimeline }
                 guard clip.timelineStart >= placement.windowStart, clip.timelineStart + clip.duration <= placement.windowEnd + 0.000_001 else { throw RecipeError.invalidTimeline }
             }
             let values = [clip.timelineStart, clip.sourceStart, clip.sourceDuration, clip.rate, clip.volume,
@@ -388,6 +389,9 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
         guard stillLayout != nil else { return transform }
         var value = transform; value.rotationDegrees = 0; return value
     }
+    /// A placed card (`visualPlacement`) positions itself, so only its `transform.rotationDegrees` is read: the card
+    /// turns about its centre, clockwise on screen (a phone Talking picture card's tilt, needs `clipTilt`).
+    var placementTiltDegrees: Double { visualPlacement == nil ? 0 : transform.rotationDegrees }
     /// Opacity from `overlayFadeIn`/`overlayFadeOut` alone across this clip's
     /// own timeline window; exactly 1 when neither is set, or when the clip is
     /// placed (it then fades through its placement, like the renderer's
