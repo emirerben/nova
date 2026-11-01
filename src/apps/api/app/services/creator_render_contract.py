@@ -2453,6 +2453,16 @@ def creator_length_note(
     return f"The video runs about {actual} seconds; you asked for {requested:g}"
 
 
+def _contract_media_id(asset: object) -> str | None:
+    """The contract's id for a recipe source: an original's media id, or ``asset-<id>`` for
+    a Visuals photo or video (KRI-1069, KRI-1102). ``None`` for anything else."""
+    if isinstance(asset, OriginalRenderAsset):
+        return asset.media_id
+    if isinstance(asset, VisualRenderAsset):
+        return f"asset-{asset.visual_id}"
+    return None
+
+
 def _verify_hidden_parts(
     contract: CreatorRenderContract, recipe: EditRecipeV2, manifest: Mapping[str, Any]
 ) -> None:
@@ -2470,12 +2480,8 @@ def _verify_hidden_parts(
     lengths = {asset.id: asset.duration for asset in recipe.assets}
     for track in recipe.tracks:
         for clip in track.clips:
-            asset = manifest.get(clip.source_asset_id)
-            if isinstance(asset, OriginalRenderAsset):
-                media_id = asset.media_id
-            elif isinstance(asset, VisualRenderAsset):
-                media_id = f"asset-{asset.visual_id}"
-            else:
+            media_id = _contract_media_id(manifest.get(clip.source_asset_id))
+            if media_id is None:
                 continue
             parts = by_media.get(media_id)
             if not parts:
@@ -2726,11 +2732,12 @@ def verify_phone_recipe(
             if requirement.shot_index is not None:
                 targets = picture[requirement.shot_index : requirement.shot_index + 1]
             elif requirement.media_id:
+                # KRI-1102: a label on a Visuals photo is looked for on that photo's shot.
                 targets = [
                     clip
                     for clip in picture
-                    if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
-                    and manifest[clip.source_asset_id].media_id == requirement.media_id
+                    if _contract_media_id(manifest.get(clip.source_asset_id))
+                    == requirement.media_id
                 ]
             group = text_source_group(contract.exact_texts, requirement)
             if group:
@@ -2740,14 +2747,15 @@ def verify_phone_recipe(
                     media_id=requirement.media_id or "",
                     spans=[
                         (
-                            manifest[clip.source_asset_id].media_id,
+                            source,
                             clip.timeline_start,
                             clip.timeline_start
                             + clip.source_duration / clip.rate
                             + (clip.hold_duration or 0),
                         )
                         for clip in picture
-                        if isinstance(manifest.get(clip.source_asset_id), OriginalRenderAsset)
+                        if (source := _contract_media_id(manifest.get(clip.source_asset_id)))
+                        is not None
                     ],
                     tolerance_s=frame,
                     minimum_overlap_s=frame,
@@ -2774,13 +2782,9 @@ def verify_phone_recipe(
     if contract.order_required:
         actual: list[str] = []
         for clip in picture:
-            asset = manifest.get(clip.source_asset_id)
-            if isinstance(asset, OriginalRenderAsset):
-                media_id = asset.media_id
-            elif isinstance(asset, VisualRenderAsset):
-                # KRI-1069: a Visuals photo or video sits in the order under its manifest id.
-                media_id = f"asset-{asset.visual_id}"
-            else:
+            # KRI-1069: a Visuals photo or video sits in the order under its manifest id.
+            media_id = _contract_media_id(manifest.get(clip.source_asset_id))
+            if media_id is None:
                 raise _phone_decline(
                     "order_required",
                     "This edit has an unverified picture source in the confirmed order.",

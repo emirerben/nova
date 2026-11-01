@@ -206,6 +206,16 @@
       ]
     },
     {
+      "id": "kri-1102-visual-photo-label",
+      "needs_native": false,
+      "api_tests": "tests/services/test_kri1102_visual_photo_label.py tests/services/test_kri1069_photo_chronology.py",
+      "paths": [
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/kri1102_m2_selfie_label.json",
+        "src/apps/api/tests/services/test_kri1102_visual_photo_label.py"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "needs_native": true,
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",

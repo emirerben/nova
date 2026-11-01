@@ -3918,6 +3918,48 @@
         "KRI-1076"
       ],
       "red_control": "not_applicable"
+    },
+    {
+      "id": "kri-1102-visual-photo-label",
+      "tickets": [
+        "KRI-1102"
+      ],
+      "symptom": "Leverkusen M2 run 3 (job 3d28fa04, 2026-10-31): \"Label the selfie 'Taha \ud83e\udd1d me'\" on a Visuals photo. The plan drew the label over the selfie's shot, yet every render failed after approval with TextPlacementError on shot_labels[] (\"This edit put confirmed text in the wrong place.\"): verify_phone_recipe looked for a labelled shot among camera-roll clips only, so a VisualRenderAsset never matched.",
+      "boundary": "verifier",
+      "status": "open_pr",
+      "owner": "KRI-1102",
+      "paths": [
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/kri1102_m2_selfie_label.json"
+      ],
+      "regression_tests": [
+        "tests/services/test_kri1102_visual_photo_label.py",
+        "tests/services/test_kri1069_photo_chronology.py"
+      ],
+      "harness": "real_compiler",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The prod job's pinned contract and length policy (kri1102_m2_selfie_label.json) against a recipe from the real contract builder, montage planner, guided + phone compilers over the same media ids: the label sits inside the selfie's shot and the verifier passes; on the pre-fix tree it raises the prod TextPlacementError. A scratch replay of the job's own approved guided_edit gives the same verdicts.",
+        "live_model": "n/a: no model or prompt involved.",
+        "native_output": "Not run on a device. The label's fixed spot (y 1497 of 1920) checked against the kit selfie: on the shirts, under all three faces.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "label moved to the other photo or onto a clip (same words and length) is refused",
+        "a label on the scoreboard photo passes there and is refused on the selfie",
+        "one caption shared by a photo and the clip after it passes; covering only the clip is refused",
+        "a label on a camera-roll clip is unchanged",
+        "the photo order (KRI-1069) is still checked"
+      ],
+      "neighbours_gap": [
+        "Phone labels use a fixed height with no face detection (KRI-116 gap); a photo with a face low in the frame can still be covered.",
+        "The cloud verifier names Visuals by the bare id in its picture timeline; not changed (iPhone is the product path).",
+        "The pre-render receipt for a photo label says \"I can't verify text for that target clip in this draft.\" (brief_checks clip ids are bare)."
+      ],
+      "follow_ups": [
+        "Leverkusen M2 iPhone re-send with the selfie label after deploy"
+      ],
+      "red_control": "not_applicable"
     }
   ]
 }
