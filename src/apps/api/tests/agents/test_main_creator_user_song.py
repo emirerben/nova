@@ -80,10 +80,10 @@ from tests.agents.test_main_creator_agent import _input, _manifest
 # v109 (KRI-1097 wave 2, planner boundary): all four re-pinned for the three evidence keys;
 # with PLANNER_BOUNDARY_HONEST_ENABLED off the render is v108's, byte for byte (V108_PROMPT_SHA).
 PRE_CHANGE_PROMPT_SHA = {
-    (True, True): "911bdde00255e89e6fe63c418bed4863c89604acab4943ed3d43a1c6d0719d82",
-    (True, False): "c6eebf012438640fedc47e39a9dba642967386d5b27162d7a2eb6777a90791da",
-    (False, True): "b20c7580e8df40be73bda2b3122c94a4a90a6bfab17b758ac98ca11cf4758528",
-    (False, False): "76835269144b5d25b0970129a1ac05d5af8001e850da18c55431e01e7f83b869",
+    (True, True): "9af5248d9961da353ed3104b1ab3295e44e77fc37ae0dfc9894f43dcb560cfaa",
+    (True, False): "3c431edce4fe79b7566a3a6c58a9edb01d56caceeae0f61b53917dac7053a1ce",
+    (False, True): "3886fed0ddd902acf7b6d3bd23a41db676bae6392ce4ea83a5c24482872602c5",
+    (False, False): "e834a386c049550ae101db826fd274f343f4e9aa96c225013b1e674a48d3ce62",
 }
 V108_PROMPT_SHA = {
     (True, True): "d457efa4baba63866bd42139f883bb07d8b691995109ecdb8168b601c4b6d6b9",

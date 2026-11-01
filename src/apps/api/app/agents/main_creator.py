@@ -9,20 +9,21 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import replace
 from typing import Any, ClassVar, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.agents._runtime import Agent, AgentSpec, SchemaError
+from app.agents._runtime import Agent, AgentSpec, ModelClient, SchemaError
 from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
     CREATOR_REQUEST_MAX_CHARS,
+    PLANNER_BOUNDARY_DECLINES_CONTEXT,
     STORY_LINE_MAX_CHARS,
     CreativeStrategy,
     CreatorAgentOutput,
-    CreatorRenderIntentEvidence,
     DraftVoiceoverScript,
     PlannerDecline,
     ProposeStrategy,
@@ -185,8 +186,10 @@ log = structlog.get_logger()
 # render is byte-identical.
 # v109 (KRI-1097 wave 2, planner boundary): `render_intent_evidence` gains `mixed_media_timing`,
 # `montage_cadence` and `video_reuse_policy` quotes, taught only with
-# PLANNER_BOUNDARY_HONEST_ENABLED; off, the prompt is byte-identical to v108.
+# PLANNER_BOUNDARY_HONEST_ENABLED; off, the prompt is byte-identical to v108 and a run reports
+# v108 (`MainCreatorAgent.__init__`).
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-01-v109"
+_PRE_BOUNDARY_PROMPT_VERSION = "2026-11-01-v108"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -245,12 +248,13 @@ _DESCRIBED_TEXT_EXCEPTION = (
 # `licensed_sfx` evidence line (the `$boundary_evidence_keys` slot) only with
 # PLANNER_BOUNDARY_HONEST_ENABLED; "" off, so that prompt is byte-identical.
 _BOUNDARY_EVIDENCE_KEYS = (
-    ',\n      "mixed_media_timing": "verbatim creator excerpt, in their own language, asking for'
-    ' the photo and video timing you set, or null",'
-    '\n      "montage_cadence": "verbatim creator excerpt, in their own language, asking for the'
-    ' alternating cut and its seconds, or null",'
-    '\n      "video_reuse_policy": "verbatim creator excerpt, in their own language, asking to'
-    ' repeat, loop or alternate footage, or null"'
+    ',\n      "mixed_media_timing": "the creator\'s whole sentence or clause, word for word in'
+    " their language, asking for the photo and video timing you set (seconds as they wrote"
+    ' them), or null",'
+    '\n      "montage_cadence": "the creator\'s whole sentence or clause, word for word in their'
+    ' language, asking for the alternating cut and its seconds, or null",'
+    '\n      "video_reuse_policy": "the creator\'s whole sentence or clause, word for word in'
+    ' their language, asking to repeat, loop or alternate footage, or null"'
 )
 
 # KRI-118 item 1: guidance for the chat-picked "shape" layered on top of
@@ -992,6 +996,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
     # retries once at "low".
     max_output_tokens = 16_384
 
+    def __init__(self, model_client: ModelClient) -> None:
+        super().__init__(model_client)
+        if not settings.planner_boundary_honest_enabled:
+            # KRI-1097 wave 2: off, the rendered prompt is v108's byte for byte; runs say so.
+            self.spec = replace(type(self).spec, prompt_version=_PRE_BOUNDARY_PROMPT_VERSION)
+
     def required_fields(self) -> list[str]:
         return ["action"]
 
@@ -1148,10 +1158,14 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                         }
                     else:
                         raise ValueError("propose_strategy must explain its duration in rationale")
-            unknown_looks = (
-                _unknown_text_looks(raw_action) if settings.planner_boundary_honest_enabled else []
+            honest = bool(settings.planner_boundary_honest_enabled)
+            raw_action, boundary_quotes = (
+                _take_boundary_quotes(raw_action) if honest else (raw_action, {})
             )
-            action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(raw_action)
+            unknown_looks = _unknown_text_looks(raw_action) if honest else []
+            action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(
+                raw_action, context={PLANNER_BOUNDARY_DECLINES_CONTEXT: honest}
+            )
             if isinstance(action, DraftVoiceoverScript) and not input.voiceover_script_available:
                 # KRI-815: only offered with footage and no voiceover; elsewhere it is a miss.
                 raise ValueError("draft_voiceover_script is not available for this project")
@@ -1227,14 +1241,14 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     "latest_message": input.user_message,
                 }
                 server_reads = _timing_cadence_reuse(action.strategy, **boundary_kwargs)
-                honest = bool(settings.planner_boundary_honest_enabled)
                 reads = (
                     _timing_cadence_reuse(
                         action.strategy,
                         **boundary_kwargs,
                         quoted=_creator_quote(
-                            action.render_intent_evidence,
+                            boundary_quotes,
                             [*user_messages, request_contract, input.user_message],
+                            action.strategy,
                         ),
                     )
                     if honest
@@ -1452,10 +1466,10 @@ def _timing_cadence_reuse(
     The recognizers' explicit reading of the creator's words always wins. ``quoted`` None is
     the server's reading alone: a model value they do not read is dropped. With ``quoted``
     (``PLANNER_BOUNDARY_HONEST_ENABLED``, KRI-1097 wave 2) the model's own value stays where the
-    recognizers are silent and the model quotes the creator's words for it, the rule
-    `media_scope` follows (KRI-129 part C). An unquoted value is no creator ask, so the model
-    still cannot grant itself repeats or a timing nobody asked for. A latest-turn "stop
-    alternating" keeps any cadence out.
+    recognizers are silent and the model's quote of the creator's words grounds it
+    (`_creator_quote`), the rule `media_scope` follows (KRI-129 part C). An ungrounded value is
+    no creator ask, so the model still cannot grant itself repeats or a timing nobody asked for.
+    A latest-turn "stop alternating" keeps any cadence out.
     """
     keep = quoted or (lambda _field: False)
     if timing is None and strategy.mixed_media_timing is not None and keep("mixed_media_timing"):
@@ -1486,17 +1500,126 @@ def _timing_cadence_reuse(
     return {"mixed_media_timing": timing, "montage_cadence": cadence, "video_reuse_policy": reuse}
 
 
+# KRI-1097 wave 2: the `render_intent_evidence` quotes for the three boundary fields. With the
+# switch on they leave the raw action before validation and only `_creator_quote` reads them;
+# off they stay, and the evidence model refuses them as unknown keys, as the foundation did.
+_BOUNDARY_QUOTE_FIELDS = ("mixed_media_timing", "montage_cadence", "video_reuse_policy")
+
+# Characters that end a clause in any script. A boundary quote starts and ends at one of them
+# (or at the edge of a message), so it never leaves out words of its own clause. Punctuation,
+# not words: what the clause means is the model's reading (the language policy, KRI-773).
+_CLAUSE_MARKS = frozenset(".,;:!?\n。，、；：！？،؛؟")
+# Quotation marks, brackets and opening marks stepped over on the way to a clause edge.
+_CLAUSE_WRAPPERS = frozenset("\"'«»“”„‘’‚()[]¿¡ ")
+
+
+def _take_boundary_quotes(raw_action: object) -> tuple[object, dict[str, str]]:
+    """``raw_action`` without the boundary quotes in its `render_intent_evidence`, and the
+    string quotes it carried."""
+    if not isinstance(raw_action, dict):
+        return raw_action, {}
+    evidence = raw_action.get("render_intent_evidence")
+    if not isinstance(evidence, dict) or not any(f in evidence for f in _BOUNDARY_QUOTE_FIELDS):
+        return raw_action, {}
+    quotes = {
+        field: value
+        for field, value in evidence.items()
+        if field in _BOUNDARY_QUOTE_FIELDS and isinstance(value, str)
+    }
+    rest = {key: value for key, value in evidence.items() if key not in _BOUNDARY_QUOTE_FIELDS}
+    return {**raw_action, "render_intent_evidence": rest}, quotes
+
+
+def _clause_edge(text: str, index: int, step: int) -> bool:
+    """Whether the slice boundary ``index`` of ``text`` is a clause edge, looking left
+    (``step`` -1) or right (+1): the edge of the text, or a clause mark past only wrappers. A
+    mark between two digits is a decimal point ("0.5"), not an edge."""
+    at = index - 1 if step < 0 else index
+    while 0 <= at < len(text) and text[at] in _CLAUSE_WRAPPERS:
+        at += step
+    if not 0 <= at < len(text):
+        return True
+    mark = text[at]
+    if mark not in _CLAUSE_MARKS:
+        return False
+    decimal = mark in ".," and 0 < at < len(text) - 1
+    return not (decimal and text[at - 1].isdecimal() and text[at + 1].isdecimal())
+
+
+def _whole_clauses_in(source: str, quote: str) -> bool:
+    """Whether ``quote`` is found in ``source`` (spacing aside) as one or more whole clauses.
+    A quote that carries its own closing mark ("... 2 segundos.") ends a clause."""
+    lines = [" ".join(line.split()) for line in source.splitlines()]
+    text = "\n".join(line for line in lines if line)
+    flat = text.replace("\n", " ")
+    start = flat.find(quote)
+    while start >= 0:
+        end = start + len(quote)
+        closed = _clause_edge(text, end, 1) or _clause_edge(text, end, -1)
+        if closed and _clause_edge(text, start, -1):
+            return True
+        start = flat.find(quote, start + 1)
+    return False
+
+
+def _numbers(text: str) -> list[float]:
+    """The numbers written with digits in ``text`` ("2", "0,5", "1.5")."""
+    out: list[float] = []
+    run = ""
+    for index, char in enumerate(text):
+        if char.isdecimal():
+            run += char
+            continue
+        if char in ".," and run and text[index + 1 : index + 2].isdecimal() and "." not in run:
+            run += "."
+            continue
+        if run:
+            out.append(float(run))
+            run = ""
+    if run:
+        out.append(float(run))
+    return out
+
+
+def _value_seconds(field: str, strategy: CreativeStrategy) -> list[float]:
+    """The seconds the model wrote for ``field``: a cadence's cut, a photo hold."""
+    if field == "montage_cadence" and strategy.montage_cadence is not None:
+        return [strategy.montage_cadence.cut_duration_s]
+    timing = strategy.mixed_media_timing
+    if field == "mixed_media_timing" and timing is not None and timing.image_hold_s is not None:
+        return [timing.image_hold_s]
+    return []
+
+
 def _creator_quote(
-    evidence: CreatorRenderIntentEvidence | None, creator_texts: list[str]
+    quotes: Mapping[str, str], creator_texts: list[str], strategy: CreativeStrategy
 ) -> Callable[[str], bool]:
-    """Whether a field's `render_intent_evidence` quote is the creator's own words: a phrase
-    of two words or more found verbatim (spacing aside) in what the creator wrote, the rule
-    the title and pinned-text quotes follow."""
-    sources = [" ".join(str(text or "").split()) for text in creator_texts]
+    """Whether a field's boundary quote grounds the model's value (KRI-1097 wave 2).
+
+    Language-neutral checks only (the language policy, KRI-773/786: the model that reads the
+    message records its meaning, the server checks the record and never guesses meaning from
+    words):
+    - the quote is the creator's own words, two words or more found verbatim (spacing aside)
+      in what they wrote, the rule the title and pinned-text quotes follow;
+    - it is whole clauses of that text, never a fragment, so it cannot leave out words of its
+      own clause ("las fotos pasen muy rápido" out of "No quiero que las fotos pasen muy
+      rápido", "montaje lento" out of "Crea un montaje lento del verano en Madrid");
+    - each number of seconds the model wrote (a cadence's cut, a photo hold) is written in it
+      with digits: "cada 2 segundos" grounds no 1 s cut, and no photo hold nobody gave.
+    Each check fails toward the server's own reading, the foundation's behaviour.
+    """
 
     def quoted(field: str) -> bool:
-        quote = " ".join(str(getattr(evidence, field, None) or "").split())
-        return len(quote.split()) >= 2 and any(quote in source for source in sources)
+        quote = " ".join(str(quotes.get(field) or "").split())
+        if len(quote.split()) < 2:
+            return False
+        written = _numbers(quote)
+        if any(
+            all(abs(value - number) > 0.02 for number in written)
+            for value in _value_seconds(field, strategy)
+        ):
+            return False
+        return any(_whole_clauses_in(str(text or ""), quote) for text in creator_texts)
 
     return quoted
 

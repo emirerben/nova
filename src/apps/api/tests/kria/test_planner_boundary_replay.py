@@ -14,35 +14,57 @@ F6  a quote that is not the creator's own words (a paraphrase, one word) grounds
 F7  a title animation / label position the renderer has no name for vanishes silently.
 F8  a known look word, an alias or an "off" word is declined.
 F9  the model writes ``planner_declines`` itself.
-F10 the switch off is not byte-identical: any recorded response parses differently, or the
-    card shows a planner line.
+F10 the switch off is not byte-identical: a recorded response parses differently, a response
+    the foundation refuses (a boundary quote, a model-written ``planner_declines``) parses or
+    fails differently, a run reports another prompt version, or the card shows a planner line.
 F11 a decline blocks approval or changes the render (it is a card line only).
+F12 a fragment of the creator's clause grounds a value, so the words it leaves out turn the ask
+    around or change its subject ("las fotos pasen muy rápido" out of "No quiero que las fotos
+    pasen muy rápido", "montaje lento" out of "Crea un montaje lento del verano en Madrid",
+    Turkish "geçmesin" left off).
+F13 the model writes seconds the creator never wrote (a 1 s cut for "cada 2 segundos", a photo
+    hold nobody gave) and the quote keeps them.
+F14 a decline sentence is reworded into a claim ("I kept the photo timing you asked for") in
+    either language and nothing fails.
 
-Each case in ``tests/fixtures/kria_replay/planner_boundary/cases.json`` names the modes it
-covers; the recorded corpus (``tests/fixtures/agent_evals/main_creator``) and the Assos draft
-cover F2 and F10 on real responses.
+The checks behind F12 and F13 are language-neutral (punctuation and digits): the language policy
+(KRI-773/786) leaves what a clause means to the model's reading. Each case in
+``tests/fixtures/kria_replay/planner_boundary/cases.json`` names the modes it covers; the
+recorded corpus (``tests/fixtures/agent_evals/main_creator``) and the Assos draft cover F2 and
+F10 on real responses; ``decline_lines`` there is the recorded golden for F14.
 """
 
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 from pathlib import Path
 
 import pytest
 
+from app.agents._runtime import SchemaError
 from app.agents._schemas.creator_agent import CreativeStrategy
-from app.agents.main_creator import MainCreatorAgent
+from app.agents.main_creator import MAIN_CREATOR_PROMPT_VERSION, MainCreatorAgent
 from app.config import settings
 from app.kria import route_disclosure
 from app.kria.reply_language import reply_language_for
+from app.kria.route_capabilities import ROUTE_TABLES
 from app.kria.strategy_policy import CheckedStrategy, check_strategy_for_runtime_v2
 
+REPO = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 CASES = json.loads((FIXTURES / "kria_replay/planner_boundary/cases.json").read_text())
 CORPUS = sorted((FIXTURES / "agent_evals/main_creator").glob("*.json"))
 BASE_INPUT = json.loads((FIXTURES / "agent_evals/main_creator/montage_strategy.json").read_text())[
     "input"
+]
+EVERY_DECLINE = [
+    {"field": "title_animation", "value": "bounce"},
+    {"field": "label_position", "value": "upper middle"},
+    {"field": "mixed_media_timing"},
+    {"field": "montage_cadence"},
+    {"field": "video_reuse_policy"},
 ]
 
 
@@ -83,14 +105,32 @@ def _card(strategy: dict, route: str, language: str) -> tuple[list, str]:
         return lines, route_disclosure.card_text(lines)
 
 
+def _scorecard():
+    spec = importlib.util.spec_from_file_location(
+        "score_route", REPO / "scripts" / "kria" / "score_route.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.mark.parametrize("case", CASES["cases"], ids=lambda case: case["id"])
 def test_planner_boundary_case(monkeypatch, case: dict) -> None:
     raw = json.dumps(case["raw"])
+    off_strategy = None
     for state in ("on", "off"):
+        want = case["expect"][state]
+        if "error_class" in want:
+            # F10: the foundation refuses this response (unknown keys), so the switch off does
+            # too: the same SchemaError, the same retry.
+            with pytest.raises(SchemaError) as refused:
+                _parse(monkeypatch, raw, _input(case), on=state == "on")
+            assert refused.value.error_class == want["error_class"], case["id"]
+            continue
         output = _parse(monkeypatch, raw, _input(case), on=state == "on")
         strategy = output["action"]["strategy"]
-        got = {field: strategy.get(field) for field in case["expect"][state]}
-        assert got == case["expect"][state], f"{case['id']} ({state}): {case['about']}"
+        got = {field: strategy.get(field) for field in want}
+        assert got == want, f"{case['id']} ({state}): {case['about']}"
         if state == "on":
             on_strategy = strategy
         else:
@@ -116,6 +156,29 @@ def test_planner_boundary_case(monkeypatch, case: dict) -> None:
     # F11: a look decline leaves every render field as the off parse has it.
     if case["id"] == "unknown_looks":
         assert {k: v for k, v in on_strategy.items() if k != "planner_declines"} == off_strategy
+
+
+def test_decline_lines_are_the_recorded_golden_and_say_not(monkeypatch) -> None:
+    """F14: every decline sentence, both languages, on every route, equals the recorded golden
+    and carries the scorecard's "not" word for its language (`score_route.NEGATION`)."""
+    monkeypatch.setattr(settings, "planner_boundary_honest_enabled", True)
+    negation = _scorecard().NEGATION
+    golden = CASES["decline_lines"]
+    for language in ("en", "tr"):
+        for route in ROUTE_TABLES:
+            lines, _text = _card({"planner_declines": EVERY_DECLINE}, str(route), language)
+            got = {line.subject: line.text for line in lines if line.subject.startswith("planner_")}
+            assert got == golden[language], (route, language)
+        for subject, text in golden[language].items():
+            assert negation[language].search(text), (language, subject, text)
+
+
+def test_switch_off_runs_report_the_v108_prompt(monkeypatch) -> None:
+    """F10: off, the rendered prompt is v108's byte for byte, so the run records v108."""
+    monkeypatch.setattr(settings, "planner_boundary_honest_enabled", False)
+    assert MainCreatorAgent(None).spec.prompt_version == "2026-11-01-v108"
+    monkeypatch.setattr(settings, "planner_boundary_honest_enabled", True)
+    assert MainCreatorAgent(None).spec.prompt_version == MAIN_CREATOR_PROMPT_VERSION
 
 
 def test_decline_lines_read_in_both_languages(monkeypatch) -> None:

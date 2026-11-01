@@ -20,11 +20,13 @@ from pydantic import (
     ConfigDict,
     Field,
     TypeAdapter,
+    ValidationInfo,
     field_validator,
     model_serializer,
     model_validator,
 )
 from pydantic.json_schema import SkipJsonSchema
+from pydantic_core import PydanticKnownError
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
@@ -377,6 +379,11 @@ class PlannerDecline(_CreatorModel):
     value: str | None = Field(default=None, max_length=80, exclude_if=lambda value: value is None)
 
 
+# Validation-context key the Main Creator parse sets to PLANNER_BOUNDARY_HONEST_ENABLED when it
+# validates a model output (`CreativeStrategy._planner_declines_are_server_owned`).
+PLANNER_BOUNDARY_DECLINES_CONTEXT = "planner_boundary_honest"
+
+
 class CreativeStrategy(_CreatorModel):
     """Bounded editorial choices selected by the orchestrator.
 
@@ -578,12 +585,6 @@ class CreativeStrategy(_CreatorModel):
     # planner overwrites whatever a model wrote, and a plan-authority worker reads only this
     # instead of re-reading the saved request. Omitted from the dump when unset.
     song_captions: SkipJsonSchema[Literal["word", "sentence"] | None] = Field(default=None)
-    # KRI-1097 wave 2: what the parse boundary could not keep, named on the card
-    # (`route_disclosure`). SERVER-owned like `song_captions`: out of every model schema, the
-    # parse overwrites whatever a model wrote, omitted from the dump when unset.
-    planner_declines: SkipJsonSchema[list[PlannerDecline] | None] = Field(
-        default=None, max_length=5, exclude_if=lambda value: value is None
-    )
 
     # KRI-479 (voice behind footage). MODEL-authored like `song_sync`: SkipJsonSchema
     # keeps it OUT of every derived JSON schema (the Kria `apply_strategy` tool schema
@@ -751,6 +752,28 @@ class CreativeStrategy(_CreatorModel):
         exclude_if=lambda value: value is None,
     )
     rationale: str = Field(default="", max_length=2000)
+    # KRI-1097 wave 2: what the parse boundary could not keep, named on the card
+    # (`route_disclosure`). SERVER-owned like `song_captions`: out of every model schema and
+    # omitted from the dump when unset. Declared last, so a model output that writes it with
+    # the switch off is refused at the place the foundation refused it, as an unknown key.
+    planner_declines: SkipJsonSchema[list[PlannerDecline] | None] = Field(
+        default=None, max_length=5, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("planner_declines", mode="before")
+    @classmethod
+    def _planner_declines_are_server_owned(cls, value: object, info: ValidationInfo) -> object:
+        """A model never writes ``planner_declines``. When the Main Creator parse validates a
+        model output it sets ``PLANNER_BOUNDARY_DECLINES_CONTEXT`` to the switch: on, the
+        model's copy is dropped before anything reads it; off, it is refused as the unknown key
+        it was on the foundation. Without the context (a stored strategy) the server's value
+        stays."""
+        context = info.context if isinstance(info.context, dict) else {}
+        if PLANNER_BOUNDARY_DECLINES_CONTEXT not in context:
+            return value
+        if not context[PLANNER_BOUNDARY_DECLINES_CONTEXT]:
+            raise PydanticKnownError("extra_forbidden")
+        return None
 
     @field_validator("story_structure")
     @classmethod
@@ -969,17 +992,6 @@ class CreatorRenderIntentEvidence(_CreatorModel):
     # the effect inside the excerpt, while a decline ("Don't add the Fah sound
     # effect") pairs this excerpt with ``licensed_sfx: null``.
     licensed_sfx: str | None = Field(
-        default=None, max_length=1200, exclude_if=lambda value: value is None
-    )
-    # KRI-1097 wave 2: the creator's words for a typed timing, cadence or reuse ask that the
-    # English/Turkish recognizers do not read; a verbatim quote keeps the model's value.
-    mixed_media_timing: str | None = Field(
-        default=None, max_length=1200, exclude_if=lambda value: value is None
-    )
-    montage_cadence: str | None = Field(
-        default=None, max_length=1200, exclude_if=lambda value: value is None
-    )
-    video_reuse_policy: str | None = Field(
         default=None, max_length=1200, exclude_if=lambda value: value is None
     )
 

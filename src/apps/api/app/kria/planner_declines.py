@@ -69,8 +69,11 @@ def _cadence(_value: object) -> str:
 
 def _reuse(_value: object) -> str:
     return say(
-        en="I can't repeat your footage on this edit, so each clip plays once",
-        tr="Bu düzenlemede çekimlerini tekrar kullanamıyorum, o yüzden her klip bir kez oynuyor",
+        en="I can't repeat or loop your footage on this edit, so no moment of it plays twice",
+        tr=(
+            "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden "
+            "hiçbir an iki kez oynamıyor"
+        ),
     )
 
 
