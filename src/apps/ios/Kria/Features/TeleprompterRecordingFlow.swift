@@ -206,31 +206,55 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         }
     }
 
-    func stop(interrupted: Bool = false) {
+    func stop(reason: TakeStopReason = .user) {
         if stage == .countdown { cancelCountdown(); return }
         guard stage == .starting || stage == .recording else { return }
         script.pause(); persistDraft(); stage = .finalizing
-        camera.stopRecording(interrupted: interrupted)
+        camera.stopRecording(reason: reason)
     }
 
     func scenePhaseChanged(_ phase: ScenePhase) {
-        // KRI-653: whatever happened to the audio session while we were away (Control Center, a
-        // call, the app switcher), the next prepare() must rebuild the capture graph.
-        if phase == .inactive { camera.sceneBecameInactive() }
-        else if phase == .active { camera.sceneBecameActive() }
-        // Privacy prompts briefly make the scene inactive. They must not
-        // cancel the prepare operation whose grant they are requesting.
-        if phase == .background || (phase == .inactive && captureBusy) { leaveCapture() }
-        else if phase == .inactive { script.pause(); persistDraft() }
-        else if stage == .camera, camera.phase != .preparing { Task { await camera.prepare() } }
+        switch phase {
+        case .inactive:
+            // KRI-653: whatever happened to the audio session while we were away (Control Center, an
+            // alert, the app switcher), the next prepare() must rebuild the capture graph. Inactive
+            // never takes the camera away, so a running take keeps going (KRI-1149).
+            camera.sceneBecameInactive()
+            if !captureBusy { script.pause(); persistDraft() }
+        case .background:
+            leaveCapture(reason: .backgrounded)
+        case .active:
+            camera.sceneBecameActive()
+            // Privacy prompts briefly make the scene inactive. They must not
+            // cancel the prepare operation whose grant they are requesting.
+            if stage == .camera, camera.phase != .preparing { Task { await camera.prepare() } }
+        @unknown default:
+            break
+        }
     }
 
-    func viewDisappeared() { leaveCapture() }
-    func viewAppeared() {}
+    /// The screen can disappear and come straight back (transitions, overlays). A running take only ends when
+    /// it stays gone past the grace; anything not yet recording is released at once.
+    func viewDisappeared() {
+        guard stage == .starting || stage == .recording else { leaveCapture(reason: .viewRemoved); return }
+        pendingViewRemoval?.cancel()
+        let grace = viewRemovalGrace
+        pendingViewRemoval = Task {
+            try? await Task.sleep(for: grace)
+            guard !Task.isCancelled else { return }
+            pendingViewRemoval = nil
+            leaveCapture(reason: TakeStopPolicy.reason(for: .viewDisappeared(reappeared: false)) ?? .viewRemoved)
+        }
+    }
 
-    func leaveCapture() {
+    func viewAppeared() {
+        pendingViewRemoval?.cancel()
+        pendingViewRemoval = nil
+    }
+
+    func leaveCapture(reason: TakeStopReason) {
         cancelCountdown(); script.pause(); persistDraft()
-        if stage == .starting || stage == .recording { stop(interrupted: true) }
+        if stage == .starting || stage == .recording { stop(reason: reason) }
         camera.stopSession()
     }
 
@@ -245,6 +269,7 @@ typealias BackgroundIntake = (TeleprompterTakeManifest, SpeakerBackgroundReferen
         activeTake = nil
         take.status = url == nil ? .invalid : .review
         take.interrupted = camera.interrupted
+        take.stopReason = camera.stopReason
         take.audioCheck = url == nil ? nil : camera.finalizedAudioCheck
         // The choice at the end of filming wins: the picker may change while recording.
         take.speakerBackground = speakerBackgroundEnabled ? background?.reference : nil

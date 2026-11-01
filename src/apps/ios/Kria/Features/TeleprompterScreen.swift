@@ -201,7 +201,7 @@ struct TeleprompterScreen: View {
                                 .font(KriaFont.body(18)).padding(24)
                         }
                         if take.interrupted, take.status != .invalid {
-                            Text("Recording was interrupted. Review this take before using it.").font(KriaFont.body(14))
+                            Text("\(take.stopReason?.creatorMessage ?? "Recording was interrupted.") Review this take before using it.").font(KriaFont.body(14))
                         }
                         if take.audioCheck?.verdict == .quiet {
                             Text(TeleprompterRecordingFlow.quietTakeMessage).font(KriaFont.body(14))
@@ -256,7 +256,7 @@ struct TeleprompterScreen: View {
     }
     private func closeCapture() {
         if flow.stage == .countdown { flow.cancelCountdown(); flow.editScript() }
-        else if flow.captureBusy { flow.stop(interrupted: true) }
+        else if flow.captureBusy { flow.stop() }
         else { flow.editScript() }
     }
     private func errorText(_ text: String) -> some View {

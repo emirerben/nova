@@ -24,8 +24,9 @@ import UIKit
     @Published private(set) var error: String?
     @Published private(set) var recordingStartedAt: TimeInterval?
     @Published private(set) var finalizedURL: URL?
-    @Published private(set) var interrupted = false
+    /// Why the current or last take stopped; nil while it is still going.
     @Published private(set) var stopReason: TakeStopReason?
+    var interrupted: Bool { stopReason?.endsAgainstCreatorIntent ?? false }
     /// The live microphone has delivered nothing for several seconds of an active recording.
     @Published private(set) var micSilent = false
     /// Measured level of the take handed to `onFinalized` (nil when the take was not valid).
@@ -51,7 +52,6 @@ import UIKit
     private nonisolated(unsafe) var isConfigured = false
     private nonisolated(unsafe) var recordingRequested = false
     private nonisolated(unsafe) var stopRequested = false
-    private nonisolated(unsafe) var captureInterrupted = false
     /// Main-actor side of the narrow gap between the button tap and the file-output callback.
     private var startRequested = false
     private var stopSessionAfterFinalization = false
@@ -109,7 +109,7 @@ import UIKit
         let generation = operationGeneration
         phase = .preparing
         error = nil
-        interrupted = false
+        stopReason = nil
         finalizedURL = nil
 
         if Self.usesUnavailableUITestFixture {
@@ -144,7 +144,7 @@ import UIKit
         guard phase == .ready, !startRequested else { return }
         error = nil
         finalizedURL = nil
-        interrupted = false
+        stopReason = nil
         startRequested = true
         note("start_requested")
         NotificationCenter.default.post(name: .kriaAudioCaptureWillStart, object: nil)
@@ -168,7 +168,6 @@ import UIKit
                 try audio.setCategory(.playAndRecord, mode: .videoRecording, options: [.defaultToSpeaker, .allowBluetoothHFP])
                 try audio.setActive(true)
                 self.recordingRequested = true
-                self.captureInterrupted = false
                 output.startRecording(to: url, recordingDelegate: self)
             } catch {
                 Task { @MainActor [weak self] in
@@ -181,20 +180,20 @@ import UIKit
     }
 
     /// Stops at the movie-output boundary. The completion callback validates the actual file before
-    /// exposing it, so callers never attach an empty or silent movie.
-    func stopRecording(interrupted: Bool = false) {
+    /// exposing it, so callers never attach an empty or silent movie. The first reason wins.
+    func stopRecording(reason: TakeStopReason) {
         guard phase == .recording || (phase == .ready && startRequested) else { return }
         phase = .finalizing
-        self.interrupted = self.interrupted || interrupted
+        if stopReason == nil {
+            stopReason = reason
+            note("stop_\(reason.rawValue)")
+        }
         captureQueue.async { [weak self] in
             guard let self, let output = self.movieOutput else { return }
             self.stopRequested = true
-            self.captureInterrupted = self.captureInterrupted || interrupted
             if self.recordingRequested, output.isRecording { output.stopRecording() }
         }
     }
-
-    func stopRecording(reason: TakeStopReason) { stopRecording(interrupted: reason != .user) }
 
     /// Stops preview and audio. If a movie is in flight, its partial result is finalized first.
     func stopSession() {
@@ -202,7 +201,7 @@ import UIKit
         operationGeneration += 1
         if phase == .recording || phase == .finalizing || startRequested {
             stopSessionAfterFinalization = true
-            stopRecording(interrupted: true)
+            stopRecording(reason: .sessionTornDown)
             return
         }
         tearDownSession()
@@ -367,34 +366,43 @@ import UIKit
     private func observeLifecycle() {
         let center = NotificationCenter.default
         observers = [
-            center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.handleInterruption("Audio was interrupted.") }
+            center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in
+                // Only the START of an interruption means audio was taken from us (CreationVoiceRecorder does the same).
+                let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                let ended = raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:)) == .ended
+                Task { @MainActor in
+                    if ended { self?.note("audio_int_ended_ignored") }
+                    self?.handle(ended ? .audioInterruptionEnded : .audioInterruptionBegan)
+                }
             },
             center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] notification in
                 let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt)
                     .flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
                 if reason == .oldDeviceUnavailable {
-                    Task { @MainActor in self?.handleInterruption("The microphone connection changed.") }
+                    Task { @MainActor in self?.handle(.routeLost) }
                 } else if reason != .categoryChange {
                     // A new input (headset, Bluetooth) while idle: do not interrupt, but do not trust the graph.
                     Task { @MainActor in self?.markNeedsRebuild("route_change") }
                 }
             },
             center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.handleInterruption("Audio services restarted.") }
+                Task { @MainActor in self?.handle(.mediaServicesReset) }
             },
             center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.markNeedsRebuild("capture_interruption_ended") }
             },
             center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.handleInterruption("Camera capture was interrupted.") }
+                Task { @MainActor in self?.handle(.captureSessionInterrupted) }
             },
             center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: .main) { [weak self] notification in
-                let detail = (notification.userInfo?[AVCaptureSessionErrorKey] as? NSError)?.localizedDescription ?? "Camera capture failed."
-                Task { @MainActor in self?.handleInterruption(detail) }
+                let code = (notification.userInfo?[AVCaptureSessionErrorKey] as? NSError)?.code
+                Task { @MainActor in
+                    if let code { self?.note("runtime_error_\(code)") }
+                    self?.handle(.captureRuntimeError)
+                }
             },
             center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.handleInterruption("Recording stopped when the app went to the background.") }
+                Task { @MainActor in self?.handle(.sceneBackground) }
             },
         ]
     }
@@ -416,16 +424,16 @@ import UIKit
     func sceneBecameInactive() { markNeedsRebuild("scene_inactive") }
     func sceneBecameActive() { note("scene_active") }
 
-    private func handleInterruption(_ message: String) {
+    private func handle(_ signal: TakeStopSignal) {
+        guard let reason = TakeStopPolicy.reason(for: signal) else { return }
         guard phase == .preparing || phase == .ready || phase == .recording || phase == .finalizing else { return }
         markNeedsRebuild("interruption")
-        interrupted = true
         if phase == .recording || phase == .finalizing || startRequested {
-            error = "\(message) A playable partial take will be kept."
-            stopRecording(interrupted: true)
+            error = "\(reason.creatorMessage) A playable partial take will be kept."
+            stopRecording(reason: reason)
         } else {
             stopSession()
-            error = message
+            error = reason.creatorMessage
             phase = .failed
         }
     }
@@ -594,6 +602,10 @@ private extension TeleprompterCamera {
     func finishRecording(_ url: URL, delegateError: (any Error)?) async {
         phase = .finalizing
         stopMeter()
+        if stopReason == nil {
+            stopReason = .systemFinished
+            note("system_finished_\((delegateError as NSError?)?.code ?? 0)")
+        }
         note("finalizing")
         let wasInterrupted = interrupted
         let startedAt = recordingStartedAt
@@ -602,10 +614,9 @@ private extension TeleprompterCamera {
         var audioCheck: TakeAudioCheck?
         if case .valid = validation { audioCheck = await TakeAudioMeasurement.measure(url: url) }
         finalizedAudioCheck = audioCheck
-        if audioCheck?.verdict == .silent {
-            let seconds = startedAt.map { ProcessInfo.processInfo.systemUptime - $0 }
-            report(.takeSilent, takeDuration: seconds)
-        }
+        let seconds = startedAt.map { ProcessInfo.processInfo.systemUptime - $0 }
+        if audioCheck?.verdict == .silent { report(.takeSilent, takeDuration: seconds) }
+        report(.takeFinished, takeDuration: seconds)
         captureQueue.async { [weak self] in
             guard let self else { return }
             self.recordingRequested = false
@@ -624,7 +635,7 @@ private extension TeleprompterCamera {
             phase = .ready
             // AVCapture sometimes supplies AVErrorRecordingSuccessfullyFinishedKey alongside a
             // successful file. The validated file, rather than that text, is authoritative.
-            if wasInterrupted { error = "Recording was interrupted. This partial take is playable." }
+            if wasInterrupted, let stopReason { error = "\(stopReason.creatorMessage) This partial take is playable." }
             onFinalized?(url, wasInterrupted ? error : nil)
         case let .invalid(reason):
             let delegateDetail = delegateError.map { ": \($0.localizedDescription)" } ?? ""

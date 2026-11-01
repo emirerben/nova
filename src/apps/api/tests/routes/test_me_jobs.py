@@ -1551,7 +1551,7 @@ def test_recorder_diagnostics_logs_a_silent_take_for_the_caller() -> None:
 
 
 def test_recorder_diagnostics_logs_every_finished_take_with_its_stop_reason() -> None:
-    """KRI-1149: a take that stopped without the creator's stop button names its trigger in the logs."""
+    """KRI-1149: a take that stopped on its own names its trigger in the logs."""
     user = _user()
     db = _db([])
     _override(user, db)

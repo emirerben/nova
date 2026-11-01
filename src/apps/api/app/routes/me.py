@@ -931,17 +931,18 @@ class LibraryPlaybackDiagnostic(BaseModel):
 
 
 class RecorderDiagnostic(BaseModel):
-    """The in-app teleprompter recorder heard nothing (KRI-653).
+    """The in-app teleprompter recorder's account of a take (KRI-653, KRI-1149).
 
     A talk-to-camera take recorded in-app came back with a digitally silent audio
-    track and nothing on the phone said why. The app reports its audio-session state
-    and the last few camera/scene transitions so the trigger can be named from logs.
-    Short bounded labels (each capped at 40 characters, lists capped) and numbers only: no
-    file names, script text, or anything the creator typed or said.
+    track, or stopped without the creator pressing stop, and nothing on the phone
+    said why. The app reports its audio-session state, the last few camera/scene
+    transitions and the typed reason the take stopped, so the trigger can be named
+    from logs. Short bounded labels (each capped at 40 characters, lists capped) and
+    numbers only: no file names, script text, or anything the creator typed or said.
     """
 
     # Not named ``event``: structlog reserves that keyword for the log message itself.
-    kind: Literal["take_silent", "live_mic_silent"]
+    kind: Literal["take_silent", "live_mic_silent", "take_finished"]
     audio_category: str | None = Field(default=None, max_length=40)
     audio_mode: str | None = Field(default=None, max_length=40)
     route_inputs: list[Annotated[str, Field(max_length=40)]] = Field(
@@ -959,6 +960,8 @@ class RecorderDiagnostic(BaseModel):
     max_power_db: float | None = Field(default=None, ge=-200, le=20)
     take_duration_s: float | None = Field(default=None, ge=0, le=7200)
     app_build: str | None = Field(default=None, max_length=32)
+    # TakeStopReason raw value on the app: "user", "backgrounded", "audio_interruption_began", ...
+    stop_reason: str | None = Field(default=None, max_length=40)
 
 
 class LibraryPosterRefreshRequest(BaseModel):
@@ -2030,13 +2033,15 @@ async def report_library_playback_failure(
 
 @router.post("/recorder-diagnostics", status_code=status.HTTP_204_NO_CONTENT)
 async def report_recorder_audio_silent(body: RecorderDiagnostic, user: CurrentUser) -> None:
-    """Log that the in-app recorder produced (or is producing) a silent take (KRI-653).
+    """Log what the in-app recorder produced (KRI-653, KRI-1149).
 
     Log-only (no DB write) and best-effort for the client: the app fires it once per
-    silent take so the next occurrence names its own trigger in the Fly logs
-    (`recorder_audio_silent`).
+    silent take (`recorder_audio_silent`) and once per finished take with the reason it
+    stopped (`recorder_take_finished`), so the next occurrence names its own trigger in
+    the Fly logs.
     """
-    log.warning("recorder_audio_silent", user_id=str(user.id), **body.model_dump())
+    event = "recorder_take_finished" if body.kind == "take_finished" else "recorder_audio_silent"
+    log.warning(event, user_id=str(user.id), **body.model_dump())
 
 
 @router.delete("/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
