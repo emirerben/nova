@@ -182,7 +182,7 @@ from app.pipeline.phone_recipe_shared import (
 from app.services.phone_sources import PhoneSourceBinding, PhoneVisualBinding
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from app.agents._schemas.text_element import TextElement
     from app.pipeline.phone_captions import PhoneCaptionLook
@@ -326,8 +326,89 @@ def narrated_title_end_s(first_word_end_s: float | None) -> float:
     return max(_TITLE_MIN_S, min(_TITLE_MAX_S, float(first_word_end_s) + _TITLE_AFTER_FIRST_WORD_S))
 
 
+def _follows_prompt() -> bool:
+    """``NARRATED_ROUTE_FOLLOWS_PROMPT_ENABLED`` (KRI-1097 wave 2): off, the plan and the asks
+    reach nothing here and every recipe is the one compiled before."""
+    from app.config import settings  # noqa: PLC0415
+
+    return bool(settings.narrated_route_follows_prompt_enabled)
+
+
+def narrated_title_edge(
+    strategy: Mapping[str, Any] | None, requirements: Iterable[Any] | None
+) -> str | None:
+    """The entrance the opening title plays for this plan and these asks, else None.
+
+    The opening title is the one text this route can animate. A typed animation ask on the
+    title or the whole video (`animation_ask` with ``styles=True``: a text or style ask) and
+    the plan's ``title_animation`` reach its entrance, in this order: a title ask that names an
+    edge, the plan's, a whole-video ask that names one, then the default fade for an ask that
+    names none. A per-clip ask has no text to animate on this route. A phone that plays only the
+    legacy effects plays a designed edge as the fade, so that is the edge returned. None when the
+    phone plays no text entrance (`text_entrance_form`) or the lane switch is off.
+    """
+    if not _follows_prompt():
+        return None
+    from app.agents._schemas.text_animation_phases import LEGACY_EFFECT_ENTRANCE  # noqa: PLC0415
+    from app.kria.animation_ask import (  # noqa: PLC0415
+        DEFAULT_TEXT_ENTRANCE,
+        animation_ask,
+        entrance_patch,
+        text_entrance_form,
+    )
+    from app.schemas.text_style_intent import normalize_title_animation  # noqa: PLC0415
+
+    form = text_entrance_form()
+    if form is None:
+        return None
+    asks = [
+        ask
+        for req in requirements or ()
+        if (ask := animation_ask(req, styles=True)) is not None and ask.scope in {"title", "global"}
+    ]
+    titled = next((ask.edge for ask in asks if ask.scope == "title" and ask.named), None)
+    planned = normalize_title_animation((strategy or {}).get("title_animation"))
+    whole = next((ask.edge for ask in asks if ask.scope == "global" and ask.named), None)
+    edge = titled or planned or whole or (DEFAULT_TEXT_ENTRANCE if asks else None)
+    if edge is not None and form == "effect":
+        return LEGACY_EFFECT_ENTRANCE.get(
+            entrance_patch(edge, form)["effect"], DEFAULT_TEXT_ENTRANCE
+        )
+    return edge
+
+
+def narrated_title_entrance(
+    strategy: Mapping[str, Any] | None, requirements: Iterable[Any] | None
+) -> dict[str, Any] | None:
+    """The title-row patch that plays `narrated_title_edge` in the form the phone plays
+    (`animation_ask.entrance_patch`), else None."""
+    edge = narrated_title_edge(strategy, requirements)
+    if edge is None:
+        return None
+    from app.kria.animation_ask import entrance_patch, text_entrance_form  # noqa: PLC0415
+
+    form = text_entrance_form()
+    return entrance_patch(edge, form) if form is not None else None
+
+
+def _draws_entrance(layer: Any, entrance: Mapping[str, Any] | None) -> bool:
+    """``layer`` plays ``entrance`` (a `narrated_title_entrance` patch)."""
+    if not entrance or layer is None:
+        return False
+    phases = entrance.get("animation_phases")
+    if phases is not None:
+        drawn = getattr(layer, "animation_phases", None)
+        return drawn is not None and drawn.entrance == phases.get("entrance")
+    return getattr(layer, "effect", None) == entrance.get("effect")
+
+
 def narrated_title_element(
-    opening_title: str | None, *, end_s: float | None, timeline_duration_s: float, canvas: Canvas
+    opening_title: str | None,
+    *,
+    end_s: float | None,
+    timeline_duration_s: float,
+    canvas: Canvas,
+    entrance: Mapping[str, Any] | None = None,
 ) -> TextElement | None:
     """The opening title as one TextElement, or ``None`` when there is none.
 
@@ -335,6 +416,8 @@ def narrated_title_element(
     title"), fitted to ``canvas`` like the cloud's: the recipe compiles it, and
     the variant row carries it for the editor preview, so the two can't drift.
     ``end_s`` ``None`` holds the title the full 3 s (`narrated_title_end_s`).
+    ``entrance`` (`narrated_title_entrance`) replaces the fade-in before the text
+    style pass measures the title.
     """
     from app.agents._schemas.text_element import TextElement
     from app.pipeline.narrated_title import narrated_title_placement
@@ -360,31 +443,39 @@ def narrated_title_element(
     )
     from app.services.phone_text_styling import generation_style_rows
 
-    return TextElement.model_validate(
-        generation_style_rows([element.model_dump(mode="json", exclude_none=True)], canvas=canvas)[
-            0
-        ]
-    )
+    row = element.model_dump(mode="json", exclude_none=True)
+    if entrance:
+        row.update(entrance)
+    return TextElement.model_validate(generation_style_rows([row], canvas=canvas)[0])
 
 
 def narrated_title_text_elements(
-    recipe: EditRecipeV2, opening_title: str | None, *, end_s: float | None
+    recipe: EditRecipeV2,
+    opening_title: str | None,
+    *,
+    end_s: float | None,
+    entrance: Mapping[str, Any] | None = None,
 ) -> list[dict]:
     """The title element behind ``recipe``'s title layers, as variant-row JSON.
 
     The editor preview compiles text from the variant, never from the pinned
     recipe, so the phone worker persists this beside the recipe it compiled
     with the same ``opening_title`` / ``end_s``. Empty when the recipe has no
-    title layer.
+    title layer. ``entrance`` is kept only when the recipe's title plays it, so
+    the row never claims an animation the recipe does not draw.
     """
     video = next((track for track in recipe.tracks if track.id == "narrated"), None)
     if video is None or not any(_is_title_layer(layer) for layer in recipe.text_layers):
         return []
+    drawn = next(
+        (layer for layer in recipe.text_layers if layer.id == f"{TITLE_LAYER_PREFIX}0"), None
+    )
     element = narrated_title_element(
         opening_title,
         end_s=end_s,
         timeline_duration_s=timeline_end_s(video.clips),
         canvas=recipe.canvas,
+        entrance=entrance if _draws_entrance(drawn, entrance) else None,
     )
     return [element.model_dump(mode="json", exclude_none=True)] if element is not None else []
 
@@ -761,8 +852,17 @@ def compile_phone_narrated_plan(
     resolved_text_elements: list[dict] | None = None,
     under_voice_media_ids: frozenset[str] = frozenset(),
     voice_tail: NarratedVoiceTail | None = None,
+    strategy: Mapping[str, Any] | None = None,
+    requirements: Iterable[Any] | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the full contract.
+
+    ``strategy`` / ``requirements`` (KRI-1097 wave 2, ``NARRATED_ROUTE_FOLLOWS_PROMPT_ENABLED``):
+    the approved plan and the brief's live asks. The plan's ``title_animation`` and a typed
+    animation ask become the opening title's entrance (`narrated_title_edge`), and the plan's
+    ``opening_title`` is the title when the caller passes none. An entrance the title cannot be
+    compiled with falls back to the plain title: an ask never costs the creator the video.
+    With the switch off neither is read.
 
     ``target_lufs`` / ``duck_footage_bed`` (KRI-139): see "Audio mix
     approximation" -- both are passed in so this module stays settings-free.
@@ -1018,26 +1118,34 @@ def compile_phone_narrated_plan(
         recipe = replace_narrated_captions(
             recipe, caption_cues=caption_cues, caption_style=caption_style, look=caption_look
         )
+    title_entrance = None
+    if _follows_prompt():
+        if opening_title is None and strategy is not None:
+            planned_title = strategy.get("opening_title")
+            opening_title = planned_title if isinstance(planned_title, str) else None
+        title_entrance = narrated_title_entrance(strategy, requirements)
     title = narrated_title_element(
         opening_title,
         end_s=opening_title_end_s,
         timeline_duration_s=timeline_end_s(clips),
         canvas=story_canvas,
+        entrance=title_entrance,
     )
-    if resolved_text_elements is not None:
-        title_rows = ([title.model_dump(mode="json")] if title is not None else []) + list(
-            resolved_text_elements
+    try:
+        recipe = _with_opening_title(
+            recipe, title, resolved_text_elements=resolved_text_elements, clips=clips
         )
-        recipe = replace_narrated_title(recipe, title_rows)
-    elif title is not None:
-        recipe = _with_text_layers(
-            recipe,
-            [
-                *_compile_title_layers(
-                    [title], canvas=story_canvas, timeline_duration_s=timeline_end_s(clips)
-                ),
-                *recipe.text_layers,
-            ],
+    except UnsupportedPhonePlan:
+        if title_entrance is None:
+            raise
+        plain = narrated_title_element(
+            opening_title,
+            end_s=opening_title_end_s,
+            timeline_duration_s=timeline_end_s(clips),
+            canvas=story_canvas,
+        )
+        recipe = _with_opening_title(
+            recipe, plain, resolved_text_elements=resolved_text_elements, clips=clips
         )
     if caption_cues and not captions_first:
         # Captions go through the same swap a phone-editor caption Save uses
@@ -1049,6 +1157,32 @@ def compile_phone_narrated_plan(
     if lanes is not None and (lanes.overlays or lanes.sound_effects):
         recipe = replace_editor_lanes(recipe, lanes=lanes, visuals=visuals)
     return recipe
+
+
+def _with_opening_title(
+    recipe: EditRecipeV2,
+    title: TextElement | None,
+    *,
+    resolved_text_elements: list[dict] | None,
+    clips: list[TimelineClip],
+) -> EditRecipeV2:
+    """``recipe`` with the opening title as its first text layer, then the authored rows."""
+    if resolved_text_elements is not None:
+        title_rows = ([title.model_dump(mode="json")] if title is not None else []) + list(
+            resolved_text_elements
+        )
+        return replace_narrated_title(recipe, title_rows)
+    if title is None:
+        return recipe
+    return _with_text_layers(
+        recipe,
+        [
+            *_compile_title_layers(
+                [title], canvas=recipe.canvas, timeline_duration_s=timeline_end_s(clips)
+            ),
+            *recipe.text_layers,
+        ],
+    )
 
 
 # Tracks and capabilities owned by the editor's sound-effect / Visuals lanes
