@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.75.0] - 2026-11-01
+
+### Fixed
+- fix(overlays): generate media works on a voiceover montage (KRI-1142) (#2020) <!-- release-pr: 2020 -->
+
 ## [0.83.74.0] - 2026-11-01
 
 ### Changed
