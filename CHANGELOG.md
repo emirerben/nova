@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.74.0] - 2026-11-01
+
+### Changed
+- feat(kria): chat can tilt clips through patch_slots, dark (KRI-1137) (#2018) <!-- release-pr: 2018 -->
+
 ## [0.83.73.0] - 2026-11-01
 
 ### Changed
