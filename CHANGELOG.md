@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.43.0] - 2026-11-01
+
+### Fixed
+- fix(ios): show a pre-ticked clip question before Done (KRI-1101) (#1991) <!-- release-pr: 1991 -->
+
 ## [0.83.42.0] - 2026-11-01
 
 ### Changed
