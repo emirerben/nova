@@ -34,12 +34,14 @@ from app.routes.generative_jobs import (
     EditorCommitCaptionMeta,
     EditorCommitMix,
     EditorCommitRequest,
+    EditorCommitSpeakerBackground,
     TimelineSlotEdit,
     _editor_capabilities,
     _guided_source_context,
     _guided_v2_layouts,
     _guided_v2_revision,
     _guided_v2_slot_rows,
+    _speaker_background_shape_ok,
     is_phone_subtitled_editor_variant,
     is_phone_voiceover_lane_variant,
     variant_render_baseline,
@@ -60,6 +62,7 @@ from app.services.phone_voiceover_timeline import is_phone_voiceover_family_vari
 _IMAGE_SUFFIXES = {".avif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"}
 _PORTABLE_FAMILIES = {
     "automatic_cut",
+    "background",
     "caption",
     "clip",
     "effect",
@@ -781,6 +784,8 @@ def _allowed_families(job: Any, variant: dict[str, Any]) -> list[str]:
         families.append("overlay")
     if caps.get("camera_effects") is True and not on_device:
         families.append("effect")
+    if background_state(job, variant)[0]:
+        families.append("background")
     return sorted(set(families) & _PORTABLE_FAMILIES)
 
 
@@ -837,6 +842,89 @@ def _overlay_snapshot(variant: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Why a Talking edit's background cannot be set from chat, in words the model can repeat to the
+# creator (S18). Keyed by the reason `background_state` returns.
+_BACKGROUND_UNAVAILABLE = {
+    "cloud": "this edit is rendered in the cloud, so a photo or video can't go behind you here",
+    "shape": "this edit's timeline was customised, so a photo or video can't go behind you here",
+    "disabled": "backgrounds behind you aren't switched on yet",
+    "token_not_verified": "backgrounds behind you aren't ready on this iPhone app yet",
+    "client_protocol_below_min": "this version of the app can't show a background behind you yet",
+}
+_BACKGROUND_ARCHETYPES = {"subtitled", "talking_head"}
+MAX_BACKGROUND_POOL_ROWS = 12
+
+
+def background_state(job: Any, variant: dict[str, Any]) -> tuple[bool, str | None]:
+    """(chat may set a background on this variant, why not).
+
+    Both ``(False, None)``: the kill switch is off or this is not a Talking edit, so the
+    snapshot says nothing about backgrounds and stays byte-identical to before the lane.
+    Otherwise it is the chat twin of ``generative_jobs._speaker_background_capability``
+    (device render, an editable shape, the phone gate), except that a worker-side planner has
+    no app build to ask, so the client protocol is checked only inside an HTTP request
+    (`speaker_background_unavailable_reason`'s default).
+    """
+    if not settings.speaker_background_enabled:
+        return False, None
+    if variant.get("resolved_archetype") not in _BACKGROUND_ARCHETYPES:
+        return False, None
+    if variant.get("render_destination") != "device":
+        return False, "cloud"
+    if not _speaker_background_shape_ok(job, variant):
+        return False, "shape"
+    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+
+    reason = speaker_background_unavailable_reason()
+    return reason is None, reason
+
+
+def background_current(job: Any, variant: dict[str, Any]) -> dict[str, Any] | None:
+    """The background behind the speaker now: the variant's own row (an explicit ``None`` is a
+    cleared draft), else what the pinned recipe says for a Talking edit never Saved."""
+    if "speaker_background" in variant:
+        current = variant["speaker_background"]
+        return current if isinstance(current, dict) and current.get("media_id") else None
+    return derived_phone_background(job, variant)
+
+
+def _background_snapshot(
+    job: Any, variant: dict[str, Any], clip_context: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The ``background`` section the copilot may address (KRI-1117), path-free.
+
+    ``pool`` is the item's ready photos and videos the server listed (``clip_context
+    ["background_pool"]``, built by the planner, which owns the DB read): an empty pool makes
+    ``set_background`` fail closed in the parser, like ``add_overlay`` with no asset pool. It is
+    a section of its own, never ``overlays.asset_pool``, which would also open ``add_overlay``
+    on a Talking edit. None while the lane says nothing (see `background_state`).
+    """
+    open_, reason = background_state(job, variant)
+    if not open_:
+        if reason is None:
+            return None
+        return {"available": False, "reason": _BACKGROUND_UNAVAILABLE[reason]}
+    current = background_current(job, variant)
+    pool = [
+        row
+        for row in clip_context.get("background_pool") or []
+        if isinstance(row, dict) and row.get("kind") in {"image", "video"}
+    ][:MAX_BACKGROUND_POOL_ROWS]
+    return {
+        "available": True,
+        "current": (
+            {
+                "media_id": current.get("media_id"),
+                "kind": current.get("kind"),
+                "source_start_s": current.get("source_start_s", 0.0),
+            }
+            if isinstance(current, dict) and current.get("media_id")
+            else None
+        ),
+        "pool": pool,
+    }
+
+
 def derived_phone_overlays(job: Any, variant: dict[str, Any]) -> list[dict[str, Any]] | None:
     """A Talking edit's cards as the editor shows them before its first Save.
 
@@ -861,6 +949,30 @@ def derived_phone_overlays(job: Any, variant: dict[str, Any]) -> list[dict[str, 
     )
     rows = (projected or {}).get("media_overlays")
     return [dict(row) for row in rows if isinstance(row, dict)] if rows is not None else None
+
+
+def derived_phone_background(job: Any, variant: dict[str, Any]) -> dict[str, Any] | None:
+    """A Talking edit's background as the editor shows it before its first Save.
+
+    The pinned device recipe is the only record until an editor Save persists the
+    ``speaker_background`` section (the HTTP read paths project it the same way,
+    `project_phone_subtitled_editor_sections`); a chat turn must see what Save sees. None when
+    the variant is not a Talking edit, its lanes are closed, or it has no background.
+    """
+    if not is_phone_subtitled_editor_variant(variant):
+        return None
+    from app.services.phone_rollout import phone_subtitled_editor_lanes_supported  # noqa: PLC0415
+    from app.services.phone_subtitled_editor import (  # noqa: PLC0415
+        project_phone_subtitled_editor_sections,
+    )
+
+    if not phone_subtitled_editor_lanes_supported():
+        return None
+    projected = project_phone_subtitled_editor_sections(
+        getattr(job, "assembly_plan", None) or {}, variant
+    )
+    document = (projected or {}).get("speaker_background")
+    return dict(document) if isinstance(document, dict) else None
 
 
 def _audio_notes(job: Any, variant: dict[str, Any]) -> list[str]:
@@ -1257,6 +1369,11 @@ def build_editor_snapshot(
         }
     if "overlay" in snapshot["allowed_op_families"]:
         snapshot["overlays"] = _overlay_snapshot(variant)
+    background = _background_snapshot(job, variant, clip_context)
+    if background is not None:
+        # Present only while the lane has something to say, so every other snapshot is
+        # byte-identical to before the Talking background existed (KRI-1117).
+        snapshot["background"] = background
     if "effect" in snapshot["allowed_op_families"]:
         snapshot["camera_effects"] = [
             {
@@ -1512,6 +1629,14 @@ def project_editor_draft(
         derived = derived_phone_overlays(job, projected)
         if derived is not None:
             projected["media_overlays"] = derived
+    # KRI-1117: a Talking edit's background. An explicit key (even `None`: cleared) is the
+    # draft's own; otherwise a never-Saved edit derives it from its pinned recipe.
+    if "speaker_background" in payload:
+        projected["speaker_background"] = copy.deepcopy(payload["speaker_background"])
+    elif job is not None and "speaker_background" not in projected:
+        derived_background = derived_phone_background(job, projected)
+        if derived_background is not None:
+            projected["speaker_background"] = derived_background
     mix = payload.get("mix")
     if isinstance(mix, dict):
         if mix.get("music_level") is not None:
@@ -1650,6 +1775,19 @@ def resolve_editor_base(
     if fresh:
         return EditorBase(project_editor_draft(variant, fresh, job), fresh, "head", reason)
     return EditorBase(project_editor_draft(variant, {}, job), {}, "variant", reason)
+
+
+def editor_payload_dump(payload: EditorCommitRequest) -> dict[str, Any]:
+    """``payload`` as the flat commit-shaped draft dict (None lanes dropped).
+
+    A cleared Talking background is the one lane whose ``None`` MEANS something: Save reads
+    an explicit ``speaker_background: null`` as "clear it", so it survives the None-drop (and
+    the draft's merge), where every other absent lane means "leave it".
+    """
+    data = payload.model_dump(mode="json", exclude_none=True)
+    if "speaker_background" in payload.model_fields_set and payload.speaker_background is None:
+        data["speaker_background"] = None
+    return data
 
 
 def merge_editor_draft(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
@@ -1876,7 +2014,7 @@ class _DraftState:
     compile_editor_ops builds the commit request from it at the end.
     changed names the lanes that reach the payload ("text", "timeline",
     "captions", "caption_meta", "mix", "music", "title", "camera_effects",
-    "sound_effects", "visual_media", "media_overlays").
+    "sound_effects", "visual_media", "media_overlays", "speaker_background").
     """
 
     job: Any
@@ -1919,6 +2057,10 @@ class _DraftState:
     post: dict[str, Any] = field(default_factory=dict)
     # Phone Talking picture cards (KRI-661); reaches the payload as `media_overlays`.
     media_overlays: list[dict[str, Any]] = field(default_factory=list)
+    # Phone Talking background (KRI-1117): the document `set_background` chose, None once
+    # `remove_background` cleared it. Reaches the payload only when "speaker_background" is in
+    # `changed`, so an untouched lane is absent (leave unchanged), never an explicit clear.
+    speaker_background: dict[str, Any] | None = None
 
     def text_bar(self, index: object) -> dict[str, Any]:
         row = self.text_bars[_require_index(self.text_bars, index, "Text")]
@@ -2753,6 +2895,15 @@ def compile_editor_ops(
             ):
                 raise KriaEditorOpError("That sequence does not fit on the final video")
     validate_sequence_collisions(state.text, initial_text)
+    # Tri-state (set / clear / leave): only a touched lane is passed, so an explicit `None`
+    # (clear) lands in `model_fields_set` and an untouched lane stays absent.
+    background_section: dict[str, Any] = {}
+    if "speaker_background" in changed:
+        background_section["speaker_background"] = (
+            EditorCommitSpeakerBackground(**state.speaker_background)
+            if state.speaker_background is not None
+            else None
+        )
     request = EditorCommitRequest(
         guided_revision_number=int(guided["revision_number"]) if guided is not None else None,
         visual_blocks=state.visual_blocks,
@@ -2789,6 +2940,7 @@ def compile_editor_ops(
         camera_effects=state.camera_effects if "camera_effects" in changed else None,
         sound_effects=state.sound_effects if "sound_effects" in changed else None,
         media_overlays=state.media_overlays if "media_overlays" in changed else None,
+        **background_section,
     )
     text_diff: list[dict[str, Any]] = []
     if "text" in changed:

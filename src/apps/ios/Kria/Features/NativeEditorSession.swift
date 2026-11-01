@@ -1472,6 +1472,12 @@ struct NativeEditorTemporaryVideo {
             itemID = "fixture-drawing-item"
             variantKey = "initial"
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
+            // KRI-1118: same stub commit transport; the pool visuals are canned (see `refreshVisualLibrary`).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-speaker-background-item"
+            variantKey = "initial"
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-delayed-source") { loadState = .loading }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-song-reference") {
             previewVariant = NativeEditorUITestFixtures.songReferenceVariant
@@ -2994,7 +3000,7 @@ struct NativeEditorTemporaryVideo {
                 refreshDuration()
             } else {
                 phoneTalkingIndices = NativePhoneTalkingSource.sourceIndices(variant: previewVariant, document: document,
-                    pool: pool, lanesEditable: canEdit(.mediaOverlays) || canEdit(.soundEffects))
+                    pool: pool, lanesEditable: phoneTalkingLanesEditable)
                 if let speakers = phoneTalkingIndices {
                     // A cutaway the preview can't place would show the speaker where the MP4 cuts away:
                     // fall back to the finished MP4 rather than preview a different video.
@@ -3370,6 +3376,15 @@ struct NativeEditorTemporaryVideo {
                 if resolvedMedia[key] != nil { continue }
                 sourcePreviewState = .preparing
                 let resolved = try await resolver.resolveMedia(id: asset.mediaID, url: asset.sourceURL, generation: document.revision.baseGeneration)
+                guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+                resolvedMedia[key] = resolved
+            }
+        }
+        if let background = document.speakerBackground {
+            let key = EditorSpeakerBackground.sourceKey(forMediaID: background.mediaID)
+            if resolvedMedia[key] == nil, authoredVisualSources[key] == nil {
+                sourcePreviewState = .preparing
+                let resolved = try await resolveSpeakerBackgroundSource(background, resolver: resolver)
                 guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
                 resolvedMedia[key] = resolved
             }
@@ -4625,6 +4640,11 @@ struct NativeEditorTemporaryVideo {
             }
             return true
         }
+        // KRI-1118: the Background fixture's canned pool.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
+            visualLibrary = NativeEditorUITestFixtures.speakerBackgroundVisuals
+            return true
+        }
         #endif
         guard let api, let itemID, !visualLibraryLoading else { return false }
         visualLibraryLoading = true
@@ -5248,6 +5268,60 @@ struct NativeEditorTemporaryVideo {
             raw: ["token": .string(CameraEmphasis.token), "intensity": .number(min(CameraEmphasis.maxIntensity, max(0.01, strength))), "easing": .string(resolved), "source": .string("user")])
         transactDocument(section: .cameraEffects) { $0.cameraEffects.append(effect) }
         select(.init(kind: .cameraEffect, id: effect.id))
+    }
+
+    // MARK: Speaker background (KRI-1118)
+
+    /// The Background tool exists only when the server advertises `speaker_background` for this variant (a
+    /// device-rendered Talk-to-camera edit on a build that speaks protocol 27, with the kill switch on).
+    /// Never inferred from the lane: a variant with a background but no capability is read-only.
+    var canEditSpeakerBackground: Bool {
+        cloudEditorUnavailableMessage == nil && canEditSection(.speakerBackground)
+    }
+    var speakerBackground: EditorSpeakerBackground? { document.speakerBackground }
+
+    /// A Talking edit's live preview hydrates its source clip once any phone lane is editable: cards,
+    /// sounds, or (KRI-1118) the speaker background, which composites behind that clip.
+    var phoneTalkingLanesEditable: Bool { canEdit(.mediaOverlays) || canEdit(.soundEffects) || canEdit(.speakerBackground) }
+
+    /// Puts one photo or video from the item's Visuals pool behind the speaker, replacing any current one.
+    /// `sourceStart` is where a video begins playing; a photo ignores it. One undo step.
+    @discardableResult
+    func setSpeakerBackground(mediaID: String, kind: VisualMediaKind, sourceStart: Double = 0) -> Bool {
+        guard canEditSpeakerBackground,
+              let value = EditorSpeakerBackground(json: EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart).json)
+        else { return false }
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
+        return true
+    }
+
+    /// Clears the background. A no-op (and no unsaved change) when there is none.
+    @discardableResult
+    func removeSpeakerBackground() -> Bool {
+        guard canEditSpeakerBackground, document.speakerBackground != nil else { return false }
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = nil }
+        return true
+    }
+
+    /// The pool visuals that can sit behind the speaker: ready photos and videos.
+    var speakerBackgroundChoices: [CreationVisual] { Self.backgroundChoices(from: visualLibrary) }
+    static func backgroundChoices(from library: [CreationVisual]) -> [CreationVisual] {
+        library.filter { $0.status == "ready" && VisualMediaKind(rawValue: $0.kind) != nil }
+    }
+
+    /// Bytes for the compiler's pinned `visual-<media_id>` asset. The library is the source of truth for the
+    /// original URL and storage generation; it is refreshed once if the background was saved before it loaded.
+    private func resolveSpeakerBackgroundSource(_ background: EditorSpeakerBackground, resolver: NativeEditorSourceResolver) async throws -> ResolvedEditorSource {
+        func match() -> CreationVisual? {
+            visualLibrary.first { $0.id == background.mediaID && $0.kind == background.kind.rawValue && $0.status == "ready" }
+        }
+        if match() == nil { await refreshVisualLibrary() }
+        guard let asset = match(), let url = asset.originalMediaURL else {
+            throw MediaEngineError.missingAsset(EditorSpeakerBackground.assetID(forMediaID: background.mediaID))
+        }
+        var resolved = try await resolver.resolveMedia(id: asset.id, url: url, generation: asset.sourceGeneration ?? document.revision.baseGeneration)
+        resolved.visualGeneration = asset.sourceGeneration ?? "0"
+        return resolved
     }
 
     // MARK: Drawings (KRI-589)
@@ -7354,8 +7428,9 @@ struct NativeEditorTemporaryVideo {
         case .captions, .captionMeta: return canEditCaptions
         case .mix, .music, .backgroundMusic: return canEditMix
         // KRI-589: only the per-operation `drawings.*` capabilities open drawings.
+        // KRI-1118: only the server's `speaker_background` capability opens the background.
         case .soundEffects, .mediaOverlays, .visualBlocks, .motionScenes, .cameraEffects, .drawings,
-             .carouselMoment, .lyrics, .title: return false
+             .speakerBackground, .carouselMoment, .lyrics, .title: return false
         // KRI-306: the server capability decides; with no capability the section stays closed.
         case .orientation, .landscapeFit: return false
         // KRI-428: only the per-operation `user_song.*` capabilities open it.
@@ -7388,6 +7463,7 @@ struct NativeEditorTemporaryVideo {
             case .motionScenes: differs = document.motionScenes != cleanDocument.motionScenes || document.motionRuntimeHash != cleanDocument.motionRuntimeHash
             case .cameraEffects: differs = document.cameraEffects != cleanDocument.cameraEffects
             case .drawings: differs = document.drawings != cleanDocument.drawings
+            case .speakerBackground: differs = document.speakerBackground != cleanDocument.speakerBackground
             case .carouselMoment: differs = document.carouselMoment != cleanDocument.carouselMoment
             case .title: differs = document.title != cleanDocument.title
             case .userSong: differs = document.userSong != cleanDocument.userSong
@@ -7544,6 +7620,7 @@ struct NativeEditorTemporaryVideo {
         let backgroundObject = Self.object(value["background_music"])
         let lyricsObject = Self.object(value["lyrics"])
         let carouselObject = Self.object(value["carousel_moment"])
+        let speakerBackgroundObject = Self.object(value["speaker_background"])
         var captionMeta = object("caption_meta", .captionMeta)
         if let y = captionMeta?["y_frac"]?.numberValue, !(0.30...0.90).contains(y),
            captionMeta?["appearance"]?.objectValue?["position_y_frac"] != nil {
@@ -7578,6 +7655,7 @@ struct NativeEditorTemporaryVideo {
             cameraEffects: array("camera_effects", .cameraEffects),
             drawings: array("drawings", .drawings),
             carouselMoment: changedSections.contains(.carouselMoment) ? (carouselObject.map(EditorCarouselMomentPatch.replace) ?? .remove) : .omitted,
+            speakerBackground: changedSections.contains(.speakerBackground) ? (speakerBackgroundObject.map(EditorSpeakerBackgroundPatch.replace) ?? .remove) : .omitted,
             title: changedSections.contains(.title) ? value["title"]?.stringValue : nil,
             guidedRevisionNumber: guidedRevisionNumber,
             editorStateVersion: 2,
@@ -7613,6 +7691,9 @@ struct NativeEditorTemporaryVideo {
         if sections.mediaOverlays { result.insert(.mediaOverlays) }; if sections.visualBlocks { result.insert(.visualBlocks) }
         if sections.motionScenes { result.insert(.motionScenes) }; if sections.cameraEffects { result.insert(.cameraEffects) }; if sections.drawings { result.insert(.drawings) }
         if sections.carouselMoment { result.insert(.carouselMoment) }; if sections.title { result.insert(.title) }
+        // KRI-1118: an accepted background is saved even if the server does not echo the section (a rejected
+        // one answers 422 and never reaches here), the same stance as the song.
+        if sections.speakerBackground || submittedSections.contains(.speakerBackground) { result.insert(.speakerBackground) }
         // KRI-428: a user_song the server accepted is saved even if it does not echo the section
         // (a rejected one answers 422 and never reaches here).
         if sections.userSong || submittedSections.contains(.userSong) { result.insert(.userSong) }
@@ -7703,6 +7784,7 @@ struct NativeEditorTemporaryVideo {
             baseline.motionRuntimeHash = submitted.motionRuntimeHash
         case .cameraEffects: baseline.cameraEffects = submitted.cameraEffects
         case .drawings: baseline.drawings = submitted.drawings
+        case .speakerBackground: baseline.speakerBackground = submitted.speakerBackground
         case .carouselMoment: baseline.carouselMoment = submitted.carouselMoment
         case .title: baseline.title = submitted.title
         case .userSong: baseline.userSong = submitted.userSong

@@ -55,6 +55,7 @@ from app.services.creator_capabilities import (
     CAPABILITY_REACTION_BEATS,
     CAPABILITY_TIMED_CARDS,
     ending_clip_candidates,
+    speaker_background_open,
 )
 from app.services.length_policy import creator_duration_s
 
@@ -169,7 +170,12 @@ log = structlog.get_logger()
 # (creator context, footage, manifest, conversation, message) moved to
 # prompts/main_creator_turn.txt at the end so the rules above it form a shared prefix.
 # v105 (KRI-1077): title animation names come from the vocab registry (all designed edges).
-MAIN_CREATOR_PROMPT_VERSION = "2026-10-30-v105"
+# v106 (prompt fidelity, animation): an UNNAMED animation ask ("with animations", "animated
+# text") is a `text` requirement carrying `animation: "any"`, not prose only; a named one
+# keeps its id. One fact for both: the disclosure unit's interim `animated: true` fact is gone.
+# v107 (KRI-1117): `background_media` (a photo / looping video behind the Talking speaker), taught
+# only where the manifest advertises `speaker_background`; every other prompt is byte-identical.
+MAIN_CREATOR_PROMPT_VERSION = "2026-10-31-v107"
 
 # Prior chat messages the model sees. Callers must bound their history to this:
 # runtime v2 loaded 24 rows, so every turn on a longer thread failed input
@@ -349,6 +355,28 @@ plays to its end and this video follows it, so never also use that video in `rea
 stays for a photo held over the last seconds of the talk, and a plain "end on ..." about the talk
 itself is not an `ending_clip`. Say in `summary`, in plain words, that the video is added after
 the talk with its own sound.
+""".strip("\n")
+
+# KRI-1117: a photo or looping video shown BEHIND the speaker for the whole talk (a green screen
+# without the green). Appended to the `$reaction_beats_section` slot ONLY when the manifest
+# advertises `speaker_background`, so every other prompt stays byte-identical. The repair
+# (`creator_capabilities.repair_creator_speaker_background`) never trusts the model's choice alone
+# and writes the creator's camera pick in when the model leaves it out.
+_SPEAKER_BACKGROUND_PROMPT_SECTION = """
+PHOTO OR VIDEO BEHIND THE SPEAKER (iPhone Talking only)
+When the creator asks to put a photo or video BEHIND them for the whole talk, like a green
+screen ("put this photo behind me", "use the beach video as my background", "arkamda bu
+fotoğraf dursun"), set `background_media`: {"media_id": "<the matching media_context entry's
+exact media_id>"}. Find it by matching what the creator named against the IMAGE or VIDEO
+entries in `media_context` (its `filename`, its `creator_context`, or its
+`analysis_only_not_copy` evidence), then copy THAT entry's exact `media_id`; never invent,
+shorten or guess an id, and never use one of the speaker's own clips. A video background plays
+muted and loops; add `source_start_s` only when the creator names where it should start. When
+the manifest carries `speaker_background_pick`, the creator already chose that background in the
+camera: set `background_media` to that exact id unless the creator now names a different one.
+A background is only the backdrop: never also use the same photo or video in `reaction_beats`,
+`closing_media` or as a cutaway. A plain "background" about audio ("background music") is not
+this. Say in `summary`, in plain words, that it sits behind them for the whole video.
 """.strip("\n")
 
 # Exact-timed small cards (flag PHONE_TIMED_CARDS_ENABLED) on a phone Montage / Voiceover
@@ -613,7 +641,12 @@ adding or ending on a clip keeps `last_clip` as above. How on-screen text should
 {{TEXT_ANIMATION_EDGES}}, never none or the name in brackets) for "animated with typewriter";
 `position` ("top_left", "top", "top_right", "middle", "bottom_left", "bottom", "bottom_right")
 for "bottom left"; `placeholder` true when they ask for placeholder text to fill in later
-("placeholder location").
+("placeholder location"). Animation asked WITHOUT a name ("with animations", "animated text",
+"make the text animate") is still a `text` requirement carrying the fact, never description
+alone: {"kind": "text", "scope": "global", "facts": {"animation": "any"}} ("any" lets the
+server pick the entrance; "explain why people should visit Assos, with animations" => that
+text requirement for the explanation, animation "any"). A named one keeps its id ("fade in the
+captions" => animation "fade"). Record it only when the creator asked for animation.
 For requested heading stacks, preserve `heading_level` (1 title, 2 smaller subtitle,
 3 subordinate detail), `stack_id` (shared only by explicitly connected lines), `below_text`
 (exact predecessor words) and `smaller_than` (exact larger text words when smaller is asked)
@@ -984,6 +1017,12 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                     if _timed_cards_available(input.capability_manifest)
                     else ""
                 )
+                # KRI-1117: a photo / looping video behind the speaker; "" unless advertised.
+                + (
+                    "\n" + _SPEAKER_BACKGROUND_PROMPT_SECTION
+                    if speaker_background_open(input.capability_manifest)
+                    else ""
+                )
             ),
             # KRI-188: "" (flag off) adds no bytes; same line-suffix trick.
             brief_section=("\n" + _BRIEF_PROMPT_SECTION if input.brief_enabled else ""),
@@ -1156,6 +1195,9 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                             True if requested_duration_s is not None else None
                         ),
                         "creator_duration_s": requested_duration_s,
+                        # Pace provenance is server-owned too; the route re-stamps it from
+                        # the creator's words (`_apply_explicit_render_intent`).
+                        "pacing_requested": None,
                         "selected_music_section": None,
                         # Preserve the actual requested target rather than a
                         # conflicting model-selected duration.

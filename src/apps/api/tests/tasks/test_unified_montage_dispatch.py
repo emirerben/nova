@@ -1001,6 +1001,7 @@ def test_a_vertical_choice_with_bars_pins_the_canvas_and_letterboxes_sideways_cl
     job.all_candidates["creator_render_shape"] = {
         "output_orientation": "portrait",
         "landscape_fit": "fit",
+        "origin": "creator",
     }
 
     gb._run_generative_job(str(job.id))

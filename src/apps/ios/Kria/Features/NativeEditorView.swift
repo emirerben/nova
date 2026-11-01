@@ -651,7 +651,7 @@ struct NativeEditorView: View {
                                     .transition(panelTransition)
                             }
                             if !keyboardVisible && !lineEditing {
-                                NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, showsDraw: session.canAddDrawing, onSelect: selectTool)
+                                NativeEditorToolRail(selected: panel?.tool, availableWidth: area.size.width - 24, connected: true, showsDraw: session.canAddDrawing, showsBackground: session.canEditSpeakerBackground, onSelect: selectTool)
                             }
                         }
                         .frame(width: panelIsOpen ? max(0, area.size.width - 24) : min(328, max(0, area.size.width - 24)))
@@ -714,6 +714,8 @@ struct NativeEditorView: View {
             ) { changePanel(to: nil) }
         case .visuals:
             NativeVisualPanel(session: session, uploads: model.uploads, projectID: project.id, panelDrafts: panelDrafts) { changePanel(to: nil) }
+        case .background:
+            NativeBackgroundPanel(session: session, uploads: model.uploads, projectID: project.id) { changePanel(to: nil) }
         case .sounds:
             NativeSoundsPanel(session: session, panelDrafts: panelDrafts) { changePanel(to: nil) }
         case .drawing(let id):
@@ -742,7 +744,7 @@ struct NativeEditorView: View {
             // An empty draft returns nil and the pending-text observer closes the panel.
             if let selection = session.finishTextCreation() { textCreated(selection) }
         case .text: textEditingDone()
-        case .captions, .visuals, .sounds, .drawing: changePanel(to: nil)
+        case .captions, .visuals, .background, .sounds, .drawing: changePanel(to: nil)
         case nil: break
         }
     }
@@ -792,6 +794,7 @@ struct NativeEditorView: View {
         case .visuals:
             changePanel(to: .visuals)
             session.select(nil)
+        case .background: changePanel(to: .background)
         case .sounds: changePanel(to: .sounds)
         case .draw: enterDrawMode()
         default:

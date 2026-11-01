@@ -997,7 +997,7 @@ class GitDiffTests(unittest.TestCase):
             ),
             (
                 "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
-                (True, "covered", "kri-841-talking-ending-clip"),
+                (True, "covered", "kri-841-talking-ending-clip,speaker-background"),
             ),
             (
                 "src/apps/api/tests/tasks/test_kri841_talking_ending_clip.py",
@@ -1024,7 +1024,7 @@ class GitDiffTests(unittest.TestCase):
                 (
                     True,
                     "covered",
-                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-760-whole-line-ask,kri-648-phone-text,kri-29ekim-post-approval-text-sequence",
+                    "kri-492-length-ownership,kri-524-creation,kri-577-reliability-gates,kri-1124-withdrawn-labels,kri-760-whole-line-ask,kri-648-phone-text,kri-29ekim-post-approval-text-sequence",
                 ),
             ),
             (
@@ -1251,9 +1251,11 @@ class GitDiffTests(unittest.TestCase):
             output.read_text(),
             "api=false\nios=true\nios_ui=true\nshared_motion=false\nnative_validation=true\nios_ui_groups=full\n"
             "ios_ui_shards=1\njourney=false\njourney_coverage=not_applicable\n"
-            'journey_ids=\njourney_needs_native=false\nnative_legs=["unit"]\n',
+            'journey_ids=\njourney_needs_native=false\nnative_legs=["unit"]\n'
+            "ios_render_evidence=false\n",
         )
         self.assertIn("ios: run", summary.read_text())
+        self.assertIn("Export/OCR unit proofs: skipped", summary.read_text())
         self.assertIn("iOS UI groups: full (1 native leg)", summary.read_text())
 
 

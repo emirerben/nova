@@ -157,6 +157,16 @@
             "title": "Output Orientation",
             "type": "string"
           },
+          "render_shape_origin": {
+            "default": null,
+            "enum": [
+              "explicit_pick",
+              "preselected"
+            ],
+            "nullable": true,
+            "title": "Render Shape Origin",
+            "type": "string"
+          },
           "speech_cleanup_analysis_id": {
             "default": null,
             "format": "uuid",
@@ -1745,6 +1755,11 @@
             "title": "Song Range Questions",
             "type": "boolean"
           },
+          "speaker_background": {
+            "default": false,
+            "title": "Speaker Background",
+            "type": "boolean"
+          },
           "suggestion_chips": {
             "default": false,
             "title": "Suggestion Chips",
@@ -3185,6 +3200,7 @@
                 "singleWordText",
                 "freezeFrame",
                 "behindSubject",
+                "speakerBackground",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3310,6 +3326,7 @@
                 "singleWordText",
                 "freezeFrame",
                 "behindSubject",
+                "speakerBackground",
                 "captions",
                 "customEffects",
                 "mediaCards",
@@ -3336,6 +3353,11 @@
             ],
             "title": "Schema Version",
             "type": "integer"
+          },
+          "speaker_background": {
+            "$ref": "#/components/schemas/SpeakerBackgroundLayer",
+            "default": null,
+            "nullable": true
           },
           "text_layers": {
             "items": {
@@ -3850,6 +3872,11 @@
             "title": "Sound Effects",
             "type": "array"
           },
+          "speaker_background": {
+            "$ref": "#/components/schemas/EditorCommitSpeakerBackground",
+            "default": null,
+            "nullable": true
+          },
           "text_elements": {
             "default": null,
             "items": {
@@ -4044,6 +4071,11 @@
             "title": "Sound Effects",
             "type": "boolean"
           },
+          "speaker_background": {
+            "default": false,
+            "title": "Speaker Background",
+            "type": "boolean"
+          },
           "text_elements": {
             "title": "Text Elements",
             "type": "boolean"
@@ -4075,6 +4107,40 @@
           "title"
         ],
         "title": "EditorCommitSections",
+        "type": "object"
+      },
+      "EditorCommitSpeakerBackground": {
+        "additionalProperties": false,
+        "description": "Editor Save section for the Talk-to-camera background (KRI-1117).\n\nThe wire is the same ``{media_id, kind, source_start_s}`` the editor document carries:\nthe media id names a visual in this item's pool, never a path (the server pins the\nexact bytes). Sent as an object to set it, as an explicit ``null`` to clear it.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "media_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Media Id",
+            "type": "string"
+          },
+          "source_start_s": {
+            "default": 0.0,
+            "maximum": 1800.0,
+            "minimum": 0.0,
+            "title": "Source Start S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "media_id",
+          "kind"
+        ],
+        "title": "EditorCommitSpeakerBackground",
         "type": "object"
       },
       "EditorCommitUserSong": {
@@ -4492,6 +4558,11 @@
             "nullable": true,
             "title": "Sound Effects",
             "type": "array"
+          },
+          "speaker_background": {
+            "$ref": "#/components/schemas/EditorCommitSpeakerBackground",
+            "default": null,
+            "nullable": true
           },
           "text_elements": {
             "default": null,
@@ -10912,6 +10983,51 @@
           "height"
         ],
         "title": "SourceCrop",
+        "type": "object"
+      },
+      "SpeakerBackgroundLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "loop": {
+            "default": true,
+            "title": "Loop",
+            "type": "boolean"
+          },
+          "media_kind": {
+            "enum": [
+              "image",
+              "video"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "source_start": {
+            "default": 0.0,
+            "maximum": 1800.0,
+            "minimum": 0,
+            "title": "Source Start",
+            "type": "number"
+          },
+          "subject_track_id": {
+            "default": "subtitled",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Subject Track Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "media_kind"
+        ],
+        "title": "SpeakerBackgroundLayer",
         "type": "object"
       },
       "StaggeredContent": {

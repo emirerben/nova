@@ -168,34 +168,53 @@ def unconfirmed_order_reason(names: Sequence[str] = ()) -> str:
     )
 
 
-def row_relations(rows: Sequence[SequenceRow], present: Collection[str] | None = None) -> list[str]:
-    """How each row relates to the rows before it, by the rule ``apply_sequence`` seats by:
-    a clip belongs to the FIRST row that names it (KRI-764).
+def seat_owners(
+    rows: Sequence[SequenceRow], present: Collection[str] | None = None
+) -> dict[str, int]:
+    """The row that seats each clip: the FIRST first / last row naming it, else the first
+    ``then`` row naming it (KRI-764, KRI-1109).
 
-    * ``new``: the row names a clip no earlier row seated (or none at all, e.g. unresolved).
+    A pin names one place for its clips, a positionless group only gathers them, so a pin
+    takes its clip out of a group however the planner listed the two (Leverkusen M3: the
+    whole match as one group, then "ending on IMG_1043"). Between two pins the earlier
+    claim stands. ``present`` limits the clips considered; None considers them all.
+    """
+    owner: dict[str, int] = {}
+    for pinned in (True, False):
+        for at, (position, _name, members, status) in enumerate(rows):
+            if status != "resolved" or (position is not None) != pinned:
+                continue
+            for member in members:
+                if present is None or member in present:
+                    owner.setdefault(member, at)
+    return owner
+
+
+def row_relations(rows: Sequence[SequenceRow], present: Collection[str] | None = None) -> list[str]:
+    """How each row relates to the others, by the rule ``apply_sequence`` seats by
+    (``seat_owners``).
+
+    * ``new``: the row seats a clip (or names none at all, e.g. unresolved).
     * ``repeat``: a first / last row whose clips an earlier row already seated at that same
       spot. The creator said it twice (a description, then the clip's file name): satisfied.
-    * ``conflict``: a first / last row whose clips an earlier row seated at another spot.
+    * ``conflict``: a first / last row whose clips an earlier pin seated at the other end.
       One clip cannot be both first and last; the earlier claim stands.
-    * ``contained``: a ``then`` group made only of clips earlier groups already seated.
+    * ``contained``: a ``then`` group made only of clips other rows seat.
 
     ``present`` limits the clips considered (the ones in the edit); None considers them all.
     """
-    seat_of: dict[str, str] = {}
+    owner = seat_owners(rows, present)
     out: list[str] = []
-    for position, _name, members, status in rows:
-        spot = position or "then"
+    for at, (position, _name, members, status) in enumerate(rows):
         mine = [m for m in members if status == "resolved" and (present is None or m in present)]
-        fresh = [m for m in mine if m not in seat_of]
-        if not mine or fresh:
+        if not mine or any(owner[m] == at for m in mine):
             out.append("new")
         elif position is None:
             out.append("contained")
-        elif {seat_of[m] for m in mine} == {spot}:
+        elif {rows[owner[m]][0] for m in mine} == {position}:
             out.append("repeat")
         else:
             out.append("conflict")
-        seat_of.update(dict.fromkeys(fresh, spot))
     return out
 
 
@@ -207,20 +226,20 @@ def apply_sequence(
     """Seat the described groups: ``first`` ones lead, ``last`` ones close, the rest follow.
 
     A group is the items the server matched to the creator's words (clip facts), kept in
-    the order they already had. An item named by two groups belongs to the first one. Items
-    no group names keep their relative order between the leading and the closing groups.
+    the order they already had. An item named by two groups belongs to the one
+    ``seat_owners`` gives it: a first / last group before a ``then`` group, else the first
+    one listed. Items no group names keep their relative order between the leading and the
+    closing groups.
     """
     ident: Callable[[T], str] = key or (lambda item: str(item))
-    claimed: set[str] = set()
     buckets: dict[str, list[T]] = {"first": [], "mid": [], "last": []}
-    refs = {ident(item) for item in ordered}
-    for position, _name, members, _status in rows:
-        wanted = {m for m in members if m in refs and m not in claimed}
-        claimed |= wanted
+    owner = seat_owners(rows, present={ident(item) for item in ordered})
+    for at, (position, _name, _members, _status) in enumerate(rows):
+        wanted = {m for m, row in owner.items() if row == at}
         buckets[position or "mid"].extend(item for item in ordered if ident(item) in wanted)
-    if not claimed:
+    if not owner:
         return list(ordered)
-    rest = [item for item in ordered if ident(item) not in claimed]
+    rest = [item for item in ordered if ident(item) not in owner]
     return [*buckets["first"], *buckets["mid"], *rest, *buckets["last"]]
 
 

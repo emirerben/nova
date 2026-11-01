@@ -424,6 +424,9 @@ struct ResolvedEditorSource: Sendable {
     let mediaID: String
     let asset: MediaAsset
     let url: URL
+    /// The Visuals-pool storage generation the bytes belong to, for a source that is a pool visual
+    /// (the Talk-to-camera background, KRI-1118). Nil for every other source.
+    var visualGeneration: String? = nil
 }
 
 /// URLSession download locations end in .tmp. AVFoundation rejects otherwise

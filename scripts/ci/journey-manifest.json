@@ -196,13 +196,34 @@
     {
       "id": "leverkusen-m2-hidden-part",
       "needs_native": false,
-      "api_tests": "tests/kria/test_m2_hidden_part_replay.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/agents/test_clip_intent_planner.py",
+      "api_tests": "tests/kria/test_m2_hidden_part_replay.py tests/kria/test_lev_m2_hidden_part_loop.py tests/services/test_creator_render_contract.py tests/services/test_cloud_render_contract.py tests/agents/test_clip_intent_planner.py",
       "paths": [
         "src/apps/api/app/kria/hidden_parts.py",
         "src/apps/api/app/pipeline/hidden_parts.py",
+        "src/apps/api/app/services/clip_intent_resolution.py",
         "src/apps/api/tests/fixtures/creator_render_contract.schema.json",
         "src/apps/api/tests/fixtures/m2_leverkusen_hidden_part.json",
-        "src/apps/api/tests/kria/test_m2_hidden_part_replay.py"
+        "src/apps/api/tests/kria/test_m2_hidden_part_replay.py",
+        "src/apps/api/tests/kria/test_lev_m2_hidden_part_loop.py"
+      ]
+    },
+    {
+      "id": "kri-1102-visual-photo-label",
+      "needs_native": false,
+      "api_tests": "tests/services/test_kri1102_visual_photo_label.py tests/services/test_kri1069_photo_chronology.py",
+      "paths": [
+        "src/apps/api/app/services/creator_render_contract.py",
+        "src/apps/api/tests/fixtures/kri1102_m2_selfie_label.json",
+        "src/apps/api/tests/services/test_kri1102_visual_photo_label.py"
+      ]
+    },
+    {
+      "id": "leverkusen-m4-clip-cap",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1122_m4_clip_cap_replay.py tests/agents/test_clip_intent_planner.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/m4_leverkusen_clip_cap.json",
+        "src/apps/api/tests/kria/test_kri1122_m4_clip_cap_replay.py"
       ]
     },
     {
@@ -739,6 +760,15 @@
       ]
     },
     {
+      "id": "kri-1123-story-order-pins-seated",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1123_story_order_pins.py tests/kria/test_kri1067_filming_order_end_picker.py tests/kria/test_order_basis_pins.py tests/services/test_request_following_kri522.py",
+      "paths": [
+        "src/apps/api/tests/kria/test_kri1123_story_order_pins.py",
+        "src/apps/api/tests/fixtures/kri1123_m4_story_order.json"
+      ]
+    },
+    {
       "id": "kri-993-subject-scope",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri993_subject_scope.py tests/kria/test_kri993_subject_scope_pick.py",
@@ -1111,6 +1141,15 @@
       ]
     },
     {
+      "id": "kri-1124-withdrawn-labels",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1124_withdrawn_labels_replay.py",
+      "paths": [
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/tests/fixtures/m4_leverkusen_withdrawn_labels.json"
+      ]
+    },
+    {
       "id": "kri-792-named-phrase-cuts",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri792_named_phrase_cuts.py",
@@ -1392,9 +1431,15 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
+        "src/apps/api/app/kria/route_disclosure.py",
+        "src/apps/api/app/kria/animation_ask.py",
+        "src/apps/api/app/pipeline/story_direction.py",
+        "src/apps/api/tests/fixtures/kria_replay/assos/README.md",
+        "src/apps/api/tests/fixtures/kria_replay/assos/fixture.json",
+        "src/apps/api/tests/fixtures/kria_replay/assos/research.json",
         "src/apps/api/app/kria/planner.py",
         "src/apps/api/app/kria/runtime.py",
         "src/apps/api/app/kria/plan_review.py",
@@ -1838,6 +1883,17 @@
         "src/apps/api/tests/kria/test_brief_rendered_speech_facts.py",
         "src/apps/api/tests/kria/test_runtime_talking_first_draft.py",
         "src/apps/api/tests/kria/test_kri787_merope_t1_runtime_postgres.py"
+      ]
+    },
+    {
+      "id": "kri-1125-pick-collision",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1125_pick_collision_replay.py tests/services/test_clip_selection.py tests/services/test_kri947_kri951_m2_picker_rows.py tests/kria/test_kri950_tap_keeps_checked_list.py tests/kria/test_kri950_tap_keeps_checked_list_postgres.py tests/kria/test_clip_selection_turns_postgres.py tests/kria/test_kri761_look_alike_exclusions.py tests/kria/test_kri1025_none_answer_pin.py tests/kria/test_lev_m2_found_clip_picker.py tests/kria/test_kri962_voiceover_tie_question.py",
+      "paths": [
+        "src/apps/api/app/services/clip_pick_collisions.py",
+        "src/apps/api/app/services/clip_selection.py",
+        "src/apps/api/tests/kria/test_kri1125_pick_collision_replay.py",
+        "src/apps/api/tests/fixtures/kri1125_m4_warmup_pick.json"
       ]
     },
     {
@@ -2464,6 +2520,39 @@
         "src/apps/api/tests/integration/test_reference_style_save_postgres.py",
         "src/apps/ios/Tests/KriaTests/ReferenceStyleSaveTests.swift",
         "src/apps/ios/Tests/Fixtures/ReferenceStyleSave.json"
+      ]
+    },
+    {
+      "id": "speaker-background",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_speaker_background.py tests/tasks/test_speaker_background_worker.py tests/routes/test_speaker_background_editor.py tests/services/test_phone_speaker_background_pin.py tests/integration/test_speaker_background_pin_postgres.py tests/kria/test_speaker_background_chat.py tests/tasks/test_speaker_background_strategy_worker.py tests/routes/test_speaker_background_chat_ops.py tests/integration/test_speaker_background_camera_pick_postgres.py tests/kria/test_editor_capability_parity.py",
+      "xctests": [
+        "KriaTests/SpeakerBackgroundEditorTests/testEveryFixtureLayerTheEditorCanExpressCompilesToTheSharedRecipeLayer",
+        "KriaTests/SpeakerBackgroundEditorTests/testClearingTheBackgroundCompilesByteIdenticalToAnEditThatNeverHadOne",
+        "KriaTests/SpeakerBackgroundEditorTests/testSaveSendsTheChosenBackgroundThenNullWhenItIsCleared",
+        "KriaTests/SpeakerBackgroundEditorTests/testTheLaneIsNotAnUnsupportedLaneAndAnUnreadableOneIs",
+        "KriaUITests/SpeakerBackgroundUITests/testNoneRemovesTheBackgroundAndBothChoicesSurviveSaveAndReopen",
+        "KriaUITests/SpeakerBackgroundUITests/testPickingAPhotoSelectsItAndMakesTheEditSaveable"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/portable_speaker_background.py",
+        "src/apps/api/app/pipeline/phone_subtitled_lanes.py",
+        "src/apps/api/app/services/phone_speaker_background.py",
+        "src/apps/api/app/agents/editor_ops_v2/background.py",
+        "src/apps/api/prompts/edit_copilot_ops/speaker_background.txt",
+        "src/apps/api/tests/kria/test_speaker_background_chat.py",
+        "src/apps/api/tests/tasks/test_speaker_background_strategy_worker.py",
+        "src/apps/api/tests/routes/test_speaker_background_chat_ops.py",
+        "src/apps/api/tests/integration/test_speaker_background_camera_pick_postgres.py",
+        "src/apps/api/tests/kria/test_speaker_background.py",
+        "src/apps/api/tests/tasks/test_speaker_background_worker.py",
+        "src/apps/api/tests/routes/test_speaker_background_editor.py",
+        "src/apps/api/tests/services/test_phone_speaker_background_pin.py",
+        "src/apps/api/tests/integration/test_speaker_background_pin_postgres.py",
+        "tests/fixtures/speaker-background-parity/",
+        "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift",
+        "src/apps/ios/Tests/KriaTests/SpeakerBackgroundEditorTests.swift",
+        "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift"
       ]
     }
   ]

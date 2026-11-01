@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import PhotosUI
 
 struct TeleprompterScreen: View {
     @StateObject private var flow: TeleprompterRecordingFlow
@@ -23,9 +24,14 @@ struct TeleprompterScreen: View {
     init(accountID: String, projectID: UUID, admissionMessage: @escaping (TeleprompterTakeManifest?) -> String?,
          intake: @escaping (TeleprompterTakeManifest, URL) async -> TeleprompterIntakeResult,
          intakeState: @escaping (TeleprompterTakeManifest) async -> TeleprompterIntakeResult?,
+         speakerBackgroundEnabled: Bool = false,
+         backgroundIntake: BackgroundIntake? = nil,
+         backgroundStatement: BackgroundStatement? = nil,
          reportDiagnostic: @escaping (RecorderDiagnosticReport) -> Void = { _ in }) {
         _flow = StateObject(wrappedValue: TeleprompterRecordingFlow(
-            accountID: accountID, projectID: projectID, reportDiagnostic: reportDiagnostic))
+            accountID: accountID, projectID: projectID, speakerBackgroundEnabled: speakerBackgroundEnabled,
+            backgroundIntake: backgroundIntake, backgroundStatement: backgroundStatement,
+            reportDiagnostic: reportDiagnostic))
         self.admissionMessage = admissionMessage; self.intake = intake; self.intakeState = intakeState
     }
 
@@ -42,9 +48,15 @@ struct TeleprompterScreen: View {
         .interactiveDismissDisabled(flow.captureBusy || flow.usingTake)
         .task {
             await flow.load()
+            // A statement the last opening could not make is retried here.
+            await flow.syncBackgroundStatement()
             while !Task.isCancelled {
                 if !flow.usingTake, let take = flow.selectedTake, take.status == .attaching,
-                   let state = await intakeState(take) { flow.apply(state) }
+                   let state = await intakeState(take) {
+                    flow.apply(state)
+                    // Resumes a background upload a relaunch interrupted; a no-op once it was handed over.
+                    if case .failed = state {} else { await flow.uploadBackgroundIfNeeded() }
+                }
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
             }
         }
@@ -101,7 +113,7 @@ struct TeleprompterScreen: View {
                                 height: max(0, geometry.size.height - topInset - bottomInset))
             ZStack {
                 Color.black.ignoresSafeArea()
-                TeleprompterCameraPreview(camera: flow.camera)
+                TeleprompterPreviewSurface(flow: flow, camera: flow.camera)
                     .frame(width: geometry.size.width, height: geometry.size.width * 16 / 9)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityHidden(true)
@@ -111,6 +123,9 @@ struct TeleprompterScreen: View {
                     HStack {
                         KriaGlassCloseButton(identifier: "teleprompter-close", label: flow.captureBusy ? "Stop and review take" : "Close camera", action: closeCapture)
                         Spacer()
+                        if flow.speakerBackgroundEnabled {
+                            TeleprompterBackgroundMenu(flow: flow, accessibilityLayout: dynamicTypeSize.isAccessibilitySize)
+                        }
                         Button { showsWindowSettings = true } label: {
                             HStack(spacing: 6) { KriaIcon(.settings); if !dynamicTypeSize.isAccessibilitySize { Text("Text window") } }
                                 .font(KriaFont.body(13).weight(.semibold)).padding(.horizontal, 12).frame(minHeight: 44)
@@ -140,6 +155,13 @@ struct TeleprompterScreen: View {
                     openSettings: { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } })
             }
             if let error = flow.error { errorText(error).padding(.horizontal, 16) }
+            if let note = flow.backgroundNote {
+                Text(note).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    .padding(.horizontal, 16).accessibilityIdentifier("teleprompter-background-note")
+            }
+            if flow.background != nil, flow.stage == .camera || flow.stage == .recording {
+                TeleprompterBackgroundPreviewNotice(camera: flow.camera)
+            }
             if flow.camera.micSilent {
                 Label("We can’t hear you. Check that nothing is covering the microphone, then stop and record again.",
                       systemImage: "mic.slash.fill")
@@ -194,6 +216,15 @@ struct TeleprompterScreen: View {
                             Text(TeleprompterRecordingFlow.quietTakeMessage).font(KriaFont.body(14))
                                 .foregroundStyle(KriaColor.mutedInk).accessibilityIdentifier("teleprompter-quiet-take")
                         }
+                        if take.speakerBackground != nil {
+                            Text("Your background is added with this take. The recording itself stays unedited.")
+                                .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-review-background")
+                        }
+                        if let note = flow.backgroundNote {
+                            Text(note).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                                .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-background-note")
+                        }
                         if let note = flow.photosNote {
                             Text(note).font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
                                 .frame(maxWidth: .infinity, alignment: .leading).accessibilityIdentifier("teleprompter-photos-note")
@@ -239,6 +270,96 @@ struct TeleprompterScreen: View {
     }
     private func errorText(_ text: String) -> some View {
         Text(text).font(KriaFont.body(14)).foregroundStyle(KriaColor.failureText).frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The camera view: the live matted preview while a background is active and frames are flowing, otherwise the plain
+/// camera preview. Observes the camera itself, which the screen's own flow object does not republish.
+private struct TeleprompterPreviewSurface: View {
+    @ObservedObject var flow: TeleprompterRecordingFlow
+    @ObservedObject var camera: TeleprompterCamera
+
+    var body: some View {
+        if flow.background != nil, let preview = flow.livePreview, camera.liveFramesAttached {
+            LiveBackgroundPreviewView(preview: preview).accessibilityIdentifier("teleprompter-live-background")
+        } else {
+            TeleprompterCameraPreview(camera: camera)
+        }
+    }
+}
+
+/// S24: the live composite is a convenience, not the render. Said plainly, never as a promise of the same pixels.
+private struct TeleprompterBackgroundPreviewNotice: View {
+    @ObservedObject var camera: TeleprompterCamera
+    var body: some View {
+        Label(camera.liveFramesAttached ? "Preview. Your recording stays unedited." : "Your background shows once the camera is ready.",
+              systemImage: "eye")
+            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
+            .padding(.horizontal, 12).padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+            .kriaGlassPanel(cornerRadius: 16).padding(.horizontal, 16)
+            .accessibilityIdentifier("teleprompter-background-preview-notice")
+    }
+}
+
+/// The "Background" capsule: pick a photo or video from the library, or clear it. Nothing uploads from here.
+private struct TeleprompterBackgroundMenu: View {
+    @ObservedObject var flow: TeleprompterRecordingFlow
+    let accessibilityLayout: Bool
+    @State private var showsPicker = false
+    @State private var item: PhotosPickerItem?
+    @State private var loading = false
+
+    private var stateLabel: String {
+        switch flow.background?.reference.kind { case .image: "Photo"; case .video: "Video"; case nil: "None" }
+    }
+
+    var body: some View {
+        Menu {
+            Button { choose() } label: { Label("Choose photo or video", systemImage: "photo.on.rectangle") }
+                .accessibilityIdentifier("teleprompter-background-choose")
+            if flow.background != nil {
+                Button(role: .destructive) { flow.clearBackground() } label: { Label("None", systemImage: "xmark.circle") }
+                    .accessibilityIdentifier("teleprompter-background-clear")
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if loading { ProgressView() } else { KriaIcon(.gallery) }
+                if !accessibilityLayout { Text("Background") }
+            }
+            .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
+            .padding(.horizontal, 12).frame(minHeight: 44).kriaFloatingSurface(Capsule())
+        }
+        .disabled(flow.captureBusy || loading)
+        .accessibilityLabel("Background").accessibilityValue(stateLabel)
+        .accessibilityIdentifier("teleprompter-background")
+        .photosPicker(isPresented: $showsPicker, selection: $item, matching: .any(of: [.images, .videos]))
+        .onChange(of: item) { _, picked in
+            guard let picked else { return }
+            item = nil
+            let isVideo = picked.supportedContentTypes.contains { $0.conforms(to: .movie) }
+            loading = true
+            Task {
+                defer { loading = false }
+                guard let url = try? await picked.loadTransferable(type: ImportedMedia.self)?.url else {
+                    flow.backgroundNote = "Couldn’t read that file. Choose another photo or video."
+                    return
+                }
+                flow.chooseBackground(from: url, kind: isVideo ? .video : .image)
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    private func choose() {
+        #if DEBUG
+        // Simulator UI tests cannot drive the system picker: a generated photo stands in for the library.
+        if TeleprompterBackgroundFixture.isRequested, let url = TeleprompterBackgroundFixture.makePhoto() {
+            flow.chooseBackground(from: url, kind: .image)
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        #endif
+        showsPicker = true
     }
 }
 

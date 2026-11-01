@@ -1261,14 +1261,17 @@ class ClipIntentPlannerAgent(Agent[ClipIntentPlannerInput, ClipIntentPlannerOutp
         # Leverkusen M2 (2026-10-30): "don't show the kids at the start of the second goal
         # clip" / "start it after 2.5 seconds" is one `hide_part` (edge + creator seconds),
         # never an exclude of the whole clip and never an invented op.
-        prompt_version="2026-10-30-hide-part",
+        # KRI-1122: the prompt's operation cap ($max_intents) is 40, not 16.
+        prompt_version="2026-10-31-cap-40",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
         thinking_budget=384,
         max_attempts=2,
         backoff_s=(1.0,),
-        timeout_s=20.0,
+        # KRI-1122: ~190 output tokens per intent; 18 intents took 14 s live, so a
+        # 40-intent inventory needs more than the old 20 s.
+        timeout_s=35.0,
         sensitive_io=True,
     )
     Input = ClipIntentPlannerInput
