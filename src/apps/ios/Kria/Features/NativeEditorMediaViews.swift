@@ -414,7 +414,7 @@ struct NativeVideoPreview: View {
         }
         if directMoveObjectID == nil, let selection = session.selection,
            let selected = objects.first(where: { $0.item.selection == selection }),
-           selected.item.kind != .text, canDirectlyPosition(selected), session.canEdit("visual_editor_style") {
+           selected.item.kind != .text, canDirectlyPosition(selected), session.canRotateVisual(selected.item.selection) {
             let bounds = frame(for: selected, in: size)
             let corner = NativeTextTransformMath.cornerPoint(of: bounds, rotationDegrees: selected.rotation)
             if NativeTextTransformMath.grabsCorner(at: value.startLocation, corner: corner, bounds: bounds) {

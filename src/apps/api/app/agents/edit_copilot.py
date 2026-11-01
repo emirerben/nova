@@ -29,6 +29,7 @@ from app.agents._schemas.text_animation_phases import (
     phases_patch,
 )
 from app.agents._schemas.text_element import _ALLOWED_EFFECTS, _ALLOWED_FONTS, _HEX_COLOR_RE
+from app.agents.editor_ops_v2 import overlays as _v2_overlays
 from app.agents.editor_ops_v2 import text as _v2_text
 from app.agents.length_options import length_options
 from app.agents.music_matcher import _sanitize_text
@@ -74,10 +75,14 @@ log = structlog.get_logger()
 # snapshot's timeline_patch_capabilities opens `tilt`; every other prompt is byte-identical.
 # v99 (KRI-1138): set_slide_tilt in the slides fragment, taught only on the slide-post surface and
 # only where `post.tilt_enabled`; video and gate-closed slide prompts are otherwise unchanged.
-# v100 (KRI-1162): set_background_sequence / set_speaker_frame / clear_speaker_frame and the
+# v101 (KRI-1141): PICTURE CARD TILT: patch_overlay "rotation_deg" / "rotation_delta_deg" (clockwise
+# positive), taught only where the snapshot's overlays open `tilt`; a gate-closed edit still refuses
+# the angle in a sentence, and every other prompt is byte-identical. (v100 is the media-backdrop
+# tilt in another branch.)
+# v102 (KRI-1162): set_background_sequence / set_speaker_frame / clear_speaker_frame and the
 # windows lines of BACKGROUND, taught only where the snapshot offers the `background_windows`
 # family; every other prompt is byte-identical.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v100"
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v102"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1916,6 +1921,10 @@ def _format_snapshot(snapshot: dict) -> str:
             else []
         )
         lines.append("\nOVERLAY CARDS (overlay_index values are authoritative for this turn):")
+        if overlays.get("tilt") is True:
+            lines.append(
+                "tilt: available (a card's tilt= is its current angle; no tilt= is upright)"
+            )
         counts = overlays.get("counts")
         if isinstance(counts, dict):
             lines.append(
@@ -1937,6 +1946,7 @@ def _format_snapshot(snapshot: dict) -> str:
                     f"y={_fmt_round3(_first_number(card, ('y_frac',)))} "
                     f"scale={_fmt_round3(_first_number(card, ('scale',)))} "
                     f"display={_field(card.get('display_mode'), max_chars=40)!r}"
+                    f"{_card_tilt_suffix(card)}"
                     f"{_context_row_suffix(card, component_context_enabled)}"
                 )
         else:
@@ -2245,6 +2255,12 @@ def _fmt_range(start: float | None, end: float | None) -> str:
 
 def _round_snapshot_float(value: float) -> float:
     return round(float(value), 3)
+
+
+def _card_tilt_suffix(card: dict) -> str:
+    """` tilt=(rotation_deg=10)` for a tilted picture card, else nothing (KRI-1141)."""
+    angle = _first_number(card, ("rotation_deg",))
+    return f" tilt=(rotation_deg={_fmt_num(angle)})" if angle else ""
 
 
 def _fmt_round3(value: float | None) -> str:
@@ -5259,18 +5275,27 @@ def _coerce_payload(
         patch = out.get("patch")
         if not isinstance(patch, dict):
             return None
-        if "rotation_deg" in patch and _v2.is_v2_snapshot(snapshot):
-            # KRI-1137: a card's rotation is not part of what the phone Talking compile keeps
-            # (`SubtitledOverlayCard` has no angle and Save drops `editor_style`), so the angle
-            # would be silently lost. Refuse the whole patch instead of applying the rest.
-            unavailable = say(
-                en="I can't rotate a picture on this edit yet.",
-                tr="Bu videoda bir görseli henüz döndüremiyorum.",
-            )
-            state.reject(op=name, reason="capability_unavailable", detail=unavailable)
-            state.reply_notes.append(unavailable)
-            return None
+        tilt_keys = {key for key in _v2_overlays.TILT_KEYS if key in patch}
+        tilt: dict[str, Any] = {}
+        if tilt_keys and _v2.is_v2_snapshot(snapshot):
+            if not _v2_overlays.tilt_open(snapshot):
+                # The card cannot be tilted on this edit (the snapshot does not offer it), so the
+                # angle would be silently lost. Refuse the whole patch instead of applying the rest.
+                unavailable = say(
+                    en="I can't tilt a picture on this edit yet.",
+                    tr="Bu videoda bir görseli henüz eğemiyorum.",
+                )
+                state.reject(op=name, reason="capability_unavailable", detail=unavailable)
+                state.reply_notes.append(unavailable)
+                return None
+            cleaned_tilt = _v2_overlays.coerce_tilt_keys(patch, state)
+            if cleaned_tilt is None:
+                return None
+            tilt = cleaned_tilt
         clean_patch = _coerce_overlay_patch(patch, state)
+        if not clean_patch and any(key in _OVERLAY_PATCH_FIELDS for key in patch):
+            return None
+        clean_patch.update(tilt)
         if not clean_patch:
             return None
         out["patch"] = clean_patch

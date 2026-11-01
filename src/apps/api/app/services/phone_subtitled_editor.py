@@ -39,6 +39,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.agents._schemas.visual_editor import VisualAnimation, VisualEditorStyle
+from app.kria.clip_tilt import wrap_degrees
 from app.kria.device_render import DeviceRenderStatus
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import LibraryRenderAsset, VisualRenderAsset
@@ -332,6 +334,13 @@ def sections_from_lanes(
                 "z": card.z,
                 "entrance_token": entrance_token,
                 "exit_token": exit_token,
+                # KRI-1141: only a tilted card carries a style, so an untilted card's section is
+                # byte-identical. The editor writes the same `editor_style.rotation_deg`.
+                **(
+                    {"editor_style": VisualEditorStyle(rotation_deg=card.rotation_deg).model_dump()}
+                    if card.rotation_deg
+                    else {}
+                ),
                 "source": "phone_lane",
             }
         )
@@ -476,6 +485,7 @@ def lanes_from_recipe(
                         scale=placement.width_fraction,
                         fade=bool(placement.fade_in or placement.fade_out),
                         z=max(placement.order - 1, 0),
+                        rotation_deg=wrap_degrees(float(clip.transform.rotation_degrees)),
                         # KRI-183: a video card compiled from a video visual
                         # keeps its kind + source start; deriving it as a
                         # photo card would make every later Save fail the
@@ -616,6 +626,33 @@ def _visual_bindings(assembly_plan: dict) -> tuple[PhoneVisualBinding, ...]:
     return tuple(bindings)
 
 
+def _card_rotation(item: dict, display_mode: str) -> float:
+    """The tilt a committed card's ``editor_style`` asks for (KRI-1141), wrapped to (-180, 180].
+
+    A phone Talking card keeps ONE style field, the angle. Any other part of the style (fit, zoom,
+    animation) has no home in the pinned recipe, so a Save that sets one is refused instead of
+    silently dropped, and so is an angle on a full-screen cutaway, which has nothing to turn.
+    """
+    raw = item.get("editor_style")
+    if raw is None:
+        return 0.0
+    try:
+        style = VisualEditorStyle.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError("a picture card's style is invalid") from exc
+    if style.fit_mode != "cover" or style.zoom != 1 or style.animation != VisualAnimation():
+        raise ValueError(
+            "a picture card on a Talking edit can only be tilted -- its fit, zoom and "
+            "animation can't be changed here yet"
+        )
+    rotation = wrap_degrees(style.rotation_deg)
+    if rotation and display_mode == "fullscreen":
+        raise ValueError(
+            "a full-screen picture can't be tilted -- put it on top of the video first"
+        )
+    return rotation
+
+
 def _overlays_from_sections(
     media_overlays: list[dict] | None,
     *,
@@ -702,6 +739,7 @@ def _overlays_from_sections(
                 scale=item.get("scale", 0.35),
                 fade=fade,
                 z=max(int(item.get("z") or 0), 0),
+                rotation_deg=_card_rotation(item, display_mode),
                 kind="video" if binding.kind == "video" else "image",
                 source_start_s=source_start_s,
                 **({"display_mode": "fullscreen"} if display_mode == "fullscreen" else {}),

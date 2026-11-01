@@ -23,6 +23,9 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayPreserveAlpha: Bool? = nil
     var overlayCenter: CGPoint = .zero
     var visualPlacement: VisualMediaPlacement? = nil
+    /// Clockwise degrees a PLACED card (a clip with a `visualPlacement`) is turned about its centre: the clip's
+    /// `transform.rotationDegrees`, which the placement path otherwise ignores. See `TimelineClip.placementTiltDegrees`.
+    var placementTilt: Double = 0
     var visualOrder: Int = 0
     var overlayDissolve: NativeDissolveRenderer? = nil
     var sourceCrop: NormalizedSourceRect? = nil
@@ -459,8 +462,19 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)
             ]).cropped(to: image.extent)
         }
-        return layer.visualPlacement?.position(image, preferred: layer.preferredTransform, canvas: canvas,
-            time: time, clipStart: layer.start, clipEnd: layer.end) ?? image.transformed(by: transform)
+        guard let placement = layer.visualPlacement else { return image.transformed(by: transform) }
+        let placed = placement.position(image, preferred: layer.preferredTransform, canvas: canvas,
+            time: time, clipStart: layer.start, clipEnd: layer.end)
+        return layer.placementTilt == 0 ? placed : turned(placed, clockwiseDegrees: layer.placementTilt)
+    }
+
+    /// `degrees` is clockwise on screen; Core Image's y axis points up, so its positive angle is counter-clockwise
+    /// and the angle is negated, exactly as `AVPlayerPreviewComposer.transform` does for a main-track tilt.
+    static func turned(_ image: CIImage, clockwiseDegrees degrees: Double) -> CIImage {
+        let centre = CGPoint(x: image.extent.midX, y: image.extent.midY)
+        return image.transformed(by: CGAffineTransform(translationX: -centre.x, y: -centre.y)
+            .concatenating(CGAffineTransform(rotationAngle: -degrees * .pi / 180))
+            .concatenating(CGAffineTransform(translationX: centre.x, y: centre.y)))
     }
 
     /// Converts a normalized, top-left-origin crop in upright space into a Core Image

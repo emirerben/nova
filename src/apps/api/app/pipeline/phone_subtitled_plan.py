@@ -74,6 +74,7 @@ from app.kria.recipes import (
     Canvas,
     MediaAsset,
     MediaSize,
+    MediaTransform,
     TimelineClip,
     TimelineTrack,
 )
@@ -1123,6 +1124,7 @@ def _compile_overlay_track(
                 source_duration=window_end - window_start,
                 timeline_start=window_start,
                 rate=1,
+                transform=MediaTransform(rotation_degrees=card.rotation_deg),
                 volume=0,
                 visual_placement=VisualMediaPlacement(
                     order=order,
@@ -1300,6 +1302,7 @@ def _compile_video_overlay_clip(
         source_duration=source_duration,
         timeline_start=window_start,
         rate=1,
+        transform=MediaTransform(rotation_degrees=card.rotation_deg),
         volume=0,
         visual_placement=VisualMediaPlacement(
             order=order,

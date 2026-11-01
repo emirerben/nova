@@ -117,11 +117,18 @@ class SubtitledOverlayCard(_LaneModel):
     # y_frac / scale / z are ignored for it -- there is no caption-band clamp
     # because the card covers the frame. Omitted from the dump while "pip".
     display_mode: Literal["pip", "fullscreen"] = "pip"
+    # KRI-1141: the card's tilt, degrees CLOCKWISE on screen, -180..180, 0 upright (the same
+    # sense as `ClipTilt.rotation_deg` and the recipe's `transform.rotation_degrees`, which is
+    # where the compile writes it). A pip card only: a full-canvas cutaway has nothing to turn
+    # about. Omitted from the dump while 0, so an untilted card's row is byte-identical.
+    rotation_deg: float = Field(default=0.0, ge=-180, le=180)
 
     @model_validator(mode="after")
     def _window(self) -> SubtitledOverlayCard:
         if self.end_s <= self.start_s:
             raise ValueError("overlay card must have a positive-duration window")
+        if self.rotation_deg != 0 and self.display_mode == "fullscreen":
+            raise ValueError("a full-screen overlay card cannot be tilted")
         return self
 
     @model_serializer(mode="wrap")
@@ -136,6 +143,8 @@ class SubtitledOverlayCard(_LaneModel):
             payload.pop("source_start_s", None)
         if self.display_mode == "pip":
             payload.pop("display_mode", None)
+        if self.rotation_deg == 0:
+            payload.pop("rotation_deg", None)
         return payload
 
 

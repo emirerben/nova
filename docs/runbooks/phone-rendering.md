@@ -3847,11 +3847,49 @@ edit". The prompt fragment is `prompts/edit_copilot_ops/clip_tilt.txt` (`EDIT_CO
 A clip with a look, or a card photo asked for a new backdrop, is refused by the compiler in a sentence
 (`editor_ops_v2/timeline.py::_tilted`).
 
-Picture cards cannot be rotated from chat: the phone Talking compile drops `editor_style`
-(`SubtitledOverlayCard` has no angle), so `patch_overlay` with `rotation_deg` is refused on every edit
-that offers the overlay family. Teach the angle to the card op only after that compile keeps it.
+Picture cards tilt through `patch_overlay` (KRI-1141, below). While the card gate is closed, a
+`patch_overlay` that carries `rotation_deg` or `rotation_delta_deg` on a v2 snapshot is still refused in a
+sentence ("I can't tilt a picture on this edit yet"), never applied without its angle.
 
 routes and phone writers (PR B, below) and the AI ops and slides (later PRs) land in the follow-ups of the same project.
+
+### Picture card tilt (KRI-1141)
+
+A phone Talking edit's picture cards (`SubtitledOverlayCard`, drawn from a clip with a `visual_placement`) turn
+by one angle, clockwise on screen, -180..180, 0 upright. The same value travels end to end:
+
+| Stage | Where the angle lives |
+|---|---|
+| Editor gesture / Rotation slider | `media_overlays[i].editor_style.rotation_deg` (an upright card carries no `editor_style`) |
+| Save -> `_overlays_from_sections` | `SubtitledOverlayCard.rotation_deg` (wrapped to `(-180, 180]`, omitted from the row while 0) |
+| Talking compile (`_compile_overlay_track`, `_compile_video_overlay_clip`) | the card clip's `transform.rotation_degrees`, the field a main-track tilt uses |
+| Pinned recipe -> editor read-back | `lanes_from_recipe` reads it back; `sections_from_lanes` projects `editor_style.rotation_deg` |
+| Device render | `RecipeVideoLayer.placementTilt` (= `TimelineClip.placementTiltDegrees`); `positionedSource` turns the placed card about its centre |
+
+Where it used to be lost: `SubtitledOverlayCard` had no angle, so `_overlays_from_sections` dropped
+`editor_style`, the recipe never carried it, and the server clamp kept `visual_editor_style` closed on every device
+variant so the editor offered no rotation either. A placed clip positions itself, so the compositor also ignored
+`transform.rotationDegrees` on it; it now reads it.
+
+Capability: no new recipe field and no new token. Python and Swift already infer `clipTilt` from any clip with a
+non-zero rotation, so the existing `clipTilt` verified token covers a tilted card. Add nothing else to
+`PHONE_RENDER_VERIFIED_FEATURES`; include a rotated Talking card in the `clipTilt` physical-device check.
+
+Gates (all must hold for `editor_capabilities.media_overlay_tilt`, present only when ON, on a device-rendered
+Talking variant with the card lane open): `MEDIA_TILT_ENABLED`, `clipTilt` verified, and a build declaring protocol
+>= `MEDIA_CARD_TILT_MIN_CLIENT_PROTOCOL` (30). Builds 28 and 29 decode `clipTilt` but draw a placed card upright, so a
+pinned recipe that carries a tilted card answers `426 client_update_required` (`feature: "card_tilt"`,
+`minimum_client_protocol: 30`) to them. The capability opens only the rotate gesture and the Rotation slider;
+`visual_editor_style` (zoom, fit, animation) stays closed, and Save refuses a card style that sets anything but the
+angle, and an angle on a full-screen card (422, never silently dropped). A new or changed angle while a gate is
+closed is a 422 `unsupported_phone_edit` ("tilting a picture isn't available on this edit yet"); keeping a stored
+angle and straightening one always work. Rollback is `MEDIA_TILT_ENABLED=false` (+ restart), never a code revert.
+
+Chat: `patch_overlay` takes `rotation_deg` (replaces) or `rotation_delta_deg` (adds), only while the snapshot's
+`overlays.tilt` is true (prompt fragment `prompts/edit_copilot_ops/overlay_tilt.txt`, `EDIT_COPILOT_PROMPT_VERSION`
+v101). A tilted card lists `tilt=(rotation_deg=...)` in OVERLAY CARDS. Proof: `tests/routes/test_overlay_card_tilt.py`,
+`tests/routes/test_overlay_card_tilt_chat.py`, the `overlay_tilt_*` replay goldens, `PlacedCardTiltTests`
+(`tests/fixtures/card-tilt-parity/v1.json` is read by both sides) and `NativeOverlayCardTiltTests`.
 
 ### Video editor (KRI-1136, PR B)
 

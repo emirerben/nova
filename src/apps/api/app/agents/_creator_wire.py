@@ -189,6 +189,7 @@ def copilot_schema():
         "size_px",
         "size_scale",
         "rotation_deg",
+        "rotation_delta_deg",
         "stroke_width",
         "letter_spacing",
         "line_spacing",
@@ -348,6 +349,7 @@ def copilot_schema():
             "transition_duration_s",
             "playback_rate",
             "tilt",
+            "rotation_delta_deg",
         }
     )
     patch = obj(

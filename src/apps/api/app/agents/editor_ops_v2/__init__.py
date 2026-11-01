@@ -52,6 +52,9 @@ FAMILY_FRAGMENTS: dict[str, str] = {
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
 # byte-identical.
 FIELD_FRAGMENTS: dict[str, str] = {"tilt": "clip_tilt.txt"}
+# KRI-1141: appended only while the `overlay` family is offered AND `snapshot["overlays"]["tilt"]`
+# is true (`editor_capabilities.media_overlay_tilt`), so a closed gate leaves the prompt identical.
+OVERLAY_TILT_FRAGMENT = "overlay_tilt.txt"
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 
@@ -159,6 +162,9 @@ def family_fragments(snapshot: object) -> str:
     names = [name for family, name in FAMILY_FRAGMENTS.items() if family in allowed]
     if isinstance(fields, dict):
         names += [name for key, name in FIELD_FRAGMENTS.items() if fields.get(key) is True]
+    overlays = snapshot.get("overlays") if "overlay" in allowed else None
+    if isinstance(overlays, dict) and overlays.get("tilt") is True:
+        names.append(OVERLAY_TILT_FRAGMENT)
     parts: list[str] = []
     for name in names:
         try:

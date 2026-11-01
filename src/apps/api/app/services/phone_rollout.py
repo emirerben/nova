@@ -884,6 +884,51 @@ def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
     )
 
 
+def recipe_has_tilted_card(recipe: Any) -> bool:
+    """Does any placed picture card of this recipe turn (KRI-1141)?
+
+    A card is a clip with a ``visual_placement`` on an overlay track; its angle is the clip's own
+    ``transform.rotation_degrees``, the same field a main-track tilt uses.
+    """
+    return any(
+        getattr(clip, "visual_placement", None) is not None and clip.transform.rotation_degrees != 0
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def card_tilt_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build turn a placed card by its clip's rotation?
+
+    At least ``media_card_tilt_min_client_protocol`` (30). Builds 28 and 29 decode the ``clipTilt``
+    token but draw a placed card upright. ``require_client`` as in `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_card_tilt_min_client_protocol
+
+
+def card_tilt_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a Talking edit's picture card be tilted right now".
+
+    The clip tilt switch and verified token (`clip_tilt_supported` minus its build gate) plus the
+    card's own build gate.
+    """
+    return bool(
+        settings.media_tilt_enabled
+        and "clipTilt" in set(settings.phone_render_verified_features)
+        and card_tilt_client_supported(require_client=require_client)
+    )
+
+
 # Variant field an HTTP editor Save writes when it compiled one-word captions for a build
 # that declared the protocol (`single_word_captions_enabled`): a later compile with no
 # request (a worker applying a chat edit) has no app build to ask, so it trusts this.
