@@ -12,7 +12,7 @@
       "the planner's choices are written as the planner returns them for this request (post-parse strategy, with the server's provenance flags where the creator states a pace or a length); no model is replayed",
       "the approval card is assembled offline from the real pure functions the draft turn calls (scripts/kria/score_route.py approval_card); the DB-bound turn body is not run",
       "phone source bindings: synthetic proxy paths (score_route.media_rows)",
-      "replay_inputs: the grounded sections the speech planner would hand the compiler (three speaker excerpts after three montage runs, no cut_s: the request names no cut length) and the b-roll clips; synthetic portrait originals. No plan or ask value"
+      "replay_inputs: the grounded sections the speech planner would hand the compiler (three speaker excerpts after three montage runs; the first run carries cut_s 0.8, the value the speech planner prompt's own example writes, the others none: the request names no cut length) and the b-roll clips; synthetic portrait originals. No plan or ask value"
     ],
     "redacted": [],
     "see": "tests/fixtures/kria_replay/speech_excerpt/README.md"
@@ -137,7 +137,8 @@
     "sections": [
       {
         "kind": "montage",
-        "duration_s": 3.0
+        "duration_s": 3.0,
+        "cut_s": 0.8
       },
       {
         "kind": "speech",

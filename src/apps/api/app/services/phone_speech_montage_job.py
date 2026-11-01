@@ -8,8 +8,9 @@ decides whether the creator asked to use what they say, and if so:
    choose excerpts and lay out speech / montage sections;
 2. grounds every quoted excerpt to real word timings;
 3. compiles the sections (``phone_speech_montage_plan``) with the confirmed plan,
-   whose pace sets the cut a section without its own ``cut_s`` gets, and pins the
-   device recipe as variant ``speech_montage`` (``resolved_archetype`` of the same name).
+   whose pace sets the fast cuts (a planner ``cut_s`` against it gives way), and pins
+   the device recipe as variant ``speech_montage`` (``resolved_archetype`` of the same
+   name).
 
 Returns ``False`` whenever the creator did not ask (or the kill switch is off),
 and the caller continues with the ordinary montage, byte-identically. It raises
