@@ -241,7 +241,7 @@ class ResearchCopyAgent(Agent[ResearchCopyInput, ResearchCopyOutput]):
     spec = AgentSpec(
         name="nova.research.caption_binding",
         prompt_id="research_caption_binding",
-        prompt_version="v7-qualified-completion",
+        prompt_version="v8-style-asks-not-unmet",
         model=settings.edit_copilot_model,
         max_attempts=1,
         timeout_s=60,
@@ -280,7 +280,9 @@ class ResearchCopyAgent(Agent[ResearchCopyInput, ResearchCopyOutput]):
             "journey with historical facts. Return media_ids=[]; the server binds window_id. "
             "scope is ONLY context or object. subject_name/identity_quote are strings, never null. "
             "limitations is ONE string (empty if none), never an array. unmet_requests is a list "
-            "of explicitly requested explanations you could not deliver. An unconfirmed "
+            "of explicitly requested explanations you could not deliver. Animation, look, "
+            "position, timing and music asks are applied by other steps: never list them. "
+            "An unconfirmed "
             "individual identity is only a limitation when the creator requested general "
             "collection context; it is unmet when they explicitly requested that identity/date. "
             "Return JSON matching this schema: "

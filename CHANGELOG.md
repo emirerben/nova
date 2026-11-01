@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.57.0] - 2026-11-01
+
+### Changed
+- fix(order): a first/last pin takes its clip out of a general order group (KRI-1109) (#1995) <!-- release-pr: 1995 -->
+
+## [0.83.56.0] - 2026-11-01
+
+### Changed
+- fix(kria): an unmet part of the ask no longer holds back sourced wording before approval (#2012) <!-- release-pr: 2012 -->
+
 ## [0.83.55.0] - 2026-11-01
 
 ### Changed
