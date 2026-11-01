@@ -82,6 +82,7 @@ from app.schemas.clip_intents import (
 )
 from app.schemas.clip_understanding import ClipUnderstanding
 from app.services.clip_facts import order_by_capture_time
+from app.services.clip_file_names import ClipNameIndex
 from app.services.clip_selection import (
     MAX_QUESTION_CLIPS,
     answered_rows,
@@ -282,6 +283,24 @@ def _invented_selection(evidence: object, alias: str, resolver_request: str) -> 
     )
 
 
+def _miscites_file_name(evidence: object, media_id: str, names: ClipNameIndex) -> bool:
+    """True when the resolver's evidence for ``media_id`` quotes the file name of another clip
+    (KRI-1112).
+
+    File names are never sent to the resolver (``IntentClip.file_name``), so a name in its
+    evidence comes from the creator's words, and the clip it pinned under that name is a
+    guess. Leverkusen M3 (13:49): the creator listed "IMG_1028, IMG_1036, IMG_1037,
+    IMG_1039, IMG_1043" and the resolver matched them to m001..m005 in alias order at
+    confidence 1.0, so IMG_1039 was kept as 'IMG_1028'. Names are read as the file-name step
+    reads them (``ClipNameIndex``: case, extension and the iOS upload prefix folded); a name
+    two clips share names neither. Structural only: it compares names, never meaning.
+    """
+    if not isinstance(evidence, str) or not names:
+        return False
+    references, _others = names.references(evidence)
+    return any(ref.media_id is not None and ref.media_id != media_id for ref in references)
+
+
 def _replace_known_media_ids_with_aliases(
     creator_request: str,
     alias_to_media: dict[str, str],
@@ -382,6 +401,9 @@ class _IntentWork:
     # "no" to. See `_settle_named_label_guesses`.
     named_guesses: dict[str, float] = field(default_factory=dict)
     vision_no_media_ids: set[str] = field(default_factory=set)
+    # KRI-1112: clips whose resolver evidence quotes another clip's file name
+    # (`_miscites_file_name`). Never kept, never a pre-tick, and the ask is asked.
+    miscited_media_ids: set[str] = field(default_factory=set)
     # KRI-779: every clip the resolver put forward for this intent (an assignment at any
     # confidence, or a vision check), whatever the check said after.
     considered_media_ids: set[str] = field(default_factory=set)
@@ -1076,8 +1098,11 @@ def _build_clip_question(
         # KRI-991: the clips the resolver put forward below the bar, or a check could not
         # settle, are the picker's pre-ticks. A clip a check confidently ruled out is not.
         # Suggestions only: nothing is applied without the creator's tap.
-        near_misses = (work.failed_media_ids | work.considered_media_ids) - (
-            work.vision_no_media_ids - work.failed_media_ids
+        # KRI-1112: a clip pinned by a file name it does not carry is no suggestion either.
+        near_misses = (
+            (work.failed_media_ids | work.considered_media_ids)
+            - work.miscited_media_ids
+            - (work.vision_no_media_ids - work.failed_media_ids)
         )
         # KRI-1108: a clip matched to a subject no record shows is no suggestion.
         near_misses -= work.unfound_media_ids
@@ -1382,6 +1407,7 @@ async def resolve_clip_intents_for_turn(
         return IntentResolution(intents=[], question=None, vision_answers={})
 
     clip_by_id = {c.media_id: c for c in clips}
+    file_names = ClipNameIndex({c.media_id: c.file_name for c in clips})
     records_by_id = {c.media_id: clip_record(c.analysis, kind=c.kind) for c in clips}
     position_by_media = {c.media_id: idx + 1 for idx, c in enumerate(clips)}
 
@@ -1543,6 +1569,18 @@ async def resolve_clip_intents_for_turn(
         }
         vision_media = {nv.media: nv.question for nv in resolved.needs_vision}
         work.had_any_candidate = bool(assignment_by_media or vision_media)
+        for alias, assignment in list(assignment_by_media.items()):
+            media_id = alias_to_media.get(alias)
+            if (
+                media_id is not None
+                and intent.accepts_source_kind(clip_by_id[media_id].kind)
+                and _miscites_file_name(assignment.evidence, media_id, file_names)
+            ):
+                # KRI-1112: matched by a name it was never given. Unsettled, so the
+                # creator is asked; never a pre-tick.
+                del assignment_by_media[alias]
+                work.miscited_media_ids.add(media_id)
+                work.failed_media_ids.add(media_id)
         if intent.op == "caption" and not intent.creator_text:
             # The resolver's ONE authored phrase for the whole chapter — text
             # authoring against the FINAL member set happens after membership
@@ -2291,6 +2329,7 @@ async def resolve_clip_intents_for_turn(
     named_guesses_settled = _settle_named_label_guesses(
         work_by_id, records_by_id=records_by_id, creator_request=creator_request
     )
+    miscited = sum(len(w.miscited_media_ids) for w in work_by_id.values())
 
     # ── Assemble the result ──────────────────────────────────────────────────
     resolved_intents: list[ResolvedClipIntent] = []
@@ -2339,6 +2378,9 @@ async def resolve_clip_intents_for_turn(
             and not intent.exclusive
             and intent.op in _FOUND_SETTLES_OPS
             and picker_eligible(intent)
+            # KRI-1112: a clip matched by a file name it does not carry was guessed, so the
+            # right citations beside it settle nothing.
+            and not work.miscited_media_ids
         )
         # Technical/provider/media failures must not be turned into a creator
         # question. The caller can retry the preparation/resolution attempt;
@@ -2419,6 +2461,8 @@ async def resolve_clip_intents_for_turn(
         "named_guesses_settled": named_guesses_settled,
         "single_take_settled": single_take_settled,
         "found_settled": found_settled,
+        # KRI-1112: omitted when no evidence quoted another clip's file name.
+        **({"miscited_file_names": miscited} if miscited else {}),
         # Omitted when nothing failed, so every other turn's diagnostics are unchanged.
         **({"vision_error_types": vision_errors[:8]} if vision_errors else {}),
         **({"unfound_pins": unfound_pins} if unfound_pins else {}),
