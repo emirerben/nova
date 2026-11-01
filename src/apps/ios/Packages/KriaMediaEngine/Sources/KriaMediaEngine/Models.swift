@@ -162,12 +162,18 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 throw RecipeError.invalidTimeline
             }
             try clip.sourceCrop?.validate()
+            if let backdrop = clip.backdrop {
+                try backdrop.validate()
+                guard tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
+                      clip.visualPlacement == nil else { throw RecipeError.invalidTimeline }
+            }
             for fade in [clip.audioFadeIn, clip.audioFadeOut].compactMap({ $0 }) {
                 guard fade.isFinite, (0...60).contains(fade) else { throw RecipeError.invalidTimeline }
             }
             if clip.stillLayout != nil {
                 guard schemaVersion == 2, tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
-                      clip.rate == 1, clip.look == nil, clip.holdDuration == nil, clip.sourceCrop == nil, clip.transform == .identity,
+                      clip.rate == 1, clip.look == nil, clip.holdDuration == nil, clip.sourceCrop == nil,
+                      clip.transform == MediaTransform(rotationDegrees: clip.transform.rotationDegrees),
                       assetManifest?.assets.contains(where: { if case .visual(_, _, .image) = $0.source { $0.id == clip.sourceAssetID } else { false } }) == true else {
                     throw RecipeError.invalidTimeline
                 }
@@ -238,6 +244,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         }) { result.insert(.editorMedia) }
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
+        if clips.contains(where: { $0.transform.rotationDegrees != 0 || $0.backdrop != nil }) { result.insert(.clipTilt) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
@@ -361,6 +368,8 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var sourceCrop: NormalizedSourceRect?
     /// A Visuals photo shown whole inside a card over a blurred cover of itself.
     public var stillLayout: StillLayout?
+    /// Drawn under the clip on the main video track; see `ClipBackdrop`. Needs `clipTilt`.
+    public var backdrop: ClipBackdrop?
     public var volume: Double
     /// Seconds of linear gain ramp at this clip's audio start/end (KRI-139):
     /// the music bed's fades and the cloud's 0.5 s voiceover fade-out. Used in
@@ -369,6 +378,12 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
     public var audioFadeIn: TimeInterval?
     public var audioFadeOut: TimeInterval?
     public var duration: TimeInterval { sourceDuration / rate + (holdDuration ?? 0) }
+    /// The transform the compositor applies to this clip's layer. A supporting card turns inside the
+    /// card (`StillFrame.supportingCard`), so its blurred cover stays upright and the layer stays put.
+    var layerTransform: MediaTransform {
+        guard stillLayout != nil else { return transform }
+        var value = transform; value.rotationDegrees = 0; return value
+    }
     /// Opacity from `overlayFadeIn`/`overlayFadeOut` alone across this clip's
     /// own timeline window; exactly 1 when neither is set, or when the clip is
     /// placed (it then fades through its placement, like the renderer's
@@ -379,15 +394,15 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
                                                  fadeIn: overlayFadeIn == true, fadeOut: overlayFadeOut == true)
     }
     // Use Swift's acronym-normalized spelling so convertToSnakeCase/convertFromSnakeCase agree.
-    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut }
+    private enum CodingKeys: String, CodingKey { case id, sourceAssetID = "sourceAssetId", sourceStart, sourceDuration, timelineStart, rate, transform, transition, text, volume, look, holdDuration, overlayAboveText, overlayPopIn, overlayPreserveAlpha, visualPlacement, overlayDissolveSeed, sourceCrop, stillLayout, overlayFadeIn, overlayFadeOut, audioFadeIn, audioFadeOut, backdrop }
     public init(id: String, sourceAssetID: String, sourceStart: TimeInterval = 0, sourceDuration: TimeInterval,
                 timelineStart: TimeInterval = 0, rate: Double = 1, transform: MediaTransform = .identity,
-                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil) {
+                transition: Transition? = nil, text: TextTreatment? = nil, volume: Double = 1, look: SourceLook? = nil, holdDuration: Double? = nil, overlayAboveText: Bool? = nil, overlayPopIn: Bool? = nil, overlayPreserveAlpha: Bool? = nil, visualPlacement: VisualMediaPlacement? = nil, overlayDissolveSeed: UInt32? = nil, sourceCrop: NormalizedSourceRect? = nil, stillLayout: StillLayout? = nil, overlayFadeIn: Bool? = nil, overlayFadeOut: Bool? = nil, audioFadeIn: TimeInterval? = nil, audioFadeOut: TimeInterval? = nil, backdrop: ClipBackdrop? = nil) {
         self.id = id; self.sourceAssetID = sourceAssetID; self.sourceStart = sourceStart; self.sourceDuration = sourceDuration
         self.timelineStart = timelineStart; self.rate = rate; self.transform = transform; self.transition = transition; self.text = text; self.volume = volume
         self.look = look; self.holdDuration = holdDuration; self.overlayAboveText = overlayAboveText; self.overlayPopIn = overlayPopIn; self.overlayPreserveAlpha = overlayPreserveAlpha; self.visualPlacement = visualPlacement; self.overlayDissolveSeed = overlayDissolveSeed; self.sourceCrop = sourceCrop; self.stillLayout = stillLayout
         self.overlayFadeIn = overlayFadeIn; self.overlayFadeOut = overlayFadeOut
-        self.audioFadeIn = audioFadeIn; self.audioFadeOut = audioFadeOut
+        self.audioFadeIn = audioFadeIn; self.audioFadeOut = audioFadeOut; self.backdrop = backdrop
     }
 }
 
@@ -404,6 +419,8 @@ public struct NormalizedSourceRect: Codable, Equatable, Sendable {
 
 public enum SourceLook: String, Codable, Sendable { case goldenHour = "golden_hour" }
 
+/// `rotationDegrees` turns the clip about its centre, positive CLOCKWISE on screen (the editor's `tilt.rotation_deg` and
+/// sticker/text `rotation_deg` use the same sense). The corners it uncovers show the clip's `backdrop`.
 public struct MediaTransform: Codable, Equatable, Sendable { public var scale: Double; public var rotationDegrees: Double; public var positionX: Double; public var positionY: Double; public init(scale: Double = 1, rotationDegrees: Double = 0, positionX: Double = 0, positionY: Double = 0) { self.scale = scale; self.rotationDegrees = rotationDegrees; self.positionX = positionX; self.positionY = positionY }; public static let identity = MediaTransform() }
 
 public struct Transition: Codable, Equatable, Sendable { public enum Kind: String, Codable, Sendable { case crossfade, fadeBlack = "fade_black", fadeWhite = "fade_white", wipeLeft = "wipe_left", wipeRight = "wipe_right" }; public var kind: Kind; public var duration: TimeInterval; public init(kind: Kind = .crossfade, duration: TimeInterval = 0.35) { self.kind = kind; self.duration = duration } }
@@ -502,7 +519,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
-         behindSubject, speakerBackground
+         behindSubject, speakerBackground, clipTilt
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

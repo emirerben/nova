@@ -187,12 +187,18 @@ public struct LivePreviewExportSnapshot: Sendable {
         func withoutVisuals(_ tracks: [TimelineTrack]) -> [TimelineTrack] {
             tracks.map { track in
                 var copy = track
-                copy.clips = track.clips.map { clip in var value = clip; value.transform = .identity; value.overlayAboveText = nil; value.overlayPopIn = nil; value.overlayPreserveAlpha = nil; value.visualPlacement = nil; value.overlayDissolveSeed = nil; value.overlayFadeIn = nil; value.overlayFadeOut = nil; return value }
+                copy.clips = track.clips.map { clip in var value = clip; value.transform = .identity; value.overlayAboveText = nil; value.overlayPopIn = nil; value.overlayPreserveAlpha = nil; value.visualPlacement = nil; value.overlayDissolveSeed = nil; value.overlayFadeIn = nil; value.overlayFadeOut = nil; value.backdrop = nil; return value }
                 return copy
             }
         }
         for clip in next.tracks.flatMap(\.clips) where clip.look != nil {
             guard recipe.tracks.flatMap(\.clips).first(where: { $0.id == clip.id })?.transform == clip.transform else { throw NativePreviewFeatureError("LivePreviewComposition-77") }
+        }
+        // A supporting card's tilt is baked into its bitmap, so changing it takes the full rebuild.
+        for clip in next.tracks.flatMap(\.clips) where clip.stillLayout != nil {
+            guard recipe.tracks.flatMap(\.clips).first(where: { $0.id == clip.id })?.transform.rotationDegrees == clip.transform.rotationDegrees else {
+                throw NativePreviewFeatureError("LivePreviewComposition-still-tilt")
+            }
         }
         guard next.audio == recipe.audio, withoutVisuals(recipe.tracks) == withoutVisuals(next.tracks) else { throw NativePreviewFeatureError("LivePreviewComposition-79") }
         // Any speaker-background change (asset, source start, loop, subject track, added or removed) re-inserts
@@ -257,6 +263,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                 updated.overlayPreserveAlpha = clip.overlayPreserveAlpha
                 updated.visualPlacement = clip.visualPlacement
                 updated.sourceCrop = clip.sourceCrop
+                updated.backdrop = clip.stillLayout == nil ? clip.backdrop : nil
                 updated.overlayFade = OverlayFadeWindow(clip: clip, start: layer.start, end: layer.end)
                 updated.visualOrder = overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? updated.visualOrder
                 updated.overlayCenter = CGPoint(x: current.renderSize.width / 2 + clip.transform.positionX, y: current.renderSize.height / 2 - clip.transform.positionY)

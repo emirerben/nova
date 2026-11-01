@@ -26,6 +26,7 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var visualOrder: Int = 0
     var overlayDissolve: NativeDissolveRenderer? = nil
     var sourceCrop: NormalizedSourceRect? = nil
+    var backdrop: ClipBackdrop? = nil
     /// Set only for an overlay clip with `overlayFadeIn`/`overlayFadeOut`.
     /// It scales opacity alone; positioning keeps using `transform`.
     var overlayFade: OverlayFadeWindow? = nil
@@ -287,6 +288,10 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
         if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
         var positioned = Self.positionedSource(source, layer: layer, canvas: instruction.canvas, time: time)
+        if let backdrop = layer.backdrop,
+           let under = Self.backdropImage(backdrop, source: source, layer: layer, canvas: instruction.canvas, time: time) {
+            positioned = positioned.composited(over: under).cropped(to: instruction.canvas)
+        }
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
             positioned = positioned.transformed(by: CGAffineTransform(translationX: -layer.overlayCenter.x, y: -layer.overlayCenter.y))
