@@ -2759,6 +2759,26 @@
         "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderIntent.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DeviceRenderIntentTests.swift"
       ]
+    },
+    {
+      "id": "kri-1137-chat-tilt",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_clip_tilt_ai.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py tests/agents/test_timeline_capability_context.py tests/kria/test_editor_capability_parity.py tests/services/test_kria_ask_cli.py",
+      "paths": [
+        "src/apps/api/app/kria/clip_tilt.py",
+        "src/apps/api/prompts/edit_copilot_ops/clip_tilt.txt",
+        "src/apps/api/tests/agents/test_clip_tilt_ai.py",
+        "src/apps/api/tests/evals/runners/snapshot_variant.py",
+        "src/apps/api/tests/fixtures/kria_battery/asks.yaml",
+        "src/apps/api/tests/fixtures/kria_battery/tilt_asks.yaml",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_second_clip_right.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_photos_blur.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_a_bit_more.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_straighten.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_turkish.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_look_clip_refusal.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_gate_closed.json"
+      ]
     }
   ]
 }
