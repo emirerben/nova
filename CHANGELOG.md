@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.82.0] - 2026-11-01
+
+### Changed
+- fix(kria): text placement never fails a render (KRI-1152) (#2029) <!-- release-pr: 2029 -->
+
 ## [0.83.81.0] - 2026-11-01
 
 ### Fixed
