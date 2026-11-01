@@ -1854,8 +1854,8 @@ def _load_indexed_clip_metadata_cache(
 ):  # noqa: ANN202
     """Load V2 metadata by its persisted source slot, never list position.
 
-    The legacy cache list is completion-ordered because Gemini analyses finish
-    concurrently. It remains available for legacy rows, but a valid identity
+    The legacy cache list may be completion-ordered (rows written before the
+    analysis helper sorted by slot). It remains available for legacy rows, but a valid identity
     envelope is the sole authority for binding metadata back to source paths.
     Sparse successful records are supported; failed slots stay explicit.
     """
@@ -14813,6 +14813,9 @@ def _ingest_clips(
     )
     if indexed_cache is not None:
         indexed_metas, identity_index = indexed_cache
+        # A cache written before the analysis helper sorted by slot holds its
+        # records in completion order; the slot is the authority, not the list.
+        indexed_metas = sorted(indexed_metas, key=lambda record: record[0])
         clip_metas = [meta for _source_slot, meta in indexed_metas]
         failed_count = len(identity_index.failed_source_slots)
         total = len(clip_metas) + failed_count
