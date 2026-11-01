@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.50.0] - 2026-11-01
+
+### Fixed
+- fix(kria): ask when one photo lands on two ordered beats; a typed fix reopens a stale tap (KRI-1125) (#2006) <!-- release-pr: 2006 -->
+
 ## [0.83.49.0] - 2026-11-01
 
 ### Changed
