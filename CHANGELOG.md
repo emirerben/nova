@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.78.0] - 2026-11-01
+
+### Changed
+- feat(ios): Tilt control for every edit type, Save contract and phone writers, dark (KRI-1136) (#2026) <!-- release-pr: 2026 -->
+
 ## [0.83.77.0] - 2026-11-01
 
 ### Changed
