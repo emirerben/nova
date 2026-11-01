@@ -797,3 +797,88 @@ def test_overlay_route_passes_paid_call_attribution_to_the_agent(monkeypatch):
     TestClient(app).post(f"/plan-items/{uuid.uuid4()}/overlay-plan", json=body, headers=headers)
     assert seen["ctx"].usage_purpose == "live_eval"
     assert seen["ctx"].test_run_id == "run-1"
+
+
+def _narrated_edit(client_slots, *, saved_slots=None):
+    import uuid
+    from types import SimpleNamespace
+
+    from app.services.overlay_generation import OverlayPlanRequest
+
+    cue = dict(
+        id="c0",
+        text="fresh coffee",
+        start_s=1.0,
+        end_s=2.0,
+        words=[
+            dict(text="fresh", start_s=1.0, end_s=1.4),
+            dict(text="coffee", start_s=1.4, end_s=2.0),
+        ],
+    )
+    variant = dict(
+        variant_id="narrated",
+        render_generation_id="g1",
+        duration_s=10,
+        resolved_archetype="narrated",
+        caption_cues=[cue],
+    )
+    if saved_slots:
+        variant["user_timeline"] = {"slots": saved_slots}
+    job = SimpleNamespace(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        mode="content_plan",
+        assembly_plan={"variants": [variant]},
+        all_candidates={},
+    )
+    body = OverlayPlanRequest(
+        job_id=job.id,
+        variant_id="narrated",
+        base_generation="g1",
+        document_fingerprint="f",
+        mode="automatic",
+        prompt="",
+        editor_snapshot={
+            "editor_payload": {
+                "base_generation": "g1",
+                "sections": {"timeline_slots": client_slots, "caption_cues": [cue]},
+            }
+        },
+    )
+    return job, variant, SimpleNamespace(clip_assignments=[], voiceover_gcs_path=None), body
+
+
+def _slots(*durations):
+    return [
+        dict(slot_id=f"s{i}", clip_index=i, in_s=0, duration_s=d, transition_after="cut")
+        for i, d in enumerate(durations)
+    ]
+
+
+def test_narration_timing_survives_clips_the_phone_rebuilt_locally():
+    from app.services.overlay_generation import plan_context
+
+    job, variant, item, body = _narrated_edit(_slots(5, 5))
+    speech = [
+        r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"
+    ]
+    assert speech and speech[0]["start_s"] == 1.0
+
+
+def test_narration_timing_is_dropped_when_the_edit_changes_length():
+    from app.services.overlay_generation import plan_context
+
+    job, variant, item, body = _narrated_edit(_slots(5, 3))
+    assert not [
+        r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"
+    ]
+
+
+def test_a_cut_edit_still_drops_speech_for_spoken_to_camera_footage():
+    from app.services.overlay_generation import plan_context
+
+    job, variant, item, body = _narrated_edit(_slots(4, 6), saved_slots=_slots(5, 5))
+    variant["resolved_archetype"] = "subtitled"
+    assert not [
+        r for r in plan_context(job, variant, item, body, []).evidence if r["kind"] == "speech"
+    ]

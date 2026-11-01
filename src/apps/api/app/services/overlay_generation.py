@@ -376,6 +376,8 @@ def safe_zone(raw: object) -> dict | None:
     return values if 0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 - x and 0 < h <= 1 - y else None
 
 
+SEPARATE_NARRATION_ARCHETYPES = frozenset({"narrated", "voiceover"})
+NARRATION_LENGTH_TOLERANCE_S = 0.05
 PERSISTENT_TEXT_MIN_SHARE = 0.5
 PERSISTENT_TEXT_END_SLACK_S = 1.0
 
@@ -535,7 +537,12 @@ def plan_context(
     saved_timing = [tuple(row.get(k) for k in timing_keys) for row in saved_snapshot["slots"]]
     originals = list(variant.get("caption_cues") or [])
     current = list(base.projected.get("caption_cues") or [])
-    evidence = speech_evidence(originals, current) if current_timing == saved_timing else []
+    speech_timing_holds = current_timing == saved_timing or (
+        variant.get("resolved_archetype") in SEPARATE_NARRATION_ARCHETYPES
+        and abs(clock.output_duration - float(variant.get("duration_s") or 0))
+        <= NARRATION_LENGTH_TOLERANCE_S
+    )
+    evidence = speech_evidence(originals, current) if speech_timing_holds else []
     narration = getattr(item, "voiceover_gcs_path", None)
     if not evidence and variant.get("resolved_archetype") == "voiceover" and narration:
         evidence = voiceover_speech_evidence(narration, clock, duration)
