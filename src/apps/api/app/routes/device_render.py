@@ -99,9 +99,11 @@ from app.services.guided_speech_cleanup import (
 from app.services.job_storage_paths import project_media_reference_lock_key
 from app.services.native_activity import record_native_activity
 from app.services.phone_rollout import (
+    clip_backdrop_media_client_supported,
     clip_tilt_client_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
+    recipe_has_clip_backdrop_media,
     recipe_has_clip_tilt,
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
@@ -628,6 +630,15 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "clip_tilt",
             "minimum_client_protocol": settings.media_tilt_min_client_protocol,
+        }
+    if not clip_backdrop_media_client_supported() and recipe_has_clip_backdrop_media(recipe):
+        # KRI-1139: a build below protocol 29 cannot decode a media backdrop (the
+        # `clipBackdropMedia` token and the backdrop's `asset_id`), so the whole recipe would
+        # fail instead of rendering the clip without its photo or video.
+        return {
+            "code": "client_update_required",
+            "feature": "clip_backdrop_media",
+            "minimum_client_protocol": settings.media_backdrop_min_client_protocol,
         }
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(recipe):
         # KRI-828: the worker planned a creator's freeze (a main-track hold, capability

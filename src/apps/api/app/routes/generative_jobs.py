@@ -7553,6 +7553,12 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             **(capabilities.get("clips") if isinstance(capabilities.get("clips"), dict) else {}),
             "tilt": {"editable": True, "reason": None},
         }
+        from app.services.phone_rollout import clip_backdrop_media_supported  # noqa: PLC0415
+
+        if clip_backdrop_media_supported():
+            # KRI-1139: a pool photo or video behind the clip. Present only when ON, so the
+            # payload of a build or deployment without it keeps its exact shape.
+            capabilities["clips"]["tilt_backdrop_media"] = {"editable": True, "reason": None}
     from app.services.client_protocol import CAPTION_STYLE_SCOPE_PROTOCOL, current_client_protocol
 
     protocol = current_client_protocol()
@@ -10966,9 +10972,12 @@ def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitReque
     """
     from app.kria.clip_tilt_row import canonical_row_tilt  # noqa: PLC0415
     from app.services.phone_rollout import (  # noqa: PLC0415
+        clip_backdrop_media_client_supported,
+        clip_backdrop_media_supported,
         clip_tilt_client_supported,
         clip_tilt_supported,
     )
+    from app.services.phone_subtitled_editor import pinned_visual  # noqa: PLC0415
 
     slots = payload.timeline_slots
     if slots is None:
@@ -10978,6 +10987,17 @@ def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitReque
         for row in editor_deletion_timeline(job, variant)
         if row.get("slot_id")
     }
+    if not clip_backdrop_media_client_supported() and any(
+        _tilt_media_asset(tilt) for tilt in stored.values()
+    ):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "clip_backdrop_media",
+                "minimum_client_protocol": settings.media_backdrop_min_client_protocol,
+            },
+        )
     if not clip_tilt_client_supported() and any(stored.values()):
         raise HTTPException(
             426,
@@ -11000,6 +11020,22 @@ def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitReque
         or not clip_tilt_supported(require_client=False)
     ):
         raise HTTPException(422, detail={"code": "clip_tilt_unavailable"})
+    for slot in changed:
+        media_id = _tilt_media_asset(slot.tilt)
+        if media_id is None:
+            continue
+        if not clip_backdrop_media_supported(require_client=False):
+            raise HTTPException(422, detail={"code": "clip_backdrop_media_unavailable"})
+        if pinned_visual(job.assembly_plan or {}, media_id) is None:
+            raise HTTPException(422, detail={"code": "clip_backdrop_media_not_in_pool"})
+
+
+def _tilt_media_asset(tilt: dict[str, Any] | None) -> str | None:
+    """The Visuals-pool id a canonical row ``tilt`` draws behind its clip, else None."""
+    backdrop = (tilt or {}).get("backdrop")
+    if isinstance(backdrop, dict) and backdrop.get("kind") == "media":
+        return str(backdrop["asset_id"])
+    return None
 
 
 def _require_caption_animation_client(

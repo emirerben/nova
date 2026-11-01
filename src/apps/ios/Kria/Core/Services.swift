@@ -1240,7 +1240,11 @@ enum KriaClientProtocolContract {
     /// `transform.rotation_degrees` (clockwise on screen). The server offers tilt only to this protocol (and only
     /// with `MEDIA_TILT_ENABLED` + `clipTilt` verified) and answers 426 `client_update_required` (`clip_tilt`)
     /// to an older build polling a recipe that already carries one.
-    static let version = 28
+    /// 29 (KRI-1139): decodes a clip backdrop of kind `media` (a Visuals-pool photo or video behind the clip) and the
+    /// `clipBackdropMedia` capability, and draws it. The server offers it only to this protocol (and only with
+    /// `MEDIA_TILT_ENABLED` + `clipBackdropMedia` verified) and answers 426 `client_update_required`
+    /// (`clip_backdrop_media`) to an older build polling a recipe that already carries one.
+    static let version = 29
     static let header = "X-Kria-Client-Protocol"
 }
 

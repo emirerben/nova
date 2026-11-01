@@ -850,6 +850,13 @@ class Settings(BaseSettings):
     # already pinned keep their tilt.
     media_tilt_enabled: bool = False
     media_tilt_min_client_protocol: int = 28
+    # KRI-1139: a Visuals-pool photo or video as a clip's tilt backdrop (`backdrop.kind =
+    # "media"`, capability `clipBackdropMedia`). Not a second master flag: it is offered only
+    # while `media_tilt_enabled` is on, and also needs `clipBackdropMedia` in
+    # PHONE_RENDER_VERIFIED_FEATURES and a build that declares protocol >= this value (29: the
+    # first build that decodes a media backdrop). A pinned recipe that already carries one
+    # answers 426 `client_update_required` (`clip_backdrop_media`) to an older build.
+    media_backdrop_min_client_protocol: int = 29
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

@@ -6,7 +6,7 @@ import copy
 import hashlib
 import json
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import structlog
@@ -1549,6 +1549,7 @@ def _swap_voiceover_cut(
     *,
     archetype: str,
     landscape_fit: str | None = None,
+    visuals: Sequence[PhoneVisualBinding] = (),
 ) -> EditRecipeV2:
     """KRI-290: the committed creator cut (resolved by
     `resolve_phone_voiceover_slots`) swapped into ``recipe``'s video track."""
@@ -1564,6 +1565,7 @@ def _swap_voiceover_cut(
         bindings=bindings,
         pool=pool,
         landscape_fit=landscape_fit,
+        visuals=visuals,
     )
     for slot in prep["timeline_override"]:
         # A cleared tilt was the compile's instruction; the stored row is simply upright.
@@ -1733,7 +1735,14 @@ def _compile_narrated_editor_commit(
     recipe = with_drawings(previous.recipe, None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
-        recipe = _swap_voiceover_cut(recipe, prep, bindings, pool, archetype="narrated")
+        recipe = _swap_voiceover_cut(
+            recipe,
+            prep,
+            bindings,
+            pool,
+            archetype="narrated",
+            visuals=_assembly_visuals(assembly) + editor_visual_bindings(variant),
+        )
     title_elements: list[dict] = []
     if text_active:
         # The STAGED row: `_prepare_editor_commit` validated the Save's
@@ -1895,6 +1904,7 @@ def _compile_voiceover_montage_editor_commit(
             landscape_fit=_resolved_landscape_fit(
                 variant, previous.recipe, prep.get("landscape_fit_override")
             ),
+            visuals=_assembly_visuals(assembly) + editor_visual_bindings(variant),
         )
     fit_override = prep.get("landscape_fit_override")
     if fit_override is not None:

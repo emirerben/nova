@@ -44,11 +44,13 @@ from app.pipeline.phone_narrated_plan import _fit_step_window
 from app.pipeline.phone_recipe_shared import (
     EXPORT_SAFETY_MARGIN_S,
     audio_fade,
+    backdrop_asset_ids,
     clip_tilt_fields,
     display_dims,
     fit_transform,
     landscape_fit_from_recipe,
     refit_source_window,
+    register_backdrop_visuals,
     timeline_end_s,
 )
 from app.services.phone_sources import PhoneSourceBinding
@@ -402,6 +404,7 @@ def replace_voiceover_cut(
     bindings: Sequence[PhoneSourceBinding],
     pool: Sequence[str],
     landscape_fit: str | None = None,
+    visuals: Sequence[Any] = (),
 ) -> EditRecipeV2:
     """``recipe`` with its main video track rebuilt from ``slots`` (KRI-290).
 
@@ -418,6 +421,9 @@ def replace_voiceover_cut(
     ``variant["landscape_fit"]`` should pass it, since an all-portrait cut
     compiled with ``"fit"`` is indistinguishable from ``"fill"``. Narrated
     recipes never letterbox (KRI-307).
+
+    ``visuals`` are the job's pinned Visuals-pool receipts: a clip whose tilt names a media
+    backdrop (KRI-1139) declares that photo or video as a recipe asset from them.
 
     Raises `UnsupportedPhonePlan` when a slot cannot be built on the phone.
     """
@@ -459,6 +465,7 @@ def replace_voiceover_cut(
             and any(clip.volume != 1 for clip in video.clips)
         ),
     )
+    register_backdrop_visuals(clips, visuals=visuals, assets=assets, manifest=manifest)
     old_end = timeline_end_s(video.clips)
     new_end = timeline_end_s(clips)
 
@@ -486,12 +493,25 @@ def replace_voiceover_cut(
             if kept:
                 tracks.append(track.model_copy(update={"clips": kept}))
 
-    still_used = {clip.source_asset_id for track in tracks for clip in track.clips}
-    dropped = {clip.source_asset_id for clip in video.clips} - still_used
+    still_used = {clip.source_asset_id for track in tracks for clip in track.clips} | (
+        backdrop_asset_ids(clips)
+    )
+    dropped = (
+        {clip.source_asset_id for clip in video.clips} | backdrop_asset_ids(video.clips)
+    ) - still_used
     assets = {key: value for key, value in assets.items() if key not in dropped}
     manifest = {key: value for key, value in manifest.items() if key not in dropped}
 
-    required = set(recipe.required_capabilities) - {"variableSpeed", "crossfade", "clipTilt"}
+    required = set(recipe.required_capabilities) - {
+        "variableSpeed",
+        "crossfade",
+        "clipTilt",
+        "clipBackdropMedia",
+    }
+    if dropped & backdrop_asset_ids(video.clips):
+        # A pool visual that only a backdrop used is gone; the recipe validator re-derives
+        # `stillImages` / `visualVideos` from the visuals the manifest still declares.
+        required -= {"stillImages", "visualVideos"}
     if any(clip.rate != 1 for clip in clips):
         required.add("variableSpeed")
     if any(clip.transition is not None for clip in clips):

@@ -88,6 +88,7 @@ from app.pipeline.phone_recipe_shared import (
     face_fill_transform,
     fit_transform,
     landscape_fit_from_recipe,  # noqa: F401 - re-export, moved to phone_recipe_shared (KRI-285)
+    register_backdrop_visuals,
     snap_text_overshoot,
 )
 from app.pipeline.phone_subtitled_lanes import (
@@ -508,6 +509,7 @@ def compile_phone_subtitled_plan(
     from app.services.phone_text_styling import register_generation_timeline
 
     register_generation_timeline(main_clips)
+    register_backdrop_visuals(main_clips, visuals=visuals, assets=assets, manifest=manifest)
 
     try:
         layers = compile_caption_layers(

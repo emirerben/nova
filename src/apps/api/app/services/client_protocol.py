@@ -26,6 +26,9 @@ RENDERED_TIMELINE_CLOCK_PROTOCOL = 26
 SPEAKER_BACKGROUND_PROTOCOL = 27
 # The first build that decodes the `clipTilt` capability (`TimelineClip.backdrop`).
 CLIP_TILT_PROTOCOL = 28
+# The first build that decodes a clip backdrop of kind `media` (the `clipBackdropMedia`
+# capability).
+CLIP_BACKDROP_MEDIA_PROTOCOL = 29
 
 
 def caption_style_scope_supported() -> bool:
