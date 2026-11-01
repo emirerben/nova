@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.79.0] - 2026-11-01
+
+### Changed
+- fix(ci): native journeys with no offline fixtures get a valid fixture bundle (KRI-1087) (#2025) <!-- release-pr: 2025 -->
+
 ## [0.83.78.0] - 2026-11-01
 
 ### Changed
