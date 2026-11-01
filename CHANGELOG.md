@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.72.0] - 2026-11-01
+
+### Changed
+- fix(ios): one Save persists every edited text type and the screen shows what each type inherits (#2016) <!-- release-pr: 2016 -->
+
 ## [0.83.71.0] - 2026-11-01
 
 ### Changed
