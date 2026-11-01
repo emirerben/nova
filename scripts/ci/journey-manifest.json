@@ -2868,6 +2868,40 @@
         "src/apps/ios/Tests/KriaTests/NativeOverlayCardTiltTests.swift",
         "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardTiltTests.swift"
       ]
+    },
+    {
+      "id": "kri-1162-speaker-background-windows",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_speaker_background_windows.py tests/routes/test_speaker_background_windows_editor.py tests/kria/test_brief_checks_speaker_background.py tests/kria/test_speaker_background_chat.py tests/tasks/test_speaker_background_strategy_worker.py tests/routes/test_speaker_background_chat_ops.py tests/kria/test_editor_capability_parity.py tests/evals/test_edit_copilot_evals.py",
+      "xctests": [
+        "KriaTests/SpeakerBackgroundEditorTests/testTheLaneIsNotAnUnsupportedLaneAndAnUnreadableOneIs",
+        "KriaTests/SpeakerBackgroundEditorTests/testTheLaneDecodesAndASnapshotWithoutItIsUntouched",
+        "KriaTests/SpeakerBackgroundEditorTests/testEditingTheLaneWritesTheObjectAndClearingWritesNull",
+        "KriaTests/SpeakerBackgroundEditorTests/testCommitRequestOmitsSendsAndNullsTheLane",
+        "KriaTests/SpeakerBackgroundEditorTests/testSaveCarriesWindowsAndTheSpeakerFrameAndOmitsThemOnceTheyAreGone",
+        "KriaTests/SpeakerBackgroundEditorTests/testWindowsAndTheSpeakerFrameRoundTripAndLocalIDsNeverReachTheWire",
+        "KriaTests/SpeakerBackgroundEditorTests/testALaneWithoutWindowsOrFrameEncodesByteIdenticallyToToday",
+        "KriaTests/SpeakerBackgroundEditorTests/testWindowsCannotOverlapOrShrinkBelowHalfASecond",
+        "KriaTests/SpeakerBackgroundEditorTests/testTimelineWithoutWindowsHasNoBackgroundLane",
+        "KriaTests/SpeakerBackgroundEditorTests/testTheCompilerRegistersTheFillAndEveryWindowAssetOnce",
+        "KriaTests/SpeakerBackgroundEditorTests/testSpeakerFramePresetsAreDetectedWithinAThousandth",
+        "KriaTests/SpeakerBackgroundEditorTests/testSpeakerFramePresetsAreSetClearedAndACustomFrameIsKeptUntilAPresetIsPicked",
+        "KriaTests/SpeakerBackgroundEditorTests/testAddingAWindowAppendsItAfterTheLastOneAndClipsItToTheVideo",
+        "KriaUITests/BackgroundLaneUITests/testDraggingAWindowMovesTheInspectorAndTheSave",
+        "KriaUITests/BackgroundLaneUITests/testTheSequenceTilesAddAndRemoveWindowsAndTheSpeakerControlSetsThePreset",
+        "KriaUITests/BackgroundLaneUITests/testAProjectWithoutWindowsKeepsItsLanesAndHidesTheWindowControls"
+      ],
+      "paths": [
+        "src/apps/api/app/services/phone_background_sequence.py",
+        "src/apps/api/prompts/edit_copilot_ops/speaker_background_windows.txt",
+        "src/apps/api/tests/kria/test_speaker_background_windows.py",
+        "src/apps/api/tests/routes/test_speaker_background_windows_editor.py",
+        "src/apps/api/tests/kria/test_brief_checks_speaker_background.py",
+        "tests/fixtures/speaker-background-parity/v2.json",
+        "docs/reviews/speaker-background-windows-failure-modes.md",
+        "src/apps/ios/Tests/KriaUITests/BackgroundLaneUITests.swift",
+        "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift"
+      ]
     }
   ]
 }
