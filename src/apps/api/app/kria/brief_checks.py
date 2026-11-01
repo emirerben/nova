@@ -2681,6 +2681,18 @@ _CANT_CHECK_EDITOR_CLIP_TEXT = "I can't verify per-clip text on an editor edit."
 _CANT_CHECK_TARGET_CLIP_TEXT = "I can't verify text for that target clip in this draft."
 
 
+def _plan_clip_id(scoped: str, ids: Sequence[str]) -> str | None:
+    """The plan clip a ``clip:<id>`` scope names, else None.
+
+    A brief names a Visuals photo by its manifest id (``asset-<uuid>``); a unified montage
+    record names it by the bare pool id, so the label on that photo is still its label.
+    """
+    if scoped in ids:
+        return scoped
+    bare = scoped.removeprefix("asset-")
+    return bare if bare != scoped and bare in ids else None
+
+
 def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     if (
         req.scope == "per_clip"
@@ -2769,8 +2781,8 @@ def _check_per_clip_text(req: BriefRequirement, facts: PlanFacts) -> Requirement
         return None
 
     if req.scope.startswith("clip:"):
-        clip = req.scope.split(":", 1)[1]
-        if clip not in ids:
+        clip = _plan_clip_id(req.scope.split(":", 1)[1], ids)
+        if clip is None:
             return _receipt(req, "partial", _CANT_CHECK_TARGET_CLIP_TEXT)
         index = ids.index(clip) if clip in ids else len(ids)
         value = text_for(index, clip)
