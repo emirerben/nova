@@ -79,6 +79,18 @@ protocol TokenStore: Sendable {
     func read() throws -> MobileSession?
     func write(_ session: MobileSession) throws
     func delete() throws
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate
+}
+
+struct SessionStoreUpdate: Sendable {
+    let applied: Bool
+    let current: MobileSession?
+}
+
+extension TokenStore {
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        throw APIError.unsupported
+    }
 }
 
 struct MobileSession: Codable, Sendable, Equatable {
@@ -89,21 +101,33 @@ struct MobileSession: Codable, Sendable, Equatable {
 }
 
 struct KeychainTokenStore: TokenStore, @unchecked Sendable {
+    private static let mutationLock = NSLock()
     let service: String
     let account: String
     init(service: String = "com.kria.auth", account: String = "access-token") { self.service = service; self.account = account }
-    func read() throws -> MobileSession? {
+    func read() throws -> MobileSession? { try Self.mutationLock.withLock { try readUnlocked() } }
+    func write(_ session: MobileSession) throws { try Self.mutationLock.withLock { try writeUnlocked(session) } }
+    func delete() throws { try Self.mutationLock.withLock { try deleteUnlocked() } }
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        try Self.mutationLock.withLock {
+            let current = try readUnlocked()
+            guard current == expected else { return SessionStoreUpdate(applied: false, current: current) }
+            if let replacement { try writeUnlocked(replacement) } else { try deleteUnlocked() }
+            return SessionStoreUpdate(applied: true, current: replacement)
+        }
+    }
+    private func readUnlocked() throws -> MobileSession? {
         var query = baseQuery; query[kSecReturnData as String] = true; query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?; let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }; guard status == errSecSuccess, let data = item as? Data else { throw KeychainError(status) }
         return try JSONDecoder().decode(MobileSession.self, from: data)
     }
-    func write(_ session: MobileSession) throws {
+    private func writeUnlocked(_ session: MobileSession) throws {
         let data = try JSONEncoder().encode(session); let status = SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecItemNotFound { var query = baseQuery; query[kSecValueData as String] = data; let add = SecItemAdd(query as CFDictionary, nil); guard add == errSecSuccess else { throw KeychainError(add) } }
         else if status != errSecSuccess { throw KeychainError(status) }
     }
-    func delete() throws { let status = SecItemDelete(baseQuery as CFDictionary); guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError(status) } }
+    private func deleteUnlocked() throws { let status = SecItemDelete(baseQuery as CFDictionary); guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError(status) } }
     private var baseQuery: [String: Any] { [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] }
 }
 struct KeychainError: Error, LocalizedError { let status: OSStatus; init(_ status: OSStatus) { self.status = status }; var errorDescription: String? { "Secure sign-in storage is unavailable." } }
@@ -180,6 +204,13 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     /// One page of chats, newest first. `nextCursor` is nil on the last page.
     func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
+    func nativeActivities(before: String?) async throws -> NativeActivityPage
+    func nativeActivity(id: UUID) async throws -> NativeActivity
+    func readNativeActivity(id: UUID) async throws -> NativeActivity
+    func nativeActivity(id: UUID, owner: String) async throws -> NativeActivity
+    func nativeActivityProject(threadID: UUID, owner: String) async throws -> CreationThread
+    func readNativeActivity(id: UUID, owner: String) async throws -> NativeActivity
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation
     func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript
     func generateMedia(itemID: String, body: GeneratedMediaRequest) async throws -> GeneratedMediaOperation
@@ -348,6 +379,7 @@ struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
 }
 
 extension KriaAPIClient {
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan { throw APIError.unsupported }
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
 
     func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript { throw APIError.unsupported }
@@ -1204,7 +1236,11 @@ enum KriaClientProtocolContract {
     /// 27 (KRI-1115): decodes a recipe's `speaker_background` and the `speakerBackground` capability. This app
     /// skips 26: the server already uses 26 for `RENDERED_TIMELINE_CLOCK_PROTOCOL`, so 27 is set exactly to match
     /// the server's `SPEAKER_BACKGROUND_PROTOCOL`. A build declaring 27 also satisfies the server's `>= 26` check.
-    static let version = 27
+    /// 28 (KRI-1134): decodes the `clipTilt` capability and a clip's `backdrop`, and draws a clip turned by
+    /// `transform.rotation_degrees` (clockwise on screen). The server offers tilt only to this protocol (and only
+    /// with `MEDIA_TILT_ENABLED` + `clipTilt` verified) and answers 426 `client_update_required` (`clip_tilt`)
+    /// to an older build polling a recipe that already carries one.
+    static let version = 28
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1257,8 +1293,9 @@ private actor MobileSessionRefreshCoordinator {
                 throw APIError.sessionExpired
             }
             let refreshed = try JSONDecoder().decode(MobileSession.self, from: data)
-            try tokenStore.write(refreshed)
-            return refreshed
+            let update = try tokenStore.updateSession(refreshed, ifCurrent: current)
+            guard let session = update.current else { throw APIError.sessionExpired }
+            return session
         }
         inFlight = (failedAccessToken, task)
 
@@ -1393,6 +1430,9 @@ struct KriaAPI: KriaAPIClient {
         return ProjectPage(projects: result.value.map(\.summary), nextCursor: result.response.value(forHTTPHeaderField: "X-Next-Cursor"))
     }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan {
+        try await request(path: "plan-items/\(itemID)/overlay-plan", method: "POST", bodyData: JSONEncoder().encode(body), decode: OverlayPlan.self)
+    }
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation {
         try await request(path: "plan-items/\(itemID)/generated-media/by-event/\(clientEventID)", method: "GET", bodyData: nil, decode: GeneratedMediaOperation.self)
     }
@@ -1729,12 +1769,12 @@ struct KriaAPI: KriaAPIClient {
         }.joined(separator: ", ")
     }
 
-    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> T {
-        try await requestWithResponse(path: path, method: method, query: query, headers: headers, bodyData: bodyData, decode: decode, requiresAuth: requiresAuth, timeoutInterval: timeoutInterval).value
+    func request<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil, expectedOwner: String? = nil) async throws -> T {
+        try await requestWithResponse(path: path, method: method, query: query, headers: headers, bodyData: bodyData, decode: decode, requiresAuth: requiresAuth, timeoutInterval: timeoutInterval, expectedOwner: expectedOwner).value
     }
 
     /// `request`, also returning the HTTP response, for the few routes that answer in headers as well as the body.
-    func requestWithResponse<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil) async throws -> (value: T, response: HTTPURLResponse) {
+    func requestWithResponse<T: Decodable>(path: String, method: String, query: [URLQueryItem] = [], headers: [String: String] = [:], bodyData: Data?, decode: T.Type, requiresAuth: Bool = true, timeoutInterval: TimeInterval? = nil, expectedOwner: String? = nil) async throws -> (value: T, response: HTTPURLResponse) {
         var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false)
         components?.queryItems = query.isEmpty ? nil : query
         // URLComponents preserves `+` in query-item values, while FastAPI
@@ -1753,18 +1793,20 @@ struct KriaAPI: KriaAPIClient {
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.setValue(String(KriaClientProtocolContract.version), forHTTPHeaderField: KriaClientProtocolContract.header)
         var storedSession = requiresAuth ? try tokenStore.read() : nil
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         // A token that is about to expire (or already has) is refreshed BEFORE the request, instead of the request
         // failing with a 401 and being replayed: after any idle period that is two round trips off every launch.
         if requiresAuth, let current = storedSession, Self.isExpiringSoon(current.accessToken) {
-            storedSession = try await refreshAhead(of: current)
+            storedSession = try await refreshAhead(of: current, expectedOwner: expectedOwner)
         }
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         if let token = storedSession?.accessToken { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let bodyData {
             request.httpBody = bodyData
             // A caller that sets its own Content-Type (multipart dictation upload) keeps it.
             if request.value(forHTTPHeaderField: "Content-Type") == nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         }
-        var (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
+        var (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth, expectedOwner: expectedOwner)
         // The server answers a request Postgres aborted as a deadlock victim with
         // `409 {"code": "concurrent_update", "retryable": true}`. It was rolled back, so
         // nothing changed and nothing was saved: send the identical request again (each
@@ -1778,10 +1820,13 @@ struct KriaAPI: KriaAPIClient {
             NativePreviewDiagnostics.record("http-concurrent-update-retry", fields: ["attempt": String(concurrentUpdateRetries)])
             #endif
             try await Task.sleep(for: delay)
-            (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth)
+            (data, response) = try await send(&request, storedSession: storedSession, requiresAuth: requiresAuth, expectedOwner: expectedOwner)
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
-        if requiresAuth, http.statusCode == 401 { clearExpiredSession(); throw APIError.sessionExpired }
+        if requiresAuth, http.statusCode == 401 {
+            try validateNotificationOwner(expectedOwner, session: storedSession)
+            clearExpiredSession(failedAccessToken: request.value(forHTTPHeaderField: "Authorization")?.replacingOccurrences(of: "Bearer ", with: "")); throw APIError.sessionExpired
+        }
         if path.hasPrefix("me/account/delete-") {
             if http.statusCode == 503 { throw AccountDeletionError.unavailable }
             if http.statusCode == 400 { throw AccountDeletionError.invalidConfirmation }
@@ -1865,13 +1910,14 @@ struct KriaAPI: KriaAPIClient {
 
     /// Rotates the session through the same coordinator the 401 path uses, so concurrent callers share one rotation
     /// and the single-use refresh token is never replayed (KRI-119).
-    private func refreshAhead(of current: MobileSession) async throws -> MobileSession {
+    private func refreshAhead(of current: MobileSession, expectedOwner: String? = nil) async throws -> MobileSession {
         do {
             return try await refreshCoordinator.refresh(
                 failedAccessToken: current.accessToken, baseURL: baseURL, tokenStore: tokenStore, session: session
             )
         } catch let error as APIError where error == .sessionExpired {
-            clearExpiredSession()
+            try validateNotificationOwner(expectedOwner, session: current)
+            clearExpiredSession(failedAccessToken: current.accessToken)
             throw error
         } catch {
             // Offline or a server hiccup: send with the token we have; the 401 path retries the refresh if it matters.
@@ -1880,7 +1926,8 @@ struct KriaAPI: KriaAPIClient {
     }
 
     /// Sends `request`, refreshing an expired access token once.
-    private func send(_ request: inout URLRequest, storedSession: MobileSession?, requiresAuth: Bool) async throws -> (Data, URLResponse) {
+    private func send(_ request: inout URLRequest, storedSession: MobileSession?, requiresAuth: Bool, expectedOwner: String? = nil) async throws -> (Data, URLResponse) {
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         let route = Perf.routeTemplate(method: request.httpMethod, path: request.url?.path ?? "")
         let requestID = UUID().uuidString
         Perf.begin("net.request", id: requestID, route)
@@ -1896,6 +1943,7 @@ struct KriaAPI: KriaAPIClient {
         var (data, response) = try await session.data(for: request)
         var retried401 = false
         defer { Perf.end("net.request", id: requestID, "\(route) \((response as? HTTPURLResponse)?.statusCode ?? 0) retried401=\(retried401)") }
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         if requiresAuth, let http = response as? HTTPURLResponse, http.statusCode == 401, let storedSession {
             retried401 = true
             let refreshed: MobileSession
@@ -1907,13 +1955,24 @@ struct KriaAPI: KriaAPIClient {
                     session: session
                 )
             } catch let error as APIError where error == .sessionExpired {
-                clearExpiredSession()
+                try validateNotificationOwner(expectedOwner, session: storedSession)
+                clearExpiredSession(failedAccessToken: storedSession.accessToken)
                 throw error
             }
+            try validateNotificationOwner(expectedOwner, session: refreshed)
             request.setValue("Bearer \(refreshed.accessToken)", forHTTPHeaderField: "Authorization")
             (data, response) = try await session.data(for: request)
         }
+        try validateNotificationOwner(expectedOwner, session: storedSession)
         return (data, response)
+    }
+    private func validateNotificationOwner(_ expectedOwner: String?, session: MobileSession?) throws {
+        guard let expectedOwner else { return }
+        guard mediaLibraryOwner == expectedOwner,
+              MediaLibraryOriginals.owner(accessToken: session?.accessToken) == expectedOwner else {
+            throw APIError.sessionExpired
+        }
+        try Task.checkCancellation()
     }
     /// Resends of one request the server rolled back as a deadlock victim.
     static let concurrentUpdateRetryLimit = 2
@@ -1928,9 +1987,11 @@ struct KriaAPI: KriaAPIClient {
         let advised = response.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init) ?? 0.25
         return .milliseconds(Int(min(max(advised, 0), 2) * 1000) + Int.random(in: 0...250))
     }
-    private func clearExpiredSession() {
-        try? tokenStore.delete()
-        NotificationCenter.default.post(name: .kriaSessionExpired, object: nil)
+    private func clearExpiredSession(failedAccessToken: String?) {
+        guard let failedAccessToken, let current = try? tokenStore.read(),
+              current.accessToken == failedAccessToken,
+              let update = try? tokenStore.updateSession(nil, ifCurrent: current), update.applied else { return }
+        NotificationCenter.default.post(name: .kriaSessionExpired, object: current)
     }
     /// Best-effort decode of the server's `{"detail": "..."}` error-body shape
     /// (FastAPI's default `HTTPException` envelope). Shared by the 409/412
@@ -2042,6 +2103,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "GUIDED_REVISION_WIRE_UNSUPPORTED": "Update Kria to save this edit.",
             "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
             "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
+            "TIMELINE_TILT_WITH_LOOK": "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here.",
+            "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
             "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
             "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
             "music_track_unavailable": "That song isn’t available any more. Pick another song and save again. Your edits are still here.",

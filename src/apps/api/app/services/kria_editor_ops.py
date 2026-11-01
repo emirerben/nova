@@ -28,6 +28,7 @@ from app.agents._schemas.text_element import (
     resolve_narrated_storyboard_rows,
 )
 from app.config import settings
+from app.kria.clip_tilt import ClipTilt
 from app.pipeline.camera_effects import easing_bounds, resolve_easing
 from app.routes.generative_jobs import (
     EditorCommitBackgroundMusic,
@@ -98,7 +99,7 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
             else value is True or (isinstance(value, dict) and value.get("editable") is True)
         )
 
-    return {
+    fields = {
         "duration_s": enabled("duration"),
         "in_s": enabled("in_s"),
         "removed": enabled("remove"),
@@ -108,6 +109,10 @@ def timeline_patch_capabilities(job: Any, variant: dict[str, Any]) -> dict[str, 
         "playback_rate": enabled("playback_rate", default=not device) and source_window_timeline,
         "source_crop": enabled("source_crop", default=False),
     }
+    if enabled("tilt", default=False):
+        # KRI-1137: present only while open, so every other snapshot and prompt is unchanged.
+        fields["tilt"] = True
+    return fields
 
 
 _TEXT_STYLE_FIELDS = {
@@ -1251,6 +1256,10 @@ def build_editor_snapshot(
         snapshot["editor_limits"] = {"max_timeline_slots": timeline_max_slots}
     if "clip" in families:
         snapshot["timeline_patch_capabilities"] = timeline_patch_capabilities(job, variant)
+        if snapshot["timeline_patch_capabilities"].get("tilt") is True:
+            for slot, row in zip(slots, slot_rows, strict=True):
+                if tilt := ClipTilt.from_row(row.get("tilt")).row():
+                    slot["tilt"] = tilt
         # Unlocks add_unused_sources/set_media_duration/stack_images bulk
         # selectors — see `_source_pool_rows`.
         snapshot["source_pool"] = _source_pool_rows(job, variant)
@@ -1456,7 +1465,13 @@ def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
             # Only guided rows carry these; omission on the wire means "inherit".
             **{
                 key: row[key]
-                for key in ("playback_rate", "source_crop", "source_start_locked", "source_end_s")
+                for key in (
+                    "playback_rate",
+                    "source_crop",
+                    "tilt",
+                    "source_start_locked",
+                    "source_end_s",
+                )
                 if key in row
             },
         )

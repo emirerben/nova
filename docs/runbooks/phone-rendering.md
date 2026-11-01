@@ -3010,6 +3010,15 @@ Flow:
    `song_sync = "lipsync" | "background"` (lip-sync cues such as "lip sync",
    "singing along", "mouthing the words" mean lip-sync; anything else is
    background). A missing `song_sync` is repaired to `background` with a notice.
+   **Lip-sync card (KRI-1093).** The iOS picker's `lipsync` card is a montage
+   (`select_format {"format": "lipsync"}` stores `state.format = "lipsync"`,
+   `state.edit_format = "montage"`; registry: `app/schemas/creation_formats.py`).
+   It is offered only to a native client while `phone_user_song_supported()` holds.
+   `creator_sessions.resolve_item_creator_context` reads the latest thread's
+   `state.format` into `ResolvedCreatorManifest.chosen_format` (omitted when unset, so
+   every other manifest/prompt is byte-identical). With a usable song the prompt adds one
+   paragraph, and an unset `song_sync` repairs to `lipsync` instead of `background`. The
+   model's own `song_sync` is never overridden: "use it as background music" still wins.
 4. **Gate (lip-sync only).** `kria/planner._song_order_gate` waits up to
    `SONG_ALIGNMENT_TURN_DEADLINE_S` (45 s) for the alignment, then replies "still
    checking your clips". It does NOT ask when the song analysis is not `ready`
@@ -3750,3 +3759,89 @@ byte-identical to today's. Builds below protocol 27 get `426 client_update_requi
 carries a background. The app reads `capabilities.speaker_background` (creation) and
 `editor_capabilities.speaker_background` (per variant). Rollback is the kill switch, never a
 code revert. Detail: `docs/pipelines/speaker-background.md`.
+
+
+## Clip tilt (KRI-1134)
+
+| Capability | Recipe field | Gate | Detail |
+|---|---|---|---|
+| `clipTilt` | `transform.rotation_degrees` (non-zero) and `backdrop` on a main-track clip | `MEDIA_TILT_ENABLED` (default off) + `clipTilt` in `PHONE_RENDER_VERIFIED_FEATURES` + client protocol >= `MEDIA_TILT_MIN_CLIENT_PROTOCOL` (28) | `KriaMediaEngine` turns the clip and draws the backdrop on device; the server only stores and passes both through |
+
+Wire: `rotation_degrees` is CLOCKWISE on screen, the same sense as the editor's `tilt.rotation_deg` and
+sticker/text `rotation_deg` (the engine negates it for Core Image's y-up space; proven by
+`ClipTiltCompositionTests`, which moves a red marker and reads the pixels). `backdrop` is
+`{"kind": "blank" | "color" | "blur", "color": "#RRGGBB"}` with `color` for `color` only, valid on the main video
+track and omitted when unused, so untilted recipes keep their bytes and digest. `blank` is black, `blur` is a
+blurred cover-fit copy of the same frame, and the corners a turn uncovers show it. A supporting-card photo turns
+inside its card and keeps its blurred cover upright; a `look` clip still refuses a non-identity transform. The
+parity fixture is `tests/fixtures/clip-tilt-parity/v1.json`.
+
+Rollout order: set the Fly secrets `MEDIA_TILT_ENABLED=true` and add `clipTilt` to
+`PHONE_RENDER_VERIFIED_FEATURES` (api + worker, restart) first, then ship the TestFlight build that declares
+protocol 28. A build below 28 polling a pinned recipe that carries a tilt gets
+`426 client_update_required` (`feature: "clip_tilt"`) instead of a recipe it cannot decode. The kill switch
+hides the authoring surface and never rewrites a pinned recipe, so rollback is `MEDIA_TILT_ENABLED=false`
+(+ restart), never a code revert. This train's PR A is the engine and wire contract; the editor surface, Save
+routes, phone writers, AI ops and slides land in the follow-up PRs of the same project.
+
+### Chat tilt (KRI-1137, PR C)
+
+The chat copilot tilts clips through `patch_slots.tilt` (no new op): `{"rotation_deg": 10, "backdrop":
+{"kind": "blur"}}`, `{"rotation_delta_deg": 3}` for "a bit more" (each clip adds to its own angle), or `null`
+to straighten. An absolute angle up to a full turn either way is wrapped into -180..180 (270 is -90);
+anything past 360 is refused in a plain sentence. The row value is `clips[i]["tilt"]`
+(`app/kria/clip_tilt.py`: the angle plus a `ClipBackdrop`, absent when upright on a blank backdrop).
+
+The parser, the prompt and the snapshot open only while the editor capability map carries
+`clips.tilt` editable (`timeline_patch_capabilities.tilt`, present only while open). A closed gate leaves
+every snapshot and prompt byte-identical; a tilt asked for anyway is refused with "I can't tilt clips on this
+edit". The prompt fragment is `prompts/edit_copilot_ops/clip_tilt.txt` (`EDIT_COPILOT_PROMPT_VERSION` v98).
+A clip with a look, or a card photo asked for a new backdrop, is refused by the compiler in a sentence
+(`editor_ops_v2/timeline.py::_tilted`).
+
+Picture cards cannot be rotated from chat: the phone Talking compile drops `editor_style`
+(`SubtitledOverlayCard` has no angle), so `patch_overlay` with `rotation_deg` is refused on every edit
+that offers the overlay family. Teach the angle to the card op only after that compile keeps it.
+
+routes and phone writers (PR B, below) and the AI ops and slides (later PRs) land in the follow-ups of the same project.
+
+### Video editor (KRI-1136, PR B)
+
+Row field: `clips[i].raw["tilt"]` = `{"rotation_deg": float, "backdrop": {"kind": ...}}`, clockwise, wrapped to
+`(-180, 180]` and rounded to hundredths; `backdrop` is absent when blank and the whole key is **omitted** when the
+clip is upright (Reset removes the key, so an untouched row, its state hash and its recipe keep their bytes). One
+model per language: `app.kria.clip_tilt.ClipTilt` (`app.kria.clip_tilt_row` validates and wraps a wire value) and
+`Kria/Core/ClipTilt.swift`, pinned together by `tests/fixtures/clip-tilt-row/v1.json`. One writer helper per
+language too: `phone_recipe_shared.clip_tilt_fields(row) -> (transform_patch, backdrop)` and
+`NativeEditorRenderCompiler.clipTilt`. No writer reads `tilt` itself.
+
+| Writer | Where the row comes from | Test |
+|---|---|---|
+| guided / montage / song / lip-sync | `TimelineSlotEdit.tilt` -> revision segment `tilt` -> `GuidedStoryMoment.tilt` -> `phone_guided_plan` | `tests/kria/test_clip_tilt_writers.py[guided]` |
+| authored (Talking, any edit after an editor Save) | `resolve_authored_phone_slots` -> `user_timeline` row -> `phone_authored_timeline` | `[authored]` |
+| Voiceover cut (narrated, voiceover montage) | `resolve_phone_voiceover_slots` -> `replace_voiceover_cut` (a clip keeps its pinned tilt unless the row sends one) | `[voiceover_cut_*]` |
+| voiceover montage plan, subtitled plan | `clip_tilts={clip id: row value}`; the subtitled editor passes the previous recipe's tilts so a lane Save keeps them | `[montage]`, `[subtitled]` |
+
+Save contract (`TimelineSlotEdit.tilt`): omitted keeps the stored tilt, an explicit `null` or an upright blank value
+clears it (the editor sends `null` for a saved tilt it removed, because an omitted key keeps it). A tilt on a slot
+with a look is refused (`TIMELINE_TILT_WITH_LOOK`; the editor disables Tilt there and says why). Letterbox and
+tilt compose: `_fit_eligible` no longer skips a rotated clip, so a tilted sideways clip keeps its bars (scale first,
+then turn about the canvas centre).
+
+Capability: `editor_capabilities.clips.tilt = {"editable": true, "reason": null}` (the shape of `clips.source_crop`),
+present only while `MEDIA_TILT_ENABLED` is on, `clipTilt` is verified, the requesting build declares protocol >= 28
+(workers skip the build check) and the variant renders on device with a Save that recompiles the row: an authored
+timeline, a guided/montage edit with its revision, or a phone Voiceover cut. A Talking edit that is not authored yet
+does not offer Tilt. A closed gate leaves the payload
+byte-identical. The Swift decoder flattens it to `clips.tilt`; `NativeEditorSession.canTiltClips` reads it.
+Save-time gates (`_require_clip_tilt_gates`): a build below protocol 28 that replaces the timeline of a variant
+holding a tilt gets `426 client_update_required` (`feature: "clip_tilt"`), because it previews the clip upright and
+cannot say the tilt; a new or changed tilt while the flag/token is off, or on a cloud variant, gets
+`422 clip_tilt_unavailable` (keeping or clearing a stored tilt is always allowed).
+
+Editor: **Tilt** in the clip's context strip (next to Crop) opens `NativeTiltSheet`: a dial from -180 to 180 with
+detents at 0, +-90 and 180 (the `NativeTextRotationSnap` thresholds, haptic on entering one; dragging right turns
+clockwise, like the Nudge right button and the corner-rotate handle), +-1 degree nudges, Turn 90, Reset, and a
+Background row (Blank / Colour / Blur, plus "use this background on every clip", which leaves clips that cannot
+tilt untouched). The preview updates through the live-composition path. The overlay corner-rotate gesture snaps
+to 90 degrees too.

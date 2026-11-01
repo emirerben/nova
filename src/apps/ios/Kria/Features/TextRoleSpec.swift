@@ -28,6 +28,8 @@ struct TextRoleSpec: Identifiable, Sendable {
     let usualPosition: String?
     var id: String { role }
 
+    static let kriaPicksPlacement = "Kria picks the clearest spot"
+
     static let all: [TextRoleSpec] = [
         TextRoleSpec(role: "all_text", label: "All text", blurb: "Every kind of text below, unless you set one differently.",
                      sample: "", sizePx: 0, defaultAnchor: TextAnchor(x: 0.5, y: 0.5, alignment: "center"),
@@ -80,7 +82,7 @@ struct TextRoleDefaults: Equatable, Sendable {
     let usualPosition: String?
     let colorHint: String
     /// The placement default in a few words, for the one-line summary beside the preview.
-    var shortPlacement: String { usualPosition != nil ? "Usual spot" : placement == "Kria picks the clearest spot" ? "Kria picks" : "Your corner" }
+    var shortPlacement: String { usualPosition != nil ? "Usual spot" : placement == TextRoleSpec.kriaPicksPlacement ? "Kria picks" : "Your corner" }
 }
 
 struct TextStyleDefaults: Decodable, Sendable {
@@ -130,7 +132,7 @@ extension TextRoleSpec {
             outline: word(remote?.outline, "Off"), shadow: word(remote?.shadow, "Off"), color: word(remote?.color, "Auto"),
             font: remote?.font == nil || remote?.font == "auto" ? "Kria picks" : (remote?.font ?? "Kria picks"),
             fontHint: remote?.fontHint ?? (role == "caption" ? fallbackCaptionFont : nil),
-            placement: !keepsUsual ? "Kria picks the clearest spot" : (usual != nil ? "Usual spot" : "The corner you pick"),
+            placement: !keepsUsual ? kriaPicksPlacement : (usual != nil ? "Usual spot" : "The corner you pick"),
             usualPosition: usual,
             colorHint: server?.colorHint ?? fallbackColorHint)
     }

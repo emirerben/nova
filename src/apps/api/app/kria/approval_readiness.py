@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -27,6 +27,7 @@ from app.kria.brief_checks import (
     plan_facts_from_editor_payload,
     plan_facts_from_strategy,
 )
+from app.kria.contracts import RequirementReceipt
 from app.kria.order_replacement_receipts import with_verified_order_execution
 from app.kria.order_replacement_sources import OrderReplacementSourceContext
 from app.kria.reply_language import say
@@ -264,19 +265,38 @@ def _planned_order_basis(
     return planned if route == "unified_montage" else None
 
 
+def _research_proven(req: Any, facts: Any) -> bool:
+    """The sourced wording researched before approval stands for this ask's research part."""
+    from app.kria.brief_checks import _check_research  # noqa: PLC0415
+
+    receipt = _check_research(req, facts)
+    return receipt is not None and receipt.status == "met" and receipt.verification == "checked"
+
+
 def _no_pre_render_checker(req: Any, facts: Any) -> bool:
     """KRI-983: no draft check can settle this ask: none owns it, or its only check reads the
     finished video (`judged_at_render`). A researched-text ask and a keep-text-off mark are
-    proven outside `_has_checker` (research preview, the mark route), so they still block."""
+    proven outside `_has_checker` (research preview, the mark route), so they still block.
+
+    Assos (prod 2026-11-01, third refusal): "With animations, explain why people should visit
+    Assos" is ONE requirement with a research fact and an animation fact. Its research part is
+    proven by the preview (the sourced wording is on the card), and what is left, how the text
+    animates, is judged on the finished video. Holding the draft for the research part again
+    ("I can't confirm this draft does it yet") blocked a creator on something no draft can
+    show, so a requirement whose research is proven falls through to the checks of its other
+    facts. Research that is not proven (never researched, a limit, a failure) still blocks."""
     from app.kria.brief_checks import judged_at_render, text_words_met  # noqa: PLC0415
     from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
     from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
     from app.kria.style_asks import text_look_facts  # noqa: PLC0415
     from app.kria.text_sequence import is_text_sequence  # noqa: PLC0415
 
-    if (req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping)) or _fact_entries(
-        req.facts.get(KEEP_TEXT_OFF_KEY)
+    researched = req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping)
+    if researched and not (
+        settings.kria_researched_look_after_render_enabled and _research_proven(req, facts)
     ):
+        return False
+    if _fact_entries(req.facts.get(KEEP_TEXT_OFF_KEY)):
         return False
     if is_text_sequence(req):
         # 29 Ekim (prod thread 64bb9853): words shown a piece at a time are laid out by the
@@ -353,8 +373,15 @@ def assess_readiness(
     prepared_research: Mapping[str, Any] | None = None,
     order_execution: Mapping[str, Any] | None = None,
     order_source_context: OrderReplacementSourceContext | None = None,
+    plan_blockers: Sequence[RequirementReceipt] = (),
 ) -> dict[str, Any]:
     """Account for every live ID using existing policy, checkers and contract.
+
+    ``plan_blockers`` (Leverkusen M2 run 3) are checked receipts the phone montage plan the
+    worker will build falls short on (``phone_montage_preflight.readiness_plan_blockers``): a
+    speed ask that plan can't place. Each one replaces the draft check's verdict, so the
+    creator hears it before the card. They only ever hold a draft back, never make one ready,
+    so an approval re-check that does not run the plan can never disagree with a ready draft.
 
     KRI-901: ``protected_marks`` says this draft renders on the phone Talking writer for an
     app that shows the mark card (`protected_targets.marks_route`); only then do
@@ -489,6 +516,13 @@ def assess_readiness(
             strict_order=True,
         )
     }
+    for blocker in plan_blockers:
+        if (
+            blocker.requirement_id in receipts
+            and blocker.verification == "checked"
+            and blocker.status != "met"
+        ):
+            receipts[blocker.requirement_id] = blocker
     delegated = {
         str(req_id)
         for answer in strategy.get("choice_answers") or []

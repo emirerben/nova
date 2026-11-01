@@ -555,7 +555,9 @@ actor NativeEditorSourceResolver {
         configuration.timeoutIntervalForResource = 600
         #if DEBUG
         // This session is private to the resolver, so a fixture can only reach it from here.
-        if PerfFixture.editorFixture { configuration.protocolClasses = [PerfSourceURLProtocol.self] }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+            configuration.protocolClasses = [GeneratedMediaImageFixtureProtocol.self]
+        } else if PerfFixture.editorFixture { configuration.protocolClasses = [PerfSourceURLProtocol.self] }
         #endif
         return URLSession(configuration: configuration)
     }()

@@ -41,6 +41,7 @@ from app.services.device_render import (
     mark_device_failed,
     save_device_record,
 )
+from app.services.native_activity import activity_statement
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -141,6 +142,9 @@ def _reap_job(job_id: Any, *, threshold_s: int, now: datetime) -> int:
                 apply_device_failure_variant_update(
                     job, variant_id, reason_code="device_render_stale", detail=_STALE_DETAIL
                 )
+            statement = activity_statement(job, variant_id, kind="action_required")
+            if statement is not None:
+                db.execute(statement)
             reaped += 1
         if reaped:
             db.commit()

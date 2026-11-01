@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 GUIDED_STORY_RENDERER_READY = True
@@ -837,6 +837,19 @@ class Settings(BaseSettings):
     # docs/pipelines/speaker-background.md.
     speaker_background_enabled: bool = False
     speaker_background_min_client_protocol: int = 27
+    # KRI-1134: tilt a clip or photo to any angle (`transform.rotation_degrees`, clockwise on
+    # screen) with a blank, colour or blurred backdrop behind it (`TimelineClip.backdrop`),
+    # drawn ON DEVICE by `KriaMediaEngine`. Capability `clipTilt` (derived from the clips). The
+    # authoring surface needs this flag on, `clipTilt` in PHONE_RENDER_VERIFIED_FEATURES (fly
+    # secret, set after a physical-device preview + export check) and an app build declaring
+    # `X-Kria-Client-Protocol` >= `media_tilt_min_client_protocol` (28: the first build that
+    # decodes `clipTilt`). A pinned recipe that already carries a tilt answers 426
+    # `client_update_required` (`clip_tilt`) to an older build. Default FALSE (dark ship).
+    # Apply: `fly secrets set MEDIA_TILT_ENABLED=true --app nova-video` (api + worker) + restart,
+    # AFTER the token is verified. Rollback = `...=false` + restart, never a code revert; recipes
+    # already pinned keep their tilt.
+    media_tilt_enabled: bool = False
+    media_tilt_min_client_protocol: int = 28
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,
@@ -1113,6 +1126,12 @@ class Settings(BaseSettings):
     planner_boundary_honest_enabled: bool = True
     copilot_direction_follows_request_enabled: bool = True
     creator_jobs_no_catalog_song_freeze_enabled: bool = True
+    # Assos (2026-11-01, third refusal): a requirement with a research fact AND a look fact
+    # ("with animations, explain ...") whose research the preview proved is approvable, with
+    # the look named as judged on the finished video; the research part is never weakened.
+    # Default TRUE; false + restart (api + worker) = byte-identical to before
+    # (`approval_readiness._no_pre_render_checker`, agents/DECISIONS.md).
+    kria_researched_look_after_render_enabled: bool = True
     # KRI-721: enroll new approval writers only after API/worker readers deploy.
     # Existing stamped assessments remain mandatory when enrollment is disabled.
     kria_approval_readiness_enabled: bool = False
@@ -2349,6 +2368,14 @@ class Settings(BaseSettings):
     # Security
     token_encryption_key: str = ""
 
+    native_notifications_enabled: bool = False
+    native_notifications_allowed_owner_ids: list[UUID] = Field(default_factory=list)
+    native_notifications_apns_environment: Literal["sandbox", "production"] = "sandbox"
+    native_notifications_apns_topic: str | None = None
+    native_notifications_apns_team_id: str | None = None
+    native_notifications_apns_key_id: str | None = None
+    native_notifications_apns_private_key: SecretStr | None = None
+
     # OAuth
     instagram_client_id: str = ""
     instagram_client_secret: str = ""
@@ -2507,6 +2534,12 @@ class Settings(BaseSettings):
     # before. Rollback: `fly secrets set STORY_DIRECTIONS_ON_MONTAGE_ENABLED=false --app
     # nova-video` + restart api+worker.
     story_directions_on_montage_enabled: bool = True
+    # A part of the ask the research writer cannot source is a disclosed note next to the
+    # sourced wording, not a hold-back. False restores the old hold-back (restart api + worker).
+    research_unmet_is_note_enabled: bool = True
+    # A rejected research answer (overlap, timing, evidence, reviewer) is sent back to the writer
+    # once with the reason before the draft is held back. False + restart: no correction round.
+    research_correction_round_enabled: bool = True
     # KRI-808: a clip's timed words are kept only when whisper's language agrees with the
     # clip's Gemini transcript; a pass that disagrees (whisper TRANSLATED accented speech) is
     # re-transcribed in the language Gemini or the chat heard, else stored as no words. Also

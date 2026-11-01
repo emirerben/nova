@@ -158,6 +158,8 @@ enum NativeEditorUITestFixtures {
 
     /// The drawings the stub commit transport last saved (UserDefaults, so a relaunch "reopens" them).
     static let savedDrawingsKey = "kria.ui-test.saved-drawings.v1"
+    /// KRI-1136: the first timeline slot's saved `tilt`, kept across relaunches by the stub commit transport.
+    static let savedTiltKey = "kria.ui-test.saved-tilt.v1"
 
     /// The `speaker_background` value the stub commit transport last saved (UserDefaults; JSON `null` = cleared).
     static let savedSpeakerBackgroundKey = "kria.ui-test.saved-speaker-background.v1"
@@ -787,6 +789,9 @@ enum NativeEditorUITestCommitTransport {
     static func api() -> KriaAPI {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [CommitURLProtocol.self]
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+            URLProtocol.registerClass(GeneratedMediaImageFixtureProtocol.self)
+        }
         return KriaAPI(baseURL: URL(string: "https://editor-ui-testing.invalid")!, tokenStore: UITestTokenStore(), session: URLSession(configuration: configuration))
     }
 
@@ -796,7 +801,19 @@ enum NativeEditorUITestCommitTransport {
         func delete() throws {}
     }
 
+    private final class FailOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var failed = false
+        func takeFailure() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            if failed { return false }
+            failed = true
+            return true
+        }
+    }
+
     private final class CommitURLProtocol: URLProtocol, @unchecked Sendable {
+        static let capabilityFailures = FailOnce()
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -804,7 +821,60 @@ enum NativeEditorUITestCommitTransport {
             guard let url = request.url else { client?.urlProtocol(self, didFailWithError: URLError(.badURL)); return }
             var status = 404
             var body = Data(#"{"detail":"not stubbed"}"#.utf8)
-            if url.path.hasSuffix("/device-render"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayRecipeKey) {
+            if url.path.hasSuffix("/capabilities"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                // KRIA_OVERLAY_CAPABILITY_FAIL_ONCE: the first account check of this launch fails, the retry succeeds.
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_CAPABILITY_FAIL_ONCE"] == "1", Self.capabilityFailures.takeFailure() {
+                    client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+                    return
+                }
+                status = 200; body = Data(#"{"formats":[],"generated_images":true}"#.utf8)
+            } else if url.path.contains("/generated-media"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_REGISTRATION_RECOVERY"] == "1",
+                   url.path.hasSuffix("/generated-media"), request.httpMethod == "POST" {
+                    UserDefaults.standard.set(UserDefaults.standard.integer(forKey: "overlay-fixture-generation-count") + 1, forKey: "overlay-fixture-generation-count")
+                }
+                let count = UserDefaults.standard.integer(forKey: "overlay-fixture-generation-count")
+                let generatedID = count > 1 ? "fixture-generated-image-b" : "fixture-generated-image"
+                let imageURL = "https://generated-media-image.invalid/cover.jpg"
+                let response: [String: JSONValue] = ["id": .string("fixture-overlay-operation"), "state": .string("ready"),
+                    "capability": .string("image"), "retryable": .bool(false), "asset_id": .string(generatedID),
+                    "preview_url": .string(imageURL), "source_url": .string(imageURL)]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/assets"), ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+                let response: [String: JSONValue] = ["max_assets": .number(20), "assets": .array(["fixture-generated-image", "fixture-generated-image-b"].map { id in .object([
+                    "id": .string(id), "kind": .string("image"), "status": .string("ready"),
+                    "source_filename": .string("Generated fixture.jpg"), "gcs_path": .string("fixture/generated.jpg"),
+                    "source_url": .string("https://generated-media-image.invalid/cover.jpg")
+                ]) })]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/overlay-plan") {
+                var data = request.httpBody ?? Data()
+                if data.isEmpty, let stream = request.httpBodyStream {
+                    stream.open(); defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
+                }
+                let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if fields["mode"] == .string("automatic"), fields["prompt"] != .string("") {
+                    client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                    return
+                }
+                let response: [String: JSONValue] = [
+                    "document_fingerprint": fields["document_fingerprint"] ?? .string(""),
+                    "base_generation": fields["base_generation"] ?? .string(""),
+                    "message": .string(ProcessInfo.processInfo.environment["KRIA_OVERLAY_MIXED"] == "1"
+                        ? "Synthetic offline overlay plan. Upload the real logo or choose it from your visual library."
+                        : "Synthetic offline overlay plan."),
+                    "overlays": .array([.object([
+                        "id": .string("DCC14763-5702-4AE3-8510-8C72845E6B15"), "kind": .string(ProcessInfo.processInfo.environment["KRIA_OVERLAY_IMAGE"] == "1" ? "image" : "text"),
+                        "title": .string("Synthetic graphic"), "prompt": .string("A synthetic image for native UI testing"), "text": .string("10"),
+                        "start_s": .number(0.5), "end_s": .number(1.5),
+                        "x_frac": .number(0.2), "y_frac": .number(0.3), "scale": .number(0.2),
+                        "reason": .string("Synthetic placement at 0.5 seconds.")
+                    ])])
+                ]
+                status = 200; body = (try? JSONEncoder().encode(response)) ?? body
+            } else if url.path.hasSuffix("/device-render"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayRecipeKey) {
                 status = 200; body = data
             } else if url.path.hasSuffix("/timeline"), let data = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedayPoolKey) {
                 status = 200; body = data
@@ -816,6 +886,24 @@ enum NativeEditorUITestCommitTransport {
                     while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
                 }
                 let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if ProcessInfo.processInfo.environment["KRIA_OVERLAY_REGISTRATION_RECOVERY"] == "1" {
+                    let key = fields["client_import_id"]?.stringValue ?? ""
+                    let source = fields["source_id"]?.stringValue ?? ""
+                    var registrations = UserDefaults.standard.dictionary(forKey: "overlay-fixture-registrations") as? [String: String] ?? [:]
+                    if let existing = registrations[key], existing != source {
+                        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: url, statusCode: 409, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+                        client?.urlProtocol(self, didLoad: Data(#"{"detail":"import_id_reused"}"#.utf8))
+                        client?.urlProtocolDidFinishLoading(self)
+                        return
+                    }
+                    let first = registrations.isEmpty
+                    registrations[key] = source
+                    UserDefaults.standard.set(registrations, forKey: "overlay-fixture-registrations")
+                    if first {
+                        client?.urlProtocol(self, didFailWithError: URLError(.networkConnectionLost))
+                        return
+                    }
+                }
                 let response: [String: JSONValue] = ["import_id": fields["client_import_id"] ?? .string(UUID().uuidString),
                     "status": .string("ready"), "source_id": .string("gameday-istanbul-source-4"), "source_index": .number(4),
                     "source": .object(["media_id": .string("gameday-istanbul-source-4"), "duration_s": .number(4)]), "retryable": .bool(false)]
@@ -828,8 +916,19 @@ enum NativeEditorUITestCommitTransport {
                     while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; data.append(buffer, count: count) }
                 }
                 let fields = (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
+                if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays"),
+                   let visuals = fields["visual_blocks"], let data = try? JSONEncoder().encode(visuals) {
+                    UserDefaults.standard.set(data, forKey: "overlay-fixture-saved-visuals")
+                }
                 if let drawings = fields["drawings"], let saved = try? JSONEncoder().encode(drawings) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedDrawingsKey)
+                }
+                if let slots = fields["timeline_slots"]?.arrayValue, let first = slots.first?.objectValue {
+                    if let tilt = first["tilt"], tilt != .null, let saved = try? JSONEncoder().encode(tilt) {
+                        UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedTiltKey)
+                    } else if first["tilt"] != nil {
+                        UserDefaults.standard.removeObject(forKey: NativeEditorUITestFixtures.savedTiltKey)
+                    }
                 }
                 if let lane = fields["speaker_background"], let saved = try? JSONEncoder().encode(lane) {
                     UserDefaults.standard.set(saved, forKey: NativeEditorUITestFixtures.savedSpeakerBackgroundKey)

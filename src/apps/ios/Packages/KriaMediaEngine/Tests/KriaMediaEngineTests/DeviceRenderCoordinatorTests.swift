@@ -8,6 +8,135 @@ import CoreGraphics
 #endif
 
 final class DeviceRenderCoordinatorTests: XCTestCase {
+    func testStopWinsAgainstEarlierReplacementReturningFromCleanupLater() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(holdFirst: true), gate = CommandReturnGate(held: .superseded)
+        let background = CommandRaceBackground(gate: gate)
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: RecordingPublisher(), backgroundExecution: background)
+        try await coordinator.start(request(), decision: .init(route: .local))
+        await exporter.waitStarted()
+        let replacement = request(revision: 2)
+        let start = Task { try await coordinator.start(replacement, decision: .init(route: .local), origin: .userInitiated(UUID())) }
+        await gate.waitHeld()
+        try await coordinator.cancelByUser()
+        try await coordinator.recover()
+        try await coordinator.retrySync()
+        await gate.release()
+        try await start.value
+        await exporter.release()
+        await coordinator.waitUntilIdle()
+        let saved = await coordinator.snapshot(), begins = await background.begins, exports = await exporter.count
+        XCTAssertEqual(saved?.phase, .cancelled)
+        XCTAssertEqual(begins, 1, "An older start must not acquire a window after Stop")
+        XCTAssertEqual(exports, 1)
+    }
+
+    func testOlderStopCannotClearNewerExplicitStartAfterCleanup() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(holdFirst: true), gate = CommandReturnGate(held: .cancelled)
+        let background = CommandRaceBackground(gate: gate), reporter = ScriptedReporter(outcomes: [.accepted])
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: RecordingPublisher(), failureReporter: reporter, backgroundExecution: background)
+        try await coordinator.start(request(), decision: .init(route: .local))
+        await exporter.waitStarted()
+        let stop = Task { try await coordinator.cancelByUser() }
+        await gate.waitHeld()
+        let replacement = request(revision: 2)
+        try await coordinator.start(replacement, decision: .init(route: .local), origin: .userInitiated(UUID()))
+        await coordinator.waitUntilIdle()
+        await gate.release()
+        try await stop.value
+        await exporter.release()
+        let saved = await coordinator.snapshot(), busy = await coordinator.isBusy()
+        XCTAssertEqual(saved?.request, replacement)
+        XCTAssertEqual(saved?.phase, .synced, "Old Stop must not overwrite the newer run")
+        XCTAssertFalse(busy)
+        await coordinator.waitForPendingReport()
+        let reports = await reporter.calls
+        XCTAssertTrue(reports.isEmpty, "A superseded Stop command must not report against the newer run")
+    }
+
+    func testAutomaticRecoveryCannotOutrunPendingStopAfterOldRunParks() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let exporter = RecordingExporter(), cleanup = CommandReturnGate(held: .cancelled), sleeping = SleepGate()
+        let background = CommandRaceBackground(gate: cleanup)
+        let publisher = ParkedPublicationPublisher()
+        let retry = DeviceRenderRetryPolicy(transientDelays: [.seconds(60)], reportBackoffCap: .zero) { delay in
+            await sleeping.enter()
+            try await Task.sleep(for: delay)
+        }
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: exporter, sources: FixtureSources(), publisher: publisher, retryPolicy: retry, backgroundExecution: background)
+        try await coordinator.start(request(), decision: .init(route: .local))
+        await sleeping.waitEntered()
+        let stop = Task { try await coordinator.cancel() }
+        await cleanup.waitHeld()
+        await coordinator.waitUntilIdle()
+        let parked = await coordinator.snapshot()
+        XCTAssertEqual(parked?.phase, .localReady)
+        try await coordinator.start(request(revision: 2), decision: .init(route: .local))
+        try await coordinator.recover()
+        try await coordinator.retrySync()
+        await coordinator.waitUntilIdle()
+        let begins = await background.begins, publications = await publisher.calls
+        XCTAssertEqual(begins, 1, "Automatic publication recovery must wait behind pending Stop")
+        XCTAssertEqual(publications, 1)
+        await cleanup.release()
+        try await stop.value
+        let final = await coordinator.snapshot()
+        XCTAssertEqual(final?.phase, .cancelled)
+        XCTAssertEqual(final?.outputURL, parked?.outputURL)
+    }
+
+    func testWindowCompletesOnlyAfterPublicationAndRecoveryHasANewRun() async throws {
+        let directory = scratch(); defer { try? FileManager.default.removeItem(at: directory) }
+        let background = RecordingBackground(), publisher = CheckingPublisher(pendingFirst: 1)
+        let coordinator = try DeviceRenderCoordinator(directory: directory, exporter: RecordingExporter(), sources: FixtureSources(), publisher: publisher, backgroundExecution: background)
+        try await coordinator.start(request(), decision: CapabilityDecision(route: .local), origin: .userInitiated(UUID()))
+        await coordinator.waitUntilIdle()
+        let first = await background.contexts
+        let parked = await background.outcomes
+        XCTAssertEqual(parked, [.suspended])
+        await background.fireOldExpirationOnNextBegin()
+        try await coordinator.recover()
+        await coordinator.waitUntilIdle()
+        let contexts = await background.contexts
+        let outcomes = await background.outcomes
+        XCTAssertEqual(outcomes, [.suspended, .completed])
+        XCTAssertEqual(contexts[0].attemptID, contexts[1].attemptID)
+        XCTAssertNotEqual(contexts[0].runID, contexts[1].runID)
+        XCTAssertEqual(contexts[1].origin, .automaticRecovery)
+        XCTAssertEqual(first.count, 1)
+    }
+
+    func testExecutionWindowRejectsNonfiniteProgressAndFinishesExactlyOnce() async {
+        let recorder = WindowRecorder()
+        let window = DeviceRenderExecutionWindow(reportProgress: { await recorder.progress($0) }, finish: { await recorder.finish($0) })
+        await window.reportProgress(0.6)
+        await window.reportProgress(.nan)
+        await window.reportProgress(0.1)
+        await window.finish(.suspended)
+        await window.reportProgress(1)
+        await window.finish(.completed)
+        let fractions = await recorder.fractions, outcomes = await recorder.outcomes
+        XCTAssertEqual(fractions, [0.6, 0.6])
+        XCTAssertEqual(outcomes, [.suspended])
+    }
+
+    func testConcurrentFinishWaitsForTheOwnedCleanup() async {
+        let gate = WindowCleanupGate(), recorder = WindowRecorder()
+        let window = DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in await gate.clean() })
+        let first = Task { await window.finish(.completed) }
+        await gate.waitEntered()
+        let second = Task { await window.finish(.cancelled); await recorder.finish(.cancelled) }
+        for _ in 0..<20 { await Task.yield() }
+        let premature = await recorder.outcomes
+        XCTAssertTrue(premature.isEmpty, "Releasing run ownership must wait for the first finish action")
+        await gate.release()
+        await first.value
+        await second.value
+        let finished = await recorder.outcomes
+        XCTAssertEqual(finished, [.cancelled])
+    }
+
     func testOptionalDurationLimitKeepsLegacyPayloadAndDecodesServerSnakeCase() throws {
         let legacy = request()
         let legacyJSON = try JSONSerialization.jsonObject(with: RecipeJSON.encoder().encode(legacy)) as? [String: Any]
@@ -767,11 +896,21 @@ private actor FlakyPublisher: DeviceRenderPublishing {
 private actor RecordingBackground: DeviceRenderBackgroundExecution {
     private var expiring: (@Sendable () -> Void)?
     private(set) var ended = 0
-    func begin(name: String, expiring: @escaping @Sendable () -> Void) async -> @Sendable () async -> Void {
+    private var firePrevious = false
+    func fireOldExpirationOnNextBegin() { firePrevious = true }
+    private(set) var contexts: [DeviceRenderExecutionContext] = []
+    private(set) var outcomes: [DeviceRenderWindowOutcome] = []
+    func begin(context: DeviceRenderExecutionContext, expiring: @escaping @Sendable () -> Void) async throws -> DeviceRenderExecutionWindow {
+        if firePrevious {
+            self.expiring?()
+            firePrevious = false
+            for _ in 0..<20 { await Task.yield() }
+        }
         self.expiring = expiring
-        return { [weak self] in await self?.end() }
+        contexts.append(context)
+        return DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { [weak self] outcome in await self?.end(outcome) })
     }
-    private func end() { ended += 1 }
+    private func end(_ outcome: DeviceRenderWindowOutcome) { ended += 1; outcomes.append(outcome) }
     /// Fires the system's expiration handler and lets the coordinator's hop land.
     func expire() async {
         expiring?()
@@ -808,6 +947,63 @@ private actor ReusedAttemptPublisher: DeviceRenderPublishing {
     func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
         attempts.append(attemptID)
         if attempts.count == 1 { throw DeviceExportAttemptReused() }
+        return .published
+    }
+}
+
+private actor WindowRecorder {
+    var fractions: [Double] = []
+    var outcomes: [DeviceRenderWindowOutcome] = []
+    func progress(_ fraction: Double) { fractions.append(fraction) }
+    func finish(_ outcome: DeviceRenderWindowOutcome) { outcomes.append(outcome) }
+}
+
+private actor WindowCleanupGate {
+    private var entered = false
+    private var entryWaiter: CheckedContinuation<Void, Never>?
+    private var cleanup: CheckedContinuation<Void, Never>?
+    func clean() async {
+        entered = true
+        entryWaiter?.resume(); entryWaiter = nil
+        await withCheckedContinuation { cleanup = $0 }
+    }
+    func waitEntered() async { if !entered { await withCheckedContinuation { entryWaiter = $0 } } }
+    func release() { cleanup?.resume(); cleanup = nil }
+}
+
+private actor CommandReturnGate {
+    let held: DeviceRenderWindowOutcome
+    private var entered = false
+    private var released = false
+    private var entry: CheckedContinuation<Void, Never>?
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    init(held: DeviceRenderWindowOutcome) { self.held = held }
+    func barrier(_ outcome: DeviceRenderWindowOutcome) async {
+        guard outcome == held, !released else { return }
+        entered = true; entry?.resume(); entry = nil
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func waitHeld() async { if !entered { await withCheckedContinuation { entry = $0 } } }
+    func release() { released = true; let saved = waiters; waiters.removeAll(); for waiter in saved { waiter.resume() } }
+}
+
+private actor CommandRaceBackground: DeviceRenderBackgroundExecution {
+    let gate: CommandReturnGate
+    private(set) var begins = 0
+    init(gate: CommandReturnGate) { self.gate = gate }
+    func begin(context: DeviceRenderExecutionContext, expiring: @escaping @Sendable () -> Void) async throws -> DeviceRenderExecutionWindow {
+        begins += 1
+        guard begins == 1 else { return DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in }) }
+        return DeviceRenderExecutionWindow(reportProgress: { _ in }, finish: { _ in }, completionBarrier: { [gate] in await gate.barrier($0) })
+    }
+}
+
+private actor ParkedPublicationPublisher: DeviceRenderPublishing {
+    private(set) var calls = 0
+    func isCurrent(_ identity: DeviceRenderIdentity) async throws -> Bool { true }
+    func publish(file: URL, identity: DeviceRenderIdentity, attemptID: UUID, brandTail: String) async throws -> DevicePublication {
+        calls += 1
+        if calls == 1 { throw URLError(.notConnectedToInternet) }
         return .published
     }
 }

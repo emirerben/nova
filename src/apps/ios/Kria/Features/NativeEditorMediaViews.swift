@@ -219,13 +219,15 @@ struct NativeVideoPreview: View {
     private var uiTestingPreviewValue: String {
         guard ProcessInfo.processInfo.arguments.contains("-ui-testing-editor") else { return "" }
         let selectedText = session.document.textElements.first { $0.id == session.selection?.id }
-        let textReady = session.textInteractionFrame.map {
-            $0.element == selectedText && abs($0.time - clock.currentTime) < 0.01
-        } ?? false
+        let textFrame = session.textInteractionFrame
+        let elementMatches = textFrame.map { $0.element == selectedText } ?? false
+        let timeMatches = textFrame.map { abs($0.time - clock.currentTime) < 0.01 } ?? false
+        let textReady = elementMatches && timeMatches
         let target = min(clock.currentTime, max(0, session.playbackDuration - 1.0 / 600))
         let stillReady = !session.isPlaying && session.scrubPreviewFrame != nil
             && session.scrubPreviewTime.map { abs($0 - target) < 0.05 } == true
-        return "liveTextSamples:\(liveTextSampleCount);liveTextReady:\(textReady);stillFrameReady:\(stillReady);dangerGuideSamples:\(dangerGuideSamples);dangerGuideLast:\(dangerGuideLast)"
+        let frameTime = textFrame.map { String($0.time) } ?? "none"
+        return "liveTextSamples:\(liveTextSampleCount);liveTextReady:\(textReady);stillFrameReady:\(stillReady);textFramePresent:\(textFrame != nil);textElementMatches:\(elementMatches);textTimeMatches:\(timeMatches);textFrameTime:\(frameTime);previewClockTime:\(clock.currentTime);dangerGuideSamples:\(dangerGuideSamples);dangerGuideLast:\(dangerGuideLast)"
     }
 
     private func refreshObjects() {
@@ -433,7 +435,7 @@ struct NativeVideoPreview: View {
             guard radius > 1 else { return }
             let scale = baseline.scale * hypot(next.dx, next.dy) / radius
             scaleHandler(for: baseline)?(scale)
-            let rotation = baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi
+            let rotation = NativeTextRotationSnap.angle(baseline.rotation + (atan2(next.dy, next.dx) - atan2(start.dy, start.dx)) * 180 / .pi)
             liveMediaScale = scale / max(0.001, baseline.scale)
             liveMediaRotation = rotation - baseline.rotation
             session.setVisualEditorStyle(baseline.item.selection, key: "rotation_deg", value: .number(max(-360, min(360, rotation))))

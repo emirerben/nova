@@ -27,6 +27,7 @@ from app.agents._schemas.text_animation_phases import (
     LEGACY_EFFECT_ENTRANCE,
     TEXT_ANIMATION_VOCAB,
 )
+from app.kria.clip_tilt import ClipTilt
 from app.kria.reply_language import say
 
 # --------------------------------------------------------------------------- vocabulary
@@ -427,6 +428,7 @@ _SLOT_FIELDS = (
     ("look_preset", "timeline", lambda r: r.get("look_preset") or "none"),
     ("playback_rate", "timeline", lambda r: _r(r.get("playback_rate") or 1.0, 2)),
     ("source_crop", "timeline", lambda r: r.get("source_crop")),
+    ("tilt", "timeline", lambda r: ClipTilt.from_row(r.get("tilt")).row()),
     (
         "transition_after",
         "transition",
@@ -957,6 +959,33 @@ def _describe_caption_meta(entry: DiffEntry) -> str:
     return say(en="Updated the captions", tr="Altyazılar güncellendi")
 
 
+def _describe_tilt(entry: DiffEntry, who: str) -> str:
+    """The receipt for a tilt: "Tilted clip 2 10 degrees right, blurred background"."""
+    afters = [t.after for t in entry.targets]
+    if all(after is None for after in afters):
+        return say(en=f"Straightened {who}", tr=f"{who} düzeltildi")
+    if len({repr(after) for after in afters}) != 1:
+        return say(en=f"Changed the tilt of {who}", tr=f"{who} eğimi değişti")
+    tilt = ClipTilt.from_row(afters[0])
+    backdrop = tilt.backdrop
+    behind_en = behind_tr = ""
+    if backdrop is not None:
+        kind = backdrop.color if backdrop.kind == "color" else backdrop.kind
+        behind_en = {"blur": "blurred background"}.get(kind, f"{kind} background")
+        behind_tr = {"blur": "bulanık arka plan"}.get(kind, f"{kind} arka plan")
+    if all(ClipTilt.from_row(t.before).rotation_deg == tilt.rotation_deg for t in entry.targets):
+        return say(
+            en=f"Changed the background behind {who}: {behind_en or 'plain'}",
+            tr=f"{who} arka planı değişti: {behind_tr or 'düz'}",
+        )
+    amount = f"{abs(tilt.rotation_deg):g}"
+    side_en, side_tr = ("right", "sağa") if tilt.rotation_deg > 0 else ("left", "sola")
+    return say(
+        en=f"Tilted {who} {amount} degrees {side_en}" + (f", {behind_en}" if behind_en else ""),
+        tr=f"{who} {amount} derece {side_tr} eğildi" + (f", {behind_tr}" if behind_tr else ""),
+    )
+
+
 def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
     """One short sentence for an entry, in the turn's language."""
     who = describe_targets(entry, live_text_count)
@@ -996,6 +1025,8 @@ def describe_entry(entry: DiffEntry, *, live_text_count: int = 0) -> str:
             return say(en=f"Changed the speed of {who}", tr=f"{who} hızı değişti")
         if name == "source_crop":
             return say(en=f"Re-cropped {who}", tr=f"{who} yeniden kırpıldı")
+        if name == "tilt":
+            return _describe_tilt(entry, who)
         if name == "total_duration":
             return say(
                 en=f"Video length {first.before:g}s → {first.after:g}s",

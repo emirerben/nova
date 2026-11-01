@@ -136,6 +136,12 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         reason="Cropping a clip's frame is a hand gesture on the phone; no agent op reframes "
         "a single clip.",
     ),
+    "clip_tilt": _g(
+        "agent_ops",
+        "setClipTilt applyTiltBackdropToAllClips",
+        ("patch_slots",),
+        fields=("tilt",),
+    ),
     "clip_audio": _g(
         "agent_ops",
         "toggleClipAudio setOriginalAudioLevel setOriginalMixLevel",
@@ -215,6 +221,18 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     ),
     # --------------------------------------------------------------- history
     "history": _g("agent_ops", "undo redo", ("undo_last_edit", "repeat_last_edit")),
+    "generated_overlay_approval": _g(
+        "agent_unsupported",
+        "applyOverlayProposal",
+        reason="Generated overlays require explicit native preview approval; chat cannot "
+        "spend on or accept a generated asset through this flow.",
+    ),
+    "overlay_planning_and_queries": _g(
+        "not_an_edit",
+        "requestOverlayPlan containsOverlayProposal overlayBaseTime overlayOutputTime "
+        "overlayDocumentFingerprint",
+        reason="Read-only proposal planning, identity checks and editor clock conversion.",
+    ),
     # ----------------------------------------------------------- not an edit
     "lifecycle_and_sync": _g(
         "not_an_edit",
@@ -252,7 +270,7 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "captionAnimationPhases captionParkTime captionTimelineRange captionTimelineRanges "
         "cameraEffectEasing clipSlotClearValue drawing drawingCapMessage pasteUnavailableMessage "
         "soundEffectPreviewURL visualLayerSelections visualRaw footageCrop footagePlaybackRate "
-        "textElement textAnchor captionPosition captionStyleSize",
+        "textElement textAnchor captionPosition captionStyleSize clipTilt tiltBlockedReason",
         reason="Read-only queries the UI uses to decide what to offer.",
     ),
 }

@@ -43,6 +43,10 @@ class EntitlementAndProjectTests(unittest.TestCase):
         self.assertRegex(text, r"com\.apple\.developer\.applesignin")
         self.assertRegex(text, r"\b(Default|Sign in with Apple)\b")
 
+    def test_push_entitlement_is_production_only_in_release(self):
+        self.assertRegex(ENTITLEMENTS.read_text(), r"aps-environment[\s\S]*\$\(KRIA_APS_ENVIRONMENT\)")
+        self.assertRegex(PRODUCTION_CONFIG.read_text(), r"(?m)^KRIA_APS_ENVIRONMENT = production$")
+
     def test_project_references_entitlement_and_release_signing_settings(self):
         text = PROJECT.read_text()
         self.assertRegex(

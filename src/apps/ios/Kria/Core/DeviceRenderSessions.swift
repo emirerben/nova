@@ -267,6 +267,11 @@ enum DeviceRenderGate: Equatable {
     /// The last capability set the server actually enabled, kept so a failed
     /// capability fetch (handed in as `.disabled`) never reads as "not available".
     private(set) var lastEnabledCapabilities: PhoneRenderingCapabilities?
+    @ObservationIgnored private let intentStore: DeviceRenderIntentStore
+    @ObservationIgnored private let ownerIdentity: @MainActor () -> String?
+    @ObservationIgnored private var activeOwner: String?
+    @ObservationIgnored private var baseGenerations: [DeviceRenderKey: String] = [:]
+    @ObservationIgnored private let initiation: DeviceRenderUserInitiation
     @ObservationIgnored private let fetch: Fetch
     @ObservationIgnored private let factory: Factory
     @ObservationIgnored private let retryFailure: RetryFailure
@@ -279,6 +284,17 @@ enum DeviceRenderGate: Equatable {
     @ObservationIgnored private var requests: [DeviceRenderKey: DeviceRenderRequest] = [:]
     @ObservationIgnored private var observations: [DeviceRenderKey: Task<Void, Never>] = [:]
     @ObservationIgnored private var tickets: [DeviceRenderKey: UUID] = [:]
+    @ObservationIgnored private var keyOperations: [DeviceRenderKey: UUID] = [:]
+    @ObservationIgnored private var resetOperation: UUID?
+    @ObservationIgnored private var pendingRetries: [DeviceRenderKey: PendingRetry] = [:]
+
+    private struct PendingRetry {
+        let operation: UUID
+        let sourceIdentity: DeviceRenderIdentity
+        var acknowledgement: DeviceRenderIdentity?
+        var stoppedBy: UUID?
+        var userInitiated = false
+    }
     /// KRI-935: the superseded request each key already followed once, so a server that keeps
     /// pointing at the same request cannot loop the refresh.
     @ObservationIgnored private var followedSuperseded: [DeviceRenderKey: DeviceRenderIdentity] = [:]
@@ -289,7 +305,11 @@ enum DeviceRenderGate: Equatable {
     /// A reconcile asked for while another held the ticket (value: whether it was a
     /// retry). It runs as soon as the holder finishes, so a read asked for after a
     /// newer request was pinned (an editor Save racing the chat poll) is never lost.
-    @ObservationIgnored private var rereads: [DeviceRenderKey: Bool] = [:]
+    private struct PendingRead {
+        let retry: Bool
+        let action: IntentAction
+    }
+    @ObservationIgnored private var rereads: [DeviceRenderKey: PendingRead] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var pathMonitor: NWPathMonitor?
     @ObservationIgnored private var wasOnline = true
@@ -297,12 +317,17 @@ enum DeviceRenderGate: Equatable {
     private struct DeclineReport {
         enum State { case sending, accepted, rejected, exhausted }
         let identity: DeviceRenderIdentity
+        let reasonCode: String
+        let owner: String
+        let operation: UUID
         var state: State
         var task: Task<Void, Never>?
     }
 
-    convenience init(api: any KriaAPIClient) {
+    convenience init(api: any KriaAPIClient, ownerIdentity: @escaping @MainActor () -> String?) {
         self.init(fetch: { try await api.deviceRender(jobID: $0, variantID: $1) }, factory: { key, request in
+            guard let owner = ownerIdentity(), !owner.isEmpty else { throw CancellationError() }
+            let isAuthorized: @Sendable () async -> Bool = { await MainActor.run { ownerIdentity() == owner } }
             let project = BackgroundUploadCoordinator.projectDirectory(key.projectID)
             let variant = SHA256.hash(data: Data(key.variantID.utf8)).map { String(format: "%02x", $0) }.joined()
             let directory = project.root.appending(path: "device-renders/\(key.jobID.uuidString)/\(variant)", directoryHint: .isDirectory)
@@ -316,11 +341,12 @@ enum DeviceRenderGate: Equatable {
                     directory: directory,
                     exporter: AVFoundationLocalExporter(stateStore: FileExportStateStore(directory: directory)),
                     sources: AuthorizedDeviceSourceResolver(api: api, request: request, originals: SourceAssetStore(project: project), library: library),
-                    publisher: DeviceExportPublisher(api: api),
-                    failureReporter: APIDeviceRenderFailureReporter(api: api)
+                    publisher: DeviceExportPublisher(api: api, isAuthorized: isAuthorized),
+                    failureReporter: APIDeviceRenderFailureReporter(api: api, isAuthorized: isAuthorized)
                 )
             }
-        }, retryFailure: { jobID, identity, rendersLocally in
+        }, intentStore: DeviceRenderIntentPersistence.store, ownerIdentity: ownerIdentity,
+        retryFailure: { jobID, identity, rendersLocally in
             try await api.retryDeviceRenderFailure(jobID: jobID, identity: identity, rendersLocally: rendersLocally)
         },
         reportPreparationFailure: { jobID, error in
@@ -334,12 +360,18 @@ enum DeviceRenderGate: Equatable {
     }
 
     init(fetch: @escaping Fetch, factory: @escaping Factory,
+         initiation: DeviceRenderUserInitiation = .shared,
+         intentStore: DeviceRenderIntentStore = DeviceRenderIntentStore(),
+         ownerIdentity: @escaping @MainActor () -> String? = { "isolated-test-owner" },
          retryFailure: @escaping RetryFailure = { _, _, _ in throw APIError.unsupported },
          reportPreparationFailure: @escaping ReportPreparationFailure = { _, _ in },
          reportDecline: @escaping ReportDecline = { _, _, _, _ in },
          environment: DeviceRenderEnvironment = .live,
          sleep: @escaping Sleep = { try await Task.sleep(for: $0) },
          projectDirectory: @escaping @MainActor (UUID) -> ProjectDirectory = { BackgroundUploadCoordinator.projectDirectory($0) }) {
+        self.initiation = initiation
+        self.intentStore = intentStore
+        self.ownerIdentity = ownerIdentity
         self.fetch = fetch; self.factory = factory; self.retryFailure = retryFailure
         self.reportPreparationFailure = reportPreparationFailure; self.reportDecline = reportDecline
         self.environment = environment; self.sleep = sleep; self.projectDirectory = projectDirectory
@@ -360,7 +392,108 @@ enum DeviceRenderGate: Equatable {
         }
     }
 
-    func reconcile(_ key: DeviceRenderKey, capabilities offered: PhoneRenderingCapabilities, retry: Bool = false) async {
+    private enum IntentAction { case automatic, creatorResume }
+    // Authoritative metadata observed while creator intent still blocks execution.
+    // Keep it separate from the request bound to the existing coordinator/factory.
+    @ObservationIgnored private var heldRequests: [DeviceRenderKey: DeviceRenderRequest] = [:]
+
+    private var ownerIsCurrent: Bool { activeOwner != nil && activeOwner == ownerIdentity() }
+
+    private func synchronizeOwner() async -> Bool {
+        let owner = ownerIdentity().flatMap { $0.isEmpty ? nil : $0 }
+        if activeOwner != owner {
+            await stopAll()
+            guard ownerIdentity() == owner else { return false }
+            activeOwner = owner
+        }
+        return owner != nil
+    }
+
+    private func intentKey(_ key: DeviceRenderKey) throws -> DeviceRenderIntentKey {
+        guard ownerIsCurrent, let owner = activeOwner else { throw CancellationError() }
+        return DeviceRenderIntentKey(owner: owner, projectID: key.projectID, jobID: key.jobID, variantID: key.variantID)
+    }
+
+    @ObservationIgnored private var failedIntentWrites: Set<DeviceRenderIntentKey> = []
+
+    private func holdIntent(_ key: DeviceRenderKey, pending: Bool = false, unreadable: Bool = false) {
+        settle(key)
+        observations.removeValue(forKey: key)?.cancel()
+        var held = presentations[key] ?? DeviceRenderPresentation(phase: .cancelled)
+        held.phase = .cancelled
+        held.message = unreadable ? "Kria couldn’t save or read the render intent. Tap Resume to check the current edit."
+                : pending ? "The last retry wasn’t confirmed. Tap Resume to check the current edit." : nil
+        held.reasonCode = Self.pausedReason
+        presentations[key] = held
+    }
+
+    /// True while a durable Stop, an unconfirmed retry or an unreadable intent holds this render.
+    func isPausedByCreator(_ key: DeviceRenderKey) -> Bool {
+        presentations[key]?.phase == .cancelled && presentations[key]?.reasonCode == Self.pausedReason
+    }
+
+    func resumeFromUser(_ key: DeviceRenderKey) async {
+        guard let capabilities = capabilities[key] ?? lastEnabledCapabilities else { return }
+        await reconcile(key, capabilities: capabilities, retry: true, origin: .automaticRecovery, intentAction: .creatorResume)
+    }
+
+    private func creatorRetryOwnsIntent(_ key: DeviceRenderKey) -> Bool {
+        guard let pending = pendingRetries[key], pending.userInitiated, pending.stoppedBy == nil,
+              keyOperations[key] == pending.operation,
+              let storageKey = try? intentKey(key),
+              let intent = try? intentStore.load(storageKey),
+              intent.state == .retryPending, intent.operationID == pending.operation else { return false }
+        return true
+    }
+
+    private func resolveIntent(_ status: DeviceRenderStatusResponse, key: DeviceRenderKey, action: IntentAction) -> Bool {
+        do {
+            let storageKey = try intentKey(key)
+            if case .creatorResume = action {
+                let resumed = DeviceRenderIntent(sourceIdentity: status.request.identity, baseGeneration: status.baseGeneration, state: .released)
+                try intentStore.save(resumed, for: storageKey)
+                failedIntentWrites.remove(storageKey)
+                keyOperations[key] = UUID()
+                declines.removeValue(forKey: key)?.task?.cancel()
+                return true
+            }
+            guard !failedIntentWrites.contains(storageKey) else { holdIntent(key, unreadable: true); return false }
+            guard var intent = try intentStore.load(storageKey) else { return true }
+            switch intent.decision(identity: status.request.identity, baseGeneration: status.baseGeneration, published: status.phase == "published") {
+            case .allow: return true
+            case .published:
+                // The finished video is shown (apply presents it as synced), but the Stop stays:
+                // a later revision is still held until the creator's typed Resume.
+                return true
+            case .hold:
+                if let target = intent.reportTarget(identity: status.request.identity, baseGeneration: status.baseGeneration) {
+                    intent.observedIdentity = target
+                    try intentStore.save(intent, for: storageKey)
+                    sendDecline(key, identity: target, reasonCode: Self.pausedReason, detail: "Cancelled by user")
+                }
+                holdIntent(key, pending: intent.state == .retryPending)
+                return false
+            }
+        } catch {
+            holdIntent(key, unreadable: true)
+            return false
+        }
+    }
+
+    func reconcile(_ key: DeviceRenderKey, capabilities offered: PhoneRenderingCapabilities, retry: Bool = false, origin: DeviceRenderExecutionOrigin = .automaticRecovery) async {
+        await reconcile(key, capabilities: offered, retry: retry, origin: origin, intentAction: .automatic)
+    }
+
+    private func reconcile(_ key: DeviceRenderKey, capabilities offered: PhoneRenderingCapabilities, retry: Bool,
+                           origin: DeviceRenderExecutionOrigin, intentAction: IntentAction) async {
+        guard resetOperation == nil, await synchronizeOwner() else { return }
+        if case .automatic = intentAction {
+            do {
+                if let intent = try intentStore.load(intentKey(key)), intent.state != .released {
+                    holdIntent(key, pending: intent.state == .retryPending)
+                }
+            } catch { holdIntent(key, unreadable: true); return }
+        }
         // `.disabled` is also what a failed capability fetch turns into. The
         // server masks a real rollout pause on the status read itself, so
         // keep rendering against the last set it actually enabled.
@@ -370,7 +503,9 @@ enum DeviceRenderGate: Equatable {
         guard tickets[key] == nil else {
             // The read in flight may predate a request pinned since (an editor Save while
             // the chat poll's read was out): read again once it finishes.
-            rereads[key] = (rereads[key] ?? false) || retry
+            let previous = rereads[key]
+            let action: IntentAction = previous?.action == .creatorResume || intentAction == .creatorResume ? .creatorResume : .automatic
+            rereads[key] = PendingRead(retry: (previous?.retry ?? false) || retry, action: action)
             return
         }
         let ticket = UUID()
@@ -379,9 +514,13 @@ enum DeviceRenderGate: Equatable {
             if tickets[key] == ticket {
                 tickets[key] = nil
                 if let again = rereads.removeValue(forKey: key) {
+                    let operation = keyOperations[key]
+                    let owner = activeOwner
                     Task { [weak self] in
-                        guard let self, let capabilities = self.capabilities[key] else { return }
-                        await self.reconcile(key, capabilities: capabilities, retry: again)
+                        guard let self, self.activeOwner == owner, self.ownerIsCurrent,
+                              self.keyOperations[key] == operation,
+                              let capabilities = self.capabilities[key] else { return }
+                        await self.reconcile(key, capabilities: capabilities, retry: again.retry, origin: .automaticRecovery, intentAction: again.action)
                     }
                 }
             }
@@ -391,11 +530,11 @@ enum DeviceRenderGate: Equatable {
             status = try await fetch(key.jobID, key.variantID)
         } catch {
             let failure = DeviceRenderReadFailure(error)
-            guard tickets[key] == ticket else { return }
+            guard ownerIsCurrent, tickets[key] == ticket else { return }
             await readFailed(key, failure: failure, error: error, ticket: ticket)
             return
         }
-        guard tickets[key] == ticket, !Task.isCancelled else { return }
+        guard ownerIsCurrent, tickets[key] == ticket, !Task.isCancelled else { return }
         // Observed by the chat body: only write when it actually changes.
         if inactiveKeys.contains(key) { inactiveKeys.remove(key) }
         guard status.request.identity.jobID == key.jobID, status.request.identity.variantID == key.variantID else {
@@ -404,30 +543,52 @@ enum DeviceRenderGate: Equatable {
             return
         }
         do {
-            try await apply(status, for: key, ticket: ticket, capabilities: capabilities, retry: retry)
+            try await apply(status, for: key, ticket: ticket, capabilities: capabilities, retry: retry, origin: origin, intentAction: intentAction)
         } catch {
-            guard tickets[key] == ticket else { return }
+            guard ownerIsCurrent, tickets[key] == ticket else { return }
             await preparationFailed(key, error: error, ticket: ticket)
         }
     }
 
     private func apply(_ status: DeviceRenderStatusResponse, for key: DeviceRenderKey, ticket: UUID,
-                       capabilities: PhoneRenderingCapabilities, retry: Bool) async throws {
+                       capabilities: PhoneRenderingCapabilities, retry: Bool, origin: DeviceRenderExecutionOrigin, intentAction: IntentAction) async throws {
         let request = status.request
+        guard ownerIsCurrent else { return }
+        guard resolveIntent(status, key: key, action: intentAction) else {
+            let current = heldRequests[key] ?? requests[key]
+            if let current, request.identity.recipeRevision > current.identity.recipeRevision {
+                heldRequests[key] = request
+                // A creator's own retry is still waiting for its acknowledgement. Its completion
+                // reconciles this newer read itself, so a poll must not fence it; every other
+                // newer request (and any Stop) still invalidates the operation.
+                if !creatorRetryOwnsIntent(key) {
+                    keyOperations[key] = UUID()
+                    initiation.invalidate(identity: current.identity)
+                    try await entries[key]?.cancel()
+                }
+            }
+            return
+        }
+        heldRequests[key] = nil
+        baseGenerations[key] = status.baseGeneration
         if status.outputVerificationRequired { verificationKeys.insert(key) }
         else { verificationKeys.remove(key) }
         if status.retryRequiresApproval { retryApprovalKeys.insert(key) }
         else { retryApprovalKeys.remove(key) }
         if requests[key] != request {
+            if let previousIdentity = requests[key]?.identity {
+                keyOperations[key] = UUID()
+                initiation.invalidate(identity: previousIdentity)
+            }
             observations.removeValue(forKey: key)?.cancel()
             if let previous = entries[key] { try await previous.cancel() }
-            guard tickets[key] == ticket else { return }
+            guard ownerIsCurrent, tickets[key] == ticket else { return }
             entries[key] = try factory(key, request)
             requests[key] = request
         }
         guard let coordinator = entries[key] else { return }
         let saved = await coordinator.snapshot()
-        guard tickets[key] == ticket else { return }
+        guard ownerIsCurrent, tickets[key] == ticket else { return }
         let unchecked = status.outputVerificationRequired && saved?.phase != .synced
         if status.phase == "published" {
             settle(key)
@@ -501,7 +662,7 @@ enum DeviceRenderGate: Equatable {
             // The creator tapped Stop. The server holds that pause under the same
             // identity; nothing restarts the render until the creator resumes it.
             let pausedHere = saved?.request != request || saved?.phase == .cancelled
-            if pausedHere && !retry {
+            if pausedHere && intentAction != .creatorResume {
                 settle(key)
                 observations.removeValue(forKey: key)?.cancel()
                 presentations[key] = DeviceRenderPresentation(phase: .cancelled, reasonCode: Self.pausedReason)
@@ -511,7 +672,7 @@ enum DeviceRenderGate: Equatable {
             // here): `/retry` lifts the pause and keeps the identity. Best effort --
             // the server takes this phone's upload either way.
             _ = try? await retryFailure(key.jobID, request.identity, false)
-            guard tickets[key] == ticket else { return }
+            guard ownerIsCurrent, tickets[key] == ticket else { return }
         }
         // Finishing an export that already exists only uploads; heat and
         // storage gates are about encoding, so they don't hold a sync back.
@@ -525,7 +686,7 @@ enum DeviceRenderGate: Equatable {
         let holdsBack: Bool = switch gate { case .wait, .decline: true; case .local: false }
         if holdsBack, saved?.request == request, [.preparing, .rendering].contains(saved?.phase) {
             inFlight = await coordinator.observationSnapshot().isBusy
-            guard tickets[key] == ticket else { return }
+            guard ownerIsCurrent, tickets[key] == ticket else { return }
         }
         var decision = CapabilityDecision(route: .local)
         switch gate {
@@ -570,13 +731,14 @@ enum DeviceRenderGate: Equatable {
         let parkedWait = saved?.request == request && saved?.phase == .needsAttention && saved?.outputURL == nil
             && [.thermal, .insufficientStorage].contains(DeviceRenderFailureReasonCode.forRouteDecision(reason: saved?.error))
         if saved?.request != request || retry || parkedWait {
-            try await coordinator.start(request, decision: decision)
+            try await coordinator.start(request, decision: decision, origin: origin)
         } else if !(await coordinator.isBusy()) {
             // A parked render (suspension, outage, pending check) resumes on
             // every reconcile, not only when nothing is observing it.
+            guard ownerIsCurrent, tickets[key] == ticket else { return }
             try await coordinator.recover()
         }
-        guard tickets[key] == ticket else { return }
+        guard ownerIsCurrent, tickets[key] == ticket else { return }
         await observe(key, coordinator: coordinator)
     }
 
@@ -585,6 +747,13 @@ enum DeviceRenderGate: Equatable {
         case .cancelled, .appGate:
             return
         case .transient(let reason):
+            do {
+                let storageKey = try intentKey(key)
+                if failedIntentWrites.contains(storageKey) { holdIntent(key, unreadable: true); return }
+                if let intent = try intentStore.load(storageKey), intent.state != .released {
+                    holdIntent(key, pending: intent.state == .retryPending); return
+                }
+            } catch { holdIntent(key, unreadable: true); return }
             wait(reason, for: key)
         case .superseded:
             presentations[key] = DeviceRenderPresentation(phase: .superseded)
@@ -651,7 +820,7 @@ enum DeviceRenderGate: Equatable {
         // save whose preparation just failed. Keep an actual in-flight
         // coordinator observable; otherwise clear the stale output identity.
         let active = await entries[key]?.observationSnapshot()
-        guard tickets[key] == ticket else { return }
+        guard ownerIsCurrent, tickets[key] == ticket else { return }
         if active?.isBusy != true || active?.receipt?.request != requests[key] {
             presentation = DeviceRenderPresentation(phase: .needsAttention)
         }
@@ -712,22 +881,27 @@ enum DeviceRenderGate: Equatable {
         observations.removeValue(forKey: key)?.cancel()
         retryApprovalKeys.remove(key); verificationKeys.remove(key)
         requests.removeValue(forKey: key)
+        heldRequests.removeValue(forKey: key)
         if let previous = entries.removeValue(forKey: key) { try? await previous.cancel() }
     }
 
     /// Tells the server, until it accepts, that this phone won't render the
     /// request, so it stops waiting 24 hours for the reaper (CloudDecisionReported).
     private func sendDecline(_ key: DeviceRenderKey, identity: DeviceRenderIdentity, reasonCode: String, detail: String) {
-        if let report = declines[key], report.identity == identity, report.state != .exhausted { return }
+        guard ownerIsCurrent, let owner = activeOwner else { return }
+        if let report = declines[key], report.identity == identity, report.reasonCode == reasonCode,
+           report.owner == owner, report.state != .exhausted { return }
         declines[key]?.task?.cancel()
-        let send = reportDecline, sleep = self.sleep
-        declines[key] = DeclineReport(identity: identity, state: .sending)
+        let send = reportDecline, sleep = self.sleep, operation = UUID()
+        declines[key] = DeclineReport(identity: identity, reasonCode: reasonCode, owner: owner, operation: operation, state: .sending)
         declines[key]?.task = Task { [weak self] in
             var attempt = 0
             while !Task.isCancelled {
+                guard let self, self.ownerIdentity() == owner, self.activeOwner == owner,
+                      self.declines[key]?.operation == operation else { return }
                 do {
                     try await send(key.jobID, identity, reasonCode, detail)
-                    guard let self, self.declines[key]?.identity == identity else { return }
+                    guard self.ownerIdentity() == owner, self.activeOwner == owner, self.declines[key]?.operation == operation else { return }
                     self.declines[key]?.state = .accepted
                     self.declines[key]?.task = nil
                     // Pick up the server's needs_attention answer (reason, retry rules).
@@ -737,7 +911,7 @@ enum DeviceRenderGate: Equatable {
                     attempt += 1
                     let retryable: Bool = if case .transient = DeviceRenderReadFailure(error, taskCancelled: false) { true } else { false }
                     guard retryable, attempt < Self.maxAutomaticRetries else {
-                        guard let self, self.declines[key]?.identity == identity else { return }
+                        guard self.ownerIdentity() == owner, self.activeOwner == owner, self.declines[key]?.operation == operation else { return }
                         self.declines[key]?.state = retryable ? .exhausted : .rejected
                         self.declines[key]?.task = nil
                         return
@@ -750,7 +924,7 @@ enum DeviceRenderGate: Equatable {
 
     /// The request identity last accepted by reconciliation. The editor uses
     /// it to fence a ready response against another device attempt.
-    func request(for key: DeviceRenderKey) -> DeviceRenderRequest? { requests[key] }
+    func request(for key: DeviceRenderKey) -> DeviceRenderRequest? { heldRequests[key] ?? requests[key] }
 
     /// Calls the server's `/device-render/retry` endpoint for a `needsAttention`
     /// identity, which mints a fresh identity (incremented recipe revision) and
@@ -758,27 +932,103 @@ enum DeviceRenderGate: Equatable {
     /// coordinator/receipt so the next `reconcile()` starts clean against it.
     @discardableResult
     func retryNeedsAttention(_ key: DeviceRenderKey) async -> Bool {
-        guard let request = requests[key] else { return false }
+        await retryNeedsAttention(key, userInitiated: false)
+    }
+
+    @discardableResult
+    func retryNeedsAttentionFromUser(_ key: DeviceRenderKey) async -> Bool {
+        await retryNeedsAttention(key, userInitiated: true)
+    }
+
+    private func retryNeedsAttention(_ key: DeviceRenderKey, userInitiated: Bool) async -> Bool {
+        // COALESCE-GUARD-BEGIN
+        // The creator's own retry is already in flight: another tap is the same intent, not a new one.
+        // Running it would release the retry marker, fence the in-flight operation and mint a second /retry.
+        if let pending = pendingRetries[key], pending.userInitiated, pending.stoppedBy == nil,
+           keyOperations[key] == pending.operation { return false }
+        // COALESCE-GUARD-END
+        guard resetOperation == nil, await synchronizeOwner(), let request = requests[key] else { return false }
         do {
-            _ = try await retryFailure(key.jobID, request.identity, rendersLocally(request, for: key))
+            if failedIntentWrites.contains(try intentKey(key)) {
+                if userInitiated { await resumeFromUser(key) } else { holdIntent(key, unreadable: true) }
+                return false
+            }
+            if let intent = try intentStore.load(intentKey(key)), intent.state != .released {
+                if userInitiated { await resumeFromUser(key) }
+                else { holdIntent(key, pending: intent.state == .retryPending) }
+                return false
+            }
+        } catch { holdIntent(key, unreadable: true); return false }
+        let operation = UUID()
+        keyOperations[key] = operation
+        pendingRetries[key] = PendingRetry(operation: operation, sourceIdentity: request.identity, userInitiated: userInitiated)
+        defer {
+            if pendingRetries[key]?.operation == operation { pendingRetries[key] = nil }
+        }
+        do {
+            try intentStore.save(DeviceRenderIntent(operationID: operation, sourceIdentity: request.identity,
+                baseGeneration: baseGenerations[key], state: .retryPending), for: intentKey(key))
+            let ack: DeviceRenderRetryAck
+            if userInitiated {
+                ack = try await initiation.retry(identity: request.identity) {
+                    try await retryFailure(key.jobID, request.identity, rendersLocally(request, for: key))
+                }
+            } else {
+                ack = try await retryFailure(key.jobID, request.identity, rendersLocally(request, for: key))
+            }
+            guard ownerIsCurrent, ack.identity.jobID == request.identity.jobID,
+                  ack.identity.variantID == request.identity.variantID,
+                  ack.phase == "awaiting_device" else { return false }
+            _ = try intentStore.update(intentKey(key), operationID: operation) { $0.acknowledgement = ack.identity }
+            if pendingRetries[key]?.operation == operation {
+                pendingRetries[key]?.acknowledgement = ack.identity
+                if let stop = pendingRetries[key]?.stoppedBy,
+                   keyOperations[key] == stop, resetOperation == nil {
+                    pauseAcknowledgedRetry(key, identity: ack.identity)
+                    return false
+                }
+            }
+            // A poll may have seen a different newer request while this creator retry was in flight.
+            // That one is not the revision this retry minted, so it stays fenced like any stale completion.
+            if let held = heldRequests[key], held.identity != ack.identity, userInitiated {
+                keyOperations[key] = UUID()
+                initiation.invalidate(identity: request.identity)
+                try? await entries[key]?.cancel()
+                return false
+            }
             // A reconcile/save may have installed a newer request while the
             // retry was in flight. Its coordinator and receipt now own this
             // key; a stale retry completion must not tear them down.
-            guard requests[key] == request else { return false }
+            guard ownerIsCurrent, keyOperations[key] == operation, requests[key] == request, !Task.isCancelled else { return false }
             settle(key)
             observations.removeValue(forKey: key)?.cancel()
-            let previous = entries.removeValue(forKey: key)
-            requests.removeValue(forKey: key)
+            let previous = entries[key]
             // Invalidate a fetch that was already in flight before the retry
             // completed. Otherwise its stale status can reinstall the old
             // request after this method clears the maps.
             tickets[key] = nil
             presentations[key] = DeviceRenderPresentation(phase: .preparing)
             if let previous { try? await previous.cancel() }
+            guard ownerIsCurrent, keyOperations[key] == operation, resetOperation == nil,
+                  requests[key] == request, entries[key] === previous, !Task.isCancelled else { return false }
+            guard try intentStore.update(intentKey(key), operationID: operation, change: { $0.state = .released }) else { return false }
+            entries[key] = nil
+            requests[key] = nil
+            if userInitiated, let capabilities = capabilities[key] {
+                await reconcile(key, capabilities: capabilities, retry: true,
+                                origin: initiation.origin(for: ack.identity))
+            }
             return true
         } catch {
-            guard requests[key] == request else { return false }
+            guard ownerIsCurrent, keyOperations[key] == operation, requests[key] == request else { return false }
             var presentation = presentations[key] ?? DeviceRenderPresentation(phase: .needsAttention)
+            if case let APIError.conflict(detail) = error, ["requires_change", "requires_update"].contains(detail.code) {
+                // A definitive refusal changed nothing on the server, so the retry marker would only
+                // wedge every later read behind "retry not confirmed". A Stop that landed meanwhile stays.
+                if let storageKey = try? intentKey(key) {
+                    _ = try? intentStore.update(storageKey, operationID: operation) { if $0.state == .retryPending { $0.state = .released } }
+                }
+            }
             if case let APIError.conflict(detail) = error, detail.code == "requires_change" {
                 // The same recipe would be refused again: the edit needs a change in
                 // chat, so Try again goes away instead of looping (S3-o).
@@ -906,27 +1156,119 @@ enum DeviceRenderGate: Equatable {
     /// `cancelByUser()`. Every other cancel in this file is housekeeping and
     /// must keep calling the coordinator's plain `cancel()`.
     func cancel(_ key: DeviceRenderKey) async {
+        guard await synchronizeOwner() else { return }
+        let operation = UUID()
+        let current: UUID? = keyOperations[key]
+        let pending: PendingRetry? = pendingRetries[key].flatMap { (pending: PendingRetry) -> PendingRetry? in
+            let owned: Bool = pending.operation == current || pending.stoppedBy == current
+            return owned ? pending : nil
+        }
+        keyOperations[key] = operation
+        if pending != nil { pendingRetries[key]?.stoppedBy = operation }
+        let stored = try? intentStore.load(intentKey(key))
+        // Split into typed steps: the single nine-operand chain exceeded Xcode 26.3's type-check budget.
+        // Precedence is unchanged: held request, then the pending retry, then the live request, then storage.
+        let held: DeviceRenderIdentity? = heldRequests[key]?.identity
+        let retried: DeviceRenderIdentity? = pending?.acknowledgement ?? pending?.sourceIdentity
+        let live: DeviceRenderIdentity? = held ?? retried ?? requests[key]?.identity
+        let recorded: DeviceRenderIdentity? = stored?.acknowledgement ?? stored?.observedIdentity ?? stored?.sourceIdentity
+        let target: DeviceRenderIdentity? = live ?? recorded
+        var storageFailed = false
+        do {
+            let storageKey = try intentKey(key)
+            if let pending {
+                guard try intentStore.update(storageKey, operationID: pending.operation, change: { $0.state = .stopped }) else { throw CancellationError() }
+            } else if let target {
+                var stopped = DeviceRenderIntent(operationID: operation, sourceIdentity: target,
+                    baseGeneration: baseGenerations[key] ?? stored?.baseGeneration, state: .stopped)
+                // A repeated Stop keeps what the earlier one learned, so its revision floor never drops.
+                if let stored, stored.state != .released {
+                    func carried(_ identity: DeviceRenderIdentity?) -> DeviceRenderIdentity? {
+                        guard let identity, identity.jobID == target.jobID, identity.variantID == target.variantID,
+                              identity.recipeRevision >= target.recipeRevision else { return nil }
+                        return identity
+                    }
+                    stopped.acknowledgement = carried(stored.acknowledgement)
+                    stopped.observedIdentity = carried(stored.observedIdentity)
+                }
+                try intentStore.save(stopped, for: storageKey)
+            }
+        } catch {
+            storageFailed = true
+            if let storageKey = try? intentKey(key) { failedIntentWrites.insert(storageKey) }
+        }
+        initiation.invalidate(jobID: key.jobID, variantID: key.variantID)
+        let coordinator = entries[key]
+        let stopsDifferentTarget = target != nil && target != requests[key]?.identity
+        if stopsDifferentTarget, let target {
+            if target == pending?.acknowledgement || target == stored?.acknowledgement {
+                pauseAcknowledgedRetry(key, identity: target)
+            } else {
+                sendDecline(key, identity: target, reasonCode: Self.pausedReason, detail: "Cancelled by user")
+            }
+        }
         tickets[key] = nil
         rereads[key] = nil
         settle(key)
         observations.removeValue(forKey: key)?.cancel()
-        try? await entries[key]?.cancelByUser()
-        if let saved = await entries[key]?.snapshot() { presentations[key] = presentation(saved, for: key) }
+        if stopsDifferentTarget { try? await coordinator?.cancel() }
+        else { try? await coordinator?.cancelByUser() }
+        guard ownerIsCurrent, keyOperations[key] == operation, entries[key] === coordinator else { return }
+        if storageFailed { holdIntent(key, unreadable: true); return }
+        if let saved = await coordinator?.snapshot(), keyOperations[key] == operation {
+            presentations[key] = presentation(saved, for: key)
+        }
+    }
+
+    private func pauseAcknowledgedRetry(_ key: DeviceRenderKey, identity: DeviceRenderIdentity) {
+        guard ownerIsCurrent else { return }
+        do {
+            let storageKey = try intentKey(key)
+            guard var intent = try intentStore.load(storageKey), intent.state == .stopped else { return }
+            intent.acknowledgement = identity
+            try intentStore.save(intent, for: storageKey)
+        } catch { holdIntent(key, unreadable: true); return }
+        initiation.invalidate(jobID: key.jobID, variantID: key.variantID)
+        sendDecline(key, identity: identity, reasonCode: Self.pausedReason, detail: "Cancelled by user")
     }
 
     /// Resumes every render that parked while idle (a background suspension, a long
     /// outage, a check still running). Called when the app returns to the foreground,
     /// so a parked render continues on its own instead of sitting on "Preparing".
     func resumeParked() async {
+        guard resetOperation == nil, await synchronizeOwner() else { return }
         for (key, coordinator) in entries {
-            guard !(await coordinator.isBusy()), requests[key] != nil else { continue }
+            let operation = keyOperations[key]
+            let request = requests[key]
+            do {
+                let storageKey = try intentKey(key)
+                if failedIntentWrites.contains(storageKey) { holdIntent(key, unreadable: true); continue }
+                if let intent = try intentStore.load(storageKey), intent.state != .released { continue }
+            } catch { holdIntent(key, unreadable: true); continue }
+            guard !(await coordinator.isBusy()), ownerIsCurrent, resetOperation == nil,
+                  entries[key] === coordinator, keyOperations[key] == operation, requests[key] == request,
+                  request != nil else { continue }
+            do {
+                let storageKey = try intentKey(key)
+                if failedIntentWrites.contains(storageKey) { holdIntent(key, unreadable: true); continue }
+                if let intent = try intentStore.load(storageKey), intent.state != .released { continue }
+            } catch { holdIntent(key, unreadable: true); continue }
             try? await coordinator.recover()
-            guard await coordinator.isBusy() else { continue }
+            guard ownerIsCurrent, entries[key] === coordinator, keyOperations[key] == operation,
+                  await coordinator.isBusy(), keyOperations[key] == operation else { continue }
             await observe(key, coordinator: coordinator)
         }
     }
 
     func stopAll() async {
+        let operation = UUID()
+        resetOperation = operation
+        defer { if resetOperation == operation { resetOperation = nil } }
+        keyOperations.removeAll()
+        pendingRetries.removeAll()
+        baseGenerations.removeAll()
+        heldRequests.removeAll()
+        initiation.invalidate()
         tickets.removeAll()
         rereads.removeAll()
         for observer in observations.values { observer.cancel() }

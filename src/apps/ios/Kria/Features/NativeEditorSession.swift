@@ -85,7 +85,7 @@ enum NativeEditorVideoDownloadRoute: Equatable {
     case server(NativeEditorVideoDownloadTarget)
 }
 
-struct NativeEditorTemporaryVideo {
+struct NativeEditorTemporaryVideo: Sendable {
     let fileURL: URL
     let cleanupURL: URL
 }
@@ -206,10 +206,13 @@ struct NativeEditorTemporaryVideo {
         let rect: CGRect
     }
     @Published private(set) var mediaInteractionFrame: MediaInteractionFrame?
+    private let previewFrameRenderer: NativePreviewFrameRenderer
     private var textInteractionTask: Task<Void, Never>?
     private var textInteractionSequence = 0
 
     private func prepareInteractionLayers() {
+        textInteractionTask?.cancel()
+        textInteractionSequence += 1
         prepareTextInteraction()
         prepareMediaInteraction()
     }
@@ -219,10 +222,9 @@ struct NativeEditorTemporaryVideo {
               let element = document.textElements.first(where: { $0.id == selection.id }),
               let preview = sourcePreview, let item = player?.currentItem,
               sourcePreviewState == .ready else { return }
-        textInteractionTask?.cancel()
-        textInteractionSequence += 1
         let sequence = textInteractionSequence
         let time = min(currentTime, max(0, duration - 1.0 / 600))
+        let renderFrame = previewFrameRenderer
         textInteractionTask = Task { @MainActor [weak self] in
             do {
                 // Prepare after scrubbing settles, never for every scrub frame.
@@ -230,18 +232,14 @@ struct NativeEditorTemporaryVideo {
                 try Task.checkCancellation()
                 let layers = try preview.textInteractionLayers(id: element.id, time: time)
                 @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    try Task.checkCancellation()
                     let generator = AVAssetImageGenerator(asset: item.asset)
                     generator.videoComposition = composition
                     generator.maximumSize = CGSize(width: 1080, height: 1920)
                     generator.requestedTimeToleranceBefore = .zero
                     generator.requestedTimeToleranceAfter = .zero
-                    let cg: CGImage = try await withCheckedThrowingContinuation { continuation in
-                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: time, preferredTimescale: 600))]) { _, image, _, result, error in
-                            if result == .succeeded, let image { continuation.resume(returning: image) }
-                            else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
-                        }
-                    }
-                    return UIImage(cgImage: cg)
+                    let frame = try await renderFrame(generator, CMTime(seconds: time, preferredTimescale: 600))
+                    return UIImage(cgImage: frame.image)
                 }
                 let below = try await image(layers.below)
                 let above = try await image(layers.above)
@@ -269,28 +267,23 @@ struct NativeEditorTemporaryVideo {
         case .visualBlock: mediaID = "visual-\(selection.id)-\(selection.id)"
         default: return
         }
-        textInteractionTask?.cancel()
-        textInteractionSequence += 1
         let sequence = textInteractionSequence
         let time = min(currentTime, max(0, duration - 1.0 / 600))
+        let renderFrame = previewFrameRenderer
         textInteractionTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(for: .milliseconds(100))
                 try Task.checkCancellation()
                 let layers = try preview.mediaInteractionLayers(id: mediaID, time: time)
                 @MainActor func image(_ composition: AVVideoComposition) async throws -> UIImage {
+                    try Task.checkCancellation()
                     let generator = AVAssetImageGenerator(asset: item.asset)
                     generator.videoComposition = composition
                     generator.maximumSize = CGSize(width: 1080, height: 1920)
                     generator.requestedTimeToleranceBefore = .zero
                     generator.requestedTimeToleranceAfter = .zero
-                    let cg: CGImage = try await withCheckedThrowingContinuation { continuation in
-                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: time, preferredTimescale: 600))]) { _, image, _, result, error in
-                            if result == .succeeded, let image { continuation.resume(returning: image) }
-                            else { continuation.resume(throwing: error ?? MediaEngineError.exportFailed) }
-                        }
-                    }
-                    return UIImage(cgImage: cg)
+                    let frame = try await renderFrame(generator, CMTime(seconds: time, preferredTimescale: 600))
+                    return UIImage(cgImage: frame.image)
                 }
                 async let below = image(layers.below)
                 async let above = image(layers.above)
@@ -1312,7 +1305,7 @@ struct NativeEditorTemporaryVideo {
     /// failure — unsupported source, storage, cancellation — which still
     /// throws through to the caller rather than falling back to the last
     /// cloud render. The user must always get what the preview shows.
-    func exportDisplayedSourcePreview() async throws -> NativeEditorTemporaryVideo {
+    func exportDisplayedSourcePreview(progress: (@Sendable (Double) -> Void)? = nil) async throws -> NativeEditorTemporaryVideo {
         guard sourcePreviewState == .ready, sourcePreviewSettled,
               let sourcePreview,
               player?.currentItem === sourcePreview.preview.playerItem else {
@@ -1322,25 +1315,27 @@ struct NativeEditorTemporaryVideo {
         let exportRecipe = recipeWithLiveSongVolume(snapshot.recipe)
         let wasPlaying = isPlaying
         pausePlayback()
-        defer { if wasPlaying { togglePlayback() } }
+        defer { if wasPlaying && !Task.isCancelled { togglePlayback() } }
         do {
-            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs)
+            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs, progress: progress)
         } catch {
+            if error is CancellationError { throw error }
+            try Task.checkCancellation()
             #if DEBUG
             NativePreviewDiagnostics.failure("editor-export-first-attempt", error: error)
             #endif
-            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs)
+            return try await performLocalExport(recipe: exportRecipe, assetURLs: snapshot.assetURLs, progress: progress)
         }
     }
 
-    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL]) async throws -> NativeEditorTemporaryVideo {
+    private func performLocalExport(recipe: KriaMediaEngine.EditRecipe, assetURLs: [String: URL], progress: (@Sendable (Double) -> Void)?) async throws -> NativeEditorTemporaryVideo {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "kria-editor-download-\(UUID().uuidString)", directoryHint: .isDirectory)
         let output = directory.appending(path: "current-preview.mp4")
         do {
             let checkpoint = try await AVFoundationLocalExporter(
                 stateStore: FileExportStateStore(directory: directory.appending(path: "state", directoryHint: .isDirectory))
-            ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output)
+            ).export(recipe: recipe, assetURLs: assetURLs, outputURL: output, progress: progress)
             guard checkpoint.status == .completed, checkpoint.outputURL == output else {
                 throw NativeEditorVideoDownloadError.unavailable
             }
@@ -1386,7 +1381,8 @@ struct NativeEditorTemporaryVideo {
         draft: EditorDraft = EditorDraft(projectID: UUID(), clips: [], text: [], captions: CaptionStyle(enabled: false, style: "sentence"), music: nil, revision: 0),
         operations: any EditorOperations = LocalEditorOperations(),
         initialPlaybackURL: URL? = nil,
-        trustsInitialPlaybackURL: Bool = true
+        trustsInitialPlaybackURL: Bool = true,
+        previewFrameRenderer: @escaping NativePreviewFrameRenderer = NativePreviewImageRequest.render
     ) {
         var initialDocument = EditorDocument(snapshot: Self.snapshotPreservingClipMetadata(draft))
         initialDocument.revision.number = draft.revision
@@ -1395,6 +1391,7 @@ struct NativeEditorTemporaryVideo {
         self.compatibilitySnapshot = draft.serverSnapshot
         self.document = initialDocument
         self.cleanDocument = initialDocument
+        self.previewFrameRenderer = previewFrameRenderer
         self.operations = operations
         self.seedIsTrusted = trustsInitialPlaybackURL
         rememberClipIDs(from: draft, in: initialDocument)
@@ -1423,11 +1420,72 @@ struct NativeEditorTemporaryVideo {
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-legacy-visuals") {
             itemID = "fixture-visual-item"
         }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays") {
+            if ProcessInfo.processInfo.environment["KRIA_OVERLAY_RESET"] == "1" {
+                UserDefaults.standard.removeObject(forKey: "overlay-fixture-saved-visuals")
+                UserDefaults.standard.removeObject(forKey: "overlay-fixture-generation-count")
+                UserDefaults.standard.removeObject(forKey: "overlay-fixture-registrations")
+                for key in UserDefaults.standard.dictionaryRepresentation().keys {
+                    if key.hasPrefix("overlay-plan.overlay-ui-fixture.") {
+                        UserDefaults.standard.removeObject(forKey: key)
+                    } else if key.hasPrefix("generated-media-recovery."),
+                              let data = Data(base64Encoded: String(key.dropFirst("generated-media-recovery.".count))),
+                              let identity = try? JSONDecoder().decode([String].self, from: data),
+                              identity.first == "overlay-ui-fixture" {
+                        UserDefaults.standard.removeObject(forKey: key)
+                    }
+                }
+            }
+            if let saved = UserDefaults.standard.data(forKey: "overlay-fixture-saved-visuals"),
+               let visuals = try? JSONDecoder().decode(JSONValue.self, from: saved) {
+                var snapshot = document.encodeSnapshot()
+                if var payload = snapshot["editor_payload"]?.objectValue {
+                    var sections = payload["sections"]?.objectValue ?? [:]
+                    sections["visual_blocks"] = visuals
+                    payload["sections"] = .object(sections)
+                    snapshot["editor_payload"] = .object(payload)
+                } else { snapshot["visual_blocks"] = visuals }
+                document = EditorDocument(snapshot: snapshot)
+                cleanDocument = document
+            }
+            api = NativeEditorUITestCommitTransport.api()
+            sourceResolver = NativeEditorSourceResolver(project: BackgroundUploadCoordinator.projectDirectory(draft.projectID), jobID: draft.projectID)
+            itemID = "fixture-overlay-item"
+            jobID = draft.projectID
+            variantKey = "initial"
+            rendersOnDevice = true
+            guidedRevisionNumber = 3
+            for key in ["visual_blocks", "visual_editor_style", "text_elements"] {
+                document.capabilities[key] = EditorCapability(editable: true)
+            }
+            cleanDocument.capabilities = document.capabilities
+            previewVariant = ["editor_capabilities": .object(["phone_editor_media": .object([
+                "enabled": .bool(true), "source_registration": .bool(true), "visual_kinds": .array([.string("image")])
+            ])])]
+        }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-drawing") {
             // KRI-589: Save goes through the real request encoder to a stub transport (no account, no server).
             api = NativeEditorUITestCommitTransport.api()
             itemID = "fixture-drawing-item"
             variantKey = "initial"
+        }
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt") {
+            // KRI-1136: a device-rendered montage whose server opens `clips.tilt`; Save commits through the stub transport
+            // and the first clip's saved tilt comes back on the next launch (`-ui-testing-editor-tilt-reset` starts upright).
+            api = NativeEditorUITestCommitTransport.api()
+            itemID = "fixture-tilt-item"
+            variantKey = "initial"
+            rendersOnDevice = true
+            let defaults = UserDefaults.standard
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt-reset") {
+                defaults.removeObject(forKey: NativeEditorUITestFixtures.savedTiltKey)
+            }
+            if let data = defaults.data(forKey: NativeEditorUITestFixtures.savedTiltKey),
+               let saved = try? JSONDecoder().decode(JSONValue.self, from: data), !document.clips.isEmpty {
+                document.clips[0].raw["tilt"] = saved
+            }
+            document.capabilities["clips.tilt"] = EditorCapability(editable: true)
+            cleanDocument = document
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
             // KRI-1118: same stub commit transport; the pool visuals are canned (see `refreshVisualLibrary`).
@@ -1546,6 +1604,7 @@ struct NativeEditorTemporaryVideo {
         durationLoadTask?.cancel()
         seekRecoveryTask?.cancel()
         scrubFrameTask?.cancel()
+        textInteractionTask?.cancel()
         observingPlayer?.pause()
         if let timeObserver, let observingPlayer { observingPlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
@@ -2626,13 +2685,15 @@ struct NativeEditorTemporaryVideo {
     /// placement, compiler, undo and local export. No account or network.
     @Published private(set) var gamedayFixtureSaved = false
 
-    func prepareGamedayFixture(url: URL) async {
+    func prepareGamedayFixture(url: URL, overlays: Bool = false) async {
         do {
             api = NativeEditorUITestCommitTransport.api()
-            itemID = "fixture-gameday-item"; variantKey = "guided_story"; jobID = projectID
-            rendersOnDevice = true; guidedRevisionNumber = 3
-            previewVariant = ["resolved_archetype": .string("guided_story"), "editor_capabilities": .object([
-                "phone_editor_media": .object(["enabled": .bool(true), "source_registration": .bool(true)])])]
+            if !overlays {
+                itemID = "fixture-gameday-item"; variantKey = "guided_story"; jobID = projectID
+                rendersOnDevice = true; guidedRevisionNumber = 3
+                previewVariant = ["resolved_archetype": .string("guided_story"), "editor_capabilities": .object([
+                    "phone_editor_media": .object(["enabled": .bool(true), "source_registration": .bool(true)])])]
+            }
             let project = BackgroundUploadCoordinator.projectDirectory(projectID)
             let store = SourceAssetStore(project: project)
             func original(_ resource: URL, mediaID: String) async throws -> (MediaAsset, JSONValue) {
@@ -2667,7 +2728,7 @@ struct NativeEditorTemporaryVideo {
             }
             let pool: [String: JSONValue] = ["base_generation": .string(document.revision.baseGeneration), "clips": .array(clips)]
             UserDefaults.standard.set(try JSONEncoder().encode(pool), forKey: NativeEditorUITestFixtures.gamedayPoolKey)
-            let request = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: projectID, variantID: "guided_story",
+            let request = DeviceRenderRequest(identity: DeviceRenderIdentity(jobID: projectID, variantID: variantKey ?? "guided_story",
                 recipeRevision: 3, recipeDigest: String(repeating: "a", count: 64)),
                 recipe: KriaMediaEngine.EditRecipe(assets: [MediaAsset(id: "source", relativePath: "source")],
                     tracks: [TimelineTrack(id: "video", kind: .video, clips: [TimelineClip(id: "clip", sourceAssetID: "source", sourceDuration: 4)])]))
@@ -2678,6 +2739,16 @@ struct NativeEditorTemporaryVideo {
             cleanDocument = document
             gamedayFixtureSaved = UserDefaults.standard.data(forKey: NativeEditorUITestFixtures.gamedaySavedKey) != nil
             mediaUploads = BackgroundUploadCoordinator(api: api!, defaultsKey: "gameday-fixture-placement", sessionConfiguration: .ephemeral)
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-overlays"),
+               let api, let itemID, let sourceResolver, !document.visualBlocks.isEmpty {
+                let library = try await api.visuals(itemID: itemID)
+                for block in document.visualBlocks where block.kind == "media" {
+                    guard let asset = library.assets.first(where: { $0.id == block.raw["asset_id"]?.stringValue }),
+                          let original = asset.originalMediaURL else { throw APIError.invalidResponse }
+                    authoredVisualSources["visual:" + block.id + ":" + block.id] = try await sourceResolver.resolveMedia(
+                        id: asset.id, url: original, generation: document.revision.baseGeneration)
+                }
+            }
             await prepareSourcePreview()
             NSLog("KRI669 fixture prepared %@", gamedayFixtureSummary)
         } catch {
@@ -3710,16 +3781,10 @@ struct NativeEditorTemporaryVideo {
             while !Task.isCancelled, let target = self?.pendingScrubFrameTime {
                 self?.pendingScrubFrameTime = nil
                 do {
-                    let frame: (image: CGImage, actualTime: CMTime) = try await withCheckedThrowingContinuation { continuation in
-                        generator.generateCGImagesAsynchronously(forTimes: [NSValue(time: CMTime(seconds: target, preferredTimescale: 600))]) { _, image, actualTime, result, error in
-                            if result == .succeeded, let image {
-                                continuation.resume(returning: (image, actualTime))
-                            } else {
-                                continuation.resume(throwing: error ?? MediaEngineError.exportFailed)
-                            }
-                        }
-                    }
+                    guard let renderer = self?.previewFrameRenderer else { return }
+                    let frame = try await renderer(generator, CMTime(seconds: target, preferredTimescale: 600))
                     guard !Task.isCancelled, let self, self.scrubFrameGeneration == generation else { return }
+                    if self.pendingScrubFrameTime != nil { continue }
                     self.scrubPreviewTime = frame.actualTime.seconds
                     self.scrubPreviewFrame = UIImage(cgImage: frame.image)
                     self.prepareInteractionLayers()
@@ -3731,9 +3796,10 @@ struct NativeEditorTemporaryVideo {
                     #if DEBUG
                     NativePreviewDiagnostics.failure("scrub-frame-failure", error: error)
                     #endif
-                    self.scrubPreviewFrame = nil
-                    self.scrubPreviewTime = nil
-                    break
+                    if self.pendingScrubFrameTime == nil {
+                        self.scrubPreviewFrame = nil
+                        self.scrubPreviewTime = nil
+                    }
                 }
             }
             guard let self, self.scrubFrameGeneration == generation else { return }
@@ -3747,7 +3813,6 @@ struct NativeEditorTemporaryVideo {
         scrubFrameGeneration += 1
         scrubFrameTask?.cancel()
         scrubFrameTask = nil
-        scrubFrameGenerator?.cancelAllCGImageGeneration()
         scrubFrameGenerator = nil
         scrubFramePlayerItem = nil
         scrubFrameComposition = nil
@@ -4994,6 +5059,101 @@ struct NativeEditorTemporaryVideo {
             if let importID { uploads.failEditorPlacement(importID, error: "This media couldn’t be added. Try again.") }
             addClipError = "This media couldn’t be added. Your edit is unchanged. " + error.localizedDescription
         }
+    }
+
+    var overlayPlanScope: String? {
+        guard let itemID, let jobID, let variantKey else { return nil }
+        return [itemID, jobID.uuidString, variantKey].joined(separator: ".")
+    }
+
+    var overlayGenerationAPI: (any KriaAPIClient)? { api }
+
+    var canGenerateOverlayPlan: Bool { rendersOnDevice && canImportVisuals }
+
+    var overlayBaseDuration: Double { timelineProjection.baseClipWindows.last?.end ?? 0 }
+
+    func overlayOutputTime(_ baseTime: Double) -> Double { timelineProjection.projectBaseTime(baseTime) }
+
+    func overlayBaseTime(_ outputTime: Double) -> Double? {
+        let base = timelineProjection.unprojectOutputTime(outputTime)
+        return abs(timelineProjection.projectBaseTime(base) - outputTime) <= 0.002 ? base : nil
+    }
+
+    func overlayDocumentFingerprint() throws -> String {
+        try OverlayPlanFingerprint.make(document.encodeSnapshot())
+    }
+
+    func requestOverlayPlan(mode: OverlayGenerationMode, prompt: String, tasteNotes: String) async throws -> OverlayPlan {
+        guard loadState == .loaded, !isSaving, let api, let itemID, let jobID, let variantKey,
+              canGenerateOverlayPlan else { throw APIError.unsupported }
+        endTransaction()
+        let fingerprint = try overlayDocumentFingerprint()
+        let value = try await api.overlayPlan(itemID: itemID, body: OverlayPlanRequest(
+            jobID: jobID.uuidString, variantID: variantKey, baseGeneration: document.revision.baseGeneration,
+            documentFingerprint: fingerprint, mode: mode, prompt: prompt, tasteNotes: tasteNotes,
+            editorSnapshot: document.encodeSnapshot()))
+        guard !Task.isCancelled, value.documentFingerprint == fingerprint,
+              value.baseGeneration == document.revision.baseGeneration,
+              try overlayDocumentFingerprint() == fingerprint,
+              value.overlays.count <= 6, Set(value.overlays.map(\.id)).count == value.overlays.count,
+              value.overlays.allSatisfy({ $0.isValid(duration: overlayBaseDuration) }) else { throw APIError.invalidResponse }
+        return value
+    }
+
+    func containsOverlayProposal(_ id: String) -> Bool {
+        document.visualBlocks.contains { $0.id == id } || document.textElements.contains { $0.id == id }
+    }
+
+    func applyOverlayProposal(_ proposal: OverlayProposal, assetID: String?, plan: OverlayPlan) async throws {
+        guard !containsOverlayProposal(proposal.id) else { return }
+        guard !isAddingVisual, !isSaving, proposal.isValid(duration: overlayBaseDuration),
+              plan.baseGeneration == document.revision.baseGeneration,
+              try overlayDocumentFingerprint() == plan.documentFingerprint else { throw APIError.invalidResponse }
+        if proposal.kind == .text {
+            guard canEdit(.text) else { throw APIError.unsupported }
+            let element = EditorTextElement(id: proposal.id, text: proposal.text, startS: proposal.startS, endS: proposal.endS,
+                raw: ["font_family": .string("Inter"), "size_px": .number(540 * proposal.scale), "color": .string("#FFFFFF"),
+                      "x_frac": .number(proposal.xFrac), "y_frac": .number(proposal.yFrac), "position": .string("custom"),
+                      "max_width_frac": .number(proposal.scale), "wrap_lines": .bool(false), "stroke_width": .number(3), "effect": .string("none")])
+            transactDocument(section: .text) { $0.textElements.append(element) }
+            return
+        }
+        guard canImportVisuals, document.visualBlocks.count < 20, let api, let itemID, let assetID,
+              let sourceResolver else { throw APIError.unsupported }
+        isAddingVisual = true
+        defer { isAddingVisual = false }
+        let library = try await api.visuals(itemID: itemID)
+        guard let asset = library.assets.first(where: { $0.id == assetID && $0.status == "ready" && $0.kind == "image" }),
+              let originalURL = asset.originalMediaURL else { throw APIError.invalidResponse }
+        var admittedPath = asset.gcsPath
+        if rendersOnDevice {
+            guard let originalTarget = editorSourceTarget(kind: .visual) else { throw APIError.unsupported }
+            let stableID = proposal.sourceRegistrationID(assetID: asset.id)
+            let target = EditorSourceRegistrationTarget(itemID: originalTarget.itemID, variantID: originalTarget.variantID,
+                clientImportID: stableID, baseGeneration: originalTarget.baseGeneration,
+                guidedRevisionNumber: originalTarget.guidedRevisionNumber, sourceKind: .visual)
+            var response = try await api.registerEditorSource(target, sourceID: asset.id)
+            for _ in 0..<120 where response.status == "preparing" {
+                try Task.checkCancellation()
+                try await Task.sleep(for: .seconds(1))
+                response = try await api.editorSource(itemID: target.itemID, variantID: target.variantID, importID: stableID)
+            }
+            guard response.status == "ready" else { throw APIError.invalidResponse }
+            admittedPath = response.source?["gcs_path"]?.stringValue ?? asset.gcsPath
+        }
+        guard let admittedPath, !admittedPath.isEmpty else { throw APIError.invalidResponse }
+        let source = try await sourceResolver.resolveMedia(id: asset.id, url: originalURL, generation: plan.baseGeneration)
+        try Task.checkCancellation()
+        guard plan.baseGeneration == document.revision.baseGeneration,
+              try overlayDocumentFingerprint() == plan.documentFingerprint, canImportVisuals,
+              document.visualBlocks.count < 20 else { throw APIError.invalidResponse }
+        guard !containsOverlayProposal(proposal.id) else { return }
+        guard var block = NativeVisualAuthoring.plannedOverlay(asset: asset, proposal: proposal,
+            z: Int(document.visualBlocks.compactMap { $0.raw["z"]?.numberValue }.max() ?? 0) + 1) else { throw APIError.invalidResponse }
+        block.raw["src_gcs_path"] = .string(admittedPath)
+        authoredVisualSources["visual:" + proposal.id + ":" + proposal.id] = source
+        transactDocument(section: .visualBlocks) { $0.visualBlocks.append(block) }
+        await prepareSourcePreview()
     }
 
     func addLibraryVisual(_ asset: CreationVisual) async {
@@ -8526,7 +8686,13 @@ struct NativeEditorTemporaryVideo {
         // A change-required or outdated-app reason: a retry re-pins the same recipe and
         // this iPhone declines it again. The banner offers chat or Update Kria instead.
         guard [.retry, .resume, .renderNow].contains(deviceRenderNextStep) else { return }
-        if deviceRenders.presentations[key]?.requiresServerRetry == true {
+        if deviceRenders.isPausedByCreator(key) {
+            // This tap is the creator's typed Resume; only it may release a durable Stop. A server that
+            // recorded Stop as a failure also needs the /retry that lifts its pause, which the typed
+            // retry mints (or turns into a plain Resume while a durable intent still holds the render).
+            if deviceRenders.presentations[key]?.requiresServerRetry == true { _ = await deviceRenders.retryNeedsAttentionFromUser(key) }
+            else { await deviceRenders.resumeFromUser(key) }
+        } else if deviceRenders.presentations[key]?.requiresServerRetry == true {
             let retried = await deviceRenders.retryNeedsAttention(key)
             guard retried else { return }
         }
@@ -8638,3 +8804,6 @@ struct NativeEditorTemporaryVideo {
 }
 
 private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
+
+// Declared here, in the scanned session file, so the editor capability parity test sees every extension.
+extension NativeEditorSession: NativeEditorExportSource {}

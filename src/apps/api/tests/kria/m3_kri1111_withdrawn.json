@@ -1,0 +1,595 @@
+{
+ "source": {
+  "issue": "KRI-1111 (withdrawn asks come back), Leverkusen M3 run 1",
+  "thread": "83f2dcaa-9a05-42bc-a5f2-fa898d243e17 (\"Mt3\"), plan item b04e62bd-0607-4720-ba81-86eb4f285cef",
+  "server": "Fly main 7b5504165 (clip_intent_planner 2026-10-30-hide-part, clip_request_resolver 2026-10-27-order-certainty); replayed on origin/main 9c5a453b0",
+  "turn": "creator message 13:26:57Z (turn 40b44b77) -> planner 13:27:47Z -> resolver 13:27:52Z -> vision 13:28:02Z -> reply 13:28:02Z (brief v4)",
+  "recorded": [
+   "brief_v4: creative_brief_versions row v4 (13:28:02Z), verbatim",
+   "brief_v3: creative_brief_versions row v3 (13:24:00Z), the brief the 13:26:57Z turn started from, verbatim",
+   "creator_request / latest_message: the resolver row's input_json.creator_request (13:27:52Z) and the 13:26:57Z user event, verbatim",
+   "resolver_input_intents: the 13:27:52Z resolver row's input_json.intents, verbatim (the dash-id row `order-first-my-ticket` is the server's own `with_brief_anchors` row)",
+   "resolver_raw: that row's raw_text (the model's answer), verbatim",
+   "vision: the 13:28:02Z nova.video.clip_question row (question + answer), verbatim",
+   "reply_1328 / clip_question_1328: the 13:28:02Z assistant event, verbatim",
+   "media: ids, kinds, durations, filming times and source file display names from the approved job's media_snapshot; `shows` = each clip record's `subject` from the resolver input"
+  ],
+  "reconstructed": [
+   "inventory_1327: the clip-intent planner's I/O is redacted at write time. Its intents are the resolver input minus the server-added anchor, with the resolver-only spelling undone: the resolver sees an `exclude` as `include` (clip_intent_resolution.py `op=\"include\" if ... exclude`), so `exclude_ticket_r10` is restored to op `exclude`; its `requirement_id` \"r10\" is read from the intent id. `source_quote`s are the creator's own sentences each row comes from.",
+   "the Main Creator's strategy is redacted; the replay uses a minimal montage proposal with no candidate clip intents (the turn ended on the clip picker, before any strategy check)."
+  ],
+  "scrubbed": "the account id (only in GCS paths) -> 00000000-0000-4000-8000-00000000c0de; no GCS path is kept here"
+ },
+ "media": [
+  {
+   "alias": "m001",
+   "media_id": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+   "file_name": "IMG_1039",
+   "kind": "video",
+   "duration_s": 18.333333,
+   "capture_time": "2026-10-28T21:35:40Z",
+   "shows": "football stadium crowd and pitch"
+  },
+  {
+   "alias": "m002",
+   "media_id": "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+   "file_name": "IMG_1028",
+   "kind": "video",
+   "duration_s": 11.066667,
+   "capture_time": "2026-10-28T19:36:41Z",
+   "shows": "stadium crowd and football pitch"
+  },
+  {
+   "alias": "m003",
+   "media_id": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+   "file_name": "IMG_1037",
+   "kind": "video",
+   "duration_s": 9.866667,
+   "capture_time": "2026-10-28T20:25:46Z",
+   "shows": "football stadium crowd and match"
+  },
+  {
+   "alias": "m004",
+   "media_id": "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+   "file_name": "IMG_1036",
+   "kind": "video",
+   "duration_s": 8.533333,
+   "capture_time": "2026-10-28T19:49:47Z",
+   "shows": "stadium crowd"
+  },
+  {
+   "alias": "m005",
+   "media_id": "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+   "file_name": "IMG_1043",
+   "kind": "video",
+   "duration_s": 7.5,
+   "capture_time": "2026-10-28T21:47:37Z",
+   "shows": "stadium crowd and football players"
+  },
+  {
+   "alias": "m006",
+   "media_id": "asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+   "file_name": "M3_06_visual",
+   "kind": "image",
+   "duration_s": null,
+   "capture_time": "2026-10-30T12:29:12Z",
+   "shows": "Bayer Leverkusen DFB Pokal ticket"
+  }
+ ],
+ "brief_v3": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "last_clip": "the trophy celebration",
+     "first_clip": "my ticket"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "chronological from kick-off to the end",
+    "source_turn_id": "fea9a92c-ca82-4cab-a3a8-36bb2797cce0"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "all vertical",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {},
+    "scope": "clip:asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "status": "superseded",
+    "literal": null,
+    "description": "blur the QR code",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Leverkusen 5:2 Nürnberg",
+    "description": "Title: “Leverkusen 5:2 Nürnberg”",
+    "source_turn_id": "fea9a92c-ca82-4cab-a3a8-36bb2797cce0"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": null,
+    "description": "who scored and in which minute on each goal clip",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r6",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "the two goals"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Mute everything except the two goals",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r7",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 15
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 15 seconds",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "open",
+    "literal": "TOR!",
+    "description": "both goal clips (IMG_1037 and IMG_1039)",
+    "source_turn_id": "f2db16e9-4c73-4816-8dd5-6cc4c3ea3e38"
+   },
+   {
+    "id": "r9",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4"
+      },
+      {
+       "sound_media": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Mute everything except the two goals (IMG_1037 and IMG_1039)",
+    "source_turn_id": "f2db16e9-4c73-4816-8dd5-6cc4c3ea3e38"
+   }
+  ]
+ },
+ "brief_v4": {
+  "version": 4,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time",
+     "last_clip": "the Nürnberg players thanking their fans (IMG_1043)",
+     "first_clip": "my ticket"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "chronological from kick-off to the end",
+    "source_turn_id": "40b44b77-7319-41d1-ba5f-20400f2b9c23"
+   },
+   {
+    "id": "r2",
+    "kind": "style",
+    "facts": {
+     "landscape_fit": "fill"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "all vertical",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {},
+    "scope": "clip:asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "status": "superseded",
+    "literal": null,
+    "description": "blur the QR code",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r4",
+    "kind": "text",
+    "facts": {},
+    "scope": "title",
+    "status": "open",
+    "literal": "Leverkusen 5:2 Nürnberg",
+    "description": "Title: “Leverkusen 5:2 Nürnberg”",
+    "source_turn_id": "fea9a92c-ca82-4cab-a3a8-36bb2797cce0"
+   },
+   {
+    "id": "r5",
+    "kind": "text",
+    "facts": {},
+    "scope": "per_clip",
+    "status": "superseded",
+    "literal": null,
+    "description": "who scored and in which minute on each goal clip",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r6",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "the two goals"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "superseded",
+    "literal": null,
+    "description": "Mute everything except the two goals",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r7",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 15
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 15 seconds",
+    "source_turn_id": "22a8e2d6-29a5-4f34-872c-24de4a0a2771"
+   },
+   {
+    "id": "r8",
+    "kind": "text",
+    "facts": {},
+    "scope": "global",
+    "status": "open",
+    "literal": "TOR!",
+    "description": "only on the two goal clips",
+    "source_turn_id": "40b44b77-7319-41d1-ba5f-20400f2b9c23"
+   },
+   {
+    "id": "r9",
+    "kind": "audio",
+    "facts": {
+     "clip_sound": "off",
+     "sound_except": [
+      {
+       "sound_media": "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4"
+      },
+      {
+       "sound_media": "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4"
+      }
+     ]
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Mute everything except the two goals (IMG_1037 and IMG_1039)",
+    "source_turn_id": "f2db16e9-4c73-4816-8dd5-6cc4c3ea3e38"
+   },
+   {
+    "id": "r10",
+    "kind": "select",
+    "facts": {},
+    "scope": "clip:asset-18868513-34e4-4336-a0cb-428f4709c6c5",
+    "status": "open",
+    "literal": null,
+    "description": "Leave the ticket out completely",
+    "source_turn_id": "40b44b77-7319-41d1-ba5f-20400f2b9c23"
+   }
+  ]
+ },
+ "creator_request": "Montage of the match from kick-off to the end, all vertical. Start with my ticket, but blur the QR code. Title it with the final score. Label each goal clip with who scored and in which minute. End on the trophy celebration. Mute everything except the two goals. Make it 15 seconds.\nThen leave the ticket out. 5:2 for Leverkusen. Title: “Leverkusen 5:2 Nürnberg”\nLeave the names and minutes out, just write “TOR!” on both goal clips. The goals are IMG_1037 and IMG_1039.\nThere is no trophy in my footage. End on the Nürnberg players thanking their fans (IMG_1043). Leave the ticket out completely. Keep “TOR!” only on the two goal clips.",
+ "latest_message": "There is no trophy in my footage. End on the Nürnberg players thanking their fans (IMG_1043). Leave the ticket out completely. Keep “TOR!” only on the two goal clips.",
+ "resolver_input_intents": [
+  {
+   "op": "order",
+   "position": null,
+   "attribute": "Montage of the match from kick-off to the end",
+   "intent_id": "order_match_chronological",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "include",
+   "position": null,
+   "attribute": "the ticket",
+   "intent_id": "exclude_ticket_r10",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "label",
+   "position": null,
+   "attribute": "who scored",
+   "intent_id": "label_goal_scorer",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "label",
+   "position": null,
+   "attribute": "in which minute",
+   "intent_id": "label_goal_minute",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "order",
+   "position": "last",
+   "attribute": "the Nürnberg players thanking their fans (IMG_1043)",
+   "intent_id": "end_on_nurnberg_fans",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "caption",
+   "position": null,
+   "attribute": "the two goal clips",
+   "intent_id": "caption_goal_tor",
+   "creator_text": "TOR!",
+   "ordered_members": null,
+   "caption_attribute": null
+  },
+  {
+   "op": "order",
+   "position": "first",
+   "attribute": "my ticket",
+   "intent_id": "order-first-my-ticket",
+   "creator_text": null,
+   "ordered_members": null,
+   "caption_attribute": null
+  }
+ ],
+ "resolver_raw": {
+  "intents": [
+   {
+    "intent_id": "order_match_chronological",
+    "assignments": [
+     {
+      "media": "m002",
+      "value": "",
+      "evidence": "player introductions, stadium lights illuminate crowd in red",
+      "confidence": 0.9
+     },
+     {
+      "media": "m003",
+      "value": "",
+      "evidence": "stadium view with ongoing match, person waves scarf and cheers",
+      "confidence": 0.8
+     },
+     {
+      "media": "m001",
+      "value": "",
+      "evidence": "celebrating a goal, red lights flashing after a goal",
+      "confidence": 0.8
+     },
+     {
+      "media": "m004",
+      "value": "",
+      "evidence": "crowd chanting and waving flags, stadium lights glow red",
+      "confidence": 0.8
+     },
+     {
+      "media": "m005",
+      "value": "",
+      "evidence": "players gather on the pitch after a match, confetti falls from stands",
+      "confidence": 0.8
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "exclude_ticket_r10",
+    "assignments": [],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "label_goal_scorer",
+    "assignments": [],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "label_goal_minute",
+    "assignments": [],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "end_on_nurnberg_fans",
+    "assignments": [
+     {
+      "media": "m005",
+      "value": "",
+      "evidence": "players gather on the pitch after a match, crowd cheering",
+      "confidence": 0.8
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "caption_goal_tor",
+    "assignments": [
+     {
+      "media": "m001",
+      "value": "",
+      "evidence": "celebrating a goal, red lights flashing after a goal",
+      "confidence": 0.9
+     },
+     {
+      "media": "m002",
+      "value": "",
+      "evidence": "red lights illuminating stands, crowd cheering",
+      "confidence": 0.7
+     }
+    ],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   },
+   {
+    "intent_id": "order-first-my-ticket",
+    "assignments": [],
+    "needs_vision": [],
+    "question": null,
+    "caption": null
+   }
+  ]
+ },
+ "vision": {
+  "question": "Does this clip match this description: \"the two goal clips\"? Answer only \"yes\" or \"no\".",
+  "answer": {
+   "answer": "no",
+   "evidence": "stadium view, no goals scored",
+   "confidence": 1.0
+  }
+ },
+ "reply_1328": "I couldn't tell which of your clips show \"my ticket\". Tap the clips that do, or tell me there aren't any. Also: I couldn't find any clips for \"who scored\"; I couldn't find any clips for \"in which minute\". Could you clarify? I ticked the first clip you filmed for \"my ticket\". I couldn't tell which of your clips to leave out for \"the ticket\". Tap the ones to leave out, or tell me none.",
+ "clip_question_1328": {
+  "version": 1,
+  "allow_none": true,
+  "categories": [
+   {
+    "op": "order",
+    "key": "order:my-ticket",
+    "label": "my ticket",
+    "intent_id": "order-first-my-ticket",
+    "candidate_media_ids": [
+     "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+     "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+     "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+     "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+     "analysis-proxy-ios-89880A9A-738E-4DAF-9A77-84CEF5605386.mp4",
+     "asset-18868513-34e4-4336-a0cb-428f4709c6c5"
+    ],
+    "suggested_media_ids": [
+     "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4"
+    ]
+   },
+   {
+    "op": "exclude",
+    "key": "exclude:the-ticket",
+    "label": "the ticket",
+    "intent_id": "exclude_ticket_r10",
+    "candidate_media_ids": [
+     "analysis-proxy-ios-84CF7AE8-F803-428F-9B99-580AD2754134.mp4",
+     "analysis-proxy-ios-9617BC94-1129-4B21-AD4C-93A9566830D5.mp4",
+     "analysis-proxy-ios-67977A00-7671-4F65-9E10-A8ED9E5F3272.mp4",
+     "analysis-proxy-ios-81B16330-7F84-4D6C-9AB9-F2986EBBA672.mp4",
+     "asset-18868513-34e4-4336-a0cb-428f4709c6c5"
+    ],
+    "suggested_media_ids": []
+   }
+  ],
+  "question_id": "8e2dce17-21b4-41bc-a29d-2892ebd9b213",
+  "candidate_media": [
+   {
+    "kind": "image",
+    "label": "Photo 1",
+    "media_id": "asset-18868513-34e4-4336-a0cb-428f4709c6c5"
+   }
+  ]
+ },
+ "inventory_1327": [
+  {
+   "intent_id": "order_match_chronological",
+   "op": "order",
+   "attribute": "Montage of the match from kick-off to the end",
+   "source_quote": "Montage of the match from kick-off to the end"
+  },
+  {
+   "intent_id": "exclude_ticket_r10",
+   "op": "exclude",
+   "attribute": "the ticket",
+   "source_quote": "Leave the ticket out completely",
+   "requirement_id": "r10"
+  },
+  {
+   "intent_id": "label_goal_scorer",
+   "op": "label",
+   "attribute": "who scored",
+   "source_quote": "Label each goal clip with who scored and in which minute"
+  },
+  {
+   "intent_id": "label_goal_minute",
+   "op": "label",
+   "attribute": "in which minute",
+   "source_quote": "Label each goal clip with who scored and in which minute"
+  },
+  {
+   "intent_id": "end_on_nurnberg_fans",
+   "op": "order",
+   "attribute": "the Nürnberg players thanking their fans (IMG_1043)",
+   "source_quote": "End on the Nürnberg players thanking their fans (IMG_1043)",
+   "position": "last"
+  },
+  {
+   "intent_id": "caption_goal_tor",
+   "op": "caption",
+   "attribute": "the two goal clips",
+   "source_quote": "Keep “TOR!” only on the two goal clips",
+   "creator_text": "TOR!"
+  }
+ ]
+}

@@ -406,6 +406,7 @@ struct NativeEditorContextStrip: View {
     @ObservedObject var session: NativeEditorSession
     let onAdjust: () -> Void
     var onCrop: () -> Void = {}
+    var onTilt: () -> Void = {}
     /// KRI-717: opens the Range picker (which part of the source clip plays).
     var onRange: () -> Void = {}
     let onTransition: () -> Void
@@ -446,6 +447,20 @@ struct NativeEditorContextStrip: View {
                     .disabled(blocked != nil || !session.canEdit(.timeline))
                     .accessibilityIdentifier("native-editor-clip-crop")
                     .accessibilityHint(blocked ?? "Choose which part of this clip shows")
+                }
+
+                // KRI-1136: only where the server explicitly lists `clips.tilt`.
+                if session.canTiltClips {
+                    let tiltBlocked = session.tiltBlockedReason(for: session.selection)
+                    Button(action: onTilt) {
+                        Label("Tilt", systemImage: "rotate.right")
+                            .frame(minHeight: 44)
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(NativeEditorContextButtonStyle(isAccent: false))
+                    .disabled(tiltBlocked != nil || !session.canEdit(.timeline))
+                    .accessibilityIdentifier("native-editor-clip-tilt")
+                    .accessibilityHint(tiltBlocked ?? "Turn this clip to any angle")
                 }
 
                 // Toggles the selected clip's own sound (it used to open Adjust and show a static

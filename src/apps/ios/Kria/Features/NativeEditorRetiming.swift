@@ -96,6 +96,8 @@ extension NativeEditorSession {
         }
         // KRI-44: a clip's crop is decided by the server's explicit `clips.source_crop`.
         if operation == "source_crop", section == .timeline, rendersOnDevice { return canCropClips }
+        // KRI-1136: tilt only exists where the server explicitly lists `clips.tilt`.
+        if operation == "tilt" { return canTiltClips }
         guard !rendersOnDevice else { return false }
         let clipKeys: [String] = section == .timeline ? ["clips.\(operation)"] : []
         return canEditOperation(keys + clipKeys + [section.rawValue], section: section)
@@ -120,6 +122,78 @@ extension NativeEditorSession {
         let crop = NormalizedSourceRect(x: x, y: y, width: width, height: height)
         guard (try? crop.validate()) != nil else { return nil }
         return crop
+    }
+
+    // MARK: Tilt (KRI-1136)
+
+    var canTiltClips: Bool { document.capabilities["clips.tilt"]?.editable == true }
+
+    /// The stored tilt of a clip, or nil when it is upright with a blank backdrop.
+    func clipTilt(for selection: EditorSelection) -> ClipTilt? {
+        guard selection.kind == .clip,
+              let clip = timelineClips.first(where: { $0.id.uuidString == selection.id }),
+              let raw = document.clips.first(where: { $0.id == clip.slotID })?.raw["tilt"],
+              let tilt = try? ClipTilt(row: raw) else { return nil }
+        return tilt
+    }
+
+    /// Why Tilt is greyed out for the selected clip, or nil when it is available.
+    func tiltBlockedReason(for selection: EditorSelection?) -> String? {
+        guard let selection, selection.kind == .clip else { return "Select a clip to tilt it." }
+        if !canTiltClips { return document.capabilities["clips.tilt"]?.reason.map(nativeEditorWireLabel) ?? "Tilt isn’t available for this edit." }
+        guard let slotID = timelineClips.first(where: { $0.id.uuidString == selection.id })?.slotID,
+              let slot = document.clips.first(where: { $0.id == slotID }) else { return nil }
+        return Self.tiltBlockedReason(for: slot)
+    }
+
+    static func tiltBlockedReason(for slot: EditorTimelineSlot) -> String? {
+        if ![nil, "none"].contains(slot.lookPreset) || !(slot.lookAdjustments?.isEmpty ?? true) {
+            return "A clip with a colour look can’t be tilted. Remove the look first."
+        }
+        if slot.raw["layout"]?.stringValue == "supporting_card" { return "Supporting cards keep their own layout." }
+        return nil
+    }
+
+    /// Sets a clip's tilt. nil (or an upright, blank one) straightens it and drops the row's `tilt` key, so a
+    /// reset clip is byte-identical to one that was never tilted.
+    func setClipTilt(_ tilt: ClipTilt?, for selection: EditorSelection) {
+        let straightening = tilt?.isIdentity ?? true
+        guard let section = footageSection(selection), section == .timeline,
+              canEditFootage(section, keys: ["footage.tilt", "tilt"], operation: "tilt", resetting: straightening),
+              straightening || tiltBlockedReason(for: selection) == nil else { return }
+        let clearValue = footageClearValue(selection, key: "tilt")
+        let value = tilt?.rowValue
+        transactDocument(section: section) { document in
+            mutateFootage(selection, in: &document) { raw in
+                if let value { raw["tilt"] = value }
+                else if let clearValue { raw["tilt"] = clearValue }
+                else { raw.removeValue(forKey: "tilt") }
+            }
+        }
+    }
+
+    /// Gives every clip that can tilt the same backdrop, keeping each one's angle, in one undo step. A clip that
+    /// cannot tilt (it carries a look, or is a supporting card) is left exactly as it was. Returns how many
+    /// clips changed hands and how many were left alone.
+    @discardableResult
+    func applyTiltBackdropToAllClips(_ backdrop: ClipBackdrop) -> (applied: Int, skipped: Int) {
+        guard canTiltClips, canEditFootage(.timeline, keys: ["footage.tilt", "tilt"], operation: "tilt", resetting: false) else {
+            return (0, document.clips.count)
+        }
+        var applied = 0, skipped = 0
+        transactDocument(section: .timeline) { document in
+            for index in document.clips.indices {
+                let slot = document.clips[index]
+                guard Self.tiltBlockedReason(for: slot) == nil else { skipped += 1; continue }
+                var tilt = (try? ClipTilt(row: slot.raw["tilt"])) ?? ClipTilt.upright
+                tilt.backdrop = backdrop
+                if let value = tilt.rowValue { document.clips[index].raw["tilt"] = value }
+                else if let clear = clipSlotClearValue(slotID: slot.id ?? "", key: "tilt") { document.clips[index].raw["tilt"] = clear }
+                else { document.clips[index].raw.removeValue(forKey: "tilt") }
+                applied += 1
+            }
+        }
+        return (applied, skipped)
     }
 
     func footagePlaybackRate(for selection: EditorSelection) -> Double {

@@ -8,14 +8,15 @@ import AVKit
     var script: GeneratedNarrationScript? = nil
     @Published var prompt = ""
     @Published var title = ""
+    var transparentBackground = false
     @Published var operation: GeneratedMediaOperation?
     @Published var submittedRequest: GeneratedMediaRequest?
     @Published var recovery: GeneratedMediaRecovery?
     @Published var submissionRejection: String?
     private var recoveryKey: String?
 
-    func configureRecovery(accountID: String, itemID: String) {
-        let parts = [accountID, itemID, capability.rawValue, source?.id ?? ""]
+    func configureRecovery(accountID: String, itemID: String, placementID: String? = nil) {
+        let parts = [accountID, itemID, capability.rawValue, source?.id ?? ""] + (placementID.map { [$0] } ?? [])
         guard let data = try? JSONEncoder().encode(parts) else { return }
         recoveryKey = "generated-media-recovery." + data.base64EncodedString()
         if let recoveryKey, let saved = UserDefaults.standard.data(forKey: recoveryKey) {
@@ -67,6 +68,11 @@ struct GeneratedMediaSheet: View {
     let itemID: String
     @ObservedObject var draft: GeneratedMediaDraft
     let accepted: () async -> Void
+    var useImage: ((GeneratedMediaOperation) async throws -> Void)? = nil
+    var allowsNewGeneration = true
+    var allowsUse = true
+    var embedded = false
+    var apiOverride: (any KriaAPIClient)? = nil
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var busy = false
@@ -79,52 +85,67 @@ struct GeneratedMediaSheet: View {
     private var narration: Bool { draft.capability == .narration }
     private var heading: String { narration ? "Generate narration" : (draft.capability == .imageEdit ? "Edit image" : "Generate image") }
 
+    private var api: any KriaAPIClient { apiOverride ?? model.api }
+
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    if narration {
-                        Text("This voice is AI-generated. Review the script and listen before using it.")
-                        Text(draft.script?.text ?? "").textSelection(.enabled)
-                    } else {
-                        TextField("Image title", text: $draft.title)
-                            .accessibilityIdentifier("generated-media-title").disabled(draft.recovery != nil || draft.submissionRejection != nil)
-                        TextField(draft.source == nil ? "Describe your image" : "Describe the changes", text: $draft.prompt, axis: .vertical)
-                            .lineLimit(3...8).accessibilityIdentifier("generated-media-prompt").disabled(draft.recovery != nil || draft.submissionRejection != nil)
-                    }
-                    if draft.recovery == nil, draft.submissionRejection == nil {
-                        Button(narration ? "Approve script and generate AI voice" : "Generate preview") { submit() }
-                            .buttonStyle(KriaPrimaryButtonStyle())
-                            .disabled(busy || (!narration && draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                            .accessibilityIdentifier("generated-media-submit")
-                    }
-                    if let rejection = draft.submissionRejection {
-                        Text(rejection).foregroundStyle(KriaColor.failureText)
-                        Button("Edit request") { editRejectedRequest() }
-                            .disabled(busy).accessibilityIdentifier("generated-media-edit-rejected")
-                    }
-                    if let operation = draft.operation {
-                        operationView(operation)
-                    } else if draft.recovery != nil && !busy {
-                        Text("The request may have reached the server. Check status to recover it without starting another generation.")
-                        Button("Check status") { pollTask = Task { await restore() } }.disabled(busy)
-                    }
-                    if busy { ProgressView("Working…") }
-                    if let error { Text(error).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("generated-media-error") }
-                    if draft.recovery != nil {
-                        Text("Closing this preview does not cancel a request already sent to the provider.")
-                            .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
-                    }
+        Group {
+            if embedded { contents }
+            else {
+                NavigationStack {
+                    ScrollView { contents.padding(24) }
+                        .navigationTitle(heading)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+                        .interactiveDismissDisabled(busy)
                 }
-                .padding(24)
-                .disabled(busy && draft.recovery == nil)
             }
-            .navigationTitle(heading)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
-            .interactiveDismissDisabled(busy)
-            .onDisappear { pollTask?.cancel(); player?.pause() }
-            .onAppear { pollTask = Task { await restore() } }
+        }
+        .onDisappear { pollTask?.cancel(); player?.pause() }
+        .onAppear {
+            pollTask = Task { await restore() }
+        }
+    }
+
+    private var contents: some View {
+        VStack(alignment: .leading, spacing: embedded ? 10 : 18) {
+            if narration {
+                Text("This voice is AI-generated. Review the script and listen before using it.")
+                Text(draft.script?.text ?? "").textSelection(.enabled)
+            } else {
+                if !embedded {
+                    TextField("Image title", text: $draft.title)
+                        .accessibilityIdentifier("generated-media-title").disabled(draft.recovery != nil || draft.submissionRejection != nil)
+                }
+                // The exact prompt that will be paid for is always visible before the first request.
+                TextField(draft.source == nil ? "Describe your image" : "Describe the changes", text: $draft.prompt, axis: .vertical)
+                    .lineLimit(embedded ? 2...6 : 3...8).accessibilityIdentifier("generated-media-prompt").disabled(draft.recovery != nil || draft.submissionRejection != nil)
+                if embedded && draft.recovery == nil && draft.submissionRejection == nil {
+                    Text("Generating uses your account’s allowance.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                }
+            }
+            if draft.recovery == nil, draft.submissionRejection == nil {
+                Button(narration ? "Approve script and generate AI voice" : "Generate preview") { submit() }
+                    .buttonStyle(KriaPrimaryButtonStyle())
+                    .disabled(busy || !allowsNewGeneration || (!narration && draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .accessibilityIdentifier("generated-media-submit")
+            }
+            if let rejection = draft.submissionRejection {
+                Text(rejection).foregroundStyle(KriaColor.failureText)
+                Button("Edit request") { editRejectedRequest() }.disabled(busy)
+                    .accessibilityIdentifier("generated-media-edit-rejected")
+            }
+            if let operation = draft.operation { operationView(operation) }
+            else if draft.recovery != nil && !busy {
+                Text("Check your existing preview without generating again.")
+                Button("Check status") { pollTask = Task { await restore() } }.disabled(busy)
+            }
+            if busy { ProgressView("Preparing preview…") }
+            if let error { Text(error).foregroundStyle(KriaColor.failureText).accessibilityIdentifier("generated-media-error") }
+            if draft.recovery != nil && draft.operation?.state != .ready && draft.operation?.state != .failed {
+                Text("Leaving this preview keeps your generation request for later.")
+                    .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+            }
         }
     }
 
@@ -155,7 +176,7 @@ struct GeneratedMediaSheet: View {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
-                        image.resizable().scaledToFit().onAppear { previewLoaded = true }
+                        image.resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: embedded ? 112 : 480).onAppear { previewLoaded = true }
                     case .failure:
                         Text("Couldn’t load the image preview. Check status to refresh it.").onAppear { previewLoaded = false }
                     default: ProgressView("Loading preview…")
@@ -163,9 +184,21 @@ struct GeneratedMediaSheet: View {
                 }
                 .accessibilityIdentifier("generated-media-preview")
             }
-            Button(narration ? "Use AI voice" : "Use image") { accept(value) }
+            if embedded && allowsNewGeneration {
+                Button("Try another look") {
+                    guard !busy else { return }
+                    draft.clearRecovery()
+                    previewLoaded = false
+                    error = nil
+                    submit()
+                }.disabled(busy)
+            }
+            Button { accept(value) } label: {
+                Text(narration ? "Use AI voice" : embedded ? "Add to timeline" : "Use image")
+                    .frame(maxWidth: embedded ? .infinity : nil)
+            }
                 .buttonStyle(KriaPrimaryButtonStyle())
-                .disabled(busy || !value.canAccept || !matchesApproval(value) || !previewLoaded || (narration && !previewPlayed))
+                .disabled(busy || !allowsUse || !value.canAccept || !matchesApproval(value) || !previewLoaded || (narration && !previewPlayed))
                 .accessibilityIdentifier("generated-media-use")
         } else {
             Text(statusText(value))
@@ -175,7 +208,7 @@ struct GeneratedMediaSheet: View {
             Text("The source or script changed. Discard this preview and approve the latest version before generating again.")
                 .foregroundStyle(KriaColor.failureText)
         }
-        if value.state == .ready || value.state == .failed {
+        if (!embedded && value.state == .ready) || value.state == .failed {
             Button("Discard preview") { pollTask?.cancel(); draft.clearRecovery(); error = nil; previewLoaded = false; previewPlayed = false }
                 .disabled(busy)
         }
@@ -187,7 +220,7 @@ struct GeneratedMediaSheet: View {
                 pollTask = Task {
                     defer { busy = false }
                     do {
-                        draft.rememberOperation(try await model.api.retryGeneratedMediaStorage(itemID: itemID, operationID: value.id))
+                        draft.rememberOperation(try await api.retryGeneratedMediaStorage(itemID: itemID, operationID: value.id))
                         error = nil
                         busy = false
                         await poll()
@@ -195,11 +228,13 @@ struct GeneratedMediaSheet: View {
                 }
             }.disabled(busy)
         }
-        Button("Check status") {
-            guard !busy else { return }
-            pollTask?.cancel()
-            pollTask = Task { await restore() }
-        }.disabled(busy)
+        if !embedded || value.state != .ready || !previewLoaded {
+            Button(embedded && value.state == .ready ? "Refresh preview" : "Check status") {
+                guard !busy else { return }
+                pollTask?.cancel()
+                pollTask = Task { await restore() }
+            }.disabled(busy)
+        }
     }
 
     private func statusText(_ value: GeneratedMediaOperation) -> String {
@@ -213,12 +248,12 @@ struct GeneratedMediaSheet: View {
     }
 
     private func submit() {
-        guard !busy, draft.recovery == nil, draft.submissionRejection == nil else { return }
+        guard !busy, allowsNewGeneration, draft.recovery == nil, draft.submissionRejection == nil else { return }
         draft.rememberRequest()
         guard let recovery = draft.recovery else { return }
         let request = draft.submittedRequest ?? GeneratedMediaRequest(
             clientEventID: recovery.clientEventID, capability: draft.capability,
-            prompt: draft.script?.text ?? draft.prompt, editableTitle: draft.title,
+            prompt: draft.script?.text ?? draft.prompt, transparentBackground: draft.transparentBackground, editableTitle: draft.title,
             sourceAssetID: draft.source?.id, sourceGeneration: draft.source?.sourceGeneration,
             scriptID: draft.script?.scriptID, scriptVersion: draft.script?.scriptVersion,
             approvedScriptSHA256: draft.script?.approvedScriptSHA256
@@ -228,7 +263,7 @@ struct GeneratedMediaSheet: View {
         error = nil
         pollTask = Task {
             do {
-                draft.rememberOperation(try await model.api.generateMedia(itemID: itemID, body: request))
+                draft.rememberOperation(try await api.generateMedia(itemID: itemID, body: request))
                 busy = false
                 await poll()
             } catch {
@@ -248,14 +283,14 @@ struct GeneratedMediaSheet: View {
                 switch draft.capability {
                 case .image: break
                 case .imageEdit:
-                    let visuals = try await model.api.visuals(itemID: itemID)
+                    let visuals = try await api.visuals(itemID: itemID)
                     guard let source = visuals.assets.first(where: { $0.id == draft.source?.id && $0.status == "ready" }) else {
                         error = "This source is no longer available. Close this sheet and choose another image."
                         return
                     }
                     draft.source = source
                 case .narration:
-                    draft.script = try await model.api.generatedNarrationScript(itemID: itemID)
+                    draft.script = try await api.generatedNarrationScript(itemID: itemID)
                 }
                 draft.resetRejectedRequest()
                 error = nil
@@ -269,17 +304,17 @@ struct GeneratedMediaSheet: View {
         do {
             let value: GeneratedMediaOperation
             if let operationID = recovery.operationID {
-                value = try await model.api.generatedMedia(itemID: itemID, operationID: operationID)
+                value = try await api.generatedMedia(itemID: itemID, operationID: operationID)
             } else {
-                value = try await model.api.generatedMediaByEvent(itemID: itemID, clientEventID: recovery.clientEventID)
+                value = try await api.generatedMediaByEvent(itemID: itemID, clientEventID: recovery.clientEventID)
             }
             switch draft.capability {
             case .image: break
             case .imageEdit:
-                let visuals = try await model.api.visuals(itemID: itemID)
+                let visuals = try await api.visuals(itemID: itemID)
                 draft.source = visuals.assets.first { $0.id == value.sourceAssetID && $0.status == "ready" }
             case .narration:
-                draft.script = try await model.api.generatedNarrationScript(itemID: itemID)
+                draft.script = try await api.generatedNarrationScript(itemID: itemID)
             }
             draft.rememberOperation(value)
             error = nil
@@ -296,26 +331,31 @@ struct GeneratedMediaSheet: View {
             guard let value = draft.operation, value.shouldPoll, !Task.isCancelled else { return }
             do {
                 try await Task.sleep(for: .seconds(3))
-                draft.rememberOperation(try await model.api.generatedMedia(itemID: itemID, operationID: value.id))
+                draft.rememberOperation(try await api.generatedMedia(itemID: itemID, operationID: value.id))
             } catch is CancellationError { return }
             catch { self.error = "Couldn’t check status. Check again when connected."; return }
         }
     }
 
     private func accept(_ value: GeneratedMediaOperation) {
-        guard !busy, value.canAccept, matchesApproval(value), previewLoaded, !narration || previewPlayed else { return }
+        guard !busy, allowsUse, value.canAccept, matchesApproval(value), previewLoaded, !narration || previewPlayed else { return }
         busy = true
         pollTask?.cancel()
         pollTask = Task {
             defer { busy = false }
             do {
-                _ = try await model.api.acceptGeneratedMedia(itemID: itemID, operationID: value.id,
+                _ = try await api.acceptGeneratedMedia(itemID: itemID, operationID: value.id,
                     body: GeneratedMediaAcceptance(scriptID: draft.script?.scriptID, scriptVersion: draft.script?.scriptVersion,
                                                    approvedScriptSHA256: draft.script?.approvedScriptSHA256))
+                if let useImage { try await useImage(value) }
                 draft.clearRecovery()
                 await accepted()
-                dismiss()
-            } catch { self.error = "Couldn’t use this preview. If the script changed, approve its latest version first." }
+                if !embedded { dismiss() }
+            } catch {
+                self.error = useImage == nil
+                    ? "Couldn’t use this preview. If the script changed, approve its latest version first."
+                    : "Couldn’t place this overlay. The generated preview is preserved. If your edit changed, close and plan again."
+            }
         }
     }
 }

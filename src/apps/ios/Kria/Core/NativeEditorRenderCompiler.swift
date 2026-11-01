@@ -275,6 +275,12 @@ enum NativeEditorRenderError: Error, Equatable {
                authoredSlot?.lookPreset != "golden_hour", video[video.count - 1].sourceCrop == nil {
                 video[video.count - 1].transform = Self.fitTransform(display: source.asset.naturalSize, canvas: canvas, landscapeFit: "fit")
             }
+            // KRI-1136: the creator's tilt turns the clip about the canvas centre AFTER the letterbox scale, so a
+            // tilted sideways clip keeps its bars. A graded clip stays upright, like the server's refusal.
+            if video[video.count - 1].look == nil, let tilt = try Self.clipTilt(authoredSlot?.raw["tilt"]) {
+                video[video.count - 1].transform.rotationDegrees = tilt.recipeRotationDegrees
+                video[video.count - 1].backdrop = tilt.recipeBackdrop
+            }
         }
         // The video track is the composition's clock. Without it text and
         // captions clip to nothing, yet an unclamped media overlay still makes
@@ -953,6 +959,10 @@ enum NativeEditorRenderError: Error, Equatable {
         let contain = min(canvasWidth / display.width, canvasHeight / display.height)
         let cover = max(canvasWidth / display.width, canvasHeight / display.height)
         return MediaTransform(scale: contain / cover)
+    }
+
+    static func clipTilt(_ raw: JSONValue?) throws -> ClipTilt? {
+        do { return try ClipTilt(row: raw) } catch { throw RecipeError.invalidTimeline }
     }
 
     static func sourceCrop(_ raw: JSONValue?) throws -> NormalizedSourceRect? {

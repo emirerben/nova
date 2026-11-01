@@ -2496,6 +2496,19 @@
               "default": null,
               "title": "Source Start Locked"
             },
+            "tilt": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Tilt"
+            },
             "transition_after": {
               "default": "cut",
               "enum": [

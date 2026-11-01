@@ -1,0 +1,39 @@
+{
+  "recorded_from": "live run before-1 (real Main Creator, gemini-3.1-pro-preview, planner prompt 2026-11-01-v108), 2026-11-01; held by the approval-readiness gate in replay-4 (same research I/O recorded live in before-4)",
+  "message": "With animations, explain why people should visit Assos, Turkey",
+  "brief_update": {
+    "operation": "add",
+    "kind": "text",
+    "scope": "global",
+    "literal": null,
+    "description": "explain why people should visit Assos, Turkey",
+    "facts": {
+      "animation": "any",
+      "research": {
+        "topic": "Assos, Turkey",
+        "request_quote": "With animations, explain why people should visit Assos, Turkey"
+      }
+    }
+  },
+  "observed_hold": {
+    "readiness_row": {
+      "requirement_id": "r1",
+      "disposition": "evidence_missing",
+      "reason": "I can't confirm this draft does it yet.",
+      "evidence_owner": "brief_checks"
+    },
+    "requirement_receipt": {
+      "stage": "understood",
+      "reason": "the text will animate in as it appears; I'll check it in the finished video",
+      "status": "met",
+      "inferred": [],
+      "verification": "unchecked",
+      "brief_version": 1,
+      "generation_id": null,
+      "requirement_id": "r1",
+      "inferred_labels": [],
+      "target_media_ids": []
+    },
+    "reply": "I can't make this yet:\n- explain why people should visit Assos, Turkey: I can't confirm this draft does it yet.\nI held this first draft back. Tell me what to change and I'll prepare it again."
+  }
+}

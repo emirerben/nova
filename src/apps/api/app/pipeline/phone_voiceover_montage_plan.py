@@ -26,7 +26,8 @@ A landscape output canvas always crops (cloud parity).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from app.kria.recipes import (
     AssetFingerprint,
@@ -50,6 +51,7 @@ from app.pipeline.phone_recipe_shared import (
     PhoneMusicBed,
     PhoneNarrationBed,
     audio_fade,
+    clip_tilt_fields,
     display_dims,
     fit_transform,
     refit_source_window,
@@ -143,8 +145,12 @@ def compile_phone_voiceover_montage_plan(
     source_audio_media_ids: tuple[str, ...] | list[str] | None = None,
     visuals: tuple[PhoneVisualBinding, ...] = (),
     timed_cards: tuple[SubtitledOverlayCard, ...] = (),
+    clip_tilts: Mapping[str, Any] | None = None,
 ) -> EditRecipeV2:
     """See the module docstring for the general contract.
+
+    `clip_tilts` (KRI-1136) maps a clip id (``step-<n>-<clip id>``) to its tilt row value; a
+    clip with none compiles upright, byte-identical to before.
 
     `timed_cards` / `visuals` (flag ``PHONE_TIMED_CARDS_ENABLED``, default ``()`` =
     byte-identical output): exact-timed small cards grounded onto this montage's output clock
@@ -301,15 +307,20 @@ def compile_phone_voiceover_montage_plan(
             # analysis proxy for every binding reaching this compiler.
             is_proxy_available=True,
         )
+        clip_id = f"step-{index}-{step.clip_id}"
+        tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(clip_id)})
+        if color_grade == "golden_hour" and (tilt_patch or backdrop is not None):
+            raise UnsupportedPhonePlan("a color grade cannot be combined with a tilted clip")
         clips.append(
             TimelineClip(
-                id=f"step-{index}-{step.clip_id}",
+                id=clip_id,
                 source_asset_id=asset.id,
                 source_start=source_start,
                 source_duration=source_duration,
                 timeline_start=timeline_start,
                 rate=rate,
-                transform=transform,
+                transform=transform.model_copy(update=tilt_patch),
+                backdrop=backdrop,
                 transition=transition,
                 look="golden_hour" if color_grade == "golden_hour" else None,
             )

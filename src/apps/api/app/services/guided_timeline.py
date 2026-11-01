@@ -243,6 +243,13 @@ def build_guided_segments(
                 segment["source_crop"] = slot.source_crop
         elif isinstance(inherited_segment, dict) and inherited_segment.get("source_crop"):
             segment["source_crop"] = inherited_segment["source_crop"]
+        if "tilt" in slot.model_fields_set:
+            if slot.tilt is not None:
+                segment["tilt"] = slot.tilt
+        elif isinstance(inherited_segment, dict) and inherited_segment.get("tilt"):
+            segment["tilt"] = inherited_segment["tilt"]
+        if segment.get("tilt") and segment["look_preset"] != "none":
+            raise GuidedTimelineError("TIMELINE_TILT_WITH_LOOK")
         if playback_rate_set and slot.playback_rate is not None:
             segment["playback_rate"] = playback_rate
         elif not playback_rate_set and isinstance(inherited_segment, dict):
@@ -306,17 +313,7 @@ def build_guided_segments(
         # Rebuilt editor slots are a continuous sequence. Snap each boundary
         # once using the same frame clock as normalization, avoiding stale
         # millisecond starts that become one-frame gaps after a speed change.
-        cursor = 0.0
-        for segment in segments:
-            segment["duration_s"] = round(round(segment["duration_s"] * GUIDED_FPS) / GUIDED_FPS, 6)
-            segment["output_start_s"] = round(cursor, 6)
-            segment["output_end_s"] = round(
-                round((cursor + segment["duration_s"]) * GUIDED_FPS) / GUIDED_FPS, 6
-            )
-            overlap = (
-                segment["transition_duration_s"] if segment["transition_after"] != "cut" else 0
-            )
-            cursor = segment["output_end_s"] - round(round(overlap * GUIDED_FPS) / GUIDED_FPS, 6)
+        cursor = layout_frame_segments(segments)
     if cursor > max_total_s + 1e-6:
         raise GuidedTimelineError("TIMELINE_TOO_LONG")
     return segments
@@ -636,3 +633,36 @@ def project_lane_times(
     if len(tombstones) > MAX_GUIDED_EDITOR_TOMBSTONES:
         raise GuidedTimelineError("GUIDED_TOMBSTONE_LIMIT")
     raw["tombstones"] = tombstones
+
+
+def layout_frame_segments(segments: list[dict[str, Any]]) -> float:
+    """Place a continuous source-window timeline on the shared 30 fps clock."""
+    cursor = 0.0
+    for segment in segments:
+        segment["duration_s"] = round(round(segment["duration_s"] * GUIDED_FPS) / GUIDED_FPS, 6)
+        segment["output_start_s"] = round(cursor, 6)
+        segment["output_end_s"] = round(
+            round((cursor + segment["duration_s"]) * GUIDED_FPS) / GUIDED_FPS, 6
+        )
+        overlap = segment["transition_duration_s"] if segment["transition_after"] != "cut" else 0
+        cursor = segment["output_end_s"] - round(round(overlap * GUIDED_FPS) / GUIDED_FPS, 6)
+    return cursor
+
+
+def carousel_boundary_duration(
+    requested_s: Any, before_duration_s: float, after_duration_s: float
+) -> float:
+    """The renderer's capped overlap at a Carousel splice boundary."""
+    requested = 0.4 if requested_s is None else float(requested_s)
+    return round(
+        max(0.0, min(1.0, max(0.1, requested), before_duration_s * 0.3, after_duration_s * 0.3)), 3
+    )
+
+
+def carousel_ripple_duration(
+    duration_s: float,
+    old_boundary_overlap_s: float,
+    incoming_overlap_s: float,
+    outgoing_overlap_s: float,
+) -> float:
+    return max(0.0, duration_s + old_boundary_overlap_s - incoming_overlap_s - outgoing_overlap_s)

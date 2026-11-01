@@ -14,6 +14,13 @@ enum AccountUITestTransport {
 final class AccountUITestTokenStore: TokenStore, @unchecked Sendable {
     private let lock = NSLock()
     private var session: MobileSession?
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        lock.withLock {
+            guard session == expected else { return SessionStoreUpdate(applied: false, current: session) }
+            session = replacement
+            return SessionStoreUpdate(applied: true, current: session)
+        }
+    }
     func read() throws -> MobileSession? { lock.lock(); defer { lock.unlock() }; return session }
     func write(_ session: MobileSession) throws { lock.lock(); defer { lock.unlock() }; self.session = session }
     func delete() throws { lock.lock(); defer { lock.unlock() }; session = nil }
@@ -58,8 +65,11 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
     static let shared = AccountTextPreferenceFixture()
     private let lock = NSLock()
     private var revision = 0
-    private var item: [String: Any]?
+    /// Rows persist per key and id like the real ledger, so a Save of one type never replaces another.
+    private var items: [[String: Any]] = []
+    private var createdCount = 0
     private var recentOperation: [String: Any]?
+    private var operationItemID: String?
     private var learningInitialized = false
     private var customColorSeeded = false
     private var learningEnabled = false
@@ -108,17 +118,17 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
         if learning && !learningInitialized {
             learningInitialized = true
             learningEnabled = initiallyEnabled
-            item = ["id": "approved-title", "normalized_key": "text_style_title", "instruction": "My title choices",
-                    "structured_value": ["text_style_title": ["shadow_enabled": false, "stroke_width": 0]]]
+            items = [["id": "approved-title", "normalized_key": "text_style_title", "instruction": "My title choices",
+                      "structured_value": ["text_style_title": ["shadow_enabled": false, "stroke_width": 0]]]]
         }
         if customColor && !customColorSeeded {
             customColorSeeded = true
-            item = ["id": "approved-all-text", "normalized_key": "text_style_all_text", "instruction": "My text choices",
-                    "structured_value": ["text_style_all_text": ["color": "#7A3FD1"]]]
+            items = [["id": "approved-all-text", "normalized_key": "text_style_all_text", "instruction": "My text choices",
+                      "structured_value": ["text_style_all_text": ["color": "#7A3FD1"]]]]
         }
         if request.httpMethod == "GET" {
             let body: [String: Any] = ["feature_available": true, "text_preferences_available": true, "enabled": true, "revision": revision,
-                                      "active": item.map { [$0] } ?? [],
+                                      "active": items,
                                       "suggestions": learningEnabled && !learningDecided ? [learningSuggestion] : [],
                                       "edit_learning": ["available": learning, "enabled": learningEnabled], "recent_undo": recentOperation as Any? ?? NSNull(),
                                       "text_style_defaults": Self.textStyleDefaults]
@@ -134,18 +144,31 @@ final class AccountTextPreferenceFixture: @unchecked Sendable {
             learningDecided = true
         } else if learning && path.hasSuffix("/learning-position/accept") {
             learningDecided = true
-            item?["structured_value"] = ["text_style_title": ["position": "top_left", "shadow_enabled": false, "stroke_width": 0]]
+            if let index = items.firstIndex(where: { $0["normalized_key"] as? String == "text_style_title" }) {
+                items[index]["structured_value"] = ["text_style_title": ["position": "top_left", "shadow_enabled": false, "stroke_width": 0]]
+            }
         } else if learning && path.hasSuffix("/learning-position/suggestion") {
             learningDecided = true
-        } else if request.httpMethod == "DELETE" { item = nil }
-        else if path.contains("/items"), let data = bodyData(request),
-                var value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            value["id"] = "00000000-0000-0000-0000-000000000648"
-            item = value
+        } else if request.httpMethod == "DELETE" {
+            let id = path.split(separator: "/").last.map(String.init)
+            items.removeAll { $0["id"] as? String == id }
+            operationItemID = id
+        } else if path.contains("/items"), let data = bodyData(request),
+                  var value = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            let id = path.hasSuffix("/items") ? nil : path.split(separator: "/").last.map(String.init)
+            if let id, let index = items.firstIndex(where: { $0["id"] as? String == id }) {
+                value["id"] = id
+                items[index] = value
+            } else {
+                createdCount += 1
+                value["id"] = String(format: "00000000-0000-0000-0000-%012d", 647 + createdCount)
+                items.append(value)
+            }
+            operationItemID = value["id"] as? String
         }
         revision += 1
         recentOperation = ["operation_id": "00000000-0000-0000-0000-000000000649",
-                           "item_id": item?["id"] as Any? ?? NSNull(), "revision": revision,
+                           "item_id": operationItemID as Any? ?? NSNull(), "revision": revision,
                            "undo_expires_at": "2099-01-01T00:00:00Z"]
         return (200, String(decoding: try! JSONSerialization.data(withJSONObject: recentOperation!), as: UTF8.self))
     }

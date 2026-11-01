@@ -108,6 +108,7 @@ from app.routes.plan_items import (
     _OVERLAY_ALLOWED_CONTENT_TYPES,
     _pool_asset_counts_toward_capacity,
 )
+from app.schemas.creation_formats import CREATION_FORMATS
 from app.schemas.edit_proposal import SNAPSHOT_FALLBACK_TITLE, EditProposal, parse_edit_proposal
 from app.schemas.slide_post import parse_slide_post, sticker_asset_ids
 from app.services.creation_thread_titles import (
@@ -239,12 +240,7 @@ _MEDIA_EXTENSIONS = {
     "audio/webm": ".webm",
     "audio/ogg": ".ogg",
 }
-_PAPER_FORMATS = {
-    "montage": "montage",
-    "narrated": "narrated_planned",
-    "talking_to_camera": "subtitled",
-    "slides": "slides",
-}
+_PAPER_FORMATS = {key: fmt.edit_format for key, fmt in CREATION_FORMATS.items()}
 # Valid neutral context for a new chat project before onboarding has generated
 # a personalized persona. Keep this schema-valid so render dispatch can use the
 # project immediately; existing non-empty personas are never replaced.
@@ -406,6 +402,9 @@ class CreationCapabilitiesOut(BaseModel):
     # X-Kria-Client-Protocol >= slide_post_sticker_min_client_protocol (a save carrying stickers
     # from an older build gets 426, unlike drawings).
     slide_post_stickers: bool = False
+    # KRI-1138: tilt a slide's photo or video. True only with MEDIA_TILT_ENABLED on AND a build
+    # declaring X-Kria-Client-Protocol >= media_tilt_min_client_protocol (28).
+    slide_post_tilt: bool = False
     # KRI-646: text Bend on device-drawn text AND slide-post text. True only with the flag
     # on, `textBend` verified, and a build declaring X-Kria-Client-Protocol >=
     # text_bend_min_client_protocol.
@@ -844,7 +843,9 @@ def _client_id(value: str) -> str:
     return value.strip()
 
 
-def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web") -> dict[str, str]:
+def _available_formats(
+    *, native_mode: Literal["web", "pilot", "strict"] = "web", song_lane: bool = True
+) -> dict[str, str]:
     available = {"montage": "montage"}
     if settings.narrated_archetype_enabled:
         available["narrated"] = "narrated_planned"
@@ -852,6 +853,20 @@ def _available_formats(*, native_mode: Literal["web", "pilot", "strict"] = "web"
         available["talking_to_camera"] = "subtitled"
     if settings.slide_posts_enabled:
         available["slides"] = "slides"
+    # Song-lane cards (Lip-sync) are montages offered wherever an uploaded song can be used,
+    # to a native client only: the web never sees `media.song`, so it never sees them.
+    # They are listed last: Lip-sync is the far-right card.
+    if native_mode != "web" and song_lane:
+        from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
+
+        if phone_user_song_supported():
+            available.update(
+                {
+                    key: fmt.edit_format
+                    for key, fmt in CREATION_FORMATS.items()
+                    if fmt.needs_song_lane
+                }
+            )
     if settings.ios_device_only_mode or native_mode != "web":
         from app.services.phone_rollout import phone_render_supported_formats  # noqa: PLC0415
 
@@ -3969,7 +3984,9 @@ async def capabilities(
         if native_client and phone_enabled
         else "web"
     )
-    formats = _available_formats(native_mode=native_mode)
+    # The Lip-sync card needs the same song affordance `media.song` is gated on: a web client in
+    # device-only mode reports `strict`, and an old protocol cannot decode the song asset.
+    formats = _available_formats(native_mode=native_mode, song_lane=song_available)
     from app.routes.generated_media import generated_capabilities
 
     return {
@@ -4030,6 +4047,11 @@ async def capabilities(
             settings.slide_post_stickers_enabled
             and client_protocol is not None
             and client_protocol >= settings.slide_post_sticker_min_client_protocol
+        ),
+        "slide_post_tilt": bool(
+            settings.media_tilt_enabled
+            and client_protocol is not None
+            and client_protocol >= settings.media_tilt_min_client_protocol
         ),
         "text_bend": bool(
             settings.text_bend_enabled

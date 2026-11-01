@@ -31,6 +31,7 @@
       "KriaUITests/CreationUITests/testExpiredApprovalCannotStartGeneration",
       "KriaUITests/CreationUITests/testUnavailableCapabilitiesShowRetryInsteadOfDeadFormatCards",
       "KriaUITests/CreationUITests/testNewChatShowsUsableFormatsWithoutWaitingForMoreReads",
+      "KriaUITests/CreationUITests/testLipsyncCardIsFarRightAndOpensTheSheetOnTheSong",
       "KriaUITests/CreationUITests/testTappingOutsideComposerDismissesKeyboardWithoutBlockingFirstTap",
       "KriaUITests/CreationUITests/testReadySuggestionChipsApplyFromTapsNearCapsuleEdges",
       "KriaUITests/CreationUITests/testPendingServerSuggestionChipsShowOnlyTheDefaultEdit",
@@ -55,6 +56,7 @@
       "KriaUITests/SlidePostUITests/testPastingAPictureWithoutTheCapabilityExplainsItself",
       "KriaUITests/SlidePostUITests/testSizeSheetSquareFitAllReshapesThePreviewAndSurvivesSave",
       "KriaUITests/SlidePostUITests/testDrawOnASlideLeavesInkThatSurvivesSaveAndSlideSwitching",
+      "KriaUITests/SlidePostUITests/testTiltTurnsThePhotoLiveAndSurvivesSave",
       "KriaUITests/SlidePostUITests/testAIButtonOpensSheetAndChatEditStagesOnThePage",
       "KriaUITests/SlidePostUITests/testLongPressDragReordersAndKeepsTheCover",
       "KriaUITests/SlidePostUITests/testDraggingToTheEdgeAutoScrollsTheStrip",
@@ -151,6 +153,9 @@
       "KriaUITests/TeleprompterUITests/testReviewNamesTheBackgroundAndKeepsTheTakeUsable",
       "KriaUITests/AccountPrivacyUITests/testExcludedFontSurvivesPickerReturnSaveAndReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferenceDraftSurvivesRoleSwitch",
+      "KriaUITests/AccountPrivacyUITests/testOneSavePersistsEveryEditedTextTypeAcrossReopen",
+      "KriaUITests/AccountPrivacyUITests/testATypeFollowsAllTextUntilItIsChangedByHand",
+      "KriaUITests/AccountPrivacyUITests/testUnsavedTextTypesAreMarkedAndLeavingAsksBeforeDiscarding",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",
       "KriaUITests/AccountPrivacyUITests/testEachTextRoleExplainsItselfAndKeepsThePreview",
@@ -231,7 +236,10 @@
       "KriaUITests/SignInUITests/testSignInErrorMessageIsAnnounced",
       "KriaUITests/SignInUITests/testExistingAccountRefusalIsReadableOnScreen",
       "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute",
-      "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam"
+      "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam",
+      "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
+      "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
+      "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
     ],
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
@@ -323,6 +331,10 @@
       "KriaUITests/SpeakerBackgroundUITests/testToolIsHiddenWhenTheServerDoesNotOpenTheCapability",
       "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview",
       "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow",
+      "KriaUITests/NativeTiltUITests/testTiltFifteenDegreesWithABlurredBackgroundSavesAndSurvivesReopen",
+      "KriaUITests/NativeTiltUITests/testTurnNinetyAndResetStraightenTheClipWithNothingLeftToSave",
+      "KriaUITests/NativeTiltUITests/testNudgeMovesTheDialClockwiseAndCounterClockwiseByOneDegree",
+      "KriaUITests/NativeTiltUITests/testTiltIsHiddenWhereTheServerDoesNotOfferIt",
       "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
       "KriaUITests/NativeEditorInspectorUITests/testQuickSwipeAcrossAClipSeeksInsteadOfReordering",
@@ -333,7 +345,12 @@
       "KriaUITests/NativeCaptionAnimationUITests/testTextMotionPresetShowsInAllCaptions",
       "KriaUITests/NativeCaptionAnimationUITests/testWithoutTheCapabilityThereIsNoAnimationTab",
       "KriaUITests/NativeCaptionAnimationUITests/testReduceMotionKeepsPreviewsStillUntilPlayed",
-      "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimation"
+      "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimation",
+      "KriaUITests/OverlayGenerationUITests/testVisualsPlansAndAddsAnEditableNumberOverlay",
+      "KriaUITests/OverlayGenerationUITests/testInlineImageApprovalUsesNormalVisualControlsUndoAndSavedReopen",
+      "KriaUITests/OverlayGenerationUITests/testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost",
+      "KriaUITests/OverlayGenerationUITests/testMixedPlanShowsTheLogoNoticeNextToTheKeptOverlay",
+      "KriaUITests/OverlayGenerationUITests/testAvailabilityCheckFailureCanBeRetriedWithoutLeavingThePanel"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -495,6 +512,9 @@
     "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "creation",
     "src/apps/ios/Kria/Core/GeneratedMedia.swift": "creation",
     "src/apps/ios/Kria/Features/GeneratedMediaSheet.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/OverlayGenerationUITests.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeOverlayGenerationPanel.swift": "editor",
+    "src/apps/ios/Kria/Core/OverlayGeneration.swift": "editor",
     "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor"
   }

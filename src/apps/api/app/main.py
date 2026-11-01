@@ -58,6 +58,9 @@ from app.routes import (
     memory,
     music,
     music_jobs,
+    native_activity,
+    notification_installations,
+    overlay_generation,
     personas,
     plan_items,
     presigned,
@@ -433,6 +436,7 @@ app.include_router(kria_runtime.router, prefix="/creation-threads", tags=["kria-
 app.include_router(plan_items.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(editor_sources.router, prefix="/plan-items", tags=["plan-items"])
 app.include_router(generated_media.router, prefix="/plan-items", tags=["generated-media"])
+app.include_router(overlay_generation.router, prefix="/plan-items", tags=["generated-media"])
 app.include_router(creator_agent.router, prefix="/plan-items", tags=["creator-agent"])
 app.include_router(creator_workspace.router, prefix="/content-plans", tags=["creator-workspace"])
 app.include_router(manual_drafts.router, prefix="/plan-items", tags=["plan-items"])
@@ -441,6 +445,8 @@ app.include_router(media_assets.router)
 app.include_router(media_collections.router)
 app.include_router(editorial_taste.router)
 app.include_router(device_render.router, prefix="/me", tags=["phone-rendering"])
+app.include_router(native_activity.router, prefix="/me", tags=["native-activity"])
+app.include_router(notification_installations.router, prefix="/me", tags=["native-notifications"])
 app.include_router(memory.router, prefix="/me", tags=["memory"])
 app.include_router(memory.direction_router, tags=["direction-overrides"])
 app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"])

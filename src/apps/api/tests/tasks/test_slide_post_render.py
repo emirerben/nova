@@ -395,6 +395,7 @@ def _sized_job(
     aspect: str | None,
     fit: str | None,
     drawing: dict | None = None,
+    tilt: dict | None = None,
 ):
     """Run one sized slide through `_run_slide_post_job` with storage/ffmpeg stubbed.
     Returns (variant result, normalize canvases, preview canvases, normalized keys)."""
@@ -410,7 +411,9 @@ def _sized_job(
                 id="s0",
                 asset_id=asset_id,
                 kind="image",
-                edits=SlideEdits(fit=fit, drawing=drawing) if (fit or drawing) else None,
+                edits=SlideEdits(fit=fit, drawing=drawing, tilt=tilt)
+                if (fit or drawing or tilt)
+                else None,
             ),
             SlideRef(id="s1", asset_id=asset_id, kind="image"),
         ],
@@ -532,6 +535,41 @@ def test_a_drawing_busts_the_normalized_key_of_that_slide_only(monkeypatch) -> N
     # The undrawn slide beside it, and every key of an undrawn post, are unchanged.
     assert drawn[1] == plain[1] and "_dr" not in drawn[1]
     assert plain[0] == plain[1] and "_dr" not in plain[0]
+
+
+_TILT = {"rotation_deg": 15, "backdrop": {"kind": "blur"}}
+
+
+def test_a_tilted_post_is_stamped_by_the_tilt_renderer_and_dispatch_stays_at_2(
+    monkeypatch,
+) -> None:
+    from app.agents._schemas.edit_format import (  # noqa: PLC0415
+        SLIDES_RENDERER_VERSION,
+        SLIDES_TILT_RENDERER_VERSION,
+    )
+
+    result, *_ = _sized_job(monkeypatch, profile="tiktok_photo", aspect=None, fit=None, tilt=_TILT)
+    assert result["slide_post"]["renderer_version"] == SLIDES_TILT_RENDERER_VERSION == 6
+    assert result["slides_renderer_version"] == SLIDES_RENDERER_VERSION == 2
+    plain, *_ = _sized_job(monkeypatch, profile="tiktok_photo", aspect=None, fit=None)
+    assert plain["slide_post"]["renderer_version"] == 3  # an untilted post is stamped as before
+
+
+def test_a_tilt_busts_the_normalized_key_of_that_slide_only(monkeypatch) -> None:
+    _, _, _, tilted = _sized_job(
+        monkeypatch, profile="tiktok_photo", aspect=None, fit=None, tilt=_TILT
+    )
+    _, _, _, plain = _sized_job(monkeypatch, profile="tiktok_photo", aspect=None, fit=None)
+    version = slide_build_module.SLIDE_TILT_COMPOSITOR_VERSION
+
+    def name(key):  # the job id and the asset fingerprint are random per run
+        return key.split("/slides/normalized/")[1].split("_", 1)[1]
+
+    tilted, plain = [name(k) for k in tilted], [name(k) for k in plain]
+    assert "noedits" not in tilted[0] and f"_wm1_tl{version}." in tilted[0]
+    # The untilted slide beside it, and every key of an untilted post, are unchanged.
+    assert tilted[1] == plain[1] and "_tl" not in tilted[1]
+    assert plain[0] == plain[1] and "_tl" not in plain[0]
 
 
 # ── Slide stickers (KRI-647): pool image that is never a slide ───────────────────────────

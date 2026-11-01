@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.kria.clip_tilt_row import row_tilt_from_clip
 from app.kria.recipes_v2 import EditRecipeV2
 from app.services.phone_sources import PHONE_SOURCES_FIELD, PhoneSourceBinding
 from app.services.phone_subtitled_editor import _pinned_recipe
@@ -138,9 +139,14 @@ def _clip_rows(
 
 
 def _crop_field(clip: Any) -> dict:
-    """``{"source_crop": {...}}`` for a cropped clip, else nothing (KRI-44)."""
+    """``{"source_crop": {...}}`` for a cropped clip, else nothing (KRI-44).
+
+    A tilted clip also carries ``{"tilt": {...}}`` (KRI-1136), so the editor opens on it.
+    """
     crop = getattr(clip, "source_crop", None)
-    return {"source_crop": crop.model_dump()} if crop is not None else {}
+    fields = {"source_crop": crop.model_dump()} if crop is not None else {}
+    tilt = row_tilt_from_clip(clip)
+    return {**fields, "tilt": tilt} if tilt is not None else fields
 
 
 def _selected_source_audio_ids(variant: dict) -> frozenset[str] | None:

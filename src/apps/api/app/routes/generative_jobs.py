@@ -994,6 +994,9 @@ class TimelineSlotEdit(BaseModel):
     # this field and the write path falls back to the current/canonical value.
     layout: Literal["fullscreen", "supporting_card"] | None = None
     source_crop: dict[str, float] | None = None
+    # KRI-1136: the creator's tilt of this occurrence, ``{rotation_deg, backdrop}``. Omission
+    # keeps the saved tilt, an explicit null (or an upright blank value) clears it.
+    tilt: dict[str, Any] | None = None
     playback_rate: float | None = Field(default=None, ge=0.25, le=4.0)
     # Explicit selected source edge for source-preserving speed edits. Omission
     # retains the legacy duration * rate window contract.
@@ -1022,6 +1025,16 @@ class TimelineSlotEdit(BaseModel):
         if x + width > 1 + 1e-6 or y + height > 1 + 1e-6:
             raise ValueError("source_crop must stay within source bounds")
         return {"x": x, "y": y, "width": width, "height": height}
+
+    @field_validator("tilt", mode="before")
+    @classmethod
+    def validate_tilt(cls, value: object) -> dict[str, Any] | None:
+        from app.kria.clip_tilt_row import canonical_row_tilt  # noqa: PLC0415
+
+        try:
+            return canonical_row_tilt(value)
+        except ValueError as exc:
+            raise ValueError(f"tilt is invalid: {exc}") from exc
 
     @field_validator("look_preset", mode="before")
     @classmethod
@@ -7533,6 +7546,13 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         capabilities["speaker_background"] = True
     if _caption_animation_capability(variant, capabilities):
         capabilities["caption_animation"] = True
+    if _clip_tilt_capability(job, variant, capabilities):
+        # KRI-1136: present only when ON, like `text_bend`: every closed-gate payload keeps
+        # its exact shape. PR C (the copilot) reads the same `clips.tilt` entry.
+        capabilities["clips"] = {
+            **(capabilities.get("clips") if isinstance(capabilities.get("clips"), dict) else {}),
+            "tilt": {"editable": True, "reason": None},
+        }
     from app.services.client_protocol import CAPTION_STYLE_SCOPE_PROTOCOL, current_client_protocol
 
     protocol = current_client_protocol()
@@ -7544,6 +7564,33 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     ):
         capabilities["caption_style_scope"] = True
     return capabilities
+
+
+def _clip_tilt_capability(job: Job, variant: dict, capabilities: dict) -> bool:
+    """KRI-1136: may the app tilt a clip (``editor_capabilities.clips.tilt``)?
+
+    Device renders only (the cloud has no ``clipTilt``), on the shapes whose Save recompiles
+    a row ``tilt`` into the pinned recipe (an authored timeline, a guided/montage edit with
+    its revision, a phone Voiceover cut), and only while the kill switch, the verified token
+    and the requesting build's protocol all hold. A worker (no app build to ask) is judged
+    on the first two.
+    """
+    from app.services.phone_rollout import clip_tilt_supported  # noqa: PLC0415
+
+    if (
+        variant.get("render_destination") != "device"
+        or variant.get("resolved_archetype") == "slides"
+        or not clip_tilt_supported()
+    ):
+        return False
+    return bool(
+        variant.get("editor_timeline_mode") == "authored"
+        or (
+            variant.get("resolved_archetype") == "guided_story"
+            and capabilities.get("timeline") is True
+        )
+        or _phone_voiceover_crop_edits_enabled(job, variant)
+    )
 
 
 def _caption_animation_capability(variant: dict, capabilities: dict) -> bool:
@@ -9333,6 +9380,7 @@ def _guided_v2_slot_rows(
                     {"timing_mode": "rendered"} if revision.get("timing_mode") == "rendered" else {}
                 ),
                 **({"source_crop": segment["source_crop"]} if segment.get("source_crop") else {}),
+                **({"tilt": segment["tilt"]} if segment.get("tilt") else {}),
                 **(
                     {"playback_rate": segment["playback_rate"]}
                     if segment.get("playback_rate") is not None
@@ -10859,6 +10907,7 @@ def prepare_editor_commit(
             job, variant, allow_authored=payload.editor_state_version in (1, 2)
         )
         _require_caption_animation_client(job, variant, payload)
+        _require_clip_tilt_gates(job, variant, payload)
     if variant is not None and variant.get("render_destination") == "device":
         from app.services.phone_editor import prepare_phone_editor_commit  # noqa: PLC0415
         from app.services.phone_editor_sources import editor_sources_for_variant
@@ -10904,6 +10953,53 @@ def prepare_editor_commit(
             learning_sections=payload.model_fields_set,
         )
     return _prepare_editor_commit(job, variant_id, payload, **arguments)
+
+
+def _require_clip_tilt_gates(job: Job, variant: dict, payload: EditorCommitRequest) -> None:
+    """The Save-time gates of a clip tilt (KRI-1136).
+
+    426 for an app build below ``media_tilt_min_client_protocol`` whose timeline Save lands on
+    a variant that already holds a tilt: it previews the clip upright and its payload cannot
+    say the tilt, so letting it replace the timeline would silently straighten the clip.
+    422 ``clip_tilt_unavailable`` for a tilt that is new or changed while the flag or the
+    verified token is off (keeping or clearing a stored tilt is always allowed).
+    """
+    from app.kria.clip_tilt_row import canonical_row_tilt  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        clip_tilt_client_supported,
+        clip_tilt_supported,
+    )
+
+    slots = payload.timeline_slots
+    if slots is None:
+        return
+    stored = {
+        row["slot_id"]: canonical_row_tilt(row.get("tilt"))
+        for row in editor_deletion_timeline(job, variant)
+        if row.get("slot_id")
+    }
+    if not clip_tilt_client_supported() and any(stored.values()):
+        raise HTTPException(
+            426,
+            detail={
+                "code": "client_update_required",
+                "feature": "clip_tilt",
+                "minimum_client_protocol": settings.media_tilt_min_client_protocol,
+            },
+        )
+    changed = [
+        slot
+        for slot in slots
+        if not slot.removed
+        and "tilt" in slot.model_fields_set
+        and slot.tilt is not None
+        and slot.tilt != stored.get(slot.slot_id)
+    ]
+    if changed and (
+        variant.get("render_destination") != "device"
+        or not clip_tilt_supported(require_client=False)
+    ):
+        raise HTTPException(422, detail={"code": "clip_tilt_unavailable"})
 
 
 def _require_caption_animation_client(

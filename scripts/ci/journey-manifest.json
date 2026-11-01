@@ -381,16 +381,31 @@
     {
       "id": "slide-post-binding-recovery",
       "needs_native": true,
-      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/routes/test_slide_post_stable_target_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py",
+      "api_tests": "tests/routes/test_slide_post_native_routes.py tests/routes/test_slide_post_binding_save_postgres.py tests/routes/test_slide_post_stable_target_postgres.py tests/pipeline/test_slide_post_framing.py tests/pipeline/test_slide_post_sizes.py tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py tests/evals/test_edit_copilot_evals.py tests/pipeline/test_slide_post_tilt.py tests/routes/test_slide_post_tilt_routes.py tests/services/test_slide_post_tilt_chat.py",
       "xctests": [
         "KriaTests/SlidePostTests/testSlidePostBindingNumericRoundTripPreservesDraftInChatAndSave",
         "KriaTests/SlidePostFramingTests/testEncodingAlwaysWritesTheFramingKeySoAClearIsNeverMistakenForAnOlderApp",
         "KriaTests/SlidePostFramingTests/testPlacementMatchesTheSharedParityFixtureWithinAHundredthOfAPixel",
         "KriaTests/SlidePostSizeTests/testFitPlacementMatchesTheSharedFixtureWithinAHundredthOfAPixel",
-        "KriaTests/SlidePostSizeTests/testSaveRequestAndDraftAlwaysSayWhichSizeTheyHold"
+        "KriaTests/SlidePostSizeTests/testSaveRequestAndDraftAlwaysSayWhichSizeTheyHold",
+        "KriaTests/SlidePostTiltTests/testGeometryMatchesTheSharedFixture",
+        "KriaTests/SlidePostTiltTests/testEncodingAlwaysWritesTheTiltKeySoAClearIsNeverMistakenForAnOlderApp"
       ],
       "paths": [
         "src/apps/api/app/pipeline/slide_post/build.py",
+        "src/apps/api/app/pipeline/slide_post/tilt.py",
+        "src/apps/api/tests/pipeline/test_slide_post_tilt.py",
+        "src/apps/api/tests/routes/test_slide_post_tilt_routes.py",
+        "src/apps/api/tests/services/test_slide_post_tilt_chat.py",
+        "tests/fixtures/slide-tilt-parity/",
+        "src/apps/ios/Kria/Core/SlidePostTilt.swift",
+        "src/apps/ios/Kria/Features/SlidePostTiltPanel.swift",
+        "src/apps/ios/Tests/KriaTests/SlidePostTiltTests.swift",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_all_crooked_blur.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_gate_closed_refusal.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_one_right.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_relative_more_left_tr.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_straighten_reset.json",
         "src/apps/api/app/pipeline/slide_post/stickers.py",
         "src/apps/api/tests/pipeline/test_slide_post_stickers.py",
         "src/apps/api/tests/routes/test_slide_post_sticker_routes.py",
@@ -1308,8 +1323,9 @@
     {
       "id": "kri-679-song-length-mood",
       "needs_native": false,
-      "api_tests": "tests/kria/test_kri679_song_length.py tests/kria/test_kri679_music_mood.py tests/kria/test_music_section_fit.py tests/evals/test_music_matcher_evals.py",
+      "api_tests": "tests/kria/test_kri679_song_length.py tests/kria/test_kri679_music_mood.py tests/kria/test_music_section_fit.py tests/evals/test_music_matcher_evals.py tests/services/test_creator_lipsync_card.py tests/routes/test_creation_threads_lipsync_card.py",
       "paths": [
+        "src/apps/api/app/schemas/creation_formats.py",
         "src/apps/api/prompts/match_music.txt",
         "src/apps/api/tests/kria/test_kri679_song_length.py",
         "src/apps/api/tests/kria/test_kri679_music_mood.py"
@@ -1457,6 +1473,7 @@
         "src/apps/api/tests/kria/test_route_lines_golden.py",
         "src/apps/api/tests/kria/test_render_entry_pins.py",
         "src/apps/api/tests/kria/test_lane_targets_guard.py",
+        "src/apps/api/tests/fixtures/kria_replay/assos/live_r1.json",
         "src/apps/api/app/kria/planner.py",
         "src/apps/api/app/kria/runtime.py",
         "src/apps/api/app/kria/plan_review.py",
@@ -2424,6 +2441,29 @@
       ]
     },
     {
+      "id": "native-generated-overlay-review",
+      "needs_native": true,
+      "api_tests": "tests/services/test_overlay_generation.py tests/services/test_guided_timeline_equivalence.py tests/services/test_kria_editor_guided_timeline.py tests/tasks/test_carousel_timed_lane_projection.py tests/pipeline/carousel/test_segment_kill_switch.py tests/agents/test_credit_plan_contracts.py",
+      "xctests": [
+        "KriaTests/OverlayGenerationTests/testTransparentFixtureOverlayExportsAtItsPlannedWindow",
+        "KriaTests/OverlayGenerationTests/testAppliedNumberKeepsAuthoredTimeSurvivesReopenAndUndoesOnce",
+        "KriaTests/OverlayGenerationTests/testUnsavedChangeRejectsAPlanWithoutAddingAnything",
+        "KriaUITests/OverlayGenerationUITests/testVisualsPlansAndAddsAnEditableNumberOverlay",
+        "KriaUITests/OverlayGenerationUITests/testInlineImageApprovalUsesNormalVisualControlsUndoAndSavedReopen",
+        "KriaUITests/OverlayGenerationUITests/testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/overlay_generation.py",
+        "src/apps/api/app/routes/overlay_generation.py",
+        "src/apps/api/app/services/overlay_generation.py",
+        "src/apps/api/tests/services/test_overlay_generation.py",
+        "src/apps/ios/Kria/Core/OverlayGeneration.swift",
+        "src/apps/ios/Kria/Features/NativeOverlayGenerationPanel.swift",
+        "src/apps/ios/Tests/KriaTests/OverlayGenerationTests.swift",
+        "src/apps/ios/Tests/KriaUITests/OverlayGenerationUITests.swift"
+      ]
+    },
+    {
       "id": "duration-text-preservation",
       "needs_native": true,
       "api_tests": "tests/services/test_duration_text_preservation.py tests/kria/test_editor_sequence_timing.py tests/kria/test_duration_text_preservation_postgres.py tests/services/test_sequence_pacing.py tests/kria/test_sequence_timing_ledger.py tests/kria/test_sequence_natural_intent_postgres.py tests/agents/test_editor_ops_v2.py tests/evals/test_plan_review_scope_eval.py",
@@ -2547,6 +2587,251 @@
         "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift",
         "src/apps/ios/Tests/KriaTests/SpeakerBackgroundEditorTests.swift",
         "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift"
+      ]
+    },
+    {
+      "id": "leverkusen-m2-run3-moment-window",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_leverkusen_m2_run3_moment_window.py tests/kria/test_kri689_clip_speed_ask.py tests/kria/test_kri689_chat_speed_spec.py tests/kria/test_kri775_phone_montage_preflight.py tests/kria/test_kri723_moment_authority_m2.py tests/kria/test_lev_m1_filming_order_group.py",
+      "paths": [
+        "src/apps/api/app/services/named_moments.py",
+        "src/apps/api/tests/kria/leverkusen_m2_run3.json",
+        "src/apps/api/tests/kria/test_leverkusen_m2_run3_moment_window.py"
+      ]
+    },
+    {
+      "id": "native-activity-inbox",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_native_activity_postgres.py tests/routes/test_device_render.py tests/tasks/test_device_render_reaper.py tests/routes/test_background_export_verification.py",
+      "xctests": [
+        "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
+        "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
+        "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
+      ],
+      "paths": [
+        "src/apps/api/app/routes/native_activity.py",
+        "src/apps/api/app/services/native_activity.py",
+        "src/apps/api/app/migrations/versions/0128_native_activities.py",
+        "src/apps/api/app/routes/device_render.py",
+        "src/apps/api/app/tasks/device_render_reaper.py",
+        "src/apps/api/app/tasks/export_verification.py",
+        "src/apps/api/tests/routes/test_native_activity_postgres.py",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Tests/KriaUITests/ActivityUITests.swift"
+      ]
+    },
+    {
+      "id": "native-activity-account-boundary",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/NotificationAtomicSessionTests/testSignOutInsideOldReadWriteGapCannotResurrectSession",
+        "KriaTests/NotificationAtomicSessionTests/testAccountBWriteInsideOldReadWriteGapCannotBeOverwritten",
+        "KriaTests/NotificationAtomicSessionTests/testConditionalExpiryCannotDeleteCompetingAccount",
+        "KriaTests/NotificationAtomicSessionTests/testUnreadableStoreDoesNotLetDelayedExpirySignOutNewAccount",
+        "KriaTests/NotificationAtomicSessionTests/testDelayedExpiryEventDoesNotSignOutNewAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testReadAcknowledgement401NeverReplaysUnderSwitchedAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject",
+        "KriaTests/SessionRefreshRaceTests/testTwoClientInstancesShareOneRefresh",
+        "KriaTests/SessionRefreshRaceTests/testRotationCompletedElsewhereIsAcceptedInsteadOfSigningOut",
+        "KriaTests/SessionRefreshRaceTests/testRefusedRefreshWithUnchangedStoreStillExpiresTheSession",
+        "KriaTests/KriaTests/testUnauthorizedRequestRefreshesOnceAndStoresRotation",
+        "KriaTests/KriaTests/testConcurrentUnauthorizedRequestsShareOneRefreshRotation"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
+        "src/apps/ios/Kria/Features/PerfFixtures.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/AIConsentTests.swift",
+        "src/apps/ios/Tests/KriaTests/KriaTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorTestSupport.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationAtomicSessionTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift"
+      ]
+    },
+    {
+      "id": "apns-transport-contract",
+      "needs_native": false,
+      "api_tests": "tests/services/test_apns.py",
+      "paths": [
+        "src/apps/api/app/services/apns.py",
+        "src/apps/api/tests/services/test_apns.py"
+      ]
+    },
+    {
+      "id": "native-continued-processing-admission",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/ContinuedProcessingExportTests/testAutomaticRecoveryAndBackgroundCallersNeverSubmit",
+        "KriaTests/ContinuedProcessingExportTests/testUnsupportedGPUResourcesNeverSubmit",
+        "KriaTests/ContinuedProcessingExportTests/testRejectionFallsBackOnceAndLateLaunchCannotStartWork",
+        "KriaTests/ContinuedProcessingExportTests/testLaunchStartsOnceAndCompletionIsExplicit",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationInterruptsOnceAndLateSuccessCannotWin",
+        "KriaTests/ContinuedProcessingExportTests/testCancellationBeforeLaunchClosesLateTaskWithoutFallback",
+        "KriaTests/ContinuedProcessingExportTests/testFailedExportAndInvalidProgressNeverReportSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationBeforeMainActorDeliveryPreventsRacingSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testExpirationDuringCompletionInterruptsWithoutReportingSuccess",
+        "KriaTests/ContinuedProcessingExportTests/testReleasingActiveRunnerInterruptsAndFinishesUnsuccessfully",
+        "KriaTests/ContinuedProcessingExportTests/testFinishedRunnerReleasesExportClosuresWhileRegistrationRemains",
+        "KriaTests/ContinuedProcessingExportTests/testRetainedLaunchHandlerDoesNotRetainRunnerOrExport",
+        "KriaTests/ContinuedProcessingExportTests/testMissingOrIncompleteBuildConfigurationKeepsContinuedProcessingDisabled",
+        "KriaTests/ContinuedProcessingExportTests/testBuildConfigurationAdmitsOnlyTheExactBundleWildcard"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/ContinuedProcessingExport.swift",
+        "src/apps/ios/Tests/KriaTests/ContinuedProcessingExportTests.swift"
+      ]
+    },
+    {
+      "id": "native-notification-runtime",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_notification_delivery_postgres.py tests/routes/test_mobile_auth.py tests/routes/test_native_activity_postgres.py tests/services/test_apns.py tests/services/test_notification_runtime.py tests/test_maintenance_task_routes.py tests/test_worker_task_registry.py tests/test_beat_heartbeat_signal.py tests/tasks/test_task_time_limits.py",
+      "xctests": [
+        "KriaTests/NativeNotificationsTests/testUnavailableBackendNeverPromptsOrRegisters",
+        "KriaTests/NativeNotificationsTests/testDeniedPermissionNeverRegisters",
+        "KriaTests/NativeNotificationsTests/testTokenRotationAndDisableUseOneInstallationAndServerVersion",
+        "KriaTests/NativeNotificationsTests/testAccountSwitchDropsTokenAndUsesDifferentInstallation",
+        "KriaTests/NativeNotificationsTests/testAccountSwitchDuringPermissionRequestNeverRegistersForNextAccount",
+        "KriaTests/NativeNotificationsTests/testAccountSwitchDuringPendingCleanupStopsOldCapabilityRead",
+        "KriaTests/NativeNotificationsTests/testColdStartTapWaitsForAuthenticationAndAccountSwitchDropsPendingTap",
+        "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringPreflightRefreshNeverSendsInstallationOrOverwritesNewAccount",
+        "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuring401RefreshNeverReplaysAsNewAccount",
+        "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringFailedRefreshNeverClearsNewAccount",
+        "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringSuccessful401ReplayRejectsStaleReceipt",
+        "KriaTests/NotificationAccountBoundaryTests/testRegistrationBodyContainsOnlyTokenAndEnabledAndDecodesServerVersion",
+        "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testReadAcknowledgement401NeverReplaysUnderSwitchedAccount",
+        "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject",
+        "KriaTests/NotificationAtomicSessionTests/testSignOutInsideOldReadWriteGapCannotResurrectSession",
+        "KriaTests/NotificationAtomicSessionTests/testAccountBWriteInsideOldReadWriteGapCannotBeOverwritten",
+        "KriaTests/NotificationAtomicSessionTests/testConditionalExpiryCannotDeleteCompetingAccount",
+        "KriaTests/NotificationAtomicSessionTests/testUnreadableStoreDoesNotLetDelayedExpirySignOutNewAccount",
+        "KriaTests/NotificationAtomicSessionTests/testDelayedExpiryEventDoesNotSignOutNewAccount",
+        "KriaTests/NativeEditorExportTests/testSaveAndShareScheduleTheActualPreviewExport",
+        "KriaTests/NativeEditorExportTests/testCancelledNativeEncoderDoesNotRetry",
+        "KriaTests/NativeEditorExportTests/testExpirationDuringCompletionCannotDeliverOutput",
+        "KriaTests/NativeEditorExportTests/testEncoderFailureNeverSavesOrShares",
+        "KriaTests/NativeEditorExportTests/testUnsupportedBackgroundAndRejectedSchedulingExportOnce",
+        "KriaTests/NativeEditorExportTests/testExpirationCancelsEncodingAndDiscardsLateOutput",
+        "KriaTests/NativeEditorExportTests/testCallerCancellationBeforeLaunchNeverStartsExport",
+        "KriaTests/NativeEditorExportTests/testCallerCancellationAlsoCancelsFallbackEncoding",
+        "KriaTests/NativeEditorExportTests/testDuplicateTapDoesNotStartAnotherExport",
+        "KriaTests/NativeEditorExportTests/testReadyLocalFileDoesNotSubmitOrEncode",
+        "KriaTests/SessionRefreshRaceTests/testTwoClientInstancesShareOneRefresh",
+        "KriaTests/SessionRefreshRaceTests/testRotationCompletedElsewhereIsAcceptedInsteadOfSigningOut",
+        "KriaTests/SessionRefreshRaceTests/testRefusedRefreshWithUnchangedStoreStillExpiresTheSession",
+        "KriaTests/KriaTests/testUnauthorizedRequestRefreshesOnceAndStoresRotation",
+        "KriaTests/KriaTests/testConcurrentUnauthorizedRequestsShareOneRefreshRotation"
+      ],
+      "paths": [
+        "src/apps/api/app/migrations/versions/0129_notification_delivery.py",
+        "src/apps/api/app/routes/notification_installations.py",
+        "src/apps/api/app/services/notification_delivery.py",
+        "src/apps/api/app/tasks/notification_delivery.py",
+        "src/apps/api/tests/routes/test_notification_delivery_postgres.py",
+        "src/apps/ios/Kria/Core/NativeNotifications.swift",
+        "src/apps/ios/Kria/Features/NativeEditorExport.swift",
+        "src/apps/ios/Tests/KriaTests/NativeNotificationsTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationAccountBoundaryTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift",
+        "src/apps/ios/Tests/KriaTests/NotificationAtomicSessionTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorExportTests.swift",
+        "src/apps/api/app/auth.py",
+        "src/apps/api/app/main.py",
+        "src/apps/api/app/models.py",
+        "src/apps/api/app/routes/auth.py",
+        "src/apps/api/app/services/auth_locks.py",
+        "src/apps/api/app/worker.py",
+        "src/apps/api/tests/routes/test_mobile_auth.py",
+        "src/apps/api/tests/test_content_plan_schema.py",
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Core/ContinuedProcessingExport.swift",
+        "src/apps/ios/Kria/Core/NativeActivity.swift",
+        "src/apps/ios/Kria/Core/Services.swift",
+        "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
+        "src/apps/ios/Kria/Features/ActivityView.swift",
+        "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
+        "src/apps/ios/Kria/Features/NativeEditorSession.swift",
+        "src/apps/ios/Kria/Features/PerfFixtures.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/AIConsentTests.swift",
+        "src/apps/ios/Tests/KriaTests/KriaTests.swift",
+        "src/apps/ios/Tests/KriaTests/NativeEditorTestSupport.swift",
+        "src/apps/api/app/services/notification_runtime.py",
+        "src/apps/api/tests/services/test_notification_runtime.py",
+        "src/apps/api/app/config.py"
+      ]
+    },
+    {
+      "id": "native-durable-render-intents",
+      "needs_native": true,
+      "xctests": [
+        "KriaTests/DeviceRenderExecutionTests/testStopDuringRetryCleanupPreventsGrantAndReplacement",
+        "KriaTests/DeviceRenderExecutionTests/testStopBeforeRetryAcknowledgementPausesReturnedIdentity",
+        "KriaTests/DeviceRenderExecutionTests/testFailedStopReportStillBlocksAutomaticRetryInThisSession",
+        "KriaTests/DeviceRenderExecutionTests/testCreatorResumeQueuedBehindAutomaticReadKeepsTypedConsent",
+        "KriaTests/DeviceRenderExecutionTests/testFailedStopWriteDoesNotLetRelinkRestartAfterStorageRecovers",
+        "KriaTests/DeviceRenderExecutionTests/testStopWithOnlyPersistedObservedTargetDoesNotInventAcknowledgement",
+        "KriaTests/DeviceRenderExecutionTests/testLegacyServerPauseRejectsAutomaticRelinkAndAcceptsTypedResume"
+      ],
+      "paths": [
+        "src/apps/ios/Kria/Core/DeviceRenderIntentPersistence.swift",
+        "src/apps/ios/Kria/Core/DeviceRenderSessions.swift",
+        "src/apps/ios/Kria/Core/DeviceRendering.swift",
+        "src/apps/ios/Kria/Core/AppState.swift",
+        "src/apps/ios/Kria/Features/DeviceRenderPanel.swift",
+        "src/apps/ios/Kria/KriaApp.swift",
+        "src/apps/ios/Tests/KriaTests/DeviceRenderExecutionTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Sources/KriaMediaEngine/DeviceRenderIntent.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/DeviceRenderIntentTests.swift"
+      ]
+    },
+    {
+      "id": "kri-1137-chat-tilt",
+      "needs_native": false,
+      "api_tests": "tests/agents/test_clip_tilt_ai.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py tests/agents/test_timeline_capability_context.py tests/kria/test_editor_capability_parity.py tests/services/test_kria_ask_cli.py",
+      "paths": [
+        "src/apps/api/app/kria/clip_tilt.py",
+        "src/apps/api/prompts/edit_copilot_ops/clip_tilt.txt",
+        "src/apps/api/tests/agents/test_clip_tilt_ai.py",
+        "src/apps/api/tests/evals/runners/snapshot_variant.py",
+        "src/apps/api/tests/fixtures/kria_battery/asks.yaml",
+        "src/apps/api/tests/fixtures/kria_battery/tilt_asks.yaml",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_second_clip_right.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_photos_blur.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_a_bit_more.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_straighten.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_turkish.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_look_clip_refusal.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_gate_closed.json"
+      ]
+    },
+    {
+      "id": "kri-1136-clip-tilt-editor",
+      "needs_native": true,
+      "api_tests": "tests/kria/test_clip_tilt_writers.py tests/routes/test_clip_tilt_editor_save.py tests/routes/test_editor_save_code_catalog.py",
+      "xctests": [
+        "KriaTests/ClipTiltTests/testSharedFixtureValidTiltsNormalizeAndMapToRecipeFields",
+        "KriaTests/ClipTiltTests/testSettingATiltStoresTheRowAndResetRestoresAByteIdenticalRow",
+        "KriaTests/ClipTiltTests/testCompilerComposesTheTiltWithTheLetterboxInsteadOfReplacingIt",
+        "KriaTests/ClipTiltRenderTests/testARowTiltRendersClockwiseOverTheColourAndBlurBackdrops"
+      ],
+      "paths": [
+        "src/apps/api/app/kria/clip_tilt_row.py",
+        "src/apps/api/tests/kria/test_clip_tilt_writers.py",
+        "src/apps/api/tests/routes/test_clip_tilt_editor_save.py",
+        "tests/fixtures/clip-tilt-row/v1.json",
+        "src/apps/ios/Kria/Core/ClipTilt.swift",
+        "src/apps/ios/Kria/Features/NativeTiltSheet.swift",
+        "src/apps/ios/Tests/KriaTests/ClipTiltTests.swift",
+        "src/apps/ios/Tests/KriaTests/ClipTiltRenderTests.swift",
+        "src/apps/ios/Tests/KriaUITests/NativeTiltUITests.swift"
       ]
     }
   ]

@@ -21,7 +21,7 @@ enum ChatUITestTransport {
     }
 }
 
-private final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
+final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "generated-media-image.invalid" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -42,7 +42,18 @@ private final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked 
 /// UI fixtures must never read or rotate a developer's Keychain session.
 struct ChatUITestTokenStore: TokenStore {
     // `KRIA_FIXTURE_EXPIRED_TOKEN=1` (perf): an in-memory expired session, so the 401 -> refresh path runs.
-    func read() throws -> MobileSession? { PerfFixture.expiredToken ? PerfTokenState.shared.current : nil }
+    func read() throws -> MobileSession? {
+        if PerfFixture.expiredToken { return PerfTokenState.shared.current }
+        if ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil {
+            let payload = Data("{\"sub\":\"activity-ui-fixture\"}".utf8).base64EncodedString()
+            return MobileSession(accessToken: "fixture.\(payload).fixture", refreshToken: "activity-fixture", expiresIn: 3600)
+        }
+        return nil
+    }
+    func updateSession(_ replacement: MobileSession?, ifCurrent expected: MobileSession) throws -> SessionStoreUpdate {
+        guard PerfFixture.expiredToken else { throw APIError.unsupported }
+        return PerfTokenState.shared.updateSession(replacement, ifCurrent: expected)
+    }
     func write(_ session: MobileSession) throws { if PerfFixture.expiredToken { PerfTokenState.shared.store(session) } }
     func delete() throws {}
 }
@@ -120,6 +131,7 @@ final class CreationChatFixture: @unchecked Sendable {
     static let shared = CreationChatFixture()
     private let lock = NSLock()
     private var threads: [String: [String: Any]] = [:]
+    private var activityTargetID: String?
     private var renders: [String: Int] = [:]
     private var preparations: [String: Int] = [:]
     /// `KRIA_CHAT_SPEECH_CLEANUP`: full reads since the approval, replaying the server's own dispatch shape
@@ -299,6 +311,15 @@ final class CreationChatFixture: @unchecked Sendable {
             let reply = AccountTextPreferenceFixture.shared.reply(request, stale: false, learning: true, initiallyEnabled: true)
             return (reply.0, Data(reply.1.utf8))
         }
+        if path.hasPrefix("/me/activities"), ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil {
+            guard let threadID = activityTargetID else { return response(["items": [], "next_before": NSNull()]) }
+            let activity: [String: Any] = ["id": "11111111-1111-4111-8111-111111111111", "thread_id": threadID,
+                "kind": "video_ready", "created_at": "2026-10-29T10:00:00Z", "read_at": NSNull()]
+            if path == "/me/activities" { return response(["items": [activity], "next_before": NSNull()]) }
+            if path.hasSuffix("/read"), ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] == "read_failure" { return response(["detail": "Try again"], status: 503) }
+            if ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] == "stale" { return response(["detail": "Activity not found"], status: 404) }
+            return response(activity)
+        }
         seedDeviceDeliveryThread()
         mirrorDeviceDelivery()
         if path == "/creation-threads/capabilities" {
@@ -307,7 +328,13 @@ final class CreationChatFixture: @unchecked Sendable {
             // `KRIA_CHAT_TALKING_MAX_CLIPS`: Talking's cap. 10 is a server with KRI-719 multi-clip Talking on;
             // `1` is one with it off (a single pick then closes Apple's picker on its own).
             let talkingMaxClips = ProcessInfo.processInfo.environment["KRIA_CHAT_TALKING_MAX_CLIPS"].flatMap(Int.init) ?? 10
-            var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            // `KRIA_CHAT_LIPSYNC=1`: the server also offers the Lip-sync card (a montage underneath) and `media.song`.
+            // Off by default so the position of Voiceover and Talk to camera in the carousel stays what other tests expect.
+            let offersLipsync = ProcessInfo.processInfo.environment["KRIA_CHAT_LIPSYNC"] == "1"
+            var formatRows: [(String, String, Int)] = [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)]
+            if offersLipsync { formatRows.append(("lipsync", "montage", 10)) }
+            var capabilities: [String: Any] = ["formats": formatRows.map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            if offersLipsync { capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]] }
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
             // `-camera-roll-surface-fixture` (KRI-944): the Camera roll row in the drawer. The surface brings its own fixture API.
             if ProcessInfo.processInfo.arguments.contains("-camera-roll-surface-fixture") { capabilities["media_collections"] = true }
@@ -325,6 +352,8 @@ final class CreationChatFixture: @unchecked Sendable {
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_DRAWING"] == "1" { capabilities["slide_post_drawing"] = true }
             // KRIA_SLIDE_POST_STICKERS (KRI-460): pasted pictures on slides. The server only advertises it to protocol 8 builds.
             if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_STICKERS"] == "1" { capabilities["slide_post_stickers"] = true }
+            // KRIA_SLIDE_POST_TILT (KRI-1138): the Tilt tool. The server only advertises it to protocol 28 builds.
+            if ProcessInfo.processInfo.environment["KRIA_SLIDE_POST_TILT"] == "1" { capabilities["slide_post_tilt"] = true }
             // KRIA_TEXT_BEND (KRI-646): the Bend slider. The server only advertises it to protocol 9 builds.
             if ProcessInfo.processInfo.environment["KRIA_TEXT_BEND"] == "1" { capabilities["text_bend"] = true }
             // KRIA_VOICE_DICTATION (KRI-742): the mic button; the engine is scripted (see DictationController).
@@ -442,8 +471,21 @@ final class CreationChatFixture: @unchecked Sendable {
                     (seededEvents, seededState) = Self.realShapeClipQuestionHistory(poolPhoto: true)
                 }
                 let thread: [String: Any] = ["id": id, "title": "Untitled project", "status": "active", "revision": seededEvents.count, "runtime_version": runtime, "state": seededState, "events": seededEvents, "active_plan_item_id": id, "updated_at": "2026-09-10T10:00:00Z"]
-                threads[id] = thread
-                return response(thread, status: 201)
+                var activityThread = thread
+                if ProcessInfo.processInfo.environment["KRIA_NATIVE_ACTIVITY_FIXTURE"] != nil {
+                    activityThread["events"] = [["id": UUID().uuidString, "sequence": 0, "revision": 1,
+                        "role": "user", "event_type": "user_message", "content": "My approved project",
+                        "payload": [:], "created_at": "2026-10-29T10:00:00Z"]]
+                    activityThread["revision"] = 1
+                    if activityTargetID == nil {
+                        activityTargetID = id
+                        activityThread["title"] = "Activity destination"
+                    } else {
+                        activityThread["title"] = "Current project"
+                    }
+                }
+                threads[id] = activityThread
+                return response(activityThread, status: 201)
             }
             return response(Array(threads.values))
         }
@@ -698,6 +740,7 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             if action == "select_format" {
                 state["format"] = payload["format"]
+                if payload["format"] as? String == "lipsync" { state["edit_format"] = "montage" }
                 // A phone-render account's clip is an analysis proxy; the original stays on the iPhone.
                 let mediaID = DeviceRenderUITestFixture.scenario == nil ? "fixture-clip" : "analysis-proxy-fixture-clip"
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {

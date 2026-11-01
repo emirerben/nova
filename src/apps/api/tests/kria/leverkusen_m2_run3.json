@@ -1,0 +1,781 @@
+{
+ "about": "Leverkusen M2 run 3, prod 355a33dae (Fly v1967), 2026-10-31, thread d1ac7437, plan item 973abc03, job ad2587a7 (phone render, unified montage). Recorded from the job debug (admin.py --prod GET jobs/ad2587a7.../debug) and the thread events: the approved brief v3, strategy and media snapshot (clip records + length plan) exactly as prod pinned them, with each capture's coarse GPS point removed; prod's unified_montage record; the draft receipts, the approval card text and the finished-video review. Visuals: the two pool photos' ids, aspects (pool rows) and filenames. Ground truth (kit answer key, reviewed source video): IMG_1039 (clip 2, 18.3 s) 0.0-2.5 other guests' children, 6.0-7.5 'TOR' on the big screen, 12.0-13.8 Taha screaming; IMG_1037 (clip 1, 9.8 s) 5.0-9.8 Taha celebrating.",
+ "client_protocol": 25,
+ "brief": {
+  "version": 3,
+  "requirements": [
+   {
+    "id": "r1",
+    "kind": "order",
+    "facts": {
+     "key": "capture_time"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Order: our selfie, the 0:0 scoreboard, the \"TOR\" on the big screen, then clip 1 first then clip 2",
+    "source_turn_id": "48e2956c-76df-4d72-85f6-9d03dc5d724e"
+   },
+   {
+    "id": "r2",
+    "kind": "text",
+    "facts": {},
+    "scope": "clip:asset-71843110-fb7d-4124-90a2-99861d248a2a",
+    "status": "superseded",
+    "literal": "Taha 🤝 me",
+    "description": "Label the selfie",
+    "source_turn_id": "76fb4fae-8c2c-4610-a435-52015db5f9b3"
+   },
+   {
+    "id": "r3",
+    "kind": "style",
+    "facts": {
+     "playback_rate": 0.5
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Put Taha’s scream at the end of clip 2 in slow motion",
+    "source_turn_id": "b2b5089b-9739-4b80-bb14-11c9d97ad69c"
+   },
+   {
+    "id": "r4",
+    "kind": "audio",
+    "facts": {
+     "audio_intent": "source_unchanged"
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Keep the stadium cheering on the goal clips",
+    "source_turn_id": "76fb4fae-8c2c-4610-a435-52015db5f9b3"
+   },
+   {
+    "id": "r5",
+    "kind": "timing",
+    "facts": {
+     "duration_s": 12
+    },
+    "scope": "global",
+    "status": "open",
+    "literal": null,
+    "description": "Make it 12 seconds",
+    "source_turn_id": "76fb4fae-8c2c-4610-a435-52015db5f9b3"
+   }
+  ]
+ },
+ "strategy": {
+  "pacing": "balanced",
+  "direction": "guided_story",
+  "rationale": "Rebuilding the edit to cleanly sequence your photos and clips in the exact order requested, keeping the stadium sound intact. The slow motion is applied at the end of the second video for the scream, dropping the previous text label to ensure a successful and focused 12-second cut.",
+  "voice_mode": "per_clip",
+  "edit_format": "montage",
+  "clip_intents": [
+   {
+    "op": "order",
+    "attribute": "our selfie",
+    "intent_id": "order_selfie"
+   },
+   {
+    "op": "order",
+    "attribute": "the 0:0 scoreboard",
+    "intent_id": "order_scoreboard"
+   },
+   {
+    "op": "order",
+    "attribute": "the \"TOR\" on the big screen",
+    "intent_id": "order_tor_screen"
+   },
+   {
+    "op": "order",
+    "attribute": "the moments where Taha is celebrating in both goal clips",
+    "intent_id": "order_taha_celebrating"
+   }
+  ],
+  "caption_style": "auto",
+  "montage_audio": {
+   "source_media_ids": [],
+   "preview_source_beds": false,
+   "preserve_source_audio": true
+  },
+  "audio_strategy": "original_audio",
+  "render_program": "guided",
+  "story_structure": [
+   "Selfie and scoreboard intro",
+   "Goal celebration on clip 1",
+   "Taha's scream in slow motion on clip 2"
+  ],
+  "target_duration_s": 12,
+  "creator_duration_s": 12,
+  "selected_media_ids": [],
+  "video_reuse_policy": "once",
+  "optional_treatments": [],
+  "resolved_clip_intents": [
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "our selfie",
+    "intent_id": "order_selfie",
+    "assignments": [
+     {
+      "evidence": "A close-up selfie of three men",
+      "media_id": "asset-71843110-fb7d-4124-90a2-99861d248a2a",
+      "confidence": 0.95
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the 0:0 scoreboard",
+    "intent_id": "order_scoreboard",
+    "assignments": [
+     {
+      "evidence": "A nighttime photo of a football stadium with a 0:0 score displayed on the scoreboard",
+      "media_id": "asset-223f68d8-edf8-48c4-a92a-80913b1d0409",
+      "confidence": 0.95
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the \"TOR\" on the big screen",
+    "intent_id": "order_tor_screen",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+      "confidence": 1.0
+     }
+    ]
+   },
+   {
+    "op": "order",
+    "status": "resolved",
+    "attribute": "the moments where Taha is celebrating in both goal clips",
+    "intent_id": "order_taha_celebrating",
+    "assignments": [
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+      "confidence": 1.0
+     },
+     {
+      "evidence": "creator selected",
+      "media_id": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+      "confidence": 1.0
+     }
+    ],
+    "ordered_members": false
+   }
+  ],
+  "selected_music_section": null,
+  "target_duration_requested": true
+ },
+ "media_snapshot": {
+  "visuals": [
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-71843110-fb7d-4124-90a2-99861d248a2a",
+    "source_filename": "32A100D9-CAE9-443E-A016-E4DE4C7FE742-M2_03_visual.jpg"
+   },
+   {
+    "kind": "image",
+    "capture": {
+     "capture_time": "2026-10-30T12:29:12Z"
+    },
+    "media_id": "asset-223f68d8-edf8-48c4-a92a-80913b1d0409",
+    "source_filename": "1661A707-0DEE-4D37-840C-3ED60A6421AF-M2_04_visual.jpg"
+   }
+  ],
+  "song_path": null,
+  "voiceover": null,
+  "best_parts": [
+   {
+    "score": 0.0,
+    "reason": "analysis_fallback",
+    "media_id": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+    "source_end_s": 5.6,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 8.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+    "source_end_s": 9.0,
+    "source_start_s": 5.0
+   }
+  ],
+  "clip_paths": [
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/d1ac7437-7395-4228-8c62-faf503846734/analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+   "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/d1ac7437-7395-4228-8c62-faf503846734/analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4"
+  ],
+  "length_plan": {
+   "owner": "creator",
+   "sources": [
+    {
+     "kind": "video",
+     "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/d1ac7437-7395-4228-8c62-faf503846734/analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+     "media_id": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+     "duration_s": 18.30666666666667,
+     "generation": null,
+     "storage_generation": "1793450640721274"
+    },
+    {
+     "kind": "video",
+     "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/d1ac7437-7395-4228-8c62-faf503846734/analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+     "media_id": "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+     "duration_s": 9.836666666666666,
+     "generation": null,
+     "storage_generation": "1793450639105981"
+    }
+   ],
+   "version": 1,
+   "windows": [
+    {
+     "score": 0.0,
+     "reason": "analysis_fallback",
+     "media_id": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+     "source_end_s": 5.6,
+     "source_start_s": 0.0
+    },
+    {
+     "score": 8.0,
+     "reason": "best_moment",
+     "media_id": "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+     "source_end_s": 9.0,
+     "source_start_s": 5.0
+    }
+   ],
+   "conflicts": [],
+   "capacity_s": 22.307,
+   "natural_owner": "footage",
+   "capacity_raw_s": 28.143,
+   "visual_budget_s": 2.4,
+   "window_eligible": true,
+   "max_source_count": 80,
+   "target_duration_s": 9.6,
+   "natural_duration_s": null
+  },
+  "song_analysis": null,
+  "song_alignment": null,
+  "voiceover_path": null,
+  "song_duration_s": null,
+  "song_generation": null,
+  "clip_assignments": [
+   {
+    "kind": "video",
+    "capture": {
+     "place": {
+      "country": "Almanya",
+      "locality": "Leverkusen",
+      "sub_locality": "Küppersteg"
+     },
+     "capture_time": "2026-10-28T20:25:46Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "answers": {
+      "does this clip match this description: \"only the moments where taha is celebrating in both goal clips\"? answer only \"yes\" or \"no\".": {
+       "answer": "",
+       "evidence": "",
+       "confidence": 0.0,
+       "generation": "1793450639105981"
+      }
+     },
+     "pix_fmt": "yuv420p",
+     "subject": "soccer match in a stadium",
+     "exposure": {
+      "frames": 11,
+      "version": 1,
+      "mean_luma": 111.7,
+      "near_black_share": 0.0
+     },
+     "clip_facts": [
+      {
+       "kind": "capture_time",
+       "value": "2026-10-28T20:25:46Z",
+       "provenance": "exif"
+      },
+      {
+       "kind": "place",
+       "value": "Küppersteg, Leverkusen, Almanya",
+       "provenance": "geocode"
+      },
+      {
+       "kind": "landmark",
+       "value": "BayArena",
+       "confidence": 1.0,
+       "provenance": "inferred"
+      }
+     ],
+     "duration_s": 9.866667,
+     "transcript": "",
+     "description": "wide view of soccer match fan waves scarf excitedly",
+     "video_codec": "h264",
+     "best_moments": [
+      {
+       "end_s": 3.0,
+       "energy": 6.0,
+       "start_s": 0.0,
+       "description": "wide view of soccer match"
+      },
+      {
+       "end_s": 9.0,
+       "energy": 8.0,
+       "start_s": 5.0,
+       "description": "fan waves scarf excitedly"
+      }
+     ],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "dark red scarf"
+      ],
+      "brands": [],
+      "people": {
+       "note": "crowd watching a soccer match, one fan waving a scarf",
+       "count": 99,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "man waves a dark red scarf"
+      ],
+      "setting": "indoor soccer stadium at night",
+      "subject": "soccer match in a stadium",
+      "summary": "The clip shows a wide view of a soccer match from a high vantage point in a stadium, with spectators in the stands. One fan in a private box enthusiastically waves a scarf or flag.",
+      "activity": "watching a soccer match, fan waving a scarf",
+      "audio_type": "ambient",
+      "content_type": "ambience",
+      "on_screen_text": "",
+      "visual_quality": "shaky handheld, stays sharp",
+      "notable_moments": [
+       {
+        "end_s": 3.0,
+        "start_s": 0.0,
+        "description": "wide view of soccer match"
+       },
+       {
+        "end_s": 9.0,
+        "start_s": 5.0,
+        "description": "fan waves scarf excitedly"
+       }
+      ]
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0,
+     "clip_facts_landmark_generation": "1793450639105981|en"
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/d1ac7437-7395-4228-8c62-faf503846734/analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+    "media_id": "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+    "has_audio": true,
+    "duration_s": 9.866667,
+    "source_filename": "A79FEA1F-B1BA-4440-8EA4-1EB11453655A-IMG_1037.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "f2c83c230700fbf08316cc8ad259a82abe31be85b947a352e49b95655103db2e",
+       "has_audio": true,
+       "byte_count": 18712920,
+       "duration_s": 9.836666666666666,
+       "orientation_degrees": 90
+      },
+      "duration_s": 9.866666666666667,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "297b4bb2-c3c0-4e1d-b177-a3ae3f7dfbb1",
+    "library_source_id": "326f9de9-f024-4cb2-a01f-2b6c8e3a3428",
+    "manifest_identity": "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+    "storage_generation": "1793450639105981"
+   },
+   {
+    "kind": "video",
+    "capture": {
+     "place": {
+      "country": "Almanya",
+      "locality": "Leverkusen",
+      "sub_locality": "Küppersteg"
+     },
+     "capture_time": "2026-10-28T21:35:40Z"
+    },
+    "shot_id": null,
+    "analysis": {
+     "width": 320,
+     "aspect": 0.5634,
+     "brands": [],
+     "height": 568,
+     "source": "clip_metadata",
+     "answers": {
+      "does this clip match this description: \"only the moments where taha is celebrating in both goal clips\"? answer only \"yes\" or \"no\".": {
+       "answer": "",
+       "evidence": "",
+       "confidence": 0.0,
+       "generation": "1793450640721274"
+      }
+     },
+     "pix_fmt": "yuv420p",
+     "subject": "stadium crowd and football pitch",
+     "exposure": {
+      "frames": 20,
+      "version": 1,
+      "mean_luma": 115.9,
+      "near_black_share": 0.0
+     },
+     "clip_facts": [
+      {
+       "kind": "capture_time",
+       "value": "2026-10-28T21:35:40Z",
+       "provenance": "exif"
+      },
+      {
+       "kind": "place",
+       "value": "Küppersteg, Leverkusen, Almanya",
+       "provenance": "geocode"
+      },
+      {
+       "kind": "landmark",
+       "value": "BayArena",
+       "confidence": 1.0,
+       "provenance": "inferred"
+      }
+     ],
+     "duration_s": 18.333333,
+     "transcript": "",
+     "description": "",
+     "video_codec": "h264",
+     "best_moments": [],
+     "display_width": 320,
+     "understanding": {
+      "kind": "video",
+      "props": [
+       "black and white football scarves",
+       "red stadium seats",
+       "green football pitch"
+      ],
+      "brands": [
+       "POWERED BY FOR 2000"
+      ],
+      "people": {
+       "note": "a group of football fans including adults and children, plus a large stadium crowd",
+       "count": null,
+       "speaks_to_camera": false
+      },
+      "speech": {
+       "to_camera": false,
+       "has_speech": false,
+       "transcript": ""
+      },
+      "actions": [
+       "people waving scarves",
+       "camera pans across stadium",
+       "crowd cheering"
+      ],
+      "setting": "inside a football stadium suite, overlooking the pitch",
+      "subject": "stadium crowd and football pitch",
+      "summary": "People in a stadium suite cheer and wave scarves, looking out at a large football stadium filled with fans and a match in progress. The camera pans across the stadium, showing the pitch and the enthusiastic crowd.",
+      "activity": "cheering, waving scarves, watching a football match",
+      "audio_type": "ambient",
+      "content_type": "action",
+      "on_screen_text": "",
+      "visual_quality": "shaky handheld, stays sharp",
+      "notable_moments": []
+     },
+     "display_height": 568,
+     "on_screen_text": "",
+     "analysis_version": 8,
+     "rotation_degrees": 0,
+     "clip_facts_landmark_generation": "1793450640721274|en"
+    },
+    "gcs_path": "users/7b56dd6f-6b9a-4634-89c8-ce91bb50a50d/creation-threads/d1ac7437-7395-4228-8c62-faf503846734/analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+    "media_id": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+    "has_audio": true,
+    "duration_s": 18.333333,
+    "source_filename": "768CDC7E-07F0-4282-B5ED-7FEF4B43EBC3-IMG_1039.mov",
+    "upload_contract": {
+     "proxy": {
+      "width": 320,
+      "height": 568,
+      "original": {
+       "kind": "video",
+       "width": 1920,
+       "height": 1080,
+       "sha256": "e02d7b4450b94b80cd7058f4d73acf04cfc1d2b4784f9d01197b6ca263641055",
+       "has_audio": true,
+       "byte_count": 34943164,
+       "duration_s": 18.30666666666667,
+       "orientation_degrees": 90
+      },
+      "duration_s": 18.333333333333332,
+      "frame_rate": 30.0,
+      "timing_version": 1,
+      "orientation_degrees": 0
+     },
+     "purpose": "analysis_proxy"
+    },
+    "library_asset_id": "ae100af9-4b9f-4454-b065-547d3198d76a",
+    "library_source_id": "36f9049d-6411-4e52-b8b1-bdcda1e30d03",
+    "manifest_identity": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+    "storage_generation": "1793450640721274"
+   }
+  ],
+  "best_parts_conflicts": [],
+  "voiceover_duration_s": null,
+  "voiceover_generation": null,
+  "best_parts_capacity_s": 22.307
+ },
+ "visual_aspects": {
+  "asset-71843110-fb7d-4124-90a2-99861d248a2a": 0.563,
+  "asset-223f68d8-edf8-48c4-a92a-80913b1d0409": 0.5625
+ },
+ "prod_unified_montage": {
+  "clip_ids": [
+   "71843110-fb7d-4124-90a2-99861d248a2a",
+   "223f68d8-edf8-48c4-a92a-80913b1d0409",
+   "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+   "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4"
+  ],
+  "best_parts": [
+   {
+    "score": 0.0,
+    "reason": "analysis_fallback",
+    "media_id": "analysis-proxy-ios-DABF1B6F-03AC-4937-A1D3-C556EBCC21CD.mp4",
+    "source_end_s": 5.6,
+    "source_start_s": 0.0
+   },
+   {
+    "score": 8.0,
+    "reason": "best_moment",
+    "media_id": "analysis-proxy-ios-49F3233F-92C5-4EC1-A239-AA4CC837F688.mp4",
+    "source_end_s": 9.0,
+    "source_start_s": 5.0
+   }
+  ],
+  "clip_speeds": [
+   {
+    "rate": 0.5,
+    "status": "not_grounded",
+    "cut_ids": [],
+    "rate_stated": true,
+    "cut_positions": [],
+    "rate_requested": 0.5,
+    "requirement_id": "r3"
+   }
+  ],
+  "repair_notes": [
+   "I couldn't tell which clip you meant for the speed change, so the clips play at normal speed. Tell me which clip."
+  ],
+  "intent_outcomes": [
+   {
+    "op": "order",
+    "code": "landed",
+    "name": "then: our selfie",
+    "reason": null,
+    "status": "met",
+    "position": "then"
+   },
+   {
+    "op": "order",
+    "code": "landed",
+    "name": "then: the 0:0 scoreboard",
+    "reason": null,
+    "status": "met",
+    "position": "then"
+   },
+   {
+    "op": "order",
+    "code": "landed",
+    "name": "then: the \"TOR\" on the big screen",
+    "reason": null,
+    "status": "met",
+    "position": "then"
+   },
+   {
+    "op": "order",
+    "code": "landed",
+    "name": "then: the moments where Taha is celebrating in both goal clips",
+    "reason": null,
+    "status": "met",
+    "position": "then"
+   }
+  ],
+  "requirement_receipts": [
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "56175a0aaa864c479e3fcc9b9d2e84cb",
+    "requirement_id": "r1",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "checked",
+    "reason": "I couldn't tell which clip you meant for the speed change, so the clips play at normal speed. Tell me which clip",
+    "status": "not_possible",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "56175a0aaa864c479e3fcc9b9d2e84cb",
+    "requirement_id": "r3",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "understood",
+    "reason": "I can't check the sound mix on this draft yet.",
+    "status": "partial",
+    "inferred": [],
+    "verification": "unchecked",
+    "brief_version": 3,
+    "generation_id": "56175a0aaa864c479e3fcc9b9d2e84cb",
+    "requirement_id": "r4",
+    "inferred_labels": [],
+    "target_media_ids": []
+   },
+   {
+    "stage": "checked",
+    "reason": null,
+    "status": "met",
+    "inferred": [],
+    "verification": "checked",
+    "brief_version": 3,
+    "generation_id": "56175a0aaa864c479e3fcc9b9d2e84cb",
+    "requirement_id": "r5",
+    "inferred_labels": [],
+    "target_media_ids": []
+   }
+  ],
+  "ordering_basis": "capture_time",
+  "duration_s": 12.0
+ },
+ "prod_draft_receipts": [
+  {
+   "stage": "understood",
+   "reason": "I can't confirm the order this draft uses.",
+   "status": "partial",
+   "inferred": [],
+   "verification": "unchecked",
+   "brief_version": 3,
+   "generation_id": null,
+   "requirement_id": "r1",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "understood",
+   "reason": "I can't verify this one automatically yet.",
+   "status": "partial",
+   "inferred": [],
+   "verification": "unchecked",
+   "brief_version": 3,
+   "generation_id": null,
+   "requirement_id": "r3",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "understood",
+   "reason": "I can't check the sound mix on this draft yet.",
+   "status": "partial",
+   "inferred": [],
+   "verification": "unchecked",
+   "brief_version": 3,
+   "generation_id": null,
+   "requirement_id": "r4",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "understood",
+   "reason": "I can't confirm this draft's length yet.",
+   "status": "partial",
+   "inferred": [],
+   "verification": "unchecked",
+   "brief_version": 3,
+   "generation_id": null,
+   "requirement_id": "r5",
+   "inferred_labels": [],
+   "target_media_ids": []
+  }
+ ],
+ "prod_card": "Render this draft: Have a look at these in the video:\n- Order: our selfie, the 0:0 scoreboard, the \"TOR\" on the big screen, then clip 1 first then clip 2\n- Put Taha’s scream at the end of clip 2 in slow motion\n- Keep the stadium cheering on the goal clips\n- Make it 12 seconds",
+ "prod_review_receipts": [
+  {
+   "stage": "checked",
+   "reason": null,
+   "status": "met",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 3,
+   "generation_id": "b6b1ef32-25aa-4fdd-9a4d-e9a7240fd523",
+   "requirement_id": "r1",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "I couldn't tell which clip you meant for the speed change, so the clips play at normal speed. Tell me which clip",
+   "status": "not_possible",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 3,
+   "generation_id": "b6b1ef32-25aa-4fdd-9a4d-e9a7240fd523",
+   "requirement_id": "r3",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": "The video keeps the clips' own sound, with nothing laid over it",
+   "status": "met",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 3,
+   "generation_id": "b6b1ef32-25aa-4fdd-9a4d-e9a7240fd523",
+   "requirement_id": "r4",
+   "inferred_labels": [],
+   "target_media_ids": []
+  },
+  {
+   "stage": "checked",
+   "reason": null,
+   "status": "met",
+   "inferred": [],
+   "verification": "checked",
+   "brief_version": 3,
+   "generation_id": "b6b1ef32-25aa-4fdd-9a4d-e9a7240fd523",
+   "requirement_id": "r5",
+   "inferred_labels": [],
+   "target_media_ids": []
+  }
+ ]
+}

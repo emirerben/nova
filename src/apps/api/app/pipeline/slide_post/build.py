@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -46,7 +47,7 @@ from app.pipeline.slide_post.stickers import (
 )
 
 if TYPE_CHECKING:
-    from app.schemas.slide_post import SlideEdits
+    from app.schemas.slide_post import SlideEdits, SlideTilt
 
 log = structlog.get_logger()
 
@@ -94,6 +95,9 @@ SLIDE_DRAWING_PAINTER_VERSION = 1
 # Part of the normalized key of a slide that carries stickers (and only of those). Bump it
 # when the sticker decode/scale/rotate/overlay recipe changes.
 SLIDE_STICKER_COMPOSITOR_VERSION = 1
+# Part of the normalized key of a tilted slide (and only of those). Bump it when the turn,
+# its backdrop or how they are composited changes.
+SLIDE_TILT_COMPOSITOR_VERSION = 1
 
 
 class SlideBuildError(Exception):
@@ -206,6 +210,55 @@ def _frame_filter(canvas: Canvas, source_crop: dict[str, float] | None, fit: str
             f"[kbgo][kfgo]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1"
         )
     raise SlideBuildError(f"unknown fit {fit!r}")
+
+
+def _tilt_frame_filter(
+    canvas: Canvas, source_crop: dict[str, float] | None, fit: str | None, tilt: SlideTilt
+) -> str:
+    """Frame the media, turn it about the canvas centre, lay it over the tilt's backdrop (KRI-1138).
+
+    The media is the (cropped) region scaled like the slide frames it: cover for Fill, whole
+    for Fit (``tilt.py``). It is NOT trimmed to the canvas before it turns, so the pixels a
+    Fill photo has beyond the frame rotate into view. The Fit bars do not draw: the tilt's
+    backdrop is what shows behind a turned photo. ``rotate`` is clockwise for a positive angle
+    and ``c=none`` leaves the corners transparent for the overlay.
+
+    Same graph convention as ``_frame_filter``: unlabelled first and last chains, so
+    ``_overlay_filter_complex``'s ``[0:v]{vf}[b0]`` wrap and the ``,``-joined look still work.
+    ``format=auto`` matches every other overlay here (see ``_frame_filter``).
+    """
+    cw, ch = canvas
+    head = f"{ffmpeg_crop_filter(source_crop)}," if source_crop else ""
+    rad = f"{math.radians(tilt.rotation_deg):.9f}"
+    mode = "decrease" if fit is not None else "increase"
+    media = (
+        f"scale={cw}:{ch}:force_original_aspect_ratio={mode},format=rgba,"
+        f"rotate={rad}:ow='rotw({rad})':oh='roth({rad})':c=none"
+    )
+    backdrop = tilt.backdrop
+    if backdrop.kind == "blur":
+        bw, bh = _even(cw / _FIT_BLUR_DOWNSCALE), _even(ch / _FIT_BLUR_DOWNSCALE)
+        sigma = FIT_BLUR_SIGMA_PX // _FIT_BLUR_DOWNSCALE
+        return (
+            f"{head}split=2[tfg][tbg];"
+            f"[tbg]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},"
+            f"gblur=sigma={sigma},scale={cw}:{ch}[tbgo];"
+            f"[tfg]{media}[tfgo];"
+            f"[tbgo][tfgo]overlay=(W-w)/2:(H-h)/2:format=auto,setsar=1"
+        )
+    colour = "black" if backdrop.kind == "blank" else f"0x{(backdrop.color or '#000000')[1:]}"
+    return (
+        f"{head}{media}[tfgo];"
+        f"color=c={colour}:s={cw}x{ch}:r=30,format=rgb24[tbgo];"
+        f"[tbgo][tfgo]overlay=(W-w)/2:(H-h)/2:format=auto:shortest=1,setsar=1"
+    )
+
+
+def tilt_key_suffix(edits: SlideEdits | None) -> str:
+    """`_tl{N}` for a tilted slide, "" otherwise (existing keys stay put)."""
+    if edits is None or edits.tilt is None:
+        return ""
+    return f"_tl{SLIDE_TILT_COMPOSITOR_VERSION}"
 
 
 def slide_canvas(profile: str, edits: SlideEdits | None, aspect: str | None = None) -> Canvas:
@@ -646,7 +699,11 @@ def normalize_image_slide(
         _sticker_inputs(edits, sticker_sources, canvas=canvas, out_path=out_path) as sticker_inputs,
     ):
         pngs = [*text_pngs, *ink_pngs]
-        vf = _frame_filter(canvas, _framing_crop(edits), edits.fit if edits is not None else None)
+        fit = edits.fit if edits is not None else None
+        if edits is not None and edits.tilt is not None:
+            vf = _tilt_frame_filter(canvas, _framing_crop(edits), fit, edits.tilt)
+        else:
+            vf = _frame_filter(canvas, _framing_crop(edits), fit)
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", decoded_path]
@@ -696,7 +753,11 @@ def normalize_video_slide(
         _sticker_inputs(edits, sticker_sources, canvas=canvas, out_path=out_path) as sticker_inputs,
     ):
         pngs = [*text_pngs, *ink_pngs]
-        vf = f"{_scale_crop_filter(canvas)},fps=30"  # video slides are never cropped (KRI-44)
+        # Video slides are never cropped (KRI-44) or fitted; a tilt turns the cover-fit frame.
+        if edits is not None and edits.tilt is not None:
+            vf = f"{_tilt_frame_filter(canvas, None, None, edits.tilt)},fps=30"
+        else:
+            vf = f"{_scale_crop_filter(canvas)},fps=30"
         if edit_fragment:
             vf = f"{vf},{edit_fragment}"
         cmd = ["ffmpeg", "-y", "-loglevel", "warning", "-nostats", "-i", src_path]

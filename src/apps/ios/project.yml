@@ -114,7 +114,7 @@ targets:
         SWIFT_STRICT_CONCURRENCY: complete
       configs:
         Live Development:
-          CODE_SIGN_ENTITLEMENTS: ""
+          CODE_SIGN_ENTITLEMENTS: "$(KRIA_LIVE_DEVELOPMENT_ENTITLEMENTS)"
         Staging:
           PRODUCT_BUNDLE_IDENTIFIER: "$(KRIA_PRODUCT_BUNDLE_IDENTIFIER)"
         Release:

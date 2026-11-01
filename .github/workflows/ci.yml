@@ -741,6 +741,18 @@ jobs:
             tests/evals/test_clip_intent_planner_evals.py \
             tests/evals/test_main_creator_evals.py -q \
             | tee ../../../test-results/kri-559/voiceover-planner-api-tests.log
+      - name: Verify generated-overlay planning through the grounded planner and route
+        if: contains(needs.changes.outputs.journey_ids, 'native-generated-overlay-review')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/services/test_overlay_generation.py \
+            tests/routes/test_generated_media.py -q \
+            | tee ../../../test-results/kri-559/generated-overlay-api-tests.log
       - name: Verify a voiceover edit keeps every clip through the planner and dispatch
         if: contains(needs.changes.outputs.journey_ids, 'kri-593-voiceover-clips')
         working-directory: src/apps/api

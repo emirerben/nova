@@ -24,6 +24,7 @@ class ImageRequest:
     editable_title: str = ""
     size: str = "1024x1536"
     quality: str = "low"
+    transparent_background: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +59,7 @@ def image_payload(request: ImageRequest) -> dict:
         "quality": request.quality,
         "n": 1,
         "output_format": "png",
+        **({"background": "transparent"} if request.transparent_background else {}),
     }
 
 

@@ -2,6 +2,121 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.78.0] - 2026-11-01
+
+### Changed
+- feat(ios): Tilt control for every edit type, Save contract and phone writers, dark (KRI-1136) (#2026) <!-- release-pr: 2026 -->
+
+## [0.83.77.0] - 2026-11-01
+
+### Changed
+- feat(slides): tilt a slide's photo or video, device + cloud + chat, dark (KRI-1138) (#2019) <!-- release-pr: 2019 -->
+
+## [0.83.76.0] - 2026-11-01
+
+### Fixed
+- fix(overlays): keep narration speech timing for narrated edits (KRI-1142) (#2027) <!-- release-pr: 2027 -->
+
+## [0.83.75.0] - 2026-11-01
+
+### Fixed
+- fix(overlays): generate media works on a voiceover montage (KRI-1142) (#2020) <!-- release-pr: 2020 -->
+
+## [0.83.74.0] - 2026-11-01
+
+### Changed
+- feat(kria): chat can tilt clips through patch_slots, dark (KRI-1137) (#2018) <!-- release-pr: 2018 -->
+
+## [0.83.73.0] - 2026-11-01
+
+### Changed
+- feat(ios): declare the push entitlement for notification registration (KRI-1087) (#2021) <!-- release-pr: 2021 -->
+
+## [0.83.72.0] - 2026-11-01
+
+### Changed
+- fix(ios): one Save persists every edited text type and the screen shows what each type inherits (#2016) <!-- release-pr: 2016 -->
+
+## [0.83.71.0] - 2026-11-01
+
+### Changed
+- fix(kria): the research writer retries on truncation and a rejected draft gets one correction round (#2017) <!-- release-pr: 2017 -->
+
+## [0.83.70.0] - 2026-11-01
+
+### Changed
+- fix(kria): a researched ask with "with animations" is approvable once its sources are shown (#2015) <!-- release-pr: 2015 -->
+
+## [0.83.69.0] - 2026-11-01
+
+### Changed
+- feat(engine): tilt a clip and draw a backdrop under it, dark (KRI-1134) (#2014) <!-- release-pr: 2014 -->
+
+## [0.83.68.0] - 2026-11-01
+
+### Changed
+- Preserve notification Stop and Resume across retries (#1977) <!-- release-pr: 1977 -->
+
+## [0.83.67.0] - 2026-11-01
+
+### Changed
+- Apply typed skip answers without repeating the picker (#1979) <!-- release-pr: 1979 -->
+
+## [0.83.66.0] - 2026-11-01
+
+### Changed
+- Project resolver creator requests before observability storage (#1980) <!-- release-pr: 1980 -->
+
+## [0.83.65.0] - 2026-11-01
+
+### Changed
+- Preserve explicit order withdrawal across waiver and fresh-start flows (#1981) <!-- release-pr: 1981 -->
+
+## [0.83.64.0] - 2026-11-01
+
+### Changed
+- fix(kria): a left-out clip no longer comes back as the opening; withdrawn label asks stay withdrawn (KRI-1111) (#1998) <!-- release-pr: 1998 -->
+
+## [0.83.63.0] - 2026-11-01
+
+### Changed
+- fix(kria): a named moment decides its clip's window; "clip 2" grounds slow motion before approval (Leverkusen M2 run 3, KRI-1106/1107) (#2008) <!-- release-pr: 2008 -->
+
+## [0.83.62.0] - 2026-11-01
+
+### Changed
+- feat(ios): generate editable overlays inside Visuals (KRI-1064) (#1956) <!-- release-pr: 1956 -->
+
+## [0.83.61.0] - 2026-11-01
+
+### Changed
+- fix(kria): a resolver match whose evidence names another clip's file is not kept (KRI-1112 part 2/3) (#2000) <!-- release-pr: 2000 -->
+
+## [0.83.60.0] - 2026-11-01
+
+### Added
+- feat(kria): Lip-sync card in the new-video picker (KRI-1093) (#1990) <!-- release-pr: 1990 -->
+
+## [0.83.59.0] - 2026-11-01
+
+### Changed
+- fix(kria): the research reviewer is told which asks another step applies (#2013) <!-- release-pr: 2013 -->
+
+## [0.83.58.0] - 2026-11-01
+
+### Changed
+- fix(kria): an end/start pin on a clip that doesn't show it asks instead of seating it (KRI-1108) (#1997) <!-- release-pr: 1997 -->
+
+## [0.83.57.0] - 2026-11-01
+
+### Changed
+- fix(order): a first/last pin takes its clip out of a general order group (KRI-1109) (#1995) <!-- release-pr: 1995 -->
+
+## [0.83.56.0] - 2026-11-01
+
+### Changed
+- fix(kria): an unmet part of the ask no longer holds back sourced wording before approval (#2012) <!-- release-pr: 2012 -->
+
 ## [0.83.55.0] - 2026-11-01
 
 ### Changed

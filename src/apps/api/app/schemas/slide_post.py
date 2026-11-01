@@ -275,6 +275,48 @@ class SlideDrawing(BaseModel):
         return sum(len(stroke.points) for stroke in self.strokes)
 
 
+class SlideTiltBackdrop(BaseModel):
+    """What shows behind a tilted slide where the media no longer covers the canvas (KRI-1138).
+
+    The slide twin of ``app.kria.recipes.ClipBackdrop`` and ``KriaMediaEngine.ClipBackdrop``:
+    ``blank`` is black, ``color`` carries a ``#RRGGBB``, ``blur`` is a blurred cover-fit copy of
+    the same photo or video frame (the Fit "blur" bars' strength, ``FIT_BLUR_SIGMA_PX``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["blank", "color", "blur"] = "blank"
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+
+    @model_validator(mode="after")
+    def _color_only_for_color(self) -> SlideTiltBackdrop:
+        if (self.kind == "color") != (self.color is not None):
+            raise ValueError("a backdrop carries a color if and only if its kind is color")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unused_color(self, handler: Any) -> dict[str, Any]:
+        data = handler(self)
+        if isinstance(data, dict) and data.get("color") is None:
+            data.pop("color", None)
+        return data
+
+
+class SlideTilt(BaseModel):
+    """A slide's media turned to any angle about the canvas centre (KRI-1138).
+
+    ``rotation_deg`` is clockwise-positive in -180..180 (the clip tilt, sticker and text
+    convention). Only the PHOTO or VIDEO turns: text, ink, stickers and the watermark stay
+    upright on top. What the turn uncovers shows ``backdrop`` (default blank = black). Frozen
+    by ``tests/fixtures/slide-tilt-parity/v1.json``.
+    """
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    rotation_deg: float = Field(ge=-180.0, le=180.0)
+    backdrop: SlideTiltBackdrop = Field(default_factory=SlideTiltBackdrop)
+
+
 MAX_SLIDE_STICKERS = 4
 
 
@@ -329,12 +371,15 @@ class SlideEdits(BaseModel):
     # Pasted image stickers (KRI-647), list order = z-order (last on top). Omitted while
     # None or empty so a slide without stickers serializes and hashes exactly as before.
     stickers: list[SlideSticker] | None = Field(default=None, max_length=MAX_SLIDE_STICKERS)
+    # The media turned to any angle (KRI-1138). A sibling of `framing` for the same reason as
+    # `fit`; omitted while None, and an upright slide is None (see `_upright_is_not_a_tilt`).
+    tilt: SlideTilt | None = None
 
     @model_serializer(mode="wrap")
     def _omit_unset_framing(self, handler: Any) -> dict[str, Any]:
         data = handler(self)
         if isinstance(data, dict):
-            for key in ("framing", "fit", "drawing"):
+            for key in ("framing", "fit", "drawing", "tilt"):
                 if data.get(key) is None:
                     data.pop(key, None)
             if not data.get("stickers"):
@@ -347,6 +392,14 @@ class SlideEdits(BaseModel):
         if isinstance(value, list) and len(value) > MAX_SLIDE_STICKERS:
             raise ValueError(f"too many stickers on one slide (at most {MAX_SLIDE_STICKERS})")
         return value
+
+    @model_validator(mode="after")
+    def _upright_is_not_a_tilt(self) -> SlideEdits:
+        # 0 degrees draws nothing, so storing it would only fork the cache key of an
+        # unchanged slide and leave a backdrop that never shows.
+        if self.tilt is not None and self.tilt.rotation_deg == 0:
+            self.tilt = None
+        return self
 
     @model_validator(mode="after")
     def _unique_sticker_ids(self) -> SlideEdits:
@@ -671,6 +724,16 @@ def merge_legacy_text_edits(
                     if "stickers" in incoming.model_fields_set
                     else {}
                 ),
+                # ...and for tilt (KRI-1138): only when sent.
+                **(
+                    {
+                        "tilt": incoming.tilt.model_dump(mode="python")
+                        if incoming.tilt is not None
+                        else None
+                    }
+                    if "tilt" in incoming.model_fields_set
+                    else {}
+                ),
             }
         )
         merged.append(ref.model_copy(update={"edits": new_edits}))
@@ -680,7 +743,7 @@ def merge_legacy_text_edits(
 def merge_stored_edit_key(
     stored: SlidePostDraft | None,
     slides: list[SlideRef],
-    key: Literal["framing", "fit", "drawing", "stickers"],
+    key: Literal["framing", "fit", "drawing", "stickers", "tilt"],
     *,
     accept_incoming: bool,
 ) -> list[SlideRef]:

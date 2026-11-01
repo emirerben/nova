@@ -32,6 +32,7 @@ from app.services.device_render import (
     save_device_record,
 )
 from app.services.job_storage_paths import project_media_reference_lock_key
+from app.services.native_activity import activity_statement, record_native_activity
 from app.services.pipeline_trace import pipeline_trace_for
 from app.worker import celery_app
 
@@ -175,6 +176,9 @@ def _expire_queued(job_id: uuid.UUID, now: datetime) -> None:
                             },
                         )
                     )
+                statement = activity_statement(job, variant_id, kind="action_required")
+                if statement is not None:
+                    db.execute(statement)
                 break
         db.commit()
     for user_id, body in requeued:
@@ -230,6 +234,7 @@ async def _run(job_id: str, user_id: str, payload: dict) -> str:
                     return "claimed"
                 if task["runs"] >= MAX_CHECK_RUNS:
                     requeued = _requeue_or_give_up(job, body.identity.variant_id, record, task, now)
+                    await record_native_activity(db, job, body.identity.variant_id)
                     await db.commit()
                     # The maintenance reconciler redelivers a requeued check (its
                     # `queued_at` is due now), so a broker hiccup cannot strand it.

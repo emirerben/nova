@@ -302,6 +302,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].backdrop = clip.backdrop
                     layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: layerEnd)
                     if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
                         try await addAudio(asset: asset, clip: clip, gain: recipeTrack.kind == .video ? recipe.audio.originalVolume : 1, originalGain: recipeTrack.kind == .video)
@@ -317,7 +318,9 @@ public struct PreviewComposition: @unchecked Sendable {
                     let drawn = recipeTrack.kind == .video ? try StillFrame.flattened(image) : image
                     let oriented = CIImage(cgImage: drawn).oriented(forExifOrientation: orientation)
                     var normalized = oriented.transformed(by: CGAffineTransform(translationX: -oriented.extent.minX, y: -oriented.extent.minY))
-                    if clip.stillLayout == .supportingCard { normalized = try StillFrame.supportingCard(normalized, canvas: canvas) }
+                    if clip.stillLayout == .supportingCard {
+                        normalized = try StillFrame.supportingCard(normalized, canvas: canvas, rotationDegrees: clip.transform.rotationDegrees)
+                    }
                     layers.append(RecipeVideoLayer(trackID: nil, image: normalized,
                         transform: Self.transform(naturalSize: normalized.extent.size, preferred: .identity, canvas: canvas, clip: clip),
                         start: clip.timelineStart, end: end, fadeIn: fadeIn, transitionKind: clip.transition?.kind ?? .crossfade, isPrimary: recipeTrack.kind == .video,
@@ -326,6 +329,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    if clip.stillLayout == nil { layers[layers.count - 1].backdrop = clip.backdrop }
                     layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: end)
                 }
                 if let seed = clip.overlayDissolveSeed {
@@ -528,15 +532,21 @@ public struct PreviewComposition: @unchecked Sendable {
     }
 
     static func transform(naturalSize: CGSize, preferred: CGAffineTransform, canvas: CGSize, clip: TimelineClip) -> CGAffineTransform {
+        transform(naturalSize: naturalSize, preferred: preferred, canvas: canvas, media: clip.layerTransform)
+    }
+
+    /// `media.rotationDegrees` is clockwise on screen. Core Image's y axis points up, so its
+    /// positive angle is counter-clockwise and the angle is negated here.
+    nonisolated static func transform(naturalSize: CGSize, preferred: CGAffineTransform, canvas: CGSize, media: MediaTransform) -> CGAffineTransform {
         let rect = CGRect(origin: .zero, size: naturalSize).applying(preferred)
         let scale = max(canvas.width / max(abs(rect.width), 1), canvas.height / max(abs(rect.height), 1))
         return preferred
             .concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
             .concatenating(CGAffineTransform(translationX: -abs(rect.width) * scale / 2, y: -abs(rect.height) * scale / 2))
-            .concatenating(CGAffineTransform(scaleX: clip.transform.scale, y: clip.transform.scale))
-            .concatenating(CGAffineTransform(rotationAngle: clip.transform.rotationDegrees * .pi / 180))
-            .concatenating(CGAffineTransform(translationX: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY))
+            .concatenating(CGAffineTransform(scaleX: media.scale, y: media.scale))
+            .concatenating(CGAffineTransform(rotationAngle: -media.rotationDegrees * .pi / 180))
+            .concatenating(CGAffineTransform(translationX: canvas.width / 2 + media.positionX, y: canvas.height / 2 - media.positionY))
     }
 }
 

@@ -311,14 +311,33 @@ def _failed(
 
 
 def _schema_failure(exc: BaseException) -> BaseException | None:
-    from app.agents._runtime import SchemaError  # noqa: PLC0415
+    """The malformed-answer failure behind ``exc``, else None.
+
+    A truncated answer is not one: the model spent its output budget, which says nothing
+    about the sources, so it is transient (never filed, or cached, as a source limit)."""
+    from app.agents._runtime import SchemaError, _OutputTruncatedError  # noqa: PLC0415
 
     seen: BaseException | None = exc
     while seen is not None:
+        if isinstance(seen, _OutputTruncatedError):
+            return None
         if isinstance(seen, SchemaError):
             return seen
         seen = seen.__cause__
     return None
+
+
+def _handled_elsewhere(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """The live asks another step applies to the researched text (not research itself)."""
+    from app.kria.animation_ask import animation_targets, requested_text_position  # noqa: PLC0415
+
+    live = brief.live() if brief is not None else []
+    handled = []
+    if animation_targets(live):
+        handled.append("animation")
+    if requested_text_position(live) is not None:
+        handled.append("text position")
+    return tuple(handled)
 
 
 def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> PreparedResearch | None:
@@ -392,7 +411,11 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
     )
     try:
         output = run_researched_revision(
-            request, utterance=inputs.creator_request, snapshot=model_snapshot, ctx=ctx
+            request,
+            utterance=inputs.creator_request,
+            snapshot=model_snapshot,
+            ctx=ctx,
+            handled_elsewhere=_handled_elsewhere(inputs.brief),
         )
     except ResearchUnavailable as exc:
         return _failed(request, requirement.id, basis, str(exc))
@@ -406,9 +429,9 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
             )
         raise ResearchNotFinished(str(exc)) from exc
     unmet = [str(row.get("reason") or "") for row in output.unmet_requests if row.get("reason")]
-    if unmet:
-        return _failed(request, requirement.id, basis, "; ".join(unmet))
     texts_out = prepared_research_texts(output.ops)
+    if unmet and not (texts_out and settings.research_unmet_is_note_enabled):
+        return _failed(request, requirement.id, basis, "; ".join(unmet))
     if not texts_out:
         return _failed(
             request,
@@ -419,6 +442,10 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
     first = next(op["research"] for op in output.ops if isinstance(op.get("research"), dict))
     # `run_researched_revision` prefixes its own note; only the copy writer's limits remain.
     limitations = output.reply_notes.removeprefix("Sources are attached to the explanations.")
+    if unmet:
+        # Sourced wording exists: the part the writer could not source is shown to the creator
+        # next to it before they approve, instead of holding the whole draft back.
+        limitations = f"{limitations.strip()} Not covered: {'; '.join(unmet)}"
     return PreparedResearch(
         status="ready",
         requirement_id=requirement.id,

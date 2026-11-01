@@ -83,6 +83,7 @@ from app.pipeline.phone_captions import (
 )
 from app.pipeline.phone_guided_plan import UnsupportedPhonePlan
 from app.pipeline.phone_recipe_shared import (
+    clip_tilt_fields,
     display_dims,
     face_fill_transform,
     fit_transform,
@@ -212,8 +213,13 @@ def compile_phone_subtitled_plan(
     speaker_position_x: float | None = None,
     additional_speakers: tuple[PhoneSourceBinding, ...] = (),
     output_orientation: Literal["portrait", "landscape"] = "portrait",
+    clip_tilts: Mapping[str, Any] | None = None,
 ) -> EditRecipeV2:
     """Compile the subtitled edit format's phone recipe.
+
+    ``clip_tilts`` (KRI-1136) maps a main-track clip id (``clip-<n>`` for the speaker's
+    kept segments, ``speaker-<n>`` for an extra speaker) to its tilt row value; an id with
+    none compiles upright, byte-identical to before.
 
     ``bindings`` follows the same one-binding-per-clip contract as
     `compile_phone_voiceover_montage_plan`/`compile_phone_guided_plan`, but subtitled is
@@ -438,6 +444,7 @@ def compile_phone_subtitled_plan(
         seg_duration = seg_end - seg_start
         if seg_duration <= 0:
             continue
+        tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(f"clip-{index}")})
         main_clips.append(
             TimelineClip(
                 id=f"clip-{index}",
@@ -446,7 +453,8 @@ def compile_phone_subtitled_plan(
                 source_duration=seg_duration,
                 timeline_start=cursor,
                 rate=1.0,
-                transform=speaker_transform,
+                transform=speaker_transform.model_copy(update=tilt_patch),
+                backdrop=backdrop,
             )
         )
         cursor += seg_duration
@@ -479,15 +487,20 @@ def compile_phone_subtitled_plan(
         extra_duration = float(extra_original.duration_s)
         if extra_duration <= 0:
             continue
+        extra_id = f"speaker-{extra_index + 1}"
+        tilt_patch, backdrop = clip_tilt_fields({"tilt": (clip_tilts or {}).get(extra_id)})
         main_clips.append(
             TimelineClip(
-                id=f"speaker-{extra_index + 1}",
+                id=extra_id,
                 source_asset_id=extra_asset.id,
                 source_start=0.0,
                 source_duration=extra_duration,
                 timeline_start=cursor,
                 rate=1.0,
-                transform=fit_transform(extra_width, extra_height, canvas, landscape_fit),
+                transform=fit_transform(
+                    extra_width, extra_height, canvas, landscape_fit
+                ).model_copy(update=tilt_patch),
+                backdrop=backdrop,
             )
         )
         cursor += extra_duration

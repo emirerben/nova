@@ -1,0 +1,147 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-01-v99",
+  "input": {
+    "utterance": "tilt slide 2 about ten degrees to the right",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "surface": "slide_post",
+      "allowed_op_families": [
+        "text",
+        "clip",
+        "timeline",
+        "slides"
+      ],
+      "base_generation": "slide-post-v2",
+      "has_narrated_captions": false,
+      "max_duration_s": 3.0,
+      "remaining_duration_s": 0.0,
+      "slots": [
+        {
+          "key": "slide-1",
+          "slot_id": "slide-1",
+          "parent_segment_id": null,
+          "clip_index": 0,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 0.0,
+          "output_end_s": 1.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-1",
+          "is_cover": true,
+          "orientation": "portrait",
+          "cropped": false
+        },
+        {
+          "key": "slide-2",
+          "slot_id": "slide-2",
+          "parent_segment_id": null,
+          "clip_index": 1,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 1.0,
+          "output_end_s": 2.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-2",
+          "is_cover": false,
+          "orientation": "portrait",
+          "cropped": false
+        },
+        {
+          "key": "slide-3",
+          "slot_id": "slide-3",
+          "parent_segment_id": null,
+          "clip_index": 2,
+          "in_s": 0.0,
+          "duration_s": 1.0,
+          "duration_beats": null,
+          "source_duration_s": null,
+          "output_start_s": 2.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "transition_duration_s": null,
+          "look_preset": "none",
+          "media_kind": "image",
+          "media_id": "slide-3",
+          "is_cover": false,
+          "orientation": "portrait",
+          "cropped": false
+        }
+      ],
+      "text_bars": [],
+      "total_duration_s": 3.0,
+      "post": {
+        "caption": "",
+        "cover_index": 0,
+        "platform_profile": "tiktok_photo",
+        "framing_enabled": true,
+        "landscape_allowed": true,
+        "tilt_enabled": true
+      },
+      "editor_ops_version": 2
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"set_slide_tilt\", \"slide_indexes\": [1], \"rotation_deg\": 10}], \"confidence\": 0.95, \"reply\": \"Slide 2 is turned 10 degrees to the right.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "set_slide_tilt",
+        "changes": [
+          {
+            "slide_id": "slide-2",
+            "tilt": {
+              "rotation_deg": 10.0,
+              "backdrop": {
+                "kind": "blank"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "confidence": 0.95,
+    "reply": "Slide 2 is turned 10 degrees to the right.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "EN: one slide ten degrees to the right is clockwise-positive on that slide only",
+    "lane": "kria-1138-slide-tilt",
+    "exact_edit_ops": [
+      {
+        "op": "set_slide_tilt",
+        "changes": [
+          {
+            "slide_id": "slide-2",
+            "tilt": {
+              "rotation_deg": 10.0,
+              "backdrop": {
+                "kind": "blank"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

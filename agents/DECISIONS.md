@@ -3209,3 +3209,100 @@ CLAUDE.md was 37,989/38,000 chars. Two lines were shortened; their previous text
 **Hardening after the foundation review:** the grader no longer trusts text. A field counts as disclosed only through its own registry line (`Disclosure` code `not_applied_on_route`, subject = the field) that the creator reads, or a route decline the grader maps to that field (animation -> `title_animation`, captions -> `caption_style`); a title-position decline discloses no field. A lane's render evidence must come from a replay that runs the route's code (traced), returns the recipe, and reports nothing honored with the asks removed or with its lane switch off (else INVALID). An `Applied` claim needs a strategy read in `READERS` or a `via` naming a real `file:symbol` that names the field, and a failing claim is a scored check (`10.claims`). The card never cuts a disclosure: past the 640-character budget the rest are named on one compact line (registry on only). With the registry off, `route_disclosure` reads `route_capabilities/_legacy_unified.py`, a frozen copy of the pre-registry table (guard: `tests/kria/test_route_registry_flag_off.py`, golden from ff5f2adbe). Route declines now reach the card for asks the first draft leaves to the render (`requirements_with_route_declines`), and route resolution mirrors the dispatch for unstamped jobs (`KRIA_PLAN_AUTHORITY_ENABLED=false` ignores `voice_mode`) and for the Talking writer's clip-count gates.
 
 **Second hardening (grade recipe values, not booleans):** two adversaries beat a grader that took a replay module's `honored: True`, so the premise changed. A lane replay module returns render recipe values (`recipe(fx) -> {"title_animation", "pace", "length_s", "caption_mode"}`) and the grader compares each with what the strategy field or typed ask asked, then runs its own controls on the module: the asked value perturbed must move the value, one ask dropped reverts only its key, the lane switch off makes the ask inert, each value must be one the route's `READERS` code returned, and the lane switch may be read only by route code (a probe records the reader). Synthetic constant, ask-keyed, switch-keyed and echo modules must fail every run. A `via` carrier must be a function in the route's own `READERS` or a listed shared carrier whose body reads the field off a strategy (AST); a schema class or another route's file never counts, and two routes may not list the same reader. A route decline speaks for a field only when the declined ask's typed facts and the registry's exact decline text say so. Card lines carry their table entry's typed code (`recorded_only_on_route` for `RecordedOnly`), are graded in English and Turkish, and are pinned by a recorded golden (`tests/fixtures/kria_replay/golden_lines.json`, guard `tests/kria/test_route_lines_golden.py`). Product: outside approval readiness a route decline no longer replaces the planner's summary; its line follows the summary (`reply_from_receipts(declines_after_summary=True)`), so a summary can still name a pace or length the heads-up lines below then say is not applied. The draft route also mirrors the writers' refusals (spoken-excerpt writer off, creator songs off, recorded voice beside kept camera sound).
+## [2026-11-01] Research: an unmet part of the ask no longer holds back sourced wording
+
+Prod, "With animations, explain why people should visit Assos, Turkey" (new chat, after the
+prompt-fidelity train): the reply was "I can't make this yet: ... Sources could not be
+confirmed before approval: animations". The research copy writer listed the creator's
+"animations" under `unmet_requests` next to its sourced captions, and
+`research_preview.prepare` treated any unmet entry as a failed research result, which the
+approval-readiness gate turned into a hold-back. Animation is applied by another step.
+
+- `research_preview.prepare`: when sourced wording exists, unmet entries are shown as
+  "Not covered: ..." in the preview note before approval and no longer fail the research.
+  With no sourced wording the result still fails with the reason.
+- Copy-writer prompt (`nova.research.caption_binding`) v8: animation, look, position,
+  timing and music asks are never `unmet_requests`.
+- Kill switch: `RESEARCH_UNMET_IS_NOTE_ENABLED` (default true). `false` + restart api and
+  worker restores the hold-back.
+- Not changed: at render time (no pinned research) an unmet entry still stops the text
+  composition (`creation_text_composition`, pinned by
+  `test_initial_creation_research_replays_without_searching_again[True]`). Prod renders use
+  the pinned preview, so this only bites a render without a preview.
+
+## [2026-11-01] Research agents are told which asks another step applies
+
+Second refusal of the same Assos prompt, after the unmet-list fix (#2012): the claim reviewer
+(`nova.research.claim_review`) rejected the sourced captions with "The request explicitly
+asked to include animations ... not listed in unmet_requests", so research failed with
+"Research needs correction" and the draft was held back. The research writer and reviewer read
+the whole creator request, so a style ask in it looked like a research ask nobody covered.
+
+- `ResearchCopyInput.handled_elsewhere` (default empty) carries the live asks another step
+  applies: "animation" (any live animation ask) and "text position". Set by
+  `research_preview._handled_elsewhere` before approval and by the text composer at render.
+  The writer (v9) and the reviewer (v4) prompts say never to list or reject for them.
+- No new flag: the field is empty unless an animation/position ask is live, so every other
+  request sends the same data as before. Prompt versions bumped; replay evals pass.
+- Verified offline with a reviewer that rejects when the data does not name the ask. The real
+  Gemini reviewer has not been run against this prompt (paid live runs need an approved ledger).
+
+## [2026-11-01] Research proven + a look judged after render is approvable (Assos, third refusal)
+
+Third refusal of "With animations, explain why people should visit Assos, Turkey" (prod 07:54,
+after #2012 and #2013): "I can't make this yet: ... I can't confirm this draft does it yet."
+Research had passed. Reproduced locally with the real Main Creator and real Gemini research
+(`scripts/kria/live_assos_turn.py`, reports under `.dev/assos-live/`). The Main Creator writes
+ONE requirement `r1` (text, global, no literal) whose facts hold both `research` (topic, quote)
+and `animation: "any"`. Its receipt is `met` + `unchecked` ("the text will animate in as it
+appears; I'll check it in the finished video"), because the research part is proven by the
+preview and the animation is judged on the finished video (`brief_checks._research_with_animation`).
+
+Root cause (`approval_readiness._no_pre_render_checker`): any requirement carrying a research
+fact returned "a draft check can settle this", so an unchecked receipt became
+`evidence_missing`, which holds approval. That rule is right for research that is NOT proven
+(no preview, a limit, a failure) and wrong once the sourced wording is on the card: what is left
+is the look, which no draft can show. Premise tested, not assumed: the live row was
+`evidence_missing/brief_checks` with `prepared_research.status == "ready"` and three texts, and
+the same draft with the fix is `unverified`.
+
+- A requirement whose research the preview proved (`_check_research` is `met` + `checked`)
+  falls through to the checks of its other facts, so its look becomes `unverified` (approved,
+  named after render). Research that is not proven still blocks; the claim reviewer, the copy
+  writer and the preview are untouched. Keep-text-off marks still block.
+- Same class checked: research with a named animation, a position, a font or a colour on one
+  requirement. Animation shapes were held, position/font/colour were already approved because
+  `_check_research` answers first (their receipt reads "checked"; that overclaim is not
+  changed here).
+- The journey file `test_kri881_research_before_approval.py` never turned the readiness gate on
+  (code default off, prod on), which is why three research fixes shipped without seeing it. The
+  new rows run the gate on, with `r1` recorded from the live run (`assos/live_r1.json`).
+- Kill switch: `KRIA_RESEARCHED_LOOK_AFTER_RENDER_ENABLED` (default true). `false` + restart api
+  and worker restores the old hold exactly (pinned by
+  `test_kill_switch_off_holds_the_researched_animation_ask_as_before`).
+
+## [2026-11-01] Research before approval: the writer retries, truncation is not a source limit
+
+Fully live local runs of the Assos prompt on main (real Main Creator, search, writer, reviewer),
+after #2012, #2013 and #2015, still refused or stalled in 3 of 3 runs, each for a different
+reason: the copy writer ran out of its 8,192 output tokens (Gemini 3 counts thinking against
+it) and the preview filed that as "no usable cited facts from institutional sources" (a
+deterministic limit, cached for an hour); the writer's captions overlapped ("Research
+explanations overlap") and the first miss ended the turn; a reading-time conflict asked a
+question instead of choosing. A live prod thread also ended "I couldn't turn that into a plan"
+(Main Creator `TerminalError` after 5 s; cause not recoverable, errors are masked and prod DB
+reads were not available).
+
+- Writer (`nova.research.caption_binding` v10): `max_attempts=2` with
+  `enable_clarification_retries=True` so the runtime's KRI-542 retry at "low" thinking runs on a
+  truncation; `max_output_tokens` 8192 -> 16384.
+- `research_preview._schema_failure`: a truncated answer is transient (never a source limit,
+  never cached); a malformed answer still is.
+- `run_researched_revision`: one correction round. A rejected answer (overlap, timing,
+  evidence, the claim reviewer) goes back to the writer once with the reason (`correction`).
+  Kill switch `RESEARCH_CORRECTION_ROUND_ENABLED` (default true; false = no correction round).
+- Not changed: the reading-time question ("longer edit or fewer parts") and the Main Creator
+  planning failure. Both are listed on KRI-1097.
+- Verified: 3 of 3 fully live runs on the fixed code ended on the approval card with sourced
+  wording (`scripts/kria/live_assos_turn.py --live`); the same code before the change refused or
+  stalled 3 of 3. Small samples; the models vary run to run.

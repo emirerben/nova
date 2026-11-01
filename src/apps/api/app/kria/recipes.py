@@ -96,6 +96,31 @@ class NormalizedSourceCrop(_RecipeModel):
         return self
 
 
+class ClipBackdrop(_RecipeModel):
+    """What shows behind a main-track clip where the clip does not cover the canvas.
+
+    Mirrors ``KriaMediaEngine.ClipBackdrop``: ``{"kind": "blank" | "color" | "blur",
+    "color": "#RRGGBB"}`` with ``color`` present for ``color`` only. ``blank`` is black
+    (drawn as nothing); ``blur`` is a blurred cover-fit copy of the same clip frame.
+    """
+
+    kind: Literal["blank", "color", "blur"]
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+
+    @model_validator(mode="after")
+    def _color_only_for_color(self) -> ClipBackdrop:
+        if (self.kind == "color") != (self.color is not None):
+            raise ValueError("a backdrop carries a color if and only if its kind is color")
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unused_color(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        result = handler(self)
+        if self.color is None:
+            result.pop("color", None)
+        return result
+
+
 class TimelineClip(_RecipeModel):
     id: str = Field(min_length=1, max_length=160)
     source_asset_id: str = Field(min_length=1, max_length=160)
@@ -120,6 +145,10 @@ class TimelineClip(_RecipeModel):
     # cover-fits it to the canvas (cloud: ``reframe`` ``source_crop``).
     # Requires the ``sourceCrop`` capability.
     source_crop: NormalizedSourceCrop | None = None
+    # Drawn under a main-track clip: the corners a tilt (``transform.rotation_degrees``,
+    # clockwise on screen) uncovers, or the bars around a letterboxed clip.
+    # Requires the ``clipTilt`` capability.
+    backdrop: ClipBackdrop | None = None
     volume: float = Field(default=1, ge=0, le=2)
     # Seconds of linear gain ramp at this clip's audio start/end (KRI-139).
     # Replaces the device's ~25ms declick edge when longer: the music bed's
@@ -142,6 +171,7 @@ class TimelineClip(_RecipeModel):
             "overlay_preserve_alpha",
             "still_layout",
             "source_crop",
+            "backdrop",
             "audio_fade_in",
             "audio_fade_out",
         ):
@@ -236,6 +266,9 @@ MediaCapability = Literal[
     # Talk-to-camera green screen: `speaker_background` (V2 recipe), a photo or looping
     # video composited behind the speaker clip's Vision person mask on device.
     "speakerBackground",
+    # A tilted clip (`transform.rotation_degrees != 0`) and/or a `backdrop` under a main-track
+    # clip, drawn on device by `KriaMediaEngine`'s compositor (KRI-1134).
+    "clipTilt",
     # Vocabulary for lanes the V2 recipe schema has no fields for yet — see
     # docs/reviews/kri-29/capability-matrix.md. Naming these does not enable
     # them: `phone_guided_plan.compile_phone_guided_plan` still rejects the
@@ -296,9 +329,16 @@ class EditRecipeV1(_RecipeModel):
                     or clip.rate != 1
                     or clip.look is not None
                     or clip.hold_duration is not None
-                    or clip.transform != MediaTransform()
+                    or clip.transform
+                    != MediaTransform(rotation_degrees=clip.transform.rotation_degrees)
                 ):
                     raise ValueError("a still card requires a plain V2 main-track clip")
+                if clip.backdrop is not None and (
+                    track.kind != "video" or clip.visual_placement is not None
+                ):
+                    raise ValueError("a backdrop requires a main-track clip without a placement")
+                if clip.transform.rotation_degrees != 0 or clip.backdrop is not None:
+                    self.required_capabilities |= {"clipTilt"}
                 if clip.source_crop is not None:
                     if clip.still_layout is not None or clip.visual_placement is not None:
                         raise ValueError(
