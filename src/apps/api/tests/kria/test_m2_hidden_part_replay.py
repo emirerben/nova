@@ -215,7 +215,7 @@ def test_the_planner_prompt_teaches_the_op() -> None:
     )
     assert "- hide_part: a part at the START or the END of ONE clip" in prompt
     assert "caption|exclude|hide_part" in prompt
-    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-30-hide-part"
+    assert ClipIntentPlannerAgent.spec.prompt_version == "2026-10-31-cap-40"
 
 
 # -- no number: an honest question, and nothing renders around it (P12, P15) -----------------

@@ -1,0 +1,28 @@
+{
+  "about": "Leverkusen M4 run 1, 2026-10-31 (prod 9ea7858ae, iOS build 1819, protocol 25), thread eeac2d3b-11e7-4064-9614-c31eba060b51, plan item 86263a6c-348d-4fe5-9301-d279d8864185. KRI-1122. `request` is the creator's first message verbatim. `planned_intents` are the clip operations prod planned for it: the 16 the turn-3 resolver received (admin proposal trace, ids/ops/attributes/creator_text as recorded) plus the two labels the creator had to withdraw to fit the old cap of 16 (\"Warm-up\", \"Away end\"). Quotes are exact substrings of `request`; prod's planner output is redacted, so they are reconstructed, not captured. Replayed through the real parser, no model call.",
+  "request": "Tell the evening as a story, in this order: the stadium from outside, the entrance gate, the Nürnberg team bus, my selfie with Taha, the warm-up, the light show, the 0:0 with the pyro, the Nürnberg fans, the first goal, and the Nürnberg players thanking their fans at the end. Skip the photo that's too dark to see anything. Keep the light show even though it's dark, that's the show. Short labels: \"Arrival\" on the stadium, \"Warm-up\", \"Kick-off\" on the 0:0, \"Away end\" on the Nürnberg fans, \"GOAL\" on the goal and \"Full time\" on the last one. Only the goal keeps its sound. Make it 20 seconds.",
+  "live_replies_at_cap_16": [
+    "I understood 16 of your clip instructions. I couldn't safely verify \"label: the warm-up\"; \"label: the last one\"; I can apply at most 16 clip instructions at a time, so 1 more weren't included. Please restate just those so I can add them.",
+    "I understood 16 of your clip instructions. I couldn't safely verify \"label: the first goal\"; \"label: the last photo, the Nürnberg players…\"; I can apply at most 16 clip instructions at a time, so 2 more weren't included. Please restate just those so I can add them."
+  ],
+  "planned_intents": [
+    {"intent_id": "order_stadium_outside", "op": "order", "attribute": "the stadium from outside", "source_quote": "the stadium from outside"},
+    {"intent_id": "order_entrance_gate", "op": "order", "attribute": "the entrance gate", "source_quote": "the entrance gate"},
+    {"intent_id": "order_nurnberg_bus", "op": "order", "attribute": "the Nürnberg team bus", "source_quote": "the Nürnberg team bus"},
+    {"intent_id": "order_selfie_taha", "op": "order", "attribute": "my selfie with Taha", "source_quote": "my selfie with Taha"},
+    {"intent_id": "order_warm_up", "op": "order", "attribute": "the warm-up", "source_quote": "the warm-up"},
+    {"intent_id": "order_light_show", "op": "order", "attribute": "the light show", "source_quote": "the light show"},
+    {"intent_id": "include_light_show", "op": "include", "attribute": "the light show", "source_quote": "Keep the light show even though it's dark"},
+    {"intent_id": "order_0_0_pyro", "op": "order", "attribute": "the 0:0 with the pyro", "source_quote": "the 0:0 with the pyro"},
+    {"intent_id": "label_0_0_pyro", "op": "label", "attribute": "the 0:0 with the pyro", "creator_text": "Kick-off", "source_quote": "\"Kick-off\" on the 0:0"},
+    {"intent_id": "order_nurnberg_fans", "op": "order", "attribute": "the Nürnberg fans", "source_quote": "the Nürnberg fans"},
+    {"intent_id": "order_first_goal", "op": "order", "attribute": "the first goal", "source_quote": "the first goal"},
+    {"intent_id": "order_nurnberg_players_thanking", "op": "order", "attribute": "the Nürnberg players thanking their fans at the end", "source_quote": "the Nürnberg players thanking their fans at the end"},
+    {"intent_id": "exclude_dark_photo", "op": "exclude", "attribute": "the photo that's too dark to see anything", "source_quote": "Skip the photo that's too dark to see anything"},
+    {"intent_id": "label_stadium_outside", "op": "label", "attribute": "the stadium from outside", "creator_text": "Arrival", "source_quote": "\"Arrival\" on the stadium"},
+    {"intent_id": "label_warm_up", "op": "label", "attribute": "the warm-up", "creator_text": "Warm-up", "source_quote": "\"Warm-up\""},
+    {"intent_id": "label_nurnberg_fans", "op": "label", "attribute": "the Nürnberg fans", "creator_text": "Away end", "source_quote": "\"Away end\" on the Nürnberg fans"},
+    {"intent_id": "label_first_goal", "op": "label", "attribute": "the first goal", "creator_text": "GOAL", "source_quote": "\"GOAL\" on the goal"},
+    {"intent_id": "label_nurnberg_players_thanking", "op": "label", "attribute": "the Nürnberg players thanking their fans at the end", "creator_text": "Full time", "source_quote": "\"Full time\" on the last one"}
+  ]
+}

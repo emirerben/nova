@@ -218,6 +218,15 @@
       ]
     },
     {
+      "id": "leverkusen-m4-clip-cap",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1122_m4_clip_cap_replay.py tests/agents/test_clip_intent_planner.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/m4_leverkusen_clip_cap.json",
+        "src/apps/api/tests/kria/test_kri1122_m4_clip_cap_replay.py"
+      ]
+    },
+    {
       "id": "kri-524-creation",
       "needs_native": true,
       "fixture_generator": "scripts/ios/kri-524-creation-e2e.py",
