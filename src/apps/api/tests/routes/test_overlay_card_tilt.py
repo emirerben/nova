@@ -9,6 +9,8 @@ compile dropped the angle. Rendering is `PlacedCardTiltTests` on the device engi
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -310,3 +312,31 @@ def test_the_capability_needs_the_flag_the_token_the_build_and_an_open_card_lane
     monkeypatch.setattr(gj.settings, "phone_render_verified_features", [])
     assert card_tilt_supported() is False
     assert gj._media_overlay_tilt_capability(variant, open_lane) is False
+
+
+_PARITY = json.loads(
+    (Path(__file__).parents[5] / "tests/fixtures/card-tilt-parity/v1.json").read_text()
+)
+
+
+@pytest.mark.parametrize("case", _PARITY["cases"], ids=lambda case: case["name"])
+def test_the_card_clip_the_compile_writes_is_the_one_the_device_parity_fixture_pins(case):
+    """`PlacedCardTiltTests` decodes these same clips on the device side and renders them."""
+    from app.pipeline.phone_subtitled_plan import compile_phone_subtitled_plan
+    from tests.pipeline.test_phone_subtitled_plan import (
+        _CUES,
+        _binding,
+        _overlay_card,
+        _photo_visual,
+    )
+
+    recipe = compile_phone_subtitled_plan(
+        (_binding(duration_s=10.0),),
+        caption_cues=_CUES,
+        visuals=(_photo_visual(),),
+        lanes=PhoneSubtitledLanes(overlays=[_overlay_card(rotation_deg=case["rotation_deg"])]),
+    )
+
+    clip = next(t for t in recipe.tracks if t.id == "subtitled-overlays").clips[0]
+    assert clip.model_dump(mode="json") == case["clip"]
+    assert ("clipTilt" in recipe.required_capabilities) is case["clip_tilt"]
