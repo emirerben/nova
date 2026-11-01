@@ -132,12 +132,15 @@ def test_the_finished_video_judges_the_clip_by_the_role_the_writer_gave_it() -> 
     assert NOT_ON_TALKING in refused.reason
 
 
-@pytest.mark.parametrize("language", ["en", "tr"])
-def test_the_receipt_says_the_voice_keeps_playing(language: str) -> None:
+@pytest.mark.parametrize(
+    ("language", "reason"),
+    [
+        ("en", "That clip plays without its own sound, so your voice keeps playing over it"),
+        ("tr", "O klip kendi sesi olmadan oynuyor, sesin üzerinde çalmaya devam ediyor"),
+    ],
+)
+def test_the_receipt_says_the_voice_keeps_playing(language: str, reason: str) -> None:
     from app.kria.reply_language import reply_language_for
 
     with reply_language_for(language):
-        reason = check_requirement(_req("r4"), _draft()).reason
-
-    assert reason
-    assert NOT_ON_TALKING not in reason
+        assert check_requirement(_req("r4"), _draft()).reason == reason
