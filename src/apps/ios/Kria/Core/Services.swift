@@ -180,6 +180,7 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     /// One page of chats, newest first. `nextCursor` is nil on the last page.
     func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation
     func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript
     func generateMedia(itemID: String, body: GeneratedMediaRequest) async throws -> GeneratedMediaOperation
@@ -348,6 +349,7 @@ struct DictationTranscriptResponse: Decodable, Equatable, Sendable {
 }
 
 extension KriaAPIClient {
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan { throw APIError.unsupported }
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation { throw APIError.unsupported }
 
     func generatedNarrationScript(itemID: String) async throws -> GeneratedNarrationScript { throw APIError.unsupported }
@@ -1393,6 +1395,9 @@ struct KriaAPI: KriaAPIClient {
         return ProjectPage(projects: result.value.map(\.summary), nextCursor: result.response.value(forHTTPHeaderField: "X-Next-Cursor"))
     }
     func project(threadID: UUID) async throws -> CreationThread { try await request(path: "creation-threads/\(threadID.uuidString)", method: "GET", query: [URLQueryItem(name: "projection", value: "full")], bodyData: nil, decode: CreationThread.self) }
+    func overlayPlan(itemID: String, body: OverlayPlanRequest) async throws -> OverlayPlan {
+        try await request(path: "plan-items/\(itemID)/overlay-plan", method: "POST", bodyData: JSONEncoder().encode(body), decode: OverlayPlan.self)
+    }
     func generatedMediaByEvent(itemID: String, clientEventID: String) async throws -> GeneratedMediaOperation {
         try await request(path: "plan-items/\(itemID)/generated-media/by-event/\(clientEventID)", method: "GET", bodyData: nil, decode: GeneratedMediaOperation.self)
     }

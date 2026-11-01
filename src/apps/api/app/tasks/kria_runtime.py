@@ -35,6 +35,7 @@ from app.kria.brief import (
     apply_updates,
     load_latest_brief_sync,
     persist_brief_version_sync,
+    removed_target_ids,
     render_brief_request,
 )
 from app.kria.brief_binding import BriefBindingRequestTooLongError
@@ -1441,7 +1442,9 @@ def _append_automatic_omissions_sync(
     unsupported text/style requirement after compiling the draft.  ``source_turn_id``
     stays NULL because the first version already owns the turn's source updates.
     """
-    merged = apply_updates(brief, updates, source_turn_id=None)
+    merged = apply_updates(
+        brief, updates, source_turn_id=None, server_removed_ids=removed_target_ids(updates)
+    )
     next_version = (
         int(
             db.execute(
@@ -2248,6 +2251,9 @@ def _complete_draft_turn(
                 readiness_reply,
             )
             from app.kria.brief_binding import snapshot_media as _readiness_media  # noqa: PLC0415
+            from app.services.phone_montage_preflight import (  # noqa: PLC0415
+                readiness_plan_blockers,
+            )
 
             if brief is None:
                 brief = load_latest_brief_sync(db, thread.id)
@@ -2274,6 +2280,23 @@ def _complete_draft_turn(
                 draft_research.prepared.model_dump(mode="json")
                 if draft_research is not None
                 else None
+            )
+            # Leverkusen M2 run 3: a speed ask the phone montage plan can't place is said
+            # before the card here too (readiness skipped the KRI-775 plan above).
+            _readiness_blockers = (
+                readiness_plan_blockers(
+                    db,
+                    creator_id=thread.creator_id,
+                    item=item,
+                    brief=brief,
+                    strategy=document.strategy,
+                    media_snapshot=planned.media_snapshot
+                    if planned.media_snapshot is not None
+                    else _readiness_media(item),
+                    client_protocol=client_protocol,
+                )
+                if document.editor_payload is None
+                else []
             )
             readiness_report = assess_readiness(
                 brief,
@@ -2304,6 +2327,7 @@ def _complete_draft_turn(
                 order_source_context=_order_source_context_sync(
                     db, brief=brief, item_id=item.id, creator_id=thread.creator_id
                 ),
+                plan_blockers=_readiness_blockers,
             )
             policy_reasons = _policy_text_reasons(brief, planned.policy_omitted_texts)
             readiness_report["requirements"] = [
@@ -2474,6 +2498,7 @@ def _complete_draft_turn(
                     thread_id=thread.id,
                     turn_id=turn.id,
                     updates=effective_brief_updates,
+                    server_removed_ids=removed_target_ids(effective_brief_updates),
                 )
             if settings.kria_choice_questions_enabled:
                 brief = answered_brief(brief, document.strategy)
@@ -2528,6 +2553,7 @@ def _complete_draft_turn(
                     order_source_context=_order_source_context_sync(
                         db, brief=brief, item_id=item.id, creator_id=thread.creator_id
                     ),
+                    plan_blockers=_readiness_blockers,
                 )
             requirement_receipts = [
                 {**receipt, "brief_version": brief.version} for receipt in requirement_receipts

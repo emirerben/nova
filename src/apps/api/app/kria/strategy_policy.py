@@ -38,6 +38,7 @@ from app.agents._schemas.creator_policy import (
     MAX_MAIN_CREATOR_SELECTED_MEDIA,
     USER_SONG_BACKGROUND_NOTICE,
     USER_SONG_CONTRACT_NOTICE,
+    USER_SONG_LIPSYNC_CARD_NOTICE,
     USER_SONG_LIPSYNC_SHAPE_NOTICE,
     USER_SONG_MISSING_CODE,
     USER_SONG_MISSING_MESSAGE,
@@ -179,6 +180,10 @@ _KNOWN_TR: dict[str, str] = {
         "zamanlamıyorum."
     ),
     USER_SONG_BACKGROUND_NOTICE: ("Şarkını bu düzenlemede arka plan müziği olarak kullanacağım."),
+    USER_SONG_LIPSYNC_CARD_NOTICE: (
+        "Dudak senkronu seçtin, o yüzden çekimlerini şarkına senkronluyorum; her birini "
+        "müziğe uyduğu yere koyuyorum."
+    ),
     USER_SONG_LIPSYNC_SHAPE_NOTICE: (
         "Dudak senkronlu düzenleme şarkını izler, o yüzden günlük vlog ya da tek kahraman "
         "kurgusu kullanmıyorum."
@@ -387,7 +392,9 @@ def song_captions_refusal(
     from app.pipeline.song_captions import captions_requested, mentions_lipsync  # noqa: PLC0415
 
     asked = captions_requested([creator_text], strategy.caption_style)
-    if not (asked and mentions_lipsync(creator_text)):
+    # The Lip-sync card is itself the lip-sync ask: its creator need not say the word.
+    lipsync_card = getattr(manifest, "chosen_format", None) == "lipsync"
+    if not (asked and (lipsync_card or mentions_lipsync(creator_text))):
         return None
     if getattr(manifest, "has_user_song", False) or getattr(manifest, "has_voiceover", False):
         return None

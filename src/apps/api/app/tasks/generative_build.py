@@ -7077,8 +7077,12 @@ def _plan_phone_unified_montage(
     creator_duration_proven: bool,
     approved_length_plan: Mapping[str, Any] | None,
     contract: Any,
+    assignments: Sequence[Mapping[str, Any]] = (),
 ) -> Any:
     """The phone montage plan of a job with no creator song (KRI-190).
+
+    ``assignments`` are the item's clip rows in the app's order: "clip 2" in the creator's
+    words is the second (Leverkusen M2 run 3).
 
     Deterministic: no model call, no storage, no write. The pre-approval check (KRI-775)
     runs this same plan on the brief, strategy and media snapshot approval pins, so a draft
@@ -7086,6 +7090,7 @@ def _plan_phone_unified_montage(
     """
     from app.kria.narration_notes import speech_order_approved  # noqa: PLC0415
     from app.pipeline.unified_montage import (  # noqa: PLC0415
+        app_clip_numbers,
         plan_unified_montage,
         skia_font_covers,
     )
@@ -7127,6 +7132,7 @@ def _plan_phone_unified_montage(
         # KRI-1029: "curved title" bends only for a build that draws `bend` (same stamp as
         # the freeze); otherwise the text stays straight and the receipt says so.
         text_bend=text_bend_planned_for(client_protocol),
+        clip_numbers=app_clip_numbers(assignments),
     )
 
 
@@ -7374,6 +7380,7 @@ def _run_phone_unified_montage_job(
                 creator_duration_proven=creator_duration_proven,
                 approved_length_plan=approved_length_plan,
                 contract=contract,
+                assignments=assignments,
             )
     # Complete the initial text lane before the canonical generation is pinned.
     # This uses the request already bound to this job, never a newer thread message.
@@ -19331,16 +19338,9 @@ def _carousel_boundary_duration(
     after_duration_s: float,
 ) -> float:
     """Render-safe boundary overlap: 0.1..1s, capped to 30% of both sides."""
-    requested = (
-        _CAROUSEL_MOMENT_TRANSITION_DURATION_S if requested_s is None else float(requested_s)
-    )
-    return round(
-        max(
-            0.0,
-            min(1.0, max(0.1, requested), before_duration_s * 0.3, after_duration_s * 0.3),
-        ),
-        3,
-    )
+    from app.services.guided_timeline import carousel_boundary_duration
+
+    return carousel_boundary_duration(requested_s, before_duration_s, after_duration_s)
 
 
 def _carousel_step_duration_s(step: Any) -> float:
@@ -20071,9 +20071,10 @@ def _insert_carousel_moment_step(
         inserted_duration_out["duration_s"] = duration_s
         if moment_cfg.get("timing_model") == "ripple_v1":
             inserted_duration_out["insertion_base_s"] = insertion_base_s
-            inserted_duration_out["ripple_duration_s"] = max(
-                0.0,
-                duration_s + old_boundary_overlap_s - incoming_overlap_s - outgoing_overlap_s,
+            from app.services.guided_timeline import carousel_ripple_duration
+
+            inserted_duration_out["ripple_duration_s"] = carousel_ripple_duration(
+                duration_s, old_boundary_overlap_s, incoming_overlap_s, outgoing_overlap_s
             )
 
     record_pipeline_event(

@@ -265,6 +265,12 @@ class ResolvedCreatorManifest(_CreatorModel):
     # a manifest with no song is byte-identical to before this field existed.
     has_user_song: bool = Field(default=False, exclude_if=lambda value: not value)
     user_song: UserSongFacts | None = Field(default=None, exclude_if=lambda value: value is None)
+    # The creator picked a picker card that carries a song default (Lip-sync): the server's
+    # hint, never a model output. Omitted from every serialization unless set, so a manifest
+    # for any other card is byte-identical (context/manifest hashes and prompt included).
+    chosen_format: Literal["lipsync"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     # KRI-1117: the creator's explicit background picked in the camera (a manifest media id).
     # Omitted from every serialization unless the `speaker_background` capability is open and a
     # pick exists, so every other manifest, hash and prompt is byte-identical.

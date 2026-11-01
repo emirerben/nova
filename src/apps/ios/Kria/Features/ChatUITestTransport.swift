@@ -21,7 +21,7 @@ enum ChatUITestTransport {
     }
 }
 
-private final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
+final class GeneratedMediaImageFixtureProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "generated-media-image.invalid" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -307,7 +307,13 @@ final class CreationChatFixture: @unchecked Sendable {
             // `KRIA_CHAT_TALKING_MAX_CLIPS`: Talking's cap. 10 is a server with KRI-719 multi-clip Talking on;
             // `1` is one with it off (a single pick then closes Apple's picker on its own).
             let talkingMaxClips = ProcessInfo.processInfo.environment["KRIA_CHAT_TALKING_MAX_CLIPS"].flatMap(Int.init) ?? 10
-            var capabilities: [String: Any] = ["formats": [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)].map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            // `KRIA_CHAT_LIPSYNC=1`: the server also offers the Lip-sync card (a montage underneath) and `media.song`.
+            // Off by default so the position of Voiceover and Talk to camera in the carousel stays what other tests expect.
+            let offersLipsync = ProcessInfo.processInfo.environment["KRIA_CHAT_LIPSYNC"] == "1"
+            var formatRows: [(String, String, Int)] = [("montage", "montage", 10), ("narrated", "narrated_planned", 10), ("talking_to_camera", "subtitled", talkingMaxClips), ("slides", "slides", 20)]
+            if offersLipsync { formatRows.append(("lipsync", "montage", 10)) }
+            var capabilities: [String: Any] = ["formats": formatRows.map { ["id": $0.0, "edit_format": $0.1, "max_clips": $0.2] as [String: Any] }, "runtime_versions": runtime == 2 ? [1, 2] : [1], "visuals_enabled": true]
+            if offersLipsync { capabilities["media"] = ["song": ["max": 1, "max_file_bytes": 52_428_800, "content_types": ["audio/mpeg", "audio/mp4"]]] }
             if ProcessInfo.processInfo.environment["KRIA_CHAT_PLAN_BLOCKS"] == "1" { capabilities["live_plan_review_enabled"] = true }
             // `-camera-roll-surface-fixture` (KRI-944): the Camera roll row in the drawer. The surface brings its own fixture API.
             if ProcessInfo.processInfo.arguments.contains("-camera-roll-surface-fixture") { capabilities["media_collections"] = true }
@@ -698,6 +704,7 @@ final class CreationChatFixture: @unchecked Sendable {
             }
             if action == "select_format" {
                 state["format"] = payload["format"]
+                if payload["format"] as? String == "lipsync" { state["edit_format"] = "montage" }
                 // A phone-render account's clip is an analysis proxy; the original stays on the iPhone.
                 let mediaID = DeviceRenderUITestFixture.scenario == nil ? "fixture-clip" : "analysis-proxy-fixture-clip"
                 if ProcessInfo.processInfo.environment["KRIA_CHAT_FIXTURE_MEDIA"] == "1" {

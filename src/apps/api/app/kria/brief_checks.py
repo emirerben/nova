@@ -382,6 +382,9 @@ class PlanFacts:
     # creator already knows about: noted (partial), never a failure.
     sequence_unlocated: tuple[str, ...] = ()
     sequence_unlocated_intent_ids: tuple[str | None, ...] = ()
+    # Leverkusen M2 run 3: (the creator's words, the clip's app number) of each named moment
+    # inside one of several clips that no cut is shown to hold (codes in _CLIP_MOMENT_CODES).
+    sequence_clip_moments: tuple[tuple[str, int | None], ...] = ()
     verified_order_execution: VerifiedOrderExecution | None = None
     # KRI-522: the spots ("first" / "last" / "then") whose stated sequence group landed,
     # read off the same outcomes. None = this plan cannot say (not a unified montage), so a
@@ -1297,6 +1300,19 @@ def plan_facts_from_unified_montage(record: Mapping[str, Any] | None) -> PlanFac
             if isinstance(row, Mapping)
             and row.get("op") == "order"
             and row.get("code") in _MOMENT_LIMIT_CODES
+        ),
+        sequence_clip_moments=tuple(
+            (
+                str(row.get("moment_words") or ""),
+                row["clip_number"]
+                if isinstance(row.get("clip_number"), int)
+                and not isinstance(row.get("clip_number"), bool)
+                else None,
+            )
+            for row in record.get("intent_outcomes") or []
+            if isinstance(row, Mapping)
+            and row.get("op") == "order"
+            and row.get("code") in _CLIP_MOMENT_CODES
         ),
         texts=tuple(
             str(text)
@@ -2459,6 +2475,7 @@ _MONTAGE_ORDER_FIELDS = (
     "sequence_conflicts",
     "sequence_unlocated",
     "sequence_unlocated_intent_ids",
+    "sequence_clip_moments",
     "sequence_spots_met",
     "route_start",
     "route_end",
@@ -3032,7 +3049,14 @@ _MOMENTS_NOT_LOCATED = (
 _MOMENTS_CREATOR_CALL = (
     "Some moments are your call: ones you said aren't in your clips, or let me pick"
 )
-_MOMENT_LIMIT_CODES = frozenset({"not_located", "delegated", "skipped"})
+# Leverkusen M2 run 3: a moment named inside one of several clips, which no cut is shown to
+# hold (``unified_montage._clip_moment_miss``). A limit like KRI-723's, never a hold-back: the
+# creator's order is still kept, and "make it without these" must not drop it.
+_MOMENT_NOT_IN_CLIP = (
+    "I couldn't confirm the part of the clip that plays shows the moment you named"
+)
+_CLIP_MOMENT_CODES = frozenset({"not_found_in_clip", "not_shown_in_clip"})
+_MOMENT_LIMIT_CODES = frozenset({"not_located", "delegated", "skipped", *_CLIP_MOMENT_CODES})
 # KRI-470 PR-G: what a required order says when it was not met.
 _ORDER_NOT_RECORDED = "I couldn't confirm the order your edit used."
 _ORDER_RULE_NOT_APPLIED = (
@@ -3040,6 +3064,25 @@ _ORDER_RULE_NOT_APPLIED = (
 )
 _ORDER_VERIFIED_ELSEWHERE = frozenset({"song_time", "confirmed", "editor", "attachment_order"})
 _PREFERENCE_STRENGTHS = frozenset({"preference", "prefer", "optional", "soft", "nice_to_have"})
+
+
+def _unlocated_moments_reason(facts: PlanFacts) -> str:
+    """Why a placed order is only partly done: named moments not shown to be playing.
+
+    A moment inside one of several clips names itself and its clip ("... : the "TOR" on the
+    big screen (clip 2)"); otherwise KRI-723's one-take sentences."""
+    if facts.sequence_clip_moments:
+        en = "; ".join(
+            f"{words} (clip {n})" if n else words for words, n in facts.sequence_clip_moments[:3]
+        )
+        tr = "; ".join(
+            f"{words} ({n}. klip)" if n else words for words, n in facts.sequence_clip_moments[:3]
+        )
+        return say(en=f"{_MOMENT_NOT_IN_CLIP}: {en}", tr=f"{_REASON_TR[_MOMENT_NOT_IN_CLIP]}: {tr}")
+    reason = (
+        _MOMENTS_NOT_LOCATED if "not_located" in facts.sequence_unlocated else _MOMENTS_CREATOR_CALL
+    )
+    return say(en=reason, tr=_REASON_TR[reason])
 
 
 def _order_is_required(req: BriefRequirement) -> bool:
@@ -3179,12 +3222,7 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     mode = order_mode(req)
     if mode == "any":
         if facts.sequence_unlocated:
-            reason = (
-                _MOMENTS_NOT_LOCATED
-                if "not_located" in facts.sequence_unlocated
-                else _MOMENTS_CREATOR_CALL
-            )
-            return _receipt(req, "partial", say(en=reason, tr=_REASON_TR[reason]))
+            return _receipt(req, "partial", _unlocated_moments_reason(facts))
         return _receipt(req, "met", None)  # any order is the order they asked for
     if mode == "random":
         return _check_random_order(req, facts)
@@ -3232,12 +3270,7 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
             )
         if honest:
             # KRI-723: placed as asked, but not every named moment is evidenced as itself.
-            reason = (
-                _MOMENTS_NOT_LOCATED
-                if "not_located" in facts.sequence_unlocated
-                else _MOMENTS_CREATOR_CALL
-            )
-            return _receipt(req, "partial", say(en=reason, tr=_REASON_TR[reason]))
+            return _receipt(req, "partial", _unlocated_moments_reason(facts))
     elif basis in _ARRIVAL_BASES and key != basis:
         # An order only the creator's words describe, and nothing in the plan applied
         # it: say so, never let a silent attachment order read as "done" (KRI-458).
@@ -3306,6 +3339,11 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
                 tr=(f"{n} klibin çekim zamanı yoktu, o yüzden bunları eklediğin sırada bıraktım."),
             ),
         )
+    if facts.sequence_clip_moments:
+        # Leverkusen M2 run 3: "Order: ... the TOR on the big screen" under a filming-order
+        # key was "Done" over clip 2's first seconds. Each clip is in its place; the moment
+        # named inside it is not shown to be the part that plays.
+        return _receipt(req, "partial", _unlocated_moments_reason(facts))
     if key in _CAPTURE_ORDER_KEYS and facts.ordering_choice == "group_first":
         # Honest: the creator picked grouping over strict filming order, so the order
         # holds inside each group only.
@@ -4609,6 +4647,7 @@ _REASON_TR: dict[str, str] = {
     _MOMENTS_CREATOR_CALL: (
         "Bazı anlar senin kararın: kliplerinde olmadığını söylediklerin ya da bana bıraktıkların"
     ),
+    _MOMENT_NOT_IN_CLIP: "Oynayan klip parçasının söylediğin anı gösterdiğini doğrulayamadım",
     _ORDER_NOT_RECORDED: "Düzenlemenin kullandığı sırayı doğrulayamadım.",
     _ORDER_RULE_NOT_APPLIED: (
         "Bu sıralama kuralını doğrulayamıyorum ve klipler kurala uyduğunu gösterebileceğim "
@@ -4874,6 +4913,7 @@ _FORMAT_LIMIT_EN: tuple[str, ...] = (
     _TYPEWRITER_STAYS_STRAIGHT,
     _MOMENTS_NOT_LOCATED,
     _MOMENTS_CREATOR_CALL,
+    _MOMENT_NOT_IN_CLIP,
     _FREEZE_NEEDS_FRAME,
     _FREEZE_FIRST_FRAME,
     _LIGHT_UNAVAILABLE,
@@ -10128,6 +10168,49 @@ def _check_clip_speed(req: BriefRequirement, row: Mapping[str, Any]) -> Requirem
         return _receipt(req, "not_possible", _SPEED_DROPPED)
     if status == "no_footage":
         return _receipt(req, "not_possible", _SPEED_NO_FOOTAGE)
+    number = row.get("clip_number")
+    if isinstance(number, int) and not isinstance(number, bool):
+        # Leverkusen M2 run 3: the creator named the clip ("the end of clip 2"), so the reply
+        # says what is missing there, never "which clip?". Each is the creator's call.
+        if status == "clip_not_in_edit":
+            return _receipt(
+                req,
+                "not_possible",
+                say(
+                    en=f"Clip {number} isn't in this video, so nothing plays at a different speed",
+                    tr=f"{number}. klip bu videoda yok, bu yüzden hiçbir yerin hızı değişmiyor",
+                ),
+            )
+        if status == "moment_not_found":
+            return _receipt(
+                req,
+                "not_possible",
+                say(
+                    en=(
+                        f"I couldn't find that moment in clip {number}, so it plays at normal "
+                        f"speed. I can slow down all of clip {number} instead"
+                    ),
+                    tr=(
+                        f"O anı {number}. klipte bulamadım, bu yüzden normal hızda oynuyor. "
+                        f"İstersen {number}. klibin tamamını yavaşlatabilirim"
+                    ),
+                ),
+            )
+        if status == "moment_not_shown":
+            return _receipt(
+                req,
+                "not_possible",
+                say(
+                    en=(
+                        f"The part of clip {number} in this video doesn't show that moment, so "
+                        "it plays at normal speed"
+                    ),
+                    tr=(
+                        f"Videodaki {number}. klip parçası o anı göstermiyor, bu yüzden normal "
+                        "hızda oynuyor"
+                    ),
+                ),
+            )
     return _receipt(req, "not_possible", _SPEED_NOT_GROUNDED)
 
 

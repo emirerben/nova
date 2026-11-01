@@ -158,6 +158,7 @@ from app.schemas.user_song import (
     SONG_ORDER_ANSWER_KEY,
     SONG_RANGE_ANSWER_KEY,
 )
+from app.services.anchor_exclusions import withdraw_excluded_anchors
 from app.services.choice_questions import (
     CONFLICT_ORDER_VS_GROUP,
     ORDER_VS_GROUP_OPTIONS,
@@ -182,7 +183,9 @@ from app.services.clip_intent_answers import persist_clip_intent_vision_answers
 from app.services.clip_intent_planning import (
     KeptLabel,
     PlannedIntentResolution,
+    authored_text_withdrawn,
     brief_label_asks,
+    excluded_anchors,
     kept_labels_from_strategy,
     plan_and_resolve_clip_intents,
     sequence_text_literals,
@@ -397,6 +400,7 @@ def _enrich_best_parts_snapshot(
     from app.services.creator_render_contract import build_render_contract  # noqa: PLC0415
     from app.services.length_planning import build_length_plan  # noqa: PLC0415
     from app.services.length_policy import creator_duration, natural_length_owner  # noqa: PLC0415
+    from app.services.named_moments import clip_moments  # noqa: PLC0415
 
     if natural_length_owner(strategy) not in {"footage", "voiceover", "song"}:
         return media_snapshot
@@ -456,6 +460,14 @@ def _enrich_best_parts_snapshot(
             window = (min(window[0], other[0]), max(window[1], other[1]))
             row.update(window_start_s=window[0], window_end_s=window[1])
         described[row["media_id"]] = window
+    # Leverkusen M2 run 3: a moment the creator named inside one clip of their stated order
+    # ("then the TOR on the big screen", clip 2 tapped for it) decides that clip's window when
+    # the clip's record places it; a sentence they described the clip by still wins. A moment
+    # no record places is said before approval instead (``_clip_moment_notice``).
+    for moment in clip_moments(strategy, media_snapshot):
+        found = moment.grounding.found
+        if found is not None and moment.media_id not in described and moment.media_id not in held:
+            described[moment.media_id] = (found.start_s, found.end_s)
 
     # KRI-824: a photo the creator gave its own seconds gets exactly that window. KRI-825:
     # so does every photo when the creator gave the photos a length as a group, and the
@@ -991,6 +1003,31 @@ async def _withdraw_stuck_pins(
     if withdrawal.notices:
         log.info("kria_stuck_pin_withdrawn", thread_id=str(thread_id))
     return withdrawal.updates, withdrawal.notices
+
+
+def _without_excluded_anchors(
+    planned: PlannedKriaTurn,
+    prior: CreativeBrief | None,
+    updates: tuple[BriefUpdate, ...],
+    notices: tuple[str, ...],
+) -> tuple[PlannedKriaTurn, tuple[BriefUpdate, ...], tuple[str, ...]]:
+    """KRI-1111: a brief first / last clip this turn's inventory left out comes off the brief.
+
+    The clip planning kept it off the picker (`excluded_anchors`); without this the brief
+    still names it and the next draft's render contract refuses on it. A draft says so with
+    its other notices; a reply that asks first (the clip picker) says so after its question.
+    """
+    excluded = turn_excluded_anchors.get()
+    if not excluded:
+        return planned, updates, notices
+    withdrawal = withdraw_excluded_anchors(prior, updates, excluded)
+    fresh = tuple(n for n in withdrawal.notices if n not in notices)
+    if fresh:
+        log.info("kria_excluded_anchor_withdrawn", positions=sorted(excluded))
+    if fresh and planned.plan.mode == "respond" and planned.plan.response:
+        response = " ".join([planned.plan.response.strip(), *fresh])
+        planned = replace(planned, plan=planned.plan.model_copy(update={"response": response}))
+    return planned, withdrawal.updates, (*notices, *fresh)
 
 
 def _fresh_if_declared(prior, updates, outputs):  # noqa: ANN001, ANN202
@@ -2175,6 +2212,11 @@ def _job_never_rendered(job: Any) -> bool:
     )
 
 
+# KRI-1111: the brief's first / last clips this turn's clip inventory left out instead of
+# placing (`excluded_anchors`), so `_plan_live_turn` takes them off the brief.
+turn_excluded_anchors: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
+    "kria_turn_excluded_anchors", default=None
+)
 # Why the last `_load_editor_target` in this task returned None (None = it did not miss).
 _editor_target_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "kria_editor_target_miss", default=None
@@ -3540,6 +3582,8 @@ async def _plan_turn_clip_intents(
     sequence_texts = sequence_text_literals(effective_brief)
     # KRI-1067: a filming-order brief's first / last clip the inventory may leave out.
     brief_anchors = stated_anchors(effective_brief) if wants_capture_order else {}
+    # KRI-1111: the creator withdrew every ask for clip text Kria writes ("leave the names out").
+    text_withdrawn = authored_text_withdrawn(effective_brief)
     await _kick_clip_understanding(item_id, intent_clips)
     # KRI-1125: one photo is never silently the answer for two ordered beats, and a typed
     # correction newer than the tap that caused it sends the beat back to the resolver.
@@ -3587,12 +3631,15 @@ async def _plan_turn_clip_intents(
         **({"sequence_texts": sequence_texts} if sequence_texts else {}),
         **({"checked_inventory": checked_inventory} if checked_inventory else {}),
         **({"brief_anchors": brief_anchors} if brief_anchors else {}),
+        **({"authored_text_asks_withdrawn": True} if text_withdrawn else {}),
         # KRI-692: a Voiceover edit draws no text on a spoken word, so such an ask is
         # never a clip question; its receipt tells the creator.
         **(
             {"spoken_text": spoken_text} if spoken_text and _is_voiceover_strategy(strategy) else {}
         ),
     )
+    if brief_anchors:
+        turn_excluded_anchors.set(excluded_anchors(planned.requested_intents, brief_anchors))
     return planned, thread_events
 
 
@@ -5645,6 +5692,11 @@ async def _gate_unresolved_choices(
     pin_notices = [n for n in planned.pin_notices if n not in planned.policy_notices]
     if pin_notices:
         planned = replace(planned, policy_notices=(*planned.policy_notices, *pin_notices))
+    # Leverkusen M2 run 3: a moment named inside a tapped clip that no record places is said
+    # before the card, on both replies, never only after the render.
+    moment_notice = _clip_moment_notice(strategy, enriched_snapshot)
+    if moment_notice and moment_notice not in planned.policy_notices:
+        planned = replace(planned, policy_notices=(*planned.policy_notices, moment_notice))
     model_summary = str(arguments.get("summary") or "")
     plan_notices = [
         notice
@@ -5655,6 +5707,7 @@ async def _gate_unresolved_choices(
             _moment_count_notice(strategy, brief, length_plan, summary=model_summary),
             song_notice,
             *planned.pin_notices,
+            moment_notice,
         )
         if notice
     ]
@@ -5812,6 +5865,61 @@ def _moment_decision(
         default_window_s=(ask.each_s if ask is not None and ask.each_s else DEFAULT_MOMENT_S),
         inspections=inspections,
     )
+
+
+def _clip_moment_notice(
+    strategy: Mapping[str, Any], media_snapshot: Mapping[str, Any] | None
+) -> str | None:
+    """Leverkusen M2 run 3: the moments the creator named inside a clip they tapped for them
+    ("then the TOR on the big screen": clip 2) that the clip's record can't place, with the
+    part of that clip the length plan plays. Before this the draft and the card were silent
+    and the finished video's review said "Done" over the clip's first seconds. A clip that
+    plays whole shows the moment wherever it is, and a placed moment seats its own window
+    (``_enrich_best_parts_snapshot``): neither is said. No model call.
+    """
+    from app.pipeline.unified_montage import app_clip_numbers  # noqa: PLC0415
+    from app.services.named_moments import WHOLE_CLIP_SLACK_S, clip_moments  # noqa: PLC0415
+
+    if not isinstance(media_snapshot, Mapping):
+        return None
+    plan = media_snapshot.get("length_plan")
+    windows = plan.get("windows") if isinstance(plan, Mapping) else None
+    if not isinstance(windows, list):
+        return None
+    rows = [row for row in media_snapshot.get("clip_assignments") or [] if isinstance(row, Mapping)]
+    numbers = app_clip_numbers(rows)
+    lengths = {str(row.get("media_id")): row.get("duration_s") for row in rows}
+    lines: list[str] = []
+    told: set[str] = set()
+    for moment in clip_moments(strategy, media_snapshot):
+        if not moment.tapped or moment.grounding.found is not None or moment.media_id in told:
+            continue
+        parts = [
+            (float(w["source_start_s"]), float(w["source_end_s"]))
+            for w in windows
+            if isinstance(w, Mapping) and w.get("media_id") == moment.media_id
+        ]
+        length = lengths.get(moment.media_id)
+        if not parts or not isinstance(length, (int, float)) or moment.media_id not in numbers:
+            continue
+        if any(end - start >= float(length) - WHOLE_CLIP_SLACK_S for start, end in parts):
+            continue
+        told.add(moment.media_id)
+        n = numbers.index(moment.media_id) + 1
+        start, end = parts[0]
+        lines.append(
+            say(
+                en=(
+                    f"I couldn't find {moment.words} in clip {n} on my own, so clip {n} plays "
+                    f"from {start:.1f} s to {end:.1f} s and may not show it."
+                ),
+                tr=(
+                    f"{n}. klipte \u201c{moment.words}\u201d kısmını kendim bulamadım; {n}. "
+                    f"klibin {start:.1f}-{end:.1f} sn arası oynuyor ve bunu göstermeyebilir."
+                ),
+            )
+        )
+    return " ".join(lines[:2]) or None
 
 
 # The apply-strategy summary holds 1000 characters (``ApplyStrategyArguments``).
@@ -6824,6 +6932,7 @@ async def _plan_live_turn(
             thread_id=str(thread_id),
             item_id=str(item_id),
         )
+    turn_excluded_anchors.set(None)
     planned = await _plan_from_creator_output(
         db,
         thread_id=thread_id,
@@ -6849,6 +6958,9 @@ async def _plan_live_turn(
         # about the script, so it must not become a timing requirement on the video, and
         # nothing the brief already holds changes.
         return planned
+    planned, updates, pin_notices = _without_excluded_anchors(
+        planned, prior_brief, updates, pin_notices
+    )
     return replace(
         planned,
         brief_updates=updates,
