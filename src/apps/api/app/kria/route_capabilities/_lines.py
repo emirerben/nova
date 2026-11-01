@@ -170,6 +170,26 @@ def title_animation(value: Any, _s: Mapping[str, Any]) -> str | None:
     )
 
 
+def title_animation_from_ask(value: Any) -> str:
+    """The planned title animation when the creator's own animation ask sets the entrance."""
+    return say(
+        en=f"I'm not using the planned title animation ({_words(value)}): the title follows "
+        "your own animation ask",
+        tr=f"Planlanan başlık animasyonunu ({_words(value)}) kullanmıyorum: başlık senin "
+        "animasyon isteğini izliyor",
+    )
+
+
+def title_animation_as_fade(value: Any) -> str:
+    """The planned title animation on a phone that plays only the legacy text effects."""
+    return say(
+        en=f"This phone can't play the title animation ({_words(value)}) yet, so the title "
+        "fades in instead",
+        tr=f"Bu telefon başlık animasyonunu ({_words(value)}) henüz oynatamıyor, o yüzden başlık "
+        "onun yerine yavaşça beliriyor",
+    )
+
+
 def label_position(value: Any, _s: Mapping[str, Any]) -> str | None:
     if not value:
         return None
@@ -378,6 +398,34 @@ def title_position_decline() -> str:
     return say(en=TITLE_POSITION_DECLINE_EN, tr=TITLE_POSITION_DECLINE_TR)
 
 
+# A route whose one animated text is the title, for an animation ask the title does not play:
+# another of the creator's asks set its one entrance, or the phone plays the asked edge as the
+# fade (it plays only the legacy text effects).
+TITLE_ENTRANCE_TAKEN_DECLINE_EN = (
+    "I can give the title only one entrance on this video, so it follows another of your asks, "
+    "not this one"
+)
+TITLE_ENTRANCE_TAKEN_DECLINE_TR = (
+    "Bu videoda başlığa yalnızca tek bir giriş verebiliyorum, o yüzden bu isteğini değil, başka "
+    "bir isteğini izliyor"
+)
+TITLE_ENTRANCE_FADE_DECLINE_EN = (
+    "I can't play that title entrance on this phone yet, so the title fades in instead"
+)
+TITLE_ENTRANCE_FADE_DECLINE_TR = (
+    "Bu başlık girişini bu telefonda henüz oynatamıyorum, o yüzden başlık onun yerine yavaşça "
+    "beliriyor"
+)
+
+
+def title_entrance_taken_decline() -> str:
+    return say(en=TITLE_ENTRANCE_TAKEN_DECLINE_EN, tr=TITLE_ENTRANCE_TAKEN_DECLINE_TR)
+
+
+def title_entrance_fade_decline() -> str:
+    return say(en=TITLE_ENTRANCE_FADE_DECLINE_EN, tr=TITLE_ENTRANCE_FADE_DECLINE_TR)
+
+
 # Every route-decline reason, both languages: `route_disclosure.is_route_decline_reason`.
 DECLINE_PREFIXES: tuple[str, ...] = (
     ANIMATION_DECLINE_EN,
@@ -386,6 +434,10 @@ DECLINE_PREFIXES: tuple[str, ...] = (
     CAPTIONS_DECLINE_TR,
     TITLE_POSITION_DECLINE_EN,
     TITLE_POSITION_DECLINE_TR,
+    TITLE_ENTRANCE_TAKEN_DECLINE_EN,
+    TITLE_ENTRANCE_TAKEN_DECLINE_TR,
+    TITLE_ENTRANCE_FADE_DECLINE_EN,
+    TITLE_ENTRANCE_FADE_DECLINE_TR,
 )
 
 

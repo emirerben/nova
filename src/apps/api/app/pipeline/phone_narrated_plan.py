@@ -153,6 +153,7 @@ resolved in this module.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -334,25 +335,79 @@ def _follows_prompt() -> bool:
     return bool(settings.narrated_route_follows_prompt_enabled)
 
 
-def narrated_title_edge(
-    strategy: Mapping[str, Any] | None, requirements: Iterable[Any] | None
-) -> str | None:
-    """The entrance the opening title plays for this plan and these asks, else None.
+# The entrance of a title that shows without motion (`TextAnimationEdge`): an ask for none.
+TITLE_STILL = "none"
 
-    The opening title is the one text this route can animate. A typed animation ask on the
-    title or the whole video (`animation_ask` with ``styles=True``: a text or style ask) and
-    the plan's ``title_animation`` reach its entrance, in this order: a title ask that names an
-    edge, the plan's, a whole-video ask that names one, then the default fade for an ask that
-    names none. A per-clip ask has no text to animate on this route. A phone that plays only the
-    legacy effects plays a designed edge as the fade, so that is the edge returned. None when the
-    phone plays no text entrance (`text_entrance_form`) or the lane switch is off.
+
+def title_motion_ask(req: Any) -> tuple[str, str | None] | None:
+    """``(scope, edge)`` for a live title or whole-video animation ask, else None.
+
+    A text or style ask (`animation_ask` with ``styles=True``) on the title or the whole
+    video: ``edge`` is the edge it names, None when it names none, `TITLE_STILL` when it asks
+    for no motion ("none", "static": the values `animation_ask` reads as no ask). A per-clip
+    or clip ask has no text to animate on this route.
+    """
+    from app.kria.animation_ask import (  # noqa: PLC0415
+        _OFF_VALUES,
+        animates_text_kind,
+        animation_ask,
+    )
+    from app.text_fold import loose_text  # noqa: PLC0415
+
+    ask = animation_ask(req, styles=True)
+    if ask is not None:
+        return (ask.scope, ask.edge) if ask.scope in {"title", "global"} else None
+    if not animates_text_kind(req, styles=True) or not getattr(req, "live", True):
+        return None
+    scope = str(getattr(req, "scope", "") or "global")
+    value = (getattr(req, "facts", None) or {}).get("animation")
+    if scope in {"title", "global"} and isinstance(value, str) and loose_text(value) in _OFF_VALUES:
+        return scope, TITLE_STILL
+    return None
+
+
+@dataclass(frozen=True)
+class NarratedTitleMotion:
+    """How the opening title enters for one plan and its asks (`narrated_title_motion`).
+
+    ``wanted`` is the edge the deciding ask or the plan names (`TITLE_STILL`: no motion);
+    ``edge`` is what the phone plays: ``wanted``, except that a phone that plays only the
+    legacy effects plays a designed edge as the default fade. ``by`` is the deciding ask, None
+    when the plan or the default fade for an unnamed ask decided.
+    """
+
+    edge: str
+    wanted: str
+    by: Any = None
+
+    def meets(self, req: Any) -> bool:
+        """``req`` gets the entrance it asks for: its named edge, any motion when it names
+        none, no motion when it asks for none."""
+        asked = title_motion_ask(req)
+        if asked is None:
+            return False
+        edge = asked[1]
+        return self.edge != TITLE_STILL if edge is None else self.edge == edge
+
+
+def narrated_title_motion(
+    strategy: Mapping[str, Any] | None, requirements: Iterable[Any] | None
+) -> NarratedTitleMotion | None:
+    """How the opening title enters for this plan and these asks, else None.
+
+    The opening title is the one text this route can animate. The creator's own asks come
+    first (`title_motion_ask`, in brief order): a title ask that names an edge or asks for no
+    motion, then a whole-video one (a whole-video "no motion" yields to a title ask for motion),
+    then the plan's ``title_animation``, then the default fade for an ask that names none. The
+    title plays one entrance, so the first deciding ask wins; `NarratedTitleMotion.meets` says
+    which asks that leaves out. None when the lane switch is off, the phone plays no text
+    entrance (`text_entrance_form`) or nothing asks for one.
     """
     if not _follows_prompt():
         return None
     from app.agents._schemas.text_animation_phases import LEGACY_EFFECT_ENTRANCE  # noqa: PLC0415
     from app.kria.animation_ask import (  # noqa: PLC0415
         DEFAULT_TEXT_ENTRANCE,
-        animation_ask,
         entrance_patch,
         text_entrance_form,
     )
@@ -361,34 +416,45 @@ def narrated_title_edge(
     form = text_entrance_form()
     if form is None:
         return None
-    asks = [
-        ask
-        for req in requirements or ()
-        if (ask := animation_ask(req, styles=True)) is not None and ask.scope in {"title", "global"}
-    ]
-    titled = next((ask.edge for ask in asks if ask.scope == "title" and ask.named), None)
+    asks = [(req, asked) for req in requirements or () if (asked := title_motion_ask(req))]
+    titled = [(req, edge) for req, (scope, edge) in asks if scope == "title"]
+    deciding = next(((req, edge) for req, edge in titled if edge is not None), None) or next(
+        (
+            (req, edge)
+            for req, (scope, edge) in asks
+            if scope == "global" and edge is not None and not (titled and edge == TITLE_STILL)
+        ),
+        None,
+    )
     planned = normalize_title_animation((strategy or {}).get("title_animation"))
-    whole = next((ask.edge for ask in asks if ask.scope == "global" and ask.named), None)
-    edge = titled or planned or whole or (DEFAULT_TEXT_ENTRANCE if asks else None)
-    if edge is not None and form == "effect":
-        return LEGACY_EFFECT_ENTRANCE.get(
-            entrance_patch(edge, form)["effect"], DEFAULT_TEXT_ENTRANCE
+    if deciding is not None:
+        by, wanted = deciding
+    elif planned is not None:
+        by, wanted = None, planned
+    elif asks:
+        by, wanted = None, DEFAULT_TEXT_ENTRANCE
+    else:
+        return None
+    edge = wanted
+    if form == "effect" and wanted != TITLE_STILL:
+        edge = LEGACY_EFFECT_ENTRANCE.get(
+            entrance_patch(wanted, form)["effect"], DEFAULT_TEXT_ENTRANCE
         )
-    return edge
+    return NarratedTitleMotion(edge, wanted, by)
 
 
 def narrated_title_entrance(
     strategy: Mapping[str, Any] | None, requirements: Iterable[Any] | None
 ) -> dict[str, Any] | None:
-    """The title-row patch that plays `narrated_title_edge` in the form the phone plays
-    (`animation_ask.entrance_patch`), else None."""
-    edge = narrated_title_edge(strategy, requirements)
-    if edge is None:
+    """The title-row patch that plays `narrated_title_motion`'s edge in the form the phone
+    plays (`animation_ask.entrance_patch`), else None."""
+    motion = narrated_title_motion(strategy, requirements)
+    if motion is None:
         return None
     from app.kria.animation_ask import entrance_patch, text_entrance_form  # noqa: PLC0415
 
     form = text_entrance_form()
-    return entrance_patch(edge, form) if form is not None else None
+    return entrance_patch(motion.edge, form) if form is not None else None
 
 
 def _draws_entrance(layer: Any, entrance: Mapping[str, Any] | None) -> bool:
@@ -399,7 +465,13 @@ def _draws_entrance(layer: Any, entrance: Mapping[str, Any] | None) -> bool:
     if phases is not None:
         drawn = getattr(layer, "animation_phases", None)
         return drawn is not None and drawn.entrance == phases.get("entrance")
-    return getattr(layer, "effect", None) == entrance.get("effect")
+    from app.agents._schemas.text_animation_phases import LEGACY_EFFECT_ENTRANCE  # noqa: PLC0415
+
+    played = LEGACY_EFFECT_ENTRANCE.get(str(entrance.get("effect")))
+    return (
+        played is not None
+        and LEGACY_EFFECT_ENTRANCE.get(str(getattr(layer, "effect", None))) == played
+    )
 
 
 def narrated_title_element(
@@ -859,7 +931,7 @@ def compile_phone_narrated_plan(
 
     ``strategy`` / ``requirements`` (KRI-1097 wave 2, ``NARRATED_ROUTE_FOLLOWS_PROMPT_ENABLED``):
     the approved plan and the brief's live asks. The plan's ``title_animation`` and a typed
-    animation ask become the opening title's entrance (`narrated_title_edge`), and the plan's
+    animation ask become the opening title's entrance (`narrated_title_motion`), and the plan's
     ``opening_title`` is the title when the caller passes none. An entrance the title cannot be
     compiled with falls back to the plain title: an ask never costs the creator the video.
     With the switch off neither is read.

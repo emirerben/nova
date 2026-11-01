@@ -49,7 +49,12 @@ from app.kria.route_capabilities import (
 )
 from app.kria.route_capabilities import _legacy_unified as legacy_unified
 from app.kria.route_capabilities import _lines as lines
-from app.kria.route_capabilities._types import NOT_APPLIED_ON_ROUTE, RECORDED_ONLY_ON_ROUTE
+from app.kria.route_capabilities._types import (
+    NOT_APPLIED_ON_ROUTE,
+    RECORDED_ONLY_ON_ROUTE,
+    AskDecline,
+    GivenAsks,
+)
 
 NOT_APPLIED = NOT_APPLIED_ON_ROUTE
 RECORDED_ONLY = RECORDED_ONLY_ON_ROUTE
@@ -191,6 +196,17 @@ def is_route_decline_reason(reason: object) -> bool:
     return isinstance(reason, str) and any(reason.startswith(p) for p in ROUTE_DECLINE_PREFIXES)
 
 
+def _declines(
+    ask: AskDecline,
+    req: BriefRequirement,
+    strategy: Mapping[str, Any],
+    live: Sequence[BriefRequirement],
+) -> bool:
+    """``ask`` declines ``req``; a `GivenAsks` test also reads the brief's live asks."""
+    test = ask.applies
+    return test.test(req, strategy, live) if isinstance(test, GivenAsks) else test(req, strategy)
+
+
 def ask_declines(
     requirements: Iterable[BriefRequirement],
     strategy: Mapping[str, Any] | None,
@@ -203,11 +219,10 @@ def ask_declines(
         return []
     asks = table.ASK_DECLINES
     strategy = strategy or {}
+    live = [req for req in requirements if req.live]
     out: list[Disclosure] = []
-    for req in requirements:
-        if not req.live:
-            continue
-        decline = next((ask for ask in asks if ask.applies(req, strategy)), None)
+    for req in live:
+        decline = next((ask for ask in asks if _declines(ask, req, strategy, live)), None)
         if decline is not None:
             out.append(
                 Disclosure(NOT_APPLIED, decline.subject, decline.sentence(), requirement_id=req.id)
