@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.73.0] - 2026-11-01
+
+### Changed
+- feat(ios): declare the push entitlement for notification registration (KRI-1087) (#2021) <!-- release-pr: 2021 -->
+
 ## [0.83.72.0] - 2026-11-01
 
 ### Changed
