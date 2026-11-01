@@ -230,3 +230,157 @@ def test_a_text_group_that_fits_nowhere_is_kept_with_a_receipt(events):
     receipts = [data for name, data in events if name == "text_fit_relaxed"]
     assert receipts and {data["rung"] for data in receipts} == {"text_group"}
     assert {data["row_id"] for data in receipts} <= {r["id"] for r in rows}
+
+
+def test_a_text_group_keeps_the_position_requested_this_turn(events):
+    rows = resolve_phone_text_style(
+        stack_rows(),
+        preferences={},
+        requested={"all_text": {"position": "top_right"}},
+        excluded_boxes=[{"start_s": 0, "end_s": 60, "box": (0.4, 0.05, 1.0, 0.45), "kind": "face"}],
+    )
+    assert {r["alignment"] for r in rows} == {"right"}
+    assert max(r["y_frac"] for r in rows) < 0.5
+    receipts = [data for name, data in events if name == "text_fit_relaxed"]
+    assert receipts and {data["requested_position"] for data in receipts} == {"top_right"}
+
+
+def test_a_text_group_gives_way_to_a_face_before_the_device_watermark(events):
+    rows = resolve_phone_text_style(
+        stack_rows(),
+        preferences={"all_text": {"position": "bottom_left"}},
+        requested={},
+        excluded_boxes=[],
+    )
+    receipts = [data for name, data in events if name == "text_fit_relaxed"]
+    assert not [data for data in receipts if "watermark" in data["overlaps"]]
+    assert [r["id"] for r in rows] == [f"guided-pinned-{i}" for i in range(3)]
+
+
+def test_a_pin_stays_in_the_corner_the_creator_confirmed(events):
+    pin = row(
+        "pinned", "Maltepe stadı teklifi, 24 Ekim", x_frac=0.06, y_frac=0.86, alignment="left"
+    )
+    rows = resolve_phone_text_style(
+        [pin],
+        preferences={},
+        requested={},
+        excluded_boxes=[
+            {"start_s": 0, "end_s": 60, "box": (0.0, 0.40, 1.0, 0.80), "kind": "caption"}
+        ],
+    )
+    assert rows[0]["alignment"] == "left"
+    assert rows[0]["y_frac"] > 0.5
+    receipts = [data for name, data in events if name == "text_fit_relaxed"]
+    assert [data["row_id"] for data in receipts] == ["pinned-0"]
+
+
+@pytest.mark.parametrize("box", [(0.35, 0.05, 0.65, 0.45), (0.3, 0.05, 0.7, 0.45)])
+def test_a_title_that_fit_before_keeps_its_place(box, events):
+    rows = resolve_phone_text_style(
+        [row("title")],
+        preferences={"all_text": {"position": "top"}},
+        requested={},
+        excluded_boxes=[{"start_s": 0, "end_s": 60, "box": box, "kind": "face"}],
+    )
+    assert rows[0]["alignment"] == "center"
+    assert rows[0]["size_px"] == 76
+    assert rows[0]["y_frac"] > 0.6
+    assert not [name for name, _ in events if name == "text_fit_relaxed"]
+
+
+def test_the_resolved_event_names_only_the_rows_it_relaxed(events):
+    from app.pipeline.phone_text_style import phone_text_measurement_scope
+
+    with phone_text_measurement_scope():
+        resolve_phone_text_style(
+            [row("caption")],
+            requested={"all_text": {"position": "bottom_left"}},
+            excluded_boxes=deepcopy(OBSTACLE_SETS["face_and_caption"]),
+        )
+        resolve_phone_text_style([row("title")], preferences={}, requested={})
+    resolved = [data for name, data in events if name == "phone_text_style_resolved"]
+    assert resolved[0]["text_fit_relaxed_ids"] == ["caption-0"]
+    assert resolved[1]["text_fit_relaxed_ids"] == []
+
+
+@pytest.mark.parametrize("cue_count", [8, 40])
+def test_caption_placement_does_not_starve_the_rows_styled_after_it(cue_count, events):
+    from app.services import phone_text_styling as styling
+
+    cues = [
+        {
+            "text": f"Bu {i}. cümle Kadıköy'ü istediler ve stat teklifi geldi",
+            "start_s": float(i),
+            "end_s": float(i + 1),
+        }
+        for i in range(cue_count)
+    ]
+
+    def policy():
+        base = deepcopy(FIXTURE["policy"])
+        base.update(
+            selected_fonts={"caption": "Inter", "title": "Inter", "label": "Inter"},
+            selection_roles=["caption", "title", "label", "pinned"],
+            _environment_sampled=True,
+            _background_frames=[],
+            _caption_boxes=[],
+            _face_boxes=[{"start_s": 0, "end_s": 60, "box": (0.2, 0.3, 0.8, 0.75), "kind": "face"}],
+        )
+        return base
+
+    def style_rows(with_captions):
+        rows = [
+            {
+                "position": "custom",
+                "font_family": "Inter",
+                "color": "#FFFFFF",
+                "stroke_width": 0,
+                "shadow_enabled": False,
+                "effect": "static",
+                **source,
+            }
+            for source in deepcopy(FIXTURE["rows"])
+        ]
+        events.clear()
+        with styling.phone_text_policy_scope(policy()):
+            if with_captions:
+                styling.generation_caption_look(cues, canvas=PORTRAIT)
+            styled = styling.generation_style_rows(rows, canvas=PORTRAIT)
+        relaxed = {data["row_id"] for name, data in events if name == "text_fit_relaxed"}
+        return styled, relaxed
+
+    alone, alone_relaxed = style_rows(False)
+    after_captions, after_relaxed = style_rows(True)
+    row_ids = {r["id"] for r in alone}
+    assert after_relaxed & row_ids == alone_relaxed & row_ids
+    for expected, actual in zip(alone, after_captions, strict=True):
+        for key in ("alignment", "x_frac", "y_frac", "size_px", "max_width_frac"):
+            assert actual[key] == expected[key], (actual["id"], key)
+
+
+def test_guided_story_faces_are_tagged_as_faces(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.pipeline import phone_guided_text_placement as placement
+    from app.services import phone_text_styling as styling
+
+    region = SimpleNamespace(
+        start_s=0.0, end_s=5.0, box=SimpleNamespace(left=0.3, top=0.3, right=0.7, bottom=0.5)
+    )
+    monkeypatch.setattr(
+        placement, "build_phone_face_sampler", lambda *_a, **_k: lambda *_b: ([region], {})
+    )
+    seen = {}
+    monkeypatch.setattr(
+        styling, "generation_style_rows", lambda rows, **kw: seen.update(kw) or rows
+    )
+    plan = SimpleNamespace(
+        output_orientation="portrait",
+        direction="",
+        model_dump=lambda **_: {
+            "text_elements": [{"id": "guided-title", "text": "x", "start_s": 0.0, "end_s": 3.0}]
+        },
+    )
+    styling.style_guided_generation(plan, [object()], job_id="job")
+    assert [box["kind"] for box in seen["excluded_boxes"]] == ["face"]
