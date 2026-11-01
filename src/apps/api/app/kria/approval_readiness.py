@@ -249,13 +249,14 @@ def _planned_order_basis(
     return planned if route == "unified_montage" else None
 
 
-def _no_pre_render_checker(req: Any) -> bool:
+def _no_pre_render_checker(req: Any, facts: Any) -> bool:
     """KRI-983: no draft check can settle this ask: none owns it, or its only check reads the
     finished video (`judged_at_render`). A researched-text ask and a keep-text-off mark are
     proven outside `_has_checker` (research preview, the mark route), so they still block."""
-    from app.kria.brief_checks import judged_at_render  # noqa: PLC0415
+    from app.kria.brief_checks import judged_at_render, text_words_met  # noqa: PLC0415
     from app.kria.protected_targets import KEEP_TEXT_OFF_KEY, _fact_entries  # noqa: PLC0415
     from app.kria.research_preview import RESEARCH_FACT  # noqa: PLC0415
+    from app.kria.style_asks import text_look_facts  # noqa: PLC0415
     from app.kria.text_sequence import is_text_sequence  # noqa: PLC0415
 
     if (req.kind == "text" and isinstance(req.facts.get(RESEARCH_FACT), Mapping)) or _fact_entries(
@@ -277,6 +278,12 @@ def _no_pre_render_checker(req: Any) -> bool:
     # the finished text lane: never a reason to hold approval (`unverified`, named after render).
     if asks_text_animation(req) and req.scope == "global" and not req.literal:
         return True
+    if req.kind == "text" and text_look_facts(req):
+        # KRI-1113 (thread 83f2dcaa, "Animate the title"): the words are checked on the draft;
+        # once they are there, what is left is a look only the finished video shows (a strategy
+        # draft has no text lane), and the render-time review judges it
+        # (`plan_facts_from_phone_variant`). Words the draft lacks still block.
+        return text_words_met(req, facts)
     # A text ask's words are checked on the draft even when its look is judged at render.
     return not _has_checker(req) or (req.kind != "text" and judged_at_render(req))
 
@@ -543,7 +550,7 @@ def assess_readiness(
             and not is_story_requirement
             # An editor draft is its own change set, so what its ops did not do is not done.
             and editor_payload is None
-            and _no_pre_render_checker(req)
+            and _no_pre_render_checker(req, facts)
             else "evidence_missing"
         )
         if req.id in declined and disposition in {"unverified", "evidence_missing"}:

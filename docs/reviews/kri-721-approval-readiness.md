@@ -196,5 +196,13 @@ clips", "make it feel dreamy"). KRI-774 and KRI-945 each patched one instance.
 Known gaps, not fixed here: a typed `audio_intent: noise_removal` and the Turkish
 "rüzgâr sesini kaldır" have no draft checker, so they are now approved as `unverified`
 instead of held. A text ask whose look only the finished video shows still blocks,
-because its words and its look share one receipt.
+because its words and its look share one receipt (closed by KRI-1113 below).
+
+KRI-1113 (prod thread 83f2dcaa, 2026-10-31): the "Animate the title" chip was held as
+"I can't confirm this draft does it yet." A text ask with look facts is now `unverified`
+when its words alone are checked and met on the draft (`brief_checks.text_words_met`);
+the render-time review still judges the look. Words the draft lacks still block. A
+curved-text ask is unchanged (its shape is not a look fact). "Make it without these" now
+also holds when the Main Creator restates exactly the offered asks on the answering turn;
+any other model update on that turn still needs its own offer.
 

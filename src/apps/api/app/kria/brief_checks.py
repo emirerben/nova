@@ -6945,6 +6945,21 @@ def _with_text_look(
     return _with_spoken_text_speaker(req, facts, base)
 
 
+def text_words_met(req: BriefRequirement, facts: PlanFacts) -> bool:
+    """KRI-1113: ``req``'s words, its look set aside, are checked and met on ``facts``.
+
+    `_with_text_look` keeps a text ask unchecked while its look (an entrance, a corner, a font,
+    a colour) can't be read, and a strategy draft has no text lane to read it from. This tells
+    "the words are there; only the finished video shows the look" from "the words are not".
+    """
+    look = text_look_facts(req)
+    words = req.model_copy(update={"facts": {k: v for k, v in req.facts.items() if k not in look}})
+    return any(
+        receipt.status == "met" and receipt.verification == "checked"
+        for receipt in build_receipts([words], facts, include_unchecked=True)
+    )
+
+
 def _check_clip_lengths(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     """ "Make all clips 1 second except the first and last": judged on the clip lengths."""
     ask = clip_length_ask(req)
@@ -11361,6 +11376,7 @@ __all__ = [
     "is_no_title_reason",
     "is_spoken_text_cue",
     "judged_at_render",
+    "text_words_met",
     "narrated_alignment_recovery",
     "needs_creator_choice",
     "SpeechSectionFact",

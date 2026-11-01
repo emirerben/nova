@@ -1153,6 +1153,32 @@ def _approved_draft_coverage(db: Any, execution: Any) -> Mapping[str, Any]:
     return coverage if isinstance(coverage, Mapping) else {}
 
 
+def _offered_brief_revision(
+    offered: object,
+    brief: CreativeBrief,
+    named: Sequence[object],
+    source_event: CreationThreadEvent,
+) -> bool:
+    """``brief`` is the revision a named simpler-version offer was made at, or (KRI-1113) the
+    next one, written by the answering turn itself restating only the asks it names.
+
+    Prod thread 83f2dcaa (2026-10-31 13:51): the Main Creator restated r4 when the creator
+    tapped "Make it without these", the turn persisted brief v8 and the v7 offer stopped
+    counting, so the same offer came back. A restatement of what is being left out is not a new
+    instruction (the runtime still refuses one beside it).
+    """
+    if offered == brief.version:
+        return True
+    turn_id = str((source_event.payload or {}).get("turn_id") or "")
+    written = {req.id for req in brief.requirements if turn_id and req.source_turn_id == turn_id}
+    return (
+        isinstance(offered, int)
+        and brief.version == offered + 1
+        and bool(written)
+        and written <= {str(req_id) for req_id in named}
+    )
+
+
 def _simpler_version_consent(
     db,  # noqa: ANN001 - SQLAlchemy sync Session
     thread_id: uuid.UUID,
@@ -1197,9 +1223,10 @@ def _simpler_version_consent(
         if isinstance(named, list):
             # KRI-968: consent covers exactly what the reply named, at that revision. A
             # changed set (a new miss, a different draft) is offered again, never dropped.
-            if (
-                set(requirement_ids) != {str(req_id) for req_id in named}
-                or question.get("brief_version") != brief.version
+            if set(requirement_ids) != {
+                str(req_id) for req_id in named
+            } or not _offered_brief_revision(
+                question.get("brief_version"), brief, named, source_event
             ):
                 return None
             consent: SimplerConsent = "named"
@@ -2381,8 +2408,12 @@ def _complete_draft_turn(
                 and apply_intent.tool_name == "draft.apply_strategy"
                 and settings.brief_binding_for(thread.creator_id)
                 # A concurrent/new instruction needs its own offer, even if its stable
-                # requirement IDs happen to be the same. Never waive model-authored updates.
-                and not planned.brief_updates
+                # requirement IDs happen to be the same. Never waive model-authored updates,
+                # except a restatement of exactly what is being left out (KRI-1113).
+                and all(
+                    update.operation == "change" and update.target_requirement_id in unmet_ids
+                    for update in planned.brief_updates
+                )
                 and not (readiness_report or {}).get("policy_problem")
             )
             else None
@@ -2427,9 +2458,10 @@ def _complete_draft_turn(
                 )
                 for req in omitted
             )
-            if automatic_omission:
-                # The turn's creator additions were already persisted above.  Append
-                # the server-owned omission as its own immutable brief revision.
+            if automatic_omission or planned.brief_updates:
+                # The turn's creator additions (KRI-1113: or the model's restatement of what
+                # the creator just left out) were already persisted above.  Append the
+                # server-owned omission as its own immutable brief revision.
                 brief = _append_automatic_omissions_sync(
                     db,
                     thread_id=thread.id,
