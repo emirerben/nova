@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-25-research-19",
+  "version": "2026-11-01-research-20",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -229,6 +229,31 @@
         "engagement_rate": 0.201742,
         "view_index": 3.9239,
         "sampled_at": "2026-10-25"
+      }
+    },
+    {
+      "id": "personal-product-reviewer-01",
+      "niche": "lifestyle & product reviews",
+      "summary": "You share honest, warm reviews of lifestyle and wellness products you actually use — framing every review as help, not a pitch. The 'hope it helps' energy is the operating principle.",
+      "tone": "warm, knowledgeable, helpful — trusted friend who did the research so you don't have to",
+      "content_pillars": [
+        "honest personal-use product reviews",
+        "styling or wellness tool tutorials",
+        "before/after or first-impressions comparisons",
+        "recommendation round-ups from actual daily use"
+      ],
+      "audience": "people who want a real opinion from someone who genuinely tried the product before buying",
+      "sample_hooks": [
+        "my honest review — hope it helps",
+        "i tested this so you don't have to",
+        "[product] review: what actually happened after [time period]",
+        "finally tried [product] — here's what i think"
+      ],
+      "source": "tiktok:@nermozdemir (2026-11)",
+      "performance": {
+        "engagement_rate": 0.022,
+        "view_index": 4.42,
+        "sampled_at": "2026-11-01"
       }
     }
   ]

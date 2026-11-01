@@ -1,5 +1,5 @@
 {
-  "version": "2026-10-25-research-19",
+  "version": "2026-11-01-research-20",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -221,6 +221,30 @@
       "provenance": "corpus",
       "evidence": "The 25 October 20-post snapshot records 184700 views against a 39000-view median, a view index of 4.7359 and engagement rate of 0.098051. No matched comparison or retention data was collected.",
       "source": "https://www.tiktok.com/@nermozdemir/video/7674217682970905874 (snapshot 2026-10-25T20:01:19.977705+00:00; observed caption and counts; visual treatment and causal effect unmeasured)"
+    },
+    {
+      "id": "honest-review-warm-cta-corpus-14",
+      "factor": "An honest personal-use review ending with 'hope it helps' can outperform the account median on views even when engagement is low — use it for reach, not conversion",
+      "why": "The warm, explicit CTA signals utility to the algorithm's recommendation engine and lowers viewer friction; shares carry the reach even without deep comment interaction",
+      "applies_to": [
+        "plan",
+        "persona"
+      ],
+      "provenance": "corpus",
+      "evidence": "In our Nov 2026 fetched lifestyle set, a personal product review with an explicit 'hope it helps' CTA indexed ~4.4x the account median (97,700 views) at low engagement (0.022) — a reach-without-depth signal consistent with save/share-driven distribution",
+      "source": "tiktok market research 2026-11-01 (lifestyle-founder account)"
+    },
+    {
+      "id": "ritual-return-beloved-spot-corpus-15",
+      "factor": "Frame a place you keep going back to as ritual ('i always come back here') rather than a discovery — loyalty earns saves from people who share the habit",
+      "why": "The 'return as ritual' frame taps savers who already know the place and shares from people who want to; discovery frames only reach newcomers",
+      "applies_to": [
+        "hook",
+        "plan"
+      ],
+      "provenance": "corpus",
+      "evidence": "In our Nov 2026 fetched city-lifestyle set, an 'always come back to [specific café]' post indexed ~3.9x the account median at 0.116 engagement — notably stronger engagement than the broader city-guide posts in the same sample",
+      "source": "tiktok market research 2026-11-01 (city-lifestyle account)"
     }
   ]
 }
