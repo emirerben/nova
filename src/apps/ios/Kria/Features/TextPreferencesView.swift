@@ -27,6 +27,44 @@ struct TextPreferenceRule: Codable, Equatable, Sendable {
     }
 }
 
+/// The settings a text type can override. A type's rule holds a value only for what the creator changed on it;
+/// everything else follows All text, so "changed" is a property of the rule, never a separate flag to keep in sync.
+enum TextSetting: String, Sendable {
+    case font, placement, color, outline, shadow
+
+    var title: String {
+        switch self {
+        case .font: "Font"
+        case .placement: "Placement"
+        case .color: "Color"
+        case .outline: "Outline"
+        case .shadow: "Shadow"
+        }
+    }
+}
+
+extension TextPreferenceRule {
+    func overrides(_ setting: TextSetting) -> Bool {
+        switch setting {
+        case .font: fontFamily != nil || automaticFont == true
+        case .placement: position != nil
+        case .color: color != nil
+        case .outline: strokeWidth != nil
+        case .shadow: shadowEnabled != nil
+        }
+    }
+
+    mutating func clear(_ setting: TextSetting) {
+        switch setting {
+        case .font: fontFamily = nil; automaticFont = nil
+        case .placement: position = nil
+        case .color: color = nil
+        case .outline: strokeWidth = nil
+        case .shadow: shadowEnabled = nil
+        }
+    }
+}
+
 struct TextPreferenceMemory: Decodable, Sendable {
     struct EditLearning: Decodable, Sendable { let available: Bool; let enabled: Bool }
     struct Item: Decodable, Identifiable, Sendable {
@@ -174,11 +212,13 @@ struct TextPreferencesView: View {
     private var isAllText: Bool { role == "all_text" }
     private var server: TextStyleDefaults? { model.memory?.textStyleDefaults }
     private var defaults: TextRoleDefaults { TextRoleSpec.defaults(for: role, server: server) }
-    private var allTextDefaults: TextRoleDefaults { TextRoleSpec.defaults(for: "all_text", server: server) }
     /// What a type inherits: the All text rule as the creator is editing it, else as saved.
     private var allTextRule: TextPreferenceRule {
         isAllText ? rule : drafts["all_text"] ?? model.memory?.rule(role: "all_text") ?? TextPreferenceRule()
     }
+
+    /// What the controls show: the type's own choices, else what All text gives it.
+    private var effective: TextPreferenceRule { isAllText ? rule : rule.inheriting(from: allTextRule) }
 
     /// The creator's working copy of a type: the live rule for the visible one, the stashed draft for the rest.
     private func draft(_ role: String) -> TextPreferenceRule? { role == self.role ? rule : drafts[role] }
@@ -426,22 +466,22 @@ struct TextPreferencesView: View {
     private var fontSection: some View {
         Group {
             groupLabel("Fonts", first: true)
-            Picker("Font", selection: Binding(get: {
-                rule.fontFamily ?? (rule.automaticFont == true || isAllText ? "auto" : "same")
-            }, set: {
-                switch $0 {
-                case "same": rule.fontFamily = nil; rule.automaticFont = nil
-                case "auto": rule.fontFamily = nil; rule.automaticFont = isAllText ? nil : true
-                default:
-                    rule.fontFamily = $0; rule.automaticFont = false
-                    rule.excludedFonts.removeAll { $0 == rule.fontFamily }
-                }
-            })) {
-                if !isAllText { Text("Same as All text (\(allTextRule.fontFamily ?? defaults.font))").tag("same") }
-                Text(defaults.font == "Kria picks" ? "Kria picks" : defaults.font).tag("auto")
-                ForEach(NativeFontCatalog.shared.pickerFonts, id: \.self) { Text($0).tag($0) }
-            }.accessibilityIdentifier("text-preference-font")
-            if let hint = defaults.fontHint, rule.fontFamily == nil {
+            pickerRow(.font) {
+                Picker("Font", selection: Binding(get: {
+                    effective.fontFamily ?? "auto"
+                }, set: {
+                    if $0 == "auto" {
+                        rule.fontFamily = nil; rule.automaticFont = isAllText ? nil : true
+                    } else {
+                        rule.fontFamily = $0; rule.automaticFont = false
+                        rule.excludedFonts.removeAll { $0 == rule.fontFamily }
+                    }
+                })) {
+                    Text(defaults.font).tag("auto")
+                    ForEach(NativeFontCatalog.shared.pickerFonts, id: \.self) { Text($0).tag($0) }
+                }.accessibilityIdentifier("text-preference-font")
+            }
+            if let hint = defaults.fontHint, effective.fontFamily == nil {
                 note("Kria starts with \(hint) for \(TextRoleSpec.spec(role).label.lowercased()).")
             }
             NavigationLink {
@@ -459,25 +499,24 @@ struct TextPreferencesView: View {
         }.plainRow()
     }
 
-    private var inheritedPlacement: String {
-        allTextRule.position.map(TextRoleSpec.positionName) ?? defaults.shortPlacement
-    }
-
-    private var inheritedColor: String { allTextRule.color.map(colorName) ?? allTextDefaults.color }
+    /// Whether this type can still show "Kria picks the clearest spot" or Auto color: those are the absence of a
+    /// value, so a type can only show them while All text has none to inherit.
+    private var inheritsNoPosition: Bool { isAllText || allTextRule.position == nil }
+    private var inheritsNoColor: Bool { isAllText || allTextRule.color == nil }
 
     private var placementSection: some View {
         Group {
             groupLabel("Placement and color")
-            Picker("Placement", selection: Binding(get: { rule.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
-                Text(isAllText ? defaults.placement : "Same as All text (\(inheritedPlacement))").tag("")
-                ForEach(TextRoleSpec.positions, id: \.self) { Text(TextRoleSpec.positionName($0)).tag($0) }
-            }.accessibilityIdentifier("text-preference-placement")
+            pickerRow(.placement) {
+                Picker("Placement", selection: Binding(get: { effective.position ?? "" }, set: { rule.position = $0.isEmpty ? nil : $0 })) {
+                    if inheritsNoPosition { Text(defaults.placement).tag("") }
+                    ForEach(TextRoleSpec.positions, id: \.self) { Text(TextRoleSpec.positionName($0)).tag($0) }
+                }.accessibilityIdentifier("text-preference-placement")
+            }
             VStack(alignment: .leading, spacing: 4) {
-                Text("Color")
+                settingHeader(.color)
                 colorSwatches
-                if rule.color == nil {
-                    if isAllText { note(defaults.colorHint) } else { note("Same as All text (\(inheritedColor))") }
-                }
+                if effective.color == nil { note(defaults.colorHint) }
             }.padding(.vertical, 4)
         }.plainRow()
     }
@@ -485,23 +524,25 @@ struct TextPreferencesView: View {
     private static let presetColors = ["#FFFFFF", "#000000", "#FFFF00", "#FF0000", "#0000FF"]
 
     private var colorSwatches: some View {
-        let current = rule.color?.uppercased()
+        let current = effective.color?.uppercased()
         let customHex = current.flatMap { SlidePostTextElement.isHex($0) && !Self.presetColors.contains($0) ? $0 : nil }
         return HStack(spacing: 0) {
-            Button { rule.color = nil } label: {
-                Text(isAllText ? "Auto" : "Same")
-                    .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.ink)
-                    .dynamicTypeSize(...DynamicTypeSize.large)
-                    .frame(width: 40, height: 40)
-                    .background(rule.color == nil ? KriaColor.butter : KriaColor.fill, in: Circle())
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            if inheritsNoColor {
+                Button { rule.color = nil } label: {
+                    Text("Auto")
+                        .font(KriaFont.body(12).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                        .dynamicTypeSize(...DynamicTypeSize.large)
+                        .frame(width: 40, height: 40)
+                        .background(current == nil ? KriaColor.butter : KriaColor.fill, in: Circle())
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Auto")
+                .accessibilityAddTraits(current == nil ? .isSelected : [])
+                .accessibilityIdentifier("text-preference-color-auto")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isAllText ? "Auto" : "Same as All text")
-            .accessibilityAddTraits(rule.color == nil ? .isSelected : [])
-            .accessibilityIdentifier("text-preference-color-auto")
             ForEach(Self.presetColors, id: \.self) { hex in
-                Button { rule.color = current == hex ? nil : hex } label: {
+                Button { rule.color = hex } label: {
                     ZStack {
                         Circle().fill(KriaColor.fill).frame(width: 40, height: 40)
                         Circle().fill(nativeEditorColor(hex)).frame(width: 28, height: 28)
@@ -523,7 +564,7 @@ struct TextPreferencesView: View {
     private func customSwatch(_ customHex: String?) -> some View {
         ZStack {
             ColorPicker("Custom color", selection: Binding(
-                get: { nativeEditorColor(rule.color ?? "#FFFFFF") },
+                get: { nativeEditorColor(effective.color ?? "#FFFFFF") },
                 set: { rule.color = nativeEditorHex($0) }
             ), supportsOpacity: false)
                 .labelsHidden().opacity(0.02)
@@ -555,31 +596,66 @@ struct TextPreferencesView: View {
     private var effectsSection: some View {
         Group {
             groupLabel("Effects")
-            effectRow("Outline", id: "text-preference-outline",
-                      value: Binding(get: { rule.strokeWidth.map { $0 == 0 ? "off" : "on" } ?? (isAllText ? "off" : "same") },
-                                     set: { rule.strokeWidth = $0 == "same" ? nil : ($0 == "off" ? 0 : 2) }),
-                      inherited: allTextRule.strokeWidth.map { $0 == 0 ? "Off" : "On" } ?? defaults.outline)
-            effectRow("Shadow", id: "text-preference-shadow",
-                      value: Binding(get: { rule.shadowEnabled.map { $0 ? "on" : "off" } ?? (isAllText ? "off" : "same") },
-                                     set: { rule.shadowEnabled = $0 == "same" ? nil : $0 == "on" }),
-                      inherited: allTextRule.shadowEnabled.map { $0 ? "On" : "Off" } ?? defaults.shadow)
+            effectRow(.outline, id: "text-preference-outline",
+                      value: Binding(get: { isOn(effective.strokeWidth.map { $0 != 0 }, fallback: defaults.outline) ? "on" : "off" },
+                                     set: { rule.strokeWidth = $0 == "on" ? 2 : 0 }))
+            effectRow(.shadow, id: "text-preference-shadow",
+                      value: Binding(get: { isOn(effective.shadowEnabled, fallback: defaults.shadow) ? "on" : "off" },
+                                     set: { rule.shadowEnabled = $0 == "on" }))
         }.plainRow()
     }
 
-    /// Label left, choices right on one row; a text size too big for that stacks them. "Same" explains itself
-    /// in one muted line, and only while it is selected.
-    private func effectRow(_ title: String, id: String, value: Binding<String>, inherited: String) -> some View {
-        let control = KriaSegmentedControl(
-            options: (isAllText ? [] : [(label: "Same", value: "same")]) + [(label: "Off", value: "off"), (label: "On", value: "on")],
-            selection: value
-        ).accessibilityIdentifier(id)
-        return VStack(alignment: .leading, spacing: 2) {
-            ViewThatFits(in: .horizontal) {
-                HStack { Text(title); Spacer(minLength: 12); control }
-                VStack(alignment: .leading, spacing: 4) { Text(title); control }
-            }
-            if value.wrappedValue == "same" { note("Same as All text (\(inherited))") }
+    private func isOn(_ explicit: Bool?, fallback: String) -> Bool { explicit ?? (fallback.lowercased() == "on") }
+
+    /// Label and its source tag left, choices right on one row; a text size too big for that stacks them.
+    private func effectRow(_ setting: TextSetting, id: String, value: Binding<String>) -> some View {
+        let control = KriaSegmentedControl(options: [(label: "Off", value: "off"), (label: "On", value: "on")], selection: value)
+            .accessibilityIdentifier(id)
+        return ViewThatFits(in: .horizontal) {
+            HStack { settingHeader(setting); Spacer(minLength: 12); control }
+            VStack(alignment: .leading, spacing: 4) { settingHeader(setting); control }
         }.padding(.vertical, 2)
+    }
+
+    private func pickerRow<Content: View>(_ setting: TextSetting, @ViewBuilder picker: () -> Content) -> some View {
+        let picker = picker().labelsHidden().fixedSize().frame(minHeight: 44)
+        return ViewThatFits(in: .horizontal) {
+            HStack { settingHeader(setting); Spacer(minLength: 12); picker }
+            // The menu label carries its own leading inset; pull it back so the value lines up under the title.
+            VStack(alignment: .leading, spacing: 0) { settingHeader(setting); picker.padding(.leading, -12) }
+        }
+    }
+
+    private func settingHeader(_ setting: TextSetting) -> some View {
+        HStack(spacing: 8) {
+            Text(setting.title)
+            sourceTag(setting)
+        }
+    }
+
+    /// A type either follows All text or has its own value. The tag says which, and "Changed" is also the way back.
+    @ViewBuilder private func sourceTag(_ setting: TextSetting) -> some View {
+        let id = "text-preference-\(setting.rawValue)-source"
+        if !isAllText {
+            if rule.overrides(setting) {
+                Button { rule.clear(setting) } label: {
+                    Text("Changed")
+                        .font(KriaFont.body(13).weight(.semibold)).foregroundStyle(KriaColor.ink)
+                        .padding(.horizontal, 10).padding(.vertical, 3)
+                        .background(KriaColor.butter, in: Capsule())
+                        .frame(minHeight: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(setting.title) changed on this type")
+                .accessibilityHint("Double tap to follow All text again")
+                .accessibilityIdentifier(id)
+            } else {
+                Text("From All text")
+                    .font(KriaFont.body(13)).foregroundStyle(KriaColor.mutedInk)
+                    .accessibilityLabel("\(setting.title) from All text")
+                    .accessibilityIdentifier(id)
+            }
+        }
     }
 
     private var saveBar: some View {

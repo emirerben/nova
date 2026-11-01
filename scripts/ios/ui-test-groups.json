@@ -153,6 +153,7 @@
       "KriaUITests/AccountPrivacyUITests/testExcludedFontSurvivesPickerReturnSaveAndReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferenceDraftSurvivesRoleSwitch",
       "KriaUITests/AccountPrivacyUITests/testOneSavePersistsEveryEditedTextTypeAcrossReopen",
+      "KriaUITests/AccountPrivacyUITests/testATypeFollowsAllTextUntilItIsChangedByHand",
       "KriaUITests/AccountPrivacyUITests/testUnsavedTextTypesAreMarkedAndLeavingAsksBeforeDiscarding",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesSaveOffEffectsAndReopen",
       "KriaUITests/AccountPrivacyUITests/testTextPreferencesStaleWriteKeepsEditsAndOffersReload",

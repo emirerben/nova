@@ -152,6 +152,56 @@ import XCTest
         XCTAssertTrue(outline.buttons["On"].isSelected, "Label outline must survive one Save and reopening")
     }
 
+    func testATypeFollowsAllTextUntilItIsChangedByHand() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let shadow = app.otherElements["text-preference-shadow"]
+        let source = app.descendants(matching: .any)["text-preference-shadow-source"]
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        XCTAssertFalse(source.exists, "All text is the base and carries no tag")
+
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Title shows what All text gives it")
+        XCTAssertFalse(shadow.buttons["Same"].exists)
+        XCTAssertEqual(source.label, "Shadow from All text")
+        attach("Title following All text shadow")
+
+        shadow.buttons["Off"].tap()
+        XCTAssertTrue(shadow.buttons["Off"].isSelected)
+        XCTAssertEqual(source.label, "Shadow changed on this type")
+        XCTAssertTrue(app.buttons["text-preference-shadow-source"].exists, "Changed is a button")
+        attach("Title shadow changed by hand")
+
+        app.buttons["text-preference-shadow-source"].tap()
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Undoing the change follows All text again")
+        XCTAssertEqual(source.label, "Shadow from All text")
+
+        shadow.buttons["Off"].tap()
+        selectRole("label", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["On"].isSelected)
+        selectRole("all_text", app: app)
+        reveal(shadow, app: app); shadow.buttons["Off"].tap()
+        selectRole("label", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["Off"].isSelected, "Label follows the new All text value")
+        XCTAssertEqual(source.label, "Shadow from All text")
+        selectRole("all_text", app: app)
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["Off"].isSelected, "Title was changed by hand, so All text no longer moves it")
+        XCTAssertEqual(source.label, "Shadow changed on this type")
+    }
+
+    private func attach(_ name: String) {
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = name; shot.lifetime = .keepAlways; add(shot)
+    }
+
     func testUnsavedTextTypesAreMarkedAndLeavingAsksBeforeDiscarding() {
         let app = launch(mode: "text-preferences")
         let manage = app.buttons["Manage account"]
@@ -184,7 +234,8 @@ import XCTest
         app.buttons["account-text-preferences"].tap()
         selectRole("title", app: app)
         reveal(shadow, app: app)
-        XCTAssertTrue(shadow.buttons["Same"].isSelected, "Discarding must not save the edit")
+        XCTAssertTrue(shadow.buttons["Off"].isSelected, "Discarding must not save the edit")
+        XCTAssertEqual(app.descendants(matching: .any)["text-preference-shadow-source"].label, "Shadow from All text")
         shadow.buttons["On"].tap()
         app.buttons["text-preferences-back"].tap()
         app.buttons["Save and leave"].tap()
