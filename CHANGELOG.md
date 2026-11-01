@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.59.0] - 2026-11-01
+
+### Changed
+- fix(kria): the research reviewer is told which asks another step applies (#2013) <!-- release-pr: 2013 -->
+
 ## [0.83.58.0] - 2026-11-01
 
 ### Changed
