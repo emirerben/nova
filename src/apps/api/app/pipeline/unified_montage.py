@@ -157,6 +157,7 @@ from app.services.spoken_roles import (
     window_holds,
     window_inside,
 )
+from app.text_fold import loose_words
 
 FPS = 30
 # The reading-time rule: 0.8s to notice the text plus 60ms per character,
@@ -192,6 +193,11 @@ def min_display_s(chars: int) -> float:
 
 def _nfc(value: object) -> str:
     return unicodedata.normalize("NFC", str(value or "")).strip()
+
+
+def _text_key(value: object) -> str:
+    """A creator's words without case, accents or punctuation ("Full-time!" == "Full time")."""
+    return " ".join(loose_words(_nfc(value)))
 
 
 def _cap_label(text: str, provenance: str) -> str:
@@ -297,6 +303,11 @@ class BriefView:
     curved_title: bool = False
     curved_labels: bool = False
     curved_texts: frozenset[str] = frozenset()
+    # KRI-1124: the words (`_text_key`) of text requirements the creator took back
+    # (superseded), minus any a live text requirement asks for again. The strategy's clip
+    # intents are re-derived from the whole thread every turn and never learn of the
+    # withdrawal, so `_without_withdrawn_texts` leaves those words out of the plan.
+    withdrawn_texts: frozenset[str] = frozenset()
 
 
 def brief_view(brief: Any) -> BriefView:
@@ -336,6 +347,12 @@ def brief_view(brief: Any) -> BriefView:
         text_position = requested_text_position(live)
     freezes = live_freezes(live)
     speeds = live_speeds(live)
+    withdrawn_texts = {
+        _text_key(req.literal)
+        for req in brief.requirements
+        if not req.live and req.kind == "text" and req.literal
+    } - {_text_key(req.literal) for req in live if req.kind == "text" and req.literal}
+    withdrawn_texts.discard("")
     for req in live:
         for key, value in (req.facts or {}).items():
             if value not in (None, "") and key not in facts:
@@ -425,6 +442,7 @@ def brief_view(brief: Any) -> BriefView:
         curved_title=curved_title,
         curved_labels=curved_labels,
         curved_texts=frozenset(curved_texts),
+        withdrawn_texts=frozenset(withdrawn_texts),
     )
 
 
@@ -1924,7 +1942,7 @@ def plan_unified_montage(
         # join the chronology, KRI-1069); with no live requirement, no receipt or contract
         # promises it. A hand reorder made since is the later word and keeps its order.
         view = replace(view, order_by_capture=True)
-    strategy = strategy or {}
+    strategy = _without_withdrawn_texts(strategy or {}, view.withdrawn_texts)
     creator_omissions = creator_omission_outcomes(strategy)
     if (
         view.version is not None
@@ -4033,6 +4051,60 @@ def _chapter_group_ids(
     return chapters, described
 
 
+def _creator_wording(intent: Mapping[str, Any]) -> list[str]:
+    """The creator's own words a clip-text intent would print (empty for a placeholder)."""
+    words = [intent.get("creator_text")]
+    if intent.get("caption_grounding") == "creator_text":
+        words.append(intent.get("caption_text"))
+    words.extend(
+        row.get("value")
+        for row in intent.get("assignments") or []
+        if isinstance(row, Mapping) and row.get("grounding") == "creator_text"
+    )
+    return [text for text in (_nfc(word) for word in words) if text]
+
+
+def _without_withdrawn_texts(
+    strategy: Mapping[str, Any], withdrawn: frozenset[str]
+) -> Mapping[str, Any]:
+    """``strategy`` minus the clip text the creator has taken back (KRI-1124).
+
+    Leverkusen M4: "Skip that part" and "Make it without these" superseded the brief's
+    "Arrival" / "GOAL" / "Full time" texts, but the clip-intent planner reads the whole
+    thread every turn and still wrote their label intents (carrying no ``requirement_id``).
+    Planned, they became confirmed copy that the creation-text pass, told the brief asks for
+    no text, then removed (the render failed) or left on screen. The brief owns what text is
+    wanted, so a label or caption whose every creator-worded text is in ``withdrawn`` is
+    dropped from both intent lists, here where the plan reads them; the copy lock stays strict.
+
+    A positional ``shot_labels`` list is dropped only when every row is withdrawn: its rows
+    sit on clips by index, so removing one would move the rest onto the wrong clips.
+    """
+    if not withdrawn:
+        return strategy
+    out = dict(strategy)
+    for key in ("clip_intents", "resolved_clip_intents"):
+        rows = strategy.get(key)
+        if not isinstance(rows, list):
+            continue
+        kept = [
+            row
+            for row in rows
+            if not (
+                isinstance(row, Mapping)
+                and row.get("op") in {"label", "caption"}
+                and (words := _creator_wording(row))
+                and all(_text_key(word) in withdrawn for word in words)
+            )
+        ]
+        if len(kept) != len(rows):
+            out[key] = kept
+    positional = [text for text in (_nfc(x) for x in strategy.get("shot_labels") or []) if text]
+    if positional and all(_text_key(text) in withdrawn for text in positional):
+        out["shot_labels"] = None
+    return out
+
+
 def _intent_labels(strategy: Mapping[str, Any], enabled: bool) -> dict[str, tuple[str, bool]]:
     """media_id -> (text, creator_wrote_it) from server-verified label intents."""
     if not enabled:
@@ -4267,6 +4339,7 @@ def title_source_exists(strategy: Mapping[str, Any], brief: Any) -> bool:
     phone path's production setting).
     """
     view = brief_view(brief)
+    strategy = _without_withdrawn_texts(strategy, view.withdrawn_texts)
     intents = _intent_labels(strategy, True).values()
     creator_labels = [
         *view.clip_literals.values(),

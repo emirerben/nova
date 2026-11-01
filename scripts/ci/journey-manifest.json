@@ -1141,6 +1141,15 @@
       ]
     },
     {
+      "id": "kri-1124-withdrawn-labels",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_kri1124_withdrawn_labels_replay.py",
+      "paths": [
+        "src/apps/api/app/pipeline/unified_montage.py",
+        "src/apps/api/tests/fixtures/m4_leverkusen_withdrawn_labels.json"
+      ]
+    },
+    {
       "id": "kri-792-named-phrase-cuts",
       "needs_native": false,
       "api_tests": "tests/kria/test_kri792_named_phrase_cuts.py",
