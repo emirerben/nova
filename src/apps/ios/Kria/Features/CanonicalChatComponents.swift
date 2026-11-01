@@ -87,7 +87,6 @@ struct ProjectsDrawer: View {
     let close: () -> Void
     let openGallery: () -> Void
     var openAccount: () -> Void = {}
-    var openActivity: () -> Void = {}
     var openCollections: (() -> Void)? = nil
     @EnvironmentObject private var model: AppModel
     @AccessibilityFocusState private var menuFocused: Bool
@@ -106,15 +105,6 @@ struct ProjectsDrawer: View {
                     Text("\(model.libraryProjects.count)\(model.libraryNextCursor == nil ? "" : "+") \(model.libraryProjects.count == 1 && model.libraryNextCursor == nil ? "video" : "videos")").font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
                 }.frame(minHeight: 44).padding(.horizontal, 12)
             }
-            Button(action: openActivity) {
-                HStack(spacing: 12) {
-                    Image(systemName: "bell").frame(width: 22, height: 22)
-                    Text("Activity").font(KriaFont.body(15).weight(.medium))
-                    Spacer()
-                }.frame(minHeight: 44).padding(.horizontal, 12)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("activity-open")
             if let openCollections {
                 Button(action: openCollections) {
                     HStack(spacing: 12) {
