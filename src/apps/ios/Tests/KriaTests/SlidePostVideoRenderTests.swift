@@ -140,6 +140,57 @@ import XCTest
         XCTAssertEqual(CMFormatDescriptionGetMediaSubType(description), kCMVideoCodecType_H264)
     }
 
+    private func pixel(_ image: CGImage, _ x: Int, _ y: Int) -> (Int, Int, Int) {
+        var bytes = [UInt8](repeating: 0, count: 4)
+        let context = CGContext(data: &bytes, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
+        return (Int(bytes[0]), Int(bytes[1]), Int(bytes[2]))
+    }
+
+    /// KRI-1138: a turned video slide exports at the same canvas, and whatever corner the turn uncovers shows the backdrop
+    /// (the shared geometry says which one) while the centre stays video. Failure modes: no backdrop, a backdrop over the
+    /// media, the turn dropped on the export path.
+    func testATiltedVideoSlideTurnsAboutTheCanvasCentreOverItsBackdrop() async throws {
+        let input = try source()
+        let tracks = try await AVURLAsset(url: input).loadTracks(withMediaType: .video)
+        let video = try XCTUnwrap(tracks.first)
+        let natural = try await video.load(.naturalSize)
+        let transform = try await video.load(.preferredTransform)
+        let upright = natural.applying(transform)
+        let pixels = CGSize(width: 2160, height: 2700)
+        let media = SlidePostTiltGeometry.mediaSize(imageSize: CGSize(width: abs(upright.width), height: abs(upright.height)), crop: nil, canvas: pixels, fit: false)
+        let degrees = 30.0
+        let corners: [(Int, Int, CGPoint)] = [(6, 6, CGPoint(x: 0, y: 0)), (2153, 6, CGPoint(x: 2160, y: 0)), (2153, 2693, CGPoint(x: 2160, y: 2700)), (6, 2693, CGPoint(x: 0, y: 2700))]
+        let exposed = corners.filter { _, _, point in
+            let sine = sin(degrees * .pi / 180), cosine = cos(degrees * .pi / 180)
+            let dx = Double(point.x - pixels.width / 2), dy = Double(point.y - pixels.height / 2)
+            return abs(dx * cosine + dy * sine) > Double(media.width) / 2 + 24 || abs(-dx * sine + dy * cosine) > Double(media.height) / 2 + 24
+        }
+        try XCTSkipIf(exposed.isEmpty, "this clip's shape leaves no corner uncovered at 30 degrees")
+
+        let output = directory.appending(path: "tilted.mp4")
+        var turned = slide()
+        turned.edits = SlidePostEdits(tilt: SlidePostTilt(rotationDeg: degrees, backdrop: .color("#336699")))
+        try await SlidePostVideoRender.renderSlide(slide: turned, asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: output)
+        let rendered = try await frame(output)
+        XCTAssertEqual(CGSize(width: rendered.width, height: rendered.height), pixels)
+        for (x, y, _) in exposed {
+            let got = pixel(rendered, x, y)
+            XCTAssertTrue(abs(got.0 - 0x33) < 14 && abs(got.1 - 0x66) < 14 && abs(got.2 - 0x99) < 14, "exposed corner (\(x), \(y)) shows the backdrop, got \(got)")
+        }
+        let centre = pixel(rendered, 1080, 1350)
+        XCTAssertFalse(abs(centre.0 - 0x33) < 14 && abs(centre.1 - 0x66) < 14 && abs(centre.2 - 0x99) < 14, "the backdrop never covers the media")
+        // The same slide without the tilt keeps the video in every corner.
+        let plainOutput = directory.appending(path: "plain.mp4")
+        try await SlidePostVideoRender.renderSlide(slide: slide(), asset: asset(input), profile: "instagram_carousel", aspect: nil, outputURL: plainOutput)
+        let plain = try await frame(plainOutput)
+        for (x, y, _) in exposed {
+            let got = pixel(plain, x, y)
+            XCTAssertFalse(abs(got.0 - 0x33) < 14 && abs(got.1 - 0x66) < 14 && abs(got.2 - 0x99) < 14, "an upright slide has no backdrop")
+        }
+    }
+
     func testRejectsNonCarouselAndPosterDisplayURLsBeforeStartingAnExport() async throws {
         let input = try source()
         let poster = SlidePostAsset(id: "asset", kind: "video", status: "ready", displayURL: URL(fileURLWithPath: "/tmp/poster.jpg"), sourceURL: nil)

@@ -63,9 +63,10 @@ import UIKit
         let fit = SlidePostFraming.effectiveFit(for: slide)
         guard let photo = decode(data, maxPixel: decodeLongSide(data, crop: crop, pixels: pixels, fit: fit != nil)) else { throw RenderError.undecodable }
         let preset = slide.edits?.lookPreset ?? "none"
-        // Bars need the Core Image composite; a plain fill keeps the cheap UIKit draw.
-        let graded = preset == "none" && fit == nil ? nil
-            : try lookedImage(photo, pixels: pixels, preset: preset, crop: crop, fit: fit, blurSigma: SlidePostFit.blurSigmaPx * scale)
+        let tilt = SlidePostFraming.effectiveTilt(for: slide)
+        // Bars and a turn need the Core Image composite; a plain fill keeps the cheap UIKit draw.
+        let graded = preset == "none" && fit == nil && tilt == nil ? nil
+            : try lookedImage(photo, pixels: pixels, preset: preset, crop: crop, fit: fit, blurSigma: SlidePostFit.blurSigmaPx * scale, tilt: tilt)
         let texts = slide.edits?.effectiveTexts ?? []
         let overlay = texts.isEmpty ? nil : textLayer(texts, pixels: pixels)
         let mark = try watermark()
@@ -95,7 +96,7 @@ import UIKit
     nonisolated static let lookContext = CIContext(options: [.workingColorSpace: NSNull()])
     nonisolated static func lookedImage(
         _ photo: UIImage, pixels: CGSize, preset: String, crop: NormalizedSourceRect? = nil,
-        fit: SlidePostFit? = nil, blurSigma: CGFloat = SlidePostFit.blurSigmaPx
+        fit: SlidePostFit? = nil, blurSigma: CGFloat = SlidePostFit.blurSigmaPx, tilt: SlidePostTilt? = nil
     ) throws -> UIImage {
         // Cache thumbnails retain their source color profile; export decoding
         // already normalizes to sRGB. Normalize both before encoded-RGB LUTs.
@@ -112,7 +113,7 @@ import UIKit
         }
         let source = CIImage(cgImage: normalized, options: [.colorSpace: NSNull()])
         let extent = CGRect(origin: .zero, size: pixels)
-        let framed = framedBase(source, crop: crop, fit: fit, pixels: pixels, blurSigma: blurSigma)
+        let framed = framedBase(source, crop: crop, fit: fit, pixels: pixels, blurSigma: blurSigma, tilt: tilt)
         let looked = preset == "none" ? framed : try SlidePostLookRenderer.apply(framed, preset: preset)
         guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let output = lookContext.createCGImage(looked, from: extent, format: .RGBA8, colorSpace: colorSpace) else { throw RenderError.encodeFailed }
@@ -121,33 +122,78 @@ import UIKit
 
     /// The photo placed in the canvas. Fill covers it (edges trimmed); a fit shows the whole cropped region and
     /// fills the rest with black, white or a blurred cover-fill of the same region -- the server's `_frame_filter`.
-    nonisolated static func framedBase(_ source: CIImage, crop: NormalizedSourceRect?, fit: SlidePostFit?, pixels: CGSize, blurSigma: CGFloat) -> CIImage {
-        let extent = CGRect(origin: .zero, size: pixels)
-        // `rect` is in top-left canvas pixels; Core Image's origin is bottom-left, so the y offset is flipped.
-        func layer(_ rect: CGRect) -> CIImage {
-            source.transformed(by: CGAffineTransform(translationX: -source.extent.minX, y: -source.extent.minY))
-                .transformed(by: CGAffineTransform(scaleX: rect.width / source.extent.width, y: rect.height / source.extent.height))
-                .transformed(by: CGAffineTransform(translationX: rect.minX, y: pixels.height - rect.maxY))
+    /// With a `tilt` the media turns about the canvas centre over the tilt's backdrop instead (`tiltedBase`).
+    nonisolated static func framedBase(_ source: CIImage, crop: NormalizedSourceRect?, fit: SlidePostFit?, pixels: CGSize, blurSigma: CGFloat,
+                                       tilt: SlidePostTilt? = nil) -> CIImage {
+        if let tilt, !tilt.isUpright {
+            return tiltedBase(source, crop: crop, fit: fit != nil, pixels: pixels, blurSigma: blurSigma, tilt: tilt)
         }
+        let extent = CGRect(origin: .zero, size: pixels)
         let cover = SlidePostFraming.placement(imageSize: source.extent.size, crop: crop, canvas: pixels, fit: false)
-        guard let fit else { return layer(cover).cropped(to: extent) }
+        guard let fit else { return placed(source, in: cover, pixels: pixels).cropped(to: extent) }
         let whole = SlidePostFraming.placement(imageSize: source.extent.size, crop: crop, canvas: pixels, fit: true)
-        var photo = layer(whole)
+        var photo = placed(source, in: whole, pixels: pixels)
         if let crop {
             // Only the cropped region is the photo: the rest of the source must never show up in the bars (the
-            // server crops first). `region` is in top-left canvas pixels; Core Image's origin is bottom-left.
-            let region = CGRect(x: whole.minX + crop.x * whole.width, y: whole.minY + crop.y * whole.height,
-                                width: crop.width * whole.width, height: crop.height * whole.height)
-            photo = photo.cropped(to: CGRect(x: region.minX, y: pixels.height - region.maxY, width: region.width, height: region.height))
+            // server crops first).
+            photo = photo.cropped(to: regionRect(crop, in: whole, pixels: pixels))
         }
         photo = photo.cropped(to: extent)
         let bars: CIImage
         switch fit {
         case .black: bars = CIImage(color: .black).cropped(to: extent)
         case .white: bars = CIImage(color: .white).cropped(to: extent)
-        case .blur: bars = layer(cover).clampedToExtent().applyingGaussianBlur(sigma: Double(blurSigma)).cropped(to: extent)
+        case .blur: bars = placed(source, in: cover, pixels: pixels).clampedToExtent().applyingGaussianBlur(sigma: Double(blurSigma)).cropped(to: extent)
         }
         return photo.composited(over: bars)
+    }
+
+    /// The source drawn at `rect` (top-left canvas pixels). Core Image's origin is bottom-left, so the y offset is flipped.
+    nonisolated private static func placed(_ source: CIImage, in rect: CGRect, pixels: CGSize) -> CIImage {
+        source.transformed(by: CGAffineTransform(translationX: -source.extent.minX, y: -source.extent.minY))
+            .transformed(by: CGAffineTransform(scaleX: rect.width / source.extent.width, y: rect.height / source.extent.height))
+            .transformed(by: CGAffineTransform(translationX: rect.minX, y: pixels.height - rect.maxY))
+    }
+
+    /// The crop region of the photo placed at `whole`, as a Core Image (bottom-left origin) rectangle.
+    nonisolated private static func regionRect(_ crop: NormalizedSourceRect, in whole: CGRect, pixels: CGSize) -> CGRect {
+        let region = CGRect(x: whole.minX + crop.x * whole.width, y: whole.minY + crop.y * whole.height,
+                            width: crop.width * whole.width, height: crop.height * whole.height)
+        return CGRect(x: region.minX, y: pixels.height - region.maxY, width: region.width, height: region.height)
+    }
+
+    /// KRI-1138: the (cropped) region scaled like the slide frames it, turned about the canvas centre, over the tilt's
+    /// backdrop; the server's `_tilt_frame_filter`. The media is NOT trimmed to the canvas before it turns, so the pixels
+    /// a Fill photo has beyond the frame rotate into view. The Fit bars do not draw: the backdrop is what shows.
+    nonisolated static func tiltedBase(_ source: CIImage, crop: NormalizedSourceRect?, fit: Bool, pixels: CGSize, blurSigma: CGFloat,
+                                       tilt: SlidePostTilt) -> CIImage {
+        let whole = SlidePostFraming.placement(imageSize: source.extent.size, crop: crop, canvas: pixels, fit: fit)
+        var media = placed(source, in: whole, pixels: pixels)
+        if let crop { media = media.cropped(to: regionRect(crop, in: whole, pixels: pixels)) }
+        let cover = SlidePostFraming.placement(imageSize: source.extent.size, crop: crop, canvas: pixels, fit: false)
+        return turned(media, over: placed(source, in: cover, pixels: pixels), tilt: tilt, pixels: pixels, blurSigma: blurSigma)
+    }
+
+    /// `media` (already placed in canvas pixels, any size) turned clockwise by `tilt` about the canvas centre over the
+    /// tilt's backdrop, cropped to the canvas. `cover` is the frame a blur backdrop softens (a cover-fit copy of the same
+    /// media). Shared by photo slides and, per frame, by the exported video slides.
+    nonisolated static func turned(_ media: CIImage, over cover: CIImage, tilt: SlidePostTilt, pixels: CGSize, blurSigma: CGFloat) -> CIImage {
+        let extent = CGRect(origin: .zero, size: pixels)
+        let centre = CGPoint(x: pixels.width / 2, y: pixels.height / 2)
+        let turn = CGAffineTransform(translationX: -centre.x, y: -centre.y)
+            .concatenating(CGAffineTransform(rotationAngle: SlidePostTiltGeometry.coreImageAngle(degrees: tilt.rotationDeg)))
+            .concatenating(CGAffineTransform(translationX: centre.x, y: centre.y))
+        let under: CIImage
+        switch tilt.backdrop {
+        case .blank:
+            under = CIImage(color: .black).cropped(to: extent)
+        case .color(let hex):
+            guard let rgb = SlidePostTilt.rgb(hex) else { under = CIImage(color: .black).cropped(to: extent); break }
+            under = CIImage(color: CIColor(red: rgb.red, green: rgb.green, blue: rgb.blue)).cropped(to: extent)
+        case .blur:
+            under = cover.clampedToExtent().applyingGaussianBlur(sigma: Double(blurSigma)).cropped(to: extent)
+        }
+        return media.transformed(by: turn).composited(over: under).cropped(to: extent)
     }
 
     /// The phone's default mark, with its opacity and shadow baked in. Missing from the bundle is a build
