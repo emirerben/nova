@@ -1,0 +1,38 @@
+{
+  "provenance": "Job 07efa44c-051f-43c2-99d9-ed567408034e (thread 6fa36e51, subtitled, 2026-11-01). The saved text style, the Turkish speech and the landscape 'fit' geometry come from prod. Prod did not persist the failing row id/role or the obstacle boxes, so the face and caption boxes below are reconstructed from that geometry (a 1920x1080 speaker clip fitted into 1080x1920 occupies y 0.342..0.658).",
+  "policy": {
+    "version": 1,
+    "requested": {},
+    "preferences": {
+      "lyric": {"position": "bottom"},
+      "pinned": {"position": "bottom_left"},
+      "all_text": {
+        "position": "bottom_left",
+        "stroke_width": 0.0,
+        "automatic_font": true,
+        "excluded_fonts": ["Fraunces"],
+        "favorite_fonts": ["Big Curls", "Inter", "Montserrat"],
+        "shadow_enabled": false
+      }
+    }
+  },
+  "duration_s": 60.0,
+  "cues": [
+    {"text": "Devlet Fenerbahçe'ye bir stat teklif etti", "start_s": 0.0, "end_s": 3.0},
+    {"text": "ve karşılığında Kadıköy'ü yani kimliğini istedi.", "start_s": 3.0, "end_s": 7.0},
+    {"text": "Bu 75.000 kişilik stat Euro 2032 finali için yapılmak isteniyor.", "start_s": 7.0, "end_s": 12.0},
+    {"text": "Kim neden bu kadar acele ediyor?", "start_s": 12.0, "end_s": 15.0}
+  ],
+  "face_boxes": [
+    {"start_s": 0.0, "end_s": 15.0, "box": [0.36, 0.37, 0.64, 0.5]},
+    {"start_s": 15.0, "end_s": 30.0, "box": [0.30, 0.36, 0.70, 0.52]},
+    {"start_s": 30.0, "end_s": 45.0, "box": [0.40, 0.38, 0.62, 0.55]},
+    {"start_s": 45.0, "end_s": 58.0, "box": [0.28, 0.35, 0.72, 0.58]}
+  ],
+  "rows": [
+    {"id": "guided-title", "text": "Fenerbahçe'ye stat teklif edildi", "role": "generative_intro", "start_s": 0.0, "end_s": 3.0, "x_frac": 0.5, "y_frac": 0.16, "size_px": 76, "alignment": "center", "max_width_frac": 0.84},
+    {"id": "spoken-text-0", "text": "75.000 kişilik stat: Euro 2032 finali için", "start_s": 7.0, "end_s": 12.0, "x_frac": 0.5, "y_frac": 0.2, "size_px": 64, "alignment": "center", "max_width_frac": 0.84},
+    {"id": "label-0", "text": "Kadıköy'ü istediler", "start_s": 3.0, "end_s": 7.0, "x_frac": 0.5, "y_frac": 0.78, "size_px": 64, "alignment": "center", "max_width_frac": 0.84},
+    {"id": "pinned-0", "text": "Maltepe stadı teklifi, 24 Ekim", "start_s": 0.0, "end_s": 58.0, "x_frac": 0.08, "y_frac": 0.86, "size_px": 56, "alignment": "left", "max_width_frac": 0.68}
+  ]
+}
