@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.64.0] - 2026-11-01
+
+### Changed
+- fix(kria): a left-out clip no longer comes back as the opening; withdrawn label asks stay withdrawn (KRI-1111) (#1998) <!-- release-pr: 1998 -->
+
 ## [0.83.63.0] - 2026-11-01
 
 ### Changed
