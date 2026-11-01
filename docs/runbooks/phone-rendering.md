@@ -3802,3 +3802,46 @@ A clip with a look, or a card photo asked for a new backdrop, is refused by the 
 Picture cards cannot be rotated from chat: the phone Talking compile drops `editor_style`
 (`SubtitledOverlayCard` has no angle), so `patch_overlay` with `rotation_deg` is refused on every edit
 that offers the overlay family. Teach the angle to the card op only after that compile keeps it.
+
+routes and phone writers (PR B, below) and the AI ops and slides (later PRs) land in the follow-ups of the same project.
+
+### Video editor (KRI-1136, PR B)
+
+Row field: `clips[i].raw["tilt"]` = `{"rotation_deg": float, "backdrop": {"kind": ...}}`, clockwise, wrapped to
+`(-180, 180]` and rounded to hundredths; `backdrop` is absent when blank and the whole key is **omitted** when the
+clip is upright (Reset removes the key, so an untouched row, its state hash and its recipe keep their bytes). One
+model per language: `app.kria.clip_tilt.ClipTilt` (`app.kria.clip_tilt_row` validates and wraps a wire value) and
+`Kria/Core/ClipTilt.swift`, pinned together by `tests/fixtures/clip-tilt-row/v1.json`. One writer helper per
+language too: `phone_recipe_shared.clip_tilt_fields(row) -> (transform_patch, backdrop)` and
+`NativeEditorRenderCompiler.clipTilt`. No writer reads `tilt` itself.
+
+| Writer | Where the row comes from | Test |
+|---|---|---|
+| guided / montage / song / lip-sync | `TimelineSlotEdit.tilt` -> revision segment `tilt` -> `GuidedStoryMoment.tilt` -> `phone_guided_plan` | `tests/kria/test_clip_tilt_writers.py[guided]` |
+| authored (Talking, any edit after an editor Save) | `resolve_authored_phone_slots` -> `user_timeline` row -> `phone_authored_timeline` | `[authored]` |
+| Voiceover cut (narrated, voiceover montage) | `resolve_phone_voiceover_slots` -> `replace_voiceover_cut` (a clip keeps its pinned tilt unless the row sends one) | `[voiceover_cut_*]` |
+| voiceover montage plan, subtitled plan | `clip_tilts={clip id: row value}`; the subtitled editor passes the previous recipe's tilts so a lane Save keeps them | `[montage]`, `[subtitled]` |
+
+Save contract (`TimelineSlotEdit.tilt`): omitted keeps the stored tilt, an explicit `null` or an upright blank value
+clears it (the editor sends `null` for a saved tilt it removed, because an omitted key keeps it). A tilt on a slot
+with a look is refused (`TIMELINE_TILT_WITH_LOOK`; the editor disables Tilt there and says why). Letterbox and
+tilt compose: `_fit_eligible` no longer skips a rotated clip, so a tilted sideways clip keeps its bars (scale first,
+then turn about the canvas centre).
+
+Capability: `editor_capabilities.clips.tilt = {"editable": true, "reason": null}` (the shape of `clips.source_crop`),
+present only while `MEDIA_TILT_ENABLED` is on, `clipTilt` is verified, the requesting build declares protocol >= 28
+(workers skip the build check) and the variant renders on device with a Save that recompiles the row: an authored
+timeline, a guided/montage edit with its revision, or a phone Voiceover cut. A Talking edit that is not authored yet
+does not offer Tilt. A closed gate leaves the payload
+byte-identical. The Swift decoder flattens it to `clips.tilt`; `NativeEditorSession.canTiltClips` reads it.
+Save-time gates (`_require_clip_tilt_gates`): a build below protocol 28 that replaces the timeline of a variant
+holding a tilt gets `426 client_update_required` (`feature: "clip_tilt"`), because it previews the clip upright and
+cannot say the tilt; a new or changed tilt while the flag/token is off, or on a cloud variant, gets
+`422 clip_tilt_unavailable` (keeping or clearing a stored tilt is always allowed).
+
+Editor: **Tilt** in the clip's context strip (next to Crop) opens `NativeTiltSheet`: a dial from -180 to 180 with
+detents at 0, +-90 and 180 (the `NativeTextRotationSnap` thresholds, haptic on entering one; dragging right turns
+clockwise, like the Nudge right button and the corner-rotate handle), +-1 degree nudges, Turn 90, Reset, and a
+Background row (Blank / Colour / Blur, plus "use this background on every clip", which leaves clips that cannot
+tilt untouched). The preview updates through the live-composition path. The overlay corner-rotate gesture snaps
+to 90 degrees too.
