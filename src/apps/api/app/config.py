@@ -275,6 +275,16 @@ class Settings(BaseSettings):
     # audible; the receipt says so. Apply: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=
     # true --app nova-video` + restart api + worker; rollback with `=false` the same way.
     phone_clip_sound_windows_enabled: bool = False
+    # KRI-1151: lets a phone Talking (`subtitled`) edit play a footage cutaway's OWN sound
+    # for its window ("use their audio") with the speaker muted under it. Recipe-only: an
+    # `audio` track clip of the cutaway's file plus a speaker mute window per cutaway, so it
+    # needs no new device capability or protocol; `phone_rollout.phone_talking_cutaway_sound_
+    # supported()` also needs `phone_clip_sound_windows_supported()` and `audioMix`,
+    # `visualVideos`, `alphaOverlay` verified. False (default): the draft says clip sound by
+    # clip works on a montage (as before) and no cutaway gets sound. Apply: `fly secrets set
+    # PHONE_TALKING_CUTAWAY_SOUND_ENABLED=true --app nova-video` + restart api + worker, Fly
+    # only (no Vercel twin); rollback with `=false` the same way.
+    phone_talking_cutaway_sound_enabled: bool = False
     # KRI-183 (video Visuals as PiP): when this flag AND
     # `phone_rollout.phone_subtitled_overlays_supported()` hold AND
     # "visualVideos" is in `phone_render_verified_features` -- i.e.
@@ -850,6 +860,19 @@ class Settings(BaseSettings):
     # already pinned keep their tilt.
     media_tilt_enabled: bool = False
     media_tilt_min_client_protocol: int = 28
+    # KRI-1141: tilting a phone Talking edit's picture card rides the same `clipTilt` capability,
+    # kill switch and verified token as a clip tilt, but a card is a placed clip
+    # (`visual_placement`) whose `transform.rotation_degrees` only builds declaring protocol >= 30
+    # turn: a 28/29 build knows the token and would draw the card upright. So a pinned recipe
+    # that carries a tilted card answers 426 `client_update_required` (`card_tilt`) below this.
+    media_card_tilt_min_client_protocol: int = 30
+    # KRI-1139: a Visuals-pool photo or video as a clip's tilt backdrop (`backdrop.kind =
+    # "media"`, capability `clipBackdropMedia`). Not a second master flag: it is offered only
+    # while `media_tilt_enabled` is on, and also needs `clipBackdropMedia` in
+    # PHONE_RENDER_VERIFIED_FEATURES and a build that declares protocol >= this value (31: the
+    # first build that decodes a media backdrop). A pinned recipe that already carries one
+    # answers 426 `client_update_required` (`clip_backdrop_media`) to an older build.
+    media_backdrop_min_client_protocol: int = 31
     # KRI-821: Sounds > Original audio on a phone Voiceover edit (narrated, or a montage
     # `voiceover`). The capability `original_audio` is advertised to app builds declaring
     # `X-Kria-Client-Protocol` >= this; older builds hydrate the row only for guided edits,

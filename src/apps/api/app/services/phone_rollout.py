@@ -422,6 +422,13 @@ def validate_phone_pilot_recipe(recipe: EditRecipeV2, *, allow_editor_media: boo
             "Tilted clips await native parity and device qualification",
             capability="clipTilt",
         )
+    if recipe_has_clip_backdrop_media(recipe) and "clipBackdropMedia" not in set(
+        settings.phone_render_verified_features
+    ):
+        raise PhoneCapabilityUnavailable(
+            "A photo or video behind a clip awaits native parity and device qualification",
+            capability="clipBackdropMedia",
+        )
     missing = recipe.required_capabilities - set(settings.phone_render_verified_features)
     if missing:
         raise PhoneCapabilityUnavailable(
@@ -802,6 +809,49 @@ def clip_tilt_client_supported(*, require_client: bool | None = None) -> bool:
     return protocol is not None and protocol >= settings.media_tilt_min_client_protocol
 
 
+def recipe_has_clip_backdrop_media(recipe: Any) -> bool:
+    """Does any clip of this recipe draw a Visuals-pool photo or video behind it?"""
+    return any(
+        getattr(getattr(clip, "backdrop", None), "kind", None) == "media"
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def clip_backdrop_media_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build decode a clip backdrop of kind ``media``?
+
+    At least ``media_backdrop_min_client_protocol`` (31) knows the ``clipBackdropMedia``
+    token and the ``asset_id`` key; an older build fails the whole recipe on either.
+    ``require_client`` follows `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_backdrop_min_client_protocol
+
+
+def clip_backdrop_media_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a tilted clip take a pool photo or video behind it".
+
+    The tilt gate (`clip_tilt_supported`: ``media_tilt_enabled``, ``clipTilt`` verified, a
+    build at protocol 28) plus ``clipBackdropMedia`` in ``phone_render_verified_features`` and
+    a build at protocol 31.
+    """
+    return bool(
+        clip_tilt_supported(require_client=require_client)
+        and "clipBackdropMedia" in set(settings.phone_render_verified_features)
+        and clip_backdrop_media_client_supported(require_client=require_client)
+    )
+
+
 def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
     """Single source of truth for "may a phone edit be tilted right now".
 
@@ -813,6 +863,51 @@ def clip_tilt_supported(*, require_client: bool | None = None) -> bool:
         settings.media_tilt_enabled
         and "clipTilt" in set(settings.phone_render_verified_features)
         and clip_tilt_client_supported(require_client=require_client)
+    )
+
+
+def recipe_has_tilted_card(recipe: Any) -> bool:
+    """Does any placed picture card of this recipe turn (KRI-1141)?
+
+    A card is a clip with a ``visual_placement`` on an overlay track; its angle is the clip's own
+    ``transform.rotation_degrees``, the same field a main-track tilt uses.
+    """
+    return any(
+        getattr(clip, "visual_placement", None) is not None and clip.transform.rotation_degrees != 0
+        for track in getattr(recipe, "tracks", None) or []
+        for clip in track.clips
+    )
+
+
+def card_tilt_client_supported(*, require_client: bool | None = None) -> bool:
+    """Does the requesting app build turn a placed card by its clip's rotation?
+
+    At least ``media_card_tilt_min_client_protocol`` (30). Builds 28 and 29 decode the ``clipTilt``
+    token but draw a placed card upright. ``require_client`` as in `clip_tilt_client_supported`.
+    """
+    from app.services.client_protocol import (  # noqa: PLC0415
+        current_client_protocol,
+        in_http_request,
+    )
+
+    if require_client is None:
+        require_client = in_http_request()
+    if not require_client:
+        return True
+    protocol = current_client_protocol()
+    return protocol is not None and protocol >= settings.media_card_tilt_min_client_protocol
+
+
+def card_tilt_supported(*, require_client: bool | None = None) -> bool:
+    """Single source of truth for "may a Talking edit's picture card be tilted right now".
+
+    The clip tilt switch and verified token (`clip_tilt_supported` minus its build gate) plus the
+    card's own build gate.
+    """
+    return bool(
+        settings.media_tilt_enabled
+        and "clipTilt" in set(settings.phone_render_verified_features)
+        and card_tilt_client_supported(require_client=require_client)
     )
 
 
@@ -1212,6 +1307,24 @@ def phone_clip_sound_windows_supported() -> bool:
     return bool(
         getattr(settings, "phone_clip_sound_windows_enabled", False)
         and "visualBlocks" in settings.phone_render_verified_features
+    )
+
+
+def phone_talking_cutaway_sound_supported() -> bool:
+    """Can a phone Talking edit play a footage cutaway's own sound right now (KRI-1151)?
+
+    True iff `phone_talking_cutaway_sound_enabled` AND `phone_clip_sound_windows_supported()`
+    (the speaker is muted under the cutaway with a recipe mute window) AND the cutaway
+    track's own features (`audioMix`, `visualVideos`, `alphaOverlay`) are verified. Read by the
+    draft check (whether the ask is met), the subtitled worker (whether it builds the sound)
+    and nothing else: the recipe itself needs no capability beyond what the cutaway track
+    already declares.
+    """
+    verified = set(settings.phone_render_verified_features)
+    return bool(
+        getattr(settings, "phone_talking_cutaway_sound_enabled", False)
+        and phone_clip_sound_windows_supported()
+        and {"audioMix", "visualVideos", "alphaOverlay"} <= verified
     )
 
 

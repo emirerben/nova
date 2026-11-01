@@ -23,10 +23,16 @@ struct RecipeVideoLayer: @unchecked Sendable {
     var overlayPreserveAlpha: Bool? = nil
     var overlayCenter: CGPoint = .zero
     var visualPlacement: VisualMediaPlacement? = nil
+    /// Clockwise degrees a PLACED card (a clip with a `visualPlacement`) is turned about its centre: the clip's
+    /// `transform.rotationDegrees`, which the placement path otherwise ignores. See `TimelineClip.placementTiltDegrees`.
+    var placementTilt: Double = 0
     var visualOrder: Int = 0
     var overlayDissolve: NativeDissolveRenderer? = nil
     var sourceCrop: NormalizedSourceRect? = nil
     var backdrop: ClipBackdrop? = nil
+    /// Set only on a layer that exists to be a clip's `.media` backdrop: the pool visual id it draws. Such a layer
+    /// is never composed onto the canvas itself; `composeVideoLayer` reads it under the clips that name it.
+    var backdropAssetID: String? = nil
     /// Set only for an overlay clip with `overlayFadeIn`/`overlayFadeOut`.
     /// It scales opacity alone; positioning keeps using `transform`.
     var overlayFade: OverlayFadeWindow? = nil
@@ -234,8 +240,9 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     /// (cutaways, fullscreen and overlay cards, fills) exactly as without a background, so nothing above the
     /// speaker is ever matted (S8). The background shows only under an active speaker clip, so an ending
     /// clip on the same track is untouched.
-    private func composeBelowText(_ layers: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
+    private func composeBelowText(_ candidates: [RecipeVideoLayer], onto canvas: CIImage, instruction: RecipeVideoInstruction,
                                   request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage {
+        let layers = candidates.filter { $0.backdropAssetID == nil }
         var frame = canvas
         func compose(_ layer: RecipeVideoLayer) throws { frame = try composeVideoLayer(layer, onto: frame, instruction: instruction, request: request, time: time) }
         guard let matte = instruction.speakerMatte, let background = layers.first(where: { $0.speakerRole == .background }),
@@ -262,11 +269,8 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
         return frame
     }
 
-    private func composeVideoLayer(_ layer: RecipeVideoLayer, onto background: CIImage,
-                                   instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
-                                   time: Double) throws -> CIImage {
-        var frame = background
-        let source: CIImage
+    /// The layer's own picture for this request: its track's frame (graded when it carries a look) or its image.
+    private func sourceImage(of layer: RecipeVideoLayer, request: AVAsynchronousVideoCompositionRequest) throws -> CIImage? {
         if let trackID = layer.trackID {
             guard let buffer = request.sourceFrame(byTrackID: trackID) else {
                 throw MediaEngineError.missingAsset(String(trackID))
@@ -276,21 +280,37 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
             // otherwise Core Image converts the Rec.709 transfer curve
             // again and visibly brightens the source before any effect.
             // The buffer's YCbCr matrix still controls YUV decoding.
-            do {
-                let graded = layer.look == .goldenHour ? try GoldenHourGrade.apply(to: buffer) : buffer
-                source = CIImage(cvPixelBuffer: graded, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
-            } catch {
-                throw error
-            }
-        } else if let image = layer.image {
-            source = image
-        } else { return frame }
+            let graded = layer.look == .goldenHour ? try GoldenHourGrade.apply(to: buffer) : buffer
+            return CIImage(cvPixelBuffer: graded, options: [.colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+        }
+        return layer.image
+    }
+
+    /// The canvas-sized pool photo or video a clip's `.media` backdrop shows, cover-fit like a fullscreen cutaway.
+    /// nil (nothing drawn) when no backdrop layer carries `poolID`, which a built composition never lacks.
+    private func mediaBackdropImage(_ poolID: String, instruction: RecipeVideoInstruction,
+                                    request: AVAsynchronousVideoCompositionRequest, time: Double) throws -> CIImage? {
+        guard let backdropLayer = instruction.layers.first(where: { $0.backdropAssetID == poolID }),
+              let source = try sourceImage(of: backdropLayer, request: request) else { return nil }
+        return Self.positionedSource(source, layer: backdropLayer, canvas: instruction.canvas, time: time).cropped(to: instruction.canvas)
+    }
+
+    private func composeVideoLayer(_ layer: RecipeVideoLayer, onto background: CIImage,
+                                   instruction: RecipeVideoInstruction, request: AVAsynchronousVideoCompositionRequest,
+                                   time: Double) throws -> CIImage {
+        var frame = background
+        guard let source = try sourceImage(of: layer, request: request) else { return frame }
         var alpha = layer.visualPlacement?.alpha(at: time) ?? (layer.fadeIn > 0 ? min(1, max(0, (time - layer.start) / layer.fadeIn)) : 1)
         if layer.visualPlacement == nil, let fade = layer.overlayFade { alpha *= fade.alpha(at: time) }
         var positioned = Self.positionedSource(source, layer: layer, canvas: instruction.canvas, time: time)
-        if let backdrop = layer.backdrop,
-           let under = Self.backdropImage(backdrop, source: source, layer: layer, canvas: instruction.canvas, time: time) {
-            positioned = positioned.composited(over: under).cropped(to: instruction.canvas)
+        if let backdrop = layer.backdrop {
+            let under: CIImage?
+            if case .media(let poolID) = backdrop {
+                under = try mediaBackdropImage(poolID, instruction: instruction, request: request, time: time)
+            } else {
+                under = Self.backdropImage(backdrop, source: source, layer: layer, canvas: instruction.canvas, time: time)
+            }
+            if let under { positioned = positioned.composited(over: under).cropped(to: instruction.canvas) }
         }
         if layer.overlayPopIn {
             let scale = 0.82 + 0.18 * min(1, max(0, (time - layer.start) / 0.18))
@@ -429,8 +449,19 @@ class RecipeVideoCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
                 "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1)
             ]).cropped(to: image.extent)
         }
-        return layer.visualPlacement?.position(image, preferred: layer.preferredTransform, canvas: canvas,
-            time: time, clipStart: layer.start, clipEnd: layer.end) ?? image.transformed(by: transform)
+        guard let placement = layer.visualPlacement else { return image.transformed(by: transform) }
+        let placed = placement.position(image, preferred: layer.preferredTransform, canvas: canvas,
+            time: time, clipStart: layer.start, clipEnd: layer.end)
+        return layer.placementTilt == 0 ? placed : turned(placed, clockwiseDegrees: layer.placementTilt)
+    }
+
+    /// `degrees` is clockwise on screen; Core Image's y axis points up, so its positive angle is counter-clockwise
+    /// and the angle is negated, exactly as `AVPlayerPreviewComposer.transform` does for a main-track tilt.
+    static func turned(_ image: CIImage, clockwiseDegrees degrees: Double) -> CIImage {
+        let centre = CGPoint(x: image.extent.midX, y: image.extent.midY)
+        return image.transformed(by: CGAffineTransform(translationX: -centre.x, y: -centre.y)
+            .concatenating(CGAffineTransform(rotationAngle: -degrees * .pi / 180))
+            .concatenating(CGAffineTransform(translationX: centre.x, y: centre.y)))
     }
 
     /// Converts a normalized, top-left-origin crop in upright space into a Core Image

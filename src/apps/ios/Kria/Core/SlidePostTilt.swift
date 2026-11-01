@@ -36,7 +36,12 @@ struct SlidePostTilt: Codable, Equatable, Sendable {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Invalid slide tilt"))
         }
         rotationDeg = degrees
-        backdrop = try c.decodeIfPresent(ClipBackdrop.self, forKey: .backdrop) ?? .blank
+        let decoded = try c.decodeIfPresent(ClipBackdrop.self, forKey: .backdrop) ?? .blank
+        // A slide backdrop is blank, a colour or a blur; a pool photo or video behind a slide is not part of the contract.
+        if case .media = decoded {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "A slide tilt has no media backdrop"))
+        }
+        backdrop = decoded
     }
 
     private struct AnyKey: CodingKey {

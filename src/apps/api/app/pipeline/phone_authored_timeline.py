@@ -26,7 +26,12 @@ from app.pipeline.phone_captions import (
     compile_caption_layers,
 )
 from app.pipeline.phone_editor_visuals import compile_editor_media_track
-from app.pipeline.phone_recipe_shared import clip_tilt_fields, snap_text_overshoot, timeline_end_s
+from app.pipeline.phone_recipe_shared import (
+    clip_tilt_fields,
+    register_backdrop_visuals,
+    snap_text_overshoot,
+    timeline_end_s,
+)
 from app.pipeline.phone_subtitled_plan import _compile_overlay_track, _compile_sfx_track
 from app.pipeline.phone_voiceover_montage_plan import voiceover_music_gain
 from app.services.authored_editor import explicit_authored_slots
@@ -202,6 +207,7 @@ def compile_phone_authored_timeline(
             )
         )
         cursor += duration
+    register_backdrop_visuals(clips, visuals=visuals, assets=assets, manifest=manifest)
     presentation = render_presentation(variant, cursor)
     for key in ("carousel_moment", "motion_scenes", "camera_effects", "custom_effects"):
         if presentation.get(key):

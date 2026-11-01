@@ -185,7 +185,7 @@ struct SlidePostTiltBackdrop: View {
 
     var body: some View {
         switch backdrop {
-        case .blank:
+        case .blank, .media:
             Color.black
         case .color(let hex):
             Color(slideHex: hex)

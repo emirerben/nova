@@ -1250,7 +1250,7 @@
         "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
         "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss"
       ],
-      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py tests/kria/test_kri1024_flag_emoji_title.py tests/kria/test_kri1024_phone_text_glyphs_postgres.py",
+      "api_tests": "tests/pipeline/test_phone_text_style.py tests/pipeline/test_phone_text_fit_never_fails.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py tests/kria/test_kri1024_flag_emoji_title.py tests/kria/test_kri1024_phone_text_glyphs_postgres.py",
       "paths": [
         "scripts/ios/phone-text-style-e2e.py",
         "src/apps/api/app/agents/creator_memory_extractor.py",
@@ -1286,6 +1286,8 @@
         "src/apps/api/prompts/creator_memory_extractor.txt",
         "src/apps/api/tests/evals/test_phone_typography_evals.py",
         "src/apps/api/tests/pipeline/test_phone_text_style.py",
+        "src/apps/api/tests/pipeline/test_phone_text_fit_never_fails.py",
+        "src/apps/api/tests/fixtures/phone_text_fit/job_07efa44c.json",
         "src/apps/api/tests/services/test_creator_direction_postgres.py",
         "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
         "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift",
@@ -2134,6 +2136,15 @@
       ]
     },
     {
+      "id": "kri-1150-talking-muted-cutaway-audio",
+      "needs_native": false,
+      "api_tests": "tests/kria/test_talking_cutaway_sound_receipts.py",
+      "paths": [
+        "src/apps/api/tests/fixtures/kri1150_talking_keep_audio_thread.json",
+        "src/apps/api/tests/kria/test_talking_cutaway_sound_receipts.py"
+      ]
+    },
+    {
       "id": "kri-957-after-voice-clip-line",
       "needs_native": false,
       "api_tests": "tests/tasks/test_kri957_after_voice_line.py tests/tasks/test_kri842_narrated_clip_sound.py tests/agents/test_main_creator_user_song.py tests/agents/test_brief_extractor.py",
@@ -2167,6 +2178,18 @@
         "src/apps/api/tests/tasks/test_kri942_clip_sound_toggle.py",
         "src/apps/api/tests/tasks/test_kri1028_kept_line_window.py",
         "src/apps/api/tests/tasks/test_leverkusen_m1_announcement_quote.py"
+      ]
+    },
+    {
+      "id": "kri-1151-talking-cutaway-sound",
+      "needs_native": false,
+      "api_tests": "tests/pipeline/test_phone_talking_cutaway_sound.py tests/kria/test_kri1151_talking_cutaway_sound_checks.py tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py tests/pipeline/test_phone_subtitled_plan.py",
+      "paths": [
+        "src/apps/api/app/pipeline/phone_talking_cutaway_sound.py",
+        "src/apps/api/tests/fixtures/kri1151_thread_6fa36e51.json",
+        "src/apps/api/tests/pipeline/test_phone_talking_cutaway_sound.py",
+        "src/apps/api/tests/kria/test_kri1151_talking_cutaway_sound_checks.py",
+        "src/apps/api/tests/tasks/test_kri1151_talking_cutaway_sound_dispatch.py"
       ]
     },
     {
@@ -2590,9 +2613,10 @@
       "needs_native": true,
       "api_tests": "tests/routes/test_native_activity_postgres.py tests/routes/test_device_render.py tests/tasks/test_device_render_reaper.py tests/routes/test_background_export_verification.py",
       "xctests": [
-        "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
-        "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
-        "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
+        "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testTapOpensTheNotifiedProjectWhileAnotherIsSelected",
+        "KriaTests/NotificationActivityOpeningTests/testDeletedProjectIsNeverReopenedByATap",
+        "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject"
       ],
       "paths": [
         "src/apps/api/app/routes/native_activity.py",
@@ -2603,8 +2627,7 @@
         "src/apps/api/app/tasks/export_verification.py",
         "src/apps/api/tests/routes/test_native_activity_postgres.py",
         "src/apps/ios/Kria/Core/NativeActivity.swift",
-        "src/apps/ios/Kria/Features/ActivityView.swift",
-        "src/apps/ios/Tests/KriaUITests/ActivityUITests.swift"
+        "src/apps/ios/Tests/KriaTests/NotificationActivityOpeningTests.swift"
       ]
     },
     {
@@ -2630,7 +2653,6 @@
         "src/apps/ios/Kria/Core/NativeActivity.swift",
         "src/apps/ios/Kria/Core/Services.swift",
         "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
-        "src/apps/ios/Kria/Features/ActivityView.swift",
         "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
         "src/apps/ios/Kria/Features/PerfFixtures.swift",
         "src/apps/ios/Kria/KriaApp.swift",
@@ -2686,12 +2708,15 @@
         "KriaTests/NativeNotificationsTests/testAccountSwitchDuringPermissionRequestNeverRegistersForNextAccount",
         "KriaTests/NativeNotificationsTests/testAccountSwitchDuringPendingCleanupStopsOldCapabilityRead",
         "KriaTests/NativeNotificationsTests/testColdStartTapWaitsForAuthenticationAndAccountSwitchDropsPendingTap",
+        "KriaTests/NativeNotificationsTests/testAccountControlFollowsCapabilityOptInAndFailedCleanup",
         "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringPreflightRefreshNeverSendsInstallationOrOverwritesNewAccount",
         "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuring401RefreshNeverReplaysAsNewAccount",
         "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringFailedRefreshNeverClearsNewAccount",
         "KriaTests/NotificationAccountBoundaryTests/testAccountSwitchDuringSuccessful401ReplayRejectsStaleReceipt",
         "KriaTests/NotificationAccountBoundaryTests/testRegistrationBodyContainsOnlyTokenAndEnabledAndDecodesServerVersion",
         "KriaTests/NotificationActivityOpeningTests/testFreshActivityProjectAndSuccessfulAcknowledgementPrecedeSelection",
+        "KriaTests/NotificationActivityOpeningTests/testTapOpensTheNotifiedProjectWhileAnotherIsSelected",
+        "KriaTests/NotificationActivityOpeningTests/testDeletedProjectIsNeverReopenedByATap",
         "KriaTests/NotificationActivityOpeningTests/testReadAcknowledgement401NeverReplaysUnderSwitchedAccount",
         "KriaTests/NotificationActivityOpeningTests/testFailedFreshFetchOrAcknowledgementNeverUsesCachedProject",
         "KriaTests/NotificationAtomicSessionTests/testSignOutInsideOldReadWriteGapCannotResurrectSession",
@@ -2741,7 +2766,6 @@
         "src/apps/ios/Kria/Core/NativeActivity.swift",
         "src/apps/ios/Kria/Core/Services.swift",
         "src/apps/ios/Kria/Features/AccountUITestTransport.swift",
-        "src/apps/ios/Kria/Features/ActivityView.swift",
         "src/apps/ios/Kria/Features/ChatUITestTransport.swift",
         "src/apps/ios/Kria/Features/NativeEditorSession.swift",
         "src/apps/ios/Kria/Features/PerfFixtures.swift",
@@ -2781,7 +2805,7 @@
     {
       "id": "kri-1137-chat-tilt",
       "needs_native": false,
-      "api_tests": "tests/agents/test_clip_tilt_ai.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py tests/agents/test_timeline_capability_context.py tests/kria/test_editor_capability_parity.py tests/services/test_kria_ask_cli.py",
+      "api_tests": "tests/agents/test_clip_tilt_ai.py tests/evals/test_edit_copilot_evals.py tests/agents/test_creator_wire_contract.py tests/agents/test_editor_ops_v2.py tests/agents/test_timeline_capability_context.py tests/kria/test_editor_capability_parity.py tests/services/test_kria_ask_cli.py tests/agents/test_clip_tilt_media_ai.py",
       "paths": [
         "src/apps/api/app/kria/clip_tilt.py",
         "src/apps/api/prompts/edit_copilot_ops/clip_tilt.txt",
@@ -2795,18 +2819,23 @@
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_straighten.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_turkish.json",
         "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_look_clip_refusal.json",
-        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_gate_closed.json"
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_gate_closed.json",
+        "src/apps/api/prompts/edit_copilot_ops/clip_tilt_media.txt",
+        "src/apps/api/tests/agents/test_clip_tilt_media_ai.py",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_media_second_photo.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/kria_v2_timeline_tilt_media_not_in_pool_refusal.json"
       ]
     },
     {
       "id": "kri-1136-clip-tilt-editor",
       "needs_native": true,
-      "api_tests": "tests/kria/test_clip_tilt_writers.py tests/routes/test_clip_tilt_editor_save.py tests/routes/test_editor_save_code_catalog.py",
+      "api_tests": "tests/kria/test_clip_tilt_writers.py tests/routes/test_clip_tilt_editor_save.py tests/routes/test_editor_save_code_catalog.py tests/kria/test_clip_backdrop_media.py tests/routes/test_clip_backdrop_media_save.py",
       "xctests": [
         "KriaTests/ClipTiltTests/testSharedFixtureValidTiltsNormalizeAndMapToRecipeFields",
         "KriaTests/ClipTiltTests/testSettingATiltStoresTheRowAndResetRestoresAByteIdenticalRow",
         "KriaTests/ClipTiltTests/testCompilerComposesTheTiltWithTheLetterboxInsteadOfReplacingIt",
-        "KriaTests/ClipTiltRenderTests/testARowTiltRendersClockwiseOverTheColourAndBlurBackdrops"
+        "KriaTests/ClipTiltRenderTests/testARowTiltRendersClockwiseOverTheColourAndBlurBackdrops",
+        "KriaTests/ClipTiltMediaBackdropTests/testTheEditorsRecipeRendersThePhotoInTheCornersOfATiltedClip"
       ],
       "paths": [
         "src/apps/api/app/kria/clip_tilt_row.py",
@@ -2817,7 +2846,37 @@
         "src/apps/ios/Kria/Features/NativeTiltSheet.swift",
         "src/apps/ios/Tests/KriaTests/ClipTiltTests.swift",
         "src/apps/ios/Tests/KriaTests/ClipTiltRenderTests.swift",
-        "src/apps/ios/Tests/KriaUITests/NativeTiltUITests.swift"
+        "src/apps/ios/Tests/KriaUITests/NativeTiltUITests.swift",
+        "src/apps/api/tests/kria/test_clip_backdrop_media.py",
+        "src/apps/api/tests/routes/test_clip_backdrop_media_save.py",
+        "src/apps/ios/Kria/Features/NativeVisualPoolPicker.swift",
+        "src/apps/ios/Tests/KriaTests/ClipTiltMediaBackdropTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/ClipBackdropMediaCompositionTests.swift"
+      ]
+    },
+    {
+      "id": "kri-1141-overlay-card-tilt",
+      "needs_native": true,
+      "api_tests": "tests/routes/test_overlay_card_tilt.py tests/routes/test_overlay_card_tilt_chat.py tests/agents/test_clip_tilt_ai.py tests/agents/test_creator_wire_contract.py tests/evals/test_edit_copilot_evals.py",
+      "xctests": [
+        "KriaTests/NativeOverlayCardTiltTests/testAngleIsWrittenAsTheCardsEditorStyleAndSurvivesTheSaveSnapshot",
+        "KriaTests/NativeOverlayCardTiltTests/testStraighteningLeavesTheCardExactlyAsItWasLoaded",
+        "KriaTests/NativeOverlayCardTiltTests/testTheSavedAnglePlacesTheCardInThePreviewOnTheSameClockwiseAngle"
+      ],
+      "paths": [
+        "src/apps/api/prompts/edit_copilot_ops/overlay_tilt.txt",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_a_bit.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_a_bit_more.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_absolute_left.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_gate_closed_refusal.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_straighten.json",
+        "src/apps/api/tests/fixtures/agent_evals/edit_copilot/golden/overlay_tilt_turkish.json",
+        "src/apps/api/app/agents/editor_ops_v2/overlays.py",
+        "src/apps/api/tests/routes/test_overlay_card_tilt.py",
+        "src/apps/api/tests/routes/test_overlay_card_tilt_chat.py",
+        "tests/fixtures/card-tilt-parity/v1.json",
+        "src/apps/ios/Tests/KriaTests/NativeOverlayCardTiltTests.swift",
+        "src/apps/ios/Packages/KriaMediaEngine/Tests/KriaMediaEngineTests/PlacedCardTiltTests.swift"
       ]
     }
   ]

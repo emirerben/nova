@@ -1,5 +1,7 @@
 # Native activity first release
 
+> KRI-1087 update: the in-app Activity inbox described below was removed. Kria sends push notifications only. The records, the list route and the tap path (`openNativeActivity`) remain, and the opt-in lives on the Account screen. The inbox and `ActivityUITests` passages describe the first release.
+
 Parent context is KRI-1039. This is a narrow notification foundation, not completion of that broader routing and recovery work.
 
 ## Request and acceptance

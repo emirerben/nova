@@ -7,8 +7,11 @@ import UIKit
 /// live, Reset removes the row's `tilt` key, and Save sends the same row the compiler reads.
 struct NativeTiltSheet: View {
     @ObservedObject var session: NativeEditorSession
+    @ObservedObject var uploads: BackgroundUploadCoordinator
+    let projectID: UUID
     let selection: EditorSelection
     @State private var applyAllNote: String?
+    @State private var showsMediaPicker = false
 
     private var tilt: ClipTilt { session.clipTilt(for: selection) ?? .upright }
     private var blockedReason: String? { session.tiltBlockedReason(for: selection) }
@@ -64,29 +67,44 @@ struct NativeTiltSheet: View {
         .background(KriaColor.paper)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("native-editor-tilt-sheet")
+        .sheet(isPresented: $showsMediaPicker) { mediaPicker }
     }
 
     // MARK: Background
 
     private var backdropKind: String {
-        switch tilt.backdrop { case .blank: "blank"; case .color: "color"; case .blur: "blur" }
+        switch tilt.backdrop { case .blank: "blank"; case .color: "color"; case .blur: "blur"; case .media: "media" }
+    }
+
+    private var backdropOptions: [(kind: String, title: String)] {
+        let options = [("blank", "Blank"), ("color", "Colour"), ("blur", "Blur")]
+        return session.canTiltBackdropMedia ? options + [("media", "Photo or video")] : options
+    }
+
+    private var mediaBackdropID: String? {
+        if case .media(let id) = tilt.backdrop { return id }
+        return nil
     }
 
     private var backgroundSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             KriaSectionLabel(title: "Background")
             HStack(spacing: 4) {
-                ForEach([("blank", "Blank"), ("color", "Colour"), ("blur", "Blur")], id: \.0) { kind, title in
+                ForEach(backdropOptions, id: \.kind) { option in
+                    let kind = option.kind, title = option.title
                     let selected = backdropKind == kind
                     Button {
                         switch kind {
                         case "blank": setBackdrop(.blank)
                         case "color": if backdropKind != "color" { setBackdrop(.color(Self.swatches[0].hex)) }
+                        case "media": showsMediaPicker = true
                         default: setBackdrop(.blur)
                         }
                     } label: {
                         Text(title)
-                            .font(KriaFont.body(15).weight(selected ? .bold : .regular))
+                            .font(KriaFont.body(backdropOptions.count > 3 ? 14 : 15).weight(selected ? .bold : .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .foregroundStyle(selected ? KriaColor.ink : KriaColor.zinc)
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(selected ? KriaColor.paper : .clear, in: Capsule())
@@ -121,6 +139,7 @@ struct NativeTiltSheet: View {
                     }
                 }
             }
+            if let poolID = mediaBackdropID { mediaBackdropRow(poolID) }
             if session.timelineClips.count > 1 {
                 pill("Use this background on every clip", systemImage: nil, id: "native-editor-tilt-apply-all", enabled: !isBlocked) {
                     let result = session.applyTiltBackdropToAllClips(tilt.backdrop)
@@ -134,6 +153,57 @@ struct NativeTiltSheet: View {
                 }
             }
         }
+    }
+
+    private func mediaBackdropRow(_ poolID: String) -> some View {
+        let asset = session.tiltBackdropChoices.first { $0.id == poolID }
+        let missing = session.tiltBackdropIsMissing(tilt.backdrop)
+        return HStack(spacing: 12) {
+            Group {
+                if let asset { NativeVisualThumbnail(asset: asset) } else { Image(systemName: "photo").foregroundStyle(KriaColor.mutedInk) }
+            }
+            .frame(width: 56, height: 56)
+            .background(KriaColor.softZinc)
+            .clipShape(RoundedRectangle(cornerRadius: 9))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(asset == nil ? "Missing photo or video" : "Chosen photo or video")
+            .accessibilityIdentifier("native-editor-tilt-media-thumbnail")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(asset?.sourceFilename ?? (asset?.kind == "video" ? "Video" : "Photo"))
+                    .font(KriaFont.body(14).weight(.semibold)).foregroundStyle(KriaColor.ink).lineLimit(1)
+                if missing {
+                    Text("That photo or video isn’t available anymore. Choose another or Reset.")
+                        .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("native-editor-tilt-media-missing")
+                }
+            }
+            Spacer(minLength: 0)
+            pill("Change", systemImage: nil, id: "native-editor-tilt-media-change") { showsMediaPicker = true }
+        }
+    }
+
+    private var mediaPicker: some View {
+        NavigationStack {
+            ScrollView {
+                NativeVisualPoolPicker(
+                    session: session, uploads: uploads, projectID: projectID, idPrefix: "native-editor-tilt-media",
+                    choices: session.tiltBackdropChoices, selectedID: mediaBackdropID, noneTitle: "None",
+                    onNone: { setBackdrop(.blank); showsMediaPicker = false },
+                    onSelect: { asset in setBackdrop(.media(asset.id)); showsMediaPicker = false }
+                )
+                .padding(16)
+            }
+            .navigationTitle("Photo or video")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showsMediaPicker = false }.accessibilityIdentifier("native-editor-tilt-media-done")
+                }
+            }
+        }
+        .tint(KriaColor.ink)
+        .presentationDetents([.medium, .large])
     }
 
     // MARK: Edits

@@ -18,6 +18,8 @@ struct TeleprompterTakeManifest: Codable, Equatable, Sendable, Identifiable {
     var fileName: String
     var status: TeleprompterTakeStatus
     var interrupted: Bool
+    /// Why the take stopped. Optional so older manifests still decode.
+    var stopReason: TakeStopReason?
     var capturedAt: Date
     var script: TeleprompterScriptDraft
     var intakeID: UUID

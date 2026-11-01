@@ -36,8 +36,9 @@ public struct LivePreviewExportSnapshot: Sendable {
               let instruction = instructions.first(where: { CMTimeRangeContainsTime($0.timeRange, time: CMTime(seconds: time, preferredTimescale: 60_000)) }),
               let layer = instruction.layers.first(where: { $0.clipID == id }), let naturalSize = layer.naturalSize else { return nil }
         var unrotated = layer
-        let rotation = layer.visualPlacement?.editorStyle?.rotationDegrees ?? 0
+        let rotation = (layer.visualPlacement?.editorStyle?.rotationDegrees ?? 0) + layer.placementTilt
         unrotated.visualPlacement?.editorStyle?.rotationDegrees = 0
+        unrotated.placementTilt = 0
         // Use the same source crop and cover fit as the compositor so selection
         // handles stay on the visible pixels after asymmetric source crops.
         var rectangle = RecipeVideoCompositor.positionedSource(
@@ -226,6 +227,11 @@ public struct LivePreviewExportSnapshot: Sendable {
         guard instructions.count == current.instructions.count, let first = instructions.first else {
             throw NativePreviewFeatureError("LivePreviewComposition-101")
         }
+        // A media backdrop is drawn from a layer built with the composition; one the build never made (or no longer
+        // needed) takes the full rebuild instead of silently drawing nothing.
+        guard Set(AVPlayerPreviewComposer.mediaBackdrops(in: next).map(\.poolID)) == Set(instructions.flatMap(\.layers).compactMap(\.backdropAssetID)) else {
+            throw NativePreviewFeatureError("LivePreviewComposition-media-backdrop")
+        }
         let previous = first.text
         var painted = previous.filter { $0.portable == nil }
         let remaining = 64 * 1024 * 1024 - painted.reduce(0) { $0 + $1.bitmapBytes }
@@ -262,6 +268,7 @@ public struct LivePreviewExportSnapshot: Sendable {
                 updated.overlayPopIn = clip.overlayPopIn == true
                 updated.overlayPreserveAlpha = clip.overlayPreserveAlpha
                 updated.visualPlacement = clip.visualPlacement
+                updated.placementTilt = clip.placementTiltDegrees
                 updated.sourceCrop = clip.sourceCrop
                 updated.backdrop = clip.stillLayout == nil ? clip.backdrop : nil
                 updated.overlayFade = OverlayFadeWindow(clip: clip, start: layer.start, end: layer.end)
