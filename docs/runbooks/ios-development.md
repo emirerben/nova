@@ -247,6 +247,54 @@ Before release, check a real iPhone for preview framing, saved portrait/mirrorin
 audio sync, text absence from saved pixels, and background/audio interruption
 recovery. Simulator success is not evidence for those hardware behaviors.
 
+#### Cinematic recording (KRI-1160)
+
+The camera's capture controls carry a **Cinematic** switch (off by default,
+remembered per device in `UserDefaults` key `teleprompter.cinematic.enabled`).
+It uses Apple's native Cinematic Video capture API
+(`AVCaptureDeviceInput.isCinematicVideoCaptureEnabled`), which needs:
+
+- **iOS 26 or later.** The app's deployment target stays iOS 18; older iOS shows
+  the switch disabled with "Cinematic needs iOS 26 or later. Your takes record
+  in standard mode."
+- **A front camera with a Cinematic format** (`AVCaptureDevice.Format
+  .isCinematicVideoCaptureSupported`). Apple lists Cinematic mode on iPhone 13
+  and later; the app checks the format, not the model name. Without one the
+  switch is disabled and says the take stays standard.
+
+The teleprompter only records the front camera, so the rear cameras are not
+offered. `TeleprompterCinematic.frontCinematicCamera()` prefers a 1080p, 30 fps,
+8-bit format. With the switch off the capture graph is unchanged (the same
+`.builtInWideAngleCamera` and `configure1080p30IfSupported`). When the camera
+refuses Cinematic, or drops it after a graph change, the switch caption says the
+camera is recording in standard mode.
+
+**Why takes are baked.** A Cinematic movie is a sharp video track plus a
+disparity (depth) track and a Cinematic metadata track. Only Apple's apps draw
+the blur from them; AVPlayer, our upload, Gemini analysis and the KriaMediaEngine
+export all see the sharp source. `CinematicTakeFinisher` therefore renders each
+frame with `CNRenderingSession` (Cinematic framework, the focus decisions the
+camera made while filming) into an ordinary HEVC movie with the source's
+orientation transform, colour tags and passthrough audio, verifies it (one video
+track, the source's audio tracks, same length within 0.25 s, not Cinematic), and
+only then replaces the take in place. Review playback, the Photos copy, intake,
+upload and the phone render all read that baked movie, so none of them changed.
+A failed bake keeps the sharp source without the depth tracks (`.standard` on the
+manifest, "Cinematic couldn't be applied to this take" on Review); a failed copy
+keeps the original. A take cut off before baking (crash) is baked when the screen
+restores it. The movie-level Cinematic intent is dropped, so Photos treats the
+baked copy as an ordinary video (its focus cannot be re-edited there).
+
+Proof: `TeleprompterCinematicTests` (unavailable refusal, persistence, standard
+take byte-identical, old manifests decode), the unavailable-switch assertions in
+`TeleprompterUITests.testScriptIsSavedAndCameraFailureKeepsItEditable`, and the
+physical `TeleprompterHardwareUITests.testPhysicalCinematicTake` (Kria Hardware QA
+scheme, same setup as above). Record each physical run here:
+
+| Date | iPhone | iOS | Result |
+| --- | --- | --- | --- |
+| — | iPhone 14 (Yasin) | — | Owed: switch on, take, Review says "Recorded in Cinematic.", blur visible in Review and in the exported edit |
+
 ## Performance gate
 
 Simulator results prove correctness only. Before enabling a local-render
