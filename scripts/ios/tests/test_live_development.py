@@ -19,7 +19,13 @@ class LiveDevelopmentConfigurationTests(unittest.TestCase):
         self.assertIn("Live Development: debug", project)
         self.assertIn("Kria Live Development:", project)
         self.assertIn('SWIFT_ACTIVE_COMPILATION_CONDITIONS: "DEBUG LIVE_GOOGLE_ONLY"', project)
-        self.assertIn('CODE_SIGN_ENTITLEMENTS: ""', project)
+        self.assertIn('CODE_SIGN_ENTITLEMENTS: "$(KRIA_LIVE_DEVELOPMENT_ENTITLEMENTS)"', project)
+        self.assertRegex(live, r"(?m)^KRIA_LIVE_DEVELOPMENT_ENTITLEMENTS =\s*$")
+        self.assertLess(
+            live.index("KRIA_LIVE_DEVELOPMENT_ENTITLEMENTS ="),
+            live.index('#include? "Local.xcconfig"'),
+            "the default must precede the include so Local.xcconfig can override it",
+        )
         self.assertIn("API_BASE_URL = https:/$()/nova-video.fly.dev", live)
         self.assertIn("600393007296-u2latle2h5ssbms4on8meh4clitc43mt.apps.googleusercontent.com", live)
         self.assertIn(

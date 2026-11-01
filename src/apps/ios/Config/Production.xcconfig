@@ -1,6 +1,7 @@
 // $() preserves the second slash because xcconfig otherwise treats // as a comment.
 API_BASE_URL = https:/$()/nova-video.fly.dev
 AUTH_MODE = apple
+KRIA_APS_ENVIRONMENT = production
 KRIA_MEDIA_ENGINE = remote
 KRIA_PRODUCT_BUNDLE_IDENTIFIER = com.emirerben.kria
 // CI supplies these values for a signed distribution archive. Keeping the
