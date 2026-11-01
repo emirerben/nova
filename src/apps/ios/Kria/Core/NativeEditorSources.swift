@@ -174,6 +174,28 @@ enum NativePhoneTalkingSource {
     static let slotID = "native-phone-talking-source"
     static let multiClipReceiptField = "phone_talking_multi_clip"
 
+    /// Range (KRI-717) on a Talking edit. The timeline stays closed (`timeline: false`); the server opens
+    /// exactly one operation, a window change on these slots, as the `clips.source_window` leaf. Absent leaf
+    /// means this server (or this build's protocol) does not offer it and the ordinary timeline gate decides.
+    static let rangeCapabilityKey = "clips.source_window"
+
+    static func isSourceSlot(_ slot: EditorTimelineSlot) -> Bool {
+        slot.id?.hasPrefix(slotID) == true
+    }
+
+    /// Plain words for a closed leaf. The server sends a reason code; the app owns the copy, and a code this
+    /// build has never heard of still gets an honest line.
+    static func rangeClosedCopy(reason: String?) -> String {
+        switch reason {
+        case "talking_range_multi_clip": "Range works on single-clip talking videos for now."
+        case "talking_range_word_cuts": "Range isn’t available after removing words from this video yet."
+        case "talking_range_processed_audio": "Range isn’t available after cleaning up this video’s sound yet."
+        case "talking_range_cut_mismatch": "This video’s cut changed. Make the video again to choose a range."
+        case "client_update_required": "Update Kria to choose which part of your take plays."
+        default: "Range isn’t available for this video yet."
+        }
+    }
+
     struct Speaker: Equatable, Sendable {
         let clipIndex: Int
         let duration: Double

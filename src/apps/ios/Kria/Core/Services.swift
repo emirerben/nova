@@ -2126,8 +2126,21 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "speaker_background_media_unavailable": "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here.",
             "speaker_background_kind_mismatch": "That background doesn’t match its file. Pick it again and save again. Your edits are still here.",
             "speaker_background_start_out_of_range": "The background video starts past its end. Pick it again and save again. Your edits are still here.",
+            // Range on a phone Talking edit. The four reasons are the `clips.source_window` leaf's own codes; the
+            // server can also answer a Save with one when the edit changed after the app last looked.
+            "talking_range_multi_clip": EditorSaveError.talkingRangeSaveCopy("talking_range_multi_clip"),
+            "talking_range_word_cuts": EditorSaveError.talkingRangeSaveCopy("talking_range_word_cuts"),
+            "talking_range_processed_audio": EditorSaveError.talkingRangeSaveCopy("talking_range_processed_audio"),
+            "talking_range_cut_mismatch": EditorSaveError.talkingRangeSaveCopy("talking_range_cut_mismatch"),
+            "talking_range_structure_changed": "Only the range of each part can change in this video. Undo your last change and save again. Your edits are still here.",
+            "talking_range_overlap": "A part now reaches into the part next to it. Shorten it and save again. Your edits are still here.",
+            "talking_range_captions_missing": "Part of your range has no captions yet. Add captions for it, turn captions off, or put the range back, then save again. Your edits are still here.",
         ]
     }()
+
+    private static func talkingRangeSaveCopy(_ code: String) -> String {
+        NativePhoneTalkingSource.rangeClosedCopy(reason: code) + " Your edits are still here."
+    }
 
     /// A plain-English sentence (not a machine code) short enough to show as is.
     static func isReadableServerMessage(_ text: String) -> Bool {

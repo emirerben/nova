@@ -97,7 +97,10 @@ final class NativeTalkingRangeTests: XCTestCase {
     /// Range on a hydrated Talking segment writes the window and Save carries the timeline rows (same ids,
     /// order and count as the hydrated document) with the captions already moved onto the new clock.
     func testRangeOnATalkingSegmentWritesTheWindowAndSavesTimelineRowsWithRebasedCaptions() async throws {
-        let (session, fake) = try await Self.session(leaf: Self.open)
+        let note: JSONValue = .array([.object(["id": .string("note"), "text": .string("Sauce"), "start_s": .number(1.2), "end_s": .number(2.0),
+            "position": .string("custom"), "x_frac": .number(0.5), "y_frac": .number(0.15), "size_px": .number(96), "font_family": .string("Playfair Display"),
+            "alignment": .string("center"), "effect": .string("static")])])
+        let (session, fake) = try await Self.session(leaf: Self.open, extraVariant: ["text_elements": note])
         XCTAssertEqual(session.sourcePreviewState, .ready)
         XCTAssertFalse(session.canEditTimeline, "the server keeps the timeline closed for Talking")
         XCTAssertEqual(session.document.clips.map(\.id), Self.ids)
@@ -133,6 +136,9 @@ final class NativeTalkingRangeTests: XCTestCase {
         XCTAssertEqual(cues.map { $0["text"]?.stringValue }, ["one", "two", "three"])
         XCTAssertEqual(try XCTUnwrap(cues[1]["start_s"]?.numberValue), 1.4, accuracy: 0.001, "the rebased lane travels in the same request")
         XCTAssertEqual(try XCTUnwrap(cues[2]["start_s"]?.numberValue), 2.8, accuracy: 0.001)
+        let texts = try XCTUnwrap(request.textElements, "every rebased lane is a full replacement in the same request").compactMap(\.objectValue)
+        XCTAssertEqual(texts.map { $0["id"]?.stringValue }, ["note"])
+        XCTAssertEqual(try XCTUnwrap(texts[0]["start_s"]?.numberValue), 1.4, accuracy: 0.001, "source 1.7 s plays 0.2 s later after the growth")
     }
 
     /// A closed leaf names why in plain words; unknown codes and `talking_range_disabled` use the generic line.

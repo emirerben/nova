@@ -332,6 +332,8 @@
       "KriaUITests/SpeakerBackgroundUITests/testToolIsHiddenWhenTheServerDoesNotOpenTheCapability",
       "KriaUITests/GamedayAddClipUITests/testEditedGamedayAddsFifthClipAndReopensCurrentPreview",
       "KriaUITests/NativeSourceWindowUITests/testRangeSheetSlidesAndResizesTheWindow",
+      "KriaUITests/NativeTalkingRangeUITests/testRangeOnATalkingSegmentSavesAndReopensWithTheSavedWindow",
+      "KriaUITests/NativeTalkingRangeUITests/testClosedLeafKeepsRangeVisibleAndSaysWhy",
       "KriaUITests/NativeTiltUITests/testTiltFifteenDegreesWithABlurredBackgroundSavesAndSurvivesReopen",
       "KriaUITests/NativeTiltUITests/testTurnNinetyAndResetStraightenTheClipWithNothingLeftToSave",
       "KriaUITests/NativeTiltUITests/testNudgeMovesTheDialClockwiseAndCounterClockwiseByOneDegree",
