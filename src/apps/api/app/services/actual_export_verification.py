@@ -97,6 +97,7 @@ def unsupported_reasons(recipe) -> list[str]:
             or clip.look is not None
             or clip.transform != MediaTransform()
             or clip.source_crop is not None
+            or clip.backdrop is not None
             or clip.still_layout is not None
             or clip.hold_duration is not None
             or clip.text is not None
