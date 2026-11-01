@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.58.0] - 2026-11-01
+
+### Changed
+- fix(kria): an end/start pin on a clip that doesn't show it asks instead of seating it (KRI-1108) (#1997) <!-- release-pr: 1997 -->
+
 ## [0.83.57.0] - 2026-11-01
 
 ### Changed
