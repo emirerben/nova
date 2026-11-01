@@ -2108,6 +2108,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
             "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
             "TIMELINE_TILT_WITH_LOOK": "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here.",
+            "clip_backdrop_media_not_in_pool": "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here.",
+            "clip_backdrop_media_unavailable": "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here.",
             "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
             "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
             "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",

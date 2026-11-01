@@ -19,6 +19,8 @@
     "TIMELINE_UNKNOWN_CLIP",
     "authored_seconds_required",
     "authored_source_required",
+    "clip_backdrop_media_not_in_pool",
+    "clip_backdrop_media_unavailable",
     "clip_tilt_unavailable",
     "guided_story_revision_unavailable",
     "guided_story_source_stale",
