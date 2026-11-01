@@ -372,14 +372,27 @@ async def test_f4_a_superseded_scorer_label_ask_is_never_asked_again(
         if req.kind == "text" and req.scope != "title" and not req.literal
     ] == []
 
+    settled_by_name: list[tuple[str, str, str | None]] = []
+    by_name = planning.apply_file_name_references
+
+    def _spy(intents, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        settled = by_name(intents, **kwargs)
+        settled_by_name.extend((r.intent_id, r.op, r.creator_text) for r in settled[0])
+        return settled
+
+    monkeypatch.setattr(planning, "apply_file_name_references", _spy)
     planned = await _turn_1328(monkeypatch)
 
     response = planned.plan.response
     assert "who scored" not in response and "in which minute" not in response, (
         f"superseded r5 asked again: {response!r}"
     )
-    # F9: the creator's own words for those clips are still placed.
-    assert ("caption_goal_tor", "caption", "the two goal clips") in provider.resolved
+    # F9: the creator's own words for those clips are still placed. Since KRI-1112 the
+    # earlier "The goals are IMG_1037 and IMG_1039." settles "the two goal clips" by file
+    # name, so the caption is settled there instead of by the resolver.
+    placed = {(i, op) for i, op, _ in settled_by_name} | {(i, op) for i, op, _ in provider.resolved}
+    assert ("caption_goal_tor", "caption") in placed
+    assert not {i for i, op in placed if op == "label"}, placed
 
 
 @pytest.mark.asyncio
@@ -520,3 +533,64 @@ def test_f8_only_leaving_out_the_same_thing_beats_the_opening(
 
     firsts = [i.attribute for i in intents if i.op == "order" and i.position == "first"]
     assert firsts == ([MY_TICKET] if kept else [])
+
+
+# -- F10: asking for the clip again brings it back ------------------------------------------
+
+
+def _brief_after_withdrawal() -> CreativeBrief:
+    """Brief v4 once the 13:26:57 turn took the left-out opening off it (F7)."""
+    from app.services.anchor_exclusions import withdraw_excluded_anchors  # noqa: PLC0415
+
+    batch = _batch_1326(model_kept_first=True)
+    withdrawal = withdraw_excluded_anchors(_brief_v3(), batch, {"first": MY_TICKET})
+    return apply_updates(_brief_v3(), withdrawal.updates, source_turn_id="t")
+
+
+def test_f10_a_left_out_clip_asked_for_again_comes_back_as_an_ordinary_clip() -> None:
+    """Asked again ("Put the ticket back in") after "Leave the ticket out": nothing on the
+    brief still holds the ticket out, so the planner's inventory (no leave-out this turn)
+    stands as it is: the ticket is an ordinary clip again, and it does not open the video
+    unasked."""
+    after = _brief_after_withdrawal()
+    anchors = stated_anchors(after)
+    assert anchors == {"last": ENDING}
+
+    inventory = _inventory(None)
+    assert planning.excluded_anchors(inventory, anchors) == {}
+
+    intents = planning.with_brief_anchors(inventory, anchors)
+
+    assert not [i for i in intents if i.op == "exclude"]
+    assert [i.attribute for i in intents if i.op == "order" and i.position == "first"] == []
+
+
+def test_f10_asking_to_start_with_it_again_puts_the_opening_back() -> None:
+    """Asked to start with it again ("Start with my ticket"): the brief takes the
+    opening again and the turn's planning seats it first, as before the leave-out."""
+    from app.services.anchor_exclusions import withdraw_excluded_anchors  # noqa: PLC0415
+
+    prior = _brief_after_withdrawal()
+    again = BriefUpdate(
+        operation="change",
+        target_requirement_id="r1",
+        expected_version=prior.version,
+        kind="order",
+        scope="global",
+        description="chronological from kick-off to the end, starting with my ticket",
+        facts={"key": "capture_time", "first_clip": MY_TICKET, "last_clip": ENDING},
+    )
+    inventory = _inventory(None)
+    anchors_now = {"first": MY_TICKET, "last": ENDING}
+
+    withdrawal = withdraw_excluded_anchors(
+        prior, [again], planning.excluded_anchors(inventory, anchors_now)
+    )
+
+    assert withdrawal.updates == (again,) and withdrawal.notices == ()
+    after = apply_updates(prior, withdrawal.updates, source_turn_id="t2")
+    assert stated_anchors(after) == anchors_now
+    intents = planning.with_brief_anchors(inventory, stated_anchors(after))
+    assert [i.attribute for i in intents if i.op == "order" and i.position == "first"] == [
+        MY_TICKET
+    ]
