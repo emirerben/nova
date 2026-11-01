@@ -536,7 +536,7 @@ private struct AccountCaptureContextRow: View {
                 .font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
         }
         .tint(KriaColor.sky)
-        .accessibilityHint("Reads date and rough location from Photos to order clips and name places")
+        .accessibilityHint("Reads each clip or photo’s date and rough location, about 1 kilometer, from Photos to order clips and name places. Turn off to send neither.")
         .accessibilityIdentifier("account-capture-context-toggle")
         .onChange(of: shareCaptureContext) { _, enabled in ClipCaptureSetting.settingChanged(to: enabled) }
         .frame(minHeight: 44)

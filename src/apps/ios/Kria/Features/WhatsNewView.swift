@@ -83,7 +83,11 @@ struct WhatsNewView: View {
             case .textPreferences: TextPreferencesView(api: api)
             }
         }
-        .task { await loadAvailability() }
+        .task {
+            // Popping back from a pushed screen restarts this task; keep what the first read found.
+            guard availability == nil else { return }
+            await loadAvailability()
+        }
     }
 
     private func previous(_ earlier: [WhatsNewRelease]) -> some View {
@@ -109,7 +113,9 @@ struct WhatsNewView: View {
     private func loadAvailability() async {
         async let capabilities = try? await api.creationCapabilities()
         async let memory = try? await api.textPreferenceMemory()
-        availability = await WhatsNewAvailability(capabilities: capabilities, memory: memory)
+        let result = await WhatsNewAvailability(capabilities: capabilities, memory: memory)
+        guard !Task.isCancelled else { return }
+        availability = result
     }
 }
 

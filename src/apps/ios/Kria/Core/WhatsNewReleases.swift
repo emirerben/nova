@@ -14,7 +14,7 @@ enum WhatsNewReleases {
                     title: "Make a lip-sync video",
                     benefit: "Add a song, then your takes of you singing along. Kria lines them up with the music.",
                     steps: [
-                        "Tap the menu button at the top left.",
+                        "Tap the menu button at the top left (Open projects).",
                         "Tap New chat.",
                         "Swipe the cards to the last one, Lip-sync, and tap it.",
                         "Add your song first, then your clips.",
@@ -85,7 +85,6 @@ enum WhatsNewReleases {
             ],
             fixes: [
                 WhatsNewFix(text: "Send no longer stays greyed out after a crash interrupts an upload.", requires: nil),
-                WhatsNewFix(text: "The format cards are now called Voiceover and Talk to camera.", requires: nil),
                 WhatsNewFix(text: "Use this idea in Camera roll now opens that idea’s chat.", requires: .cameraRoll),
             ]
         ),
@@ -98,7 +97,7 @@ enum WhatsNewReleases {
                     title: "Watch examples on the format cards",
                     benefit: "A new chat shows a short example video on the format cards. Tap the pause button on a card to stop it.",
                     steps: [
-                        "Tap the menu button at the top left.",
+                        "Tap the menu button at the top left (Open projects).",
                         "Tap New chat.",
                         "Swipe through the cards under “What are we making?”.",
                     ],
@@ -111,7 +110,7 @@ enum WhatsNewReleases {
                     title: "Plan videos around an event",
                     benefit: "Group what you filmed into events, like a trip or a weekend. Kria suggests videos to make from each one.",
                     steps: [
-                        "Tap the menu button at the top left.",
+                        "Tap the menu button at the top left (Open projects).",
                         "Open Camera roll.",
                         "Tap Choose photos and videos, or New event if you already have one.",
                         "Open an event to see its ideas, then tap Use this idea.",
