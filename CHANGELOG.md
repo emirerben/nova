@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.46.0] - 2026-11-01
+
+### Changed
+- fix(kria): keep a hidden part's edge and seconds through the resolver (Leverkusen M2 run 2, KRI-1105) (#1994) <!-- release-pr: 1994 -->
+
 ## [0.83.45.0] - 2026-11-01
 
 ### Fixed
