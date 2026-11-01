@@ -1247,7 +1247,7 @@
         "KriaUITests/AccountPrivacyUITests/testFinishedEditLearningDismissAndResetHistory",
         "KriaUITests/CreationUITests/testFinishedEditLearningChatAcceptAndDismiss"
       ],
-      "api_tests": "tests/pipeline/test_phone_text_style.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py tests/kria/test_kri1024_flag_emoji_title.py tests/kria/test_kri1024_phone_text_glyphs_postgres.py",
+      "api_tests": "tests/pipeline/test_phone_text_style.py tests/pipeline/test_phone_text_fit_never_fails.py tests/evals/test_phone_typography_evals.py tests/integration/test_finished_style_learning.py tests/kria/test_kri1024_flag_emoji_title.py tests/kria/test_kri1024_phone_text_glyphs_postgres.py",
       "paths": [
         "scripts/ios/phone-text-style-e2e.py",
         "src/apps/api/app/agents/creator_memory_extractor.py",
@@ -1283,6 +1283,8 @@
         "src/apps/api/prompts/creator_memory_extractor.txt",
         "src/apps/api/tests/evals/test_phone_typography_evals.py",
         "src/apps/api/tests/pipeline/test_phone_text_style.py",
+        "src/apps/api/tests/pipeline/test_phone_text_fit_never_fails.py",
+        "src/apps/api/tests/fixtures/phone_text_fit/job_07efa44c.json",
         "src/apps/api/tests/services/test_creator_direction_postgres.py",
         "src/apps/ios/Kria/Core/NativeEditorDocument.swift",
         "src/apps/ios/Kria/Core/NativeEditorRenderCompiler.swift",
