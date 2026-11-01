@@ -3210,3 +3210,20 @@ approval-readiness gate turned into a hold-back. Animation is applied by another
   composition (`creation_text_composition`, pinned by
   `test_initial_creation_research_replays_without_searching_again[True]`). Prod renders use
   the pinned preview, so this only bites a render without a preview.
+
+## [2026-11-01] Research agents are told which asks another step applies
+
+Second refusal of the same Assos prompt, after the unmet-list fix (#2012): the claim reviewer
+(`nova.research.claim_review`) rejected the sourced captions with "The request explicitly
+asked to include animations ... not listed in unmet_requests", so research failed with
+"Research needs correction" and the draft was held back. The research writer and reviewer read
+the whole creator request, so a style ask in it looked like a research ask nobody covered.
+
+- `ResearchCopyInput.handled_elsewhere` (default empty) carries the live asks another step
+  applies: "animation" (any live animation ask) and "text position". Set by
+  `research_preview._handled_elsewhere` before approval and by the text composer at render.
+  The writer (v9) and the reviewer (v4) prompts say never to list or reject for them.
+- No new flag: the field is empty unless an animation/position ask is live, so every other
+  request sends the same data as before. Prompt versions bumped; replay evals pass.
+- Verified offline with a reviewer that rejects when the data does not name the ask. The real
+  Gemini reviewer has not been run against this prompt (paid live runs need an approved ledger).

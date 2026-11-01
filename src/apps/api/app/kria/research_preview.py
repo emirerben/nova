@@ -321,6 +321,19 @@ def _schema_failure(exc: BaseException) -> BaseException | None:
     return None
 
 
+def _handled_elsewhere(brief: CreativeBrief | None) -> tuple[str, ...]:
+    """The live asks another step applies to the researched text (not research itself)."""
+    from app.kria.animation_ask import animation_targets, requested_text_position  # noqa: PLC0415
+
+    live = brief.live() if brief is not None else []
+    handled = []
+    if animation_targets(live):
+        handled.append("animation")
+    if requested_text_position(live) is not None:
+        handled.append("text position")
+    return tuple(handled)
+
+
 def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> PreparedResearch | None:
     """Research the draft ``inputs`` describe, exactly as the render would.
 
@@ -392,7 +405,11 @@ def prepare(inputs: ResearchInputs, *, visuals: Any, ctx: Any = None) -> Prepare
     )
     try:
         output = run_researched_revision(
-            request, utterance=inputs.creator_request, snapshot=model_snapshot, ctx=ctx
+            request,
+            utterance=inputs.creator_request,
+            snapshot=model_snapshot,
+            ctx=ctx,
+            handled_elsewhere=_handled_elsewhere(inputs.brief),
         )
     except ResearchUnavailable as exc:
         return _failed(request, requirement.id, basis, str(exc))
