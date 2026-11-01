@@ -257,6 +257,8 @@
       "KriaUITests/EditorUITests/testCapturedCreationWordsPlayReopenAndExport",
       "KriaUITests/NativeEditorInspectorUITests/testEditorChromeFitsViewportAndCurrentToolsRemainReachable",
       "KriaUITests/NativeEditorInspectorUITests/testSixToolRailScrollsAndLeavesHalfOfTheNextToolVisible",
+      "KriaUITests/NativeEditorInspectorUITests/testSixToolRailDoesNotMoveForAVisibleToolAndRestsAtTheStartWhenThePanelCloses",
+      "KriaUITests/NativeEditorInspectorUITests/testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt",
       "KriaUITests/NativeEditorInspectorUITests/testSoundsTabShowsSongVolumeStartAndRemove",
       "KriaUITests/NativeEditorInspectorUITests/testLipSyncSongTrimCutsTheVideoAndKeepsVolumeAndRemove",
       "KriaUITests/NativeEditorInspectorUITests/testServerWithoutTrimKeepsTheSingleHandleBarAndTheLipSyncLock",

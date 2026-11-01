@@ -156,6 +156,45 @@ final class NativeEditorInspectorUITests: XCTestCase {
         XCTAssertTrue(app.buttons["native-editor-tool-sounds"].isHittable, "the selected tool stays in view when the panel opens")
     }
 
+    func testSixToolRailDoesNotMoveForAVisibleToolAndRestsAtTheStartWhenThePanelCloses() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-rail-six-tools", "-ui-testing-editor-speaker-background"]
+        app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "390"
+        app.launchEnvironment["UI_TEST_REDUCE_MOTION"] = "1"
+        app.launch()
+        let rail = app.descendants(matching: .any)["native-editor-tool-rail"].firstMatch
+        XCTAssertTrue(rail.waitForExistence(timeout: 20))
+        let text = app.buttons["native-editor-tool-text"]
+        let sounds = app.buttons["native-editor-tool-sounds"]
+        XCTAssertTrue(sounds.waitForExistence(timeout: 5))
+        let restingInset = text.frame.minX - rail.frame.minX
+
+        app.buttons["native-editor-tool-visuals"].tap()
+        XCTAssertTrue(app.buttons["native-editor-tool-visuals"].isSelected)
+        XCTAssertEqual(text.frame.minX - rail.frame.minX, restingInset, accuracy: 2, "opening a tool that is already fully visible must not shift the rail")
+        XCTAssertGreaterThanOrEqual(text.frame.minX, rail.frame.minX, "the first tool is not cut at the left")
+
+        app.buttons["native-editor-tool-visuals"].tap()
+        sounds.tap()
+        XCTAssertTrue(app.scrollViews["native-editor-sounds-scroll"].waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(sounds.frame.maxX, rail.frame.maxX + 1, "an off-screen tool is scrolled into view when it opens")
+
+        sounds.tap()
+        XCTAssertFalse(app.scrollViews["native-editor-sounds-scroll"].waitForExistence(timeout: 1))
+        XCTAssertEqual(text.frame.minX - rail.frame.minX, restingInset, accuracy: 2, "closing the panel returns the rail to its start")
+        XCTAssertGreaterThan(sounds.frame.maxX, rail.frame.maxX, "back at rest the next tool is cut by the edge again")
+        XCTAssertTrue(text.isHittable)
+    }
+
+    func testFourToolRailIsAPlainRowNotAScrollViewSoSwipesNeverStartOnIt() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ui-testing-editor"]
+        app.launchEnvironment["UI_TEST_EDITOR_WIDTH"] = "390"
+        app.launch()
+        XCTAssertTrue(app.buttons["native-editor-tool-text"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.scrollViews.containing(.button, identifier: "native-editor-tool-text").count, 0, "a rail that fits must not be a scroll view")
+    }
+
     func testVisiblePanelHandleExpandsAndRestoresEveryTool() {
         let app = XCUIApplication()
         app.launchArguments = ["-ui-testing-editor", "-ui-testing-editor-caption-visuals", "-ui-testing-editor-source-text"]
