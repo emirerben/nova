@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.kria.clip_tilt_row import canonical_row_tilt
 from app.pipeline.look_presets import normalize_look_adjustments, normalize_look_preset
 from app.schemas.edit_proposal import MAX_EDIT_PROPOSAL_MEDIA, MAX_PROPOSAL_DURATION_S
 from app.schemas.editor_window import EDITOR_MIN_CLIP_S, below_editor_minimum
@@ -94,6 +95,9 @@ class GuidedEditorSegment(BaseModel):
     source_crop: GuidedEditorSourceCrop | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    # KRI-1136: the creator's tilt, ``{rotation_deg, backdrop}`` (`app.kria.clip_tilt.ClipTilt`).
+    # Omitted when upright with a blank backdrop so every revision keeps its state hash.
+    tilt: dict[str, Any] | None = Field(default=None, exclude_if=lambda value: not value)
     playback_rate: float | None = Field(
         default=None, ge=0.25, le=4.0, exclude_if=lambda value: value is None
     )
@@ -143,6 +147,9 @@ class GuidedEditorSegment(BaseModel):
         object.__setattr__(self, "look_adjustments", controls.model_dump() if controls else None)
         if self.source_end_s is not None and self.source_end_s <= self.source_start_s:
             raise ValueError("source window must be ordered")
+        object.__setattr__(self, "tilt", canonical_row_tilt(self.tilt))
+        if self.tilt is not None and preset != "none":
+            raise ValueError("a tilted segment cannot carry a look")
         return self
 
 

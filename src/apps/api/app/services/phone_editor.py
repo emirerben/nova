@@ -13,6 +13,7 @@ import structlog
 from fastapi import HTTPException
 
 from app.config import settings
+from app.kria.clip_tilt_row import row_tilt_from_clip
 from app.kria.device_render import make_device_request
 from app.kria.recipes_v2 import EditRecipeV2
 from app.pipeline.editor_render_window import RenderWindowUnavailable
@@ -42,6 +43,7 @@ from app.pipeline.phone_narrated_plan import (
     replace_narrated_title,
 )
 from app.pipeline.phone_recipe_shared import (
+    FIT_VIDEO_TRACK_IDS,
     PhoneNarrationBed,
     PhoneSongBed,
     apply_landscape_fit,
@@ -1358,6 +1360,7 @@ def _compile_subtitled_editor_commit(
         **({"speaker_position_x": speaker_position_x} if speaker_position_x is not None else {}),
         # Only a landscape canvas names itself: the portrait call stays byte-identical.
         **({"output_orientation": "landscape"} if landscape_canvas else {}),
+        **({"clip_tilts": tilts} if (tilts := _previous_clip_tilts(previous.recipe)) else {}),
     )
     recipe = with_drawings(recipe, variant.get("drawings"))
     # A native same-source cut normally borrows 25 ms of removed audio to
@@ -1554,7 +1557,7 @@ def _swap_voiceover_cut(
     slots = [slot for slot in prep.get("timeline_override") or [] if not slot.get("removed")]
     if not slots:
         raise ValueError("a phone Voiceover clip edit needs at least one clip")
-    return replace_voiceover_cut(
+    swapped = replace_voiceover_cut(
         recipe,
         archetype=archetype,
         slots=slots,
@@ -1562,6 +1565,11 @@ def _swap_voiceover_cut(
         pool=pool,
         landscape_fit=landscape_fit,
     )
+    for slot in prep["timeline_override"]:
+        # A cleared tilt was the compile's instruction; the stored row is simply upright.
+        if "tilt" in slot and slot["tilt"] is None:
+            del slot["tilt"]
+    return swapped
 
 
 def _has_editor_lanes(recipe: EditRecipeV2, variant: dict) -> bool:
@@ -1932,6 +1940,20 @@ def _compile_voiceover_montage_editor_commit(
             _persist_lane_state(
                 row, lanes, labels, paths, caption_style="sentence", duck_receipt=None
             )
+
+
+def _previous_clip_tilts(recipe: Any) -> dict[str, dict]:
+    """Each main-track clip's tilt (KRI-1136), by clip id, so a lane Save that recompiles the
+    speaker clips keeps what the creator tilted."""
+    if not isinstance(recipe, EditRecipeV2):
+        return {}
+    tilts = {}
+    for track in recipe.tracks:
+        if track.kind == "video" and track.id in FIT_VIDEO_TRACK_IDS:
+            for clip in track.clips:
+                if (tilt := row_tilt_from_clip(clip)) is not None:
+                    tilts[clip.id] = tilt
+    return tilts
 
 
 def _previous_keep_segments(

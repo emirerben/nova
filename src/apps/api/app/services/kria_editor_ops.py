@@ -1465,7 +1465,13 @@ def _timeline_models(rows: list[dict[str, Any]]) -> list[TimelineSlotEdit]:
             # Only guided rows carry these; omission on the wire means "inherit".
             **{
                 key: row[key]
-                for key in ("playback_rate", "source_crop", "source_start_locked", "source_end_s")
+                for key in (
+                    "playback_rate",
+                    "source_crop",
+                    "tilt",
+                    "source_start_locked",
+                    "source_end_s",
+                )
                 if key in row
             },
         )

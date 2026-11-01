@@ -243,6 +243,13 @@ def build_guided_segments(
                 segment["source_crop"] = slot.source_crop
         elif isinstance(inherited_segment, dict) and inherited_segment.get("source_crop"):
             segment["source_crop"] = inherited_segment["source_crop"]
+        if "tilt" in slot.model_fields_set:
+            if slot.tilt is not None:
+                segment["tilt"] = slot.tilt
+        elif isinstance(inherited_segment, dict) and inherited_segment.get("tilt"):
+            segment["tilt"] = inherited_segment["tilt"]
+        if segment.get("tilt") and segment["look_preset"] != "none":
+            raise GuidedTimelineError("TIMELINE_TILT_WITH_LOOK")
         if playback_rate_set and slot.playback_rate is not None:
             segment["playback_rate"] = playback_rate
         elif not playback_rate_set and isinstance(inherited_segment, dict):
