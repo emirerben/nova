@@ -530,6 +530,7 @@ def compile_phone_subtitled_plan(
         raise
     except Exception as exc:  # noqa: BLE001 - untrusted transcript/edited cue content
         raise UnsupportedPhonePlan(f"unable to compile captions: {exc}") from exc
+    caption_layer_ids = {layer.id for layer in layers}
 
     for font_id, font_asset in caption_font_assets(layers).items():
         manifest[font_id] = font_asset
@@ -613,6 +614,7 @@ def compile_phone_subtitled_plan(
             tracks.append(cutaway_track)
             if cutaway_sound.clips:
                 mute_windows = _cutaway_mute_windows(cutaway_sound, main_clips)
+                layers = _without_muted_captions(layers, caption_layer_ids, mute_windows)
             # Native derives `alphaOverlay` from every non-empty overlay
             # track, including opaque full-frame Talking-head cutaways. Keep
             # the server declaration aligned so a device never routes cloud
@@ -1330,6 +1332,24 @@ def _cutaway_mute_windows(
         if covered:
             windows.append(AudioMuteWindow(clip_ids=covered, start=start, end=end))
     return windows
+
+
+def _without_muted_captions(
+    layers: list[Any], caption_layer_ids: set[str], mute_windows: list[AudioMuteWindow]
+) -> list[Any]:
+    """Drop each caption whose words the viewer cannot hear: more than half of it sits inside a
+    speaker mute window. Titles and other text stay."""
+
+    def muted_s(layer: Any) -> float:
+        return sum(
+            max(0.0, min(layer.end, w.end) - max(layer.start, w.start)) for w in mute_windows
+        )
+
+    return [
+        layer
+        for layer in layers
+        if layer.id not in caption_layer_ids or muted_s(layer) * 2 <= layer.end - layer.start
+    ]
 
 
 def cutaways_from_recipe(

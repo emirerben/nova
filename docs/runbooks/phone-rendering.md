@@ -932,6 +932,11 @@ butcher clip", "no sound from 5 to 8 seconds" on a phone Montage (every edit thr
   so. Apply / rollback: `fly secrets set PHONE_CLIP_SOUND_WINDOWS_ENABLED=true|false --app
   nova-video` + restart api + worker. Tests: `tests/tasks/test_kri942_clip_sound_toggle.py`;
   design, failure modes and native export evidence: `docs/reviews/kri-942-clip-sound-toggle.md`.
+- **Under a sound cutaway**: a caption with more than half of it inside a speaker mute window is
+  dropped from the recipe (its words are not heard); titles stay. A sound that would change the
+  approved contract's camera-audio sources (`audio_source_ids` list, `original_audio: forbid`) is
+  not turned on and the ask records `contract_conflict`, the same refusal the montage lane makes.
+  While the gate is off the render-ready review judges a Talking recipe exactly as before.
 - **Known gaps**: the in-app editor preview doesn't show part-of-a-clip mutes and an editor Save
   drops them (the receipt then says so); the speech-excerpt route doesn't apply the asks (its
   recipe is judged as it is).

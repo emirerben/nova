@@ -4715,7 +4715,7 @@ def _creator_landscape_fit(all_candidates: dict | None) -> str:
     return fit if fit in ("fill", "fit") else "fill"
 
 
-def _phone_pin_contract(snapshot: dict) -> Any:
+def _phone_pin_contract(snapshot: dict, variant_id: str = "guided_story") -> Any:
     """The contract ``pin_device_request`` will verify this variant against, or ``None``.
 
     Read here only so the compile can repair toward it; an unreadable contract is left to
@@ -4727,7 +4727,7 @@ def _phone_pin_contract(snapshot: dict) -> Any:
     from app.services.device_render import _contract_for_variant  # noqa: PLC0415
 
     try:
-        return _contract_for_variant(snapshot, "guided_story")
+        return _contract_for_variant(snapshot, variant_id)
     except CreatorRenderContractError:
         return None
 
@@ -8609,11 +8609,16 @@ def _run_phone_subtitled_job(
             cutaways: tuple = ()
             cutaway_sound_plans: list = []
 
-            def _with_cutaway_sound(found: tuple, speaker_media_ids: list[str]) -> tuple:
+            def _with_cutaway_sound(found: tuple, speakers: list) -> tuple:
                 """KRI-1151: turn on the sound of each footage cutaway the approved brief
-                asked for, while the lane is switched on; ``found`` untouched otherwise."""
+                asked for, while the lane is switched on; ``found`` untouched otherwise.
+                Sound that would change the approved contract's camera-audio sources stays
+                off and the ask is recorded as a contract conflict."""
                 from app.pipeline.phone_talking_cutaway_sound import (  # noqa: PLC0415
+                    CONTRACT_CONFLICT,
                     plan_cutaway_sound_for_snapshot,
+                    sound_breaks_contract,
+                    without_sound,
                 )
                 from app.services.phone_rollout import (  # noqa: PLC0415
                     phone_talking_cutaway_sound_supported,
@@ -8624,12 +8629,11 @@ def _run_phone_subtitled_job(
                 plan = plan_cutaway_sound_for_snapshot(
                     snapshot,
                     cutaway_media_ids=[c.binding.media_id for c in found],
-                    speaker_media_ids=speaker_media_ids,
+                    speaker_media_ids=[b.media_id for b in speakers],
                 )
                 if not plan.rows:
                     return found
-                cutaway_sound_plans[:] = [plan]
-                return tuple(
+                sounding = tuple(
                     c.model_copy(
                         update={
                             "sound": c.binding.media_id in plan.on_media_ids
@@ -8638,6 +8642,13 @@ def _run_phone_subtitled_job(
                     )
                     for c in found
                 )
+                if sound_breaks_contract(
+                    _phone_pin_contract(snapshot, "subtitled"), speakers, sounding
+                ):
+                    cutaway_sound_plans[:] = [without_sound(plan, CONTRACT_CONFLICT)]
+                    return found
+                cutaway_sound_plans[:] = [plan]
+                return sounding
 
             probe = probe_video(clip_path)
             if float(probe.duration_s) > MAX_CLIP_DURATION_S:
@@ -8658,7 +8669,7 @@ def _run_phone_subtitled_job(
                         clip_id_to_gcs=clip_id_to_gcs,
                         binding_by_proxy=binding_by_proxy,
                     ),
-                    [binding.media_id],
+                    [binding],
                 )
 
             # `required_v1`: bind the immutable preflight snapshot to THIS
@@ -9349,7 +9360,7 @@ def _run_phone_subtitled_job(
                         )
                         for w in windows
                     ),
-                    [binding.media_id] + [extra.media_id for extra in extra_speaker_bindings],
+                    [binding, *extra_speaker_bindings],
                 )
 
             sfx_duck: dict | None = None

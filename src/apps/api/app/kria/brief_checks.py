@@ -6555,6 +6555,8 @@ def _draft_talking_cutaway_sound(
     if not phone_talking_cutaway_sound_supported():
         return None
     videos = video_media_ids(facts.media_snapshot) or list(facts.clip_ids)
+    if len(videos) < 2:
+        return None
     plan = plan_cutaway_sound([ask], cutaway_media_ids=videos, speaker_media_ids=())
     if not plan.rows:
         return None

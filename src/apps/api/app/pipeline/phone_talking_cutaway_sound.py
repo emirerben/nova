@@ -34,10 +34,12 @@ MET = "met"
 PARTIAL = "partial"
 NOT_POSSIBLE = "not_possible"
 
+CONTRACT_CONFLICT = "contract_conflict"
 CUTAWAY_ONLY = "cutaway_only"
 NOT_IN_EDIT = "not_in_edit"
 NOT_BUILT = "not_built"
 NO_SOUND = "no_sound"
+OVERRIDDEN = "overridden"
 
 _EPS = 0.06  # the engine's 25 ms ramp at a mute edge plus rounding
 
@@ -136,12 +138,44 @@ def plan_cutaway_sound(
         for media_id in row["media_ids"]:
             owned[media_id] = ask.requirement_id
     for rid, row in rows.items():
-        row["media_ids"] = [m for m in row["media_ids"] if owned.get(m) == rid]
+        claimed = row["media_ids"]
+        row["media_ids"] = [m for m in claimed if owned.get(m) == rid]
+        if claimed and not row["media_ids"]:
+            row.update(status=NOT_POSSIBLE, reason_code=OVERRIDDEN)
     on = frozenset(m for m, s in state.items() if s == SOUND_ON)
     return CutawaySoundPlan(
         on_media_ids=on,
         rows=tuple(rows[a.requirement_id] for a in ordered if a.requirement_id in rows),
     )
+
+
+def sound_breaks_contract(
+    contract: Any, speaker_bindings: Iterable[Any], cutaways: Iterable[Any]
+) -> bool:
+    """True when the cutaways' sound would change which camera sources the approved contract
+    lets play (`original_audio` forbid, or an `audio_source_ids` list that must stay exact)."""
+    if contract is None:
+        return False
+    audible = {b.media_id for b in speaker_bindings if b.original.has_audio is not False}
+    audible |= {
+        c.binding.media_id
+        for c in cutaways
+        if c.sound and c.binding.original.has_audio is not False
+    }
+    if contract.original_audio == "forbid" and audible:
+        return True
+    return bool(contract.audio_source_ids) and audible != set(contract.audio_source_ids)
+
+
+def without_sound(plan: CutawaySoundPlan, reason_code: str) -> CutawaySoundPlan:
+    """``plan`` with no cutaway playing; its built "on" asks become ``reason_code``."""
+    rows = tuple(
+        {**row, "status": NOT_POSSIBLE, "reason_code": reason_code}
+        if row["state"] == SOUND_ON and row["status"] == BUILT
+        else row
+        for row in plan.rows
+    )
+    return CutawaySoundPlan(on_media_ids=frozenset(), rows=rows)
 
 
 def _merge(spans: Iterable[Interval]) -> list[Interval]:
@@ -280,6 +314,8 @@ __all__ = [
     "CutawaySoundPlan",
     "judge_cutaway_sound",
     "plan_cutaway_sound",
+    "sound_breaks_contract",
+    "without_sound",
     "rendered_cutaway_receipt",
     "plan_cutaway_sound_for_snapshot",
 ]
