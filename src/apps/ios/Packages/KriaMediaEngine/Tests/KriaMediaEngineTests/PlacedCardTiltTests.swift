@@ -37,6 +37,13 @@ final class PlacedCardTiltTests: XCTestCase {
     }
 
     @MainActor private func render(rotation: Double?, directory: URL) async throws -> Frame {
+        let placement = VisualMediaPlacement(order: 1, widthFraction: 0.5, xFraction: 0.5, yFraction: 0.4, windowStart: 0, windowEnd: 2)
+        let card = TimelineClip(id: "card", sourceAssetID: "card", sourceDuration: 2, transform: MediaTransform(rotationDegrees: rotation ?? 0),
+                                volume: 0, visualPlacement: placement)
+        return try await render(card: card, expectsTilt: rotation != nil && rotation != 0, directory: directory)
+    }
+
+    @MainActor private func render(card: TimelineClip, expectsTilt: Bool, directory: URL) async throws -> Frame {
         let urls = ["base": try write(directory, "base", CGSize(width: 16, height: 16), marker: false),
                     "card": try write(directory, "card", CGSize(width: 160, height: 160), marker: true)]
         let assets = try urls.keys.sorted().map { MediaAsset(id: $0, relativePath: $0,
@@ -44,16 +51,13 @@ final class PlacedCardTiltTests: XCTestCase {
         let manifest = try RenderAssetManifest(assets: assets.map { asset in
             RenderAssetReference(id: asset.id, fingerprint: try RenderFingerprint(asset.fingerprint!), source: .original(mediaID: asset.id))
         })
-        let placement = VisualMediaPlacement(order: 1, widthFraction: 0.5, xFraction: 0.5, yFraction: 0.4, windowStart: 0, windowEnd: 2)
-        let card = TimelineClip(id: "card", sourceAssetID: "card", sourceDuration: 2, transform: MediaTransform(rotationDegrees: rotation ?? 0),
-                                volume: 0, visualPlacement: placement)
         let recipe = EditRecipe(schemaVersion: 2, rendererVersion: "kria-ios-2", canvas: Canvas(width: width, height: height),
             assets: assets, tracks: [
                 TimelineTrack(id: "v", kind: .video, clips: [TimelineClip(id: "base", sourceAssetID: "base", sourceDuration: 2)]),
                 TimelineTrack(id: "overlays", kind: .overlay, clips: [card]),
             ], assetManifest: manifest)
         try recipe.validate()
-        XCTAssertEqual(recipe.effectiveCapabilities.contains(.clipTilt), rotation != nil && rotation != 0)
+        XCTAssertEqual(recipe.effectiveCapabilities.contains(.clipTilt), expectsTilt)
         let preview = try await AVPlayerPreviewComposer().makePreview(recipe: recipe, assetURLs: urls)
         let generator = AVAssetImageGenerator(asset: preview.playerItem.asset)
         generator.videoComposition = preview.playerItem.videoComposition
@@ -83,6 +87,10 @@ final class PlacedCardTiltTests: XCTestCase {
         // carries it up and to the left, towards the top edge of the card.
         XCTAssertGreaterThan(right.x, start.x + 5, "+30 moves the marker right"); XCTAssertGreaterThan(right.y, start.y + 5, "+30 moves the marker down")
         XCTAssertLessThan(left.x, start.x - 5, "-30 moves the marker left"); XCTAssertLessThan(left.y, start.y - 5, "-30 moves the marker up")
+        // The marker sits (+34.5, -35.6) from the card centre (108, 153.6); 30 degrees clockwise carries it to (155.7, 140.0),
+        // 30 degrees counter-clockwise to (120.1, 105.5).
+        XCTAssertEqual(right.x, 155.7, accuracy: 3); XCTAssertEqual(right.y, 140.0, accuracy: 3)
+        XCTAssertEqual(left.x, 120.1, accuracy: 3); XCTAssertEqual(left.y, 105.5, accuracy: 3)
         // The card turns about its own centre: the marker keeps its distance from it.
         func distance(_ point: (x: Double, y: Double, count: Int)) -> Double { hypot(point.x - 108, point.y - 153.6) }
         XCTAssertEqual(distance(right), distance(start), accuracy: 2); XCTAssertEqual(distance(left), distance(start), accuracy: 2)
@@ -97,6 +105,40 @@ final class PlacedCardTiltTests: XCTestCase {
         let omitted = try await render(rotation: nil, directory: directory)
         let zero = try await render(rotation: 0, directory: directory)
         XCTAssertEqual(omitted.bytes, zero.bytes)
+    }
+
+    /// `tests/fixtures/card-tilt-parity/v1.json` holds the card clips the server's Talking compile writes
+    /// (`tests/routes/test_overlay_card_tilt.py` pins them from the Python side). Decode them with the app's own
+    /// codec and draw them: the angle must survive the wire and turn the right way.
+    @MainActor func testTheCardClipsTheServerCompilesDecodeAndTurnOnDevice() async throws {
+        var url = URL(fileURLWithPath: #filePath)
+        for _ in 0..<8 { url.deleteLastPathComponent() }
+        let data = try Data(contentsOf: url.appendingPathComponent("tests/fixtures/card-tilt-parity/v1.json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let cases = try XCTUnwrap(root["cases"] as? [[String: Any]])
+        XCTAssertEqual(cases.count, 4)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var frames: [String: Frame] = [:]
+        for item in cases {
+            let name = try XCTUnwrap(item["name"] as? String)
+            let angle = try XCTUnwrap(item["rotation_deg"] as? Double)
+            var clip = try RecipeJSON.decoder().decode(TimelineClip.self, from: JSONSerialization.data(withJSONObject: try XCTUnwrap(item["clip"])))
+            XCTAssertEqual(clip.transform.rotationDegrees, angle, name)
+            XCTAssertEqual(clip.placementTiltDegrees, angle, name)
+            clip.sourceAssetID = "card"
+            frames[name] = try await render(card: clip, expectsTilt: item["clip_tilt"] as? Bool == true, directory: directory)
+        }
+        let upright = try XCTUnwrap(frames["upright"]), right = try XCTUnwrap(frames["clockwise_30"])
+        let left = try XCTUnwrap(frames["counter_clockwise_30"]), half = try XCTUnwrap(frames["half_turn"])
+        let start = try XCTUnwrap(upright.redCentroid())
+        let moved = try XCTUnwrap(right.redCentroid()), back = try XCTUnwrap(left.redCentroid()), flipped = try XCTUnwrap(half.redCentroid())
+        XCTAssertGreaterThan(moved.x, start.x + 5); XCTAssertGreaterThan(moved.y, start.y + 5)
+        XCTAssertLessThan(back.x, start.x - 5); XCTAssertLessThan(back.y, start.y - 5)
+        // Half a turn carries the marker to the opposite side of the card's centre: the card is drawn at 0.5 / 0.4 of the canvas.
+        let (centreX, centreY) = (Double(width) * 0.5, Double(height) * 0.4)
+        XCTAssertEqual(flipped.x, 2 * centreX - start.x, accuracy: 3); XCTAssertEqual(flipped.y, 2 * centreY - start.y, accuracy: 3)
     }
 
     func testAPlacementOnlyReadsTheClipRotationAndAnOutOfRangeAngleIsRefused() throws {
