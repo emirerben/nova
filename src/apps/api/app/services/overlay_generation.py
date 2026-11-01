@@ -376,13 +376,75 @@ def safe_zone(raw: object) -> dict | None:
     return values if 0 <= x < 1 and 0 <= y < 1 and 0 < w <= 1 - x and 0 < h <= 1 - y else None
 
 
-def occupied_intervals(variant: dict) -> list[dict]:
+PERSISTENT_TEXT_MIN_SHARE = 0.5
+PERSISTENT_TEXT_END_SLACK_S = 1.0
+
+
+def is_persistent_text(row: dict, duration_s: float | None) -> bool:
+    """A title or pin held to the video's end frames the footage; it claims no moment."""
+    start, end = row.get("start_s"), row.get("end_s")
+    if not duration_s or not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return False
+    return (
+        end >= duration_s - PERSISTENT_TEXT_END_SLACK_S
+        and end - start >= duration_s * PERSISTENT_TEXT_MIN_SHARE
+    )
+
+
+def voiceover_words(path: str) -> list:
+    """Word timings of the creator's recorded narration. Transcripts are content-cached."""
+    import os
+    import tempfile
+
+    from app.pipeline.transcribe import transcribe_whisper_cached
+    from app.storage import download_to_file
+
+    with tempfile.TemporaryDirectory() as tmp:
+        local = os.path.join(tmp, "voiceover")
+        download_to_file(path, local)
+        return list(transcribe_whisper_cached(local).words)
+
+
+def voiceover_speech_evidence(path: str, clock: OverlayClock, duration_s: float) -> list[dict]:
+    """Speech evidence for a montage whose only speech is a separate narration track.
+
+    The narration starts at output time 0, so its word clock is the output clock; each word is
+    moved onto the editor base clock, and a sentence that touches a Carousel or the end of the
+    footage is dropped whole. Any transcription failure means no speech evidence.
+    """
+    from app.pipeline.captions import build_plain_cues
+
+    try:
+        cues = build_plain_cues(voiceover_words(path), attach_words=True)
+    except Exception:  # noqa: BLE001 - planning continues from visual and explicit-time evidence
+        return []
+    based = []
+    for cue in cues:
+        try:
+            words = [
+                dict(
+                    text=w["text"],
+                    start_s=clock.to_base(w["start_s"]),
+                    end_s=clock.to_base(w["end_s"]),
+                )
+                for w in cue.get("words") or []
+            ]
+        except ValueError:
+            continue
+        if words and words[-1]["end_s"] <= duration_s:
+            based.append({**cue, "words": words})
+    return speech_evidence(based, based)
+
+
+def occupied_intervals(variant: dict, duration_s: float | None = None) -> list[dict]:
     from app.services.kria_editor_ops import is_caption_text_bar
 
     intervals = []
     for lane in ("visual_blocks", "media_overlays", "text_elements", "motion_scenes"):
         for row in variant.get(lane) or []:
             if not isinstance(row, dict) or row.get("removed") or is_caption_text_bar(row):
+                continue
+            if lane == "text_elements" and is_persistent_text(row, duration_s):
                 continue
             start, end = row.get("start_s"), row.get("end_s")
             if lane == "motion_scenes":
@@ -474,6 +536,9 @@ def plan_context(
     originals = list(variant.get("caption_cues") or [])
     current = list(base.projected.get("caption_cues") or [])
     evidence = speech_evidence(originals, current) if current_timing == saved_timing else []
+    narration = getattr(item, "voiceover_gcs_path", None)
+    if not evidence and variant.get("resolved_archetype") == "voiceover" and narration:
+        evidence = voiceover_speech_evidence(narration, clock, duration)
     evidence.extend(
         explicit_time_evidence(
             body.prompt, clock.output_duration or duration, clock if clock.windows else None
@@ -525,7 +590,8 @@ def plan_context(
             {
                 **base.projected,
                 "motion_scenes": sections.get("motion_scenes", base.projected.get("motion_scenes")),
-            }
+            },
+            duration,
         ),
     )
 
