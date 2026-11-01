@@ -25,7 +25,8 @@
         "speech_order",
         "freeze_frames",
         "clip_speed",
-        "text_bend"
+        "text_bend",
+        "clip_numbers"
       ],
       "recipe": {
         "title_animation": "snapshot.title_animation",
@@ -46,7 +47,8 @@
         "resolved_text_elements",
         "source_audio_media_ids",
         "visuals",
-        "timed_cards"
+        "timed_cards",
+        "clip_tilts"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=intro-].animation_phases.entrance",
@@ -74,7 +76,8 @@
         "text_elements_user_edited",
         "speaker_position_x",
         "additional_speakers",
-        "output_orientation"
+        "output_orientation",
+        "clip_tilts"
       ],
       "recipe": {
         "title_animation": "text_layers[id^=text-].animation_phases.entrance",
