@@ -92,6 +92,7 @@
       "KriaUITests/CreationUITests/testPickerShowsAVisualsPhotoWithItsThumbnailAndAPhotoName",
       "KriaUITests/CreationUITests/testClipPickerSlideAcrossTilesSelectsDeselectsAndKeepsCircleAndTapToWatch",
       "KriaUITests/CreationUITests/testTwoQuestionPickerNextShowsTheSecondQuestionAndDoneSendsBoth",
+      "KriaUITests/CreationUITests/testPreTickedSecondQuestionIsShownBeforeDoneAndCanBeCorrected",
       "KriaUITests/CreationUITests/testTappingAClipOpensItPlayingAndUseThisClipPicksIt",
       "KriaUITests/SongOrderUITests/testOrderCardShowsBadgesReordersAndSendsTheConfirmedOrder",
       "KriaUITests/SongOrderUITests/testTimelineFillsAnEmptySpotFromTheTrayAndSendsPlacements",
