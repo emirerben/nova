@@ -19331,16 +19331,9 @@ def _carousel_boundary_duration(
     after_duration_s: float,
 ) -> float:
     """Render-safe boundary overlap: 0.1..1s, capped to 30% of both sides."""
-    requested = (
-        _CAROUSEL_MOMENT_TRANSITION_DURATION_S if requested_s is None else float(requested_s)
-    )
-    return round(
-        max(
-            0.0,
-            min(1.0, max(0.1, requested), before_duration_s * 0.3, after_duration_s * 0.3),
-        ),
-        3,
-    )
+    from app.services.guided_timeline import carousel_boundary_duration
+
+    return carousel_boundary_duration(requested_s, before_duration_s, after_duration_s)
 
 
 def _carousel_step_duration_s(step: Any) -> float:
@@ -20071,9 +20064,10 @@ def _insert_carousel_moment_step(
         inserted_duration_out["duration_s"] = duration_s
         if moment_cfg.get("timing_model") == "ripple_v1":
             inserted_duration_out["insertion_base_s"] = insertion_base_s
-            inserted_duration_out["ripple_duration_s"] = max(
-                0.0,
-                duration_s + old_boundary_overlap_s - incoming_overlap_s - outgoing_overlap_s,
+            from app.services.guided_timeline import carousel_ripple_duration
+
+            inserted_duration_out["ripple_duration_s"] = carousel_ripple_duration(
+                duration_s, old_boundary_overlap_s, incoming_overlap_s, outgoing_overlap_s
             )
 
     record_pipeline_event(

@@ -2408,6 +2408,29 @@
       ]
     },
     {
+      "id": "native-generated-overlay-review",
+      "needs_native": true,
+      "api_tests": "tests/services/test_overlay_generation.py tests/services/test_guided_timeline_equivalence.py tests/services/test_kria_editor_guided_timeline.py tests/tasks/test_carousel_timed_lane_projection.py tests/pipeline/carousel/test_segment_kill_switch.py tests/agents/test_credit_plan_contracts.py",
+      "xctests": [
+        "KriaTests/OverlayGenerationTests/testTransparentFixtureOverlayExportsAtItsPlannedWindow",
+        "KriaTests/OverlayGenerationTests/testAppliedNumberKeepsAuthoredTimeSurvivesReopenAndUndoesOnce",
+        "KriaTests/OverlayGenerationTests/testUnsavedChangeRejectsAPlanWithoutAddingAnything",
+        "KriaUITests/OverlayGenerationUITests/testVisualsPlansAndAddsAnEditableNumberOverlay",
+        "KriaUITests/OverlayGenerationUITests/testInlineImageApprovalUsesNormalVisualControlsUndoAndSavedReopen",
+        "KriaUITests/OverlayGenerationUITests/testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost"
+      ],
+      "paths": [
+        "src/apps/api/app/agents/overlay_generation.py",
+        "src/apps/api/app/routes/overlay_generation.py",
+        "src/apps/api/app/services/overlay_generation.py",
+        "src/apps/api/tests/services/test_overlay_generation.py",
+        "src/apps/ios/Kria/Core/OverlayGeneration.swift",
+        "src/apps/ios/Kria/Features/NativeOverlayGenerationPanel.swift",
+        "src/apps/ios/Tests/KriaTests/OverlayGenerationTests.swift",
+        "src/apps/ios/Tests/KriaUITests/OverlayGenerationUITests.swift"
+      ]
+    },
+    {
       "id": "duration-text-preservation",
       "needs_native": true,
       "api_tests": "tests/services/test_duration_text_preservation.py tests/kria/test_editor_sequence_timing.py tests/kria/test_duration_text_preservation_postgres.py tests/services/test_sequence_pacing.py tests/kria/test_sequence_timing_ledger.py tests/kria/test_sequence_natural_intent_postgres.py tests/agents/test_editor_ops_v2.py tests/evals/test_plan_review_scope_eval.py",

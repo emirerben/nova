@@ -10,6 +10,7 @@ struct GeneratedMediaRequest: Codable, Sendable {
     let clientEventID: String
     let capability: GeneratedMediaCapability
     let prompt: String
+    var transparentBackground: Bool = false
     var editableTitle: String = ""
     var sourceAssetID: String? = nil
     var sourceGeneration: String? = nil
@@ -19,6 +20,7 @@ struct GeneratedMediaRequest: Codable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case capability, prompt
+        case transparentBackground = "transparent_background"
         case clientEventID = "client_event_id", editableTitle = "editable_title"
         case sourceAssetID = "source_asset_id", sourceGeneration = "source_generation"
         case scriptID = "script_id"

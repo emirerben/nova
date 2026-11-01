@@ -334,7 +334,12 @@
       "KriaUITests/NativeCaptionAnimationUITests/testTextMotionPresetShowsInAllCaptions",
       "KriaUITests/NativeCaptionAnimationUITests/testWithoutTheCapabilityThereIsNoAnimationTab",
       "KriaUITests/NativeCaptionAnimationUITests/testReduceMotionKeepsPreviewsStillUntilPlayed",
-      "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimation"
+      "KriaUITests/NativeCaptionAnimationUITests/testWordDisplayKeepsTheChosenAnimation",
+      "KriaUITests/OverlayGenerationUITests/testVisualsPlansAndAddsAnEditableNumberOverlay",
+      "KriaUITests/OverlayGenerationUITests/testInlineImageApprovalUsesNormalVisualControlsUndoAndSavedReopen",
+      "KriaUITests/OverlayGenerationUITests/testNewLookCanBeAddedAfterAcceptedSourceRegistrationResponseIsLost",
+      "KriaUITests/OverlayGenerationUITests/testMixedPlanShowsTheLogoNoticeNextToTheKeptOverlay",
+      "KriaUITests/OverlayGenerationUITests/testAvailabilityCheckFailureCanBeRetriedWithoutLeavingThePanel"
     ],
     "smoke": [
       "KriaUITests/CreationUITests/testLaunchEntersChatFirstWorkspace",
@@ -496,6 +501,9 @@
     "src/apps/ios/Tests/KriaUITests/GeneratedMediaUITests.swift": "creation",
     "src/apps/ios/Kria/Core/GeneratedMedia.swift": "creation",
     "src/apps/ios/Kria/Features/GeneratedMediaSheet.swift": "creation",
+    "src/apps/ios/Tests/KriaUITests/OverlayGenerationUITests.swift": "editor",
+    "src/apps/ios/Kria/Features/NativeOverlayGenerationPanel.swift": "editor",
+    "src/apps/ios/Kria/Core/OverlayGeneration.swift": "editor",
     "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift": "editor",
     "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor"
   }
