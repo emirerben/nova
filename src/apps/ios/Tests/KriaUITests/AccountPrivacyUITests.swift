@@ -152,6 +152,48 @@ import XCTest
         XCTAssertTrue(outline.buttons["On"].isSelected, "Label outline must survive one Save and reopening")
     }
 
+    func testUnsavedTextTypesAreMarkedAndLeavingAsksBeforeDiscarding() {
+        let app = launch(mode: "text-preferences")
+        let manage = app.buttons["Manage account"]
+        reveal(manage, app: app); manage.tap()
+        app.buttons["account-text-preferences"].tap()
+        let shadow = app.segmentedControls["text-preference-shadow"]
+        selectRole("title", app: app)
+        reveal(shadow, app: app); shadow.buttons["On"].tap()
+        selectRole("label", app: app)
+        let outline = app.segmentedControls["text-preference-outline"]
+        reveal(outline, app: app); outline.buttons["On"].tap()
+        XCTAssertEqual(app.buttons["text-preference-role-title"].value as? String, "unsaved changes")
+        XCTAssertEqual(app.buttons["text-preference-role-label"].value as? String, "unsaved changes")
+        XCTAssertNotEqual(app.buttons["text-preference-role-caption"].value as? String, "unsaved changes")
+        XCTAssertTrue(app.staticTexts["Unsaved changes in 2 types"].exists)
+        let marked = XCTAttachment(screenshot: app.screenshot())
+        marked.name = "Two types with unsaved changes"; marked.lifetime = .keepAlways; add(marked)
+
+        app.buttons["text-preferences-back"].tap()
+        XCTAssertTrue(app.buttons["Discard changes"].waitForExistence(timeout: 5))
+        let dialog = XCTAttachment(screenshot: app.screenshot())
+        dialog.name = "Leave with unsaved changes"; dialog.lifetime = .keepAlways; add(dialog)
+        // Anchored to the toolbar the dialog is a popover: it has no Cancel button, a tap outside keeps editing.
+        let keepEditing = app.buttons["Keep editing"]
+        if keepEditing.exists { keepEditing.tap() } else { app.otherElements["PopoverDismissRegion"].firstMatch.tap() }
+        XCTAssertTrue(app.staticTexts["Unsaved changes in 2 types"].waitForExistence(timeout: 5), "Keep editing stays on the screen with the edits")
+
+        app.buttons["text-preferences-back"].tap()
+        app.buttons["Discard changes"].tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["Same"].isSelected, "Discarding must not save the edit")
+        shadow.buttons["On"].tap()
+        app.buttons["text-preferences-back"].tap()
+        app.buttons["Save and leave"].tap()
+        app.buttons["account-text-preferences"].tap()
+        selectRole("title", app: app)
+        reveal(shadow, app: app)
+        XCTAssertTrue(shadow.buttons["On"].isSelected, "Save and leave must persist the edit")
+    }
+
     func testTextPreferencesSaveOffEffectsAndReopen() {
         let app = launch(mode: "text-preferences")
         let manage = app.buttons["Manage account"]

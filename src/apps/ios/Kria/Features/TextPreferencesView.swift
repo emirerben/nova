@@ -90,19 +90,28 @@ struct TextPreferenceOperation: Decodable, Sendable {
         do { memory = try await api.textPreferenceMemory(); error = nil; needsReload = false }
         catch { self.error = error.localizedDescription }
     }
-    func save(role: String, rule: TextPreferenceRule) async {
-        guard let memory, memory.textStylingAvailable else { return }
+    /// Writes one row per type, in order. Each write reloads memory, so the next one carries a valid revision.
+    /// The first failure stops the batch; types already written stay saved and the rest stay unsaved.
+    func save(_ writes: [(role: String, rule: TextPreferenceRule)]) async {
+        guard memory?.textStylingAvailable == true else { return }
+        isWorking = true
+        defer { isWorking = false }
+        for entry in writes {
+            do { try await writeRow(role: entry.role, rule: entry.rule) }
+            catch { show(error); return }
+        }
+        saved = true
+    }
+    private func writeRow(role: String, rule: TextPreferenceRule) async throws {
+        guard let memory else { return }
         let key = "text_style_" + role
-        do {
-            let value = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(rule))
-            let item = memory.active.first { $0.normalizedKey == key }
-            try await mutate(path: "me/memory/items" + (item.map { "/" + $0.id } ?? ""),
-                             method: item == nil ? "POST" : "PATCH", extra: [
-                                "instruction": .string("My saved \(role.replacingOccurrences(of: "_", with: " ")) text preferences"),
-                                "category": .string("video_style"), "enforcement": .string("default"),
-                                "normalized_key": .string(key), "structured_value": .object([key: value])])
-            saved = true
-        } catch { show(error) }
+        let value = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(rule))
+        let item = memory.active.first { $0.normalizedKey == key }
+        try await mutate(path: "me/memory/items" + (item.map { "/" + $0.id } ?? ""),
+                         method: item == nil ? "POST" : "PATCH", extra: [
+                            "instruction": .string("My saved \(role.replacingOccurrences(of: "_", with: " ")) text preferences"),
+                            "category": .string("video_style"), "enforcement": .string("default"),
+                            "normalized_key": .string(key), "structured_value": .object([key: value])])
     }
     func reset(role: String) async {
         guard let item = memory?.active.first(where: { $0.normalizedKey == "text_style_" + role }) else { return }
@@ -134,8 +143,9 @@ struct TextPreferenceOperation: Decodable, Sendable {
     }
     private func mutate(path: String, method: String, extra: [String: JSONValue] = [:]) async throws {
         guard let memory else { return }
+        let wasWorking = isWorking
         isWorking = true; saved = false
-        defer { isWorking = false }
+        defer { isWorking = wasWorking }
         var body = extra
         body["expected_revision"] = .number(Double(memory.revision))
         body["idempotency_key"] = .string(UUID().uuidString)
@@ -155,6 +165,8 @@ struct TextPreferencesView: View {
     @State private var rule = TextPreferenceRule()
     @State private var drafts: [String: TextPreferenceRule] = [:]
     @State private var enlarged = false
+    @State private var confirmingLeave = false
+    @Environment(\.dismiss) private var dismiss
     init(api: any KriaAPIClient) { _model = StateObject(wrappedValue: TextPreferencesModel(api: api)) }
 
     private var isAllText: Bool { role == "all_text" }
@@ -164,6 +176,15 @@ struct TextPreferencesView: View {
     /// What a type inherits: the All text rule as the creator is editing it, else as saved.
     private var allTextRule: TextPreferenceRule {
         isAllText ? rule : drafts["all_text"] ?? model.memory?.rule(role: "all_text") ?? TextPreferenceRule()
+    }
+
+    /// The creator's working copy of a type: the live rule for the visible one, the stashed draft for the rest.
+    private func draft(_ role: String) -> TextPreferenceRule? { role == self.role ? rule : drafts[role] }
+
+    /// Types whose working copy differs from what is saved. Switching types stashes edits, so more than one can be pending.
+    private var dirtyRoles: [String] {
+        guard let memory = model.memory else { return [] }
+        return TextRoleSpec.roles.filter { role in draft(role).map { $0 != memory.rule(role: role) } ?? false }
     }
 
     var body: some View {
@@ -246,6 +267,26 @@ struct TextPreferencesView: View {
             model.saved = false
         }
         .onChange(of: rule) { _, _ in model.saved = false }
+        .navigationBarBackButtonHidden(!dirtyRoles.isEmpty)
+        .toolbar {
+            if !dirtyRoles.isEmpty {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { confirmingLeave = true } label: {
+                        Label("Back", systemImage: "chevron.left").labelStyle(.titleAndIcon)
+                    }.accessibilityIdentifier("text-preferences-back")
+                }
+            }
+        }
+        .confirmationDialog("Save your changes?", isPresented: $confirmingLeave, titleVisibility: .visible) {
+            Button("Save and leave") {
+                let writes = dirtyRoles.map { (role: $0, rule: draft($0) ?? TextPreferenceRule()) }
+                Task { await model.save(writes); if model.error == nil { dismiss() } }
+            }
+            Button("Discard changes", role: .destructive) { dismiss() }
+            Button("Keep editing", role: .cancel) {}
+        } message: {
+            Text("You changed \(dirtyRoles.count == 1 ? "a text type" : "\(dirtyRoles.count) text types") that is not saved yet.")
+        }
     }
 
     /// Pinned above the scrolling settings so the frame stays in view while a setting changes.
@@ -319,8 +360,12 @@ struct TextPreferencesView: View {
 
     private func chip(_ spec: TextRoleSpec) -> some View {
         let selected = role == spec.role
+        let unsaved = dirtyRoles.contains(spec.role)
         return Button { role = spec.role } label: {
-            Text(spec.label)
+            HStack(spacing: 6) {
+                Text(spec.label)
+                if unsaved { Circle().fill(KriaColor.ink).frame(width: 6, height: 6) }
+            }
                 .font(KriaFont.body(14).weight(.semibold))
                 .foregroundStyle(KriaColor.ink)
                 .padding(.horizontal, 16).frame(minHeight: 44)
@@ -329,6 +374,7 @@ struct TextPreferencesView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("text-preference-role-" + spec.role)
+        .accessibilityValue(unsaved ? "unsaved changes" : "")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -511,8 +557,10 @@ struct TextPreferencesView: View {
     private var saveBar: some View {
         VStack(spacing: 8) {
             if model.saved { Label("Saved for future videos.", systemImage: "checkmark.circle.fill").foregroundStyle(KriaColor.success).accessibilityIdentifier("text-preferences-saved") }
-            if let memory = model.memory, !model.saved, model.error == nil, rule != memory.rule(role: role) {
-                Text("Unsaved changes").foregroundStyle(KriaColor.mutedInk)
+            if !model.saved, model.error == nil, !dirtyRoles.isEmpty {
+                Text(dirtyRoles.count == 1 ? "Unsaved changes" : "Unsaved changes in \(dirtyRoles.count) types")
+                    .foregroundStyle(KriaColor.mutedInk)
+                    .accessibilityIdentifier("text-preferences-unsaved")
             }
             if let error = model.error {
                 Text(error).foregroundStyle(KriaColor.failureText)
@@ -526,8 +574,9 @@ struct TextPreferencesView: View {
             }
             if model.memory?.textStylingAvailable == true {
                 Button {
-                    let savedRole = role, savedRule = rule
-                    Task { await model.save(role: savedRole, rule: savedRule) }
+                    // With nothing pending the visible type is still written, as before.
+                    let writes = (dirtyRoles.isEmpty ? [role] : dirtyRoles).map { (role: $0, rule: draft($0) ?? rule) }
+                    Task { await model.save(writes) }
                 } label: {
                     HStack {
                         if model.isWorking { ProgressView() }
