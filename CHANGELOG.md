@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.83.0] - 2026-11-01
+
+### Changed
+- fix(kria): a Talking edit counts a muted cutaway as keeping the creator's audio (KRI-1150) (#2031) <!-- release-pr: 2031 -->
+
 ## [0.83.82.0] - 2026-11-01
 
 ### Changed
