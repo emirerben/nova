@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.45.0] - 2026-11-01
+
+### Fixed
+- fix(kria): a change after a render that failed before any video re-plans, not "no editable draft" (KRI-1103) (#1992) <!-- release-pr: 1992 -->
+
 ## [0.83.44.0] - 2026-11-01
 
 ### Changed
