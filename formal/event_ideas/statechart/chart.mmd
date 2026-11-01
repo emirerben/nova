@@ -1,0 +1,148 @@
+---
+title: "Event ideas"
+config:
+  markdownAutoWrap: false
+  state:
+    useMaxWidth: false
+---
+stateDiagram-v2
+  %% second model (fix): PR fix
+  classDef plainFixed fill:#f4f6f7,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group0 fill:#fdf2d0,stroke:#7f7968,color:#1b2631
+  classDef group1 fill:#f8d7da,stroke:#7c6c6d,color:#1b2631
+  classDef group1Fixed fill:#f8d7da,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group2 fill:#e2e3e5,stroke:#717273,color:#1b2631
+  classDef group2Fixed fill:#e2e3e5,stroke:#1e8449,stroke-width:4px,color:#145a32
+  classDef group3 fill:#d1f2eb,stroke:#697976,color:#1b2631
+  classDef group4 fill:#ffffff,stroke:#808080,color:#1b2631
+  state "Legend" as legend {
+    state "Working" as legendGroup0
+    state "Error shown" as legendGroup1
+    state "Nothing new shown" as legendGroup2
+    state "Ideas shown" as legendGroup3
+    state "Before ideas" as legendGroup4
+    state "Fixed or new with PR fix" as legendFixed
+  }
+  class legendGroup0 group0
+  class legendGroup1 group1
+  class legendGroup2 group2
+  class legendGroup3 group3
+  class legendGroup4 group4
+  class legendFixed plainFixed
+  state "Research off" as g0 {
+    state "Another idea, AI is<br/>writing ideas" as s0
+    state "Another idea, checking<br/>saved answers" as s1
+    state "Another idea, dropping<br/>repeats" as s2
+    state "Find ideas, AI is writing<br/>ideas" as s3
+    state "Find ideas, checking saved<br/>answers" as s4
+    state "Find ideas, dropping<br/>repeats" as s5
+    state "direction panel open" as s6
+    state "direction panel open,<br/>“Kria hit a problem”" as s7
+    state "direction panel open, “No<br/>idea found yet”" as s8
+    state "more ideas on screen" as s9
+    state "more ideas on screen,<br/>“Kria hit a problem”" as s10
+    state "more ideas on screen, “No<br/>other idea found”" as s11
+    state "no ideas yet" as s12
+    state "no ideas yet, “Kria hit a<br/>problem”" as s13
+    state "no ideas yet, “No idea<br/>found yet”" as s14
+    state "some ideas on screen" as s15
+    state "some ideas on screen,<br/>“Kria hit a problem”" as s16
+    state "some ideas on screen, “No<br/>other idea found”" as s17
+  }
+  state "Research on" as g1 {
+    state "Another idea, AI is<br/>writing ideas" as s18
+    state "Another idea, checking<br/>saved answers" as s19
+    state "Another idea, dropping<br/>repeats" as s20
+    state "Find ideas, AI is writing<br/>ideas" as s21
+    state "Find ideas, checking saved<br/>answers" as s22
+    state "Find ideas, dropping<br/>repeats" as s23
+    state "Find ideas, fact checker<br/>reviewing ideas" as s24
+    state "direction panel open" as s25
+    state "direction panel open,<br/>“Kria hit a problem”" as s26
+    state "direction panel open, “No<br/>idea found yet”" as s27
+    state "more ideas on screen" as s28
+    state "more ideas on screen,<br/>“Kria hit a problem”" as s29
+    state "more ideas on screen, “No<br/>other idea found”" as s30
+    state "no ideas yet, “Kria hit a<br/>problem”" as s31
+    state "no ideas yet, “No idea<br/>found yet”" as s32
+    state "some ideas on screen" as s33
+    state "some ideas on screen,<br/>“Kria hit a problem”" as s34
+    state "some ideas on screen, “No<br/>other idea found”" as s35
+  }
+  [*] --> s12
+  s12 --> s6 : tap Find ideas
+  s6 --> s25 : toggle Research
+  s6 --> s4 : tap Find ideas from N ready
+  s25 --> s22 : tap Find ideas from N ready
+  s4 --> s3 : no saved answer, AI asked
+  s22 --> s21 : no saved answer, AI asked
+  s3 --> s5 : AI answers with nothing, with<br/>usable ideas, or with only<br/>repeats
+  s3 --> s13 : AI times out or every idea is<br/>malformed
+  s21 --> s24 : AI answers with usable ideas<br/>or with only repeats
+  s21 --> s31 : AI times out or every idea is<br/>malformed
+  s5 --> s14 : nothing new survives
+  s5 --> s15 : new ideas appear
+  s13 --> s7 : tap Find ideas
+  s23 --> s32 : nothing new survives
+  s24 --> s31 : fact checker flags one idea
+  s31 --> s26 : tap Find ideas
+  s14 --> s8 : tap Find ideas
+  s15 --> s1 : tap Another idea
+  s32 --> s27 : tap Find ideas
+  s23 --> s33 : new ideas appear
+  s8 --> s4 : tap Find ideas from N ready
+  s1 --> s0 : no saved answer, AI asked
+  s33 --> s19 : tap Another idea
+  s4 --> s5 : same request as last time,<br/>saved answer reused
+  s0 --> s2 : AI answers with nothing, with<br/>usable ideas, or with only<br/>repeats
+  s0 --> s16 : AI times out or every idea is<br/>malformed
+  s22 --> s23 : same request as last time,<br/>saved answer reused
+  s19 --> s18 : no saved answer, AI asked
+  s2 --> s17 : nothing new survives
+  s2 --> s9 : new ideas appear
+  s18 --> s20 : AI answers with nothing
+  s18 --> s34 : AI times out or every idea is<br/>malformed
+  s20 --> s35 : nothing new survives
+  s20 --> s28 : new ideas appear
+  s0 --> s10 : AI times out or every idea is<br/>malformed
+  s2 --> s11 : nothing new survives
+  s18 --> s29 : AI times out or every idea is<br/>malformed
+  s20 --> s30 : nothing new survives
+  s24 --> s23 : with PR fix, fact checker<br/>flags one idea
+  s4 --> s4 : with PR fix, same request as<br/>last time, saved answer reused<br/>cannot happen
+  class s0 group0
+  class s1 group0
+  class s2 group0
+  class s3 group0
+  class s4 group0
+  class s5 group0
+  class s6 group4
+  class s7 group1
+  class s8 group2
+  class s9 group3
+  class s10 group1
+  class s11 group2
+  class s12 group4
+  class s13 group1
+  class s14 group2Fixed
+  class s15 group3
+  class s16 group1
+  class s17 group2
+  class s18 group0
+  class s19 group0
+  class s20 group0
+  class s21 group0
+  class s22 group0
+  class s23 group0
+  class s24 group0
+  class s25 group4
+  class s26 group1
+  class s27 group2
+  class s28 group3
+  class s29 group1Fixed
+  class s30 group2
+  class s31 group1Fixed
+  class s32 group2Fixed
+  class s33 group3
+  class s34 group1Fixed
+  class s35 group2

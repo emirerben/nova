@@ -39,6 +39,7 @@ SERVER_FIELDS = {
     "song_captions",
     "creator_duration_s",
     "target_duration_requested",
+    "pacing_requested",
     "selected_music_section",
 }
 MODEL_HIDDEN = {
@@ -46,6 +47,7 @@ MODEL_HIDDEN = {
     "reaction_beats",
     "closing_media",
     "ending_clip",
+    "background_media",
     "timed_cards",
     "song_sync",
     "voice_mode",
@@ -170,6 +172,7 @@ def copilot_schema():
         "start_s",
         "end_s",
         "duration_s",
+        "source_start_s",
         "in_s",
         "target_s",
         "shift_s",

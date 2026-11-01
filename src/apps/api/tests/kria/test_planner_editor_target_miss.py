@@ -447,23 +447,38 @@ async def test_router_path_recovers_when_target_missing_without_copilot_first(
 # --- a FAILED first render is not a render: follow-ups re-plan, never dead-end ----------
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "The hook should say 'Weekend away'",
+        # Leverkusen M2 run 3 (10-31), verbatim: a text-shaped ask ("label").
+        "Skip the selfie label. Put Taha\u2019s scream at the end of clip 2 in slow motion",
+        "Selfie etiketini kald\u0131r",
+    ],
+)
+@pytest.mark.parametrize("compose", [False, True])
 @pytest.mark.parametrize("binding", [True, False])
 @pytest.mark.parametrize("failed_status", ["processing_failed", "variants_failed"])
 async def test_follow_up_after_a_failed_first_render_replans(
-    monkeypatch: pytest.MonkeyPatch, binding: bool, failed_status: str
+    monkeypatch: pytest.MonkeyPatch, binding: bool, failed_status: str, compose: bool, message: str
 ) -> None:
     """Incident shape: the item's only job failed with no variant; the creator then
     types the missing words. That must reach the planner, not the 'couldn't open your
-    current edit' dead end, and the brief must be extracted exactly once."""
+    current edit' dead end, and the brief must be extracted exactly once.
+
+    With compose on (prod since KRI-1039), the same text-shaped ask was turned into the
+    'no current editable draft for this failed render' refusal (Leverkusen M2, 10-31)."""
+    monkeypatch.setattr(planner.settings, "kria_compose_unmet_with_ops_enabled", compose)
     db, item, creator_id, runs, copilot = _wire_real(
         monkeypatch,
         render_status=None,
         job_status=failed_status,
         binding=binding,
     )
-    result = await _ask(db, item, creator_id, "The hook should say 'Weekend away'")
+    result = await _ask(db, item, creator_id, message)
     assert result.plan.response != planner._EDITOR_TARGET_RECOVERY_REPLY
     assert "couldn't open your current edit" not in (result.plan.response or "")
+    assert "editable draft" not in (result.plan.response or "")
     assert len(runs) == 1  # the Main Creator planned it
     assert EXTRACTOR_RUNS == []  # no second, pre-routing extraction of the same message
     assert len(result.brief_updates) == 1  # the brief update is applied once

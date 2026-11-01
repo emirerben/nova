@@ -1,0 +1,74 @@
+{
+  "device" : {
+    "low_power_mode" : false,
+    "os" : "Version 27.0.1 (Build 24A446)",
+    "segmenter" : "KriaMediaEngine.VisionPersonSegmenter",
+    "thermal_at_launch" : "nominal"
+  },
+  "runs" : [
+    {
+      "case" : "on_photo_60",
+      "cooldown_waits_45s" : 0,
+      "error" : null,
+      "footprint_before_mb" : 31.548652648925781,
+      "label" : "control_nomatte_60s",
+      "low_power_mode" : false,
+      "output_duration_s" : 60,
+      "peak_footprint_mb" : 135.79878997802734,
+      "speaker_background" : false,
+      "status" : "completed",
+      "thermal_end" : "nominal",
+      "thermal_max" : "nominal",
+      "thermal_start" : "nominal",
+      "wall_s" : 19.558525085449219
+    },
+    {
+      "case" : "on_photo_60",
+      "cooldown_waits_45s" : 0,
+      "error" : null,
+      "footprint_before_mb" : 39.50189208984375,
+      "label" : "photo_60s_run1",
+      "low_power_mode" : false,
+      "output_duration_s" : 60,
+      "peak_footprint_mb" : 183.65814208984375,
+      "speaker_background" : true,
+      "status" : "completed",
+      "thermal_end" : "nominal",
+      "thermal_max" : "nominal",
+      "thermal_start" : "nominal",
+      "wall_s" : 62.473452091217041
+    },
+    {
+      "case" : "on_photo_60",
+      "cooldown_waits_45s" : 0,
+      "error" : null,
+      "footprint_before_mb" : 48.095619201660156,
+      "label" : "photo_60s_run2",
+      "low_power_mode" : false,
+      "output_duration_s" : 60,
+      "peak_footprint_mb" : 186.47064208984375,
+      "speaker_background" : true,
+      "status" : "completed",
+      "thermal_end" : "nominal",
+      "thermal_max" : "nominal",
+      "thermal_start" : "nominal",
+      "wall_s" : 61.007193922996521
+    },
+    {
+      "case" : "on_video_60",
+      "cooldown_waits_45s" : 0,
+      "error" : null,
+      "footprint_before_mb" : 73.908119201660156,
+      "label" : "video_60s",
+      "low_power_mode" : false,
+      "output_duration_s" : 60,
+      "peak_footprint_mb" : 170.68936920166016,
+      "speaker_background" : true,
+      "status" : "completed",
+      "thermal_end" : "nominal",
+      "thermal_max" : "nominal",
+      "thermal_start" : "nominal",
+      "wall_s" : 61.11359703540802
+    }
+  ]
+}

@@ -2,6 +2,121 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.59.0] - 2026-11-01
+
+### Changed
+- fix(kria): the research reviewer is told which asks another step applies (#2013) <!-- release-pr: 2013 -->
+
+## [0.83.58.0] - 2026-11-01
+
+### Changed
+- fix(kria): an end/start pin on a clip that doesn't show it asks instead of seating it (KRI-1108) (#1997) <!-- release-pr: 1997 -->
+
+## [0.83.57.0] - 2026-11-01
+
+### Changed
+- fix(order): a first/last pin takes its clip out of a general order group (KRI-1109) (#1995) <!-- release-pr: 1995 -->
+
+## [0.83.56.0] - 2026-11-01
+
+### Changed
+- fix(kria): an unmet part of the ask no longer holds back sourced wording before approval (#2012) <!-- release-pr: 2012 -->
+
+## [0.83.55.0] - 2026-11-01
+
+### Changed
+- fix(kria): clip text the creator took back is no longer planned or locked as copy (KRI-1124) (#2005) <!-- release-pr: 2005 -->
+
+## [0.83.54.0] - 2026-11-01
+
+### Changed
+- fix(kria): seat a stated first/last beat the planner already wrote; say a draft-wide refusal once (KRI-1123) (#2004) <!-- release-pr: 2004 -->
+
+## [0.83.53.0] - 2026-11-01
+
+### Changed
+- fix(kria): raise the clip-instruction cap from 16 to 40 (KRI-1122) (#1999) <!-- release-pr: 1999 -->
+
+## [0.83.52.0] - 2026-11-01
+
+### Changed
+- fix(kria): pin and credit a complete order the creator listed clip by clip (Leverkusen M3) (#2003) <!-- release-pr: 2003 -->
+
+## [0.83.51.0] - 2026-11-01
+
+### Fixed
+- fix(kria): judge a Visuals photo label on that photo in the plan receipt (KRI-1102) (#2007) <!-- release-pr: 2007 -->
+
+## [0.83.50.0] - 2026-11-01
+
+### Fixed
+- fix(kria): ask when one photo lands on two ordered beats; a typed fix reopens a stale tap (KRI-1125) (#2006) <!-- release-pr: 2006 -->
+
+## [0.83.49.0] - 2026-11-01
+
+### Changed
+- fix(kria): "Animate the title" no longer dead-ends before render (KRI-1113) (#2002) <!-- release-pr: 2002 -->
+
+## [0.83.48.0] - 2026-11-01
+
+### Changed
+- fix(kria): file names said for a subject bind its later clip asks; a new order basis drops the replaced ends (KRI-1112 3/3) (#2001) <!-- release-pr: 2001 -->
+
+## [0.83.47.0] - 2026-11-01
+
+### Changed
+- fix(kria): judge a dictated shot text on its own clips before render (KRI-1110) (#1996) <!-- release-pr: 1996 -->
+
+## [0.83.46.0] - 2026-11-01
+
+### Changed
+- fix(kria): keep a hidden part's edge and seconds through the resolver (Leverkusen M2 run 2, KRI-1105) (#1994) <!-- release-pr: 1994 -->
+
+## [0.83.45.0] - 2026-11-01
+
+### Fixed
+- fix(kria): a change after a render that failed before any video re-plans, not "no editable draft" (KRI-1103) (#1992) <!-- release-pr: 1992 -->
+
+## [0.83.44.0] - 2026-11-01
+
+### Changed
+- fix(kria): let a label on a Visuals photo pass the phone text check (KRI-1102) (#1993) <!-- release-pr: 1993 -->
+
+## [0.83.43.0] - 2026-11-01
+
+### Fixed
+- fix(ios): show a pre-ticked clip question before Done (KRI-1101) (#1991) <!-- release-pr: 1991 -->
+
+## [0.83.42.0] - 2026-11-01
+
+### Changed
+- ci: skip slow export/OCR unit proofs on PRs that don't touch render code (#2010) <!-- release-pr: 2010 -->
+
+## [0.83.41.0] - 2026-10-31
+
+### Added
+- feat(kria): Talk-to-camera green-screen backgrounds, dark behind SPEAKER_BACKGROUND_ENABLED (KRI-1115..1119) (#2011) <!-- release-pr: 2011 -->
+
+## [0.83.40.0] - 2026-10-31
+
+### Changed
+- fix(kria): the creator's prompt drives the phone montage (pace, direction, animation, honest approval card) (KRI-1097) (#2009) <!-- release-pr: 2009 -->
+
+## [0.83.39.0] - 2026-10-31
+
+### Changed
+- ci: get iOS PRs near 25 min: one Mac per PR, journey renders nightly (#1957) <!-- release-pr: 1957 -->
+
+## [0.83.38.0] - 2026-10-31
+
+### Changed
+- feat(kria): inspect source intervals for prompt-specific named moments (#1961) <!-- release-pr: 1961 -->
+
+## [0.83.37.0] - 2026-10-31
+
+### Fixed
+- fix(camera-roll): one flagged researched idea no longer fails the batch; never replay an empty first answer (#1986) <!-- release-pr: 1986 -->
+
 ## [0.83.36.0] - 2026-10-31
 
 ### Changed

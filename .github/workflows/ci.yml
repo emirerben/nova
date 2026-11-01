@@ -957,6 +957,17 @@ jobs:
           set -o pipefail
           python3 -m pytest tests/tasks/test_named_line_windows_montage.py tests/tasks/test_long_take_moments_montage.py -q \
             | tee ../../../test-results/kri-559/named-line-windows-api-tests.log
+      - name: Verify a clip text the creator took back is neither planned nor locked as copy
+        if: contains(needs.changes.outputs.journey_ids, 'kri-1124-withdrawn-labels')
+        working-directory: src/apps/api
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src/apps/api
+          STORAGE_BUCKET: replay
+          DATABASE_URL: postgresql://replay@localhost/replay
+        run: |
+          set -o pipefail
+          python3 -m pytest tests/kria/test_kri1124_withdrawn_labels_replay.py -q \
+            | tee ../../../test-results/kri-559/withdrawn-labels-api-tests.log
       - name: Verify a montage line the creator wants heard whole is held whole, never a pop-in
         if: contains(needs.changes.outputs.journey_ids, 'kri-760-whole-line-ask')
         working-directory: src/apps/api
@@ -1118,13 +1129,18 @@ jobs:
 
   journey-native:
     name: iPhone validation (${{ matrix.leg }})
-    needs: [changes, journey-mapping, journey-offline, journey-library]
+    # Starts with the selector, not after journey-offline/journey-library: the
+    # Macs compile while the Linux journeys run (~11 min, 2026-10-27..30) and
+    # block only where the fixture bundle is consumed (wait-for-jobs.py). The
+    # `journey` aggregate still requires both portable jobs to pass.
+    needs: [changes, journey-mapping]
     if: >-
       !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native_validation == 'true' &&
-      ((contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && needs.journey-library.result == 'success') ||
-       (!contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && needs.journey-library.result == 'skipped')) &&
-      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success' && needs.journey-offline.result == 'success') ||
-       (needs.changes.outputs.journey == 'false' && needs.journey-mapping.result == 'skipped' && needs.journey-offline.result == 'skipped'))
+      ((needs.changes.outputs.journey == 'true' && needs.journey-mapping.result == 'success') ||
+       (needs.changes.outputs.journey == 'false' && needs.journey-mapping.result == 'skipped'))
+    permissions:
+      contents: read
+      actions: read
     runs-on: macos-15
     # Up to three duration-balanced legs. `unit` compiles, runs unit tests, the
     # UI smoke subset and the named-unit gate; `creation` and `screens` compile
@@ -1141,21 +1157,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare native result directories
         run: mkdir -p test-results/kri-559 test-results/ios
-      - name: Download this attempt's portable fixture inputs
-        if: needs.changes.outputs.journey_needs_native == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
-          path: test-results/kri-559/
-      - name: Check fixture provenance and transferred bytes
-        if: needs.changes.outputs.journey_needs_native == 'true'
-        env:
-          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
-        run: |
-          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
-          if [[ ",$JOURNEY_IDS," == *",kri-524-creation,"* ]]; then
-            python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "${{ github.sha }}"
-          fi
       - name: Set up Xcode
         if: needs.changes.outputs.ios == 'true' || needs.changes.outputs.journey_needs_native == 'true'
         uses: maxim-lobanov/setup-xcode@v1
@@ -1197,6 +1198,11 @@ jobs:
           # Only the unit leg executes the unit suite; the other legs compile
           # the same bundles and skip it (verify.sh prepare-ui contract).
           KRIA_IOS_UNIT_TESTS: ${{ matrix.leg == 'unit' && github.event_name == 'pull_request' && needs.changes.outputs.ios == 'true' && '1' || '0' }}
+          # The export/OCR proofs (~10 of the unit leg's minutes) run on PRs that
+          # touch render, export or text code; ios.yml runs them on every main push.
+          KRIA_IOS_SKIP_RENDER_EVIDENCE: ${{ github.event_name == 'pull_request' && needs.changes.outputs.ios_render_evidence == 'false' && '1' || '0' }}
+          # Selected journeys keep the proofs they name (journey-gate.py native-units).
+          KRIA_JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
           KRIA_RESTORE_INPUT_TIMES: '1'
         run: bash scripts/ios/verify.sh
       - name: Record compiled iPhone input timestamps
@@ -1214,6 +1220,27 @@ jobs:
             src/apps/ios/.derived-data/SDKStatCaches.noindex
             src/apps/ios/.derived-data/CompilationCache.noindex
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
+      - name: Wait for the portable journeys this leg depends on
+        if: needs.changes.outputs.journey == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIBRARY: ${{ contains(needs.changes.outputs.journey_ids, 'kri-384-library-ingest') && 'journey-library' || '' }}
+        run: python3 scripts/ci/wait-for-jobs.py journey-offline "$LIBRARY"
+      - name: Download this attempt's portable fixture inputs
+        if: needs.changes.outputs.journey_needs_native == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: fixture-bundle-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.sha }}
+          path: test-results/kri-559/
+      - name: Check fixture provenance and transferred bytes
+        if: needs.changes.outputs.journey_needs_native == 'true'
+        env:
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+        run: |
+          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          if [[ ",$JOURNEY_IDS," == *",kri-524-creation,"* ]]; then
+            python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "${{ github.sha }}"
+          fi
       - name: Run selected iPhone UI scenarios
         if: github.event_name == 'pull_request' && needs.changes.outputs.ios_ui == 'true' && matrix.leg == 'unit'
         env:

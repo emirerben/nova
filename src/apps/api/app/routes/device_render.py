@@ -104,6 +104,7 @@ from app.services.phone_rollout import (
     recipe_has_freeze_frame,
     recipe_has_single_word_text,
     single_word_text_client_supported,
+    speaker_background_client_supported,
     text_behind_subject_phone_client_supported,
     text_bend_client_supported,
 )
@@ -278,6 +279,50 @@ async def _refuse_publication(
     await record_native_activity(db, job, refusal.variant_id)
     await db.commit()
     await asyncio.to_thread(_nudge_kria_observer, job.id)
+
+
+def _export_text_notes(job: Job, verification_report: dict | None) -> list[str]:
+    """A creator-facing note when the export's on-screen text could not be confirmed.
+
+    The phone's export check can reject a text layer (the OCR read too few of its words)
+    while the finished video still ships. That stays advisory: nothing is withheld or
+    retried, but the creator is told instead of left to find it. Says "couldn't confirm",
+    never "is wrong" (the check reads pixels, it does not see the video). No failed text
+    check, or the switch off => no note.
+    """
+    if not settings.export_text_note_enabled or not isinstance(verification_report, dict):
+        return []
+    if verification_report.get("status") not in {"rejected", "partial"}:
+        return []
+    times = [
+        float(row["at_s"])
+        for row in verification_report.get("checks", [])
+        if isinstance(row, dict)
+        and row.get("kind") == "text"
+        and row.get("status") == "failed"
+        and row.get("expected_visible") is True
+        and isinstance(row.get("at_s"), int | float)
+    ]
+    if not times:
+        return []
+    from app.kria.reply_language import reply_language_for, say  # noqa: PLC0415
+
+    language = (job.assembly_plan or {}).get("creator_reply_language")
+    at = min(times)
+    with reply_language_for(language if isinstance(language, str) else None):
+        return [
+            say(
+                en=(
+                    f"I couldn't confirm all the on-screen text in the finished video was "
+                    f"readable (around {at:.0f}s). If a line looks off, tell me and I'll fix it."
+                ),
+                tr=(
+                    f"Bitmiş videodaki ekran yazılarının hepsinin okunaklı olduğunu "
+                    f"doğrulayamadım (yaklaşık {at:.0f}. saniye). Bir satır yanlış görünüyorsa "
+                    f"söyle, düzelteyim."
+                ),
+            )
+        ]
 
 
 def _record_export_advisory(
@@ -561,6 +606,18 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "text_behind_subject",
             "minimum_client_protocol": settings.text_behind_subject_phone_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and not speaker_background_client_supported()
+    ):
+        # KRI-1117: an older build rejects `speaker_background` as an unknown recipe key and
+        # would FAIL the job. Compile strips the lane for a build below the minimum, so this
+        # covers a recipe a newer build or the worker pinned before this build read it.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_background",
+            "minimum_client_protocol": settings.speaker_background_min_client_protocol,
         }
     if not freeze_frame_client_supported() and recipe_has_freeze_frame(recipe):
         # KRI-828: the worker planned a creator's freeze (a main-track hold, capability
@@ -2018,6 +2075,7 @@ async def _complete_device_export(
         "identity": status.request.identity.model_dump(mode="json"),
         "source_receipts_digest": sources_digest,
     }
+    export_text_notes = _export_text_notes(job, verification_report)
     status.phase = "published"
     record.update(
         status=status.model_dump(mode="json"),
@@ -2029,7 +2087,13 @@ async def _complete_device_export(
     assembly["variants"] = [
         {
             # Cloud evidence describes the cloud file this export replaces.
-            **{key: value for key, value in v.items() if key != "cloud_evidence"},
+            **{
+                key: value
+                for key, value in v.items()
+                # A note from an earlier export must not outlive a clean re-export.
+                if key not in ("cloud_evidence", "export_check_notes")
+            },
+            **({"export_check_notes": export_text_notes} if export_text_notes else {}),
             "ok": True,
             "render_status": "ready",
             "render_generation_id": attempt_id,

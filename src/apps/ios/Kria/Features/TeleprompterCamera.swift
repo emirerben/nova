@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import OSLog
 import SwiftUI
 import UIKit
 
@@ -28,6 +29,9 @@ import UIKit
     @Published private(set) var micSilent = false
     /// Measured level of the take handed to `onFinalized` (nil when the take was not valid).
     @Published private(set) var finalizedAudioCheck: TakeAudioCheck?
+    /// KRI-1119: the live-frame output is attached, so a live background preview has frames to draw. False means the
+    /// plain camera preview layer is the right view (no background, or the output could not be added).
+    @Published private(set) var liveFramesAttached = false
 
     /// Read by `TeleprompterCameraPreview`; configuration always happens on `captureQueue`.
     nonisolated(unsafe) let session = AVCaptureSession()
@@ -38,6 +42,10 @@ import UIKit
     var isBusy: Bool { phase == .preparing || phase == .recording || phase == .finalizing || startRequested }
 
     private let captureQueue = DispatchQueue(label: "app.kria.teleprompter-camera.capture")
+    /// KRI-1119: frames for the live background preview. Own queue, never the audio path or the movie output's.
+    private let frameQueue = DispatchQueue(label: "app.kria.teleprompter-camera.frames", qos: .userInitiated)
+    private let frameRelay = LiveFrameRelay()
+    private nonisolated(unsafe) var liveOutput: AVCaptureVideoDataOutput?
     private nonisolated(unsafe) var movieOutput: AVCaptureMovieFileOutput?
     private nonisolated(unsafe) var isConfigured = false
     private nonisolated(unsafe) var recordingRequested = false
@@ -69,6 +77,29 @@ import UIKit
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
         AudioSessionArbiter.shared.releaseCapture(claimToken)
+    }
+
+    /// KRI-1119: asks for raw camera frames (a creator picked a background). The video data output is added to the
+    /// graph only while a consumer is set, so without a background the graph is exactly the one it always was.
+    /// The movie output keeps recording the raw front camera either way. Never reconfigures a running take: the
+    /// change is applied when the take finishes.
+    func setLiveFrameConsumer(_ consumer: (any LiveFrameConsumer)?) {
+        frameRelay.setConsumer(consumer)
+        captureQueue.async { [weak self] in self?.reconcileLiveOutput() }
+    }
+
+    private nonisolated func reconcileLiveOutput() {
+        guard isConfigured, !recordingRequested else { return }
+        let attached = LiveFrameOutputGraph.reconcile(session: session, existing: &liveOutput, wanted: frameRelay.hasConsumer,
+                                                      relay: frameRelay, queue: frameQueue)
+        publishLiveFrames(attached)
+    }
+
+    private nonisolated func publishLiveFrames(_ attached: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self, self.liveFramesAttached != attached else { return }
+            self.liveFramesAttached = attached
+        }
     }
 
     /// Rechecks both privacy grants every time, since a creator may return from Settings.
@@ -239,6 +270,7 @@ import UIKit
                         // zero-filled buffers for a whole take. Throw it away and build a fresh one.
                         self.session.stopRunning()
                         self.movieOutput = nil
+                        self.liveOutput = nil
                         self.isConfigured = false
                     }
                     self.needsRebuild = false
@@ -267,6 +299,12 @@ import UIKit
                     self.session.addInput(audioInput)
                     self.session.addOutput(output)
                     self.configure1080p30IfSupported(camera)
+                    // KRI-1119: only when a background was picked; otherwise this graph is unchanged.
+                    var liveAttached = false
+                    if self.frameRelay.hasConsumer {
+                        liveAttached = LiveFrameOutputGraph.reconcile(session: self.session, existing: &self.liveOutput, wanted: true,
+                                                                      relay: self.frameRelay, queue: self.frameQueue)
+                    }
                     if let connection = output.connection(with: .video) {
                         if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
                         // Selfie comfort belongs only to the preview layer. Keep the source non-mirrored.
@@ -281,6 +319,7 @@ import UIKit
                     committed = true
                     self.movieOutput = output
                     self.isConfigured = true
+                    self.publishLiveFrames(liveAttached)
                     self.session.startRunning()
                     continuation.resume()
                 } catch {
@@ -295,6 +334,8 @@ import UIKit
                     AudioSessionArbiter.shared.releaseCapture(self.claimToken)
                     AudioSessionArbiter.shared.deactivate(requester: "teleprompter.configure-failed")
                     self.movieOutput = nil
+                    self.liveOutput = nil
+                    self.publishLiveFrames(false)
                     self.isConfigured = false
                     continuation.resume(throwing: error)
                 }
@@ -474,6 +515,10 @@ import UIKit
             guard let self else { return }
             self.session.stopRunning()
             self.movieOutput = nil
+            // Matting stops with the session (S25). The consumer stays, so the next prepare() attaches again.
+            self.liveOutput = nil
+            self.publishLiveFrames(false)
+            self.frameRelay.sessionDidStop()
             self.isConfigured = false
             self.recordingRequested = false
             self.stopRequested = false
@@ -557,6 +602,7 @@ private extension TeleprompterCamera {
             self.stopRequested = false
             // The session still has microphone input until the review flow tears it down.
             // Deactivate only after stopRunning in tearDownSession.
+            self.reconcileLiveOutput()
         }
         recordingStartedAt = nil
         startRequested = false
@@ -618,6 +664,86 @@ private extension TeleprompterCamera {
             case .cancelled: "Camera setup was cancelled."
             }
         }
+    }
+}
+
+/// Forwards frames from the video data output to the live preview. A class of its own so the sample-buffer delegate does
+/// not have to live on the main-actor camera.
+final class LiveFrameRelay: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var consumer: (any LiveFrameConsumer)?
+
+    var hasConsumer: Bool { lock.lock(); defer { lock.unlock() }; return consumer != nil }
+
+    func setConsumer(_ consumer: (any LiveFrameConsumer)?) {
+        lock.lock(); self.consumer = consumer; lock.unlock()
+    }
+
+    func sessionDidStop() {
+        lock.lock(); let current = consumer; loggedConnection = false; lock.unlock()
+        current?.sessionDidStop()
+    }
+
+    /// Re-arms the once-per-session connection log (a new output was attached).
+    func sessionWillStart() { lock.lock(); loggedConnection = false; lock.unlock() }
+
+    private var loggedConnection = false
+    private static let log = Logger(subsystem: "com.kria.app", category: "teleprompter")
+
+    /// One line per session, from the first frame, so the state the connection ACTUALLY has can be read off a device.
+    private func logConnectionOnce(_ connection: AVCaptureConnection) {
+        lock.lock(); let already = loggedConnection; loggedConnection = true; lock.unlock()
+        guard !already else { return }
+        let mirrored = connection.isVideoMirrored, adjusts = connection.automaticallyAdjustsVideoMirroring
+        let angle = connection.videoRotationAngle
+        Self.log.notice("live data output connection isVideoMirrored=\(mirrored, privacy: .public) automaticallyAdjustsVideoMirroring=\(adjusts, privacy: .public) videoRotationAngle=\(angle, privacy: .public) previewMirrored=\(LivePreviewOrientation.previewMirrored(connectionIsMirrored: mirrored), privacy: .public)")
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        lock.lock(); let current = consumer; lock.unlock()
+        guard let current, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        logConnectionOnce(connection)
+        current.consume(buffer, mirrored: LivePreviewOrientation.previewMirrored(connectionIsMirrored: connection.isVideoMirrored))
+    }
+}
+
+/// Adds or removes the one `AVCaptureVideoDataOutput` the live preview needs. Settings are the ones measured on an
+/// iPhone 13 Pro running beside the movie output (KRI-1114 spike): 32BGRA, late frames discarded, portrait (rotation 90, the
+/// same angle the preview layer uses). Mirroring is REQUESTED off, but it is not trusted: the relay reads
+/// `isVideoMirrored` from the connection on every frame and the preview mirrors accordingly.
+enum LiveFrameOutputGraph {
+    /// Returns whether a live output is attached afterwards.
+    static func reconcile(session: AVCaptureSession, existing: inout AVCaptureVideoDataOutput?, wanted: Bool,
+                          relay: LiveFrameRelay, queue: DispatchQueue) -> Bool {
+        if !wanted {
+            if let output = existing {
+                session.beginConfiguration()
+                output.setSampleBufferDelegate(nil, queue: nil)
+                session.removeOutput(output)
+                session.commitConfiguration()
+                existing = nil
+            }
+            return false
+        }
+        if existing != nil { return true }
+        let output = AVCaptureVideoDataOutput()
+        output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(relay, queue: queue)
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        guard session.canAddOutput(output) else { return false }
+        session.addOutput(output)
+        if let connection = output.connection(with: .video) {
+            if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = false
+            }
+        }
+        relay.sessionWillStart()
+        existing = output
+        return true
     }
 }
 

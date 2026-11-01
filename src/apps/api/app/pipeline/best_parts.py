@@ -573,6 +573,15 @@ def select_moment_windows(
     return BestPartsResult(tuple(parts), round(target, 3), total, round(sum(durations.values()), 3))
 
 
+def is_fixed_moment(pin: Mapping[str, Any]) -> bool:
+    evidence = pin.get("evidence")
+    return pin.get("origin") == "creator_answer" or (
+        pin.get("origin") == "grounded"
+        and isinstance(evidence, Mapping)
+        and evidence.get("kind") == "targeted_model_inspection"
+    )
+
+
 def select_pinned_moment_windows(
     source: Any,
     pins: Sequence[Mapping[str, Any]],
@@ -582,7 +591,8 @@ def select_pinned_moment_windows(
     """KRI-723: one window per named moment of ONE take, in the creator's order.
 
     ``pins`` are ``named_moments.Pin.json()`` rows. A ``creator_answer`` window is the
-    creator's exact interval: never re-centred, trimmed or moved. A ``grounded`` moment gets
+    creator's exact interval: never re-centred, trimmed or moved. An inspected grounding
+    also keeps its exact interval. Other ``grounded`` moments get
     a ``width_s`` window as close to its evidenced interval as the creator's windows allow;
     an ``ai_pick_by_request`` one (the creator said "you pick") or an ``unlocated`` one (an app
     that could not ask) the strongest analysed moment still free, else the middle of the
@@ -596,7 +606,7 @@ def select_pinned_moment_windows(
     parts: list[BestPart | None] = [None] * len(pins)
     taken: list[tuple[float, float]] = []
     for index, pin in enumerate(pins):
-        if pin.get("origin") != "creator_answer":
+        if not is_fixed_moment(pin):
             continue
         start, end = _number(pin.get("source_start_s")), _number(pin.get("source_end_s"))
         if start is None or end is None or not 0 <= start < end:
@@ -604,7 +614,10 @@ def select_pinned_moment_windows(
         end = min(end, duration)
         if end - start < MIN_INCLUDED_PART_S:
             return None
-        parts[index] = BestPart(media_id, round(start, 3), round(end, 3), 0.0, "creator_answer")
+        if any(start < hi - 0.001 and end > lo + 0.001 for lo, hi in taken):
+            return None
+        reason = "creator_answer" if pin.get("origin") == "creator_answer" else "grounded_moment"
+        parts[index] = BestPart(media_id, round(start, 3), round(end, 3), 0.0, reason)
         taken.append((start, end))
     ranked = sorted(
         (
@@ -619,7 +632,7 @@ def select_pinned_moment_windows(
     )
     # Evidence first: a grounded moment claims its interval before any free pick can.
     for index, pin in enumerate(pins):
-        if pin.get("origin") != "grounded":
+        if pin.get("origin") != "grounded" or is_fixed_moment(pin):
             continue
         start, end = _number(pin.get("source_start_s")), _number(pin.get("source_end_s"))
         if start is None or end is None:
