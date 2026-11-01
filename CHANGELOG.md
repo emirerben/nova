@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.69.0] - 2026-11-01
+
+### Changed
+- feat(engine): tilt a clip and draw a backdrop under it, dark (KRI-1134) (#2014) <!-- release-pr: 2014 -->
+
 ## [0.83.68.0] - 2026-11-01
 
 ### Changed
