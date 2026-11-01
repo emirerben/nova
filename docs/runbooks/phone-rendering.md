@@ -3989,3 +3989,43 @@ tilt); the AI naming an id outside the pool (`test_clip_tilt_media_ai.py` and a 
 Rollout: after `MEDIA_TILT_ENABLED` is on, add `clipBackdropMedia` to `PHONE_RENDER_VERIFIED_FEATURES` on Fly (api and
 worker, restart) once a physical-device preview and export check has passed, then ship the TestFlight build that
 declares protocol 31. Rollback is removing the token or `MEDIA_TILT_ENABLED=false`, never a code revert.
+
+## Range on phone Talking edits
+
+The editor's Range sheet (`KriaSourceWindowEditor`, KRI-717) chooses which part of a clip plays. On a
+phone Talking (`subtitled`, device) edit it picks which part of the speaker take plays. Related: KRI-717,
+KRI-1149.
+
+**Gate:** `PHONE_TALKING_RANGE_EDITS_ENABLED` (default `false`, also the kill switch), through
+`phone_rollout.phone_talking_range_supported()` (flag AND the Talking editor lanes). No client protocol
+bump and no `PHONE_RENDER_VERIFIED_FEATURES` token: the recipe is the same hard-cut keep segments that
+speech cleanup already ships. Builds that predate this ignore the new capability and stay blocked.
+
+**Contract.** `editor_capabilities.clips.source_window = {editable, reason}` appears only while the flag
+is on (`timeline` stays `false`). `reason` is one of `talking_range_multi_clip`, `talking_range_word_cuts`
+(explicit spoken-word cuts applied), `talking_range_processed_audio` (noise reduction applied),
+`talking_range_cut_mismatch` (the stored rows no longer match the pinned recipe, e.g. after a
+regenerate). One predicate, `phone_talking_range.talking_range_reason`, drives both the capability and
+Save. A Save carries `timeline_slots`: the SAME `native-phone-talking-source[-n]` ids, order and count
+the server derived (`editor_deletion_timeline`), with new `in_s` / `duration_s`. Anything else is
+`422 talking_range_structure_changed`; a window reaching into the next segment's footage is
+`422 talking_range_overlap`; past the source is `TIMELINE_OUT_OF_BOUNDS`; widening into footage with no
+caption timing while captions are on is `422 talking_range_captions_missing` (no silent caption gap).
+
+**Compile.** The rows become `keep_segments` for `compile_phone_subtitled_plan`
+(`phone_editor._apply_talking_range`). Lanes move through the existing speech projection
+(`speech_cut_state.reproject_authored_speech_records`; the KRI-852 basis sync was factored into
+`authored_editor.sync_talking_source_lanes` and is shared, not copied). A lane the Save carries is
+already on the new clock and is never moved twice. The variant never enters authored mode, so
+cutaways, speaker background, ending clip and framing keep compiling through the Talking compiler.
+The rows persist as `variant.user_timeline.slots`; the pinned recipe stays the source of truth and a
+later regenerate that re-cuts the take closes the capability (`talking_range_cut_mismatch`).
+
+**Not in this slice (follow-ups).** Delete / split / reorder of speech segments, several-clip Talking
+(per-speaker windows and cutaway re-projection), a cutaway's own source start, variants with spoken-word
+cuts or noise reduction, copilot `set_source_window`, and a "your take is 0:58, the video uses 0:41"
+line in the editor.
+
+**Deploy order.** API first with the flag off (payloads byte-identical), then the iOS build, then flip
+`PHONE_TALKING_RANGE_EDITS_ENABLED=true` (fly secret, restart api and worker). Rollback: set it to
+`false`; saved Range windows stay in their pinned recipes and keep rendering.
