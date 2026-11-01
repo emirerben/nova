@@ -362,10 +362,10 @@ class ArtifactTransferTests(unittest.TestCase):
         (self.root / "fixture/source.mp4").write_bytes(b"synthetic media")
 
     def seal(self):
-        evidence.seal_bundle(self.root, "a" * 40, "123", "1")
+        evidence.seal_bundle(self.root, "a" * 40, "123", "1", "kri-524-creation")
 
     def verify(self, head="a" * 40, run="123", attempt="1"):
-        evidence.verify_bundle(self.root, head, run, attempt)
+        evidence.verify_bundle(self.root, head, run, attempt, "kri-524-creation")
 
     def test_transfer_preserves_paths_bytes_and_attempt_identity(self):
         self.seal()
