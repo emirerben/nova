@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any, ClassVar, Literal
@@ -20,7 +21,7 @@ from app.agents._runtime import Agent, AgentSpec, ModelClient, SchemaError
 from app.agents._schemas.creator_agent import (
     CREATOR_AGENT_OUTPUT_ADAPTER,
     CREATOR_REQUEST_MAX_CHARS,
-    PLANNER_BOUNDARY_DECLINES_CONTEXT,
+    MODEL_OUTPUT_CONTEXT,
     STORY_LINE_MAX_CHARS,
     CreativeStrategy,
     CreatorAgentOutput,
@@ -186,8 +187,8 @@ log = structlog.get_logger()
 # render is byte-identical.
 # v109 (KRI-1097 wave 2, planner boundary): `render_intent_evidence` gains `mixed_media_timing`,
 # `montage_cadence` and `video_reuse_policy` quotes, taught only with
-# PLANNER_BOUNDARY_HONEST_ENABLED; off, the prompt is byte-identical to v108 and a run reports
-# v108 (`MainCreatorAgent.__init__`).
+# PLANNER_BOUNDARY_HONEST_ENABLED (default off); off, the prompt is byte-identical to v108 and a
+# run reports v108 (`MainCreatorAgent.__init__`).
 MAIN_CREATOR_PROMPT_VERSION = "2026-11-01-v109"
 _PRE_BOUNDARY_PROMPT_VERSION = "2026-11-01-v108"
 
@@ -1163,9 +1164,13 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
             raw_action, boundary_quotes = (
                 _take_boundary_quotes(raw_action) if honest else (raw_action, {})
             )
-            unknown_looks = _unknown_text_looks(raw_action) if honest else []
+            unknown_looks = (
+                _unknown_text_looks(raw_action)
+                if settings.planner_unknown_look_decline_enabled
+                else []
+            )
             action = CREATOR_AGENT_OUTPUT_ADAPTER.validate_python(
-                raw_action, context={PLANNER_BOUNDARY_DECLINES_CONTEXT: honest}
+                raw_action, context={MODEL_OUTPUT_CONTEXT: True}
             )
             if isinstance(action, DraftVoiceoverScript) and not input.voiceover_script_available:
                 # KRI-815: only offered with footage and no voiceover; elsewhere it is a miss.
@@ -1238,6 +1243,7 @@ class MainCreatorAgent(Agent[MainCreatorInput, MainCreatorOutput]):
                 boundary_kwargs = {
                     "timing": timing,
                     "regex_cadence": cadence,
+                    "video_ids": [media.media_id for media in videos],
                     "reuse_messages": [request_contract, *user_messages, input.user_message],
                     "latest_message": input.user_message,
                     "cadence_reuse": reuse_policy,
@@ -1459,6 +1465,7 @@ def _timing_cadence_reuse(
     *,
     timing: MixedMediaTimingProfile | None,
     regex_cadence: MontageCadenceConstraint | None,
+    video_ids: list[str],
     reuse_messages: list[str],
     latest_message: str,
     cadence_reuse: Literal["no_repeat", "allow_repeat"],
@@ -1475,8 +1482,9 @@ def _timing_cadence_reuse(
     A quote grounds only its own field: a timing quote keeps the photo and video holds, never
     grouping the model read elsewhere, and a cadence quote keeps the cut, never the model's
     permission to repeat footage (``cadence_reuse``, the server's reading, stands unless the
-    repeat ask is grounded by its own quote). A latest-turn "stop alternating" keeps any cadence
-    out.
+    repeat ask is grounded by its own quote). A kept cadence follows the recognizers' rule: the
+    manifest has exactly two videos (``video_ids``) and the cadence alternates those two. A
+    latest-turn "stop alternating" keeps any cadence out.
     """
     keep = quoted or (lambda _field: False)
     if timing is None and strategy.mixed_media_timing is not None and keep("mixed_media_timing"):
@@ -1491,6 +1499,8 @@ def _timing_cadence_reuse(
     if (
         cadence is None
         and strategy.montage_cadence is not None
+        and len(video_ids) == 2
+        and sorted(strategy.montage_cadence.source_media_ids) == sorted(video_ids)
         and not rejects_round_robin_cadence(latest_message)
         and keep("montage_cadence")
     ):
@@ -1515,19 +1525,24 @@ def _timing_cadence_reuse(
     return {"mixed_media_timing": timing, "montage_cadence": cadence, "video_reuse_policy": reuse}
 
 
-# KRI-1097 wave 2: the `render_intent_evidence` quotes for the three boundary fields. With the
-# switch on they leave the raw action before validation and only `_creator_quote` reads them;
-# off they stay, and the evidence model refuses them as unknown keys, as the foundation did.
+# KRI-1097 wave 2: the `render_intent_evidence` quotes for the three boundary fields. With
+# PLANNER_BOUNDARY_HONEST_ENABLED on they leave the raw action before validation and only
+# `_creator_quote` reads them; off they stay, and the evidence model refuses them as unknown
+# keys, as the foundation did.
 _BOUNDARY_QUOTE_FIELDS = ("mixed_media_timing", "montage_cadence", "video_reuse_policy")
 
 # Characters that end a sentence in any script. A boundary quote starts and ends at one of them
 # (or at the edge of a message), so it never leaves out words of its own sentence: a negation
-# before it reaches the quoted words across commas, colons and asides ("No quiero que, como la
-# última vez, las fotos ..."), and a later clause can turn them around. Punctuation, not words:
-# what the sentence means is the model's reading (the language policy, KRI-773).
-_SENTENCE_MARKS = frozenset(".;!?\n…。；！？؛؟।")
+# before it reaches the quoted words across commas, semicolons, colons and asides ("No quiero
+# que, como la última vez, las fotos ...", "Lo que no quiero es esto; las fotos ..."), and a
+# later clause can turn them around. Punctuation, not words: what the sentence means is the
+# model's reading (the language policy, KRI-773).
+_SENTENCE_MARKS = frozenset(".!?\n…。！？؟।")
 # Quotation marks, brackets and opening marks stepped over on the way to a sentence edge.
 _SENTENCE_WRAPPERS = frozenset("\"'«»“”„‘’‚()[]¿¡ ")
+_WRAPPER_CHARS = "".join(_SENTENCE_WRAPPERS)
+# Marks that open a list line ("- fotos", "• fotos"), read as indent, never as words.
+_LIST_MARKS = frozenset("-*•·\u2013\u2014▪◦●")
 # How a seconds unit is written right after the digits ("2 s", "1.5-second", "2 segundos",
 # "2 saniyede"): notation read like the digits themselves, never what a sentence asks for.
 _SECOND_UNITS = frozenset(
@@ -1594,17 +1609,67 @@ def _sentence_edge(text: str, index: int, step: int) -> bool:
     return not (decimal and text[at - 1].isdecimal() and text[at + 1].isdecimal())
 
 
+def _list_mark_width(line: str) -> int:
+    """How many leading characters of ``line`` are a list mark ("- ", "• ", "1. ", "2) ")."""
+    if line[:1] in _LIST_MARKS and line[1:2] == " ":
+        return 1
+    digits = len(line) - len(line.lstrip("0123456789"))
+    if (
+        0 < digits <= 3
+        and line[digits : digits + 1] in (".", ")")
+        and line[digits + 1 : digits + 2] == " "
+    ):
+        return digits + 1
+    return 0
+
+
+def _sentence_text(source: str) -> tuple[str, str]:
+    """``source`` with its lines joined, spacing aside, as ``(flat, marks)`` of one length:
+    ``flat`` holds the words, ``marks`` the same text where a line break that ends a sentence
+    is "\\n", any other a space, and each list mark ("- ", "1. ") is blanked.
+
+    A line break ends a sentence, except inside a list a line introduces, which belongs to
+    that line's sentence so its negation reaches every item ("No quiero:\\n- fotos muy rápido
+    ..."): a line ending with ":" introduces every line after it up to a blank line, and a line
+    with no end mark followed by list items introduces those items. A list with no such line
+    is one sentence per item."""
+    flat: list[str] = []
+    marks: list[str] = []
+    to_blank = items = False
+    previous = None
+    for raw in source.splitlines():
+        line = " ".join(raw.split())
+        if not line:
+            previous, to_blank, items = None, False, False
+            continue
+        width = _list_mark_width(line)
+        if flat:
+            joined = False
+            if previous is not None:
+                end = previous.rstrip(_WRAPPER_CHARS)[-1:]
+                to_blank = to_blank or end in (":", "：")
+                items = width > 0 and (
+                    items or (not _list_mark_width(previous) and end not in _SENTENCE_MARKS)
+                )
+                joined = to_blank or items
+            flat.append(" ")
+            marks.append(" " if joined else "\n")
+        flat.append(line)
+        marks.append(" " * width + line[width:])
+        previous = line
+    return "".join(flat), "".join(marks)
+
+
 def _whole_sentences_in(source: str, quote: str) -> bool:
     """Whether ``quote`` is found in ``source`` (spacing aside) as one or more whole
-    sentences. A quote that carries its own closing mark ("... 2 segundos.") ends one."""
-    lines = [" ".join(line.split()) for line in source.splitlines()]
-    text = "\n".join(line for line in lines if line)
-    flat = text.replace("\n", " ")
+    sentences (`_sentence_text`). A quote that carries its own closing mark ("... 2
+    segundos.") ends one."""
+    flat, marks = _sentence_text(unicodedata.normalize("NFC", source))
     start = flat.find(quote)
     while start >= 0:
         end = start + len(quote)
-        closed = _sentence_edge(text, end, 1) or _sentence_edge(text, end, -1)
-        if closed and _sentence_edge(text, start, -1):
+        closed = _sentence_edge(marks, end, 1) or _sentence_edge(marks, end, -1)
+        if closed and _sentence_edge(marks, start, -1):
             return True
         start = flat.find(quote, start + 1)
     return False
@@ -1663,13 +1728,27 @@ def _creator_quote(
       montaje lento del verano en Madrid");
     - each number of seconds the model wrote (a cadence's cut, a photo hold) is written in it
       with digits and a seconds unit right after them: "cada 2 segundos" grounds no 1 s cut,
-      and "Somos 2 amigos" no 2 s photo hold.
+      and "Somos 2 amigos" no 2 s photo hold;
+    - a repeat quote is not the cadence quote or a part of it: alternating two videos is no
+      ask to play a moment twice.
+    Both sides are compared in Unicode NFC, so an accent typed as two code points still matches.
     Each check fails toward the server's own reading, the foundation's behaviour.
+
+    Limits of the design (agents/DECISIONS.md "Prompt fidelity wave 2: planner"): the server
+    checks provenance, not meaning. A whole sentence about something else (a slow montage
+    quoted for very fast photos, an unrelated sentence quoted for repeats, a title's seconds
+    quoted for a cut), a reversal in the next sentence, or a later turn that withdraws the ask
+    in words the recognizers do not read keeps the model's value.
     """
 
+    def text(field: str) -> str:
+        return " ".join(unicodedata.normalize("NFC", str(quotes.get(field) or "")).split())
+
     def quoted(field: str) -> bool:
-        quote = " ".join(str(quotes.get(field) or "").split())
+        quote = text(field)
         if len(quote.split()) < 2:
+            return False
+        if field == "video_reuse_policy" and quote in text("montage_cadence"):
             return False
         written = _seconds_written(quote)
         if any(
@@ -1687,7 +1766,8 @@ _LOOK_OFF_WORDS = frozenset({"none", "null", "no", "off", "default", "static"})
 
 
 def _unknown_text_looks(raw_action: object) -> list[PlannerDecline]:
-    """Title animation / label position words the renderer has no name for (KRI-1097 wave 2).
+    """Title animation / label position words the renderer has no name for (KRI-1097 wave 2,
+    PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED).
 
     The strategy's validators read such a word as unset, the default look. The model fills
     these fields only when the creator named a look, so the word is kept for the card to say

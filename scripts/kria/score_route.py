@@ -3429,6 +3429,7 @@ def golden_lines() -> dict[str, Any]:
         patch.object(settings, "route_registry_enabled", True),
         patch.object(settings, "kria_route_disclosure_enabled", True),
         patch.object(settings, "planner_boundary_honest_enabled", True),
+        patch.object(settings, "planner_unknown_look_decline_enabled", True),
     ):
         for rid in ROUTE_TABLES:
             route = str(rid)

@@ -5,7 +5,9 @@ animation or label position the renderer has no name for (the strategy validator
 unset), and a timing, cadence or reuse ask quoted from the creator that the manifest cannot
 render (the parse fell back to the server's own reading). `route_disclosure.strategy_notices`
 names them on the approval card on every route, so nothing the creator asked for disappears
-silently. Pure and fail-open; nothing here refuses a render or blocks approval.
+silently. A look line needs PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED, a timing, cadence or reuse line
+PLANNER_BOUNDARY_HONEST_ENABLED. Pure and fail-open; nothing here refuses a render or blocks
+approval.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from app.agents._schemas.creator_agent import planner_decline_fields
 from app.kria.reply_language import say
 from app.kria.route_capabilities._lines import clip
 
@@ -87,7 +90,9 @@ _LINES: dict[str, Callable[[object], str | None]] = {
 
 
 def decline_lines(strategy: Mapping[str, Any] | None) -> list[tuple[str, str]]:
-    """``(subject, sentence)`` per recorded decline, in order; one line per field."""
+    """``(subject, sentence)`` per recorded decline whose field's switch is on
+    (`planner_decline_fields`), in order; one line per field."""
+    fields = planner_decline_fields()
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
     for item in (strategy or {}).get("planner_declines") or ():
@@ -95,7 +100,7 @@ def decline_lines(strategy: Mapping[str, Any] | None) -> list[tuple[str, str]]:
             continue
         field = str(item.get("field") or "")
         build = _LINES.get(field)
-        if build is None or field in seen:
+        if build is None or field in seen or field not in fields:
             continue
         try:
             text = build(item.get("value"))

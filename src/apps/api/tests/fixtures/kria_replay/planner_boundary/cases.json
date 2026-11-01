@@ -1,5 +1,5 @@
 {
- "about": "KRI-1097 wave 2, planner boundary lane (L7). Raw Main Creator responses, one per failure mode, run through MainCreatorAgent.parse with PLANNER_BOUNDARY_HONEST_ENABLED on and off by tests/kria/test_planner_boundary_replay.py; declines also through route_disclosure. The responses are authored in the recorded fixture format (prod redacts model I/O); the live model leg (whether the model writes the quotes the v109 prompt asks for) is not replayed. 'on'/'off' list the post-parse strategy fields each switch state must produce; 'off' is the foundation's behaviour: an 'error_class' where the foundation refuses the response (a boundary quote or a model-written planner_declines is an unknown key there), so the parse raises the same SchemaError and spends the same retry.",
+ "about": "KRI-1097 wave 2, planner boundary lane (L7). Raw Main Creator responses, one per failure mode, run through MainCreatorAgent.parse by tests/kria/test_planner_boundary_replay.py in all four states of the two switches; declines also through route_disclosure. The responses are authored in the recorded fixture format (prod redacts model I/O); the live model leg (whether the model writes the quotes the v109 prompt asks for) is not replayed. 'on' lists the post-parse strategy fields with PLANNER_BOUNDARY_HONEST_ENABLED and PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED both on, 'off' with both off, which is the foundation's behaviour: an 'error_class' where the foundation refuses the response (a boundary quote or a model-written planner_declines is an unknown key there), so the parse raises the same SchemaError and spends the same retry. The two mixed states follow from these (the quote rule's fields from 'on' or 'off', the look declines only while their switch is on). 'direction' records, per field, whether the creator asked for the model's value ('keep') or not ('drop'); with the quote rule on the parse follows it except on a case marked 'limit', a documented limit of the quote design. 'extra_media' adds manifest media (a third video).",
  "manifests": {
   "guided": {
    "draft_guided_proposal": {
@@ -572,7 +572,7 @@
   },
   {
    "id": "forged_declines",
-   "about": "F9: a model-written planner_declines is server-owned and wiped",
+   "about": "F9: a model-written planner_declines is refused as the unknown key it is on the foundation, in every switch state (the same SchemaError and retry)",
    "message": "Make a quick Lisbon montage",
    "conversation": [],
    "manifest": "guided",
@@ -608,7 +608,7 @@
    },
    "expect": {
     "on": {
-     "planner_declines": null
+     "error_class": "propose_strategy:strategy:planner_declines:extra_forbidden"
     },
     "off": {
      "error_class": "propose_strategy:strategy:planner_declines:extra_forbidden"
@@ -1467,6 +1467,1241 @@
      "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden,propose_"
     }
    }
+  },
+  {
+   "id": "attack_negation_across_semicolon",
+   "about": "Reviewer 4 A2 (F16): a negation before a ';' governs the clause after it; the clause alone grounds nothing",
+   "message": "Lo que no quiero es esto; las fotos pasando muy rápido y los videos más largos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "las fotos pasando muy rápido y los videos más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "drop"
+   }
+  },
+  {
+   "id": "attack_negated_list",
+   "about": "Reviewer 4 A3 (F16): a list a line ending with ':' introduces is that line's sentence; one item grounds nothing",
+   "message": "No quiero:\n- fotos muy rápido y videos largos\n- texto encima",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "- fotos muy rápido y videos largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "drop"
+   }
+  },
+  {
+   "id": "attack_negated_list_no_colon",
+   "about": "Reviewer 4 A3 (F16): list items hanging off a line with no end mark belong to its sentence",
+   "message": "No quiero esto\n- fotos muy rápido y videos largos\n- texto encima",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "fotos muy rápido y videos largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "drop"
+   }
+  },
+  {
+   "id": "attack_negated_colon_lines",
+   "about": "Reviewer 4 A3 (F16): every line after a line ending with ':' up to a blank line belongs to its sentence",
+   "message": "No quiero:\nfotos muy rápido y videos largos\ntexto encima",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "fotos muy rápido y videos largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "drop"
+   }
+  },
+  {
+   "id": "attack_list_item_control",
+   "about": "Control for A3: an item of a list no line introduces is its own sentence and grounds its ask",
+   "message": "- Las fotos tienen que pasar muy rápido y los videos un poco más largos\n- Música alegre",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Las fotos tienen que pasar muy rápido y los videos un poco más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+     },
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "keep"
+   }
+  },
+  {
+   "id": "attack_introduced_list_whole_unit",
+   "about": "Control for A3: the whole introduced list, quoted with its line, grounds the ask",
+   "message": "Quiero esto:\n- las fotos muy rápido y los videos más largos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Quiero esto: - las fotos muy rápido y los videos más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+     },
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "keep"
+   }
+  },
+  {
+   "id": "attack_whole_sentence_off_topic_timing",
+   "about": "Reviewer 4 A5 (limit): a whole sentence about a slow montage quoted for very fast photos",
+   "message": "Crea un montaje lento del verano en Madrid.",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Crea un montaje lento del verano en Madrid."
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+     },
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "drop"
+   },
+   "limit": "the server checks that the quote is the creator's whole sentence, not what it asks for (agents/DECISIONS.md, planner Limits (2)); only the live v109 eval can measure how often"
+  },
+  {
+   "id": "attack_whole_sentence_off_topic_repeat",
+   "about": "Reviewer 4 A6 (limit): an unrelated whole message quoted for repeats nobody asked for",
+   "message": "Haz un video del viaje con música alegre",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "video_reuse_policy": "allow_repeat"
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "video_reuse_policy": "Haz un video del viaje con música alegre"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "allow_repeat",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:video_reuse_policy:extra_forbidden"
+    }
+   },
+   "direction": {
+    "video_reuse_policy": "drop"
+   },
+   "limit": "the server checks that the quote is the creator's whole sentence, not what it asks for (agents/DECISIONS.md, planner Limits (2)); only the live v109 eval can measure how often"
+  },
+  {
+   "id": "attack_title_seconds_as_cadence",
+   "about": "Reviewer 4 A7 (limit): a sentence about the title's seconds quoted for a 2 s cut",
+   "message": "Que el título dure 2 segundos.",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Que el título dure 2 segundos."
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 2.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   },
+   "direction": {
+    "montage_cadence": "drop"
+   },
+   "limit": "the server checks that the quote is the creator's whole sentence, not what it asks for (agents/DECISIONS.md, planner Limits (2)); only the live v109 eval can measure how often"
+  },
+  {
+   "id": "attack_clip_length_whole_sentence",
+   "about": "Reviewer 4 A8 (limit): a whole sentence about clip length quoted for an alternating cut",
+   "message": "Haz un montaje con clips de 2 segundos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Haz un montaje con clips de 2 segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 2.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   },
+   "direction": {
+    "montage_cadence": "drop"
+   },
+   "limit": "the server checks that the quote is the creator's whole sentence, not what it asks for (agents/DECISIONS.md, planner Limits (2)); only the live v109 eval can measure how often"
+  },
+  {
+   "id": "attack_cadence_needs_exactly_two_videos",
+   "about": "Reviewer 4 A10: three videos; a kept cadence needs exactly two, as the recognizers' path does",
+   "message": "Alterna entre el primer video y el de la playa cada 2 segundos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre el primer video y el de la playa cada 2 segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   },
+   "direction": {
+    "montage_cadence": "drop"
+   },
+   "extra_media": [
+    {
+     "media_id": "clip-3",
+     "kind": "video",
+     "label": "beach"
+    }
+   ]
+  },
+  {
+   "id": "attack_cadence_over_three_videos",
+   "about": "Reviewer 4 A10 (F19): a cadence over all three videos is not the recognizers' exactly-two rule",
+   "message": "Alterna entre los tres videos cada 2 segundos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2",
+        "clip-3"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los tres videos cada 2 segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   },
+   "direction": {
+    "montage_cadence": "drop"
+   },
+   "extra_media": [
+    {
+     "media_id": "clip-3",
+     "kind": "video",
+     "label": "beach"
+    }
+   ]
+  },
+  {
+   "id": "attack_cadence_wrong_pair",
+   "about": "Reviewer 4 A10: a cadence over a video and a photo is not the manifest's two videos",
+   "message": "Alterna entre los dos videos cada 2 segundos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "photo-1"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada 2 segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   },
+   "direction": {
+    "montage_cadence": "drop"
+   }
+  },
+  {
+   "id": "attack_seconds_in_words",
+   "about": "Reviewer 4 A11 (limit, over-drop): seconds written as a word ground no cut",
+   "message": "Alterna entre los dos videos cada dos segundos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada dos segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   },
+   "direction": {
+    "montage_cadence": "keep"
+   },
+   "limit": "fails toward the server's own reading, the foundation's behaviour (Limits (2))"
+  },
+  {
+   "id": "attack_seconds_double_prime",
+   "about": "Reviewer 4 A13 (limit, over-drop): seconds written 2\" ground no cut",
+   "message": "Alterna entre los dos videos cada 2\"",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada 2\""
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   },
+   "direction": {
+    "montage_cadence": "keep"
+   },
+   "limit": "fails toward the server's own reading, the foundation's behaviour (Limits (2))"
+  },
+  {
+   "id": "attack_repeat_quote_is_the_cadence_quote",
+   "about": "Reviewer 4 A15 (F15): the cadence sentence reused as the repeat quote grants no repeats",
+   "message": "Alterna entre los dos videos cada 2 segundos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "allow_repeat"
+      },
+      "video_reuse_policy": "allow_repeat"
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada 2 segundos",
+      "video_reuse_policy": "Alterna entre los dos videos cada 2 segundos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 2.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden,propose_"
+    }
+   },
+   "direction": {
+    "video_reuse_policy": "drop"
+   }
+  },
+  {
+   "id": "attack_repeat_quote_inside_cadence_quote",
+   "about": "Reviewer 4 A15 (F15): a sentence of the cadence quote reused as the repeat quote grants no repeats",
+   "message": "Alterna entre los dos videos. Cada 2 segundos.",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "allow_repeat"
+      },
+      "video_reuse_policy": "allow_repeat"
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos. Cada 2 segundos.",
+      "video_reuse_policy": "Alterna entre los dos videos."
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 2.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden,propose_"
+    }
+   },
+   "direction": {
+    "video_reuse_policy": "drop"
+   }
+  },
+  {
+   "id": "attack_empty_quote",
+   "about": "Reviewer 4 A16 (limit, over-drop): a real repeat ask with an empty quote stays dropped",
+   "message": "Repite los videos en bucle hasta el final",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "video_reuse_policy": "allow_repeat"
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "video_reuse_policy": ""
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:video_reuse_policy:extra_forbidden"
+    }
+   },
+   "direction": {
+    "video_reuse_policy": "keep"
+   },
+   "limit": "fails toward the server's own reading, the foundation's behaviour (Limits (2))"
+  },
+  {
+   "id": "attack_nfd_creator_text",
+   "about": "Reviewer 4 A17: the creator's accents typed as two code points (NFD) still match the model's NFC quote",
+   "message": "Las fotos tienen que pasar muy rápido y los videos un poco más largos",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "Las fotos tienen que pasar muy rápido y los videos un poco más largos"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+     },
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "keep"
+   }
+  },
+  {
+   "id": "attack_reversal_in_next_sentence",
+   "about": "Reviewer 4 A20 (limit): the next sentence takes the ask back",
+   "message": "¿Las fotos pueden pasar muy rápido? No, mejor que no.",
+   "conversation": [],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "mixed_media_timing": {
+       "image_hold": "very_fast",
+       "video_hold": "longer",
+       "boundary_style": "cut"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "mixed_media_timing": "¿Las fotos pueden pasar muy rápido?"
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": {
+      "image_hold": "very_fast",
+      "video_hold": "longer",
+      "boundary_style": "cut"
+     },
+     "montage_cadence": null,
+     "video_reuse_policy": "once",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:mixed_media_timing:extra_forbidden"
+    }
+   },
+   "direction": {
+    "mixed_media_timing": "drop"
+   },
+   "limit": "the server checks that the quote is the creator's whole sentence, not what it asks for (agents/DECISIONS.md, planner Limits (2)); only the live v109 eval can measure how often"
+  },
+  {
+   "id": "attack_withdrawn_in_a_later_turn",
+   "about": "Reviewer 4 A21 (limit): the latest turn stops the alternating cut in words the recognizers do not read",
+   "message": "Deja de alternar, haz un montaje normal.",
+   "conversation": [
+    "Alterna entre los dos videos cada 2 segundos."
+   ],
+   "manifest": "guided",
+   "raw": {
+    "action": {
+     "kind": "propose_strategy",
+     "strategy": {
+      "direction": "fast_montage",
+      "edit_format": "montage",
+      "audio_strategy": "licensed_music",
+      "story_structure": [
+       "Arrival",
+       "City details",
+       "Sunset"
+      ],
+      "caption_style": "auto",
+      "pacing": "fast",
+      "target_duration_s": 20,
+      "render_program": "guided",
+      "media_scope": "all",
+      "selected_media_ids": [],
+      "optional_treatments": [],
+      "rationale": "Short city montage cut to the creator's timing.",
+      "montage_cadence": {
+       "mode": "round_robin",
+       "source_media_ids": [
+        "clip-1",
+        "clip-2"
+       ],
+       "cut_duration_s": 2.0,
+       "reuse_policy": "no_repeat"
+      }
+     },
+     "summary": "A quick montage.",
+     "render_intent_evidence": {
+      "montage_cadence": "Alterna entre los dos videos cada 2 segundos."
+     }
+    }
+   },
+   "expect": {
+    "on": {
+     "mixed_media_timing": null,
+     "montage_cadence": {
+      "mode": "round_robin",
+      "source_media_ids": [
+       "clip-1",
+       "clip-2"
+      ],
+      "cut_duration_s": 2.0,
+      "reuse_policy": "no_repeat"
+     },
+     "video_reuse_policy": "distinct_windows",
+     "planner_declines": null
+    },
+    "off": {
+     "error_class": "propose_strategy:render_intent_evidence:montage_cadence:extra_forbidden"
+    }
+   },
+   "direction": {
+    "montage_cadence": "drop"
+   },
+   "limit": "the server checks that the quote is the creator's whole sentence, not what it asks for (agents/DECISIONS.md, planner Limits (2)); only the live v109 eval can measure how often"
   }
  ]
 }

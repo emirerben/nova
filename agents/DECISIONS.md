@@ -3309,81 +3309,106 @@ reads were not available).
 
 ## [2026-11-01] Prompt fidelity wave 2: planner
 
-**What changed (`MainCreatorAgent.parse`, switch `PLANNER_BOUNDARY_HONEST_ENABLED`):**
-`mixed_media_timing`, `montage_cadence` and `video_reuse_policy` follow the `media_scope` rule
-(KRI-129 part C): the English/Turkish recognizers' explicit reading still wins, and where they
-are silent the model's own value now stays, but only when the model's quote for it grounds it.
-Prompt v109 asks for the three quotes in `render_intent_evidence` (the creator's whole sentence,
-word for word); the parse takes them out of the raw action before validation and only
+**Two switches, two defaults (after reviewer 4).** `PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED`
+(default `true`) gates only the unknown-look card lines. `PLANNER_BOUNDARY_HONEST_ENABLED` (default
+`false`, dark) gates only the quote rule for `mixed_media_timing`, `montage_cadence` and
+`video_reuse_policy`, its prompt keys (v109) and its card lines. Reviewer 4 ran 26 attack cases
+against the quote rule: 15 kept a value the creator did not ask for, 3 dropped one they did. The
+server can check that a quote is the creator's own whole sentence, not that the sentence is about
+the field, and the creator's prompt comes first, so keeping a value against the ask is the failure
+this wave exists to prevent. The quote rule stays dark until the paid live v109 eval (an approved
+development-ledger run) measures how often the live model quotes a sentence about something else;
+the look lines carry no such risk (they only name a word the renderer drops anyway). Both are
+reversible by the switch alone.
+
+**What the quote rule does (`MainCreatorAgent.parse`, when on):** the three fields follow the
+`media_scope` rule (KRI-129 part C): the English/Turkish recognizers' explicit reading still wins,
+and where they are silent the model's own value stays only when the model's quote for it grounds
+it. Prompt v109 asks for the three quotes in `render_intent_evidence` (the creator's whole
+sentence, word for word); the parse takes them out of the raw action before validation and only
 `_creator_quote` reads them. A quote grounds a value when (a) it is two words or more found
-verbatim in what the creator wrote (the rule titles and pinned texts already follow), (b) it is
-whole sentences of that text, starting and ending at a sentence mark (`. ; ! ? …`, a line break,
-their CJK/Arabic forms) or the edge of a message, never a part that leaves out words of its own
-sentence: a negation before the quote reaches it across commas, colons and asides ("No quiero
-que, como la última vez, las fotos ..."), and a later clause can turn it around, and (c) every
-number of seconds the model wrote (a cadence's cut, a photo hold) is written in it with digits
-and a seconds unit right after them ("2 segundos", "1,5s"; "Somos 2 amigos" grounds nothing). A
-quote grounds only its own field: a timing quote keeps the photo and video holds
-(`image_hold`, `image_hold_s`, `video_hold`, `boundary_style`), never photo runs or sport groups
-the model added; a cadence quote keeps the cut, while the cadence's `reuse_policy` is the
-recognizers' reading (no repeats unless the creator's English/Turkish words grant them) unless
-`video_reuse_policy` is grounded by its own quote, so the model cannot grant repeats through a
-cadence. The checks read sentence marks, digits and the unit written after them, never what a
-sentence asks for: the language policy (KRI-773/786, `test_kri667_no_new_intent_regexes`) leaves
-that to the model that read it. Every check fails toward the server's own reading, which is what
-the foundation kept. A latest-turn "stop alternating" still keeps any cadence out. A grounded ask the manifest cannot render (no guided proposals, a voiceover beside a
-cadence) no longer costs a retry: the parse falls back to the server's own reading. A title
-animation or label position the renderer has no name for ("bounce", "upper middle") used to
-become None in the strategy validators and vanish. Both cases are now recorded on the strategy as
-server-owned `planner_declines` (out of every model schema, omitted when empty, never taken from
-a model), and `route_disclosure.strategy_notices` names them on the approval card on every route
-(code `not_applied_on_route`, subjects `planner_<field>`, English and Turkish,
-`app/kria/planner_declines.py`). They are card lines only: never a receipt, a question or a
-block, and the render is unchanged. The reuse line says "no moment of it plays twice", not "each
-clip plays once": the unified montage may still use distinct windows of a clip.
+verbatim in what the creator wrote, both sides in Unicode NFC (an accent typed as two code points
+still matches); (b) it is whole sentences of that text, starting and ending at a sentence mark
+(`. ! ? …`, a line break, their CJK/Arabic/Devanagari forms) or the edge of a message, never a part
+that leaves out words of its own sentence: a negation before the quote reaches it across commas,
+semicolons, colons and asides ("No quiero que, como la última vez, las fotos ...", "Lo que no
+quiero es esto; las fotos ..."), a later clause can turn it around, and a list a line introduces
+is that line's sentence (a line ending with ":" introduces every line up to a blank line; a line
+with no end mark followed by list items introduces those items; a list no line introduces is one
+sentence per item, `_sentence_text`); (c) every number of seconds the model wrote (a cadence's
+cut, a photo hold) is written in it with digits and a seconds unit right after them ("2
+segundos", "1,5s"; "Somos 2 amigos" grounds nothing); (d) a repeat quote is not the cadence quote
+or a part of it. A quote grounds only its own field: a timing quote keeps the photo and video
+holds, never photo runs or sport groups; a cadence quote keeps the cut, while the cadence's
+`reuse_policy` is the recognizers' reading unless `video_reuse_policy` is grounded by its own
+quote (a cadence with no repeat ask gives `distinct_windows`, as the English recognizer path
+does); a kept cadence follows the recognizers' rule of exactly two videos in the manifest,
+alternating those two (three videos, or a video and a photo, keep no cadence). The checks read
+sentence marks, list marks, digits and the unit written after them, never what a sentence asks
+for: the language policy (KRI-773/786, `test_kri667_no_new_intent_regexes`) leaves that to the
+model. Every check fails toward the server's own reading, the foundation's behaviour. A
+latest-turn "stop alternating" still keeps any cadence out. A grounded ask the manifest cannot
+render (no guided proposals, a voiceover beside a cadence) costs no retry: the parse falls back to
+the server's own reading and records a decline. An ungrounded model value is not kept (a deviation
+from the plan's literal "else keep the model's value"): the overwrite also stops the model
+inventing asks (`test_creator_initial_and_followup_reuse_is_grounded`,
+`test_main_creator_drops_model_invented_timing_for_unrelated_request`, the recorded
+`video_reuse_default` response: very fast photos for "Create a slow Summer in Madrid montage").
 
-**Deviation from the plan's literal rule ("else keep the model's value"), awaiting sign-off:** an
-ungrounded model value is not kept. The overwrite was not only a silent override. It also stops
-the model from inventing asks: `test_creator_initial_and_followup_reuse_is_grounded` ("the
-provider cannot grant itself permission to loop footage"),
-`test_main_creator_drops_model_invented_timing_for_unrelated_request`, and the recorded
-`video_reuse_default` response (very fast photo timing written for "Create a slow Summer in
-Madrid montage"). Keeping those values would put the model's guess ahead of the creator's prompt.
-The fix rounds tightened the rule after review: a verbatim fragment ("montaje lento" out of "Crea
-un montaje lento del verano en Madrid", "las fotos pasen muy rápido" out of "No quiero que las
-fotos pasen muy rápido") let an invention back in, and so did a clause cut at a comma (round 2:
-whole sentences, seconds units, per-field quotes). A first try at word lists (photo nouns,
-"no"/"nicht" negation words) was dropped: it broke the language policy guard and still guessed
-meaning.
+**What the look switch does:** a title animation or label position the renderer has no name for
+("bounce", "upper middle") used to become None in the strategy validators and vanish. It is now
+recorded on the strategy as a server-owned `planner_declines` entry (out of every model schema,
+omitted when empty), and `route_disclosure.strategy_notices` names it on the approval card on
+every route (code `not_applied_on_route`, subject `planner_<field>`, English and Turkish,
+`app/kria/planner_declines.py`). The render is unchanged; a decline is never a receipt, a question
+or a block. Each `planner_declines` field belongs to one switch (`planner_decline_fields`): a
+decline whose switch is off is not recorded, is dropped from a stored strategy when it is
+validated, and is not named on the card. A model-written `planner_declines` is refused as the
+unknown key it is on the foundation in every switch state (the same `SchemaError` and retry).
+`drafts.write_draft` drops a client's copy and keeps the head draft's declines only for fields the
+save leaves as the head had them: a client that sets the title to "fade" no longer sees "bounce
+won't be used" (an unknown word typed back is still unset, so that line stays).
 
-**Failure modes, listed before the code** (each pinned in `tests/kria/test_planner_boundary_replay.py`
-over `tests/fixtures/kria_replay/planner_boundary/cases.json`, both switch states):
-F1 an ask in words the recognizers do not read is erased (Spanish timing, cadence, repeats);
-F2 a model invention is kept (timing, cadence, repeats nobody asked for); F3 the recognizers'
-explicit reading loses to the model (every 1 s vs a quoted 2 s); F4 a latest "stop alternating"
-loses to a stale quoted cadence; F5 a kept ask the manifest cannot render makes the parse refuse;
-F6 a paraphrase or a one-word quote grounds a value; F7 an unknown look vanishes; F8 a known
-word, an alias or "none" is declined; F9 a model writes `planner_declines`; F10 the switch off is
-not byte-identical (a response parses or fails differently, a run reports v109, the card shows a
-planner line); F11 a decline blocks approval or changes the render; F12 a fragment of the
-creator's clause grounds a value, so the words it leaves out turn the ask around or change its
-subject ("No quiero que ...", "Crea un montaje lento ...", Turkish "geçmesin" left off); F13
-seconds the creator never wrote are kept (a 1 s cut for "cada 2 segundos", an invented photo
-hold); F14 a decline sentence is reworded into a claim in either language and nothing fails
-(probe `planner_declines` in the route card golden `tests/fixtures/kria_replay/golden_lines.json`,
-`tests/kria/test_route_lines_golden.py`, plus the scorecard's `NEGATION` words); F15 a quoted
-cadence carries the model's own repeat permission; F16 a negation earlier in the sentence escapes
-across a comma or an aside, or a later clause turns the quoted words around; F17 a timing quote
-keeps grouping nobody asked for, or a digit that is not seconds grounds a hold; F18 a client draft
-save writes `planner_declines`, or with the switch off a strategy carrying it validates to
-anything but the foundation's strategy. Mutation check: accepting fragments fails four F12 cases;
-treating a comma as a sentence edge fails F16; skipping the seconds check fails both F13 cases and
-counting any digit as seconds fails F17; keeping the model's grouping or the cadence's repeat
-permission fails F17/F15; counting every quote fails F2/F6/F12; counting none fails F1/F5 and the
-controls; rewording the English timing or reuse line, or the Turkish cadence line, fails the
-route card golden (F14); keeping a client's `planner_declines` or a stored one with the switch
-off fails F18; accepting a model-written `planner_declines` or reporting v109 with the switch off
-fails F10.
+**Failure modes, listed before the code** (pinned in `tests/kria/test_planner_boundary_replay.py`
+over `tests/fixtures/kria_replay/planner_boundary/cases.json`, all four switch states):
+F1 an ask in words the recognizers do not read is erased; F2 a model invention is kept; F3 the
+recognizers' explicit reading loses to the model; F4 a latest "stop alternating" loses to a stale
+quoted cadence; F5 a kept ask the manifest cannot render makes the parse refuse; F6 a paraphrase or
+a one-word quote grounds a value; F7 an unknown look vanishes; F8 a known word, an alias or "none"
+is declined; F9 a model-written `planner_declines` is anything but refused; F10 a switch off is not
+byte-identical, or one switch's behaviour leaks through the other; F11 a decline blocks approval or
+changes the render; F12 a fragment of the creator's clause grounds a value; F13 seconds the creator
+never wrote are kept; F14 a decline sentence is reworded into a claim (route card golden
+`tests/fixtures/kria_replay/golden_lines.json`, `tests/kria/test_route_lines_golden.py`); F15 a
+quoted cadence carries the model's repeat permission, or the cadence sentence (or a part of it) is
+reused as the repeat quote; F16 a negation escapes across a comma, a semicolon, an aside, a colon or
+a list break, or a later clause turns the quote around; F17 a timing quote keeps grouping, or a
+digit that is not seconds grounds a hold; F18 a client save forges a decline or keeps one whose
+field it changed, or a stored decline whose switch is off validates to anything but the
+foundation's strategy without it; F19 a kept cadence alternates other than the manifest's exactly
+two videos; F20 an NFD/NFC spelling difference drops a real ask. The `attack_*` cases (reviewer 4)
+record the creator's `direction` per field ("keep" or "drop"), so a later flip of the default is
+guarded: with the quote rule on, the parse follows the direction except on a case marked `limit`
+(`test_the_quote_rule_follows_the_creators_direction`; fixing a limit fails the test until the mark
+is dropped). Mutation check (each fails at least one test): a semicolon as a sentence end (A2), no
+introduced lists, no colon rule, no list-item rule, list marks not blanked (A3), no NFC (A17), no
+cadence-quote containment check (A15), no two-video rule or no pair check (A10), the look lines
+read from the quote switch, a model-written `planner_declines` dropped instead of refused, stored
+declines not filtered by switch, a stale decline kept after a client edit, a client's own
+declines kept, the card not filtered by switch, the quote rule default on.
+
+**Reviewer 4 attack cases:** fixed: A2 (negation before ";"), A3 (negated list, with and without
+a colon, and plain lines after a colon), A10 (three videos, a cadence over all three, a video and
+a photo), A15 (repeat quote equal to or inside the cadence quote: no repeats, `distinct_windows`
+as the English path), A17 (NFD creator text). Documented limits, recorded as `limit` cases and
+not fixed: A5/A6/A7/A8 (a whole sentence about something else: a slow montage for very fast
+photos, an unrelated message for repeats, a title's or a clip's seconds for a cut), A20 (the next
+sentence takes the ask back), A21 (a later turn withdraws the ask in words the recognizers do not
+read), and the over-drops A11 (seconds in words), A13 (2"), A16 (empty quote), which fail toward
+the foundation's reading. A14 (a cadence quoted, repeats not) gives `distinct_windows`, which is
+the English recognizer path's own result, not a repeat. Out of this lane: A1 ("Her fotoğraf 2 sn.
+olsun istemiyorum") is the foundation's Turkish recognizer reading "2 sn." despite the negation,
+with the switch on or off; A23/A24 send an `image_hold` value the schema refuses.
 
 **Wipes left as they are (justified):** `pacing_requested`, `selected_music_section`,
 `song_captions`, `resolved_song_takes`, `choice_answers`, `selection_reconciliation` and
@@ -3393,60 +3418,61 @@ from the creator's words or a server resolver; wiping the model's copy loses no 
 mechanisms and model plans, not creator asks; their visible consequences are already reported
 (KRI-594 downgrade notices, the story fallback notes).
 
-**Kill switch:** `PLANNER_BOUNDARY_HONEST_ENABLED` (default `true`, reserved by the foundation).
-`false` + restart api and worker: the prompt is v108 byte for byte (`V108_PROMPT_SHA` in
-`tests/agents/test_main_creator_user_song.py`) and the run records `2026-11-01-v108`
-(`MainCreatorAgent.__init__`); the evidence model has no boundary keys, so a response carrying
-one is refused as an unknown key, and `CreativeStrategy._planner_declines_are_server_owned`
-refuses a model-written `planner_declines` the same way (the same `SchemaError`, error class and
-retry feedback as the foundation). The card shows no planner line even for a stored strategy
-that carries one. Outside the parse, `CreativeStrategy` with the switch off drops a carried
-`planner_declines` instead of refusing it, so the strategy validates to exactly the foundation's
-strategy without the key: refusing would make every draft stored (or echoed by a client) while
-the switch was on unreadable after a rollback. That is the one schema-level difference from the
-foundation, and no client can use it: the only client-writable strategy path,
-`drafts.write_draft`, drops the client's copy in both switch states and keeps only the head
-draft's, which the parse wrote (`_sanitize_strategy_duration_provenance`, like `choice_answers`);
-every other `CreativeStrategy.model_validate` reads a strategy the server stored. Apply: `fly secrets set PLANNER_BOUNDARY_HONEST_ENABLED=false --app nova-video`
-(api + worker) + restart.
+**Kill switches:** `PLANNER_BOUNDARY_HONEST_ENABLED=false` (the default) + restart api and worker:
+the prompt is v108 byte for byte (`V108_PROMPT_SHA` in `tests/agents/test_main_creator_user_song.py`)
+and the run records `2026-11-01-v108` (`MainCreatorAgent.__init__`); a response carrying a boundary
+quote is refused as an unknown key, as on the foundation. `PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED=false`
++ restart: no look decline is recorded or shown. With both off the planner path is the foundation's
+(see Verification). Outside the parse, `CreativeStrategy` drops a carried decline whose switch is
+off instead of refusing it, so a strategy stored while a switch was on stays readable and validates
+to exactly the foundation's strategy without it. That is the one schema-level difference from the
+foundation, and no client can use it to forge a line: the only client-writable strategy path,
+`drafts.write_draft`, drops the client's copy in every switch state. Apply: `fly secrets set
+PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED=false --app nova-video` (api + worker) + restart.
 
-**Verification:** with the switch off, all 27 cases and the 89 recorded Main Creator responses
-give the same parse output or the same exception text, error class and retry feedback as the
-foundation worktree (15c03a51b), the same prompt hashes and the same card lines on all seven
-routes in both languages; the model and typed-wire schemas hash the same in both switch states.
-The only difference in that dump is the schema-level one above (`forged_declines` validated as a
-bare strategy: the foundation refuses the key, the switch-off lane drops it).
-With the switch on the recorded responses parse as off. Through the real recipe
-(`plan_unified_montage` after `check_strategy_for_runtime_v2`): a quoted Spanish very fast photo
-timing gives a 0.667 s photo hold, a fragment, an invented hold or no quote gives the 1.2 s
-default, and "Cada foto dura 2 segundos" gives 2.0 s. The Assos draft parses the same on and off;
-`make kria-replay` for all eight fixtures gives the foundation's reports (Assos also with the
-switch off; 29-ekim differs only in timestamps, ids, latency and the v109 label); evals replay
-green.
+**Never revert this lane's code; use the switches.** The foundation's `CreativeStrategy` refuses
+unknown keys (`extra="forbid"`), so with this code reverted every draft, approval and job strategy
+stored with a `planner_declines` entry (an unknown look, recorded by default) fails validation on
+read: approval reads, `approval_readiness`, `kria_runtime` and the render paths that call
+`CreativeStrategy.model_validate` on stored JSON. No tolerance written in this lane's diff can
+survive its own revert. Turning both switches off stops new entries and makes stored ones validate
+as if absent. If a revert is ever unavoidable, keep a read-time drop of the key in the revert
+(`_read_legacy_labels` in `CreativeStrategy` pops retired keys the same way: add
+`data.pop("planner_declines", None)`), which is byte-identical for payloads without it.
 
-**Limits:** (1) the live model leg is not replayed: the cases are authored responses in the
-recorded format, so whether the live model writes grounded v109 quotes is unmeasured. A paid live
-eval (approved development-ledger run) is needed before relying on the switch. (2) The server
-checks provenance, not meaning. A model that misreads a whole clause and quotes all of it keeps
-its value: "No quiero que las fotos pasen muy rápido" quoted whole beside very fast photos, or
-"Create a slow Summer in Madrid montage" quoted whole beside the recorded `video_reuse_default`
-invention, both keep the timing. Only the live eval in (1) can measure how often. Seconds written
-as words ("dos segundos"), or with a unit outside the English, Spanish, Portuguese, French,
-Italian, German and Turkish spellings in `_SECOND_UNITS`, ground no number, so such a hold or
-cut is dropped as on the foundation; an abbreviation point ("p. ej.") counts as a sentence end;
-CJK quotes fail the two-word rule. A grouping ask (photo runs, sport groups) in words the
-recognizers do not read stays dropped, as on the foundation: no quote covers it. (3) The web-only v1 route
+**Verification:** with both switches off, all 48 cases and the 89 recorded Main Creator responses
+give the same parse output, or the same exception text, error class and attributes, as the
+foundation worktree (15c03a51b); the same prompt version and hashes (brief on and off), the same
+model, strategy and output schema hashes, and the same card lines on all seven routes in English
+and Turkish. The only difference is the schema-level one above (a stored strategy carrying
+`planner_declines` validates to the bare strategy; the foundation refuses the key). With the
+defaults (quote rule off, looks on) the only further difference is the `unknown_looks` case: its
+two look declines and their card lines. Quote rule on with looks off differs from both on only in
+those look declines. The recorded responses and the Assos draft parse the same in all four states.
+`make kria-replay` for all eight fixtures gives the foundation's reports (only latencies differ;
+29-ekim now records v108 like the foundation); evals replay green; `tests/kria` + `tests/agents`
+fail only the 15 tests (and 44 Postgres fixture errors) that fail the same way on the
+foundation in this environment.
+
+**Limits:** (1) the live model leg is not replayed: whether the live model writes grounded v109
+quotes, and how often it quotes a whole sentence about something else, is unmeasured; that eval
+gates the quote rule's default. (2) The server checks provenance, not meaning (the `limit` cases
+above). Seconds written as words, as 2", or with a unit outside the English, Spanish, Portuguese,
+French, Italian, German and Turkish spellings in `_SECOND_UNITS` ground no number; an abbreviation
+point ("p. ej.", "2 sn.") counts as a sentence end; CJK quotes fail the two-word rule; a line
+after a colon belongs to the colon's sentence up to a blank line, so an unrelated ask written
+there without a blank line is dropped. A grouping ask (photo runs, sport groups) in words the
+recognizers do not read stays dropped, as on the foundation. (3) The web-only v1 route
 (`routes/creator_agent._apply_explicit_render_intent`) still re-derives `mixed_media_timing` from
-the recognizer; Kria (iOS) does not run it. (4) A fallback reverts all three fields together.
-(5) With the switch off, a strategy that carries both an unknown key and `planner_declines`
-lists the two errors in another order than the foundation when the unknown key comes first
-(`planner_declines` is a declared field refused by its validator, so it is reported before
-unknown keys); the exception class and the retry are the same. (6) `FIELD_MATRIX` gains the three
-`planner_declines` paths (`upstream_resolved`), which changes `worker_capabilities_digest` on
-deploy like any new strategy field; per-strategy readiness digests are unchanged when no decline
-is recorded (`field_matrix_for_strategy` leaves the paths out). (7) The typed wire schema
-(`main_creator_output_mode=native`, off by default) carries no boundary quote, so that arm keeps
-the server's reading. (8) Found by review, owned by the foundation's `unified_montage` table, not
-this lane: `montage_cadence` is marked Applied there although the phone planner reads it only as
-a story blocker, so a kept cadence renders as a plain montage with no card line (true for English
-cadences already), and `image_hold` "standard" and "very_fast" give the same photo hold.
+the recognizer; Kria (iOS) does not run it. (4) A fallback reverts all three fields together. (5)
+A strategy that carries both an unknown key and `planner_declines` lists the two errors in another
+order than the foundation when the unknown key comes first (`planner_declines` is a declared field
+refused by its validator); the exception class and the retry are the same. (6) `FIELD_MATRIX`
+gains the three `planner_declines` paths (`upstream_resolved`), which changes
+`worker_capabilities_digest` on deploy like any new strategy field; per-strategy readiness digests
+are unchanged when no decline is recorded. (7) The typed wire schema (`main_creator_output_mode=native`,
+off by default) carries no boundary quote, so that arm keeps the server's reading. (8) Owned by
+the foundation's `unified_montage` table, not this lane: `montage_cadence` is marked Applied there
+although the phone planner reads it only as a story blocker, so a kept cadence renders as a plain
+montage with no card line (true for English cadences already), and `image_hold` "standard" and
+"very_fast" give the same photo hold.
