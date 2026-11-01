@@ -107,6 +107,7 @@ from app.services.phone_rollout import (
     recipe_has_single_word_text,
     single_word_text_client_supported,
     speaker_background_client_supported,
+    speaker_background_windows_client_supported,
     text_behind_subject_phone_client_supported,
     text_bend_client_supported,
 )
@@ -620,6 +621,19 @@ def _client_update_detail(job: Job, record: dict, status: DeviceRenderStatus) ->
             "code": "client_update_required",
             "feature": "speaker_background",
             "minimum_client_protocol": settings.speaker_background_min_client_protocol,
+        }
+    if (
+        getattr(recipe, "speaker_background", None) is not None
+        and recipe.speaker_background.uses_windows
+        and not speaker_background_windows_client_supported()
+    ):
+        # KRI-1162 (S32): an older build rejects `windows` / `speaker_frame` as unknown keys (and
+        # the `speakerBackgroundWindows` token) and would FAIL the job. Compile strips both for
+        # such a build; this covers a recipe a newer build or the worker pinned before.
+        return {
+            "code": "client_update_required",
+            "feature": "speaker_background_windows",
+            "minimum_client_protocol": settings.speaker_background_windows_min_client_protocol,
         }
     if not clip_tilt_client_supported() and recipe_has_clip_tilt(recipe):
         # KRI-1134: an older build cannot decode the `clipTilt` capability token, so the whole

@@ -25,6 +25,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_valid
 MAX_REACTION_BEATS = 24
 
 BeatVisualRole = Literal["photo", "sticker"]
+# Mirrors `app.kria.portable_speaker_background.SpeakerFramePreset` (importing it here would be
+# circular through `app.kria`); `test_speaker_frame_presets_mirror_the_portable_contract` pins it.
+SpeakerFramePreset = Literal[
+    "full", "small_bottom_right", "small_bottom_left", "small_top_right", "small_top_left"
+]
 
 
 def _clean(value: object) -> str | None:
@@ -145,15 +150,18 @@ class EndingClip(BaseModel):
     keep_audio: bool = True
 
 
-class BackgroundMedia(BaseModel):
-    """The photo or looping video shown BEHIND the speaker for the whole edit (KRI-1117).
+MAX_BACKGROUND_SEQUENCE = 40
+DEFAULT_BACKGROUND_CADENCE_S = 4.0
 
-    "Put this photo behind me" / the creator's pick in the camera: a green-screen style
-    background on a phone Talking edit. ``media_id`` is an opaque manifest media id of a
-    Visuals-pool photo or video (``asset-*``), never one of the speaker's own clips. The
-    server repair (``app.services.creator_capabilities.repair_creator_speaker_background``)
-    keeps it only where the phone can composite it and canonicalizes the id; the worker
-    resolves it into the lane request's ``background``.
+
+class BackgroundSequenceEntry(BaseModel):
+    """One photo / muted looping video of a commentary-style background sequence (KRI-1162).
+
+    ``media_id`` is a Visuals-pool manifest id. ``spoken_phrase`` (the creator's words, in
+    their language) anchors the entry to the first time that phrase is heard in the kept
+    take ("whichever photo I'm talking about"); an entry without one is laid out by cadence.
+    ``hold_s`` overrides how long the entry stays up. The worker resolves all of it into
+    timed ``windows`` (`generative_build._resolve_strategy_background`); this is the REQUEST.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -161,12 +169,71 @@ class BackgroundMedia(BaseModel):
     media_id: str = Field(min_length=1, max_length=200)
     # Video only: where the looping background starts playing (a photo ignores it).
     source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
+    spoken_phrase: str | None = Field(default=None, max_length=120)
+    hold_s: float | None = Field(default=None, ge=0.5, le=30.0, allow_inf_nan=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_phrase(cls, data: object) -> object:
+        if not isinstance(data, dict) or "spoken_phrase" not in data:
+            return data
+        cleaned = dict(data)
+        cleaned["spoken_phrase"] = _clean(cleaned["spoken_phrase"])
+        return cleaned
+
+    @model_serializer(mode="wrap")
+    def _omit_defaults(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if data.get("source_start_s") == 0.0:
+            data.pop("source_start_s", None)
+        if data.get("spoken_phrase") is None:
+            data.pop("spoken_phrase", None)
+        if data.get("hold_s") is None:
+            data.pop("hold_s", None)
+        return data
+
+
+class BackgroundMedia(BaseModel):
+    """The photo or looping video shown BEHIND the speaker (KRI-1117, KRI-1162).
+
+    "Put this photo behind me" / the creator's pick in the camera: a green-screen style
+    background on a phone Talking edit. ``media_id`` is an opaque manifest media id of a
+    Visuals-pool photo or video (``asset-*``), never one of the speaker's own clips. The
+    server repair (``app.services.creator_capabilities.repair_creator_speaker_background``)
+    keeps it only where the phone can composite it and canonicalizes the id; the worker
+    resolves it into the lane request's ``background``.
+
+    KRI-1162 (commentary-style green screen), all omitted from the dump while unused:
+    ``sequence`` is an ordered list of pool photos / videos that take turns behind the
+    speaker (``media_id`` stays the FILL shown wherever no window covers the time),
+    ``cadence_s`` how long an unanchored entry stays up, ``speaker_frame`` a NAMED corner for
+    the matted speaker (never geometry from the model, S37).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    media_id: str = Field(min_length=1, max_length=200)
+    # Video only: where the looping background starts playing (a photo ignores it).
+    source_start_s: float = Field(default=0.0, ge=0.0, le=1800.0, allow_inf_nan=False)
+    sequence: tuple[BackgroundSequenceEntry, ...] = Field(
+        default=(), max_length=MAX_BACKGROUND_SEQUENCE
+    )
+    cadence_s: float = Field(
+        default=DEFAULT_BACKGROUND_CADENCE_S, ge=2.0, le=10.0, allow_inf_nan=False
+    )
+    speaker_frame: SpeakerFramePreset = "full"
 
     @model_serializer(mode="wrap")
     def _omit_default_start(self, handler):  # noqa: ANN001, ANN202
         data = handler(self)
         if data.get("source_start_s") == 0.0:
             data.pop("source_start_s", None)
+        if not data.get("sequence"):
+            data.pop("sequence", None)
+        if data.get("cadence_s") == DEFAULT_BACKGROUND_CADENCE_S:
+            data.pop("cadence_s", None)
+        if data.get("speaker_frame") == "full":
+            data.pop("speaker_frame", None)
         return data
 
 
@@ -228,11 +295,13 @@ class TimedCard(BaseModel):
 
 __all__ = [
     "MAX_REACTION_BEATS",
+    "MAX_BACKGROUND_SEQUENCE",
     "MAX_TIMED_CARDS",
     "BeatVisualRole",
     "ReactionBeat",
     "ClosingMedia",
     "EndingClip",
     "BackgroundMedia",
+    "BackgroundSequenceEntry",
     "TimedCard",
 ]

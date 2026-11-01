@@ -200,8 +200,9 @@ def copilot_schema():
         "duration",
         "delay",
         "amount",
+        "cadence_s",
     }
-    list_strings = {"target_ids", "segments", "slide_ids"}
+    list_strings = {"target_ids", "segments", "slide_ids", "asset_ids"}
     map_fields = {
         "effect",
         "config",
@@ -217,6 +218,11 @@ def copilot_schema():
             return enum("scale", "close", "fixed")
         if name == "backdrop":
             return enum("blank", "color", "blur")
+        if name == "preset":
+            # KRI-1162: the speaker's corner, a name and never numbers (S37).
+            return enum(
+                "small_bottom_right", "small_bottom_left", "small_top_right", "small_top_left"
+            )
         if name in bools:
             return boolean
         if name == "base_generation":

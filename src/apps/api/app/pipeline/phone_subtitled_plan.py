@@ -62,7 +62,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.kria.portable_speaker_background import SpeakerBackgroundLayer
+from app.kria.portable_speaker_background import (
+    SpeakerBackgroundLayer,
+    SpeakerBackgroundWindow,
+    SpeakerFrame,
+)
 from app.kria.portable_visual import AudioMuteWindow, VisualMediaPlacement
 from app.kria.recipes import (
     AssetFingerprint,
@@ -92,6 +96,7 @@ from app.pipeline.phone_recipe_shared import (
 )
 from app.pipeline.phone_subtitled_lanes import (
     CAPTION_BAND_TOP_FRAC,
+    MIN_BACKGROUND_WINDOW_S,
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
     SubtitledBackground,
@@ -283,7 +288,11 @@ def compile_phone_subtitled_plan(
         it). Stripped first while the phone gate is closed
         (`strip_unsupported_background`), so a closed gate is byte-identical to a
         request that never asked. A missing or unplayable asset raises
-        ``SubtitledLaneError`` for the ``background`` lane.
+        ``SubtitledLaneError`` for the ``background`` lane. KRI-1162: its ``windows``
+        pin their own visuals the same way (``visuals`` must hold every one; see
+        `phone_subtitled_lanes.background_media_refs`), are clipped to the compiled edit
+        (a window starting at or past the end is dropped, one overrunning it is
+        shortened), and ``speaker_frame`` is emitted as ``SpeakerBackgroundLayer.speaker_frame``.
 
     ``duck_sfx_under_speech`` (default ``False``, from
     ``settings.phone_sfx_speech_duck_enabled``) scales the volume of every
@@ -704,7 +713,11 @@ def compile_phone_subtitled_plan(
     if lanes is not None and lanes.background is not None:
         try:
             speaker_background = _compile_background(
-                lanes.background, visuals=visuals, assets=assets, manifest=manifest
+                lanes.background,
+                visuals=visuals,
+                assets=assets,
+                manifest=manifest,
+                timeline_duration_s=timeline_end,
             )
         except UnsupportedPhonePlan:
             raise
@@ -731,32 +744,108 @@ def _compile_background(
     visuals: tuple[PhoneVisualBinding, ...],
     assets: dict[str, MediaAsset],
     manifest: dict[str, object],
+    timeline_duration_s: float | None = None,
 ) -> SpeakerBackgroundLayer:
-    """The recipe layer for the whole-edit background, pinning its visual (KRI-1117, S9).
+    """The recipe layer for the background, pinning its visuals (KRI-1117, S9; KRI-1162).
 
-    A photo is held for the whole edit; a video loops from ``source_start_s``. A video
-    with no playable footage from that start (zero or unreadable duration, or a start at
-    or past the end) fails the lane at compile time instead of mid-render.
+    The fill is held for the whole edit when a photo; a video loops from
+    ``source_start_s``. A video with no playable footage from that start (zero or
+    unreadable duration, or a start at or past the end) fails the lane at compile time
+    instead of mid-render. Every window pins its own visual with the same checks (S30);
+    the same photo may fill and open (one manifest entry). Windows are clipped to
+    ``timeline_duration_s`` (the compiled edit): one starting at or past it is dropped,
+    one overrunning it is shortened (S39).
     """
+    fill_asset_id = _pin_background_visual(
+        media_id=background.media_id,
+        path=background.gcs_path,
+        generation=background.generation,
+        kind=background.kind,
+        source_start_s=background.source_start_s,
+        visuals=visuals,
+        assets=assets,
+        manifest=manifest,
+    )
+    windows: list[SpeakerBackgroundWindow] = []
+    for window in background.windows:
+        # Pin every window first (a missing/unplayable one fails the lane even when its
+        # span is later clipped away), then clip to the edit.
+        window_asset_id = _pin_background_visual(
+            media_id=window.media_id,
+            path=window.gcs_path,
+            generation=window.generation,
+            kind=window.kind,
+            source_start_s=window.source_start_s,
+            visuals=visuals,
+            assets=assets,
+            manifest=manifest,
+        )
+        start = window.start_s
+        end = window.end_s
+        if timeline_duration_s is not None:
+            if start >= timeline_duration_s - 1e-6:
+                continue
+            end = min(end, timeline_duration_s)
+        if end - start < MIN_BACKGROUND_WINDOW_S - 1e-9:
+            continue
+        windows.append(
+            SpeakerBackgroundWindow(
+                asset_id=window_asset_id,
+                media_kind=window.kind,
+                source_start=window.source_start_s if window.kind == "video" else 0.0,
+                start=start,
+                end=end,
+            )
+        )
+    frame = background.speaker_frame
+    return SpeakerBackgroundLayer(
+        asset_id=fill_asset_id,
+        media_kind=background.kind,
+        source_start=background.source_start_s if background.kind == "video" else 0.0,
+        windows=windows or None,
+        speaker_frame=(
+            SpeakerFrame(
+                width_fraction=frame.width_fraction,
+                x_fraction=frame.x_fraction,
+                y_fraction=frame.y_fraction,
+            )
+            if frame is not None
+            else None
+        ),
+    )
+
+
+def _pin_background_visual(
+    *,
+    media_id: str,
+    path: str,
+    generation: str,
+    kind: str,
+    source_start_s: float,
+    visuals: tuple[PhoneVisualBinding, ...],
+    assets: dict[str, MediaAsset],
+    manifest: dict[str, object],
+) -> str:
+    """Pin one background visual (fill or window) into the manifest; returns its asset id."""
     try:
         visual = require_bound_visual(
             visuals,
-            media_id=background.media_id,
-            path=background.gcs_path,
-            generation=background.generation,
+            media_id=media_id,
+            path=path,
+            generation=generation,
         )
     except ValueError as exc:
         raise _lane_error("background", str(exc), capability="speakerBackground") from exc
-    if visual.kind != background.kind:
+    if visual.kind != kind:
         raise _lane_error(
             "background",
-            f"background asks for a {background.kind} but the pinned visual is a {visual.kind}",
+            f"background asks for a {kind} but the pinned visual is a {visual.kind}",
             capability="speakerBackground",
         )
     media_asset: MediaAsset
     if visual.kind == "video":
         duration = visual.duration_s or 0.0
-        if duration <= 0 or background.source_start_s >= duration:
+        if duration <= 0 or source_start_s >= duration:
             raise _lane_error(
                 "background",
                 "no playable footage remains from the background's start",
@@ -779,11 +868,7 @@ def _compile_background(
     render_asset = visual.render_asset()
     manifest[render_asset.id] = render_asset
     assets[render_asset.id] = media_asset
-    return SpeakerBackgroundLayer(
-        asset_id=render_asset.id,
-        media_kind=visual.kind,
-        source_start=background.source_start_s if visual.kind == "video" else 0.0,
-    )
+    return render_asset.id
 
 
 def _compile_text_lane(

@@ -143,6 +143,55 @@ The recorded take stays raw; the background is applied at render. A later chat o
 replaces what the render uses; the pick stays on the thread until cleared. The app never edits the
 plan itself. State key: `app.services.creator_capabilities.SPEAKER_BACKGROUND_STATE_KEY`.
 
+## Timed windows and the speaker frame (KRI-1162, commentary-style green screen)
+
+The same lane can carry several backgrounds in time and draw the speaker small in a corner.
+Contract, decisions and failure modes (S27–S45): `docs/reviews/speaker-background-windows-failure-modes.md`.
+Capability row: `speakerBackgroundWindows`.
+
+| Where | Shape |
+| --- | --- |
+| Lane (`SubtitledBackground`) | The first-cut fields stay the FILL. `windows: tuple[SubtitledBackgroundWindow, ...]` (`media_id, gcs_path, generation, kind, source_start_s, start_s, end_s`; sorted, non-overlapping, ≥ 0.5 s, ≤ 40) and `speaker_frame: SubtitledSpeakerFrame | None` (`width_fraction, x_fraction, y_fraction`), both omitted from every dump while unused. Window times are ORIGINAL take time in a lane request (remapped by `remap_lanes_for_cut` like overlay cards; a window inside a removal is dropped and its `media_id` joins the returned dropped-id set) and cut-timeline time in the editor document and Save. |
+| Recipe (`SpeakerBackgroundLayer`) | `windows: [{asset_id, media_kind, source_start, start, end}]` and `speaker_frame`, omitted while unused (every first-cut recipe keeps its digest). `EditRecipeV2` requires a matching-kind `VisualRenderAsset` per window, `end` within the recipe, and derives `speakerBackgroundWindows`. Shared fixture: `tests/fixtures/speaker-background-parity/v2.json`. |
+| Compile (`_compile_background`) | Pins the fill and every window (`_pin_background_visual`), clips windows to the edit (a window starting at or past the end is dropped), one manifest asset per distinct visual. |
+| Editor document / Save | `speaker_background` gains `windows` and `speaker_frame` (keys absent while unused). `EditorCommitSpeakerBackground` accepts them; every window id is pinned from THIS item's pool before validation (`background_pin_requests`). 422 `speaker_background_windows_disabled` (reason), `speaker_background_window_invalid`, and the first-cut per-visual codes; 426 `client_update_required` `feature: "speaker_background_windows"` for a build below 31 that sets them, Saves a variant already carrying them, or polls a pinned recipe using them (`phone_editor.py`, `device_render.py`). Capability `editor_capabilities.speaker_background_windows`. |
+| Speaker frame | Written only from a named preset (`SPEAKER_FRAME_PRESETS` in `portable_speaker_background.py`): `small_bottom_right` {0.42, 0.76, 0.80}, `small_bottom_left`, `small_top_right`, `small_top_left`; `full` = absent. The phone masks the full-size speaker first, then scales and places the cut-out. |
+
+### Gates
+
+`speaker_background_windows_supported()` = `speaker_background_supported()` AND `speakerBackgroundWindows` in
+`PHONE_RENDER_VERIFIED_FEATURES` AND (inside an app request) protocol ≥ `speaker_background_windows_min_client_protocol`
+(31; 29 is unused, 30 is the card-tilt build of KRI-1141). No new env flag: `SPEAKER_BACKGROUND_ENABLED` stays the one kill
+switch. When the base lane is open but this gate is closed, `strip_unsupported_background` keeps the fill and drops the windows
+and the frame, tracing `speaker_background_windows_phone_fallback` (`reason`: `windows_token_not_verified` or
+`client_protocol_below_min`, plus `window_count`, `had_frame`); the render equals a request for the single background.
+`validate_phone_pilot_recipe` refuses an unstripped recipe without the token.
+
+### Chat
+
+- Strategy `background_media` gains `sequence` (`{media_id, source_start_s?, spoken_phrase?, hold_s?}`, ≤ 40), `cadence_s` (2–10,
+  default 4) and `speaker_frame` (a preset name), all omitted while unused. Taught only when the manifest advertises
+  `capabilities.speaker_background_windows`. Repair keeps only this item's pool photos/videos, drops the rest with a
+  `Couldn't …` notice, and drops the frame when the windows capability is closed.
+- Worker: entries with a `spoken_phrase` start at the first loose match in the take's caption-cue words; the others fill the
+  remaining time in order, `cadence_s` each, cycling to the take end. An unheard phrase falls back to the cadence with a
+  `phrase_not_heard` receipt note. Window visuals are reserved from cards (`used_media_ids`).
+- Copilot ops `set_background_sequence {asset_ids, cadence_s?}`, `set_speaker_frame {preset}`, `clear_speaker_frame`;
+  `set_background` stays the single fill, `remove_background` clears everything. Snapshot `background` carries `windows`,
+  `speaker_frame` and `windows_available` while open.
+- brief_checks (KRI-1161): the brief writer records the ask as facts (`speaker_background`, `background_changes`,
+  `speaker_small`; never for background music) and `_check_speaker_background` answers with a named reason (no photo or
+  video attached, not an iPhone Talking edit, gate closed, app too old), never the generic Talking refusal.
+  `assess_readiness` builds the same Talking facts as the draft turn, so a checked `not_possible` is `unsupported` and
+  named in the reply instead of a hidden `unverified`. Layout module: `app/services/phone_background_sequence.py`
+  (anchors on `raw_words` in original take time; windows laid out in kept-take time and written back in original time).
+
+### Rollout
+
+`speakerBackgroundWindows` joins `PHONE_RENDER_VERIFIED_FEATURES` only after the physical iPhone check in the failure-mode
+doc (three photo windows + corner speaker in preview and export, a silent looping video window, a 60 s ten-window export
+within 120 s). Until then every request renders the single fill background exactly as before.
+
 ## Rollback
 
 Kill switch, never a code revert: `fly secrets set SPEAKER_BACKGROUND_ENABLED=false

@@ -210,8 +210,16 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
     # (`speaker_background` in the editor commit), only while the editor capability is open.
     "speaker_background": _g(
         "agent_ops",
-        "setSpeakerBackground removeSpeakerBackground",
-        ("set_background", "remove_background"),
+        "setSpeakerBackground removeSpeakerBackground setSpeakerBackgroundWindows "
+        "addSpeakerBackgroundWindow removeSpeakerBackgroundWindow setSpeakerFrame "
+        "clearSpeakerFrame",
+        (
+            "set_background",
+            "remove_background",
+            "set_background_sequence",
+            "set_speaker_frame",
+            "clear_speaker_frame",
+        ),
     ),
     "video_shape": _g(
         "agent_unsupported",
@@ -251,6 +259,11 @@ PARITY_GROUPS: dict[str, ParityGroup] = {
         "pollVisualLibrary retryLibraryVisual loadSoundEffectCatalog end set "
         "auditPreviewWindow",
         reason="Loading, saving, rendering, importing and test fixtures change no creative lane.",
+    ),
+    "background_tool_navigation": _g(
+        "not_an_edit",
+        "requestBackgroundTool",
+        reason="Opens the Background tool panel; the edit itself is the actions in it.",
     ),
     "playback_and_selection": _g(
         "not_an_edit",

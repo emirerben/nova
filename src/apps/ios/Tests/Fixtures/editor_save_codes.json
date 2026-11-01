@@ -33,6 +33,8 @@
     "speaker_background_media_unavailable",
     "speaker_background_start_out_of_range",
     "speaker_background_unsupported",
+    "speaker_background_window_invalid",
+    "speaker_background_windows_disabled",
     "track_duration_unknown",
     "transitions_disabled",
     "unsupported_phone_edit",

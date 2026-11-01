@@ -45,6 +45,8 @@ FAMILY_FRAGMENTS: dict[str, str] = {
     "caption": "captions.txt",
     # KRI-1117: only while the snapshot offers the background family (the capability is open).
     "background": "speaker_background.txt",
+    # KRI-1162: timed backgrounds + the speaker frame, only while the windows gate is open.
+    "background_windows": "speaker_background_windows.txt",
 }
 # KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt

@@ -74,7 +74,10 @@ log = structlog.get_logger()
 # snapshot's timeline_patch_capabilities opens `tilt`; every other prompt is byte-identical.
 # v99 (KRI-1138): set_slide_tilt in the slides fragment, taught only on the slide-post surface and
 # only where `post.tilt_enabled`; video and gate-closed slide prompts are otherwise unchanged.
-EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v99"
+# v100 (KRI-1162): set_background_sequence / set_speaker_frame / clear_speaker_frame and the
+# windows lines of BACKGROUND, taught only where the snapshot offers the `background_windows`
+# family; every other prompt is byte-identical.
+EDIT_COPILOT_PROMPT_VERSION = "2026-11-01-v100"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 # Coupled surfaces: prompts/edit_copilot.txt operation-budget prose and the
 # eval structural gate (tests/evals/runners/structural.py imports this).
@@ -1999,6 +2002,28 @@ def _format_snapshot(snapshot: dict) -> str:
                     )
             else:
                 lines.append("(none)")
+            if background.get("windows_available") is True:
+                # KRI-1162: only while the windows gate is open.
+                windows = (
+                    background.get("windows") if isinstance(background.get("windows"), list) else []
+                )
+                lines.append(
+                    f"windows_available: yes; video duration="
+                    f"{_fmt_round3(_first_number(background, ('duration_s',)))}s; "
+                    f"speaker_frame={_field(background.get('speaker_frame'), max_chars=24)!r}"
+                )
+                lines.append("WINDOWS:")
+                if windows:
+                    for window in windows[:40]:
+                        if not isinstance(window, dict):
+                            continue
+                        lines.append(
+                            f"- id={_field(window.get('media_id'), max_chars=80)!r} "
+                            f"{_fmt_round3(_first_number(window, ('start_s',)))}-"
+                            f"{_fmt_round3(_first_number(window, ('end_s',)))}s"
+                        )
+                else:
+                    lines.append("(none)")
 
     if isinstance(snapshot.get("captions"), dict):
         captions = snapshot["captions"]

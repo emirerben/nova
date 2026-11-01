@@ -46,9 +46,11 @@ from app.pipeline.phone_subtitled_lanes import (
     PhoneSubtitledLanes,
     ResolvedSoundEffect,
     SubtitledBackground,
+    SubtitledBackgroundWindow,
     SubtitledEndingClip,
     SubtitledOverlayCard,
     SubtitledSoundEffect,
+    SubtitledSpeakerFrame,
     sfx_path_is_playable,
 )
 from app.pipeline.phone_subtitled_plan import SFX_DUCK_RECEIPT_FIELD
@@ -114,6 +116,38 @@ def variant_carries_speaker_background(assembly_plan: dict, variant: dict) -> bo
         return False
     recipe = _pinned_recipe(assembly_plan, variant_id)
     return recipe is not None and recipe.speaker_background is not None
+
+
+def variant_carries_speaker_background_windows(assembly_plan: dict, variant: dict) -> bool:
+    """Does this variant already hold background ``windows`` or a ``speaker_frame`` (KRI-1162)?
+
+    The same three places as `variant_carries_speaker_background`: the projected document
+    row, the persisted lane state, and the pinned device recipe. PURE. Decides whether a Save
+    from a build below the windows protocol must be refused (S32): such a build would drop
+    them silently.
+    """
+    if not isinstance(assembly_plan, dict) or not isinstance(variant, dict):
+        return False
+
+    def uses(value: object) -> bool:
+        return isinstance(value, dict) and bool(value.get("windows") or value.get("speaker_frame"))
+
+    if uses(variant.get("speaker_background")):
+        return True
+    persisted = variant.get(PHONE_SUBTITLED_EDITOR_LANES_FIELD)
+    if isinstance(persisted, dict):
+        lanes = persisted.get("lanes")
+        if isinstance(lanes, dict) and uses(lanes.get("background")):
+            return True
+    variant_id = variant.get("variant_id")
+    if not isinstance(variant_id, str) or not variant_id:
+        return False
+    recipe = _pinned_recipe(assembly_plan, variant_id)
+    return (
+        recipe is not None
+        and recipe.speaker_background is not None
+        and recipe.speaker_background.uses_windows
+    )
 
 
 def project_phone_subtitled_editor_sections(
@@ -310,12 +344,35 @@ def sections_from_lanes(
 
 def speaker_background_document(background: SubtitledBackground) -> dict[str, Any]:
     """The editor document's ``speaker_background`` value (a fixed shared interface):
-    ``{"media_id", "kind", "source_start_s"}``. The path and generation stay server-side."""
-    return {
+    ``{"media_id", "kind", "source_start_s"}``. The path and generation stay server-side.
+
+    KRI-1162: ``windows`` (``[{media_id, kind, source_start_s, start_s, end_s}]``) and
+    ``speaker_frame`` (``{width_fraction, x_fraction, y_fraction}``) are added ONLY while
+    present, so every existing document is byte-identical.
+    """
+    document: dict[str, Any] = {
         "media_id": background.media_id,
         "kind": background.kind,
         "source_start_s": background.source_start_s,
     }
+    if background.windows:
+        document["windows"] = [
+            {
+                "media_id": window.media_id,
+                "kind": window.kind,
+                "source_start_s": window.source_start_s,
+                "start_s": window.start_s,
+                "end_s": window.end_s,
+            }
+            for window in background.windows
+        ]
+    if background.speaker_frame is not None:
+        document["speaker_frame"] = {
+            "width_fraction": background.speaker_frame.width_fraction,
+            "x_fraction": background.speaker_frame.x_fraction,
+            "y_fraction": background.speaker_frame.y_fraction,
+        }
+    return document
 
 
 def lanes_from_recipe(
@@ -463,6 +520,15 @@ def lanes_from_recipe(
                 generation=visual.generation,
                 kind="video" if visual.kind == "video" else "image",
                 source_start_s=layer.source_start if visual.kind == "video" else 0.0,
+                # KRI-1162: the recipe's windows are already in the compiled (cut) timeline,
+                # like the overlay cards derived above. A window whose visual cannot be
+                # matched is dropped rather than guessed.
+                windows=tuple(_windows_from_layer(layer, visual_for)),
+                speaker_frame=(
+                    SubtitledSpeakerFrame(**layer.speaker_frame.model_dump())
+                    if layer.speaker_frame is not None
+                    else None
+                ),
             )
 
     return PhoneSubtitledLanes(
@@ -471,6 +537,26 @@ def lanes_from_recipe(
         ending_clip=ending_clip,
         background=background,
     )
+
+
+def _windows_from_layer(layer: Any, visual_for: Any) -> list[SubtitledBackgroundWindow]:
+    windows: list[SubtitledBackgroundWindow] = []
+    for window in layer.windows or ():
+        window_visual = visual_for(window.asset_id)
+        if window_visual is None:
+            continue
+        windows.append(
+            SubtitledBackgroundWindow(
+                media_id=window_visual.media_id,
+                gcs_path=window_visual.gcs_path,
+                generation=window_visual.generation,
+                kind="video" if window_visual.kind == "video" else "image",
+                source_start_s=window.source_start if window_visual.kind == "video" else 0.0,
+                start_s=window.start,
+                end_s=window.end,
+            )
+        )
+    return windows
 
 
 def _unducked_volume(request_id: str, volume: float, duck_receipt: object) -> float:

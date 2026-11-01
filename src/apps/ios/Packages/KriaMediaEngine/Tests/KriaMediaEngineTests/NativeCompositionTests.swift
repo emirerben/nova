@@ -61,6 +61,45 @@ final class NativeCompositionTests: XCTestCase {
         XCTAssertLessThan(peak, 0.55, "the background's tone leaked into the export")
     }
 
+    /// Speaker background S31 (KRI-1162): each video window is its own composition track holding samples ONLY
+    /// inside its window, so no two window tracks (and no window and the fill) decode at once, and a window's
+    /// own audio never joins the mix (S11).
+    @MainActor func testBackgroundWindowsNeverOverlapInTheComposition() async throws {
+        useSpeakerSegmenter(self, GreenPersonSegmenter())
+        let directory = try speakerTestDirectory(self)
+        let speaker = try await writeSpeakerClip(directory: directory, size: (120, 200), seconds: 6, toneAmplitude: 0.2)
+        func clip(_ name: String) async throws -> URL {
+            try await writeSpeakerTestVideo(directory: directory, name: name, size: (120, 200), seconds: 1, toneAmplitude: 0.9) { context, _ in
+                context.setFillColor(SpeakerColor.background)
+                context.fill(CGRect(x: 0, y: 0, width: 120, height: 200))
+            }
+        }
+        let fill = try solidSpeakerTestImage(directory: directory)
+        let plain = try speakerRecipe(canvas: Canvas(width: 120, height: 200), speaker: speaker, duration: 6, background: nil)
+        let scene = try speakerRecipe(canvas: Canvas(width: 120, height: 200), speaker: speaker, duration: 6,
+                                      background: SpeakerTestBackground(url: fill),
+                                      windows: [SpeakerTestWindow(url: try await clip("a"), kind: .video, start: 1, end: 2.5),
+                                                SpeakerTestWindow(url: try await clip("b"), kind: .video, start: 2.5, end: 4.5)])
+        let preview = try await AVPlayerPreviewComposer().makePreview(recipe: scene.recipe, assetURLs: scene.urls)
+        let without = try await AVPlayerPreviewComposer().makePreview(recipe: plain.recipe, assetURLs: plain.urls)
+        let video = try await preview.playerItem.asset.loadTracks(withMediaType: .video).compactMap { $0 as? AVCompositionTrack }
+        let ranges = video.map { track in track.segments.filter { !$0.isEmpty }.map(\.timeMapping.target).map { ($0.start.seconds, $0.end.seconds) } }
+        // The speaker track spans the whole edit; every other track is a window and lies inside exactly one window.
+        let windows = [(1.0, 2.5), (2.5, 4.5)]
+        let windowTracks = ranges.filter { track in !(track.contains { $0.0 < 0.01 }) }
+        XCTAssertEqual(windowTracks.count, 2, "one track per video window: \(ranges)")
+        for (index, window) in windows.enumerated() {
+            let matching = windowTracks.filter { $0.allSatisfy { $0.0 >= window.0 - 0.02 && $0.1 <= window.1 + 0.02 } }
+            XCTAssertEqual(matching.count, 1, "exactly one track lies inside window \(index): \(windowTracks)")
+            let track = try XCTUnwrap(matching.first)
+            XCTAssertEqual(track.map(\.0).min() ?? -1, window.0, accuracy: 0.02, "window \(index) track starts with its window")
+            XCTAssertEqual(track.map(\.1).max() ?? -1, window.1, accuracy: 0.02, "window \(index) track ends with its window")
+        }
+        let audio = try await preview.playerItem.asset.loadTracks(withMediaType: .audio).count
+        let plainAudio = try await without.playerItem.asset.loadTracks(withMediaType: .audio).count
+        XCTAssertEqual(audio, plainAudio, "a window's tone never joins the mix")
+    }
+
     /// KRI-99: a clip trimmed flush against its source's own end (rate 1,
     /// no crop, no hold) failed to render in the last fraction of a second
     /// — the recipe's sourceDuration can be a hair ahead of what the source

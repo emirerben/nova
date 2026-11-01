@@ -90,6 +90,19 @@ class EditRecipeV2(EditRecipeV1):
             ):
                 raise ValueError("a speaker background requires a matching Visuals asset")
             self.required_capabilities |= {"speakerBackground"}
+            # KRI-1162: every timed window names its own Visuals asset of the same kind and
+            # ends inside the timeline; windows or a speaker frame add their own capability.
+            for window in self.speaker_background.windows or ():
+                window_source = manifest.get(window.asset_id)
+                if (
+                    not isinstance(window_source, VisualRenderAsset)
+                    or window_source.media_kind != window.media_kind
+                ):
+                    raise ValueError("a background window requires a matching Visuals asset")
+                if window.end > self.duration + 1e-6:
+                    raise ValueError("a background window exceeds the timeline")
+            if self.speaker_background.uses_windows:
+                self.required_capabilities |= {"speakerBackgroundWindows"}
         if set(manifest) != {asset.id for asset in self.assets}:
             raise ValueError("recipe and manifest must name exactly the same assets")
         # Mirrors `EditRecipe.effectiveCapabilities`: a device that has not

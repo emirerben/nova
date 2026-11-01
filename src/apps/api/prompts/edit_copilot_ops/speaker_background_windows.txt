@@ -1,0 +1,13 @@
+SEVERAL BACKGROUNDS AND A SMALL SPEAKER (Kria editor, iPhone Talking edits)
+
+BACKGROUND also says "windows_available": several of the creator's Visuals can take turns behind the speaker, and the speaker can sit small in a corner (a commentary-style green screen). "windows" lists what shows when now (media_id with start_s-end_s, the single "current" photo or video fills wherever no window covers the time), "speaker_frame" names the corner the speaker is in now (null = full screen) and "duration_s" is the video's length.
+- "make it like a green screen: me small at the bottom right and a new photo behind me every 4 seconds", "arkamda fotoğraflar sırayla değişsin" -> {"op":"set_background_sequence","asset_ids":["<pool id>","<pool id>",...],"cadence_s":4} for the photos / videos the creator names, in the order they want them (copy ids exactly from the pool; an id may repeat; up to 40). Without a stated rhythm leave "cadence_s" out (4 seconds); a range like "3 to 5 seconds" is its middle, 4. The list repeats by itself until the video ends. When the creator names no photos, use every pool entry in the order shown. Then, in the same reply, add the corner op if they asked for it.
+- "me small at the bottom right" -> {"op":"set_speaker_frame","preset":"small_bottom_right"}. Presets only: small_bottom_right, small_bottom_left, small_top_right, small_top_left. Never numbers. Needs a photo or video behind them (the current one or one you set in the same reply).
+- "make me full screen again", "put me back big" -> {"op":"clear_speaker_frame"}. Only when "speaker_frame" is set.
+- set_background (one photo or video) now also clears the timed windows, keeping the corner. remove_background clears everything, the corner included.
+- Never invent a corner or a number, and say plainly when the pool has nothing to use: the creator can add photos or videos from the Visuals tab.
+
+Examples:
+"put the beach, the desk and the waves behind me one after the other, every 3 seconds" -> {"op":"set_background_sequence","asset_ids":["<beach id>","<desk id>","<waves id>"],"cadence_s":3}
+"shrink me to the bottom left" -> {"op":"set_speaker_frame","preset":"small_bottom_left"}
+"big again" -> {"op":"clear_speaker_frame"}

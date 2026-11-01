@@ -118,6 +118,8 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// a source-compatible adapter for the first-pass clip views.
     @Published private(set) var selection: EditorSelection? { didSet { prepareInteractionLayers() } }
     @Published private(set) var selectionRequest = 0
+    /// KRI-1162: bumped to ask the editor view to open the Background tool (from the lane or an inspector).
+    @Published private(set) var backgroundToolRequest = 0
     /// A new text item is staged separately until Done. Cancel must not roll
     /// back unrelated edits or leave a placeholder in the persisted document.
     @Published private(set) var pendingText: EditorTextElement? {
@@ -1764,6 +1766,8 @@ struct NativeEditorTemporaryVideo: Sendable {
         items += document.motionScenes.enumerated().map { index, item in projected(EditorSelection(kind: .motionScene, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 250 + index), sourceIndex: index) }
         items += document.cameraEffects.enumerated().map { index, item in projected(EditorSelection(kind: .cameraEffect, id: item.id), start: item.startS, end: item.endS, zIndex: timelineZ(item.raw, fallback: 260 + index), sourceIndex: index) }
         items += document.drawings.enumerated().map { index, item in projected(EditorSelection(kind: .drawing, id: item.id), start: item.startS, end: item.endS, zIndex: 270 + index, sourceIndex: index) }
+        // KRI-1162: a Talk-to-camera edit's timed backgrounds get their own lane (client-local ids, see `EditorSpeakerBackgroundWindow`).
+        items += (document.speakerBackground?.windows ?? []).enumerated().map { index, item in projected(EditorSelection(kind: .speakerBackgroundWindow, id: item.localID), start: item.startS, end: item.endS, zIndex: 20 + index, sourceIndex: index) }
         if let carousel = projection.carouselItem { items.append(carousel) }
         if let music = document.music {
             items.append(
@@ -3397,12 +3401,15 @@ struct NativeEditorTemporaryVideo: Sendable {
             }
         }
         if let background = document.speakerBackground {
-            let key = EditorSpeakerBackground.sourceKey(forMediaID: background.mediaID)
-            if resolvedMedia[key] == nil, authoredVisualSources[key] == nil {
-                sourcePreviewState = .preparing
-                let resolved = try await resolveSpeakerBackgroundSource(background, resolver: resolver)
-                guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
-                resolvedMedia[key] = resolved
+            // KRI-1162: the fill and every window visual need bytes (one resolve per media id).
+            for requirement in background.mediaRequirements {
+                let key = EditorSpeakerBackground.sourceKey(forMediaID: requirement.mediaID)
+                if resolvedMedia[key] == nil, authoredVisualSources[key] == nil {
+                    sourcePreviewState = .preparing
+                    let resolved = try await resolveSpeakerBackgroundSource(mediaID: requirement.mediaID, kind: requirement.kind, resolver: resolver)
+                    guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+                    resolvedMedia[key] = resolved
+                }
             }
         }
         return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }
@@ -5294,18 +5301,117 @@ struct NativeEditorTemporaryVideo: Sendable {
     /// sounds, or (KRI-1118) the speaker background, which composites behind that clip.
     var phoneTalkingLanesEditable: Bool { canEdit(.mediaOverlays) || canEdit(.soundEffects) || canEdit(.speakerBackground) }
 
-    /// Puts one photo or video from the item's Visuals pool behind the speaker, replacing any current one.
-    /// `sourceStart` is where a video begins playing; a photo ignores it. One undo step.
+    /// Puts one photo or video from the item's Visuals pool behind the speaker, replacing any current fill.
+    /// `sourceStart` is where a video begins playing; a photo ignores it. The timed windows and the speaker frame
+    /// (KRI-1162) stay as they are. One undo step.
     @discardableResult
     func setSpeakerBackground(mediaID: String, kind: VisualMediaKind, sourceStart: Double = 0) -> Bool {
+        let current = document.speakerBackground
         guard canEditSpeakerBackground,
-              let value = EditorSpeakerBackground(json: EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart).json)
+              EditorSpeakerBackground(json: EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart).json) != nil
         else { return false }
+        let value = EditorSpeakerBackground(mediaID: mediaID, kind: kind, sourceStartS: sourceStart,
+                                            windows: current?.windows ?? [], speakerFrame: current?.speakerFrame)
         transactDocument(section: .speakerBackground) { $0.speakerBackground = value }
         return true
     }
 
-    /// Clears the background. A no-op (and no unsaved change) when there is none.
+    // MARK: Timed backgrounds and the speaker frame (KRI-1162)
+
+    /// The window and corner controls exist only while the server advertises `speaker_background_windows` (the
+    /// windows gate is open and this build speaks protocol 31). The single-background controls keep following
+    /// `speaker_background`.
+    var canEditSpeakerBackgroundWindows: Bool {
+        canEditSpeakerBackground && document.capabilities["speaker_background_windows"]?.editable == true
+    }
+    var speakerBackgroundWindows: [EditorSpeakerBackgroundWindow] { document.speakerBackground?.windows ?? [] }
+    var speakerFrame: EditorSpeakerFrame? { document.speakerBackground?.speakerFrame }
+
+    /// Where a background window may end: the end of the video, else the wire's own ceiling while it is unknown.
+    private var backgroundWindowsCeiling: Double {
+        let total = timelineProjection.unprojectOutputTime(timelineProjection.totalDuration)
+        return total.isFinite && total > 0 ? min(total, SpeakerBackgroundLimits.maxTimeline) : SpeakerBackgroundLimits.maxTimeline
+    }
+
+    /// Replaces the timed backgrounds. They must be sorted by start, non-overlapping (touching is fine), at least
+    /// half a second each and at most 40, else nothing changes and this returns false. An empty list clears them.
+    /// With no fill yet, the first window's medium becomes the fill. One undo step.
+    @discardableResult
+    func setSpeakerBackgroundWindows(_ windows: [EditorSpeakerBackgroundWindow]) -> Bool {
+        guard canEditSpeakerBackgroundWindows else { return false }
+        var normalized = windows
+        var used = Set<String>()
+        for index in normalized.indices {
+            if normalized[index].localID.isEmpty || !used.insert(normalized[index].localID).inserted {
+                var n = normalized.count
+                while used.contains(EditorSpeakerBackground.localID(n)) { n += 1 }
+                normalized[index].localID = EditorSpeakerBackground.localID(n); used.insert(normalized[index].localID)
+            }
+        }
+        if !normalized.isEmpty { guard EditorSpeakerBackground.windowsAreOrdered(normalized) else { return false } }
+        var background = document.speakerBackground
+        if background == nil {
+            guard let first = normalized.first else { return false }
+            background = EditorSpeakerBackground(mediaID: first.mediaID, kind: first.kind, sourceStartS: first.sourceStartS)
+        }
+        guard var next = background else { return false }
+        next.windows = normalized
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = next }
+        if let selected = selection, selected.kind == .speakerBackgroundWindow, !normalized.contains(where: { $0.localID == selected.id }) { select(nil) }
+        return true
+    }
+
+    /// Adds one pool photo or video as a window after the last one (the first window starts at 0), `length`
+    /// seconds long and clipped to the end of the video. A video window plays from its start. False when no
+    /// half second is left or the 40-window cap is reached.
+    @discardableResult
+    func addSpeakerBackgroundWindow(mediaID: String, kind: VisualMediaKind, length: Double = 4) -> Bool {
+        guard canEditSpeakerBackgroundWindows else { return false }
+        let existing = speakerBackgroundWindows
+        let ceiling = backgroundWindowsCeiling
+        let start = existing.last?.endS ?? 0
+        let end = min(start + length, ceiling)
+        guard existing.count < SpeakerBackgroundLimits.maxWindows, end - start >= EditorSpeakerBackgroundWindow.minDuration else { return false }
+        var n = existing.count
+        while existing.contains(where: { $0.localID == EditorSpeakerBackground.localID(n) }) { n += 1 }
+        let window = EditorSpeakerBackgroundWindow(localID: EditorSpeakerBackground.localID(n), mediaID: mediaID, kind: kind,
+                                                   sourceStartS: 0, startS: start, endS: end)
+        guard setSpeakerBackgroundWindows(existing + [window]) else { return false }
+        return true
+    }
+
+    /// Removes one window by its block id. Taking the last one away leaves the fill alone.
+    @discardableResult
+    func removeSpeakerBackgroundWindow(id: String) -> Bool {
+        guard canEditSpeakerBackgroundWindows, speakerBackgroundWindows.contains(where: { $0.localID == id }) else { return false }
+        return setSpeakerBackgroundWindows(speakerBackgroundWindows.filter { $0.localID != id })
+    }
+
+    /// Draws the speaker small in a corner (`small_bottom_right`, `small_bottom_left`, `small_top_right`,
+    /// `small_top_left`) or full-frame (`full`). Presets only; the editor never writes free geometry.
+    @discardableResult
+    func setSpeakerFrame(preset: String) -> Bool {
+        guard canEditSpeakerBackgroundWindows, var background = document.speakerBackground else { return false }
+        if preset == "full" { return clearSpeakerFrame() }
+        guard let frame = EditorSpeakerFrame.preset(preset) else { return false }
+        background.speakerFrame = frame
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
+        return true
+    }
+
+    /// Back to the speaker filling the frame. A no-op (and no unsaved change) when it already does.
+    @discardableResult
+    func clearSpeakerFrame() -> Bool {
+        guard canEditSpeakerBackgroundWindows, var background = document.speakerBackground, background.speakerFrame != nil else { return false }
+        background.speakerFrame = nil
+        transactDocument(section: .speakerBackground) { $0.speakerBackground = background }
+        return true
+    }
+
+    /// The inspector's and the lane's "open the Background tool": the editor view watches `backgroundToolRequest`.
+    func requestBackgroundTool() { backgroundToolRequest &+= 1 }
+
+    /// Clears the background (fill, windows and speaker frame). A no-op (and no unsaved change) when there is none.
     @discardableResult
     func removeSpeakerBackground() -> Bool {
         guard canEditSpeakerBackground, document.speakerBackground != nil else { return false }
@@ -5321,13 +5427,13 @@ struct NativeEditorTemporaryVideo: Sendable {
 
     /// Bytes for the compiler's pinned `visual-<media_id>` asset. The library is the source of truth for the
     /// original URL and storage generation; it is refreshed once if the background was saved before it loaded.
-    private func resolveSpeakerBackgroundSource(_ background: EditorSpeakerBackground, resolver: NativeEditorSourceResolver) async throws -> ResolvedEditorSource {
+    private func resolveSpeakerBackgroundSource(mediaID: String, kind: VisualMediaKind, resolver: NativeEditorSourceResolver) async throws -> ResolvedEditorSource {
         func match() -> CreationVisual? {
-            visualLibrary.first { $0.id == background.mediaID && $0.kind == background.kind.rawValue && $0.status == "ready" }
+            visualLibrary.first { $0.id == mediaID && $0.kind == kind.rawValue && $0.status == "ready" }
         }
         if match() == nil { await refreshVisualLibrary() }
         guard let asset = match(), let url = asset.originalMediaURL else {
-            throw MediaEngineError.missingAsset(EditorSpeakerBackground.assetID(forMediaID: background.mediaID))
+            throw MediaEngineError.missingAsset(EditorSpeakerBackground.assetID(forMediaID: mediaID))
         }
         var resolved = try await resolver.resolveMedia(id: asset.id, url: url, generation: asset.sourceGeneration ?? document.revision.baseGeneration)
         resolved.visualGeneration = asset.sourceGeneration ?? "0"
@@ -5732,6 +5838,9 @@ struct NativeEditorTemporaryVideo: Sendable {
                 document.drawings.removeAll { $0.id == selected.id }
                 appendIfPersisted(EditorDeletion(kind: "drawing", id: selected.id), selection: selected, to: &document)
             }
+        case .speakerBackgroundWindow:
+            // Not a persisted tombstone: the window just leaves the `speaker_background` object.
+            return removeSpeakerBackgroundWindow(id: selected.id)
         case .carousel:
             guard document.carouselMoment != nil else { return false }
             transactDocument(section: .carouselMoment) { document in
@@ -5757,6 +5866,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         case .motionScene: return cleanDocument.motionScenes.contains { $0.id == selection.id }
         case .cameraEffect: return cleanDocument.cameraEffects.contains { $0.id == selection.id }
         case .drawing: return cleanDocument.drawings.contains { $0.id == selection.id }
+        case .speakerBackgroundWindow: return cleanDocument.speakerBackground?.windows.contains { $0.localID == selection.id } ?? false
         case .carousel: return cleanDocument.carouselMoment?["id"] == .string(selection.id)
         }
     }
@@ -7223,6 +7333,7 @@ struct NativeEditorTemporaryVideo: Sendable {
         case .motionScene: return .motionScenes
         case .cameraEffect: return .cameraEffects
         case .drawing: return .drawings
+        case .speakerBackgroundWindow: return .speakerBackground
         default: return nil
         }
     }
@@ -7245,6 +7356,8 @@ struct NativeEditorTemporaryVideo: Sendable {
               let section = section(for: selection.kind),
               // KRI-589: a drawing's window moves and trims under the server's `drawings.trim` / `drawings.edit`.
               canEditOperation(section == .drawings ? ["drawings.trim", "drawings.edit"] : ["\(section.rawValue).\(operation)", section.rawValue], section: section),
+              // KRI-1162: a background window moves and trims only while the server opens `speaker_background_windows`.
+              section != .speakerBackground || canEditSpeakerBackgroundWindows,
               timedObjectExists(selection),
               supportsTimedGesture(selection) else { return }
         activeTimedEdit = ActiveTimedEdit(selection: selection, edge: edge, kind: kind, baseline: document, redoBaseline: redoStack, projection: timelineProjection)
@@ -7274,6 +7387,16 @@ struct NativeEditorTemporaryVideo: Sendable {
             guard let edge = active.edge else { return }
             if edge == .leading { start = min(max(0, start + baseTranslation), end - minimum) }
             else { end = max(start + minimum, min(totalDuration > 0 ? totalDuration : .greatestFiniteMagnitude, end + baseTranslation)) }
+        }
+        // KRI-1162: a background window snaps to its neighbours' edges and the video ends, never overlaps a
+        // neighbour and never shrinks below half a second.
+        if active.selection.kind == .speakerBackgroundWindow,
+           let windows = next.speakerBackground?.windows, let index = windows.firstIndex(where: { $0.localID == active.selection.id }) {
+            let fitted = Self.fittedBackgroundWindow(
+                proposed: (start, end), original: (bounds.start, bounds.end), moving: active.kind == .move, edge: active.edge,
+                previousEnd: index > 0 ? windows[index - 1].endS : 0,
+                nextStart: index + 1 < windows.count ? windows[index + 1].startS : max(totalDuration > 0 ? totalDuration : SpeakerBackgroundLimits.maxTimeline, bounds.end))
+            start = fitted.start; end = fitted.end
         }
         if active.kind == .trim, active.selection.kind == .soundEffect {
             setSoundEffectTrimBounds(active.selection.id, edge: active.edge ?? .trailing, translation: baseTranslation, in: &next)
@@ -7319,8 +7442,39 @@ struct NativeEditorTemporaryVideo: Sendable {
         case .motionScene: guard let item = document.motionScenes.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .cameraEffect: guard let item = document.cameraEffects.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
         case .drawing: guard let item = document.drawings.first(where: { $0.id == selection.id }) else { return nil }; return (item.startS, item.endS)
+        case .speakerBackgroundWindow: guard let item = document.speakerBackground?.windows.first(where: { $0.localID == selection.id }) else { return nil }; return (item.startS, item.endS)
         default: return nil
         }
+    }
+
+    /// The span a background window takes after a drag sample: inside `previousEnd...nextStart`, snapped to those
+    /// edges within 80 ms, keeping its length on a move and at least half a second on a trim, on a millisecond
+    /// grid (so the wire never carries a 0.49999 s window).
+    static func fittedBackgroundWindow(proposed: (start: Double, end: Double), original: (start: Double, end: Double), moving: Bool,
+                                       edge: NativeTrimEdge?, previousEnd: Double, nextStart: Double) -> (start: Double, end: Double) {
+        let minLength = EditorSpeakerBackgroundWindow.minDuration
+        let tolerance = 0.08
+        let lower = max(0, previousEnd), upper = max(nextStart, lower)
+        func grid(_ value: Double) -> Double { (value * 1_000).rounded() / 1_000 }
+        var start = original.start, end = original.end
+        if moving {
+            let length = original.end - original.start
+            var candidate = proposed.start
+            if abs(candidate - lower) <= tolerance { candidate = lower }
+            else if abs(candidate + length - upper) <= tolerance { candidate = upper - length }
+            start = min(max(grid(candidate), lower), max(lower, upper - length))
+            end = start + length
+        } else if edge == .leading {
+            var candidate = proposed.start
+            if abs(candidate - lower) <= tolerance { candidate = lower }
+            start = min(max(grid(candidate), lower), original.end - minLength)
+        } else {
+            var candidate = proposed.end
+            if abs(candidate - upper) <= tolerance { candidate = upper }
+            end = max(min(grid(candidate), upper), original.start + minLength)
+        }
+        while end - start < minLength { end = end.nextUp }
+        return (start, end)
     }
 
     private static func syncCardTextTiming(_ block: EditorVisualBlock, in document: inout EditorDocument) {
@@ -7373,6 +7527,17 @@ struct NativeEditorTemporaryVideo: Sendable {
             document.drawings[index].endS = end
             // The pen can never take longer than the window it draws in.
             document.drawings[index].drawDurationS = min(max(0.2, document.drawings[index].drawDurationS), max(0.2, end - start))
+        case .speakerBackgroundWindow:
+            guard var background = document.speakerBackground,
+                  let index = background.windows.firstIndex(where: { $0.localID == selection.id }) else { return }
+            background.windows[index].startS = start
+            background.windows[index].endS = end
+            // Ids keep their blocks; the list stays sorted by start. A result the wire would refuse is dropped.
+            background.windows = background.windows.enumerated().sorted { lhs, rhs in
+                lhs.element.startS != rhs.element.startS ? lhs.element.startS < rhs.element.startS : lhs.offset < rhs.offset
+            }.map(\.element)
+            guard EditorSpeakerBackground.windowsAreOrdered(background.windows) else { return }
+            document.speakerBackground = background
         default: break
         }
     }

@@ -49,6 +49,15 @@ BACKGROUND_REFUSALS: dict[str, tuple[str, str]] = {
         "Couldn't use that start point: it's outside the video",
         "Bu başlangıç noktasını kullanamadım: videonun dışında",
     ),
+    # KRI-1162: timed backgrounds / the speaker frame.
+    "speaker_background_windows_disabled": (
+        "Couldn't change the backgrounds behind you over time: it isn't available right now",
+        "Arkandaki görselleri zamanla değiştiremedim: şu anda kullanılamıyor",
+    ),
+    "speaker_background_window_invalid": (
+        "Couldn't use those background times: they overlap or are too short",
+        "Bu arka plan sürelerini kullanamadım: üst üste biniyor ya da çok kısa",
+    ),
     "speaker_background_media_unavailable": (
         "Couldn't read that photo or video",
         "Bu fotoğraf ya da videoyu okuyamadım",
@@ -148,40 +157,62 @@ def pin_pool_visual_for_background_sync(
     job.assembly_plan = _with_receipts(plan, bound)
 
 
-def background_pin_request(job: Any, variant_id: str, payload: Any) -> tuple[str, str] | None:
-    """``(media_id, kind)`` a Save that SETS a background needs pinned first, else None.
+def background_pin_requests(job: Any, variant_id: str, payload: Any) -> list[tuple[str, str]]:
+    """Every ``(media_id, kind)`` a Save that SETS a background needs pinned first.
 
-    Only a Save the validator can accept is worth a download and a hash: a clear, an
-    untouched lane, a closed gate or a variant that cannot carry one reach
-    `_validate_speaker_background_section` and get their own refusal there. The one rule the
-    HTTP Save route and the chat apply paths (async copilot edit, sync approval task) share.
+    The fill first, then each ``windows`` entry (KRI-1162, S35), de-duplicated by id.
+    Empty for a Save the validator can accept nothing of: a clear, an untouched lane, a
+    closed gate or a variant that cannot carry one reach `_validate_speaker_background_section`
+    and get their own refusal there. Window ids are only worth a download while the windows
+    gate is open (else the validator refuses the Save as ``speaker_background_windows_disabled``
+    / 426 and nothing is pinned). The one rule the HTTP Save route and the chat apply paths
+    (async copilot edit, sync approval task) share.
     """
     if "speaker_background" not in getattr(payload, "model_fields_set", ()):
-        return None
-    if getattr(payload, "speaker_background", None) is None:
-        return None
+        return []
+    section = getattr(payload, "speaker_background", None)
+    if section is None:
+        return []
     from app.routes.generative_jobs import (  # noqa: PLC0415
         _find_variant,
         _speaker_background_shape_ok,
     )
-    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_unavailable_reason,
+        speaker_background_windows_unavailable_reason,
+    )
 
     variant = _find_variant(job, variant_id) or {}
     if not _speaker_background_shape_ok(job, variant):
-        return None
+        return []
     if speaker_background_unavailable_reason() is not None:
-        return None
-    return payload.speaker_background.media_id, payload.speaker_background.kind
+        return []
+    requests: dict[str, str] = {section.media_id: section.kind}
+    if (
+        getattr(section, "windows", None)
+        and speaker_background_windows_unavailable_reason() is None
+    ):
+        for window in section.windows:
+            requests.setdefault(window.media_id, window.kind)
+    return list(requests.items())
+
+
+def background_pin_request(job: Any, variant_id: str, payload: Any) -> tuple[str, str] | None:
+    """``(media_id, kind)`` of the FILL a Save that SETS a background needs pinned, else None.
+
+    The first entry of `background_pin_requests` (kept for callers that only know the fill).
+    """
+    requests = background_pin_requests(job, variant_id, payload)
+    return requests[0] if requests else None
 
 
 async def pin_background_for_commit(
     db: AsyncSession, job: Any, variant_id: str, payload: Any, *, plan_item_id: uuid.UUID
 ) -> None:
-    """Pin the pool visual ``payload`` sets as the background (no-op for any other Save)."""
-    request = background_pin_request(job, variant_id, payload)
-    if request is not None:
+    """Pin the pool visuals ``payload`` sets as the background: fill and windows (else no-op)."""
+    for media_id, kind in background_pin_requests(job, variant_id, payload):
         await pin_pool_visual_for_background(
-            db, job, plan_item_id=plan_item_id, media_id=request[0], kind=request[1]
+            db, job, plan_item_id=plan_item_id, media_id=media_id, kind=kind
         )
 
 
@@ -189,8 +220,7 @@ def pin_background_for_commit_sync(
     db: Session, job: Any, variant_id: str, payload: Any, *, plan_item_id: uuid.UUID
 ) -> None:
     """`pin_background_for_commit` for the sync approval task."""
-    request = background_pin_request(job, variant_id, payload)
-    if request is not None:
+    for media_id, kind in background_pin_requests(job, variant_id, payload):
         pin_pool_visual_for_background_sync(
-            db, job, plan_item_id=plan_item_id, media_id=request[0], kind=request[1]
+            db, job, plan_item_id=plan_item_id, media_id=media_id, kind=kind
         )

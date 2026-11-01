@@ -1239,7 +1239,12 @@ enum KriaClientProtocolContract {
     /// `transform.rotation_degrees` (clockwise on screen). The server offers tilt only to this protocol (and only
     /// with `MEDIA_TILT_ENABLED` + `clipTilt` verified) and answers 426 `client_update_required` (`clip_tilt`)
     /// to an older build polling a recipe that already carries one.
-    static let version = 28
+    /// 31 (KRI-1162): decodes a recipe's `speaker_background.windows` / `speaker_frame` and the
+    /// `speakerBackgroundWindows` capability, and edits them (Background tool + timeline lane). 29 is unused and
+    /// 30 is the card-tilt build (KRI-1141). The server offers timed backgrounds only to this protocol (and only with
+    /// `speakerBackgroundWindows` verified) and answers 426 `client_update_required` (`speaker_background_windows`)
+    /// to an older build polling or saving a recipe that already carries them.
+    static let version = 31
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -1878,6 +1883,11 @@ struct KriaAPI: KriaAPIClient {
                 ])
                 throw saveError
             }
+            // KRI-1162: a Save the server holds back for an older build (`client_update_required`, e.g. for
+            // `speaker_background_windows`) reads as a plain sentence, not as a failure with a code.
+            if http.statusCode == 426, path.hasSuffix("/editor-commit"), Self.decodeCodedDetail(from: data)?.code == "client_update_required" {
+                throw EditorSaveError.timeline(code: "client_update_required")
+            }
             #if DEBUG
             NativePreviewDiagnostics.record("http-failure", fields: ["status": String(http.statusCode)])
             #endif
@@ -2116,6 +2126,10 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "speaker_background_media_unavailable": "That background isn’t ready yet. Wait a moment or pick another, then save again. Your edits are still here.",
             "speaker_background_kind_mismatch": "That background doesn’t match its file. Pick it again and save again. Your edits are still here.",
             "speaker_background_start_out_of_range": "The background video starts past its end. Pick it again and save again. Your edits are still here.",
+            "speaker_background_windows_disabled": "Timed backgrounds aren’t available right now. Remove them and save again. Your edits are still here.",
+            "speaker_background_window_invalid": "The timed backgrounds overlap or one is too short. Give each at least half a second without overlap, then save again. Your edits are still here.",
+            // 426 from the editor-commit route: this build is older than the feature the edit uses (see the call site).
+            "client_update_required": "Update Kria to save this edit. Your edits are still here.",
         ]
     }()
 

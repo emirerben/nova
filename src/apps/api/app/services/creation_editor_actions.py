@@ -479,6 +479,9 @@ _OP_PHRASES = {
     "apply_custom_effect": "add that effect",
     "set_background": "put that behind you",
     "remove_background": "remove the background behind you",
+    "set_background_sequence": "change the backgrounds behind you",
+    "set_speaker_frame": "make you small in a corner",
+    "clear_speaker_frame": "put you back full screen",
 }
 _OP_PHRASES_TR = {
     "set_edit_direction": "kurgunun yönünü değiştirmek",
@@ -486,6 +489,9 @@ _OP_PHRASES_TR = {
     "apply_custom_effect": "o efekti eklemek",
     "set_background": "onu arkana koymak",
     "remove_background": "arkandaki arka planı kaldırmak",
+    "set_background_sequence": "arkandaki arka planları değiştirmek",
+    "set_speaker_frame": "seni köşede küçültmek",
+    "clear_speaker_frame": "seni tekrar tam ekran yapmak",
 }
 
 

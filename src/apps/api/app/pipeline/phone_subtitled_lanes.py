@@ -19,7 +19,12 @@ The subtitled phone recipe is one speaker clip + Whisper captions today
     creator asked for its own sound (``volume``, KRI-841).
   - ``background``: one Visuals-pool photo or looping video the phone shows
     behind the speaker's person mask for the whole edit (KRI-1117, the
-    Talk-to-camera "green screen"). Always muted, never retimed by speech cuts.
+    Talk-to-camera "green screen"). Always muted. The fill (this photo/video) is
+    whole-edit and never retimed by speech cuts. KRI-1162 adds, on the same lane,
+    timed ``windows`` (each its own pool photo or muted looping video, on the ORIGINAL
+    take's time, remapped by `remap_lanes_for_cut` like overlay cards) that override
+    the fill in their span, and a ``speaker_frame`` (the matted speaker drawn small in
+    a corner).
 
 ``PhoneSubtitledLaneRequest`` is the server-authored, unresolved shape
 persisted on ``Job.assembly_plan[PHONE_SUBTITLED_LANES_FIELD]``.
@@ -72,6 +77,11 @@ _ID_PATTERN = r"^\S+$"
 
 # Mirrors `kria.portable_speaker_background.MAX_SOURCE_START_S`.
 MAX_BACKGROUND_SOURCE_START_S = 1800.0
+# KRI-1162: timed background windows (`SubtitledBackgroundWindow`) and the speaker frame.
+MAX_BACKGROUND_WINDOWS = 40
+MIN_BACKGROUND_WINDOW_S = 0.5
+MAX_BACKGROUND_TIMELINE_S = 1800.0
+MIN_SPEAKER_FRAME_WIDTH_FRACTION = 0.2
 
 
 class _LaneModel(BaseModel):
@@ -181,13 +191,51 @@ class SubtitledEndingClip(_LaneModel):
         return payload
 
 
+class SubtitledBackgroundWindow(_LaneModel):
+    """One timed background behind the speaker (KRI-1162): a Visuals-pool photo or muted
+    looping video shown from ``start_s`` to ``end_s`` of the take's ORIGINAL timeline
+    (like an overlay card, so `remap_lanes_for_cut` moves it into cut time). Pinned like
+    every other lane visual."""
+
+    media_id: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
+    gcs_path: str = Field(min_length=1)
+    generation: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
+    kind: Literal["image", "video"] = "image"
+    source_start_s: float = Field(default=0.0, ge=0, le=MAX_BACKGROUND_SOURCE_START_S)
+    start_s: float = Field(ge=0, le=MAX_BACKGROUND_TIMELINE_S)
+    end_s: float = Field(gt=0, le=MAX_BACKGROUND_TIMELINE_S)
+
+    @model_validator(mode="after")
+    def _well_formed(self) -> SubtitledBackgroundWindow:
+        if self.kind == "image" and self.source_start_s != 0:
+            raise ValueError("a photo background has no source start")
+        if self.end_s - self.start_s < MIN_BACKGROUND_WINDOW_S:
+            raise ValueError("a background window must last at least 0.5 seconds")
+        return self
+
+
+class SubtitledSpeakerFrame(_LaneModel):
+    """Where the matted speaker is drawn (KRI-1162): scaled so its width is
+    ``width_fraction`` of the canvas, centred at (``x_fraction``, ``y_fraction``).
+    Written only from a named preset (`portable_speaker_background.SPEAKER_FRAME_PRESETS`)."""
+
+    width_fraction: float = Field(ge=MIN_SPEAKER_FRAME_WIDTH_FRACTION, le=1)
+    x_fraction: float = Field(ge=0, le=1)
+    y_fraction: float = Field(ge=0, le=1)
+
+
 class SubtitledBackground(_LaneModel):
-    """The whole-edit background behind the speaker (KRI-1117).
+    """The background behind the speaker (KRI-1117, KRI-1162).
 
     One Visuals-pool photo or video, pinned like every other lane visual
-    (``gcs_path``/``generation`` are the exact bytes the runner bound). It is a
-    whole-edit lane: it has no window, so a speech cleanup cut never moves it, and
-    a video loops on output time from ``source_start_s``.
+    (``gcs_path``/``generation`` are the exact bytes the runner bound), is the FILL:
+    a whole-edit lane with no window, so a speech cleanup cut never moves it, and a
+    video loops on output time from ``source_start_s``.
+
+    KRI-1162: ``windows`` (empty while unused, omitted from every dump) override the
+    fill in their spans; ``speaker_frame`` (None while unused, omitted) draws the matted
+    speaker small in a corner. Windows must be sorted by ``start_s`` and never overlap
+    (touching is fine). A background with neither dumps exactly as before.
     """
 
     media_id: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
@@ -195,12 +243,37 @@ class SubtitledBackground(_LaneModel):
     generation: str = Field(min_length=1, max_length=160, pattern=_ID_PATTERN)
     kind: Literal["image", "video"] = "image"
     source_start_s: float = Field(default=0.0, ge=0, le=MAX_BACKGROUND_SOURCE_START_S)
+    windows: tuple[SubtitledBackgroundWindow, ...] = Field(
+        default=(), max_length=MAX_BACKGROUND_WINDOWS
+    )
+    speaker_frame: SubtitledSpeakerFrame | None = None
 
     @model_validator(mode="after")
     def _photo_has_no_timeline(self) -> SubtitledBackground:
         if self.kind == "image" and self.source_start_s != 0:
             raise ValueError("a photo background has no source start")
         return self
+
+    @model_validator(mode="after")
+    def _windows_sorted_and_disjoint(self) -> SubtitledBackground:
+        for earlier, later in zip(self.windows, self.windows[1:], strict=False):
+            if later.start_s < earlier.end_s:
+                raise ValueError("background windows must be sorted and must not overlap")
+        return self
+
+    @property
+    def uses_windows(self) -> bool:
+        """True when the lane needs the ``speakerBackgroundWindows`` gate."""
+        return bool(self.windows) or self.speaker_frame is not None
+
+    @model_serializer(mode="wrap")
+    def _omit_unused(self, handler):  # noqa: ANN001, ANN202
+        data = handler(self)
+        if not data.get("windows"):
+            data.pop("windows", None)
+        if data.get("speaker_frame") is None:
+            data.pop("speaker_frame", None)
+        return data
 
 
 def _omit_empty_background(payload: dict) -> dict:
@@ -325,8 +398,19 @@ def remap_lanes_for_cut(
       - ``ending_clip``: untouched. It always starts right after the
         speaker clip's OWN (now-shorter) end, never at a fixed
         source-timeline position, so it needs no remap.
-      - ``background``: untouched. It is a whole-edit lane with no window, and
-        a video keeps looping on output time, so a cut moves nothing in it.
+      - ``background``: the FILL (the top-level photo/video) is untouched. It is a
+        whole-edit lane with no window, and a video keeps looping on output time, so
+        a cut moves nothing in it. KRI-1162 ``windows`` are on the original take's
+        time like overlay cards: each ``start_s``/``end_s`` is remapped with
+        `remap_range`; a window entirely inside a removal (or left shorter than the
+        0.5 s minimum by it) is dropped. ``source_start_s`` and ``speaker_frame`` are
+        untouched.
+
+    Returns ``(lanes, dropped_ids)``. ``dropped_ids`` holds the ids of the dropped
+    overlay cards AND the ``media_id`` of every dropped background window that no
+    surviving window still shows (a media id, not a card id: the caller writes a
+    receipt for it; a media id equal to a card id is the same visual either way).
+    The tuple shape is unchanged from before windows existed.
 
     Returns ``(lanes, frozenset())`` unchanged when ``lanes`` is ``None`` or
     the plan removed nothing (byte-identical fast path for every render that
@@ -357,11 +441,45 @@ def remap_lanes_for_cut(
                 update={"request": resolved.request.model_copy(update={"at_s": new_at})}
             )
         )
-    remapped = lanes.model_copy(update={"overlays": kept_cards, "sound_effects": remapped_sfx})
+    update: dict = {"overlays": kept_cards, "sound_effects": remapped_sfx}
+    if lanes.background is not None and lanes.background.windows:
+        kept_windows, dropped_window_media_ids = _remap_background_windows(
+            lanes.background.windows, plan
+        )
+        update["background"] = lanes.background.model_copy(update={"windows": kept_windows})
+        dropped_card_ids |= dropped_window_media_ids
+    remapped = lanes.model_copy(update=update)
     return remapped, frozenset(dropped_card_ids)
 
 
+def _remap_background_windows(
+    windows: tuple[SubtitledBackgroundWindow, ...], plan: CutPlan
+) -> tuple[tuple[SubtitledBackgroundWindow, ...], set[str]]:
+    """Windows in cut time (S29), plus the media ids no surviving window still shows."""
+    from app.pipeline.silence_cut import remap_range  # noqa: PLC0415
+
+    kept: list[SubtitledBackgroundWindow] = []
+    dropped: list[str] = []
+    cursor = 0.0
+    for window in windows:
+        mapped = remap_range(window.start_s, window.end_s, plan)
+        if mapped is None or mapped[1] - mapped[0] < MIN_BACKGROUND_WINDOW_S:
+            dropped.append(window.media_id)
+            continue
+        # The remap is monotonic, so windows stay sorted; float noise may leave a hair of
+        # overlap between neighbours that used to touch.
+        new_start = max(mapped[0], cursor)
+        if mapped[1] - new_start < MIN_BACKGROUND_WINDOW_S:
+            dropped.append(window.media_id)
+            continue
+        kept.append(window.model_copy(update={"start_s": new_start, "end_s": mapped[1]}))
+        cursor = mapped[1]
+    still_shown = {window.media_id for window in kept}
+    return tuple(kept), {media_id for media_id in dropped if media_id not in still_shown}
+
+
 SPEAKER_BACKGROUND_FALLBACK_EVENT = "speaker_background_phone_fallback"
+SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT = "speaker_background_windows_phone_fallback"
 
 
 def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _BackgroundCarrier | None:
@@ -373,14 +491,42 @@ def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _Backgroun
     recipe is byte-identical to one for a request that never asked, and the creator
     still gets the edit (with their own background). The fallback is recorded for the
     job-debug view. Works on the resolved lanes and on the persisted request alike.
+
+    KRI-1162 (S33): when only the windows gate is closed
+    (`phone_rollout.speaker_background_windows_unavailable_reason`: the
+    ``speakerBackgroundWindows`` token is not verified, or the build is below its
+    protocol) and the background carries ``windows`` / ``speaker_frame``, the fill is
+    kept and both are dropped, so the recipe equals one for a request that asked for the
+    single background only (trace `SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT`).
     """
     if lanes is None or lanes.background is None:
         return lanes
-    from app.services.phone_rollout import speaker_background_unavailable_reason  # noqa: PLC0415
+    from app.services.phone_rollout import (  # noqa: PLC0415
+        speaker_background_unavailable_reason,
+        speaker_background_windows_unavailable_reason,
+    )
 
     reason = speaker_background_unavailable_reason()
     if reason is None:
-        return lanes
+        if not lanes.background.uses_windows:
+            return lanes
+        windows_reason = speaker_background_windows_unavailable_reason()
+        if windows_reason is None:
+            return lanes
+        import structlog  # noqa: PLC0415
+
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        detail = {
+            "media_id": lanes.background.media_id,
+            "reason": windows_reason,
+            "window_count": len(lanes.background.windows),
+            "had_frame": lanes.background.speaker_frame is not None,
+        }
+        structlog.get_logger(__name__).info(SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT, **detail)
+        record_pipeline_event("phone", SPEAKER_BACKGROUND_WINDOWS_FALLBACK_EVENT, detail)
+        fill_only = lanes.background.model_copy(update={"windows": (), "speaker_frame": None})
+        return lanes.model_copy(update={"background": fill_only})
     import structlog  # noqa: PLC0415
 
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
@@ -394,6 +540,44 @@ def strip_unsupported_background(lanes: _BackgroundCarrier | None) -> _Backgroun
         {"media_id": lanes.background.media_id, "reason": reason},
     )
     return lanes.model_copy(update={"background": None})
+
+
+def background_media_refs(
+    background: SubtitledBackground | None,
+) -> tuple[tuple[str, str, str, str], ...]:
+    """Every pool visual a background names, as ``(media_id, gcs_path, generation, kind)``.
+
+    The fill first, then each window's visual, de-duplicated by ``media_id`` (the same
+    photo may fill and open). The worker binds exactly these (S35) and keeps them as
+    referenced receipts; `background_pins` is the same set in `bind_phone_visual_assets`'
+    ``pins`` shape.
+    """
+    if background is None:
+        return ()
+    refs: dict[str, tuple[str, str, str, str]] = {
+        background.media_id: (
+            background.media_id,
+            background.gcs_path,
+            background.generation,
+            background.kind,
+        )
+    }
+    for window in background.windows:
+        refs.setdefault(
+            window.media_id,
+            (window.media_id, window.gcs_path, window.generation, window.kind),
+        )
+    return tuple(refs.values())
+
+
+def background_pins(
+    background: SubtitledBackground | None,
+) -> dict[str, tuple[str, str, str]]:
+    """`background_media_refs` as ``{media_id: (kind, gcs_path, generation)}``."""
+    return {
+        media_id: (kind, gcs_path, generation)
+        for media_id, gcs_path, generation, kind in background_media_refs(background)
+    }
 
 
 def drop_lane(lanes: PhoneSubtitledLanes, name: str) -> PhoneSubtitledLanes:

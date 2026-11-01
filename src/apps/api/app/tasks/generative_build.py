@@ -95,6 +95,7 @@ from app.kria.plan_blocks import (
 from app.kria.plan_blocks import (
     make_stage_reporter as _make_plan_stage_reporter,
 )
+from app.kria.portable_speaker_background import SPEAKER_FRAME_PRESETS
 from app.models import Job, MusicTrack
 from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.pipeline.generative_decision import (
@@ -7678,7 +7679,12 @@ def _names_pool_media(visual_id: object, media_id: str) -> bool:
 
 
 def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
-    """The approved strategy's ``background_media`` as ``{"media_id", "source_start_s"}``."""
+    """The approved strategy's ``background_media`` as ``{"media_id", "source_start_s"}``.
+
+    KRI-1162: plus ``sequence`` (``[{media_id, source_start_s, spoken_phrase, hold_s}]``),
+    ``cadence_s`` and ``speaker_frame`` (a preset name) -- each present only when the strategy
+    carries it, so a single-background strategy yields exactly the pre-KRI-1162 dict.
+    """
     strategy = all_candidates.get("creator_strategy")
     raw = strategy.get("background_media") if isinstance(strategy, dict) else None
     if not isinstance(raw, dict):
@@ -7687,16 +7693,54 @@ def _strategy_background_request(all_candidates: dict) -> dict[str, Any] | None:
     if not isinstance(media_id, str) or not media_id.strip():
         return None
     start = raw.get("source_start_s")
-    return {
+    request: dict[str, Any] = {
         "media_id": media_id.strip(),
         "source_start_s": float(start)
         if isinstance(start, (int, float)) and not isinstance(start, bool)
         else 0.0,
     }
+    entries: list[dict[str, Any]] = []
+    raw_sequence = raw.get("sequence")
+    for item in raw_sequence if isinstance(raw_sequence, list) else []:
+        entry_id = item.get("media_id") if isinstance(item, dict) else None
+        if not isinstance(entry_id, str) or not entry_id.strip():
+            continue
+        entry_start = item.get("source_start_s")
+        hold = item.get("hold_s")
+        phrase = item.get("spoken_phrase")
+        entries.append(
+            {
+                "media_id": entry_id.strip(),
+                "source_start_s": float(entry_start)
+                if isinstance(entry_start, (int, float)) and not isinstance(entry_start, bool)
+                else 0.0,
+                "spoken_phrase": phrase.strip()
+                if isinstance(phrase, str) and phrase.strip()
+                else None,
+                "hold_s": float(hold)
+                if isinstance(hold, (int, float)) and not isinstance(hold, bool)
+                else None,
+            }
+        )
+    if entries:
+        request["sequence"] = entries
+        cadence = raw.get("cadence_s")
+        if isinstance(cadence, (int, float)) and not isinstance(cadence, bool):
+            request["cadence_s"] = float(cadence)
+    frame = raw.get("speaker_frame")
+    if isinstance(frame, str) and frame in SPEAKER_FRAME_PRESETS:
+        request["speaker_frame"] = frame
+    return request
 
 
 def _resolve_strategy_background(
-    request: dict[str, Any], *, job_id: str, lane_drops: list[dict]
+    request: dict[str, Any],
+    *,
+    job_id: str,
+    lane_drops: list[dict],
+    words: list[dict] | None = None,
+    keep_segments: list[tuple[float, float]] | None = None,
+    take_s: float | None = None,
 ) -> tuple[Any, frozenset[str]]:
     """The ``SubtitledBackground`` lane the approved strategy names, and the pool spellings
     that stay out of every mid-talk placement (KRI-1117).
@@ -7707,15 +7751,31 @@ def _resolve_strategy_background(
     dropped with a ``lane_drops`` receipt and never fails the job; the reservation is returned
     whatever becomes of the lane, so the photo is never also a card, except while the phone
     gate is closed (then nothing about the render changes).
+
+    KRI-1162: a ``sequence`` is resolved entry by entry against the same ready pool (a bad
+    entry is a ``{"lane": "background", "window": i, "reason": ...}`` drop, never a failed
+    job) and laid out on the KEPT take by `phone_background_sequence.lay_out`. ``words`` are
+    the spoken words in the ORIGINAL take's time (the worker's ``raw_words``), ``keep_segments``
+    the speech cut's kept spans in that same time and ``take_s`` the kept take's length; every
+    window is written in ORIGINAL take time, which is what the lane expects
+    (`remap_lanes_for_cut` moves it into cut time). Every window's pool id joins the
+    reservation (S43); a window gate closed alone strips the windows and the frame again in
+    `strip_unsupported_background`, and only what survives is reserved.
     """
     import app.services.phone_overlay_grounding as pool_mod  # noqa: PLC0415
     from app.pipeline.phone_subtitled_lanes import (  # noqa: PLC0415
         PhoneSubtitledLaneRequest,
         SubtitledBackground,
+        SubtitledBackgroundWindow,
+        SubtitledSpeakerFrame,
         strip_unsupported_background,
     )
+    from app.services import phone_background_sequence as sequence_mod  # noqa: PLC0415
 
+    sequence_request: list[dict[str, Any]] = list(request.get("sequence") or [])
     reserved = _pool_media_keys(request["media_id"])
+    for entry in sequence_request:
+        reserved = reserved | _pool_media_keys(entry["media_id"])
     try:
         rows = pool_mod._load_ready_pool_assets(_sync_session, job_id=job_id)
     except OperationalError:
@@ -7723,25 +7783,107 @@ def _resolve_strategy_background(
     except Exception as exc:  # noqa: BLE001 - the background never fails the job
         lane_drops.append({"lane": "background", "reason": f"pool unavailable: {exc}"[:300]})
         return None, reserved
-    row = next((r for r in rows if _names_pool_media(str(r.get("id")), request["media_id"])), None)
-    if row is None:
+
+    def _pool_row(media_id: str, *, window: int | None) -> dict | None:
+        """The ready, playable pool row a background names, else None with a receipt."""
+        extra = {} if window is None else {"window": window}
+        row = next((r for r in rows if _names_pool_media(str(r.get("id")), media_id)), None)
+        if row is None:
+            lane_drops.append({"lane": "background", **extra, "reason": "not_in_ready_pool"})
+            return None
+        if row.get("kind") not in ("image", "video"):
+            lane_drops.append({"lane": "background", **extra, "reason": "not_a_photo_or_video"})
+            return None
+        if not row.get("gcs_path") or not row.get("gcs_generation"):
+            lane_drops.append({"lane": "background", **extra, "reason": "missing_generation"})
+            return None
+        return row
+
+    entry_rows: list[tuple[int, dict, dict]] = []  # (sequence index, request entry, pool row)
+    for index, entry in enumerate(sequence_request):
+        row = _pool_row(entry["media_id"], window=index)
+        if row is not None:
+            entry_rows.append((index, entry, row))
+            reserved = reserved | _pool_media_keys(str(row["id"]))
+
+    fill_row = next(
+        (r for r in rows if _names_pool_media(str(r.get("id")), request["media_id"])), None
+    )
+    fill_start = request["source_start_s"]
+    if fill_row is None and entry_rows:
+        # The named fill is gone but the sequence survives: its first entry fills, and the
+        # drop of the named one is still on the receipt.
+        lane_drops.append({"lane": "background", "reason": "not_in_ready_pool"})
+        _first_index, first_entry, fill_row = entry_rows[0]
+        fill_start = first_entry["source_start_s"]
+    elif fill_row is None:
         lane_drops.append({"lane": "background", "reason": "not_in_ready_pool"})
         return None, reserved
-    reserved = reserved | _pool_media_keys(str(row["id"]))
-    kind = row.get("kind")
-    if kind not in ("image", "video"):
+    reserved = reserved | _pool_media_keys(str(fill_row["id"]))
+    fill_kind = fill_row.get("kind")
+    if fill_kind not in ("image", "video"):
         lane_drops.append({"lane": "background", "reason": "not_a_photo_or_video"})
         return None, reserved
-    if not row.get("gcs_path") or not row.get("gcs_generation"):
+    if not fill_row.get("gcs_path") or not fill_row.get("gcs_generation"):
         lane_drops.append({"lane": "background", "reason": "missing_generation"})
         return None, reserved
+
+    windows: list[SubtitledBackgroundWindow] = []
+    if entry_rows:
+        by_index = {index: (entry, row) for index, entry, row in entry_rows}
+        layout = sequence_mod.lay_out(
+            [
+                sequence_mod.SequenceEntry(
+                    index=index,
+                    spoken_phrase=entry.get("spoken_phrase"),
+                    hold_s=entry.get("hold_s"),
+                )
+                for index, entry, _row in entry_rows
+            ],
+            cadence_s=float(request.get("cadence_s") or 4.0),
+            take_s=float(take_s) if take_s is not None else 0.0,
+            words=words,
+            keep_segments=keep_segments,
+        )
+        lane_drops.extend(layout.notes)
+        for placed in layout.windows:
+            entry, row = by_index[placed.index]
+            kind = row["kind"]
+            try:
+                windows.append(
+                    SubtitledBackgroundWindow(
+                        media_id=str(row["id"]),
+                        gcs_path=str(row["gcs_path"]),
+                        generation=str(row["gcs_generation"]),
+                        kind=kind,
+                        source_start_s=entry["source_start_s"] if kind == "video" else 0.0,
+                        start_s=sequence_mod.to_source_time(placed.start_s, keep_segments),
+                        end_s=sequence_mod.to_source_time(placed.end_s, keep_segments, as_end=True),
+                    )
+                )
+            except ValueError as exc:
+                lane_drops.append(
+                    {
+                        "lane": "background",
+                        "window": placed.index,
+                        "reason": str(exc)[:300],
+                    }
+                )
+    frame_preset = request.get("speaker_frame")
+    frame = (
+        SubtitledSpeakerFrame(**SPEAKER_FRAME_PRESETS[frame_preset])
+        if frame_preset in SPEAKER_FRAME_PRESETS
+        else None
+    )
     try:
         background = SubtitledBackground(
-            media_id=str(row["id"]),
-            gcs_path=str(row["gcs_path"]),
-            generation=str(row["gcs_generation"]),
-            kind=kind,
-            source_start_s=request["source_start_s"] if kind == "video" else 0.0,
+            media_id=str(fill_row["id"]),
+            gcs_path=str(fill_row["gcs_path"]),
+            generation=str(fill_row["gcs_generation"]),
+            kind=fill_kind,
+            source_start_s=fill_start if fill_kind == "video" else 0.0,
+            windows=tuple(windows),
+            speaker_frame=frame,
         )
     except ValueError as exc:
         lane_drops.append({"lane": "background", "reason": str(exc)[:300]})
@@ -7751,7 +7893,19 @@ def _resolve_strategy_background(
         # A closed gate renders exactly what a strategy that never asked renders: no lane and no
         # reservation (the trace `speaker_background_phone_fallback` says why).
         return None, frozenset()
-    return stripped.background, reserved
+    kept = stripped.background
+    if windows and not kept.windows:
+        # Only the windows gate is closed: the render equals a single-background ask, so only
+        # the fill is reserved (S33).
+        reserved = _pool_media_keys(request["media_id"]) | _pool_media_keys(str(fill_row["id"]))
+    return kept, reserved
+
+
+def _background_take_s(keep_segments: list[tuple[float, float]] | None, full_s: float) -> float:
+    """The kept take's length in output seconds (the whole clip when nothing was cut)."""
+    from app.services.phone_background_sequence import kept_duration  # noqa: PLC0415
+
+    return kept_duration(keep_segments, full_s)
 
 
 def _creator_pinned_media_keys(beats: list, closing: dict | None) -> frozenset[str]:
@@ -8155,6 +8309,8 @@ def _run_phone_subtitled_job(
             PhoneSubtitledLanes,
             SubtitledEndingClip,
             SubtitledLaneError,
+            background_media_refs,
+            background_pins,
             drop_lane,
             lane_names,
             strip_unsupported_background,
@@ -9497,9 +9653,22 @@ def _run_phone_subtitled_job(
                             {"lane": "background", "reason": "lane_request_background_wins"}
                         )
                     else:
+                        # KRI-1162: the sequence is laid out on the KEPT take. `raw_words` are the
+                        # spoken words in the ORIGINAL take's time (what the lane's windows use;
+                        # the caption cues are already in cut time), `cut_plan` the kept spans.
+                        _bg_keep = (
+                            [tuple(seg) for seg in cut_plan.keep_segments]
+                            if cut_plan is not None and cut_plan.removed
+                            else None
+                        )
                         strategy_background_lane, background_reserved = (
                             _resolve_strategy_background(
-                                background_request, job_id=job_id, lane_drops=lane_drops
+                                background_request,
+                                job_id=job_id,
+                                lane_drops=lane_drops,
+                                words=raw_words,
+                                keep_segments=_bg_keep,
+                                take_s=_background_take_s(_bg_keep, float(probe.duration_s)),
                             )
                         )
 
@@ -9900,27 +10069,41 @@ def _run_phone_subtitled_job(
                             )
                             background_lane = None
                         else:
+                            # KRI-1162: a window whose kind the phone cannot draw is dropped alone
+                            # (the fill and the other windows keep rendering).
+                            if background_lane.windows:
+                                drawable_windows = tuple(
+                                    window
+                                    for window in background_lane.windows
+                                    if ("stillImages" if window.kind == "image" else "visualVideos")
+                                    in settings.phone_render_verified_features
+                                )
+                                if len(drawable_windows) != len(background_lane.windows):
+                                    lane_drops.append(
+                                        {
+                                            "lane": "background",
+                                            "reason": "window kind not verified on the phone",
+                                        }
+                                    )
+                                    background_lane = background_lane.model_copy(
+                                        update={"windows": drawable_windows}
+                                    )
                             already_bound = {
                                 (v.media_id, v.gcs_path, v.generation)
                                 for v in (*overlay_visuals, *ending_visuals)
                             }
-                            background_pin = (
-                                background_lane.media_id,
-                                background_lane.gcs_path,
-                                background_lane.generation,
-                            )
-                            if background_pin not in already_bound:
+                            # The fill and every window pool visual, bound like the fill is (S35).
+                            background_pins_by_id = {
+                                media_id: pin
+                                for media_id, pin in background_pins(background_lane).items()
+                                if (media_id, pin[1], pin[2]) not in already_bound
+                            }
+                            if background_pins_by_id:
                                 try:
                                     background_visuals = bind_phone_visual_assets(
                                         _sync_session,
                                         job_id=job_id,
-                                        pins={
-                                            background_lane.media_id: (
-                                                background_lane.kind,
-                                                background_lane.gcs_path,
-                                                background_lane.generation,
-                                            )
-                                        },
+                                        pins=background_pins_by_id,
                                     )
                                 except OperationalError:
                                     raise  # transient DB -> Celery autoretry, never a lane drop
@@ -9972,7 +10155,22 @@ def _run_phone_subtitled_job(
                     # window is final, does it move onto the CUT timeline
                     # the compiled recipe actually plays.
                     id_to_media = {card.id: card.media_id for card in lanes.overlays}
+                    # KRI-1162: a background window inside a removal comes back among the
+                    # dropped ids as its pool media id; it is a lane drop, not a card.
+                    window_media_ids = (
+                        frozenset(window.media_id for window in lanes.background.windows)
+                        if lanes.background is not None
+                        else frozenset()
+                    )
                     lanes, cut_dropped_card_ids = remap_lanes_for_cut(lanes, cut_plan)
+                    for dropped_media_id in sorted(cut_dropped_card_ids & window_media_ids):
+                        lane_drops.append(
+                            {
+                                "lane": "background",
+                                "reason": "window_inside_cut",
+                                "media_id": dropped_media_id,
+                            }
+                        )
                     if cut_dropped_card_ids:
                         demoted_media_ids = grounded_media_ids & {
                             id_to_media[card_id]
@@ -10071,8 +10269,7 @@ def _run_phone_subtitled_job(
                     referenced = {card.media_id for card in lanes.overlays}
                     if lanes.ending_clip is not None:
                         referenced.add(lanes.ending_clip.media_id)
-                    if lanes.background is not None:
-                        referenced.add(lanes.background.media_id)
+                    referenced.update(ref[0] for ref in background_media_refs(lanes.background))
                     visuals = tuple(v for v in visuals if v.media_id in referenced)
                 if grounded_media_ids and overlay_receipt is not None:
                     # A grounded card that didn't survive the compiler's own
@@ -10108,6 +10305,23 @@ def _run_phone_subtitled_job(
                     "applied": list(lane_names(lanes)) if lanes is not None else [],
                     "dropped": lane_drops,
                 }
+                if lanes is not None and lanes.background is not None:
+                    # KRI-1161: what the finished video really has behind the speaker, so the
+                    # render-ready review judges the ask (omitted while the background is plain).
+                    _bg = lanes.background
+                    if _bg.windows or _bg.speaker_frame is not None:
+                        lane_receipt["background"] = {
+                            "windows": len(_bg.windows),
+                            "speaker_frame": next(
+                                (
+                                    name
+                                    for name, preset in SPEAKER_FRAME_PRESETS.items()
+                                    if _bg.speaker_frame is not None
+                                    and _bg.speaker_frame.model_dump() == preset
+                                ),
+                                None,
+                            ),
+                        }
                 try:
                     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
