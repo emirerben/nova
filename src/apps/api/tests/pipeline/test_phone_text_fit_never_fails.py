@@ -180,3 +180,53 @@ def test_replay_of_job_07efa44c_produces_styled_rows(events):
     assert look is not None
     assert [r["id"] for r in styled] == [r["id"] for r in rows]
     assert [r["text"] for r in styled] == [r["text"] for r in rows]
+
+
+def stack_rows(count=3, text="Kadıköy'ü istediler ve stat teklifi geldi"):
+    from app.pipeline.text_stack_layout import HEADING_SIZES, STACK_LAYOUT_PARAM
+
+    return [
+        row(
+            "pinned",
+            text,
+            id=f"guided-pinned-{index}",
+            x_frac=0.08,
+            y_frac=0.8,
+            alignment="left",
+            size_px=HEADING_SIZES[min(index + 1, 3)],
+            source_params={
+                STACK_LAYOUT_PARAM: {
+                    "corner": "bottom_left",
+                    "heading_level": min(index + 1, 3),
+                    "stack_id": "pin-0",
+                    "explicit_size": False,
+                }
+            },
+        )
+        for index in range(count)
+    ]
+
+
+@pytest.mark.parametrize("obstacle_set", sorted(OBSTACLE_SETS))
+@pytest.mark.parametrize("position", ["top_left", "bottom_left", "bottom_right"])
+def test_a_text_group_never_fails_under_a_saved_position(position, obstacle_set, events):
+    rows = resolve_phone_text_style(
+        stack_rows(),
+        preferences={"all_text": {"position": position}},
+        requested={},
+        excluded_boxes=deepcopy(OBSTACLE_SETS[obstacle_set]),
+    )
+    assert [r["id"] for r in rows] == [f"guided-pinned-{i}" for i in range(3)]
+
+
+def test_a_text_group_that_fits_nowhere_is_kept_with_a_receipt(events):
+    rows = resolve_phone_text_style(
+        stack_rows(count=8, text=LONG),
+        preferences={"all_text": {"position": "bottom_left"}},
+        requested={},
+        excluded_boxes=deepcopy(OBSTACLE_SETS["whole_frame"]),
+    )
+    assert len(rows) == 8
+    receipts = [data for name, data in events if name == "text_fit_relaxed"]
+    assert receipts and {data["rung"] for data in receipts} == {"text_group"}
+    assert {data["row_id"] for data in receipts} <= {r["id"] for r in rows}
