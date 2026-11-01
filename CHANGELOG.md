@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.71.0] - 2026-11-01
+
+### Changed
+- fix(kria): the research writer retries on truncation and a rejected draft gets one correction round (#2017) <!-- release-pr: 2017 -->
+
 ## [0.83.70.0] - 2026-11-01
 
 ### Changed
