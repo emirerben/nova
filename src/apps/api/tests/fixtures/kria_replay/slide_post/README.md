@@ -43,11 +43,14 @@ Nothing.
 | 10.claims registry claims (every `Applied` field has a reader or a real carrier) | gate | VERIFIED | |
 | 10 consumer gate | report | REPORT (gaps) | |
 
-No honored checks: the slide lane (L6) discloses every video-only field and changes the planner
-prompt, which an offline replay of a written strategy cannot show.
+No honored checks: a slide post reads no strategy field, so every video-only field is disclosed.
+The slide lane (L6) ships that disclosure and no planner change: no planner draft can target
+slides today (`creator_capabilities._format_availability` offers no `slides`, so the Main
+Creator's slides strategy is refused at its parse with `policy_edit_format_unavailable`). See
+agents/DECISIONS.md "Prompt fidelity wave 2: slide".
 
 ## What the checks do not prove
 
 A synthetic plan shows what the card says for these choices, not that a planner would make them
-(L6 stops it choosing direction, pace and music for slides). The field's own registry line
+(today no planner turn can produce this draft at all). The field's own registry line
 (whole lines within the 640-character budget, then one compact line naming every line that did not fit) plus typed declines; no native render.

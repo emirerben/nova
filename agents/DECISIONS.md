@@ -3336,3 +3336,43 @@ watermark as hard obstacles, then raised.
 - Guard: `tests/pipeline/test_phone_text_fit_never_fails.py` (roles x saved positions x obstacle
   sets, text groups, replay of job 07efa44c conditions). No burn-dict field changed, so the
   renderer-parity guard `test_both_renderers_honor_text_anchor_left` is untouched.
+
+## [2026-11-01] Prompt fidelity wave 2: slide
+
+**Decision:** the slide lane (L6) ships the foundation's disclosure and no planner change. The
+plan said "stop the planner choosing direction, pace and music for slide drafts". That premise
+does not hold: no planner draft can target slides today.
+
+- `creator_capabilities._format_availability` has no `slides` branch, so `edit_format:slides`
+  is always unavailable and `creator_policy.effective_render_program` refuses a slides strategy
+  at the Main Creator's parse (`policy_edit_format_unavailable`; the retry is told to pick
+  `montage`). Checked with the real manifest builder and `MainCreatorAgent.parse` on this
+  branch. KRI-725 says the same (`prepared_coverage.py`, `test_kri725_cloud_prepared_postgres`).
+  Slide posts are composed on the Plan page (`slide_post_composer`) and dispatched from the
+  slides route without a planner turn (the 7 prod slide jobs the fixture scout found).
+- So the slide card (`route_capabilities/slide_post.py`) is reached only by the synthetic
+  fixture. The card output is unchanged; `SLIDE_ROUTE_FOLLOWS_PROMPT_ENABLED` stays reserved and
+  unread.
+
+**Why not change the prompt or parse anyway (failure modes):**
+
+1. In a Slider thread the manifest says `slides`, but the only draft the planner can make is a
+   montage, which reads pace, direction and music. A "leave video fields alone for slides" rule
+   would strip those choices from the draft that actually renders.
+2. The rule could leak into other formats' turns and flatten their pace and direction.
+3. A server-side strip of a slides strategy at the parse is dead code: the same parse refuses
+   the strategy first.
+4. The success test cannot be met by the planner alone. With every video field left at the
+   schema default, a slide card still shows three lines (balanced pace, fast montage direction,
+   licensed music), because those defaults are video defaults. "Add music" sets the same
+   `licensed_music` as the default, so no strategy value tells "asked for music" from "asked for
+   nothing". Hiding default-valued lines would drop the music ask silently.
+5. L7 bumps `MAIN_CREATOR_PROMPT_VERSION`; a second bump in this lane would conflict on the same
+   line for no creator-visible gain.
+
+**When slides become a strategy format (follow-up):** give a slides strategy slide-neutral
+values for the video-only fields unless a typed ask states them (`audio_strategy` the slides'
+own sound, no direction, no pace chip), behind `SLIDE_ROUTE_FOLLOWS_PROMPT_ENABLED`, and keep the
+music line keyed on a typed audio ask. Also check what approval does to a Slider item:
+`runtime._apply_strategy_approval_media` writes the strategy's `edit_format` onto the item
+(not verified for a Slider thread).
