@@ -1111,3 +1111,26 @@ covers.
   email sheet, largest Dynamic Type reachability, Reduce Motion
   immediacy, error-message announcement). `scripts/ios/ui-test-groups.json`
   maps these sources and tests into the `projects` UI group.
+
+### What's New guide
+
+Settings opens a "What's New" guide (`Features/WhatsNewView.swift`). Its content is
+the typed catalog in `Core/WhatsNewReleases.swift`; the model, ordering and
+visibility rules are in `Core/WhatsNew.swift`. The guide shows verified dates only,
+never a version number, because the app version (`MARKETING_VERSION`) is unrelated
+to the monorepo `VERSION`.
+
+Adding the next update:
+
+1. Add a `WhatsNewRelease` at the top of `WhatsNewReleases.all`. Take its day from the
+   `## [version] - date` header in `CHANGELOG.md`, never from a commit date.
+2. Include only what an iPhone creator can notice. Server-only fixes belong in
+   "Also improved" and only when the fix is flag-free in production.
+3. Gate anything that is not on for every account with a `WhatsNewRequirement`. Add a
+   new case, and read it from the capability the feature itself uses in
+   `WhatsNewAvailability.init(capabilities:memory:)`. A failed read keeps the gate closed.
+4. Quote button and screen names exactly as the code shows them, keep a benefit to two
+   short sentences and a card to four steps, and leave ticket IDs, PR numbers and flag
+   names out. `WhatsNewTests` fails the build on any of these.
+5. Run `KRIA_IOS_TEST_MODE=unit bash scripts/ios/verify.sh`. A new UI test also goes in
+   `scripts/ios/ui-test-groups.json`.

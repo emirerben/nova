@@ -384,11 +384,9 @@ struct AccountView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                KriaWordmark()
-                Text("Account")
-                    .font(KriaFont.display(30))
-                    .padding(.top, 14)
-                    .accessibilityAddTraits(.isHeader)
+                NavigationLink(destination: WhatsNewView(api: model.api)) { WhatsNewEntryLabel() }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("account-whats-new")
                 identityBlock
                     .padding(.top, 24)
                     .padding(.bottom, 20)
@@ -464,6 +462,7 @@ struct AccountView: View {
             .frame(maxWidth: .infinity)
         }
         .background(KriaColor.paper)
+        .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         .task { await auth.refreshProfile() }
@@ -532,18 +531,14 @@ private struct AccountSection<Content: View>: View {
 private struct AccountCaptureContextRow: View {
     @AppStorage(ClipCaptureSetting.defaultsKey) private var shareCaptureContext = true
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Toggle(isOn: $shareCaptureContext) {
-                Text("Use when and where clips and photos were taken")
-                    .font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
-            }
-            .tint(KriaColor.sky)
-            .accessibilityIdentifier("account-capture-context-toggle")
-            .onChange(of: shareCaptureContext) { _, enabled in ClipCaptureSetting.settingChanged(to: enabled) }
-            Text("Kria reads each chosen clip's or photo's date and rough location (about 1 km) from Photos, and looks up the place name on your phone. It uses them to put your clips in the order you filmed them and to name places. Turn this off to send neither.")
-                .font(KriaFont.body(12)).foregroundStyle(KriaColor.mutedInk)
-                .fixedSize(horizontal: false, vertical: true)
+        Toggle(isOn: $shareCaptureContext) {
+            Text("Use when and where clips and photos were taken")
+                .font(KriaFont.body(15)).foregroundStyle(KriaColor.ink)
         }
+        .tint(KriaColor.sky)
+        .accessibilityHint("Reads each clip or photo’s date and rough location, about 1 kilometer, from Photos to order clips and name places. Turn off to send neither.")
+        .accessibilityIdentifier("account-capture-context-toggle")
+        .onChange(of: shareCaptureContext) { _, enabled in ClipCaptureSetting.settingChanged(to: enabled) }
         .frame(minHeight: 44)
         .padding(.vertical, 6)
     }
