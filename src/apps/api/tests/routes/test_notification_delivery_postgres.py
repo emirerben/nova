@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import json
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -12,7 +13,7 @@ from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from sqlalchemy import event, select, text, update
+from sqlalchemy import delete, event, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -34,7 +35,7 @@ from app.models import (
 )
 from app.routes import auth, native_activity, notification_installations
 from app.services.apns import Accepted, APNsTransport, Rejected, TransportUncertain
-from app.services.device_render import device_record, pin_device_request
+from app.services.device_render import device_record, mark_device_failed, pin_device_request
 from app.services.mobile_auth import issue_access_token, refresh_token_hash
 from app.services.native_activity import activity_statement
 from app.services.notification_delivery import (
@@ -85,12 +86,15 @@ class Journey:
             headers=headers or self.headers,
         )
 
-    def activity(self):
+    def activity(self, *, needs_attention=False):
         from tests.routes.test_native_activity_postgres import settle
 
         with sync_session() as db:
             job = db.get(Job, self.job_id)
-            settle(job, "published")
+            if needs_attention:
+                mark_device_failed(job, "first", reason_code="export_failed", detail="private")
+            else:
+                settle(job, "published")
             db.execute(activity_statement(job, "first"))
             db.commit()
             return db.scalar(select(NativeActivity.id).where(NativeActivity.job_id == self.job_id))
@@ -255,6 +259,100 @@ def delivery_state(delivery_id):
     with sync_session() as db:
         row = db.get(NotificationDelivery, delivery_id)
         return row.status, row.attempts
+
+
+def wire_transport(requests):
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, content=b"", extensions={"http_version": b"HTTP/2"})
+
+    return APNsTransport(
+        lambda: SecretStr("fakeheader.fakeclaims.fakesignature"),
+        transport=httpx.MockTransport(handle),
+    )
+
+
+@pytest.mark.parametrize(
+    "needs_attention,kind,title,body",
+    [
+        (False, "video_ready", "Your video is ready", "Open it to watch and share."),
+        (
+            True,
+            "action_required",
+            "Your video needs a look",
+            "Open Kria to see what to do next.",
+        ),
+    ],
+)
+def test_each_activity_kind_pushes_its_own_generic_copy(
+    journey, needs_attention, kind, title, body
+):
+    assert journey.register().status_code == 200
+    activity_id = journey.activity(needs_attention=needs_attention)
+    with sync_session() as db:
+        assert db.get(NativeActivity, activity_id).kind == kind
+    delivery_id = journey.discover()
+    requests = []
+
+    async def send():
+        async with wire_transport(requests) as transport:
+            return await dispatch_delivery(delivery_id, transport=transport, policy=POLICY)
+
+    assert asyncio.run(send()) == "accepted"
+    assert len(requests) == 1
+    payload = json.loads(requests[0].content)
+    assert payload == {
+        "aps": {"alert": {"title": title, "body": body}},
+        "activity_id": str(activity_id),
+    }
+    assert len(requests[0].content) < 1024
+    assert requests[0].headers["apns-collapse-id"] == str(delivery_id)
+    assert requests[0].headers["apns-priority"] == "10"
+
+
+def test_admitted_kind_wins_when_the_activity_changes_during_send(journey):
+    assert journey.register().status_code == 200
+    activity_id = journey.activity()
+    delivery_id = journey.discover()
+
+    async def flip_kind():
+        with sync_session() as db:
+            db.get(NativeActivity, activity_id).kind = "action_required"
+            db.commit()
+
+    sender = RecordingSender(during_send=flip_kind)
+    assert (
+        asyncio.run(dispatch_delivery(delivery_id, transport=sender, policy=POLICY)) == "accepted"
+    )
+    assert [call[1].kind for call in sender.calls] == ["video_ready"]
+
+
+def test_activity_deleted_after_discovery_sends_nothing(journey):
+    assert journey.register().status_code == 200
+    activity_id = journey.activity()
+    delivery_id = journey.discover()
+    with sync_session() as db:
+        db.execute(delete(NativeActivity).where(NativeActivity.id == activity_id))
+        db.commit()
+    sender = RecordingSender()
+    assert asyncio.run(dispatch_delivery(delivery_id, transport=sender, policy=POLICY)) in {
+        "skipped",
+        "suppressed",
+    }
+    assert sender.calls == []
+
+
+def test_unmapped_kind_is_terminal_and_never_sent(journey, monkeypatch):
+    from app.services import apns
+
+    assert journey.register().status_code == 200
+    journey.activity(needs_attention=True)
+    delivery_id = journey.discover()
+    monkeypatch.setattr(apns, "ALERT_COPY", {"video_ready": apns.ALERT_COPY["video_ready"]})
+    sender = RecordingSender()
+    assert asyncio.run(dispatch_delivery(delivery_id, transport=sender, policy=POLICY)) == "skipped"
+    assert sender.calls == []
+    assert delivery_state(delivery_id) == ("rejected", 0)
 
 
 def test_authenticated_registration_activity_dispatch_is_durable_and_deduplicated(journey):
@@ -1163,4 +1261,8 @@ def test_configured_runtime_drives_real_auth_registration_and_fake_http2_once(jo
     assert str(requests[0].url) == f"https://api.sandbox.push.apple.com/3/device/{TOKEN}"
     assert requests[0].headers["apns-topic"] == "com.example.kria"
     assert requests[0].headers["authorization"].startswith("bearer ")
+    assert json.loads(requests[0].content)["aps"]["alert"] == {
+        "title": "Your video is ready",
+        "body": "Open it to watch and share.",
+    }
     assert delivery_state(delivery_id) == ("accepted", 1)
