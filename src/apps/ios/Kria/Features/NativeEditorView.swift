@@ -609,6 +609,7 @@ struct NativeEditorView: View {
                                     session: session,
                                     onAdjust: { inspector = .adjust },
                                     onCrop: { inspector = .crop(selection) },
+                                    onTilt: { inspector = .tilt(selection) },
                                     onRange: { inspector = .sourceWindow(selection) },
                                     onTransition: { inspector = .selection(selection) }
                                 )
@@ -1075,6 +1076,8 @@ private enum NativeEditorInspector: Identifiable {
     case adjust
     /// KRI-44: the shared Crop editor for the selected clip.
     case crop(EditorSelection)
+    /// KRI-1136: turn the selected clip to any angle and pick its corner background.
+    case tilt(EditorSelection)
     /// KRI-717: the Range picker for the selected clip's source window.
     case sourceWindow(EditorSelection)
     /// KRI-306: Vertical / Landscape and Black bars / Crop for the finished video.
@@ -1086,6 +1089,7 @@ private enum NativeEditorInspector: Identifiable {
         case .selection(let selection): return "selection-\(selection.kind.rawValue)-\(selection.id)"
         case .adjust: return "adjust"
         case .crop(let selection): return "crop-\(selection.kind.rawValue)-\(selection.id)"
+        case .tilt(let selection): return "tilt-\(selection.kind.rawValue)-\(selection.id)"
         case .sourceWindow(let selection): return "range-\(selection.kind.rawValue)-\(selection.id)"
         case .videoShape: return "video-shape"
         }
@@ -1108,6 +1112,7 @@ private enum NativeEditorInspector: Identifiable {
             }
         case .adjust: return "Adjust"
         case .crop: return "Crop"
+        case .tilt: return "Tilt"
         case .sourceWindow: return "Range"
         case .videoShape: return "Video shape"
         }
@@ -1136,6 +1141,7 @@ private struct NativeEditorInspectorView: View {
                 case .selection(let selection): NativeSelectionInspector(selection: selection, session: session)
                 case .adjust: NativeAdjustInspector(session: session)
                 case .crop(let selection): NativeCropSheet(session: session, selection: selection, embedded: true)
+                case .tilt(let selection): NativeTiltSheet(session: session, selection: selection)
                 case .sourceWindow(let selection): NativeSourceWindowSheet(session: session, selection: selection, embedded: true)
                 case .videoShape: NativeVideoShapeInspector(session: session)
                 }

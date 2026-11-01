@@ -4793,6 +4793,13 @@
             "title": "Source Start Locked",
             "type": "boolean"
           },
+          "tilt": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Tilt",
+            "type": "object"
+          },
           "transition_after": {
             "default": "cut",
             "enum": [
@@ -12827,6 +12834,13 @@
             "nullable": true,
             "title": "Source Start Locked",
             "type": "boolean"
+          },
+          "tilt": {
+            "additionalProperties": true,
+            "default": null,
+            "nullable": true,
+            "title": "Tilt",
+            "type": "object"
           },
           "transition_after": {
             "default": "cut",

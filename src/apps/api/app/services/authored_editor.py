@@ -59,6 +59,7 @@ def prepare_authored_editor_commit(
         _find_variant,
         _prepare_editor_commit,
         _require_caption_animation_client,
+        _require_clip_tilt_gates,
         require_editor_clock_reader,
         variant_render_baseline,
     )
@@ -73,6 +74,7 @@ def prepare_authored_editor_commit(
         raise HTTPException(409, detail="baseline_conflict")
     require_editor_clock_reader(job, variant)
     _require_caption_animation_client(job, variant, payload)
+    _require_clip_tilt_gates(job, variant, payload)
     if not is_authored_timeline(variant) and (
         payload.timeline_slots is None or not any(not row.removed for row in payload.timeline_slots)
     ):
@@ -470,9 +472,11 @@ def resolve_authored_phone_slots(
         if slot.look_preset not in (None, "none") or slot.look_adjustments is not None:
             raise HTTPException(422, detail={"code": "phone_edit_unsupported"})
         total += duration
+        tilt = slot.tilt if "tilt" in slot.model_fields_set else old.get("tilt")
         resolved.append(
             {
-                **slot.model_dump(mode="json"),
+                **slot.model_dump(mode="json", exclude={"tilt"}),
+                **({"tilt": tilt} if tilt is not None else {}),
                 "slot_id": slot.slot_id or str(uuid.uuid4()),
                 "source_gcs_path": source["gcs_path"],
                 "source_duration_s": bound,

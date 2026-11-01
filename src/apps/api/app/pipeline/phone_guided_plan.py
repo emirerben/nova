@@ -7,7 +7,7 @@ their native implementations and parity fixtures are available.
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from app.kria.portable_visual import AudioMuteWindow
 from app.kria.recipes import (
@@ -33,6 +33,7 @@ from app.pipeline.guided_story import (
 from app.pipeline.phone_recipe_shared import (
     PhoneNarrationBed,
     PhoneSongBed,
+    clip_tilt_fields,
     display_dims,
     face_fill_transform,
     fit_transform,
@@ -158,6 +159,18 @@ def _clock_aligned(value: float) -> bool:
 # The device recipe's source bound (EditRecipeV2 and Models.swift reject a
 # clip starting past it). Footage originals can't exceed it; pool videos can.
 _DEVICE_SOURCE_LIMIT_S = 1800
+
+
+def _still_tilt_fields(moment: Any) -> dict[str, Any]:
+    """``transform`` / ``backdrop`` for a photo moment. A supporting card turns about its
+    centre over its own blurred cover, so it takes the rotation only."""
+    patch, backdrop = clip_tilt_fields(moment)
+    fields: dict[str, Any] = {}
+    if patch:
+        fields["transform"] = MediaTransform(**patch)
+    if backdrop is not None and moment.layout != "supporting_card":
+        fields["backdrop"] = backdrop
+    return fields
 
 
 def _phone_source_crop(crop: dict[str, float] | None) -> NormalizedSourceCrop | None:
@@ -508,6 +521,7 @@ def compile_phone_guided_plan(
                     transition=incoming,
                     still_layout="supporting_card" if moment.layout == "supporting_card" else None,
                     source_crop=_phone_source_crop(moment.source_crop),
+                    **_still_tilt_fields(moment),
                 )
             )
             cursor = moment.output_end_s
@@ -655,6 +669,13 @@ def compile_phone_guided_plan(
                 transform = face_fill_transform(
                     display_w, display_h, canvas, moment.fill_position_x
                 )
+        tilt_patch, backdrop = clip_tilt_fields(moment)
+        if backdrop is not None or tilt_patch:
+            if moment.look_preset == "golden_hour":
+                raise UnsupportedPhonePlan(
+                    "a color grade cannot be combined with a tilted clip", capability="clipTilt"
+                )
+            transform = transform.model_copy(update=tilt_patch)
         hold_duration = None
         if freeze_hold:
             # The source window plays at 1x, then its last frame holds for the rest of the
@@ -680,6 +701,7 @@ def compile_phone_guided_plan(
                 transition=incoming,
                 look="golden_hour" if moment.look_preset == "golden_hour" else None,
                 source_crop=source_crop,
+                backdrop=backdrop,
                 # The creator silenced this occurrence's own sound; a default clip stays
                 # byte-identical (volume unset).
                 **({"volume": 0.0} if moment.source_audio_muted else {}),

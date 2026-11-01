@@ -11,6 +11,7 @@ from app.kria.recipes import (
     Canvas,
     MediaAsset,
     MediaSize,
+    MediaTransform,
     TimelineClip,
     TimelineTrack,
     Transition,
@@ -25,7 +26,7 @@ from app.pipeline.phone_captions import (
     compile_caption_layers,
 )
 from app.pipeline.phone_editor_visuals import compile_editor_media_track
-from app.pipeline.phone_recipe_shared import snap_text_overshoot, timeline_end_s
+from app.pipeline.phone_recipe_shared import clip_tilt_fields, snap_text_overshoot, timeline_end_s
 from app.pipeline.phone_subtitled_plan import _compile_overlay_track, _compile_sfx_track
 from app.pipeline.phone_voiceover_montage_plan import voiceover_music_gain
 from app.services.authored_editor import explicit_authored_slots
@@ -181,6 +182,8 @@ def compile_phone_authored_timeline(
                     duration=overlap,
                 )
                 cursor -= overlap
+        tilt_patch, backdrop = clip_tilt_fields(row)
+        card = still and row.get("layout") == "supporting_card"
         clips.append(
             TimelineClip(
                 id=row["slot_id"],
@@ -193,9 +196,9 @@ def compile_phone_authored_timeline(
                 transition=transition,
                 volume=0 if still or row.get("muted") else 1,
                 source_crop=row.get("source_crop"),
-                still_layout="supporting_card"
-                if still and row.get("layout") == "supporting_card"
-                else None,
+                still_layout="supporting_card" if card else None,
+                transform=MediaTransform(**tilt_patch),
+                backdrop=None if card else backdrop,
             )
         )
         cursor += duration

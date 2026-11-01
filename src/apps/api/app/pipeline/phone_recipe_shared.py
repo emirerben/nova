@@ -15,13 +15,14 @@ from instead of copy-pasting again.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.kria.clip_tilt_row import parse_row_tilt
 from app.kria.portable_drawing import compile_drawing_layers
-from app.kria.recipes import Canvas, MediaTransform, TimelineClip
+from app.kria.recipes import Canvas, ClipBackdrop, MediaTransform, TimelineClip
 from app.kria.recipes_v2 import EditRecipeV2
 from app.kria.render_assets import RenderAssetManifest, RenderFingerprint
 
@@ -156,17 +157,33 @@ def landscape_fit_from_recipe(recipe: EditRecipeV2) -> Literal["fill", "fit"]:
     return "fill"
 
 
+def clip_tilt_fields(row: Any) -> tuple[dict[str, float], ClipBackdrop | None]:
+    """What a row's ``tilt`` (KRI-1136) adds to its clip: ``(transform_patch, backdrop)``.
+
+    ``row`` is the editor row (a mapping) or anything with a ``tilt`` attribute. The patch
+    holds ``rotation_degrees`` (clockwise, the recipe's own sign) only when the clip is
+    turned, and ``backdrop`` is ``None`` for a blank one, so an untilted clip compiles to
+    exactly what it did before. Every phone writer applies this; none reads ``tilt`` itself.
+    """
+    raw = row.get("tilt") if isinstance(row, Mapping) else getattr(row, "tilt", None)
+    tilt = parse_row_tilt(raw)
+    if tilt is None:
+        return {}, None
+    patch = {"rotation_degrees": tilt.rotation_deg} if tilt.rotation_deg != 0 else {}
+    return patch, tilt.backdrop
+
+
 def _fit_eligible(clip: TimelineClip) -> bool:
     """A main-track clip whose transform is ours to set: a plain cover-filled
     video clip (no look -- the device throws on look + transform, no re-frame
-    crop, no still card/hold) that still carries the compilers' centered,
-    unrotated transform."""
+    crop, no still card/hold) that still carries the compilers' centered
+    transform. A tilt (``rotation_degrees``) does not disqualify it: the scale
+    and the rotation compose, so a tilted sideways clip keeps its letterbox."""
     return (
         clip.look is None
         and clip.source_crop is None
         and clip.still_layout is None
         and clip.hold_duration is None
-        and clip.transform.rotation_degrees == 0
         and clip.transform.position_x == 0
         and clip.transform.position_y == 0
     )
@@ -188,7 +205,7 @@ def apply_landscape_fit(
       audio, Visuals, cutaway and ending tracks are never modified.
     - Skipped (left as-is): clips with a ``look`` (golden_hour -- the device
       throws on a look combined with a transform), a ``source_crop``, a still
-      card/hold, a non-centered/rotated transform, or whose source dimensions
+      card/hold, a non-centered transform, or whose source dimensions
       are unknown (stills carry no ``natural_size``).
     - A landscape (non-portrait) output canvas is returned unchanged: the
       cloud's landscape output always crops (``resolve_output_fit``).

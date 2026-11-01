@@ -44,6 +44,7 @@ from app.pipeline.phone_narrated_plan import _fit_step_window
 from app.pipeline.phone_recipe_shared import (
     EXPORT_SAFETY_MARGIN_S,
     audio_fade,
+    clip_tilt_fields,
     display_dims,
     fit_transform,
     landscape_fit_from_recipe,
@@ -242,8 +243,10 @@ def _video_clips(
         )
         if old is not None and old.source_asset_id == asset.id and not clearing_crop:
             if crop is not None:
-                update["transform"] = MediaTransform()
-            clips.append(old.model_copy(update=update))
+                update["transform"] = MediaTransform(
+                    rotation_degrees=old.transform.rotation_degrees
+                )
+            placed = old.model_copy(update=update)
         else:
             transform = MediaTransform()
             keeps_identity = crop is not None or (old is not None and old.still_layout is not None)
@@ -258,13 +261,42 @@ def _video_clips(
                 # A repointed slot is a different picture: it never inherits the old
                 # source's crop unless the slot sends one (KRI-44).
                 update.setdefault("source_crop", None)
-                clips.append(old.model_copy(update={**update, "transform": transform}))
+                placed = old.model_copy(update={**update, "transform": transform})
             else:
-                clips.append(TimelineClip(**update, transform=transform, look=default_look))
+                placed = TimelineClip(**update, transform=transform, look=default_look)
+        clips.append(_with_tilt(placed, slot, old))
         cursor = timeline_start + source_duration / rate
     if per_clip_sound:
         clips = _keep_clip_sound(previous, clips, slots)
     return clips
+
+
+def _with_tilt(placed: TimelineClip, slot: dict, old: TimelineClip | None) -> TimelineClip:
+    """``placed`` carrying the slot's tilt (KRI-1136).
+
+    A slot that sends ``tilt`` owns it (``None`` straightens). One that omits it keeps the
+    pinned clip's tilt while it plays the same footage; a repointed or new slot starts
+    upright, like a crop.
+    """
+    if "tilt" in slot:
+        patch, backdrop = clip_tilt_fields(slot)
+        rotation = patch.get("rotation_degrees", 0.0)
+    elif old is not None and old.source_asset_id == placed.source_asset_id:
+        rotation, backdrop = old.transform.rotation_degrees, old.backdrop
+    else:
+        rotation, backdrop = 0.0, None
+    if placed.still_layout is not None:
+        backdrop = None
+    if (rotation, backdrop) == (placed.transform.rotation_degrees, placed.backdrop):
+        return placed
+    if placed.look is not None and (rotation or backdrop is not None):
+        raise UnsupportedPhonePlan("a color grade cannot be combined with a tilted clip")
+    return placed.model_copy(
+        update={
+            "transform": placed.transform.model_copy(update={"rotation_degrees": rotation}),
+            "backdrop": backdrop,
+        }
+    )
 
 
 def _step_slot_id(clip: TimelineClip) -> str | None:
@@ -459,7 +491,7 @@ def replace_voiceover_cut(
     assets = {key: value for key, value in assets.items() if key not in dropped}
     manifest = {key: value for key, value in manifest.items() if key not in dropped}
 
-    required = set(recipe.required_capabilities) - {"variableSpeed", "crossfade"}
+    required = set(recipe.required_capabilities) - {"variableSpeed", "crossfade", "clipTilt"}
     if any(clip.rate != 1 for clip in clips):
         required.add("variableSpeed")
     if any(clip.transition is not None for clip in clips):
