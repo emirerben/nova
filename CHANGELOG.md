@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.89.0] - 2026-11-01
+
+### Changed
+- feat(ios): What's New guide in Settings (KRI-1166) (#2044) <!-- release-pr: 2044 -->
+
 ## [0.83.88.0] - 2026-11-01
 
 ### Changed
