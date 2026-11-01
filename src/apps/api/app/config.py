@@ -1114,8 +1114,9 @@ class Settings(BaseSettings):
     # Talking, Narrated, creator-song, spoken-excerpt and slide drafts get their own honest
     # card lines, and the lines and route declines show for every account (not only approval
     # readiness ones). The per-lane switches below each gate one route's follow-the-prompt
-    # change. Every default TRUE; false + restart (api + worker) = byte-identical to before
-    # that change (agents/DECISIONS.md "Prompt fidelity wave 2").
+    # change. Every default TRUE except PLANNER_BOUNDARY_HONEST_ENABLED; false + restart (api +
+    # worker) = byte-identical to before that change (agents/DECISIONS.md "Prompt fidelity
+    # wave 2").
     route_registry_enabled: bool = True
     voiceover_route_follows_prompt_enabled: bool = True
     talking_head_route_follows_prompt_enabled: bool = True
@@ -1123,7 +1124,14 @@ class Settings(BaseSettings):
     lipsync_route_follows_prompt_enabled: bool = True
     speech_excerpt_route_follows_prompt_enabled: bool = True
     slide_route_follows_prompt_enabled: bool = True
-    planner_boundary_honest_enabled: bool = True
+    # Planner boundary: a timing, cadence or repeat ask the recognizers do not read stays when
+    # the model quotes the creator's whole sentence for it (prompt v109). Default FALSE: dark
+    # until the paid live v109 eval runs, since a quote proves the words are the creator's, not
+    # that they ask for the field. false + restart = byte-identical to the foundation.
+    planner_boundary_honest_enabled: bool = False
+    # A title animation or label position the renderer has no name for is named on the
+    # approval card instead of vanishing. false + restart = byte-identical to the foundation.
+    planner_unknown_look_decline_enabled: bool = True
     copilot_direction_follows_request_enabled: bool = True
     creator_jobs_no_catalog_song_freeze_enabled: bool = True
     # Assos (2026-11-01, third refusal): a requirement with a research fact AND a look fact

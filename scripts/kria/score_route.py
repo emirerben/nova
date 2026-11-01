@@ -3365,6 +3365,17 @@ GOLDEN_PROBES: dict[str, dict[str, Any]] = {
         "caption_style": "none",
         "title_animation": "fade",
     },
+    # What the Main Creator parse could not keep (`app/kria/planner_declines.py`).
+    "planner_declines": {
+        "edit_format": "montage",
+        "planner_declines": [
+            {"field": "title_animation", "value": "bounce"},
+            {"field": "label_position", "value": "upper middle"},
+            {"field": "mixed_media_timing"},
+            {"field": "montage_cadence"},
+            {"field": "video_reuse_policy"},
+        ],
+    },
 }
 GOLDEN_ASKS: list[dict[str, Any]] = [
     {
@@ -3417,6 +3428,8 @@ def golden_lines() -> dict[str, Any]:
         _prod_flags(),
         patch.object(settings, "route_registry_enabled", True),
         patch.object(settings, "kria_route_disclosure_enabled", True),
+        patch.object(settings, "planner_boundary_honest_enabled", True),
+        patch.object(settings, "planner_unknown_look_decline_enabled", True),
     ):
         for rid in ROUTE_TABLES:
             route = str(rid)

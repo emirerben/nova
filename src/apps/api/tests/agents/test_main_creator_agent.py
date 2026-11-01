@@ -122,7 +122,7 @@ def test_brief_prompt_requires_explicit_versioned_target_for_changes() -> None:
         _input().model_copy(update={"brief_enabled": True})
     )
 
-    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-01-v108"
+    assert MAIN_CREATOR_PROMPT_VERSION == "2026-11-01-v109"
     assert '`operation`: "change"' in prompt
     assert "target_requirement_id" in prompt
     assert "expected_version" in prompt
@@ -566,6 +566,11 @@ def test_reaction_beats_prompt_section_omitted_when_capability_unavailable() -> 
         ),
         described_text_exception=(
             main_creator_module._DESCRIBED_TEXT_EXCEPTION if settings.clip_intents_enabled else ""
+        ),
+        boundary_evidence_keys=(
+            main_creator_module._BOUNDARY_EVIDENCE_KEYS
+            if settings.planner_boundary_honest_enabled
+            else ""
         ),
         story_shape_section=(
             main_creator_module._STORY_SHAPE_PROMPT_SECTION

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -46,12 +47,23 @@ from app.services.length_policy import creator_duration
 MAX_DRAFT_BYTES = 2 * 1024 * 1024
 
 
+def _without_none(value: object) -> object:
+    """``value`` with every None dict entry left out, at any depth: a stored strategy and a
+    client's copy of it may spell an unset key either way."""
+    if isinstance(value, Mapping):
+        return {key: _without_none(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [_without_none(item) for item in value]
+    return value
+
+
 def _sanitize_strategy_duration_provenance(
     raw: dict[str, Any],
     *,
     authoritative_answers: list[dict[str, Any]] | None = None,
     authoritative_duration_s: float | None = None,
     authoritative_pacing_requested: bool | None = None,
+    head_strategy: Mapping[str, Any] | None = None,
     brief_binding: BriefBinding | None = None,
 ) -> dict[str, Any]:
     """Persist only server-derived duration approval provenance.
@@ -63,6 +75,11 @@ def _sanitize_strategy_duration_provenance(
 
     ``choice_answers`` (KRI-476) are server-owned the same way: whatever the client wrote
     is dropped and only the head draft's own answers (the planner gate wrote them) stay.
+    So are ``planner_declines`` (KRI-1097 wave 2, approval-card lines): only the head
+    draft's (``head_strategy``, the Main Creator parse wrote them), and of those only the ones
+    whose field this save leaves as the head had it. A decline names a value the plan does not
+    use, so after an edit to that field it would be stale ("bounce" is not used, under a title
+    the client set to fade).
     """
 
     binding_answers = (
@@ -73,20 +90,34 @@ def _sanitize_strategy_duration_provenance(
         authoritative_answers=binding_answers,
     )
     proven_duration_s = proven.seconds if proven is not None else authoritative_duration_s
+    head = head_strategy or {}
+    head_declines = head.get("planner_declines")
     strategy = CreativeStrategy.model_validate(
         {
-            key: value
-            for key, value in raw.items()
-            if key
-            not in (
-                "target_duration_requested",
-                "creator_duration_s",
-                "choice_answers",
-                "selected_music_section",
-                "pacing_requested",
-            )
+            **{
+                key: value
+                for key, value in raw.items()
+                if key
+                not in (
+                    "target_duration_requested",
+                    "creator_duration_s",
+                    "choice_answers",
+                    "selected_music_section",
+                    "pacing_requested",
+                    "planner_declines",
+                )
+            },
+            **({"planner_declines": head_declines} if head_declines else {}),
         }
     )
+    if strategy.planner_declines:
+        saved = strategy.model_dump(mode="json", exclude_none=True)
+        kept = [
+            decline
+            for decline in strategy.planner_declines
+            if _without_none(saved.get(decline.field)) == _without_none(head.get(decline.field))
+        ]
+        strategy = strategy.model_copy(update={"planner_declines": kept or None})
     update: dict[str, Any] = {
         "target_duration_requested": True if proven_duration_s is not None else None,
         "creator_duration_s": proven_duration_s,
@@ -588,6 +619,7 @@ async def write_draft(
             authoritative_pacing_requested=(
                 head_strategy.get("pacing_requested") if isinstance(head_strategy, dict) else None
             ),
+            head_strategy=head_strategy if isinstance(head_strategy, dict) else None,
             brief_binding=(
                 BriefBinding.model_validate(binding) if isinstance(binding, dict) else None
             ),

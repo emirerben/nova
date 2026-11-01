@@ -100,6 +100,50 @@
             }
           ],
           "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the cuts follow a fast pace\n- The native direction isn't applied on this video yet: it is cut as a fast montage"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "I don't have a \"bounce\" animation for the title yet, so it won't be used"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "I can't repeat or loop your footage on this edit, so no moment of it plays twice"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "captions",
+              "text": "I can't add subtitles of the speech to this video yet, so it has none",
+              "requirement_id": "g2"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "title_position",
+              "text": "I can't move the title to the spot you asked for on this video yet, so it stays where the layout puts it",
+              "requirement_id": "g3"
+            }
+          ],
+          "card": "Heads-up for this video:\n- I don't have a \"bounce\" animation for the title yet, so it won't be used\n- I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them\n- I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing\n- I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage\n- I can't repeat or loop your footage on this edit, so no moment of it plays twice"
         }
       },
       "tr": {
@@ -200,6 +244,50 @@
             }
           ],
           "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: kesimler hızlı tempoda\n- native yönü bu videoda henüz uygulanmıyor: hızlı bir montaj olarak kesiliyor"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "captions",
+              "text": "Bu videoya henüz konuşmanın altyazısını ekleyemiyorum, o yüzden altyazı yok",
+              "requirement_id": "g2"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "title_position",
+              "text": "Bu videoda başlığı henüz istediğin yere taşıyamıyorum, o yüzden düzenin koyduğu yerde kalıyor",
+              "requirement_id": "g3"
+            }
+          ],
+          "card": "Bu video için not:\n- Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak\n- Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar\n- Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor\n- Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor\n- Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
         }
       }
     },
@@ -322,6 +410,55 @@
             }
           ],
           "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the cuts keep their usual length\n- The native direction isn't applied on this video yet: it is cut as a montage under your voiceover\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "I can't make this video the length you asked for yet: its length follows your voiceover"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "I don't have a \"bounce\" animation for the title yet, so it won't be used"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "I can't repeat or loop your footage on this edit, so no moment of it plays twice"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+              "requirement_id": "g1"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "captions",
+              "text": "I can't add subtitles of the speech to this video yet, so it has none",
+              "requirement_id": "g2"
+            }
+          ],
+          "card": "Heads-up for this video:\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I don't have a \"bounce\" animation for the title yet, so it won't be used\n- I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them\n- I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing\n- I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage\n- I can't repeat or loop your footage on this edit, so no moment of it plays twice"
         }
       },
       "tr": {
@@ -442,6 +579,55 @@
             }
           ],
           "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: kesimler her zamanki uzunluğunda\n- native yönü bu videoda henüz uygulanmıyor: seslendirmenin altında bir montaj olarak kesiliyor\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+              "requirement_id": "g1"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "captions",
+              "text": "Bu videoya henüz konuşmanın altyazısını ekleyemiyorum, o yüzden altyazı yok",
+              "requirement_id": "g2"
+            }
+          ],
+          "card": "Bu video için not:\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak\n- Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar\n- Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor\n- Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor\n- Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
         }
       }
     },
@@ -552,6 +738,49 @@
             }
           ],
           "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the video follows your speech\n- The native direction isn't applied on this video yet: the video follows your speech\n- I can't turn captions off on this kind of edit yet, so the video will have captions\n- I can't make this video the length you asked for yet: its length follows your speech\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "I can't make this video the length you asked for yet: its length follows your speech"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "I don't have a \"bounce\" animation for the title yet, so it won't be used"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "I can't repeat or loop your footage on this edit, so no moment of it plays twice"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+              "requirement_id": "g1"
+            }
+          ],
+          "card": "Heads-up for this video:\n- I can't make this video the length you asked for yet: its length follows your speech\n- I don't have a \"bounce\" animation for the title yet, so it won't be used\n- I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them\n- I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing\n- I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage\n- I can't repeat or loop your footage on this edit, so no moment of it plays twice"
         }
       },
       "tr": {
@@ -660,6 +889,49 @@
             }
           ],
           "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- native yönü bu videoda henüz uygulanmıyor: video konuşmanı izliyor\n- Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+              "requirement_id": "g1"
+            }
+          ],
+          "card": "Bu video için not:\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu konuşmanı takip ediyor\n- Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak\n- Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar\n- Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor\n- Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor\n- Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
         }
       }
     },
@@ -775,6 +1047,49 @@
             }
           ],
           "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the cuts follow your voiceover\n- The native direction isn't applied on this video yet: the video follows your voiceover\n- I can't turn captions off on this kind of edit yet, so the video will have captions\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "I can't make this video the length you asked for yet: its length follows your voiceover"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "I don't have a \"bounce\" animation for the title yet, so it won't be used"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "I can't repeat or loop your footage on this edit, so no moment of it plays twice"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+              "requirement_id": "g1"
+            }
+          ],
+          "card": "Heads-up for this video:\n- I can't make this video the length you asked for yet: its length follows your voiceover\n- I don't have a \"bounce\" animation for the title yet, so it won't be used\n- I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them\n- I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing\n- I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage\n- I can't repeat or loop your footage on this edit, so no moment of it plays twice"
         }
       },
       "tr": {
@@ -888,6 +1203,49 @@
             }
           ],
           "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: kesimler seslendirmeni izliyor\n- native yönü bu videoda henüz uygulanmıyor: video seslendirmeni izliyor\n- Bu tür bir düzenlemede altyazıları henüz kapatamıyorum, o yüzden videoda altyazı olacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+              "requirement_id": "g1"
+            }
+          ],
+          "card": "Bu video için not:\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu seslendirmeni takip ediyor\n- Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak\n- Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar\n- Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor\n- Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor\n- Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
         }
       }
     },
@@ -1003,6 +1361,49 @@
             }
           ],
           "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: your song sets where the cuts fall\n- The native direction isn't applied on this video yet: it is cut to your song\n- I can't make this video the length you asked for yet: its length follows your song\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "I can't make this video the length you asked for yet: its length follows your song"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "I don't have a \"bounce\" animation for the title yet, so it won't be used"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "I can't repeat or loop your footage on this edit, so no moment of it plays twice"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+              "requirement_id": "g1"
+            }
+          ],
+          "card": "Heads-up for this video:\n- I can't make this video the length you asked for yet: its length follows your song\n- I don't have a \"bounce\" animation for the title yet, so it won't be used\n- I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them\n- I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing\n- I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage\n- I can't repeat or loop your footage on this edit, so no moment of it plays twice"
         }
       },
       "tr": {
@@ -1116,6 +1517,49 @@
             }
           ],
           "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: kesimlerin yerini şarkın belirliyor\n- native yönü bu videoda henüz uygulanmıyor: şarkına göre kesiliyor\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+              "requirement_id": "g1"
+            }
+          ],
+          "card": "Bu video için not:\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: uzunluğu şarkını takip ediyor\n- Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak\n- Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar\n- Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor\n- Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor\n- Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
         }
       }
     },
@@ -1238,6 +1682,50 @@
             }
           ],
           "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: the cuts between spoken lines keep a fixed length\n- The native direction isn't applied on this video yet: it is cut around the spoken lines\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "I don't have a \"bounce\" animation for the title yet, so it won't be used"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "I can't repeat or loop your footage on this edit, so no moment of it plays twice"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+              "requirement_id": "g1"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "captions",
+              "text": "I can't add subtitles of the speech to this video yet, so it has none",
+              "requirement_id": "g2"
+            }
+          ],
+          "card": "Heads-up for this video:\n- I don't have a \"bounce\" animation for the title yet, so it won't be used\n- I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them\n- I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing\n- I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage\n- I can't repeat or loop your footage on this edit, so no moment of it plays twice"
         }
       },
       "tr": {
@@ -1358,6 +1846,50 @@
             }
           ],
           "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: konuşmalar arasındaki kesimler sabit uzunlukta\n- native yönü bu videoda henüz uygulanmıyor: konuşulan cümlelerin etrafında kesiliyor\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+              "requirement_id": "g1"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "captions",
+              "text": "Bu videoya henüz konuşmanın altyazısını ekleyemiyorum, o yüzden altyazı yok",
+              "requirement_id": "g2"
+            }
+          ],
+          "card": "Bu video için not:\n- Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak\n- Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar\n- Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor\n- Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor\n- Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
         }
       }
     },
@@ -1510,6 +2042,55 @@
             }
           ],
           "card": "Heads-up for this video:\n- The balanced pacing isn't applied on this video yet: a slide post shows each slide for its own time\n- The native direction isn't applied on this video yet: a slide post shows your slides in order\n- A slide post plays no added music or voiceover yet, so the planned audio won't be used\n- I can't make this video the length you asked for yet: a slide post's length follows its slides\n- I can't animate the title (fade) on this video yet, so it shows without motion"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "I can't make this video the length you asked for yet: a slide post's length follows its slides"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "I don't have a \"bounce\" animation for the title yet, so it won't be used"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "I can't repeat or loop your footage on this edit, so no moment of it plays twice"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "I can't animate on-screen text on this video yet, so the text shows without motion",
+              "requirement_id": "g1"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "captions",
+              "text": "I can't add subtitles of the speech to this video yet, so it has none",
+              "requirement_id": "g2"
+            }
+          ],
+          "card": "Heads-up for this video:\n- I can't make this video the length you asked for yet: a slide post's length follows its slides\n- I don't have a \"bounce\" animation for the title yet, so it won't be used\n- I can't place the clip labels \"upper middle\" yet, so they stay where the layout puts them\n- I can't keep the photo and video timing you asked for on this edit, so it uses the standard timing\n- I can't keep the exact alternating cut you asked for on this edit, so it is cut as a regular montage\n- I can't repeat or loop your footage on this edit, so no moment of it plays twice"
         }
       },
       "tr": {
@@ -1660,6 +2241,55 @@
             }
           ],
           "card": "Bu video için not:\n- balanced tempo bu videoda henüz uygulanmıyor: slayt gönderisi her slaytı kendi süresince gösteriyor\n- native yönü bu videoda henüz uygulanmıyor: slayt gönderisi slaytlarını sırayla gösteriyor\n- Slayt gönderisi henüz eklenmiş müzik ya da seslendirme çalmıyor, planlanan ses kullanılmayacak\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı\n- Başlığı (fade) bu videoda henüz canlandıramıyorum, o yüzden hareketsiz görünecek"
+        },
+        "planner_declines": {
+          "lines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "target_duration_s",
+              "text": "Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_title_animation",
+              "text": "Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_label_position",
+              "text": "Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_mixed_media_timing",
+              "text": "Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_montage_cadence",
+              "text": "Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "planner_video_reuse_policy",
+              "text": "Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
+            }
+          ],
+          "declines": [
+            {
+              "code": "not_applied_on_route",
+              "subject": "text_animation",
+              "text": "Bu videoda ekrandaki yazıyı henüz canlandıramıyorum, o yüzden yazı hareketsiz görünecek",
+              "requirement_id": "g1"
+            },
+            {
+              "code": "not_applied_on_route",
+              "subject": "captions",
+              "text": "Bu videoya henüz konuşmanın altyazısını ekleyemiyorum, o yüzden altyazı yok",
+              "requirement_id": "g2"
+            }
+          ],
+          "card": "Bu video için not:\n- Bu videoyu henüz istediğin uzunlukta yapamıyorum: slayt gönderisinin uzunluğu slaytlarına bağlı\n- Başlık için henüz \"bounce\" animasyonum yok, o yüzden kullanılmayacak\n- Klip etiketlerini henüz \"upper middle\" konumuna yerleştiremiyorum, o yüzden düzenin koyduğu yerde kalıyorlar\n- Bu düzenlemede istediğin fotoğraf ve video zamanlamasını koruyamıyorum, o yüzden standart zamanlama kullanılıyor\n- Bu düzenlemede istediğin dönüşümlü kesimi aynen koruyamıyorum, o yüzden normal bir montaj olarak kesiliyor\n- Bu düzenlemede çekimlerini tekrarlayamıyor ya da döngüye alamıyorum, o yüzden hiçbir an iki kez oynamıyor"
         }
       }
     }

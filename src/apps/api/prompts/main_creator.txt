@@ -344,7 +344,7 @@ OR:
       "shot_labels": "verbatim creator excerpt containing every shot label, or null",
       "closing_title": "verbatim creator excerpt containing the exact closing text, or null",
       "pinned_texts": "verbatim creator excerpt containing every pinned line and any time they named, or null",
-      "licensed_sfx": "verbatim creator excerpt asking for or declining a specific sound effect, or null"
+      "licensed_sfx": "verbatim creator excerpt asking for or declining a specific sound effect, or null"$boundary_evidence_keys
     }
   }
 }

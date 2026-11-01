@@ -20,11 +20,13 @@ from pydantic import (
     ConfigDict,
     Field,
     TypeAdapter,
+    ValidationInfo,
     field_validator,
     model_serializer,
     model_validator,
 )
 from pydantic.json_schema import SkipJsonSchema
+from pydantic_core import PydanticKnownError
 
 from app.agents._schemas.edit_format import EditFormat, RenderProgram
 from app.agents._schemas.reaction_beats import (
@@ -353,6 +355,54 @@ class ChoiceAnswer(_CreatorModel):
     detail: dict[str, str | int | float] | None = Field(
         default=None, max_length=8, exclude_if=lambda value: not value
     )
+
+
+PlannerDeclineField = Literal[
+    "title_animation",
+    "label_position",
+    "mixed_media_timing",
+    "montage_cadence",
+    "video_reuse_policy",
+]
+
+
+class PlannerDecline(_CreatorModel):
+    """A planner value the Main Creator parse could not keep, for the card (KRI-1097 wave 2).
+
+    ``value`` is the model's word for a title animation or label position the renderer has
+    no name for (the strategy validator reads it as unset;
+    ``PLANNER_UNKNOWN_LOOK_DECLINE_ENABLED``). None for a timing, cadence or reuse ask quoted
+    from the creator that this manifest cannot render, so the parse kept the server's own
+    reading instead (`MainCreatorAgent.parse`, ``PLANNER_BOUNDARY_HONEST_ENABLED``).
+    """
+
+    field: PlannerDeclineField
+    value: str | None = Field(default=None, max_length=80, exclude_if=lambda value: value is None)
+
+
+_PLANNER_DECLINE_SWITCHES: dict[str, str] = {
+    "title_animation": "planner_unknown_look_decline_enabled",
+    "label_position": "planner_unknown_look_decline_enabled",
+    "mixed_media_timing": "planner_boundary_honest_enabled",
+    "montage_cadence": "planner_boundary_honest_enabled",
+    "video_reuse_policy": "planner_boundary_honest_enabled",
+}
+
+
+def planner_decline_fields() -> frozenset[str]:
+    """The ``planner_declines`` fields whose switch is on: a decline of any other field is
+    neither recorded, kept on a stored strategy nor named on the card."""
+    # Imported here: this schema loads before the settings can (the replay CLI).
+    from app.config import settings  # noqa: PLC0415
+
+    return frozenset(
+        field for field, switch in _PLANNER_DECLINE_SWITCHES.items() if getattr(settings, switch)
+    )
+
+
+# Validation-context key the Main Creator parse sets when it validates a model output
+# (`CreativeStrategy._planner_declines_are_server_owned`).
+MODEL_OUTPUT_CONTEXT = "main_creator_model_output"
 
 
 class CreativeStrategy(_CreatorModel):
@@ -723,6 +773,42 @@ class CreativeStrategy(_CreatorModel):
         exclude_if=lambda value: value is None,
     )
     rationale: str = Field(default="", max_length=2000)
+    # KRI-1097 wave 2: what the parse boundary could not keep, named on the card
+    # (`route_disclosure`). SERVER-owned like `song_captions`: out of every model schema and
+    # omitted from the dump when unset. Declared last, so a model output that writes it is
+    # refused at the place the foundation refused it, as an unknown key.
+    planner_declines: SkipJsonSchema[list[PlannerDecline] | None] = Field(
+        default=None, max_length=5, exclude_if=lambda value: value is None
+    )
+
+    @field_validator("planner_declines", mode="before")
+    @classmethod
+    def _planner_declines_are_server_owned(cls, value: object, info: ValidationInfo) -> object:
+        """A model never writes ``planner_declines``: in a model output (the Main Creator parse
+        sets ``MODEL_OUTPUT_CONTEXT``) it is refused as the unknown key it was on the
+        foundation, in every switch state.
+
+        Anywhere else it is a strategy the server stored, or a client draft that
+        `drafts.write_draft` already gave the head draft's value (a client's own copy never
+        survives). Each entry stays while its field's switch is on (`planner_decline_fields`)
+        and is dropped otherwise, so with both switches off the strategy validates to what the
+        foundation made of it without the key. Refusing it instead would make every draft
+        stored while a switch was on unreadable after that switch is turned off. A revert of
+        this code is not covered: agents/DECISIONS.md "never revert, use the switches"."""
+        if isinstance(info.context, dict) and MODEL_OUTPUT_CONTEXT in info.context:
+            raise PydanticKnownError("extra_forbidden")
+        fields = planner_decline_fields()
+        if not fields:
+            return None
+        if not isinstance(value, (list, tuple)):
+            return value
+        kept = [
+            item
+            for item in value
+            if (item.get("field") if isinstance(item, Mapping) else getattr(item, "field", None))
+            in fields
+        ]
+        return kept or None
 
     @field_validator("story_structure")
     @classmethod
