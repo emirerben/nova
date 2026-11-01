@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-01-v99",
+  "prompt_version": "2026-11-01-v101",
   "input": {
     "utterance": "make everything a little crooked with a blurred background",
     "prior_turns": [],

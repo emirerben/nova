@@ -24,7 +24,7 @@ from tests.services.test_kria_editor_ops import _job, _variant
 
 
 def test_prompt_version_pinned() -> None:
-    assert EDIT_COPILOT_PROMPT_VERSION == "2026-11-01-v99"
+    assert EDIT_COPILOT_PROMPT_VERSION == "2026-11-01-v101"
 
 
 def test_op_cap_is_a_single_shared_constant() -> None:
