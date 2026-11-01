@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-01-v99",
+  "prompt_version": "2026-11-01-v100",
   "input": {
     "utterance": "tilt the second clip 10 degrees to the right",
     "prior_turns": [],

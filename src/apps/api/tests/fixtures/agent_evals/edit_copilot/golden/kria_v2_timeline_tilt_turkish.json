@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-01-v99",
+  "prompt_version": "2026-11-01-v100",
   "input": {
     "utterance": "ikinci klibi 10 derece sağa yatır",
     "prior_turns": [],

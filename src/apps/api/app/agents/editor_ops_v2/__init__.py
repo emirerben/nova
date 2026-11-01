@@ -49,7 +49,12 @@ FAMILY_FRAGMENTS: dict[str, str] = {
 # KRI-1137: fragments appended only while `snapshot["timeline_patch_capabilities"]` opens the named
 # patch_slots field (and the `clip` family is offered), so a closed gate leaves every prompt
 # byte-identical.
-FIELD_FRAGMENTS: dict[str, str] = {"tilt": "clip_tilt.txt"}
+FIELD_FRAGMENTS: dict[str, str] = {
+    "tilt": "clip_tilt.txt",
+    # KRI-1139: appended after `clip_tilt.txt` only while the pool-photo backdrop is open too, so
+    # a tilt-open edit without it keeps its exact prompt.
+    "tilt_backdrop_media": "clip_tilt_media.txt",
+}
 _FRAGMENT_DIR = Path(__file__).resolve().parents[3] / "prompts" / "edit_copilot_ops"
 
 

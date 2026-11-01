@@ -1,0 +1,143 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-01-v100",
+  "input": {
+    "utterance": "put my cat photo behind the tilted clip",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "clip",
+        "text",
+        "transition"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [
+        {
+          "key": "s1",
+          "slot_id": "s1",
+          "clip_index": 0,
+          "media_id": "m0",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 0.0,
+          "output_end_s": 3.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video"
+        },
+        {
+          "key": "s2",
+          "slot_id": "s2",
+          "clip_index": 1,
+          "media_id": "m1",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 10.0,
+          "output_start_s": 3.0,
+          "output_end_s": 6.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "video",
+          "tilt": {
+            "rotation_deg": 10.0
+          }
+        },
+        {
+          "key": "s3",
+          "slot_id": "s3",
+          "clip_index": 2,
+          "media_id": "m2",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 3.0,
+          "output_start_s": 6.0,
+          "output_end_s": 9.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "image"
+        },
+        {
+          "key": "s4",
+          "slot_id": "s4",
+          "clip_index": 3,
+          "media_id": "m3",
+          "in_s": 0.0,
+          "duration_s": 3,
+          "source_duration_s": 3.0,
+          "output_start_s": 9.0,
+          "output_end_s": 12.0,
+          "removed": false,
+          "transition_after": "cut",
+          "look_preset": "none",
+          "media_kind": "image"
+        }
+      ],
+      "text_bars": [],
+      "timeline_patch_capabilities": {
+        "duration_s": true,
+        "in_s": true,
+        "removed": true,
+        "transition_after": true,
+        "transition_duration_s": true,
+        "look_preset": false,
+        "playback_rate": false,
+        "source_crop": false,
+        "tilt": true,
+        "tilt_backdrop_media": true
+      },
+      "total_duration_s": 12.0,
+      "max_duration_s": 120,
+      "remaining_duration_s": 108.0,
+      "tilt_backdrop_pool": [
+        {
+          "id": "5b2f9d1e-8c3a-4f6b-9e21-7a0d4c3b2a10",
+          "kind": "image",
+          "label": "beach.jpg"
+        },
+        {
+          "id": "9c1e7a42-3d5b-4e08-8f67-2b4a6d8c0e13",
+          "kind": "image",
+          "label": "sunset.jpg"
+        },
+        {
+          "id": "7d4f1b3a-0e5c-4a8d-b9f2-1c6e8a7b5d43",
+          "kind": "video",
+          "label": "waves.mp4",
+          "duration_s": 9.0
+        }
+      ]
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_slots\", \"selector\": {\"slot_indexes\": [1]}, \"patch\": {\"tilt\": {\"backdrop\": {\"kind\": \"media\", \"asset_id\": \"cat-photo\"}}}}], \"confidence\": 0.95, \"reply\": \"Put your cat photo behind clip 2.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [],
+    "confidence": 0.4,
+    "reply": "I can only put a photo or video from this video's Visuals behind a clip, and I couldn't find that one there.",
+    "suggestions": [],
+    "needs_clarification": true,
+    "outcome": "failed",
+    "rejection_reasons": [
+      {
+        "op": "patch_slots",
+        "reason": "invalid_value",
+        "detail": "operation values are invalid"
+      }
+    ],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "I can only put a photo or video from this video's Visuals behind a clip, and I couldn't find that one there.",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "refusal: the asked id is not in the pool, nothing is applied and the reply does not claim it",
+    "lane": "kria_v2_timeline_tilt_media"
+  }
+}
