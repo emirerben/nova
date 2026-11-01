@@ -532,6 +532,72 @@ over the slide's photo in the server render exactly like text and ink.
   `tests/routes/test_slide_post_sticker_routes.py` (merge, 426, validation, never-a-slide, freshness, chat-edit),
   `tests/tasks/test_slide_post_render.py` (dispatch download/drop, key, stamp).
 
+## Per-slide tilt (KRI-1138, gate `MEDIA_TILT_ENABLED`, default off)
+
+A creator turns a slide's photo OR video to any angle. Part of the "Tilt videos and photos" train: the engine contract
+(`ClipBackdrop`, clockwise-positive rotation) is PR A (#2014); the main-timeline editor and the other AI lanes are
+separate. This section is slide posts only.
+
+- **Wire.** `SlideEdits.tilt = {rotation_deg (-180..180, clockwise), backdrop {kind: blank|color|blur, color?}}`
+  (`SlideTilt`, `app/schemas/slide_post.py`). A SIBLING of `framing` (an older build re-encodes `framing` from its own
+  struct and drops a nested key). `color` is present for `color` only; `extra="forbid"`. Omitted from the serialized
+  form while None, and 0 degrees collapses to None, so an unchanged slide hashes and serializes exactly as before
+  (digests pinned in `test_slide_post_tilt.py`). Frozen with Swift by `tests/fixtures/slide-tilt-parity/v1.json`.
+- **Geometry** (`app/pipeline/slide_post/tilt.py`, `SlidePostTiltGeometry`). The MEDIA is the (cropped) region scaled the
+  way the slide frames it, cover for Fill and whole for Fit, centred on the canvas, then turned clockwise about the
+  CANVAS centre. It is not trimmed to the canvas first, so for Fill the pixels the photo has beyond the frame rotate into
+  view (the engine's clip tilt behaves the same). Only the media turns: text, ink, stickers and the watermark are
+  overlaid after it and stay upright. Videos turn too (cover-fit frame, no crop, no Fit).
+- **Tilt and Fit.** A tilt REPLACES the Fit bars with its own backdrop; Fit still decides whether the media is the whole
+  photo or the cover-fit one. Tilt and Crop combine (crop first, as everywhere). Looks grade the whole frame, backdrop
+  included. The Instagram carousel canvases (4:5, 3:4, 1:1, 1.91:1) and the TikTok landscape slide all turn about their
+  own centre.
+- **Backdrop.** `blank` is black, `color` a `#RRGGBB`, `blur` a blurred cover-fit copy of the same media at the Fit
+  blur's strength (`FIT_BLUR_SIGMA_PX = 80` at 1080 wide; the main-timeline clip tilt uses a lighter 24.9, a separate
+  contract).
+- **Cloud** (`build._tilt_frame_filter`). `scale` (cover or whole) -> `format=rgba,rotate=<rad>:ow=rotw:oh=roth:c=none`
+  -> `overlay` centred on a `color` source (black or the colour; 30 fps with `shortest=1` for video) or on the blurred
+  copy. Same unlabelled first and last chains as the Fit blur graph, so the overlay wrap and the look still work. A
+  tilted slide's normalized key gets `_tl{SLIDE_TILT_COMPOSITOR_VERSION}` (only then).
+- **Device.** Photos: `SlidePostOnDeviceRender.framedBase` -> `tiltedBase` / `turned` (Core Image, angle negated for its
+  y-up axis). Videos: `SlidePostVideoRender` turns each frame (`tiltedCover` -> `turned`) before the look. Preview:
+  `SlidePostCachedImage` (an instant SwiftUI stand-in while the exact Core Image pass computes) and
+  `SlidePostVideoPicture` (the player laid out at its own cover size, rotated; the poster beneath draws the backdrop).
+- **Save contract (three states, like `fit`).** `tilt` key missing (older iOS, the web editor, `edits: null`) keeps the
+  stored value; explicit `null` clears; a value sets (`merge_stored_edit_key(..., "tilt", accept_incoming=media_tilt_enabled)`;
+  `merge_legacy_text_edits`, `_backfill_slide_post_sizes` and `compile_slide_post_ops` carry it). Flag off: the stored
+  value always wins and stored tilts still render. A PUT carrying a tilt from a build below
+  `media_tilt_min_client_protocol` (28, or no header) is refused with `426 {"code": "client_update_required", "feature":
+  "slide_tilt"}`.
+- **Capability.** `slide_post_tilt` in `/creation-threads/capabilities` = `MEDIA_TILT_ENABLED` AND protocol >= 28. No
+  `clipTilt` verified token: that token gates the recipe path; slide posts export through their own renderer.
+- **Version fence.** `SLIDES_TILT_RENDERER_VERSION = 6` (stickers took 5, drawings 4, sizes 3). The worker stamps
+  `slide_post.renderer_version` with it when any slide is tilted, and `_slide_post_export_is_current` treats a tilted draft
+  rendered below 6 as stale, so an older worker's upright export never reads as current. The dispatch stamp
+  `SLIDES_RENDERER_VERSION` stays 2.
+- **UI** (`SlidePostTiltPanel.swift`, dock item "Tilt" next to Crop, capability-gated). A dial from -180 to 180 with
+  detents (and haptics) at 0, +-90 and 180, a 1 degree nudge, Turn 90 and Reset, and a Background row (Blank, Colour,
+  Blur). A dial drag is one undo step. The panel is a view over (`tilt`, `onChange`) so a shared Tilt sheet can replace
+  it without touching the session. Fills not borders, Inter, 44pt targets, no animation.
+- **AI.** `set_slide_tilt{slide_indexes|all, rotation_deg?, backdrop?, color?, reset?}` (slides lane,
+  `editor_ops_v2/slides.py`) is a SIBLING op rather than two more fields on `set_slide_framing`: framing is photo-only and
+  gated on `framing_enabled`, while a tilt turns videos too, is gated on `post.tilt_enabled` and persists in its own key.
+  `rotation_deg` is the angle the slide should END at (the prompt resolves relative asks against the current angle that
+  CURRENT POST lists); out-of-range angles fold into -180..180; a backdrop alone on an upright slide is refused (it would
+  draw nothing). The gate is `MEDIA_TILT_ENABLED` and a protocol-28 build (`run_slide_post_chat_edit(tilt_enabled=...)`).
+  Closed, the snapshot and CURRENT POST carry no tilt and the op is refused with `capability_unavailable`.
+  `compile_slide_post_ops` carries the tilt across text, look, framing and fit changes. Replay goldens:
+  `tests/fixtures/agent_evals/edit_copilot/golden/slide_tilt_*.json`. Prompt version `2026-11-01-v98`.
+- **Rollout.** Merge dark and deploy api + worker FIRST (an older worker that re-dumps a tilted draft through its older
+  `SlideEdits` would drop the tilt). Then `fly secrets set MEDIA_TILT_ENABLED=true` (api + worker) + restart, with a
+  protocol-28 TestFlight build out. **Rollback is the flag only**: never roll the CODE back once a tilt exists (draft
+  models drop unknown keys and `SlideTilt` is `extra="forbid"`).
+- Tests: `tests/pipeline/test_slide_post_tilt.py` (fixture, digests, real ffmpeg against the shared geometry),
+  `tests/routes/test_slide_post_tilt_routes.py` (merge, 426, capability, freshness, backfill),
+  `tests/services/test_slide_post_tilt_chat.py` (op, gate, sign, carry-through), `tests/tasks/test_slide_post_render.py`
+  (stamp and key); iOS `SlidePostTiltTests` (fixture, save semantics, real render against the same geometry),
+  `SlidePostVideoRenderTests`, UI `testTiltTurnsThePhotoLiveAndSurvivesSave`.
+
 ## Known v1 gaps (tracked, not silently shipped)
 
 - **No direct publish.** v1 is export-only (`bundle.zip`). TikTok photo
@@ -599,4 +665,6 @@ cd src/apps/web && npx jest src/__tests__/plan/items/SlidePostPanel.test.tsx src
 cd src/apps/api && pytest tests/services/test_slide_post_chat_edit.py tests/routes/test_slide_post_chat_edit_route.py -q
 # Post size + Fit (KRI-606): real ffmpeg, needs one with drawtext + gblur (e.g. ffmpeg-full)
 cd src/apps/api && pytest tests/pipeline/test_slide_post_sizes.py tests/pipeline/test_slide_post_framing.py tests/routes/test_slide_post_native_routes.py -q
+# Tilt (KRI-1138): real ffmpeg, no drawtext needed
+cd src/apps/api && pytest tests/pipeline/test_slide_post_tilt.py tests/routes/test_slide_post_tilt_routes.py tests/services/test_slide_post_tilt_chat.py -q
 ```
