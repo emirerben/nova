@@ -3014,6 +3014,8 @@ def _route_reversed_reason(req: BriefRequirement, facts: PlanFacts) -> str | Non
 _CANT_CONFIRM_ORDER = "I can't confirm the order this draft uses."
 _CANT_CHECK_ORDER_RULE = "I can't verify this ordering automatically."
 _ARRIVAL_BASES = frozenset({"attachment", "creator_order"})
+# KRI-1112: `creator_render_contract.CREATOR_LIST_ORDER_BASIS` (that module imports this one).
+_CREATOR_LIST_BASIS = "creator_list"
 _ORDER_NOT_APPLIED = (
     "I couldn't match your description to the clips, so they stay in the order you attached them."
 )
@@ -3197,6 +3199,10 @@ def _check_order(req: BriefRequirement, facts: PlanFacts) -> RequirementReceipt:
     reversed_reason = _route_reversed_reason(req, facts)
     if reversed_reason is not None:
         return _receipt(req, "partial", reversed_reason)
+    if basis == _CREATOR_LIST_BASIS and key not in _CAPTURE_ORDER_KEYS:
+        # KRI-1112: the creator listed every clip the edit shows, one at a time, and the render
+        # contract pins that list (`creator_render_contract._creator_listed_order`).
+        return _receipt(req, "met", None)
     if key in _CAPTURE_ORDER_KEYS:
         if basis not in _CAPTURE_BASES:
             return _receipt(

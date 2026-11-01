@@ -35,6 +35,7 @@ from app.kria.strategy_policy import RefusedStrategy, check_strategy_for_runtime
 from app.models import ContentPlan, Persona
 from app.services.creator_render_contract import (
     ADAPTER_DECLARATIONS,
+    CREATOR_LIST_ORDER_BASIS,
     FIELD_MATRIX,
     build_render_contract,
     field_matrix_for_strategy,
@@ -223,9 +224,21 @@ def _planned_order_basis(
     render that plays any other (`verify_phone_recipe`). Without this every filming-order
     draft read "I can't confirm the order this draft uses" and approval was held. A
     "group first" answer is not that order (the planner regroups it; the contract does not).
+
+    KRI-1112 (Leverkusen M3, 13:39): so is a list the creator gave one clip at a time that
+    places every clip and Visual the edit shows (the contract pins it as ``creator_list``):
+    the planner seats exactly those rows (`apply_sequence`) and the verifier refuses any
+    other order.
     """
     if strategy.get("ordering_choice") == "random":
         planned = "random"
+    elif (
+        contract is not None
+        and contract.order_required
+        and contract.order_basis == CREATOR_LIST_ORDER_BASIS
+        and contract.order_ids
+    ):
+        planned = CREATOR_LIST_ORDER_BASIS
     elif (
         strategy.get("ordering_choice") != "group_first"
         and contract is not None

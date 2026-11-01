@@ -59,6 +59,7 @@ from app.services.choice_questions import (
 )
 from app.services.clip_file_names import clip_display_name
 from app.services.clip_order_sequence import (
+    SequenceRow,
     apply_sequence,
     sequence_rows,
     stated_anchors,
@@ -1088,6 +1089,34 @@ _SEQUENCE_UNRESOLVED = (
 )
 
 
+# KRI-1112: the order a creator listed clip by clip ("Use exactly this order: IMG_1028, ..."),
+# when the list states every shown item's place (`_creator_listed_order`).
+CREATOR_LIST_ORDER_BASIS = "creator_list"
+
+
+def _creator_listed_order(
+    sequence: Sequence[SequenceRow], shown: Sequence[str], stated: Mapping[str, str]
+) -> tuple[str, ...]:
+    """KRI-1112: the whole order a creator listed one clip at a time, else ``()``.
+
+    Every item the edit shows sits in exactly one resolved single-clip row of the stated
+    sequence and no row names anything else, so the montage writer's own seating
+    (`apply_sequence`) leaves nothing to a basis order: the list is the order. A first / last
+    clip the brief still states that no row seats is not that list (it is asked about).
+    """
+    if (
+        not shown
+        or len(set(shown)) != len(shown)
+        or any(status != "resolved" or len(members) != 1 for _p, _n, members, status in sequence)
+        or not set(stated) <= {position for position, _n, _m, _s in sequence}
+    ):
+        return ()
+    named = [members[0] for _p, _n, members, _s in sequence]
+    if len(set(named)) != len(named) or set(named) != set(shown):
+        return ()
+    return tuple(apply_sequence(list(shown), sequence))
+
+
 def _pin_not_found(words: str) -> str:
     """A stated first / last clip the server could not place, in the chat's language."""
     return say(
@@ -1492,6 +1521,7 @@ def build_render_contract(
         str(item) for item in clip_order if str(item).strip() and str(item) not in hidden_ids
     )
     order_basis = "confirmed" if order_ids else None
+    placed_rule = False
     unresolved: list[str] = []
     # Leverkusen M2: parts of clips the creator asked never to show. `strategy` is already
     # collapsed onto the kept copy of a byte-identical upload. One nobody settled (no clip,
@@ -1684,7 +1714,9 @@ def build_render_contract(
                     # strict model takes no new field (old workers must read every
                     # contract): the brief receipt proves where each described group
                     # landed (`brief_checks._check_order`), and a checked receipt that is
-                    # not met blocks the unified montage before anything renders.
+                    # not met blocks the unified montage before anything renders. A list that
+                    # places every shown clip is pinned below (KRI-1112).
+                    placed_rule = True
                     continue
                 if (
                     one_clip
@@ -1808,6 +1840,21 @@ def build_render_contract(
                 else tuple(sorted(shown, key=lambda media_id: dates[media_id]))
             )
             order_basis = "capture_time"
+    if placed_rule and not order_required:
+        # KRI-1112 (prod thread 83f2dcaa, 13:39): "Use exactly this order: IMG_1028, IMG_1036,
+        # IMG_1037, IMG_1039, IMG_1043" placed every clip by its file name, but a rule with no
+        # basis pinned nothing, so approval could never confirm it. A complete list is the
+        # whole order: pin it, so the phone verifier refuses a render that plays another.
+        listed = _creator_listed_order(
+            sequence,
+            [
+                *(str(row.get("media_id") or "") for row in edit_rows if isinstance(row, Mapping)),
+                *(str(row["media_id"]) for row in _edit_visuals(media_snapshot, raw, hidden_ids)),
+            ],
+            stated_anchors(brief),
+        )
+        if listed:
+            order_required, order_ids, order_basis = True, listed, CREATOR_LIST_ORDER_BASIS
     if (
         order_required
         and order_ids
