@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.53.0] - 2026-11-01
+
+### Changed
+- fix(kria): raise the clip-instruction cap from 16 to 40 (KRI-1122) (#1999) <!-- release-pr: 1999 -->
+
 ## [0.83.52.0] - 2026-11-01
 
 ### Changed
