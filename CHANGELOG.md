@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.56.0] - 2026-11-01
+
+### Changed
+- fix(kria): an unmet part of the ask no longer holds back sourced wording before approval (#2012) <!-- release-pr: 2012 -->
+
 ## [0.83.55.0] - 2026-11-01
 
 ### Changed

@@ -134,6 +134,7 @@ from app.services.clip_order_sequence import (
     apply_sequence,
     moment_seats,
     row_relations,
+    seat_owners,
     sequence_rows,
     unconfirmed_order_groups,
 )
@@ -1392,13 +1393,13 @@ def _sequence_outcomes(
 
     Every row also carries a ``code`` (KRI-503) so the receipt never re-parses ``reason``:
     ``landed`` / ``misplaced`` (a described group is not where it was asked), ``absent`` (none
-    of its clips are in the edit), ``contained`` (a ``then`` group whose clips are all already
-    in an earlier group), ``repeat`` (a first / last group naming clips an earlier group
-    already seated at that same spot: the creator said it twice, KRI-764), ``conflict`` (a
-    first / last group naming clips an earlier group seated at another spot: one clip cannot
-    be both, the earlier claim stands), ``visual`` (its members are Visuals-pool items, which
-    no sequence rule seats) and ``unresolved``. ``status`` keeps its meaning for every other
-    consumer.
+    of its clips are in the edit), ``contained`` (a ``then`` group whose clips other rows
+    all seat: an earlier group, or a first / last pin, KRI-1109), ``repeat`` (a first / last
+    group naming clips an earlier group already seated at that same spot: the creator said it
+    twice, KRI-764), ``conflict`` (a first / last group naming clips an earlier pin seated at
+    the other end: one clip cannot be both, the earlier claim stands), ``visual`` (its
+    members are Visuals-pool items, which no sequence rule seats) and ``unresolved``.
+    ``status`` keeps its meaning for every other consumer.
 
     A row lands (KRI-941) when the finished cut agrees with it against EVERY other clip in the
     edit, named or not: a ``first`` group leads the whole cut, a ``last`` group closes it, and
@@ -1419,13 +1420,9 @@ def _sequence_outcomes(
     seated = [c for c in ordered if c.lane == "clip" or c.ref_id in seated_visuals]
     spot = {clip.ref_id: i for i, clip in enumerate(seated)}
     visuals = {clip.ref_id for clip in ordered if clip.lane != "clip"} - seated_visuals
-    # The row that seats each clip: the first one naming it (``apply_sequence``'s own rule).
-    owner: dict[str, int] = {}
-    for at, (_p, _n, members, status) in enumerate(rows):
-        if status == "resolved":
-            for member in members:
-                if member in spot:
-                    owner.setdefault(member, at)
+    # The row that seats each clip, by ``apply_sequence``'s own rule: a first / last row
+    # takes its clips out of a ``then`` group (KRI-1109), else the first row naming them.
+    owner = seat_owners(rows, present=spot)
     relations = row_relations(rows, present=spot)
     moments = (
         _moment_outcomes(seats, cuts, spans=spans, record=moment_record)
@@ -1433,7 +1430,6 @@ def _sequence_outcomes(
         else {}
     )
     out: list[dict[str, Any]] = []
-    seen: set[str] = set()
     landed_clips: set[str] = set()
     for index, ((position, name, members, status), relation) in enumerate(
         zip(rows, relations, strict=True)
@@ -1441,10 +1437,9 @@ def _sequence_outcomes(
         label = f"{position or 'then'}: {name}" if name else "the order you described"
         row = {"op": "order", "name": label, "position": position or "then"}
         if index in moments:
-            seen.update(m for m in members if m in spot)
             out.append({**row, **moments[index]})
             continue
-        mine = [m for m in members if m in spot and m not in seen]
+        mine = [m for m in members if owner.get(m) == index]
         if status != "resolved":
             out.append(
                 {
@@ -1478,7 +1473,7 @@ def _sequence_outcomes(
             )
             continue
         if not mine:
-            if any(m in seen for m in members):
+            if any(m in owner for m in members):
                 code, reason = "contained", "its clips are already in an earlier group"
             elif members and all(m in visuals for m in members):
                 code, reason = "visual", "I found no clips of it"
@@ -1486,7 +1481,6 @@ def _sequence_outcomes(
                 code, reason = "absent", "I found no clips of it"
             out.append({**row, "status": "not_possible", "code": code, "reason": reason})
             continue
-        seen.update(mine)
         met = _group_landed(position, index, mine, spot, owner, rows)
         if met:
             landed_clips.update(mine)

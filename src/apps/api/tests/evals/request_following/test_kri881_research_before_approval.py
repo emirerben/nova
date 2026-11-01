@@ -254,11 +254,13 @@ class _Recorded(ModelClient):
         *,
         search_delay_s: float = 0.0,
         search_failures: int = 0,
+        copy_unmet: list[str] | None = None,
     ) -> None:
         self.calls = calls
         self.grounding = grounding
         self.search_delay_s = search_delay_s
         self.search_failures = search_failures
+        self.copy_unmet = copy_unmet or []
 
     def invoke(self, *, model: str, prompt: str, **_: object) -> ModelInvocation:  # noqa: ARG002
         if prompt.startswith("Research this public topic"):
@@ -302,7 +304,9 @@ class _Recorded(ModelClient):
                         "identity_quote": "",
                     }
                 )
-            return ModelInvocation(raw_text=json.dumps({"captions": captions}))
+            return ModelInvocation(
+                raw_text=json.dumps({"captions": captions, "unmet_requests": self.copy_unmet})
+            )
         if prompt.startswith("Review proposed on-screen captions"):
             self.calls["review"] += 1
             return ModelInvocation(
@@ -636,6 +640,29 @@ async def test_t06_sourced_wording_is_shown_before_approval_and_rendered_as_appr
 def _draft_snapshot(draft_id: uuid.UUID) -> dict:
     with sync_session() as db:
         return dict(db.get(CreatorEditDraft, draft_id).snapshot_json)
+
+
+@pytest.mark.asyncio
+async def test_an_ask_the_writer_cannot_source_never_holds_back_a_sourced_draft(
+    monkeypatch,
+) -> None:
+    """Prod 2026-11-01, "With animations, explain why people should visit Assos, Turkey":
+    the copy writer listed "animations" under unmet_requests next to four sourced captions,
+    and the whole draft was held back with "I can't make this yet". A part of the ask the
+    research step cannot do is disclosed; it never blocks the sourced wording."""
+    calls = _record(monkeypatch, INSTITUTIONAL, copy_unmet=["animations"])
+    result, accepted, thread_id = await _turn(monkeypatch)
+
+    assert result["status"] == "awaiting_approval", result
+    assert (calls["search"], calls["copy"], calls["review"]) == (1, 1, 1)
+    approvals, binding = _approved_binding(accepted.turn_id)
+    assert len(approvals) == 1
+    content = str(_reply(thread_id).content)
+    assert "Sourced on-screen explanations" in content
+    assert "Sources could not be confirmed" not in content
+    assert binding is not None and binding.prepared_research is not None
+    assert binding.prepared_research["status"] == "ready"
+    assert len(binding.prepared_research["texts"]) == 2
 
 
 @pytest.mark.asyncio

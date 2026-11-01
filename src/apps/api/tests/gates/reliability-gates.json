@@ -4098,6 +4098,48 @@
       "red_control": "not_applicable"
     },
     {
+      "id": "kri-1109-order-pin-beats-group",
+      "tickets": [
+        "KRI-1109",
+        "KRI-764"
+      ],
+      "symptom": "Leverkusen M3 run 1 (thread 83f2dcaa, 13:24 + 13:35, 2026-10-31): \"in the order I filmed them, ending on IMG_1043\" was held with \"You asked for the same clip in two places: ... (IMG_1043) (last). I kept the first place you named.\" The clip-intent planner wrote the filming order as a positionless order group over all five videos, listed before a last pin on IMG_1043; the sequence rule gave each clip to the first row naming it, so the group seated IMG_1043 at 'then' and the pin read as a conflict (listed the other way round, no conflict). The approved 13:41 job (one row per file + the same pin) came back code=conflict while its cut ended on IMG_1043, and 'filming order, but end on <another clip>' ignored the ending.",
+      "boundary": "planner",
+      "status": "open_pr",
+      "owner": "KRI-1109",
+      "paths": [
+        "src/apps/api/app/services/clip_order_sequence.py",
+        "src/apps/api/app/pipeline/unified_montage.py"
+      ],
+      "regression_tests": [
+        "tests/kria/test_m3_kri1109_repro.py",
+        "tests/services/test_kri1109_pin_beats_group.py",
+        "tests/services/test_order_pin_repeats.py"
+      ],
+      "harness": "real_contract",
+      "kill_switch": null,
+      "evidence": {
+        "offline_replay": "The run's recorded briefs v3/v4 (prod DB), both turns' recorded clip-intent planner output and resolver output (proposal trace) and the media snapshot approval pinned for job 3c415e0e (media digest a496e95d..., the 13:35 turn's) through the real answered_brief, brief_order_fields, plan_facts_from_strategy, assess_readiness and render contract; the replayed briefs have the turns' recorded brief_digest. Red on main (13:35, 13:24, listed-order dependence); green after. The caf\u00e9 world (12 dated clips) drives the real planner, contract, phone recipe verifier and receipts for the group + pin shapes.",
+        "live_model": "Not run; no paid calls. No prompt or model change.",
+        "native_output": "unknown; no iPhone re-send yet. The planner order equals the contract order_ids and verify_phone_recipe passes offline.",
+        "production": "Not deployed."
+      },
+      "neighbours_covered": [
+        "group over every clip + last pin on the last clip filmed: no conflict, filming order, receipt met",
+        "group over every clip + last pin on another clip: that clip plays last, contract agrees, group and pin both landed",
+        "the two intents listed either way round: same cut, contract and verdict",
+        "one positionless row per file + an agreeing last pin (the 13:41 job): emptied row contained, pin landed",
+        "one clip asked first AND last: still 'two places', the earlier pin keeps it, wherever a group listing it sits",
+        "a last pin restated by file name after a group: repeat"
+      ],
+      "neighbours_gap": [
+        "A pin that contradicts an explicitly listed one-clip order (\"A, B, C, D in this order\" + \"end on B\") now seats B last without a word, as it always did when the pin was listed first.",
+        "generative_build._narrated_creator_clip_labels and content_plan_build.order_paths_by_resolved_intents keep their own first-row-wins copies of the seating rule (narrated pins and the native pre-order the montage planner re-seats); not changed here."
+      ],
+      "follow_ups": [],
+      "red_control": "not_applicable"
+    },
+    {
       "id": "kri-1108-unfound-order-pin",
       "tickets": [
         "KRI-1108"
