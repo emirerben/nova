@@ -9,8 +9,8 @@ import pytest
 from pydantic import SecretStr
 
 from app.services.apns import (
-    Accepted,
     ALERT_COPY,
+    Accepted,
     ActivityNotification,
     APNsTarget,
     APNsTransport,
