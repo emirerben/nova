@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.83.92.0] - 2026-11-01
+
+### Changed
+- feat(ios): native Cinematic recording in the teleprompter (KRI-1160) (#2048) <!-- release-pr: 2048 -->
+
 ## [0.83.91.0] - 2026-11-01
 
 ### Fixed
