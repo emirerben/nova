@@ -78,8 +78,8 @@ FIELD_HANDLING: dict[str, Handling] = {
     "montage_cadence": Applied(),
     # Read outside the route's files (the dispatch, the contract) or through a helper the
     # read scan does not see: each names the symbol that reads it, which the gate checks.
-    "edit_format": Applied(via=lines.DISPATCH),
-    "render_program": Applied(via="agents/_schemas/creator_policy.py:effective_render_program"),
+    "edit_format": Applied(via=lines.APPROVAL),
+    "render_program": Applied(via=lines.RENDER_POLICY),
     "audio_strategy": Applied(via=lines.CONTRACT),
     "media_scope": Applied(via="pipeline/unified_montage.py:selected_visual_ids"),
     "selected_media_ids": Applied(via="pipeline/unified_montage.py:selected_visual_ids"),
@@ -87,13 +87,13 @@ FIELD_HANDLING: dict[str, Handling] = {
     "target_duration_s": Applied(via=_PLAN),
     "font_family": Applied(via=_PLAN),
     "text_color": Applied(via=_PLAN),
-    "opening_title": Applied(via="pipeline/unified_montage.py:_title"),
+    "opening_title": Applied(via=lines.TITLE),
     "opening_title_duration_s": Applied(via=_PLAN),
     "closing_title": Applied(via=_PLAN),
     "shot_labels": Applied(via=_PLAN),
     "video_reuse_policy": Applied(via=lines.DISPATCH),
     "montage_audio": Applied(via="pipeline/unified_montage.py:_keeps_source_audio"),
-    "execution_contract": Applied(via="agents/_schemas/creator_policy.py:effective_render_program"),
+    "execution_contract": Applied(via=lines.RENDER_POLICY),
 }
 
 READERS = RouteReaders(

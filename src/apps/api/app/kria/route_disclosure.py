@@ -49,8 +49,10 @@ from app.kria.route_capabilities import (
 )
 from app.kria.route_capabilities import _legacy_unified as legacy_unified
 from app.kria.route_capabilities import _lines as lines
+from app.kria.route_capabilities._types import NOT_APPLIED_ON_ROUTE, RECORDED_ONLY_ON_ROUTE
 
-NOT_APPLIED = "not_applied_on_route"
+NOT_APPLIED = NOT_APPLIED_ON_ROUTE
+RECORDED_ONLY = RECORDED_ONLY_ON_ROUTE
 RESEARCH_AFTER_APPROVAL = "research_after_approval"
 UNIFIED_MONTAGE = str(RouteId.UNIFIED_MONTAGE)
 
@@ -63,7 +65,7 @@ def enabled() -> bool:
 class Disclosure:
     """One honest line for the draft/approval card, with a typed reason for clients and logs."""
 
-    code: str  # NOT_APPLIED | RESEARCH_AFTER_APPROVAL
+    code: str  # NOT_APPLIED | RECORDED_ONLY (the table entry's own code) | RESEARCH_AFTER_APPROVAL
     subject: str  # strategy field name, or an ask class ("text_animation")
     text: str
     requirement_id: str | None = None
@@ -147,7 +149,7 @@ def strategy_notices(
                 if says_fallback(reason, direction):
                     out.append(
                         Disclosure(
-                            NOT_APPLIED, field, fallback_note(reason, direction, future=True)
+                            handling.code, field, fallback_note(reason, direction, future=True)
                         )
                     )
                     continue
@@ -155,7 +157,7 @@ def strategy_notices(
                 lines_of = getattr(table, "story_lines_notice", None)
                 text = lines_of(strategy) if lines_of is not None else None
                 if text:
-                    out.append(Disclosure(NOT_APPLIED, field, text))
+                    out.append(Disclosure(handling.code, field, text))
                 continue
         try:
             build = handling.build
@@ -167,7 +169,7 @@ def strategy_notices(
         except Exception:  # noqa: BLE001 - a disclosure must never fail a draft
             text = None
         if text:
-            out.append(Disclosure(NOT_APPLIED, field, text))
+            out.append(Disclosure(handling.code, field, text))
     for subject, notice in getattr(table, "NOTICES", {}).items():
         try:
             text = notice(strategy)
@@ -366,11 +368,11 @@ def card_layout(
 def card_text(disclosures: Sequence[Disclosure], *, limit: int = 640) -> str:
     """The disclosures as card lines under a plain heads-up: whole sentences within ``limit``
     characters, then one compact line naming every disclosure that did not fit (never cut
-    silently). A subject with no short name keeps its whole sentence. With the registry off
-    the lines past the budget are dropped, as before it."""
+    silently). A subject with no short name keeps its whole sentence. With the registry or the
+    disclosure switch off the lines past the budget are dropped, as before the registry."""
     whole, rest = card_layout(disclosures, limit=limit)
     out = [f"- {item.text}" for item in whole]
-    if rest and registry_enabled():
+    if rest and decoupled_from_readiness():
         named = [item.subject for item in rest if lines.subject_label(item.subject)]
         if named:
             out.append(f"- {lines.compact_line(named)}")

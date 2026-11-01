@@ -163,8 +163,8 @@
       "r3"
     ],
     "honored": {
-      "fields": [],
-      "asks": []
+      "fields": {},
+      "asks": {}
     },
     "not_graded": {
       "honored": "no render target: the slide lane (L6) discloses every video-only field and changes the planner prompt, which an offline replay of a written strategy cannot show"

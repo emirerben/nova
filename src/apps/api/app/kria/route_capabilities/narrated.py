@@ -46,7 +46,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "hero_media_id": NotApplied(lines.hero),
     "overlay_display": NotApplied(lines.overlay),
     "licensed_sfx": NotApplied(lines.sfx),
-    "edit_format": Applied(via=lines.DISPATCH),
+    "edit_format": Applied(via=lines.APPROVAL),
     "opening_title": Applied(),
     # Every phone writer styles its text through the shared pass (KRI-1024).
     "font_family": Applied(via=lines.TEXT_STYLE),

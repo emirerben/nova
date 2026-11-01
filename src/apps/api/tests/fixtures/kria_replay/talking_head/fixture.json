@@ -399,12 +399,12 @@
       "r6"
     ],
     "honored": {
-      "fields": [
-        "title_animation"
-      ],
-      "asks": [
-        "r6"
-      ]
+      "fields": {
+        "title_animation": "title_animation"
+      },
+      "asks": {
+        "r6": "title_animation"
+      }
     },
     "not_graded": {
       "r1": "start/end at spoken lines: judged by the Talking writer's cut receipts at render (prod: end_cut not_found, the take ran to the end); not a strategy field the route table owns",

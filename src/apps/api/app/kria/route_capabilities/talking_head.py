@@ -39,7 +39,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "archetype": NotApplied(lines.archetype),
     "hero_media_id": NotApplied(lines.hero),
     "licensed_sfx": NotApplied(lines.sfx),
-    "edit_format": Applied(via=lines.DISPATCH),
+    "edit_format": Applied(via=lines.APPROVAL),
     "opening_title": Applied(),
     "opening_title_duration_s": Applied(),
     "closing_title": Applied(),

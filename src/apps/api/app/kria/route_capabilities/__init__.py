@@ -88,6 +88,14 @@ def table_for(route: object) -> ModuleType | None:
         return None
 
 
+def _kept_camera_sources(strategy: Mapping[str, Any]) -> list[str]:
+    """The clips whose camera sound the approved contract keeps (its ``audio_source_ids``)."""
+    audio = strategy.get("montage_audio")
+    if not isinstance(audio, Mapping) or not audio.get("preserve_source_audio"):
+        return []
+    return [m for m in (audio.get("source_media_ids") or []) if m]
+
+
 def _montage_family_route(strategy: Mapping[str, Any]) -> RouteId | None:
     """Which phone montage writer takes a draft that leaves the voiceover lane.
 
@@ -100,10 +108,16 @@ def _montage_family_route(strategy: Mapping[str, Any]) -> RouteId | None:
     A job minted with ``KRIA_PLAN_AUTHORITY_ENABLED`` off carries no plan-authority stamp, and
     the dispatch then ignores ``voice_mode`` (`job_requires_camera_speech`): named camera
     sound always takes the spoken-excerpt writer, as it does here.
+
+    A writer that would refuse answers None: the spoken-excerpt writer with
+    ``SPEECH_EXCERPT_MONTAGE_ENABLED`` off asks instead of cutting
+    (`run_phone_speech_montage_job`), and a creator song fails closed while
+    `phone_user_song_supported` is false (``USER_SONG_MONTAGE_ENABLED`` off).
     """
     from dataclasses import replace  # noqa: PLC0415
 
     from app.config import settings  # noqa: PLC0415
+    from app.services.phone_rollout import phone_user_song_supported  # noqa: PLC0415
     from app.services.render_route import (  # noqa: PLC0415
         ContractFacts,
         Route,
@@ -114,7 +128,7 @@ def _montage_family_route(strategy: Mapping[str, Any]) -> RouteId | None:
 
     audio = strategy.get("montage_audio")
     keeps_sound = isinstance(audio, Mapping) and bool(audio.get("preserve_source_audio"))
-    sources = [m for m in (audio.get("source_media_ids") or []) if m] if keeps_sound else []
+    sources = _kept_camera_sources(strategy)
     original_audio = (
         ("require" if keeps_sound else "forbid")
         if isinstance(audio, Mapping)
@@ -139,6 +153,13 @@ def _montage_family_route(strategy: Mapping[str, Any]) -> RouteId | None:
             song_present=strategy.get("audio_strategy") == "user_song",
         )
     )
+    if resolution.route is Route.SPEECH_MONTAGE and not settings.speech_excerpt_montage_enabled:
+        return None
+    if (
+        resolution.route in {Route.USER_SONG_MONTAGE, Route.LIPSYNC_MONTAGE}
+        and not phone_user_song_supported()
+    ):
+        return None
     return {
         Route.UNIFIED_MONTAGE: RouteId.UNIFIED_MONTAGE,
         Route.USER_SONG_MONTAGE: RouteId.UNIFIED_MONTAGE,
@@ -220,16 +241,26 @@ def resolve_route_id(
         common = {"creator_id": creator_id, "edit_format": fmt, "clip_paths": paths}
         if defers_to_unified_montage(audio_strategy=audio, **common):
             return _montage_family_route(strategy)
+        # Kept camera sound beside a recorded voice: the dispatch refuses the two soundtracks
+        # (`check_phone_dispatch_contract`) unless a narrated item may keep camera sound.
+        kept_with_voice = audio == "voiceover" and bool(_kept_camera_sources(strategy))
         if fmt in GUIDED_EDIT_FORMATS:
             # The voiceover lane: the dispatch gate refuses it unless the phone plays narration.
             on_phone = (
                 audio == "voiceover"
+                and not kept_with_voice
                 and defers_text_to_phone(creator_id=creator_id, clip_paths=paths)
                 and settings.phone_narration_rendering_enabled
                 and "narrationAudio" in settings.phone_render_verified_features
             )
             return RouteId.VOICEOVER_MONTAGE if on_phone else None
         if defers_to_narrated_render(audio_strategy=audio, **common):
+            from app.services.phone_rollout import (  # noqa: PLC0415
+                phone_voiceover_source_audio_supported,
+            )
+
+            if kept_with_voice and not phone_voiceover_source_audio_supported(require_client=False):
+                return None
             return RouteId.NARRATED
         return _talking_writer_route(creator_id, fmt, audio, paths)
     except Exception:  # noqa: BLE001 - a disclosure must never fail a draft

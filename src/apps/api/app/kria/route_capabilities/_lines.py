@@ -13,12 +13,19 @@ from app.kria.brief import BriefRequirement
 from app.kria.reply_language import say
 from app.kria.route_capabilities._types import Builder, WithAsks
 
-# Carriers for ``Applied(via=...)``: the symbol that reads a field outside a route's own files.
+# Carriers for ``Applied(via=...)``: the shared function that reads a field off the strategy
+# outside a route's own files. The grader accepts only these shared ones (each must read the
+# field) beside a function in the route's own ``READERS`` (`score_route.SHARED_CARRIERS`).
+APPROVAL = "kria/runtime.py:_apply_strategy_approval_media"
 DISPATCH = "tasks/generative_build.py:_run_generative_job_impl"
 CONTRACT = "services/creator_render_contract.py:build_render_contract"
 SELECTION = "tasks/content_plan_build.py:_creator_selected_clip_paths"
 TEXT_STYLE = "services/phone_text_styling.py:requested_style"
 OVERLAY_CANDIDATE = "services/generative_jobs.py:build_generative_job"
+# The title resolver both montage writers call (`lipsync_montage` imports it).
+TITLE = "pipeline/unified_montage.py:_title"
+# The render-program policy approval and dispatch share.
+RENDER_POLICY = "agents/_schemas/creator_policy.py:effective_render_program"
 
 
 def clip(value: object, limit: int = 70) -> str:

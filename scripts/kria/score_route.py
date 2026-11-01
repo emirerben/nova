@@ -9,7 +9,8 @@ is a recorded or reconstructed draft under ``tests/fixtures/kria_replay/<name>/f
      "clips": [{"id", "kind", "duration_s", "has_audio"?, "analysis"?}],
      "client_protocol"?, "source": {"recorded": [...], "reconstructed": [...]},
      "checks"?: {"fields": [...], "asks": ["r1", ...],
-                 "honored"?: {"fields": [...], "asks": [...]}, "not_graded"?: {item: why}}}
+                 "honored"?: {"fields": {field: key}, "asks": {req_id: key}},
+                 "perturb"?: {key: value}, "not_graded"?: {item: why}}}
 
 ``checks`` defaults are read from the plan, never from the code: every creator-visible field
 the planner set away from the schema default (the pace always, since the card shows it; a length
@@ -19,49 +20,63 @@ the rest out of grading; each one left out is counted in the summary, and one wi
 
     cd src/apps/api && .venv/bin/python ../../../scripts/kria/score_route.py --fixture NAME
     make kria-replay FIXTURE=NAME          # a fixture with no score_<name>.py of its own
+    ... score_route.py --write-golden-lines  # re-record the card-line golden (review its diff)
 
 Offline: a socket guard fails any network attempt and no model is called. The approval card is
 assembled from the same pure functions the draft turn runs (`tasks.kria_runtime`): receipts,
-route declines, the route's card lines. On code that predates the route registry it falls back
-to what that code did (unified montage only, lines only for approval-readiness accounts), so the
-same fixture shows the drops as NOT VERIFIED there.
+route declines, the route's card lines, once in English and once in Turkish
+(`reply_language_for`). On code that predates the route registry it falls back to what that
+code did (unified montage only, lines only for approval-readiness accounts), so the same
+fixture shows the drops as NOT VERIFIED there.
 
 Checks (VERIFIED / NOT VERIFIED; INCONCLUSIVE when a check could not run). Each carries a
 ``kind``: ``disclosed_ok`` (applied or said before approval), ``honored`` (applied in the render,
 nothing else counts), ``gate`` or ``route`` / ``report``.
 
 1.        route: the draft resolves to the fixture's route (the card reads that route's table).
-2.<field> disclosed_ok: render evidence shows the field applied, or the card carries that
-          field's own registry line (a `route_disclosure.Disclosure` with code
-          ``not_applied_on_route`` and subject <field>) that the creator reads (a whole line,
-          or named on the compact line), or a route decline about that field (an animation
-          decline for ``title_animation``, a captions decline for ``caption_style``). Free text
-          never counts, whatever it says ("applied exactly as planned, nothing is skipped").
+2.<field> disclosed_ok: the render replay applies the field, or the English AND the Turkish
+          card each carry that field's own registry line the creator reads (a whole line, or
+          named on the compact line) whose typed code is the code the route's table gives the
+          field (``not_applied_on_route`` / ``recorded_only_on_route``), or a route decline
+          whose ask's own facts are about that field and whose text is the registry's decline
+          for it. Free text never counts, whatever it says.
 3.<id>    disclosed_ok: the receipt is met (checked), or a typed decline before approval
           (``not_possible``, checked, with a reason), or for a length ask the card's own
-          ``target_duration_s`` registry line.
-4.<field> honored: render evidence applies the field (``checks.honored.fields``).
-5.<id>    honored: render evidence honors the ask (``checks.honored.asks``).
+          ``target_duration_s`` registry line; in both languages.
+4.<field> honored / 5.<id> honored: the render replay's recipe value meets what was asked
+          (``checks.honored``), under the replay contract below.
 10.claims gate: every field the route's table marks ``Applied`` is read off the strategy in the
           route's code (``READERS``: a strategy receiver, so ``step.target_duration_s`` is not a
-          read), or its ``via`` names a ``"<path under app/>:<symbol>"`` that is defined there
-          and names the field. A red one is listed in lane_targets.json or the run fails.
+          read), or its ``via`` names a function in the route's own ``READERS`` or one of the
+          ``SHARED_CARRIERS`` whose body reads the field off a strategy object (AST); a class,
+          another route's file or a symbol that only names the field is no carrier. A reader
+          file or function listed by two routes fails it too.
+10.lines  gate: the card lines every route's table builds for fixed probe plans, both
+          languages, with their typed codes, equal the recorded golden
+          (``tests/fixtures/kria_replay/golden_lines.json``): rewording a line, or turning it
+          into a claim that the value is applied, changes the golden, which a reviewer reads.
 10.       consumer gate (REPORT ONLY): fields the route ignores that the card does not disclose.
 
-Render evidence (checks 2, 4, 5) comes only from a route replay module,
-``scripts/kria/route_replays/<route>.py``, under this contract:
+Replay contract (render evidence for checks 2, 3, 4, 5). A lane adds
+``scripts/kria/route_replays/<route>.py`` exporting ``recipe(fx) -> {key: value}``: the render
+recipe values the route's own code builds for the fixture's inputs, never a verdict. Keys
+(``RECIPE_KEYS``): ``title_animation`` the entrance on the title rows (str, or one per row),
+``pace`` the pace the clip holds use, ``length_s`` the rendered seconds, ``caption_mode``
+none / sentence / word. The grader compares each value with the asked one (a field's strategy
+value, an ask's typed fact) and runs its own controls on the module, each needed for a claim:
 
-* ``honored(fx) -> {"fields": {field: bool}, "asks": {req_id: bool}, "recipe": <JSON>}``, where
-  ``recipe`` is what the route's code produced for ``fx`` (the plan the phone renders). Only a
-  literal ``True`` counts.
-* It must run the route's own code: the grader traces the call and a run that enters no file or
-  function in the route's ``READERS`` gives no render evidence (its claims are discarded and
-  the scorecard is INVALID).
-* Negative controls rerun it (a) with every brief ask removed and every honored target field
-  (and its provenance) removed from the plan, and (b) with the route's lane kill switch off
-  (``LANE_SWITCH``). Every honored target must come back not honored in both, and the recipe
-  of (a) must differ from the real one. A claim that survives either, or a claim with no
-  recipe, makes the scorecard INVALID (exit 2).
+* perturbation: the asked value changed (pop to fade, relaxed to fast, 30 s to 45 s, or
+  ``checks.perturb``) must change the value to match;
+* drop: one asked key removed (field, provenance and asks) reverts only that key to the value
+  with nothing asked; every other claimed key keeps its value;
+* switch off: with the lane switch (``LANE_SWITCH``) off the ask changes nothing;
+* provenance: every claimed value is one a function in the route's ``READERS`` returned during
+  that run, and the run entered the route's code;
+* switch probe: the lane switch is read only by the route's code, never by the module.
+
+A module that fails one makes the scorecard INVALID (exit 2). The same controls run every time
+on synthetic modules over a synthetic route: an honest one must pass; a constant, an ask-keyed,
+a switch-keyed and two echo modules must fail.
 
 Lane targets: ``tests/fixtures/kria_replay/lane_targets.json`` lists, per fixture, the checks
 expected NOT VERIFIED today and the lane that turns each green. The report splits failures into
@@ -69,12 +84,11 @@ expected NOT VERIFIED today and the lane that turns each green. The report split
 targets (a lane landed: remove the entry). An unexpected red exits 1.
 
 Negative controls (mandatory, INVALID rule as in ``score_29_ekim.py``): each check's predicate
-and the check functions themselves (`check_field`, `check_ask`, the card's ``on_card``) get a
-synthetic card that ignores the ask (must FAIL) and one that honours it (must PASS); the gate
-gets a synthetic unread field, an ``Applied`` claim with no reader, a colliding attribute read
-and bad carriers (all must be flagged). A control that cannot run because the registry fails to
-import is INVALID too; only code that predates the registry (no package) shows them n/a.
-A failed control makes the scorecard INVALID (exit 2).
+and the check functions themselves get a synthetic card that ignores the ask (must FAIL) and one
+that honours it (must PASS); the gates get unread fields, claims with no reader, bad carriers,
+a shared reader file and a reworded line (all must be flagged). A control that cannot run
+because the registry fails to import is INVALID too; only code that predates the registry (no
+package) shows them n/a. A failed control makes the scorecard INVALID (exit 2).
 """
 
 from __future__ import annotations
@@ -83,15 +97,21 @@ import argparse
 import ast
 import contextlib
 import copy
+import functools
 import importlib.util
+import inspect
 import json
+import os
 import re
 import sys
+import tempfile
+import types
 import uuid
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
@@ -100,18 +120,18 @@ API = REPO / "src" / "apps" / "api"
 APP = API / "app"
 FIXTURES = API / "tests" / "fixtures" / "kria_replay"
 LANE_TARGETS = FIXTURES / "lane_targets.json"
+GOLDEN_LINES = FIXTURES / "golden_lines.json"
 REPLAYS = HERE / "route_replays"
 REGISTRY_PACKAGE = APP / "kria" / "route_capabilities" / "__init__.py"
+BUILDER = "tasks/generative_build.py"
 CREATOR_ID = uuid.UUID("00000000-0000-4000-8000-000000001097")
+LANGS = ("en", "tr")
 
-# `route_disclosure.NOT_APPLIED`: the code of a line the route's table built.
-NOT_APPLIED_CODE = "not_applied_on_route"
-# A route decline about an ask class that also says this strategy field is not applied. The
-# grader owns this map: a decline about anything else (a title position, a pop-in) discloses
-# no field.
-DECLINE_DISCLOSES = {"text_animation": "title_animation", "captions": "caption_style"}
+# The typed codes of a table's card lines (`route_capabilities._types`): a line counts only
+# with the code its table entry gives the field.
+TABLE_CODES = frozenset({"not_applied_on_route", "recorded_only_on_route"})
 # Each route's lane kill switch (`config.py`): off, the route is byte-identical to before the
-# lane, so a replay must show nothing honored.
+# lane, so an ask must change nothing in its recipe.
 LANE_SWITCH = {
     "voiceover_montage": "voiceover_route_follows_prompt_enabled",
     "talking_head": "talking_head_route_follows_prompt_enabled",
@@ -120,10 +140,17 @@ LANE_SWITCH = {
     "speech_excerpt": "speech_excerpt_route_follows_prompt_enabled",
     "slide_post": "slide_route_follows_prompt_enabled",
 }
-# Server provenance that states a field on the creator's behalf (removed with the field).
-PROVENANCE = {
-    "target_duration_s": ("creator_duration_s", "target_duration_requested"),
-    "pacing": ("pacing_requested",),
+# Shared functions outside every route's own files that may carry an ``Applied`` field
+# (`route_capabilities._lines`). Each must still read the field off a strategy object.
+SHARED_CARRIERS = {
+    "kria/runtime.py:_apply_strategy_approval_media": "approval writes the format onto the item",
+    "tasks/generative_build.py:_run_generative_job_impl": "the dispatch",
+    "services/creator_render_contract.py:build_render_contract": "the approved render contract",
+    "tasks/content_plan_build.py:_creator_selected_clip_paths": "the creator's clip selection",
+    "services/phone_text_styling.py:requested_style": "the shared phone text style pass",
+    "services/generative_jobs.py:build_generative_job": "the job builder's flat keys",
+    "agents/_schemas/creator_policy.py:effective_render_program": "the render-program policy",
+    "pipeline/unified_montage.py:_title": "the title resolver both montage writers call",
 }
 
 
@@ -158,6 +185,12 @@ def _prod_flags() -> contextlib.ExitStack:
     )
     stack.enter_context(patch.object(settings, "phone_render_user_ids", []))
     return stack
+
+
+def _language(lang: str):  # noqa: ANN202
+    from app.kria.reply_language import reply_language_for
+
+    return reply_language_for(lang)
 
 
 # --------------------------------------------------------------------------- fixture
@@ -285,10 +318,23 @@ def exclusions(fx: dict) -> dict[str, Any]:
     }
 
 
-def honored_targets(fx: dict) -> tuple[list[str], list[str]]:
+class Target(NamedTuple):
+    """One render target: check ``4.<field>`` or ``5.<req_id>`` and the recipe key it reads."""
+
+    check_id: str
+    kind: str  # "fields" | "asks"
+    ident: str
+    key: str
+
+
+def honored_targets(fx: dict) -> list[Target]:
     """The fields and asks a lane will honor in the render (``checks.honored``)."""
     honored = (fx.get("checks") or {}).get("honored") or {}
-    return list(honored.get("fields") or []), list(honored.get("asks") or [])
+    out = []
+    for kind, prefix in (("fields", "4"), ("asks", "5")):
+        for ident, key in dict(honored.get(kind) or {}).items():
+            out.append(Target(f"{prefix}.{ident}", kind, ident, str(key)))
+    return out
 
 
 def lane_targets(fixture_id: str) -> dict[str, dict]:
@@ -359,6 +405,27 @@ def card_route(fx: dict) -> str | None:
     )
 
 
+def table_codes(route: str | None) -> dict[str, str]:
+    """``subject -> code`` for every line the route's table can build (the code its entry
+    gives it). Empty on code that predates the registry."""
+    registry = _registry()
+    if registry is None or route is None:
+        return {}
+    from app.kria.route_capabilities import NotApplied, RecordedOnly
+    from app.kria.route_disclosure import NOT_APPLIED, _table
+
+    table = _table(route)
+    if table is None:
+        return {}
+    codes = {
+        field: handling.code
+        for field, handling in table.FIELD_HANDLING.items()
+        if isinstance(handling, NotApplied | RecordedOnly)
+    }
+    codes.update(dict.fromkeys(getattr(table, "NOTICES", {}), NOT_APPLIED))
+    return codes
+
+
 def _compact_labels(line: str) -> list[str] | None:
     """The subjects a compact card line names, or None for any other line."""
     registry = _registry()
@@ -383,26 +450,50 @@ def on_card(record: dict, reply: str) -> bool:
     return bool(label) and any(label in (_compact_labels(line) or ()) for line in lines)
 
 
-def card_records(disclosures: list, reply: str) -> list[dict]:
-    """The card's registry lines (`Disclosure` records), each with whether the creator reads it."""
+def card_records(disclosures: list, reply: str, codes: Mapping[str, str]) -> list[dict]:
+    """The card's registry lines (`Disclosure` records): whether the creator reads each, and
+    the code the route's table gives its subject (``codes``, `table_codes`)."""
     records = [d.as_record() for d in disclosures]
-    return [{**r, "on_card": on_card(r, reply)} for r in records]
+    return [
+        {**r, "on_card": on_card(r, reply), "table_code": codes.get(str(r.get("subject")))}
+        for r in records
+    ]
 
 
-def decline_records(declines: list, receipts: list[dict], reply: str) -> list[dict]:
+def decline_field(req: Any, text: str) -> str | None:
+    """The strategy field a route decline speaks for: decided by the declined ask's own typed
+    facts and the registry's exact decline text in the card's language, never by the subject
+    label the table picked. A title-position decline speaks for no field."""
+    registry = _registry()
+    if registry is None or req is None:
+        return None
+    lines = registry.lines
+    for asks, decline, field in (
+        (lines.asks_text_animation, lines.animation_decline, "title_animation"),
+        (lines.asks_captions_on, lines.captions_decline, "caption_style"),
+    ):
+        if asks(req) and text == decline():
+            return field
+    return None
+
+
+def decline_records(
+    declines: list, receipts: list[dict], reply: str, requirements: list
+) -> list[dict]:
     """The route's declines (`route_disclosure.ask_declines`), each with the field it speaks for
-    and whether the card shows it: a checked ``not_possible`` receipt for that ask with that
-    reason, which the reply carries."""
+    (`decline_field`) and whether the card shows it: a checked ``not_possible`` receipt for that
+    ask with that reason, which the reply carries."""
     shown = {
         (r.get("requirement_id"), r.get("reason"))
         for r in receipts
         if r.get("status") == "not_possible" and r.get("verification") == "checked"
     }
+    by_id = {req.id: req for req in requirements}
     return [
         {
             "requirement_id": d.requirement_id,
             "subject": d.subject,
-            "field": DECLINE_DISCLOSES.get(d.subject),
+            "field": decline_field(by_id.get(d.requirement_id), d.text),
             "text": d.text,
             "on_card": (d.requirement_id, d.text) in shown and d.text in reply,
         }
@@ -411,7 +502,8 @@ def decline_records(declines: list, receipts: list[dict], reply: str) -> list[di
 
 
 def approval_card(fx: dict) -> dict[str, Any]:
-    """The creator-visible draft reply, from the pure functions the draft turn calls.
+    """The creator-visible draft reply, from the pure functions the draft turn calls, in the
+    language bound by the caller (`approval_cards`).
 
     Mirrors `tasks.kria_runtime` for an account outside approval readiness (the default): the
     asks checked at draft plus the asks the route declines (`requirements_with_route_declines`),
@@ -491,11 +583,18 @@ def approval_card(fx: dict) -> dict[str, Any]:
         receipts = with_route_declines(receipts, answered, strategy, route=route)
     if not readiness and not facts.phone_talking:
         receipts = [r for r in receipts if r.verification != "unchecked"]
+    # Outside readiness a route decline follows the planner summary (code that has the switch).
+    after_summary = (
+        {"declines_after_summary": shown and not readiness}
+        if "declines_after_summary" in inspect.signature(reply_from_receipts).parameters
+        else {}
+    )
     reply = reply_from_receipts(
         CreativeBrief(version=brief.version, requirements=answered),
         receipts,
         summary=str(fx.get("planner_summary") or ""),
         notices=(),
+        **after_summary,
     )
     disclosures = (
         card_disclosures(brief.live(), strategy, route=route, media=media) if shown else []
@@ -514,21 +613,35 @@ def approval_card(fx: dict) -> dict[str, Any]:
         "reply": reply,
         "changes": changes,
         "receipts": receipt_records,
-        "not_applied": card_records(disclosures, reply),
+        "not_applied": card_records(disclosures, reply, table_codes(route)),
         "declines": decline_records(
             ask_declines(answered, strategy, route=route) if shown else [],
             receipt_records,
             reply,
+            list(brief.live()),
         ),
     }
 
 
+def approval_cards(fx: dict) -> dict[str, dict]:
+    """The card in every reply language (``LANGS``)."""
+    out = {}
+    for lang in LANGS:
+        with _language(lang):
+            out[lang] = approval_card(fx)
+    return out
+
+
 def field_disclosed(card: dict, field: str) -> bool:
     """The card says ``field`` is not applied: that field's own registry line the creator reads,
-    or a route decline about it. Free text, another field's line, or a decline about another ask
-    never counts."""
+    with the code the route's table gives the field, or a route decline about it
+    (`decline_field`). Free text, another field's line, another code, or a decline about
+    another ask never counts."""
     own_line = any(
-        r.get("code") == NOT_APPLIED_CODE and r.get("subject") == field and r.get("on_card") is True
+        r.get("code") in TABLE_CODES
+        and r.get("code") == r.get("table_code")
+        and r.get("subject") == field
+        and r.get("on_card") is True
         for r in card.get("not_applied") or []
     )
     decline = any(
@@ -537,48 +650,411 @@ def field_disclosed(card: dict, field: str) -> bool:
     return own_line or decline
 
 
-def _strip_targets(fx: dict, fields: list[str]) -> dict:
-    """``fx`` with every brief ask removed and ``fields`` (with their provenance) off the plan."""
-    stripped = copy.deepcopy(fx)
-    stripped["brief"]["requirements"] = []
-    for field in fields:
-        stripped["strategy"].pop(field, None)
-        for key in PROVENANCE.get(field, ()):
-            stripped["strategy"].pop(key, None)
-    return stripped
+# ----------------------------------------------------------------- the replay contract
 
 
-def _route_code(route: str) -> tuple[set[str], set[str]]:
-    """Absolute paths of the route's ``READERS`` files, and its generative_build functions."""
+class RecipeKey(NamedTuple):
+    """A render recipe value a replay module returns, and what it answers: a strategy field
+    (with the server provenance that states it) and a typed ask fact."""
+
+    field: str
+    fact: str
+    provenance: tuple[str, ...] = ()
+
+
+RECIPE_KEYS: dict[str, RecipeKey] = {
+    "title_animation": RecipeKey("title_animation", "animation"),
+    "pace": RecipeKey("pacing", "pace", ("pacing_requested",)),
+    "length_s": RecipeKey(
+        "target_duration_s", "duration_s", ("creator_duration_s", "target_duration_requested")
+    ),
+    "caption_mode": RecipeKey("caption_style", "captions"),
+}
+# A caption style or caption fact, as the caption modes that meet it (`kria.runtime`
+# approval: clean/editorial sentences, kinetic/karaoke word by word, none off).
+_CAPTION_MODES = {
+    "none": {"none"},
+    "off": {"none"},
+    "clean": {"sentence"},
+    "editorial": {"sentence"},
+    "kinetic": {"word"},
+    "karaoke": {"word"},
+    "on": {"sentence", "word"},
+    "word_by_word": {"word"},
+}
+_ANIMATION_PERTURB = ("fade", "typewriter", "pop", "slide")
+_PACE_PERTURB = ("fast", "relaxed", "balanced")
+
+
+def _requirement(fx: dict, req_id: str) -> dict:
+    return next((r for r in fx["brief"]["requirements"] if r["id"] == req_id), {})
+
+
+def asked(fx: dict, target: Target) -> tuple[Any, str]:
+    """``(value, bound)`` the creator asked for this target: the strategy field's value (a
+    length: the stated seconds), or the ask's typed fact (a length: with its bound)."""
+    from app.services.length_policy import duration_bound
+
+    spec = RECIPE_KEYS[target.key]
+    if target.kind == "fields":
+        strategy = fx["strategy"]
+        if target.key == "length_s":
+            stated = strategy.get("creator_duration_s")
+            return (stated if stated is not None else strategy.get(spec.field)), "exact"
+        return strategy.get(spec.field), "exact"
+    facts = _requirement(fx, target.ident).get("facts") or {}
+    bound = duration_bound(facts) if target.key == "length_s" else "exact"
+    return facts.get(spec.fact), bound
+
+
+def _animation(value: Any) -> str | None:
+    from app.schemas.text_style_intent import normalize_title_animation
+
+    return normalize_title_animation(value)
+
+
+def honors(key: str, value: Any, wanted: Any, bound: str = "exact") -> bool:
+    """The recipe value meets the asked one (the grader's own comparison, per key)."""
+    if wanted is None or value is None:
+        return False
+    if key == "title_animation":
+        values = value if isinstance(value, list) else [value]
+        if not values:
+            return False
+        if str(wanted).strip().casefold() == "any":
+            return all(_animation(v) is not None for v in values)
+        want = _animation(wanted)
+        return want is not None and all(_animation(v) == want for v in values)
+    if key == "pace":
+        return isinstance(value, str) and value.casefold() == str(wanted).casefold()
+    if key == "length_s":
+        from app.services.length_policy import creator_duration_satisfied
+
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return False
+        return creator_duration_satisfied(float(value), float(wanted), bound)  # type: ignore[arg-type]
+    if key == "caption_mode":
+        modes = _CAPTION_MODES.get(str(wanted).strip().casefold())
+        return bool(modes) and value in modes
+    return False
+
+
+def _perturbed(key: str, wanted: Any, override: Any = None) -> tuple[Any, Any]:
+    """``(field value, fact value)`` that asks for something else than ``wanted``."""
+    if override is not None:
+        return override, override
+    if key == "title_animation":
+        current = None if str(wanted).casefold() == "any" else _animation(wanted)
+        pick = next(a for a in _ANIMATION_PERTURB if _animation(a) != current)
+        return pick, pick
+    if key == "pace":
+        pick = next(p for p in _PACE_PERTURB if p != str(wanted).casefold())
+        return pick, pick
+    if key == "length_s":
+        seconds = float(wanted) * 1.5
+        pick = round(seconds if seconds <= 60 else float(wanted) * 0.5)
+        return pick, pick
+    if key == "caption_mode":
+        off = _CAPTION_MODES.get(str(wanted).strip().casefold()) == {"none"}
+        return ("kinetic", "word_by_word") if off else ("none", "off")
+    raise KeyError(key)
+
+
+def _set_key(fx: dict, key: str, field_value: Any, fact_value: Any) -> dict:
+    """``fx`` asking for another value of ``key`` everywhere it is asked (field and asks)."""
+    out = copy.deepcopy(fx)
+    spec = RECIPE_KEYS[key]
+    strategy = out["strategy"]
+    if spec.field in strategy or key == "length_s":
+        strategy[spec.field] = field_value
+    if key == "length_s" and strategy.get("creator_duration_s") is not None:
+        strategy["creator_duration_s"] = field_value
+    for req in out["brief"]["requirements"]:
+        facts = req.get("facts") or {}
+        if spec.fact in facts:
+            facts[spec.fact] = fact_value
+    return out
+
+
+def _drop_keys(fx: dict, keys: list[str]) -> dict:
+    """``fx`` with nothing asked for ``keys``: the fields, their provenance and the asks."""
+    out = copy.deepcopy(fx)
+    for key in keys:
+        spec = RECIPE_KEYS[key]
+        for name in (spec.field, *spec.provenance):
+            out["strategy"].pop(name, None)
+        out["brief"]["requirements"] = [
+            r for r in out["brief"]["requirements"] if spec.fact not in (r.get("facts") or {})
+        ]
+    return out
+
+
+def _same(a: Any, b: Any) -> bool:
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_same(x, y) for x, y in zip(a, b, strict=True))
+    numeric = (int, float)
+    if (
+        isinstance(a, numeric)
+        and isinstance(b, numeric)
+        and not isinstance(a, bool)
+        and not isinstance(b, bool)
+    ):
+        return abs(float(a) - float(b)) <= 1e-6
+    return a == b
+
+
+def _holds(obj: Any, value: Any, budget: list[int]) -> bool:
+    """``obj`` (a returned value) contains ``value`` somewhere within a bounded walk."""
+    stack = [(obj, 0)]
+    seen: set[int] = set()
+    while stack and budget[0] > 0:
+        current, depth = stack.pop()
+        budget[0] -= 1
+        if type(current) is type(value) or (
+            isinstance(current, int | float) and isinstance(value, int | float)
+        ):
+            if not isinstance(current, bool) and _same(current, value):
+                return True
+        if depth >= 8 or id(current) in seen or isinstance(current, str | bytes | int | float):
+            continue
+        seen.add(id(current))
+        if isinstance(current, Mapping):
+            children = list(current.values())
+        elif isinstance(current, list | tuple | set | frozenset):
+            children = list(current)
+        elif hasattr(current, "__dict__"):
+            children = list(vars(current).values())
+        elif hasattr(current, "__slots__"):
+            children = [getattr(current, s, None) for s in current.__slots__]
+        else:
+            continue
+        stack.extend((child, depth + 1) for child in children)
+    return False
+
+
+def returned_by_route(value: Any, returns: list) -> bool:
+    """Every part of ``value`` is in something the route's code returned during the run."""
+    parts = value if isinstance(value, list) else [value]
+    budget = [400_000]
+    return bool(parts) and all(any(_holds(r, part, budget) for r in returns) for part in parts)
+
+
+class SwitchProbe:
+    """A lane switch's value that records the code reading it (``readers``)."""
+
+    def __init__(self, value: bool, readers: list) -> None:
+        self.value = value
+        self.readers = readers
+
+    def _read(self) -> None:
+        self.readers.append(sys._getframe(2).f_code)
+
+    def __bool__(self) -> bool:
+        self._read()
+        return self.value
+
+    def __eq__(self, other: object) -> bool:
+        self._read()
+        return self.value == other
+
+    def __hash__(self) -> int:
+        return hash(self.value)
+
+    def __repr__(self) -> str:
+        self._read()
+        return repr(self.value)
+
+
+class RouteCode(NamedTuple):
+    """Where a route's code lives at run time: absolute file paths and its builder functions."""
+
+    files: frozenset[str]
+    functions: frozenset[str]
+
+    def owns(self, code: Any) -> bool:
+        name = _real(code.co_filename)
+        return name in self.files or (
+            name == _real(str(APP / BUILDER)) and code.co_name in self.functions
+        )
+
+
+@functools.cache
+def _real(path: str) -> str:
+    return os.path.realpath(path)
+
+
+def route_code(route: str) -> RouteCode:
     registry = _registry()
     table = registry.tables.table_for(route) if registry is not None else None
     if table is None:
-        return set(), set()
-    files = {str((APP / rel).resolve()) for rel in table.READERS.files}
-    return files, set(table.READERS.functions)
+        return RouteCode(frozenset(), frozenset())
+    return RouteCode(
+        frozenset(_real(str(APP / rel)) for rel in table.READERS.files),
+        frozenset(table.READERS.functions),
+    )
 
 
-def _traced(run: Any, route: str) -> tuple[Any, int]:
-    """``run()`` and whether it entered the route's own code (a call in ``READERS``)."""
-    files, functions = _route_code(route)
-    builder = str((APP / "tasks" / "generative_build.py").resolve())
-    hits = [0]
+def _run(module: Any, fx: dict, code: RouteCode, switch: str | None, on: bool) -> dict:
+    """One ``module.recipe(fx)`` run with the lane switch ``on`` (a `SwitchProbe`): the recipe,
+    calls into the route's code, what that code returned, and who read the switch."""
+    from app.config import settings
 
-    def profile(frame: Any, event: str, _arg: Any) -> None:
-        if event != "call":
-            return
-        code = frame.f_code
-        name = code.co_filename
-        if name in files or (name == builder and code.co_name in functions):
-            hits[0] += 1
+    calls = [0]
+    returns: list = []
+    readers: list = []
+
+    def profile(frame: Any, event: str, arg: Any) -> None:
+        if event == "call" and code.owns(frame.f_code):
+            calls[0] += 1
+        elif event == "return" and arg is not None and code.owns(frame.f_code):
+            returns.append(arg)
+
+    probe = (
+        patch.object(settings, switch, SwitchProbe(on, readers))
+        if switch is not None and hasattr(settings, switch)
+        else contextlib.nullcontext()
+    )
+    with probe:
+        sys.setprofile(profile)
+        try:
+            recipe = module.recipe(copy.deepcopy(fx))
+        except Exception as exc:  # noqa: BLE001 - recorded: a control that cannot run fails
+            return {
+                "recipe": {},
+                "calls": calls[0],
+                "returns": [],
+                "readers": readers,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        finally:
             sys.setprofile(None)
+    return {
+        "recipe": dict(recipe) if isinstance(recipe, Mapping) else {},
+        "calls": calls[0],
+        "returns": returns,
+        "readers": readers,
+        "error": None,
+    }
 
-    sys.setprofile(profile)
-    try:
-        value = run()
-    finally:
-        sys.setprofile(None)
-    return value, hits[0]
+
+def _json(value: Any) -> Any:
+    return json.loads(json.dumps(value, default=str))
+
+
+def grade_recipe(
+    module: Any, fx: dict, code: RouteCode, switch: str | None, targets: list[Target]
+) -> dict:
+    """The module's recipe against what was asked, and the grader's controls on it.
+
+    ``honored[check_id]`` is the grader's comparison; ``valid`` is False when a control fails
+    for a key some target claims (the scorecard is then INVALID)."""
+    real = _run(module, fx, code, switch, True)
+    if real["error"] is not None:
+        raise RuntimeError(f"the route replay raised: {real['error']}")
+    recipe = real["recipe"]
+    wanted = {t.check_id: asked(fx, t) for t in targets}
+    honored = {t.check_id: honors(t.key, recipe.get(t.key), *wanted[t.check_id]) for t in targets}
+    claimed = sorted({t.key for t in targets if honored[t.check_id]})
+    rows: list[dict] = []
+    runs = [real]
+    if not claimed:
+        rows.append(_row("replay: the recipe meets no target, nothing to control", True, True))
+        return _replay_report(recipe, wanted, honored, rows, runs)
+    keys = sorted({t.key for t in targets})
+    perturb = dict((fx.get("checks") or {}).get("perturb") or {})
+    stripped = _run(module, _drop_keys(fx, keys), code, switch, True)
+    off = _run(module, fx, code, switch, False)
+    off_stripped = _run(module, _drop_keys(fx, keys), code, switch, False)
+    runs += [stripped, off, off_stripped]
+    rows.append(
+        _row(
+            "replay: a claim from a run that never entered the route's code must FAIL",
+            False,
+            real["calls"] == 0,
+            {"route_code_calls": real["calls"]},
+        )
+    )
+    for key in claimed:
+        mine = [t for t in targets if t.key == key and honored[t.check_id]]
+        first = wanted[mine[0].check_id][0]
+        field_value, fact_value = _perturbed(key, first, perturb.get(key))
+        moved_fx = _set_key(fx, key, field_value, fact_value)
+        moved = _run(module, moved_fx, code, switch, True)
+        dropped = _run(module, _drop_keys(fx, [key]), code, switch, True)
+        runs += [moved, dropped]
+        follows = all(
+            honors(key, moved["recipe"].get(key), *asked(moved_fx, t)) for t in mine
+        ) and not _same(moved["recipe"].get(key), recipe.get(key))
+        others = [k for k in claimed if k != key]
+        reverts = _same(dropped["recipe"].get(key), stripped["recipe"].get(key)) and all(
+            _same(dropped["recipe"].get(k), recipe.get(k)) for k in others
+        )
+        inert = _same(off["recipe"].get(key), off_stripped["recipe"].get(key))
+        traced = returned_by_route(recipe.get(key), real["returns"]) and returned_by_route(
+            moved["recipe"].get(key), moved["returns"]
+        )
+        rows += [
+            _row(
+                f"replay {key}: a value that does not follow the asked one ({first!r} -> "
+                f"{fact_value!r}) must FAIL",
+                False,
+                not follows,
+                _json({"real": recipe.get(key), "perturbed": moved["recipe"].get(key)}),
+            ),
+            _row(
+                f"replay {key}: dropping its ask must revert only its value to the no-ask "
+                "default, else FAIL",
+                False,
+                not reverts,
+                _json(
+                    {
+                        "dropped": {k: dropped["recipe"].get(k) for k in claimed},
+                        "default": stripped["recipe"].get(key),
+                        "real": {k: recipe.get(k) for k in claimed},
+                    }
+                ),
+            ),
+            _row(
+                f"replay {key}: an ask that still changes the recipe with {switch} off must FAIL",
+                False,
+                not inert,
+                _json(
+                    {"off": off["recipe"].get(key), "off_no_ask": off_stripped["recipe"].get(key)}
+                ),
+            ),
+            _row(
+                f"replay {key}: a value the route's code never returned must FAIL",
+                False,
+                not traced,
+            ),
+        ]
+    errors = [r["error"] for r in runs if r["error"]]
+    rows.append(
+        _row("replay: a claim whose control reruns raised must FAIL", False, bool(errors), errors)
+    )
+    outside = sorted(
+        {f"{c.co_filename}:{c.co_name}" for r in runs for c in r["readers"] if not code.owns(c)}
+    )
+    rows.append(
+        _row(
+            f"replay: {switch} read outside the route's code (by the replay module) must FAIL",
+            False,
+            bool(outside),
+            outside,
+        )
+    )
+    return _replay_report(recipe, wanted, honored, rows, runs)
+
+
+def _replay_report(recipe, wanted, honored, rows, runs) -> dict:  # noqa: ANN001
+    return {
+        "recipe": _json(recipe),
+        "asked": _json(wanted),
+        "honored": honored,
+        "controls": rows,
+        "valid": all(r["ok"] is True for r in rows),
+        "route_code_calls": runs[0]["calls"],
+    }
 
 
 def _shown_path(path: Path) -> str:
@@ -596,52 +1072,21 @@ def _replay_module(route: str):  # noqa: ANN202
     return module
 
 
-def _run_replay(module: Any, fx: dict, route: str, *, control: bool = False) -> dict[str, Any]:
-    """One run of the replay. A control rerun that raises is recorded (its control fails when
-    the real run claims anything); the real run's own exception is the caller's to report."""
-    try:
-        seen, calls = _traced(lambda: module.honored(copy.deepcopy(fx)), route)
-    except Exception as exc:  # noqa: BLE001 - a control that cannot run is never a pass
-        if not control:
-            raise
-        return {"fields": {}, "asks": {}, "recipe": None, "route_code_calls": 0, "error": repr(exc)}
-    seen = seen if isinstance(seen, dict) else {}
-    return {
-        "fields": {k: v is True for k, v in dict(seen.get("fields") or {}).items()},
-        "asks": {k: v is True for k, v in dict(seen.get("asks") or {}).items()},
-        "recipe": seen.get("recipe"),
-        "route_code_calls": calls,
-    }
-
-
 def route_replay(fx: dict, route: str) -> dict[str, Any]:
-    """Render evidence from ``route_replays/<route>.py`` (nothing without one), plus the
-    reruns its controls read: asks removed, and the lane kill switch off."""
+    """Render evidence from ``route_replays/<route>.py`` under the contract above (nothing
+    without one)."""
     module = _replay_module(route)
     if module is None:
-        return {"fields": {}, "asks": {}, "source": None, "recipe": None, "route_code_calls": 0}
-    from app.config import settings
+        return {"source": None, "honored": {}, "controls": [], "valid": True, "recipe": None}
+    graded = grade_recipe(
+        module, fx, route_code(route), LANE_SWITCH.get(route), honored_targets(fx)
+    )
+    return {**graded, "source": _shown_path(REPLAYS / f"{route}.py")}
 
-    fields, _asks = honored_targets(fx)
-    real = _run_replay(module, fx, route)
-    stripped = _run_replay(module, _strip_targets(fx, fields), route, control=True)
-    switch = LANE_SWITCH.get(route)
-    switched_off = None
-    if switch is not None and hasattr(settings, switch):
-        with patch.object(settings, switch, False):
-            switched_off = _run_replay(module, fx, route, control=True)
-    claimed = any(real["fields"].values()) or any(real["asks"].values())
-    trusted = claimed and real["route_code_calls"] > 0
-    return {
-        # Claims from a run that never entered the route's code are no render evidence.
-        "fields": real["fields"] if trusted else {},
-        "asks": real["asks"] if trusted else {},
-        "recipe": real["recipe"],
-        "route_code_calls": real["route_code_calls"],
-        "claimed": claimed,
-        "controls": {"asks_removed": stripped, "switch_off": switched_off, "switch": switch},
-        "source": _shown_path(REPLAYS / f"{route}.py"),
-    }
+
+def applied(replay: dict, target_id: str) -> bool:
+    """A render target the replay's recipe meets, under valid controls."""
+    return bool(replay.get("valid")) and replay.get("honored", {}).get(target_id) is True
 
 
 # --------------------------------------------------------------------- verdict logic
@@ -649,17 +1094,22 @@ def route_replay(fx: dict, route: str) -> dict[str, Any]:
 # Pure predicates: the checks feed them the real outputs, the controls synthetic ones.
 
 
-def field_verdict(field: str, card: dict, honored: dict[str, bool]) -> dict[str, Any]:
-    applied = honored.get(field) is True
-    disclosed = field_disclosed(card, field)
-    return {"pass": applied or disclosed, "applied": applied, "disclosed_on_card": disclosed}
+def field_verdict(field: str, cards: Mapping[str, dict], render: bool) -> dict[str, Any]:
+    by_lang = {lang: field_disclosed(card, field) for lang, card in cards.items()}
+    disclosed = bool(by_lang) and all(by_lang.values())
+    return {
+        "pass": render is True or disclosed,
+        "applied": render is True,
+        "disclosed_on_card": disclosed,
+        "disclosed_by_language": by_lang,
+    }
 
 
 def ask_verdict(
     receipt: dict | None, honored: bool = False, card: dict | None = None, field: str | None = None
 ) -> dict[str, Any]:
-    """``field``: the strategy field whose own card line answers this ask (a length ask and the
-    route's ``target_duration_s`` line)."""
+    """One language's card. ``field``: the strategy field whose own card line answers this ask
+    (a length ask and the route's ``target_duration_s`` line)."""
     receipt = receipt or {}
     checked = receipt.get("verification") == "checked"
     met = checked and receipt.get("status") == "met"
@@ -673,7 +1123,8 @@ def ask_verdict(
             r.get("text")
             for r in (card or {}).get("not_applied") or []
             if field
-            and r.get("code") == NOT_APPLIED_CODE
+            and r.get("code") in TABLE_CODES
+            and r.get("code") == r.get("table_code")
             and r.get("subject") == field
             and r.get("on_card") is True
         ),
@@ -697,11 +1148,6 @@ def ask_field(req: dict) -> str | None:
     if req.get("kind") == "timing" and facts.get("duration_s") is not None:
         return "target_duration_s"
     return None
-
-
-def honored_verdict(key: str, evidence: dict[str, bool]) -> dict[str, Any]:
-    applied = evidence.get(key) is True
-    return {"pass": applied, "applied_at_render": applied}
 
 
 # ------------------------------------------------------------------- consumer gate
@@ -757,7 +1203,7 @@ def route_reads(
     ``sources`` (controls only) replaces the route's code with synthetic files."""
     if sources is None:
         sources = {rel: (APP / rel).read_text().splitlines() for rel in readers.files}
-        gb_text = (APP / "tasks" / "generative_build.py").read_text()
+        gb_text = (APP / BUILDER).read_text()
         gb_lines = gb_text.splitlines()
         for node in ast.walk(ast.parse(gb_text)):
             if (
@@ -765,7 +1211,7 @@ def route_reads(
                 and node.name in readers.functions
             ):
                 body = gb_lines[node.lineno - 1 : node.end_lineno]
-                sources[f"tasks/generative_build.py:{node.name}"] = [""] * (node.lineno - 1) + body
+                sources[f"{BUILDER}:{node.name}"] = [""] * (node.lineno - 1) + body
     reads: dict[str, list[str]] = {}
     for field in fields:
         reads[field] = [
@@ -776,37 +1222,189 @@ def route_reads(
     return reads
 
 
-def _names_field(field: str) -> re.Pattern:
-    name = re.escape(field)
-    return re.compile(rf"""["']{name}["']|\.{name}\b""")
+# --- carriers (AST): a function whose body reads the field off a strategy object
+
+_STRATEGY_NAME = re.compile(r"\w*strategy\w*")
+_STRATEGY_CALL = re.compile(r"strategy", re.I)
 
 
-def via_problem(via: str, field: str) -> str | None:
-    """Why ``Applied(via=...)`` is no carrier for ``field``, or None when it is one: a
-    ``"<path under app/>:<symbol>"`` whose symbol is defined in that file and names the field."""
+def _const_str(node: ast.AST) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _is_strategy(node: ast.AST, aliases: set[str]) -> bool:
+    """``node`` evaluates to a strategy: a name with "strategy" in it or an alias of one,
+    ``x.strategy``, ``(strategy or {})``, ``x.get("creator_strategy")``,
+    ``x["creator_strategy"]``."""
+    if isinstance(node, ast.Name):
+        return bool(_STRATEGY_NAME.fullmatch(node.id)) or node.id in aliases
+    if isinstance(node, ast.Attribute):
+        return bool(_STRATEGY_NAME.fullmatch(node.attr))
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+        return _is_strategy(node.values[0], aliases)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        key = _const_str(node.args[0]) if node.func.attr == "get" and node.args else None
+        return bool(key and _STRATEGY_NAME.fullmatch(key))
+    if isinstance(node, ast.Subscript):
+        key = _const_str(node.slice)
+        return bool(key and _STRATEGY_NAME.fullmatch(key))
+    return False
+
+
+def _aliases(fn: ast.AST) -> set[str]:
+    """Names bound to a strategy in ``fn``: ``s = strategy or {}``, ``typed = _strategy(x)``
+    over a strategy, ``raw = dict(strategy)``."""
+    found: set[str] = set()
+    for _ in range(3):
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Assign | ast.AnnAssign) or node.value is None:
+                continue
+            value = node.value
+            converted = (
+                isinstance(value, ast.Call)
+                and (
+                    _STRATEGY_CALL.search(ast.unparse(value.func))
+                    or (isinstance(value.func, ast.Name) and value.func.id == "dict")
+                )
+                and any(_is_strategy(arg, found) for arg in value.args)
+            )
+            if _is_strategy(value, found) or converted:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                found |= {t.id for t in targets if isinstance(t, ast.Name)}
+    return found
+
+
+def _loop_keys(fn: ast.AST) -> dict[str, set[str]]:
+    """Loop names that range over a literal of field names (``for source, dest in (...)``)."""
+    out: dict[str, set[str]] = {}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.For | ast.comprehension) and isinstance(
+            node.iter, ast.Tuple | ast.List | ast.Set
+        ):
+            strings = {s for s in map(_const_str, ast.walk(node.iter)) if s}
+            for name in ast.walk(node.target):
+                if isinstance(name, ast.Name):
+                    out.setdefault(name.id, set()).update(strings)
+    return out
+
+
+def function_reads(fn: ast.AST, field: str) -> bool:
+    """``fn``'s body reads ``field`` off a strategy object."""
+    aliases = _aliases(fn)
+    loops = _loop_keys(fn)
+
+    def key(node: ast.AST) -> bool:
+        if _const_str(node) == field:
+            return True
+        return isinstance(node, ast.Name) and field in loops.get(node.id, ())
+
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Attribute) and node.attr == field:
+            if _is_strategy(node.value, aliases):
+                return True
+        elif isinstance(node, ast.Subscript) and _is_strategy(node.value, aliases):
+            if key(node.slice):
+                return True
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "get":
+                if _is_strategy(func.value, aliases) and node.args and key(node.args[0]):
+                    return True
+            if any(_is_strategy(a, aliases) for a in node.args) and any(key(a) for a in node.args):
+                return True  # getattr(strategy, "f"), _value(strategy, "f")
+    return False
+
+
+def _definition(tree: ast.Module, symbol: str) -> ast.AST | None:
+    """``Name`` (a top-level def or class) or ``Class.method`` in ``tree``."""
+    head, _, tail = symbol.partition(".")
+    for node in tree.body:
+        if getattr(node, "name", None) != head:
+            continue
+        if not tail:
+            return node
+        if isinstance(node, ast.ClassDef):
+            return next((m for m in node.body if getattr(m, "name", None) == tail), None)
+    return None
+
+
+def _owner_of(path: str, symbol: str, route: str | None) -> str | None:
+    """Another route whose ``READERS`` holds ``path`` (or the builder function ``symbol``)."""
+    registry = _registry()
+    if registry is None:
+        return None
+    for rid, table in registry.tables.ROUTE_TABLES.items():
+        if str(rid) == route:
+            continue
+        readers = table.READERS
+        if path in readers.files or (path == BUILDER and symbol in readers.functions):
+            return str(rid)
+    return None
+
+
+def via_problem(
+    via: str,
+    field: str,
+    route: str | None = None,
+    *,
+    readers: Any = None,
+    texts: Mapping[str, str] | None = None,
+) -> str | None:
+    """Why ``Applied(via=...)`` is no carrier for ``field`` on ``route``, or None when it is:
+    a function (``path:name`` or ``path:Class.method``) in the route's own ``READERS`` or one of
+    ``SHARED_CARRIERS``, whose body reads the field off a strategy object. ``readers`` and
+    ``texts`` (controls only) stand in for the route's readers and the files' source."""
     path, _, symbol = via.partition(":")
-    file = APP / path
-    if not path.endswith(".py") or not symbol.isidentifier():
-        return f"{via!r} is not <path under app/>:<symbol>"
-    if not file.is_file():
-        return f"{path} does not exist"
-    text = file.read_text()
-    node = next(
-        (
-            n
-            for n in ast.parse(text).body
-            if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
-            and n.name == symbol
-        ),
-        None,
+    if not path.endswith(".py") or not all(p.isidentifier() for p in symbol.split(".")):
+        return f"{via!r} is not <path under app/>:<function>"
+    text = (texts or {}).get(path)
+    if text is None:
+        if not (APP / path).is_file():
+            return f"{path} does not exist"
+        text = (APP / path).read_text()
+    if readers is None and route is not None and _registry() is not None:
+        table = _registry().tables.table_for(route)
+        readers = table.READERS if table is not None else None
+    own = readers is not None and (
+        path in readers.files or (path == BUILDER and symbol in readers.functions)
     )
+    if not own and via not in SHARED_CARRIERS:
+        other = _owner_of(path, symbol, route)
+        if other is not None:
+            return f"{via} is in {other}'s code, not this route's"
+        return f"{via} is neither in this route's READERS nor a shared carrier"
+    node = _definition(ast.parse(text), symbol)
     if node is None:
         return f"{symbol} is not defined in {path}"
-    body = text.splitlines()[node.lineno - 1 : node.end_lineno]
-    pattern = _names_field(field)
-    if not any(pattern.search(line) and not line.strip().startswith("#") for line in body):
-        return f"{path}:{symbol} never names {field}"
+    if isinstance(node, ast.ClassDef):
+        return f"{via} is a class: a schema names the field, it reads nothing"
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+        return f"{via} is not a function"
+    if not function_reads(node, field):
+        return f"{via} never reads {field} off a strategy"
     return None
+
+
+def ownership_problems(route: str, extra_files: tuple[str, ...] = ()) -> list[str]:
+    """Reader files or builder functions the route lists that another route lists too: a
+    reader belongs to one route, so a table can't claim fields another route's code reads.
+    ``extra_files`` (controls only) adds files to the route's ``READERS``."""
+    registry = _registry()
+    table = registry.tables.table_for(route) if registry is not None else None
+    if table is None:
+        return []
+    files = (*table.READERS.files, *extra_files)
+    out = []
+    for rid, other in registry.tables.ROUTE_TABLES.items():
+        if str(rid) == route:
+            continue
+        out += [f"{f} is also {rid}'s reader file" for f in files if f in other.READERS.files]
+        out += [
+            f"{BUILDER}:{f} is also {rid}'s reader function"
+            for f in table.READERS.functions
+            if f in other.READERS.functions
+        ]
+    return out
 
 
 def consumer_gate(
@@ -822,7 +1420,8 @@ def consumer_gate(
     ``claimed_applied_unread``: marked ``Applied`` but no strategy read in ``READERS`` and no
     valid carrier (``bad_carriers`` says why a ``via`` is none). ``unconsumed``: no reader and
     no carrier; ``undisclosed``: of those, what the card does not disclose
-    (`field_disclosed`). ``registry_drift`` is report-only detail."""
+    (`field_disclosed`). ``shared_readers``: reader files another route lists too.
+    ``registry_drift`` is report-only detail."""
     from app.kria.route_capabilities import Applied, NotApplied, RecordedOnly, table_for
 
     table = table_for(route)
@@ -833,9 +1432,9 @@ def consumer_gate(
     settable = [n for n in names if n not in hidden] + list(extra_fields)
     reads = route_reads(list(dict.fromkeys([*settable, *handling])), table.READERS, sources)
     bad = {
-        f: via_problem(h.via, f)
+        f: problem
         for f, h in handling.items()
-        if isinstance(h, Applied) and h.via and via_problem(h.via, f)
+        if isinstance(h, Applied) and h.via and (problem := via_problem(h.via, f, route))
     }
     carried = {
         f: h.via for f, h in handling.items() if isinstance(h, Applied) and h.via and f not in bad
@@ -854,12 +1453,14 @@ def consumer_gate(
         "listed_but_read": sorted(f for f in not_applied if f in settable and reads[f]),
         "unread_but_unlisted": sorted(f for f in unconsumed if f not in not_applied),
     }
+    shared = ownership_problems(route)
     return {
         "registry_drift": drift,
-        "pass": not undisclosed and not claimed,
+        "pass": not undisclosed and not claimed and not shared,
         "settable_fields": len(settable),
         "claimed_applied_unread": claimed,
         "bad_carriers": bad,
+        "shared_readers": shared,
         "unconsumed": unconsumed,
         "undisclosed": undisclosed,
         "disclosed": [f for f in unconsumed if f not in undisclosed],
@@ -897,22 +1498,182 @@ def gate_result(check_id: int | str, route: str, card: dict) -> dict:
 
 
 def claims_result(route: str, card: dict) -> dict:
-    """Scored: no field the route's table marks applied lacks a reader or a real carrier."""
+    """Scored: no field the route's table marks applied lacks a reader or a real carrier, and
+    no reader file is another route's."""
     name = "registry claims: every field the table marks applied is read by the route's code"
     if _registry() is None:
         return _kind(_no_registry("10.claims", name), "gate")
     gate = consumer_gate(route, card)
     claimed = gate["claimed_applied_unread"]
+    why = []
+    if claimed:
+        why.append(
+            f"the {route} table marks {claimed} applied, but nothing in the route's code reads "
+            f"them off the strategy and no carrier reads them ({gate['bad_carriers']})"
+        )
+    if gate["shared_readers"]:
+        why.append(f"the {route} READERS list another route's code: {gate['shared_readers']}")
+    evidence = {
+        k: gate[k] for k in ("claimed_applied_unread", "bad_carriers", "carriers", "shared_readers")
+    }
+    return _kind(_result("10.claims", name, not why, why, evidence), "gate")
+
+
+# ------------------------------------------------------------------- golden lines
+
+# Fixed plans every route's table builds its card lines for (`golden_lines`).
+GOLDEN_PROBES: dict[str, dict[str, Any]] = {
+    "every_field": {
+        "edit_format": "montage",
+        "audio_strategy": "licensed_music",
+        "intro_hook": "Nobody tells you this about the old town",
+        "story_structure": ["Arrive at the harbour", "Climb to the castle", "Sunset view"],
+        "pacing": "relaxed",
+        "direction": "guided_story",
+        "caption_style": "kinetic",
+        "optional_treatments": ["zoom", "shake"],
+        "archetype": "day_in_life",
+        "hero_media_id": "clip-01",
+        "overlay_display": "fullscreen",
+        "licensed_sfx": [{"id": "whoosh"}],
+        "title_animation": "pop",
+        "label_position": "top",
+        "opening_title": "Kas in three days",
+        "closing_title": "See you next summer",
+        "shot_labels": ["day one", "day two"],
+        "font_family": "Inter",
+        "text_color": "#ffffff",
+        "mixed_media_timing": {"boundary_style": "crossfade"},
+        "creator_duration_s": 25,
+        "target_duration_s": 25,
+        "target_duration_requested": True,
+    },
+    "voice_no_captions": {
+        "edit_format": "montage",
+        "audio_strategy": "voiceover",
+        "pacing": "balanced",
+        "direction": "native",
+        "caption_style": "none",
+        "title_animation": "fade",
+    },
+}
+GOLDEN_ASKS: list[dict[str, Any]] = [
+    {
+        "id": "g1",
+        "kind": "text",
+        "scope": "title",
+        "description": "animate the title",
+        "facts": {"animation": "pop"},
+    },
+    {
+        "id": "g2",
+        "kind": "style",
+        "scope": "global",
+        "description": "add captions",
+        "facts": {"captions": "on"},
+    },
+    {
+        "id": "g3",
+        "kind": "text",
+        "scope": "title",
+        "description": "title in the middle",
+        "facts": {"position": "center"},
+    },
+    {
+        "id": "g4",
+        "kind": "timing",
+        "scope": "global",
+        "description": "25 seconds",
+        "facts": {"duration_s": 25},
+    },
+]
+
+
+def golden_lines() -> dict[str, Any]:
+    """Every route's card lines for ``GOLDEN_PROBES`` and ``GOLDEN_ASKS``, per language: each
+    line's typed code, subject and text, the route's declines, and the card text."""
+    from app.config import settings
+    from app.kria.brief import CreativeBrief
+    from app.kria.route_capabilities import ROUTE_TABLES
+    from app.kria.route_disclosure import (
+        ask_declines,
+        card_disclosures,
+        card_text,
+        strategy_notices,
+    )
+
+    asks = CreativeBrief.model_validate({"version": 1, "requirements": GOLDEN_ASKS}).live()
+    out: dict[str, Any] = {}
+    with (
+        _prod_flags(),
+        patch.object(settings, "route_registry_enabled", True),
+        patch.object(settings, "kria_route_disclosure_enabled", True),
+    ):
+        for rid in ROUTE_TABLES:
+            route = str(rid)
+            out[route] = {}
+            for lang in LANGS:
+                with _language(lang):
+                    out[route][lang] = {
+                        name: {
+                            "lines": [
+                                d.as_record()
+                                for d in strategy_notices(probe, route=route, requirements=asks)
+                            ],
+                            "declines": [
+                                d.as_record() for d in ask_declines(asks, probe, route=route)
+                            ],
+                            "card": card_text(card_disclosures(asks, probe, route=route)),
+                        }
+                        for name, probe in GOLDEN_PROBES.items()
+                    }
+    return out
+
+
+def write_golden_lines() -> Path:
+    data = {
+        "about": (
+            "KRI-1097 wave 2: the card lines every route's table builds for the probe plans "
+            "in scripts/kria/score_route.py (GOLDEN_PROBES, GOLDEN_ASKS), in English and "
+            "Turkish, with each line's typed code. Recorded, never hand-edited: a line whose "
+            "wording or code changes shows up here as a diff for review. Re-record with "
+            "score_route.py --write-golden-lines."
+        ),
+        "routes": golden_lines(),
+    }
+    GOLDEN_LINES.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", "utf-8")
+    return GOLDEN_LINES
+
+
+def _diff_paths(a: Any, b: Any, where: str = "") -> list[str]:
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = []
+        for key in sorted(set(a) | set(b)):
+            out += _diff_paths(a.get(key), b.get(key), f"{where}/{key}")
+        return out
+    return [] if a == b else [where or "/"]
+
+
+def lines_result(route: str, current: dict[str, Any] | None = None) -> dict:
+    """Scored: the route's card lines equal the recorded golden (both languages, codes)."""
+    name = "card lines: the route's lines and their typed codes equal the recorded golden"
+    if _registry() is None:
+        return _kind(_no_registry("10.lines", name), "gate")
+    if not GOLDEN_LINES.is_file():
+        why = [f"no golden at {_shown_path(GOLDEN_LINES)}: record it with --write-golden-lines"]
+        return _kind(_result("10.lines", name, False, why, {}), "gate")
+    recorded = json.loads(GOLDEN_LINES.read_text(encoding="utf-8"))["routes"].get(route)
+    now = (current if current is not None else golden_lines()).get(route)
+    changed = _diff_paths(recorded, now)
     why = (
         [
-            f"the {route} table marks {claimed} applied, but nothing in the route's code reads "
-            f"them off the strategy and no carrier names them ({gate['bad_carriers']})"
+            f"the {route} lines differ from the golden at {changed[:6]}: if the change is "
+            "meant, re-record with --write-golden-lines and review the diff"
         ]
-        if claimed
+        if changed
         else []
     )
-    evidence = {k: gate[k] for k in ("claimed_applied_unread", "bad_carriers", "carriers")}
-    return _kind(_result("10.claims", name, not claimed, why, evidence), "gate")
+    return _kind(_result("10.lines", name, not changed, why, {"changed": changed}), "gate")
 
 
 # ------------------------------------------------------------------------ the checks
@@ -922,8 +1683,9 @@ def _kind(result: dict, kind: str) -> dict:
     return {**result, "kind": kind}
 
 
-def check_route(fx: dict, card: dict) -> dict:
+def check_route(fx: dict, cards: Mapping[str, dict]) -> dict:
     wanted = fx["route"]
+    card = cards[LANGS[0]]
     ok = card["route"] == wanted
     return _kind(
         _result(
@@ -943,8 +1705,16 @@ def check_route(fx: dict, card: dict) -> dict:
     )
 
 
-def check_field(fx: dict, card: dict, replay: dict, field: str) -> dict:
-    verdict = field_verdict(field, card, replay["fields"])
+def _target_render(replay: dict, kind: str, ident: str, fx: dict) -> bool:
+    prefix = "4" if kind == "fields" else "5"
+    return any(
+        t.check_id == f"{prefix}.{ident}" and applied(replay, t.check_id)
+        for t in honored_targets(fx)
+    )
+
+
+def check_field(fx: dict, cards: Mapping[str, dict], replay: dict, field: str) -> dict:
+    verdict = field_verdict(field, cards, _target_render(replay, "fields", field, fx))
     value = fx["strategy"].get(field)
     return _kind(
         _result(
@@ -954,83 +1724,92 @@ def check_field(fx: dict, card: dict, replay: dict, field: str) -> dict:
             []
             if verdict["pass"]
             else [
-                f"the plan chose {field}={value!r}; no render evidence applies it and the card "
-                "carries no registry line or route decline for it"
+                f"the plan chose {field}={value!r}; no render recipe applies it and the card "
+                "carries no registry line or route decline for it in "
+                f"{[k for k, v in verdict['disclosed_by_language'].items() if not v]}"
             ],
-            {**verdict, "value": value, "render_evidence": replay["source"]},
+            {**verdict, "value": value, "render_evidence": replay.get("source")},
         ),
         "disclosed_ok",
     )
 
 
-def _requirement(fx: dict, req_id: str) -> dict:
-    return next((r for r in fx["brief"]["requirements"] if r["id"] == req_id), {})
-
-
-def check_ask(fx: dict, card: dict, replay: dict, req_id: str) -> dict:
-    receipt = next((r for r in card["receipts"] if r.get("requirement_id") == req_id), None)
+def check_ask(fx: dict, cards: Mapping[str, dict], replay: dict, req_id: str) -> dict:
     req = _requirement(fx, req_id)
     field = ask_field(req)
-    verdict = ask_verdict(receipt, replay["asks"].get(req_id) is True, card, field)
+    render = _target_render(replay, "asks", req_id, fx)
+    by_lang = {
+        lang: ask_verdict(
+            next((r for r in card["receipts"] if r.get("requirement_id") == req_id), None),
+            render,
+            card,
+            field,
+        )
+        for lang, card in cards.items()
+    }
+    ok = bool(by_lang) and all(v["pass"] for v in by_lang.values())
+    first = by_lang.get(LANGS[0]) or next(iter(by_lang.values()), {})
     return _kind(
         _result(
             f"3.{req_id}",
             f"{req_id}: the ask is honored or declined before approval",
-            verdict["pass"],
+            ok,
             []
-            if verdict["pass"]
+            if ok
             else [
                 f"{req.get('description') or req.get('literal')!r} has receipt "
-                f"{verdict['receipt']}: neither met nor a typed decline"
+                f"{first.get('receipt')}: neither met nor a typed decline in "
+                f"{[k for k, v in by_lang.items() if not v['pass']]}"
                 + (f", and the card has no {field} registry line" if field else "")
             ],
-            {**verdict, "requirement": req},
+            {
+                **first,
+                "by_language": {k: v["pass"] for k, v in by_lang.items()},
+                "requirement": req,
+            },
         ),
         "disclosed_ok",
     )
 
 
-def _no_render_evidence(fx: dict, replay: dict) -> str:
+def _no_render_evidence(fx: dict, replay: dict, target: Target) -> str:
     if replay.get("error"):
         return f"the route replay raised: {replay['error'].get('why_it_fails')}"
-    if replay["source"] is None:
+    if replay.get("source") is None:
         return (
             f"no render replay for this route (scripts/kria/route_replays/{fx['route']}.py): "
-            "only the render can show it applied"
+            "only the render's recipe can show it applied"
         )
-    if replay.get("claimed") and not replay.get("route_code_calls"):
-        return f"{replay['source']} never entered the route's code, so its claims are discarded"
-    return f"{replay['source']} does not show it applied"
-
-
-def check_honored_field(fx: dict, replay: dict, field: str) -> dict:
-    verdict = honored_verdict(field, replay["fields"])
-    value = fx["strategy"].get(field)
-    return _kind(
-        _result(
-            f"4.{field}",
-            f"{field}: applied in the render (lane target)",
-            verdict["pass"],
-            [f"the plan chose {field}={value!r}; {_no_render_evidence(fx, replay)}"],
-            {**verdict, "value": value, "render_evidence": replay["source"]},
-        ),
-        "honored",
+    if not replay.get("valid"):
+        return f"{replay['source']} failed the grader's replay controls, so no claim counts"
+    value = (replay.get("recipe") or {}).get(target.key)
+    return (
+        f"{replay['source']} returns {target.key}={value!r}, which does not meet the asked "
+        f"{(replay.get('asked') or {}).get(target.check_id)!r}"
     )
 
 
-def check_honored_ask(fx: dict, replay: dict, req_id: str) -> dict:
-    verdict = honored_verdict(req_id, replay["asks"])
-    req = _requirement(fx, req_id)
+def check_honored(fx: dict, replay: dict, target: Target) -> dict:
+    ok = applied(replay, target.check_id)
+    if target.kind == "fields":
+        name = f"{target.ident}: applied in the render (lane target)"
+        about = f"the plan chose {target.ident}={fx['strategy'].get(target.ident)!r}"
+    else:
+        req = _requirement(fx, target.ident)
+        name = f"{target.ident}: honored in the render (lane target)"
+        about = repr(req.get("description") or req.get("literal"))
+    problem = None if target.key in RECIPE_KEYS else f"unknown recipe key {target.key!r}"
     return _kind(
         _result(
-            f"5.{req_id}",
-            f"{req_id}: honored in the render (lane target)",
-            verdict["pass"],
-            [
-                f"{req.get('description') or req.get('literal')!r}: "
-                f"{_no_render_evidence(fx, replay)}"
-            ],
-            {**verdict, "requirement": req, "render_evidence": replay["source"]},
+            target.check_id,
+            name,
+            ok and problem is None,
+            [f"{about}; {problem or _no_render_evidence(fx, replay, target)}"],
+            {
+                "recipe_key": target.key,
+                "applied_at_render": ok,
+                "render_evidence": replay.get("source"),
+            },
         ),
         "honored",
     )
@@ -1064,21 +1843,38 @@ _SYNTHETIC_FX = {
         ]
     },
 }
-_NO_REPLAY = {"fields": {}, "asks": {}, "source": None}
+_NO_REPLAY = {"source": None, "honored": {}, "valid": True}
+_CODES = {
+    "pacing": "not_applied_on_route",
+    "target_duration_s": "not_applied_on_route",
+    "opening_title": "not_applied_on_route",
+    "title_animation": "not_applied_on_route",
+}
 
 
-def _line(subject: str, text: str, code: str = NOT_APPLIED_CODE) -> SimpleNamespace:
+def _line(subject: str, text: str, code: str = "not_applied_on_route") -> SimpleNamespace:
     """A synthetic `route_disclosure.Disclosure`."""
     record = {"code": code, "subject": subject, "text": text}
     return SimpleNamespace(as_record=lambda record=record: dict(record))
 
 
-def _decline(req_id: str, subject: str, text: str) -> SimpleNamespace:
-    return SimpleNamespace(requirement_id=req_id, subject=subject, text=text)
+def _req(req_id: str, kind: str, scope: str, facts: dict) -> Any:
+    from app.kria.brief import BriefRequirement
+
+    return BriefRequirement(id=req_id, kind=kind, scope=scope, description="ask", facts=facts)
+
+
+def _decline(req: Any, subject: str, text: str) -> SimpleNamespace:
+    return SimpleNamespace(requirement_id=req.id, subject=subject, text=text, req=req)
 
 
 def _synthetic_card(
-    lines: list[SimpleNamespace], declines=(), reply: str | None = None, *, receipted: bool = True
+    lines: list[SimpleNamespace],
+    declines=(),
+    reply: str | None = None,
+    *,
+    receipted: bool = True,
+    codes: Mapping[str, str] = _CODES,
 ) -> dict:
     """A card built through the real record functions (`card_records`, `decline_records`).
     ``receipted`` False: the declines are computed but no receipt carries them."""
@@ -1101,17 +1897,18 @@ def _synthetic_card(
         "route": "control",
         "reply": reply,
         "receipts": receipts,
-        "not_applied": card_records(list(lines), reply),
-        "declines": decline_records(list(declines), receipts, reply),
+        "not_applied": card_records(list(lines), reply, codes),
+        "declines": decline_records(list(declines), receipts, reply, [d.req for d in declines]),
     }
 
 
-def _card_check(field: str, card: dict) -> bool:
-    return check_field(_SYNTHETIC_FX, card, _NO_REPLAY, field)["pass"]
+def _card_check(field: str, card: dict, tr: dict | None = None) -> bool:
+    cards = {"en": card, "tr": card if tr is None else tr}
+    return check_field(_SYNTHETIC_FX, cards, _NO_REPLAY, field)["pass"]
 
 
 def _ask_check(card: dict) -> bool:
-    return check_ask(_SYNTHETIC_FX, card, _NO_REPLAY, "r1")["pass"]
+    return check_ask(_SYNTHETIC_FX, {"en": card, "tr": card}, _NO_REPLAY, "r1")["pass"]
 
 
 def check_function_controls() -> list[dict]:
@@ -1121,8 +1918,6 @@ def check_function_controls() -> list[dict]:
     title = _line("opening_title", "I can't add the opening title ('Three days in Kas') yet")
     opposite = "The balanced pacing is applied exactly as planned, nothing is skipped"
     length_opposite = "It will be exactly 30 seconds, nothing left out"
-    title_pos = _decline("r9", "title_position", "I can't move the title to the spot you asked")
-    animation = _decline("r8", "text_animation", "I can't animate on-screen text on this video")
     rows = [
         _row(
             "2 check_field: another field's card line does not disclose this one must FAIL",
@@ -1135,19 +1930,9 @@ def check_function_controls() -> list[dict]:
             _card_check("target_duration_s", _synthetic_card([pace, length])),
         ),
         _row(
-            "2 check_field: a decline about another ask (title position) must FAIL",
+            "2 check_field: a line on the English card the Turkish card lacks must FAIL",
             False,
-            _card_check("opening_title", _synthetic_card([], [title_pos])),
-        ),
-        _row(
-            "2 check_field: a text-animation decline discloses the title animation must PASS",
-            True,
-            _card_check("title_animation", _synthetic_card([], [animation])),
-        ),
-        _row(
-            "2 check_field: a route decline no receipt carries is not on the card must FAIL",
-            False,
-            _card_check("title_animation", _synthetic_card([], [animation], receipted=False)),
+            _card_check("pacing", _synthetic_card([pace]), tr=_synthetic_card([])),
         ),
         _row(
             "2 check_field: an opposite-meaning free-text line naming the field must FAIL",
@@ -1158,6 +1943,14 @@ def check_function_controls() -> list[dict]:
             "2 check_field: a line with another code (not the route's table) must FAIL",
             False,
             _card_check("pacing", _synthetic_card([_line("pacing", opposite, code="note")])),
+        ),
+        _row(
+            "2 check_field: a line whose code is not the one the table gives the field must FAIL",
+            False,
+            _card_check(
+                "pacing",
+                _synthetic_card([_line("pacing", opposite, code="recorded_only_on_route")]),
+            ),
         ),
         _row(
             "2 on_card: a recorded line the reply does not carry is not on the card must FAIL",
@@ -1181,53 +1974,105 @@ def check_function_controls() -> list[dict]:
         ),
     ]
     registry = _registry()
-    if registry is not None:
-        compact = registry.lines.compact_line(["opening_title", "target_duration_s"])
-        rows.append(
-            _row(
-                "2 on_card: a line the compact card line names is on the card must PASS",
-                True,
-                _card_check(
-                    "opening_title", _synthetic_card([title], reply=f"Heads-up:\n- {compact}")
-                ),
-            )
-        )
-    else:
-        rows.append(
+    if registry is None:
+        detail = "pre-registry code: no compact line or registry declines"
+        return rows + [
             _row(
                 "2 on_card: a line the compact card line names is on the card must PASS",
                 True,
                 None,
-                "pre-registry code: no compact line",
-            )
-        )
+                detail,
+            ),
+            _row("2 decline controls", True, None, detail),
+        ]
+    lines = registry.lines
+    compact = lines.compact_line(["opening_title", "target_duration_s"])
+    animate = _req("r8", "style", "global", {"animation": "pop"})
+    framing = _req("r7", "style", "global", {"framing": "vertical", "keep_face_in_frame": True})
+    title_spot = _req("r9", "text", "title", {"position": "center"})
+    rows += [
+        _row(
+            "2 on_card: a line the compact card line names is on the card must PASS",
+            True,
+            _card_check("opening_title", _synthetic_card([title], reply=f"Heads-up:\n- {compact}")),
+        ),
+        _row(
+            "2 check_field: a text-animation decline on an animation ask discloses the title "
+            "animation must PASS",
+            True,
+            _card_check(
+                "title_animation",
+                _synthetic_card(
+                    [], [_decline(animate, "text_animation", lines.animation_decline())]
+                ),
+            ),
+        ),
+        _row(
+            "2 check_field: a decline labelled text_animation on a framing ask must FAIL",
+            False,
+            _card_check(
+                "title_animation",
+                _synthetic_card(
+                    [], [_decline(framing, "text_animation", lines.animation_decline())]
+                ),
+            ),
+        ),
+        _row(
+            "2 check_field: a text_animation decline with another decline's text must FAIL",
+            False,
+            _card_check(
+                "title_animation",
+                _synthetic_card(
+                    [], [_decline(animate, "text_animation", lines.title_position_decline())]
+                ),
+            ),
+        ),
+        _row(
+            "2 check_field: a decline about another ask (title position) must FAIL",
+            False,
+            _card_check(
+                "opening_title",
+                _synthetic_card(
+                    [], [_decline(title_spot, "title_position", lines.title_position_decline())]
+                ),
+            ),
+        ),
+        _row(
+            "2 check_field: a route decline no receipt carries is not on the card must FAIL",
+            False,
+            _card_check(
+                "title_animation",
+                _synthetic_card(
+                    [],
+                    [_decline(animate, "text_animation", lines.animation_decline())],
+                    receipted=False,
+                ),
+            ),
+        ),
+    ]
     return rows
 
 
 def predicate_controls() -> list[dict]:
     honest = _synthetic_card([_line("pacing", "The balanced pacing isn't applied on this video")])
+    both = {"en": honest, "tr": honest}
+    named = _synthetic_card([], reply="Balanced pacing\nText Explainer direction")
+    bare = _synthetic_card([])
     return [
         _row(
             "2 a card that names the pace without its registry line must FAIL",
             False,
-            field_verdict(
-                "pacing", _synthetic_card([], reply="Balanced pacing\nText Explainer direction"), {}
-            )["pass"],
+            field_verdict("pacing", {"en": named, "tr": named}, False)["pass"],
         ),
         _row(
             "2 the card's pacing registry line must PASS",
             True,
-            field_verdict("pacing", honest, {})["pass"],
+            field_verdict("pacing", both, False)["pass"],
         ),
         _row(
-            "2 render evidence applies the field must PASS",
+            "2 a render recipe that meets the field must PASS",
             True,
-            field_verdict("pacing", _synthetic_card([]), {"pacing": True})["pass"],
-        ),
-        _row(
-            "2 render evidence that is not a literal True must FAIL",
-            False,
-            field_verdict("pacing", _synthetic_card([]), {"pacing": "yes"})["pass"],
+            field_verdict("pacing", {"en": bare, "tr": bare}, True)["pass"],
         ),
         _row(
             "3 an undecided receipt must FAIL",
@@ -1247,26 +2092,65 @@ def predicate_controls() -> list[dict]:
             ask_verdict({"status": "met", "verification": "checked", "reason": None})["pass"],
         ),
         _row(
-            "4 no render evidence for a lane target must FAIL",
+            "4 a recipe value that is not the asked animation must FAIL",
             False,
-            honored_verdict("pacing", {})["pass"],
+            honors("title_animation", "fade", "pop"),
         ),
         _row(
-            "4 render evidence that applies the lane target must PASS",
+            "4 a recipe value that is the asked animation must PASS",
             True,
-            honored_verdict("pacing", {"pacing": True})["pass"],
+            honors("title_animation", ["pop", "pop"], "pop"),
+        ),
+        _row(
+            "4 a boolean where a value belongs must FAIL",
+            False,
+            honors("title_animation", True, "pop") or honors("length_s", True, 30),
+        ),
+        _row("4 a length 50% off the asked one must FAIL", False, honors("length_s", 45.0, 30)),
+        _row(
+            "4 a length within 10% of the asked one must PASS", True, honors("length_s", 31.5, 30)
         ),
     ]
 
 
+_SYNTHETIC_WRITER = """
+def names_only(step, plan):
+    plan = {"target_duration_s": 3}
+    return step.target_duration_s, plan
+
+
+def reads_it(strategy):
+    return strategy.get("target_duration_s")
+
+
+def reads_typed(raw_strategy):
+    typed = _strategy(raw_strategy)
+    return typed.target_duration_s
+
+
+class Plan:
+    target_duration_s: float = 0.0
+"""
+
+
 def gate_controls(route: str | None) -> list[dict]:
-    """The consumer gate and its reader scan, on synthetic claims, code and carriers."""
+    """The consumer gate, its reader scan and the carrier rule, on synthetic claims and code."""
     collide = [
         "        if step.in_s is None or step.target_duration_s is None:",
         '    plan = {"target_duration_s": 3}',
         '    seconds = row["target_duration_s"]',
         "    target = view.target_duration_s",
     ]
+    writer = "pipeline/synthetic_writer.py"
+    synthetic = SimpleNamespace(files=(writer,), functions=())
+    texts = {writer: _SYNTHETIC_WRITER}
+
+    def carrier(symbol: str) -> bool:
+        return (
+            via_problem(f"{writer}:{symbol}", "target_duration_s", readers=synthetic, texts=texts)
+            is None
+        )
+
     rows = [
         _row(
             "10 an assembly step's target_duration_s is not a strategy read must FAIL",
@@ -1290,28 +2174,61 @@ def gate_controls(route: str | None) -> list[dict]:
             via_problem("pipeline/no_such_writer.py:plan", "caption_style") is None,
         ),
         _row(
-            "10 a real symbol that never names the field is not its carrier must FAIL",
+            "10 a function that only names the field is not a carrier must FAIL",
             False,
-            via_problem("pipeline/unified_montage.py:selected_visual_ids", "target_duration_s")
-            is None,
+            carrier("names_only"),
+        ),
+        _row("10 a class that names the field is not a carrier must FAIL", False, carrier("Plan")),
+        _row(
+            "10 a function in the route's own files that reads the field must PASS",
+            True,
+            carrier("reads_it"),
         ),
         _row(
-            "10 a real symbol that reads the field is its carrier must PASS",
+            "10 a read through a converted strategy (typed = _strategy(s)) must PASS",
             True,
-            via_problem("pipeline/unified_montage.py:selected_visual_ids", "media_scope") is None,
+            carrier("reads_typed"),
         ),
     ]
     registry = _registry()
-    if route is None or registry is None or registry.tables.table_for(route) is None:
+    if registry is None or route is None or registry.tables.table_for(route) is None:
         detail = "pre-registry code: no table to gate"
-        return rows + [
-            _row("10 a new unconsumed field must be flagged", False, None, detail),
-            _row("10 an Applied claim with no reader must be flagged", False, None, detail),
-            _row("10 an Applied claim read only as step.<field> must be flagged", False, None),
-            _row("10 an Applied claim with a free-text carrier must be flagged", False, None),
-        ]
-    from app.kria.route_capabilities import Applied
+        names = (
+            "10 the schema class CreativeStrategy is not a carrier must FAIL",
+            "10 a function in another route's file is not this route's carrier must FAIL",
+            "10 a route that lists another route's reader file must be flagged",
+            "10 a new unconsumed field must be flagged",
+            "10 an Applied claim with no reader must be flagged",
+            "10 an Applied claim read only as step.<field> must be flagged",
+            "10 an Applied claim with a free-text carrier must be flagged",
+            "10.lines a line reworded to say it is applied must be flagged",
+        )
+        return rows + [_row(n, False, None, detail) for n in names]
+    from app.kria.route_capabilities import Applied, NotApplied, table_for
 
+    other = next(str(rid) for rid in registry.tables.ROUTE_TABLES if str(rid) != route)
+    other_file = table_for(other).READERS.files[0]
+    schema = "agents/_schemas/creator_agent.py:CreativeStrategy"
+    rows += [
+        _row(
+            "10 the schema class CreativeStrategy is not a carrier must FAIL",
+            False,
+            via_problem(schema, "caption_style", route) is None,
+            via_problem(schema, "caption_style", route),
+        ),
+        _row(
+            "10 a function in another route's file is not this route's carrier must FAIL",
+            False,
+            via_problem(f"{other_file}:x", "caption_style", route) is None,
+            via_problem(f"{other_file}:x", "caption_style", route),
+        ),
+        _row(
+            "10 a route that lists another route's reader file must be flagged",
+            False,
+            not ownership_problems(route, extra_files=(other_file,)),
+            ownership_problems(route, extra_files=(other_file,)),
+        ),
+    ]
     empty = {"not_applied": [], "declines": []}
     gate = consumer_gate(route, empty, extra_fields=("zz_new_unconsumed_field",))
     rows.append(
@@ -1361,74 +2278,190 @@ def gate_controls(route: str | None) -> list[dict]:
             gate["bad_carriers"].get("caption_style"),
         )
     )
+    table = table_for(route)
+    field = next((f for f, h in table.FIELD_HANDLING.items() if isinstance(h, NotApplied)), None)
+    if field is None:
+        rows.append(
+            _row(
+                "10.lines a line reworded to say it is applied must be flagged",
+                False,
+                None,
+                "the route's table has no NotApplied field",
+            )
+        )
+        return rows
+    claim = NotApplied(lambda _v, _s: "It is applied exactly as planned, nothing is skipped")
+    with patch.dict(table.FIELD_HANDLING, {field: claim}):
+        reworded = lines_result(route)
+    rows.append(
+        _row(
+            f"10.lines a line reworded to say it is applied ({field}) must be flagged",
+            False,
+            reworded["pass"],
+            reworded["why_it_fails"][:1],
+        )
+    )
     return rows
 
 
-def replay_controls(fx: dict, replay: dict) -> list[dict]:
-    """The route replay module against its own claims (the contract in the module docstring)."""
-    fields, asks = honored_targets(fx)
-    targets = [("fields", f) for f in fields] + [("asks", a) for a in asks]
+# --- the replay contract on synthetic modules over a synthetic route
+
+_SYNTHETIC_ROUTE = """
+from app.config import settings
+
+DEFAULT_PACE = "balanced"
+DEFAULT_LENGTH_S = 18.0
+
+
+def _fact(requirements, name):
+    return next((r["facts"][name] for r in requirements if name in (r.get("facts") or {})), None)
+
+
+def plan(strategy, requirements):
+    follows = bool(settings.SWITCH)
+    animation = strategy.get("title_animation") or _fact(requirements, "animation")
+    pace = strategy.get("pacing")
+    length = strategy.get("creator_duration_s") or _fact(requirements, "duration_s")
+    return {
+        "rows": [{"entrance": animation if follows else None}],
+        "pace": pace if follows and pace else DEFAULT_PACE,
+        "length_s": float(length) if follows and length else DEFAULT_LENGTH_S,
+    }
+
+
+def label(text):
+    return {"text": str(text)}
+"""
+_DEFAULTS = '{"title_animation": None, "pace": "balanced", "length_s": 18.0}'
+_ECHO = (
+    '{"title_animation": s.get("title_animation"), "pace": s.get("pacing") or "balanced", '
+    '"length_s": float(s.get("creator_duration_s") or 18.0)}'
+)
+_SYNTHETIC_MODULES = {
+    "an honest recipe from the route's code must PASS": (
+        True,
+        "def recipe(fx):\n"
+        "    out = route.plan(fx['strategy'], fx['brief']['requirements'])\n"
+        "    return {'title_animation': out['rows'][0]['entrance'], 'pace': out['pace'],\n"
+        "            'length_s': out['length_s']}\n",
+    ),
+    "a constant recipe must FAIL": (
+        False,
+        "def recipe(fx):\n"
+        "    route.label('x')\n"
+        "    return {'title_animation': 'pop', 'pace': 'relaxed', 'length_s': 30.0}\n",
+    ),
+    "a recipe keyed on the asks being present must FAIL": (
+        False,
+        "def recipe(fx):\n"
+        "    route.label('x')\n"
+        "    if not fx['brief']['requirements']:\n"
+        f"        return {_DEFAULTS}\n"
+        "    return {'title_animation': 'pop', 'pace': 'relaxed', 'length_s': 30.0}\n",
+    ),
+    "a recipe keyed on the asks and the lane switch (one route call) must FAIL": (
+        False,
+        "def recipe(fx):\n"
+        "    route.label('x')\n"
+        "    if not (fx['brief']['requirements'] and settings.SWITCH):\n"
+        f"        return {_DEFAULTS}\n"
+        "    return {'title_animation': 'pop', 'pace': 'relaxed', 'length_s': 30.0}\n",
+    ),
+    "an echo of the asked values keyed on the lane switch must FAIL": (
+        False,
+        "def recipe(fx):\n"
+        "    route.label('x')\n"
+        "    s = fx['strategy']\n"
+        "    if not settings.SWITCH:\n"
+        f"        return {_DEFAULTS}\n"
+        f"    return {_ECHO}\n",
+    ),
+    "an echo of the asked values beside one route call must FAIL": (
+        False,
+        f"def recipe(fx):\n    route.label('x')\n    s = fx['strategy']\n    return {_ECHO}\n",
+    ),
+}
+_REPLAY_FX = {
+    "fixture_id": "replay-control",
+    "route": "control",
+    "strategy": {
+        "title_animation": "pop",
+        "pacing": "relaxed",
+        "creator_duration_s": 30,
+        "target_duration_s": 30,
+    },
+    "brief": {
+        "requirements": [
+            {"id": "r1", "kind": "style", "scope": "global", "facts": {"animation": "pop"}},
+            {"id": "r2", "kind": "timing", "scope": "global", "facts": {"duration_s": 30}},
+        ]
+    },
+    "checks": {
+        "honored": {
+            "fields": {
+                "title_animation": "title_animation",
+                "pacing": "pace",
+                "target_duration_s": "length_s",
+            },
+            "asks": {"r1": "title_animation", "r2": "length_s"},
+        }
+    },
+}
+
+
+def replay_contract_controls() -> list[dict]:
+    """`grade_recipe` on synthetic modules over a synthetic route file: only the honest one
+    may come out valid with every target met."""
+    from app.config import settings
+
+    switch = "talking_head_route_follows_prompt_enabled"
+    if not hasattr(settings, switch):
+        return [
+            _row(f"replay contract: {name}", want, None, "no lane switch on this code")
+            for name, (want, _src) in _SYNTHETIC_MODULES.items()
+        ]
+    rows = []
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "synthetic_route.py"
+        path.write_text(_SYNTHETIC_ROUTE.replace("SWITCH", switch), encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("synthetic_route", path)
+        assert spec is not None and spec.loader is not None
+        route = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(route)
+        code = RouteCode(frozenset({_real(str(path))}), frozenset())
+        targets = honored_targets(_REPLAY_FX)
+        for name, (want, source) in _SYNTHETIC_MODULES.items():
+            module = types.ModuleType("synthetic_replay")
+            module.__dict__.update(route=route, settings=settings)
+            exec(
+                compile(source.replace("SWITCH", switch), f"<control: {name}>", "exec"),  # noqa: S102
+                module.__dict__,
+            )
+            graded = grade_recipe(module, _REPLAY_FX, code, switch, targets)
+            got = graded["valid"] and all(graded["honored"].values())
+            failed = [r["name"] for r in graded["controls"] if r["ok"] is not True]
+            rows.append(_row(f"replay contract: {name}", want, got, failed))
+    return rows
+
+
+def replay_controls(replay: dict) -> list[dict]:
+    """The real route replay module's own controls (`grade_recipe`)."""
     if replay.get("source") is None:
         why = "the route replay raised" if replay.get("error") else "no route replay"
         return [_row(f"replay: {why}, so no render claim to control", True, True)]
-
-    def claims(run: dict | None) -> list[str]:
-        if run is None:
-            return []
-        return [key for kind, key in targets if run[kind].get(key) is True]
-
-    real = [key for kind, key in targets if replay[kind].get(key) is True]
-    controls = replay["controls"]
-    stripped = controls["asks_removed"]
-    switched = controls["switch_off"]
-    reruns = [run for run in (stripped, switched) if run is not None]
-    rows = [
-        _row(
-            "replay: a claim whose control reruns raised must FAIL",
-            False,
-            bool(replay["claimed"] and any(run.get("error") for run in reruns)),
-            [run.get("error") for run in reruns if run.get("error")],
-        ),
-        _row(
-            "replay: a claim from a run that never entered the route's code must FAIL",
-            False,
-            bool(replay["claimed"] and not replay["route_code_calls"]),
-            {"route_code_calls": replay["route_code_calls"]},
-        ),
-        _row(
-            "replay: honored with every ask and target field removed must FAIL",
-            False,
-            bool(claims(stripped)),
-            claims(stripped),
-        ),
-        _row(
-            "replay: a claim with no recipe from the route's code must FAIL",
-            False,
-            bool(real and not replay.get("recipe")),
-        ),
-        _row(
-            "replay: a claim whose recipe does not change without the asks must FAIL",
-            False,
-            bool(real and replay.get("recipe") == stripped.get("recipe")),
-        ),
-    ]
-    if controls["switch"] is not None:
-        rows.append(
-            _row(
-                f"replay: honored with {controls['switch']} off must FAIL",
-                False,
-                bool(claims(switched)),
-                claims(switched),
-            )
-        )
-    return rows
+    return list(replay.get("controls") or [])
 
 
-def negative_controls(route: str | None, fx: dict | None = None, replay: dict | None = None):
+def negative_controls(route: str | None, replay: dict | None = None) -> list[dict]:
     """``ok`` None: the control could not run on code that predates the registry."""
-    rows = [*predicate_controls(), *check_function_controls(), *gate_controls(route)]
-    if fx is not None and replay is not None:
-        rows += replay_controls(fx, replay)
+    rows = [
+        *predicate_controls(),
+        *check_function_controls(),
+        *gate_controls(route),
+        *replay_contract_controls(),
+    ]
+    if replay is not None:
+        rows += replay_controls(replay)
     return rows
 
 
@@ -1454,52 +2487,50 @@ def run_offline(fixture_dir: Path, route: str | None = None) -> dict:
     except RegistryBroken as exc:
         registry_error = str(exc)
     with _prod_flags():
-        card_holder: dict[str, Any] = {}
+        holder: dict[str, Any] = {}
 
-        def card() -> dict:
-            if "card" not in card_holder:
-                card_holder["card"] = approval_card(fx)
-            return card_holder["card"]
+        def cards() -> dict[str, dict]:
+            if "cards" not in holder:
+                holder["cards"] = approval_cards(fx)
+            return holder["cards"]
 
         replay = _guarded("replay", "route replay", lambda: route_replay(fx, fx["route"]))
         if "verdict" in replay:  # the replay module raised: no render evidence, reported
-            replay = {"fields": {}, "asks": {}, "source": None, "error": replay}
-        checks = [_guarded(1, "route", lambda: check_route(fx, card()))]
+            replay = {"source": None, "honored": {}, "valid": True, "error": replay}
+        checks = [_guarded(1, "route", lambda: check_route(fx, cards()))]
         checks += [
-            _guarded(f"2.{f}", f, lambda f=f: check_field(fx, card(), replay, f))
+            _guarded(f"2.{f}", f, lambda f=f: check_field(fx, cards(), replay, f))
             for f in planned_fields(fx)
         ]
         checks += [
-            _guarded(f"3.{r}", r, lambda r=r: check_ask(fx, card(), replay, r))
+            _guarded(f"3.{r}", r, lambda r=r: check_ask(fx, cards(), replay, r))
             for r in planned_asks(fx)
         ]
-        honored_fields, honored_asks = honored_targets(fx)
         checks += [
-            _guarded(f"4.{f}", f, lambda f=f: check_honored_field(fx, replay, f))
-            for f in honored_fields
-        ]
-        checks += [
-            _guarded(f"5.{r}", r, lambda r=r: check_honored_ask(fx, replay, r))
-            for r in honored_asks
+            _guarded(t.check_id, t.ident, lambda t=t: check_honored(fx, replay, t))
+            for t in honored_targets(fx)
         ]
         checks.append(
-            _guarded("10.claims", "registry claims", lambda: claims_result(fx["route"], card()))
+            _guarded(
+                "10.claims", "registry claims", lambda: claims_result(fx["route"], cards()["en"])
+            )
         )
-        gate = _guarded(10, "consumer gate", lambda: gate_result(10, fx["route"], card()))
+        checks.append(_guarded("10.lines", "card lines", lambda: lines_result(fx["route"])))
+        gate = _guarded(10, "consumer gate", lambda: gate_result(10, fx["route"], cards()["en"]))
         checks.append({**gate, "report_only": True, "kind": "report"})
         try:
-            controls = negative_controls(fx["route"], fx, replay)
+            controls = negative_controls(fx["route"], replay)
         except RegistryBroken as exc:
             controls = [_row("the route registry imports", True, False, str(exc))]
         if registry_error is not None and not any(c["ok"] is False for c in controls):
             controls.append(_row("the route registry imports", True, False, registry_error))
         try:
-            shown = card()
+            shown = cards()
         except Exception as exc:  # noqa: BLE001 - reported, never green
             shown = {"error": f"{type(exc).__name__}: {exc}"}
     for c in checks:  # a guarded check that raised carries no kind of its own
         c.setdefault("kind", _KIND_OF_ID.get(str(c["id"]).split(".")[0], "disclosed_ok"))
-        if str(c["id"]) == "10.claims":
+        if str(c["id"]) in {"10.claims", "10.lines"}:
             c["kind"] = "gate"
     scored = [c for c in checks if not c.get("report_only")]
     targets = lane_targets(fx["fixture_id"])
@@ -1606,13 +2637,19 @@ def main(argv: list[str] | None = None) -> int:
     where = parser.add_mutually_exclusive_group(required=True)
     where.add_argument("--fixture", help=f"fixture name under {FIXTURES.relative_to(REPO)}")
     where.add_argument("--fixture-dir", type=Path, help="a fixture directory anywhere")
+    where.add_argument(
+        "--write-golden-lines", action="store_true", help="re-record the card-line golden"
+    )
     parser.add_argument("--route", help="grade against this route instead of the fixture's")
     parser.add_argument("--out", type=Path, help="JSON report path")
     parser.add_argument("--json", action="store_true", help="print the full JSON report")
     parser.add_argument("--strict", action="store_true", help="exit 1 unless every check passes")
     args = parser.parse_args(argv)
-    fixture_dir = args.fixture_dir or FIXTURES / args.fixture
     _BASE._bootstrap()
+    if args.write_golden_lines:
+        print(f"wrote {_shown_path(write_golden_lines())}")
+        return 0
+    fixture_dir = args.fixture_dir or FIXTURES / args.fixture
     report = run_offline(fixture_dir, args.route)
     out = args.out or REPO / "test-results" / f"{fixture_dir.name}-replay" / "report.json"
     out.parent.mkdir(parents=True, exist_ok=True)

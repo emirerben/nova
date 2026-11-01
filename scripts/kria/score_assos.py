@@ -533,9 +533,9 @@ def approval_card(fx: dict, job: SimpleNamespace) -> dict[str, Any]:
         "consequence_summary": consequence,
         "receipts": receipt_records,
         "ready": bool(report["ready"]),
-        "not_applied": _ROUTE.card_records(disclosures, reply),
+        "not_applied": _ROUTE.card_records(disclosures, reply, _ROUTE.table_codes(route)),
         "declines": _ROUTE.decline_records(
-            ask_declines(checked, strategy, route=route), receipt_records, reply
+            ask_declines(checked, strategy, route=route), receipt_records, reply, list(checked)
         ),
         "draft_target_duration_s": draft_strategy.get("target_duration_s"),
         "text": "\n".join([reply, consequence, *changes, *[str(r.reason or "") for r in receipts]]),
@@ -1401,6 +1401,33 @@ def reproduction(fx: dict, base: dict) -> list[dict]:
 # ----------------------------------------------------------------------------------- report
 
 
+def all_controls(fx: dict) -> list[dict]:
+    """The negative and hold controls. One that cannot run (a route registry that fails to
+    import) is a failed control, so the scorecard is INVALID like `score_route`'s, never a
+    crash."""
+
+    def broken(exc: Exception) -> dict:
+        return {
+            "name": "the negative controls run (the route registry imports)",
+            "expected_pass": True,
+            "got_pass": False,
+            "ok": False,
+            "detail": f"{type(exc).__name__}: {exc}",
+        }
+
+    try:
+        _ROUTE._registry()
+    except _ROUTE.RegistryBroken as exc:
+        return [broken(exc)]
+    controls: list[dict] = []
+    for build in (negative_controls, lambda: hold_controls(fx)):
+        try:
+            controls += build()
+        except Exception as exc:  # noqa: BLE001
+            controls.append(broken(exc))
+    return controls
+
+
 def run_offline(fixture_dir: Path = FIXTURE_DIR) -> dict:
     fx, rs = load_fixture(fixture_dir), load_research(fixture_dir)
     with _prod_flags():
@@ -1442,7 +1469,7 @@ def run_offline(fixture_dir: Path = FIXTURE_DIR) -> dict:
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             ]
-    controls = negative_controls() + hold_controls(fx)
+    controls = all_controls(fx)
     scored = [c for c in checks if not c.get("report_only")]
     return {
         "fixture": fx["fixture_id"],

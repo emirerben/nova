@@ -51,7 +51,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "hero_media_id": NotApplied(lines.hero),
     "overlay_display": NotApplied(lines.overlay),
     "licensed_sfx": NotApplied(lines.sfx),
-    "edit_format": Applied(via=lines.DISPATCH),
+    "edit_format": Applied(via=lines.APPROVAL),
     "opening_title": Applied(),
     "font_family": Applied(),
     "text_color": Applied(),

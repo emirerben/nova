@@ -2237,6 +2237,12 @@ def _complete_draft_turn(
                             receipts,
                             summary=arguments.summary,
                             notices=planned.policy_notices,
+                            # Outside readiness a route decline follows the planner's
+                            # summary instead of replacing it (registry on).
+                            declines_after_summary=route_name is not None
+                            and not readiness_required
+                            and not editor_turn
+                            and decoupled_from_readiness(),
                         )
                     requirement_receipts = [r.model_dump(mode="json") for r in receipts]
                 elif editor_turn:

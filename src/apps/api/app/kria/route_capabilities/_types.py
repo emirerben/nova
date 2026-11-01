@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from app.config import settings
 from app.kria.brief import BriefRequirement
+
+# The typed code of every card line a table builds (`route_disclosure.Disclosure.code`): the
+# code says the value is not followed, so no wording can turn a line into a claim that it is.
+NOT_APPLIED_ON_ROUTE = "not_applied_on_route"
+RECORDED_ONLY_ON_ROUTE = "recorded_only_on_route"
 
 
 def registry_enabled() -> bool:
@@ -50,6 +55,7 @@ class RecordedOnly:
     """The route stores the value (the plan records it) but the render does not follow it."""
 
     build: Builder | WithAsks
+    code: ClassVar[str] = RECORDED_ONLY_ON_ROUTE
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,7 @@ class NotApplied:
     """The route ignores the value; ``build`` is the line the approval card shows instead."""
 
     build: Builder | WithAsks
+    code: ClassVar[str] = NOT_APPLIED_ON_ROUTE
 
 
 Handling = Applied | RecordedOnly | NotApplied

@@ -147,10 +147,10 @@
       "r2"
     ],
     "honored": {
-      "fields": [
-        "pacing"
-      ],
-      "asks": []
+      "fields": {
+        "pacing": "pace"
+      },
+      "asks": {}
     },
     "not_graded": {
       "target_duration_s": "no stated length; the table marks the length Applied (the consumer gate holds that claim)"

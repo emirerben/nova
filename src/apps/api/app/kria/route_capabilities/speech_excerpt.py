@@ -76,7 +76,7 @@ FIELD_HANDLING: dict[str, Handling] = {
     "opening_title": Applied(via=lines.CONTRACT),
     "opening_title_duration_s": Applied(via=lines.CONTRACT),
     "shot_labels": Applied(via=lines.CONTRACT),
-    "edit_format": Applied(via=lines.DISPATCH),
+    "edit_format": Applied(via=lines.APPROVAL),
     "media_scope": Applied(via=lines.SELECTION),
     "selected_media_ids": Applied(via=lines.SELECTION),
 }

@@ -1431,7 +1431,7 @@
     {
       "id": "kri-721-approval-readiness",
       "needs_native": false,
-      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py",
+      "api_tests": "tests/kria/test_approval_readiness_postgres.py tests/kria/test_automatic_strategy_fallback.py tests/kria/test_runtime_automatic_simplification.py tests/kria/test_runtime_simpler_version_loop.py tests/kria/test_render_retry_postgres.py tests/kria/test_plan_review.py tests/kria/test_natural_delegation_readiness_postgres.py tests/kria/test_kri983_lipsync_song_journey.py tests/kria/test_lev_m1_length_photo_holds_replay.py tests/kria/test_assos_request_to_recipe.py tests/kria/test_route_replays.py tests/kria/test_route_registry_flag_off.py tests/kria/test_route_lines_golden.py tests/kria/test_text_animation_ask.py tests/pipeline/test_story_direction.py",
       "paths": [
         "src/apps/api/app/kria/approval_readiness.py",
         "src/apps/api/app/kria/route_disclosure.py",
@@ -1443,6 +1443,7 @@
         "src/apps/api/tests/fixtures/kria_replay/assos/research.json",
         "src/apps/api/tests/fixtures/kria_replay/assos/registry_off_golden.json",
         "src/apps/api/tests/fixtures/kria_replay/lane_targets.json",
+        "src/apps/api/tests/fixtures/kria_replay/golden_lines.json",
         "src/apps/api/tests/fixtures/kria_replay/voiceover_montage/",
         "src/apps/api/tests/fixtures/kria_replay/talking_head/",
         "src/apps/api/tests/fixtures/kria_replay/narrated/",
@@ -1451,6 +1452,7 @@
         "src/apps/api/tests/fixtures/kria_replay/slide_post/",
         "src/apps/api/tests/kria/test_route_replays.py",
         "src/apps/api/tests/kria/test_route_registry_flag_off.py",
+        "src/apps/api/tests/kria/test_route_lines_golden.py",
         "src/apps/api/app/kria/planner.py",
         "src/apps/api/app/kria/runtime.py",
         "src/apps/api/app/kria/plan_review.py",
