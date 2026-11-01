@@ -3303,8 +3303,14 @@ watermark as hard obstacles, then raised.
   `text_fit_relaxed` pipeline event with the row id, role, text, requested position and obstacles.
 - `measure_box` only raises its fit declines when given a `floor` (a fit probe). Re-measuring a placed
   row never fails a render.
-- Text groups (`text_stack_v1`) retry at their own corner when the saved corner is crowded, then are
-  kept with a receipt.
+- Text groups (`text_stack_v1`) retry at their own corner, then each other corner, when the saved
+  corner is crowded; the layout that gives way only the least important obstacles is kept, with a
+  receipt. A corner requested this turn is never abandoned.
+- A pinned or label row whose corner came from its lane (no saved or requested position) keeps that
+  corner; it relaxes in place with a receipt rather than jumping to another corner.
+- Each placement has its own probe allowance (`_PLACE_PROBE_BUDGET`), so a caption block cannot
+  starve the rows styled after it. A spent allowance falls through to best-effort with reason
+  `measurement_budget`. The old global "too many complex text layouts" decline is gone.
 - Kept: `needs_choice` stays for font coverage and outline-width declines; its chat copy is generic.
   `phone_plan_repair._place_added_contract_text` (confirmed exact text) still declines and is not
   covered here.
