@@ -189,6 +189,7 @@ def copilot_schema():
         "size_px",
         "size_scale",
         "rotation_deg",
+        "rotation_delta_deg",
         "stroke_width",
         "letter_spacing",
         "line_spacing",
@@ -244,7 +245,13 @@ def copilot_schema():
                 {
                     "rotation_deg": number,
                     "rotation_delta_deg": number,
-                    "backdrop": obj({"kind": enum("blank", "color", "blur"), "color": string}),
+                    "backdrop": obj(
+                        {
+                            "kind": enum("blank", "color", "blur", "media"),
+                            "color": string,
+                            "asset_id": string,
+                        }
+                    ),
                 }
             )
         if name in map_fields:
@@ -342,6 +349,7 @@ def copilot_schema():
             "transition_duration_s",
             "playback_rate",
             "tilt",
+            "rotation_delta_deg",
         }
     )
     patch = obj(

@@ -1,0 +1,82 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-01-v101",
+  "input": {
+    "utterance": "tilt it a bit more",
+    "prior_turns": [
+      {
+        "role": "user",
+        "content": "tilt the picture a bit"
+      },
+      {
+        "role": "assistant",
+        "content": "Tilted the picture a little to the right."
+      }
+    ],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "overlay"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 10.0,
+      "overlays": {
+        "cards": [
+          {
+            "index": 0,
+            "id": "card-1",
+            "kind": "image",
+            "start_s": 1.0,
+            "end_s": 3.0,
+            "x_frac": 0.74,
+            "y_frac": 0.22,
+            "scale": 0.36,
+            "position": "custom",
+            "display_mode": "pip",
+            "rotation_deg": 4.0
+          }
+        ],
+        "counts": {
+          "total": 1,
+          "images": 1,
+          "videos": 0,
+          "fullscreen": 0
+        },
+        "asset_pool": [],
+        "pending_suggestions": [],
+        "tilt": true
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_overlay\", \"overlay_index\": 0, \"patch\": {\"rotation_delta_deg\": 3}}], \"confidence\": 0.95, \"reply\": \"Tilted the picture a little further to the right.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [
+      {
+        "op": "patch_overlay",
+        "overlay_index": 0,
+        "patch": {
+          "rotation_delta_deg": 3.0
+        }
+      }
+    ],
+    "confidence": 0.95,
+    "reply": "Tilted the picture a little further to the right.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "proposed",
+    "rejection_reasons": [],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "relative ask after a tilt: rotation_delta_deg adds to the card's own angle, never rotation_deg",
+    "lane": "overlay_tilt"
+  }
+}

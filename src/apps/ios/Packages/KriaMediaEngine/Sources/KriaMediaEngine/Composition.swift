@@ -302,6 +302,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].placementTilt = clip.placementTiltDegrees
                     layers[layers.count - 1].backdrop = clip.backdrop
                     layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: layerEnd)
                     if clip.visualPlacement == nil && (recipeTrack.kind == .video || clip.overlayPreserveAlpha == nil) {
@@ -329,6 +330,7 @@ public struct PreviewComposition: @unchecked Sendable {
                         overlayCenter: CGPoint(x: canvas.width / 2 + clip.transform.positionX, y: canvas.height / 2 - clip.transform.positionY),
                         visualPlacement: clip.visualPlacement, visualOrder: overlayOrders[clip.id] ?? clip.visualPlacement?.order ?? (recipeTrack.kind == .overlay ? 2000 : 0)))
                     layers[layers.count - 1].sourceCrop = clip.sourceCrop
+                    layers[layers.count - 1].placementTilt = clip.placementTiltDegrees
                     if clip.stillLayout == nil { layers[layers.count - 1].backdrop = clip.backdrop }
                     layers[layers.count - 1].overlayFade = OverlayFadeWindow(clip: clip, start: clip.timelineStart, end: end)
                 }
@@ -389,6 +391,11 @@ public struct PreviewComposition: @unchecked Sendable {
         if let background = recipe.speakerBackground {
             guard let url = assetURLs[background.assetID] else { throw MediaEngineError.missingAsset(background.assetID) }
             layers.append(try await Self.speakerBackgroundLayer(background, url: url, composition: composition, canvas: canvas, duration: total))
+        }
+        for backdrop in Self.mediaBackdrops(in: recipe) {
+            guard let url = assetURLs[backdrop.assetID] else { throw MediaEngineError.missingAsset(backdrop.assetID) }
+            layers.append(try await Self.mediaBackdropLayer(poolID: backdrop.poolID, assetID: backdrop.assetID, kind: backdrop.kind,
+                                                            url: url, composition: composition, canvas: canvas, duration: total))
         }
         try Task.checkCancellation()
         if let musicID = recipe.audio.musicAssetID {

@@ -1,0 +1,79 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-11-01-v101",
+  "input": {
+    "utterance": "tilt the picture a bit",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": [
+        "overlay"
+      ],
+      "editor_ops_version": 2,
+      "render_destination": "device",
+      "slots": [],
+      "text_bars": [],
+      "total_duration_s": 10.0,
+      "overlays": {
+        "cards": [
+          {
+            "index": 0,
+            "id": "card-1",
+            "kind": "image",
+            "start_s": 1.0,
+            "end_s": 3.0,
+            "x_frac": 0.74,
+            "y_frac": 0.22,
+            "scale": 0.36,
+            "position": "custom",
+            "display_mode": "pip"
+          }
+        ],
+        "counts": {
+          "total": 1,
+          "images": 1,
+          "videos": 0,
+          "fullscreen": 0
+        },
+        "asset_pool": [],
+        "pending_suggestions": []
+      }
+    }
+  },
+  "raw_text": "{\"intent\": \"edit\", \"ops\": [{\"op\": \"patch_overlay\", \"overlay_index\": 0, \"patch\": {\"rotation_deg\": 4}}], \"confidence\": 0.95, \"reply\": \"Tilted the picture a little to the right.\", \"suggestions\": [], \"needs_clarification\": false}",
+  "output": {
+    "intent": "edit",
+    "ops": [],
+    "confidence": 0.95,
+    "reply": "I can't tilt a picture on this edit yet.",
+    "suggestions": [],
+    "needs_clarification": false,
+    "outcome": "unsupported",
+    "rejection_reasons": [
+      {
+        "op": "patch_overlay",
+        "reason": "capability_unavailable",
+        "detail": "I can't tilt a picture on this edit yet."
+      }
+    ],
+    "clarification_context": null,
+    "pending_actions": [],
+    "unmet_requests": [],
+    "reply_notes": "I can't tilt a picture on this edit yet.",
+    "claimed_ops": null
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "closed gate: the snapshot does not offer tilt, so the model's success claim is replaced by the refusal and no op survives",
+    "lane": "overlay_tilt",
+    "capability_contract": {
+      "intent": "edit",
+      "needs_clarification": false,
+      "reply_contains": [
+        "can't tilt a picture"
+      ],
+      "reply_excludes": [
+        "Tilted the picture"
+      ]
+    }
+  }
+}

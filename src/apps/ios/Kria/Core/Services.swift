@@ -204,7 +204,6 @@ protocol KriaAPIClient: SlidePostProposalClient, SongRangeClient, SpeakerBackgro
     /// One page of chats, newest first. `nextCursor` is nil on the last page.
     func projectsPage(cursor: String?) async throws -> ProjectPage
     func project(threadID: UUID) async throws -> CreationThread
-    func nativeActivities(before: String?) async throws -> NativeActivityPage
     func nativeActivity(id: UUID) async throws -> NativeActivity
     func readNativeActivity(id: UUID) async throws -> NativeActivity
     func nativeActivity(id: UUID, owner: String) async throws -> NativeActivity
@@ -1240,7 +1239,15 @@ enum KriaClientProtocolContract {
     /// `transform.rotation_degrees` (clockwise on screen). The server offers tilt only to this protocol (and only
     /// with `MEDIA_TILT_ENABLED` + `clipTilt` verified) and answers 426 `client_update_required` (`clip_tilt`)
     /// to an older build polling a recipe that already carries one.
-    static let version = 28
+    /// 30 (KRI-1141): turns a PLACED picture card (a Talking card, a clip with a `visual_placement`) by its clip's
+    /// `transform.rotation_degrees`. Builds 28 and 29 decode `clipTilt` but draw such a card upright, so the server
+    /// answers 426 `client_update_required` (`card_tilt`) to them for a recipe that carries a tilted card, and
+    /// offers `editor_capabilities.media_overlay_tilt` only from here.
+    /// 31 (KRI-1139): decodes a clip backdrop of kind `media` (a Visuals-pool photo or video behind the clip) and the
+    /// `clipBackdropMedia` capability, and draws it. The server offers it only to this protocol (and only with
+    /// `MEDIA_TILT_ENABLED` + `clipBackdropMedia` verified) and answers 426 `client_update_required`
+    /// (`clip_backdrop_media`) to an older build polling a recipe that already carries one.
+    static let version = 31
     static let header = "X-Kria-Client-Protocol"
 }
 
@@ -2104,6 +2111,8 @@ enum EditorSaveError: Error, LocalizedError, Equatable, Sendable {
             "LOOK_PRESET_NOT_AVAILABLE": "That clip look isn’t available for this video. Remove it and save again. Your edits are still here.",
             "phone_edit_unsupported": "That clip look can’t be saved on this iPhone yet. Remove it and save again. Your edits are still here.",
             "TIMELINE_TILT_WITH_LOOK": "A clip with a colour look can’t be tilted. Remove the look or reset the tilt, then save again. Your edits are still here.",
+            "clip_backdrop_media_not_in_pool": "That photo or video isn’t in this video’s Visuals any more. Choose another background or reset the tilt, then save again. Your edits are still here.",
+            "clip_backdrop_media_unavailable": "A photo or video behind a clip isn’t available right now. Choose another background or reset the tilt, then save again. Your edits are still here.",
             "clip_tilt_unavailable": "Tilt isn’t available right now. Reset the tilt on that clip and save again. Your edits are still here.",
             "transitions_disabled": "Transitions aren’t available right now. Set the clip to a cut and save again. Your edits are still here.",
             "song_shorter_than_video": "The song is shorter than your video. Pick a longer song or shorten the video, then save again. Your edits are still here.",
@@ -2286,7 +2295,7 @@ private struct LibraryPosterRequest: Encodable {
 /// KRI-653: why the in-app recorder produced (or is producing) a silent take. Enumerated labels and
 /// numbers only: no file names, script text, or anything the creator typed or said.
 struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
-    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent" }
+    enum Kind: String, Encodable, Sendable { case takeSilent = "take_silent", liveMicSilent = "live_mic_silent", takeFinished = "take_finished" }
     let kind: Kind
     let audioCategory: String?
     let audioMode: String?
@@ -2299,11 +2308,13 @@ struct RecorderDiagnosticReport: Encodable, Equatable, Sendable {
     let maxPowerDb: Double?
     let takeDurationS: Double?
     let appBuild: String?
+    /// `TakeStopReason.rawValue` of the take this report describes; nil for a live recording that has not stopped.
+    let stopReason: String?
     enum CodingKeys: String, CodingKey {
         case kind, audioCategory = "audio_category", audioMode = "audio_mode"
         case routeInputs = "route_inputs", routeOutputs = "route_outputs", otherAudioPlaying = "other_audio_playing"
         case phaseHistory = "phase_history", channelCount = "channel_count", maxPowerDb = "max_power_db"
-        case takeDurationS = "take_duration_s", appBuild = "app_build"
+        case takeDurationS = "take_duration_s", appBuild = "app_build", stopReason = "stop_reason"
     }
 }
 /// Identity of a failed editor player item: numeric AVFoundation codes and domains only, never URLs or error text.

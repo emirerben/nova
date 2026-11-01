@@ -231,6 +231,7 @@ from app.services.kria_editor_ops import (
     editor_state_has_lanes,
     failed_editor_draft_basis,
     resolve_editor_base,
+    timeline_patch_capabilities,
     unknown_editor_render_query,
 )
 from app.services.music_genre import (
@@ -2065,7 +2066,11 @@ async def _copilot_clip_context(
     try:
         # KRI-1117: the photos and videos a Talking edit's background can be. No query while
         # the lane is closed for this variant, so every other turn reads exactly what it read.
-        if background_state(job, variant)[0]:
+        # KRI-1139: the same pool backs a tilt's media backdrop, so that edit reads it too.
+        if (
+            background_state(job, variant)[0]
+            or timeline_patch_capabilities(job, variant).get("tilt_backdrop_media") is True
+        ):
             pool = await _background_pool_rows(db, item)
             if pool:
                 context["background_pool"] = pool

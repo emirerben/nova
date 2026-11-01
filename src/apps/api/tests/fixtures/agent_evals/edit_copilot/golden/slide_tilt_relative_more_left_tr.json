@@ -1,6 +1,6 @@
 {
   "agent": "nova.edit.copilot",
-  "prompt_version": "2026-11-01-v99",
+  "prompt_version": "2026-11-01-v102",
   "input": {
     "utterance": "ikinci slayt biraz daha sola yatsın",
     "prior_turns": [],

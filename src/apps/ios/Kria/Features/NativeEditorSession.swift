@@ -1485,6 +1485,10 @@ struct NativeEditorTemporaryVideo: Sendable {
                 document.clips[0].raw["tilt"] = saved
             }
             document.capabilities["clips.tilt"] = EditorCapability(editable: true)
+            // KRI-1139: the media backdrop is a separate capability; its pool is the Background fixture's (`refreshVisualLibrary`).
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt-media") {
+                document.capabilities["clips.tilt_backdrop_media"] = EditorCapability(editable: true)
+            }
             cleanDocument = document
         }
         if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
@@ -3405,6 +3409,16 @@ struct NativeEditorTemporaryVideo: Sendable {
                 resolvedMedia[key] = resolved
             }
         }
+        // KRI-1139: the pool photo or video behind a tilted clip. One that cannot be read leaves the preview without it
+        // (the compiler drops it) instead of failing the whole preview; the tilt sheet says it is unavailable.
+        for poolID in Self.tiltMediaBackdropPoolIDs(in: document) {
+            let key = NativeEditorRenderCompiler.tiltBackdropSourceKey(forPoolID: poolID)
+            if resolvedMedia[key] != nil || authoredVisualSources[key] != nil { continue }
+            sourcePreviewState = .preparing
+            let resolved = try? await resolveTiltBackdropSource(poolID: poolID, resolver: resolver)
+            guard sequence == sourcePreviewSequence, !Task.isCancelled else { throw CancellationError() }
+            if let resolved { resolvedMedia[key] = resolved }
+        }
         return resolvedMedia.merging(authoredVisualSources) { _, authored in authored }
     }
 
@@ -4651,7 +4665,8 @@ struct NativeEditorTemporaryVideo: Sendable {
             return true
         }
         // KRI-1118: the Background fixture's canned pool.
-        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background") {
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-speaker-background")
+            || ProcessInfo.processInfo.arguments.contains("-ui-testing-editor-tilt-media") {
             visualLibrary = NativeEditorUITestFixtures.speakerBackgroundVisuals
             return true
         }
@@ -5334,6 +5349,32 @@ struct NativeEditorTemporaryVideo: Sendable {
         return resolved
     }
 
+    /// Bytes for a clip's media tilt backdrop (`visual-<pool id>`). Like the speaker background, the library is the
+    /// source of truth for the original URL, storage generation and photo-or-video kind; it is refreshed once when
+    /// the pool visual is not in it yet.
+    private func resolveTiltBackdropSource(poolID: String, resolver: NativeEditorSourceResolver) async throws -> ResolvedEditorSource {
+        func match() -> CreationVisual? {
+            visualLibrary.first { $0.id == poolID && $0.status == "ready" && VisualMediaKind(rawValue: $0.kind) != nil }
+        }
+        if match() == nil { await refreshVisualLibrary() }
+        guard let asset = match(), let url = asset.originalMediaURL, let kind = VisualMediaKind(rawValue: asset.kind) else {
+            throw MediaEngineError.missingAsset(EditorSpeakerBackground.assetID(forMediaID: poolID))
+        }
+        var resolved = try await resolver.resolveMedia(id: asset.id, url: url, generation: asset.sourceGeneration ?? document.revision.baseGeneration)
+        resolved.visualGeneration = asset.sourceGeneration ?? "0"
+        resolved.visualKind = kind
+        return resolved
+    }
+
+    /// The distinct pool visual ids the document's clips draw behind themselves.
+    static func tiltMediaBackdropPoolIDs(in document: EditorDocument) -> [String] {
+        var ids = Set<String>()
+        for slot in document.clips where !slot.removed {
+            if case .media(let id)? = (try? ClipTilt(row: slot.raw["tilt"]))?.backdrop { ids.insert(id) }
+        }
+        return ids.sorted()
+    }
+
     // MARK: Drawings (KRI-589)
 
     /// The Draw tool exists only when the server opens `drawings.add` for this variant (a phone-rendered
@@ -5504,15 +5545,30 @@ struct NativeEditorTemporaryVideo: Sendable {
         }
     }
 
+    /// KRI-1141: a Talking picture card can turn (`editor_capabilities.media_overlay_tilt`) while the rest of
+    /// `editor_style` (zoom, fit, animation) stays closed (`visual_editor_style`), because the pinned recipe keeps
+    /// only the angle. Anything with the full style capability may turn; a card needs a pip card, not a cutaway.
+    func canRotateVisual(_ selection: EditorSelection) -> Bool {
+        if canEdit("visual_editor_style") { return true }
+        guard selection.kind == .mediaOverlay, canEdit("media_overlay_tilt"),
+              let card = document.mediaOverlays.first(where: { $0.id == selection.id }) else { return false }
+        return card.raw["display_mode"]?.stringValue != "fullscreen"
+    }
+
     func setVisualEditorStyle(_ selected: EditorSelection, key: String, value: JSONValue, animationPhase: String? = nil) {
-        guard canEdit("visual_editor_style"), let raw = visualRaw(selected) else { return }
+        let tiltOnly = key == "rotation_deg" && !canEdit("visual_editor_style") && canRotateVisual(selected)
+        guard canEdit("visual_editor_style") || tiltOnly, let raw = visualRaw(selected) else { return }
         var style = NativeVisualAuthoring.style(for: raw)
         style[key] = value
         guard (try? NativeEditorRenderCompiler.visualEditorStyle(.object(style))) != nil else { return }
+        // A card that can only turn keeps a style while it is turned: upright it carries none, so Reset is the
+        // untouched card (the server compiles the angle alone and projects none back for an upright card).
+        let uprightTiltOnly: Bool = tiltOnly && style == NativeVisualAuthoring.defaultStyle
+        let storedStyle: JSONValue? = uprightTiltOnly ? nil : JSONValue.object(style)
         switch selected.kind {
         case .mediaOverlay:
             mutateTimedEffect(kind: .mediaOverlay, id: selected.id, section: .mediaOverlays, operationKeys: ["media_overlays", "overlays"]) {
-                $0.raw["editor_style"] = .object(style)
+                $0.raw["editor_style"] = storedStyle
                 if key == "animation" {
                     if animationPhase == nil || animationPhase == "entrance" { $0.raw["entrance_token"] = .string("none") }
                     if animationPhase == nil || animationPhase == "exit" { $0.raw["exit_token"] = .string("none") }
@@ -6379,7 +6435,13 @@ struct NativeEditorTemporaryVideo: Sendable {
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.scale", "overlays.scale", "media_overlays.scale", "lanes.overlays"]) { $0.raw["scale"] = .number(min(max(0.05, scale), 1)) }
     }
     func setMediaOverlayDisplayMode(id: String, mode: String) {
-        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.display_mode", "overlays.display_mode", "media_overlays.display_mode", "lanes.overlays"]) { $0.raw["display_mode"] = .string(mode) }
+        // KRI-1141: a full-screen cutaway has nothing to turn, and the server refuses its angle, so a card that can
+        // only turn (no full style capability) goes full screen upright.
+        let dropsTilt = mode == "fullscreen" && !canEdit("visual_editor_style")
+        mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["lanes.overlays.display_mode", "overlays.display_mode", "media_overlays.display_mode", "lanes.overlays"]) {
+            $0.raw["display_mode"] = .string(mode)
+            if dropsTilt { $0.raw["editor_style"] = nil }
+        }
     }
     func setMediaOverlayZIndex(id: String, z: Double) {
         mutateTimedEffect(kind: .mediaOverlay, id: id, section: .mediaOverlays, operationKeys: ["layers.reorder", "layer_order", "lanes.overlays.z_order", "lanes.overlays"]) { $0.raw["z"] = .number(z) }

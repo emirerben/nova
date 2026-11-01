@@ -6,7 +6,7 @@ import copy
 import hashlib
 import json
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import structlog
@@ -84,6 +84,7 @@ from app.services.phone_editor_sources import (
 )
 from app.services.phone_rollout import (
     SINGLE_WORD_CAPTIONS_STAMP,
+    card_tilt_supported,
     freehand_drawing_client_supported,
     freeze_frame_client_supported,
     phone_guided_sfx_supported,
@@ -91,6 +92,7 @@ from app.services.phone_rollout import (
     phone_narrated_title_edits_supported,
     phone_subtitled_editor_lanes_supported,
     phone_subtitled_title_supported,
+    phone_talking_cutaway_sound_supported,
     phone_timed_cards_supported,
     phone_voiceover_editor_lanes_supported,
     phone_voiceover_editor_media_supported,
@@ -1224,6 +1226,23 @@ def _persist_lane_state(
         row.pop(SFX_DUCK_RECEIPT_FIELD, None)
 
 
+def _require_card_tilt_supported(previous: Any, lanes: Any) -> None:
+    """KRI-1141: refuse a NEW or CHANGED card angle while the tilt gates are closed.
+
+    Keeping a stored angle and straightening one are always allowed (a Save that does not touch
+    the tilt of a card the edit already holds must not fail because the kill switch was flipped
+    afterwards).
+    """
+    held = {card.id: card.rotation_deg for card in (previous.overlays if previous else [])}
+    changed = [
+        card
+        for card in lanes.overlays
+        if card.rotation_deg != 0 and card.rotation_deg != held.get(card.id, 0.0)
+    ]
+    if changed and not card_tilt_supported():
+        raise ValueError("tilting a picture isn't available on this edit yet")
+
+
 def _compile_subtitled_editor_commit(
     staged: Any,
     assembly: dict,
@@ -1270,6 +1289,8 @@ def _compile_subtitled_editor_commit(
         background=_background_lane(prep.get("speaker_background_override"), visuals),
     )
 
+    _require_card_tilt_supported(previous_lanes, lanes)
+
     caption_cues = prep.get("caption_cues_override")
     caption_cues_overridden = caption_cues is not None
     if caption_cues is None:
@@ -1297,6 +1318,8 @@ def _compile_subtitled_editor_commit(
     if isinstance(previous.recipe, EditRecipeV2):
         speaker = speaker_binding_from_recipe(previous.recipe, bindings)
         cutaways = cutaways_from_recipe(previous.recipe, bindings)
+        if not phone_talking_cutaway_sound_supported():
+            cutaways = tuple(c.model_copy(update={"sound": False}) for c in cutaways)
         additional_speakers = additional_speakers_from_recipe(previous.recipe, bindings)
     elif len(bindings) != 1:
         raise ValueError("multi-clip phone Talking edits need a pinned recipe")
@@ -1522,6 +1545,7 @@ def _commit_voiceover_lanes(
         media_overlays=prep.get("media_overlays_override"),
         visuals=visuals,
     )
+    _require_card_tilt_supported(previous_lanes, lanes)
     recipe = replace_editor_lanes(
         recipe, lanes=lanes, visuals=visuals, video_track_id=video_track_id
     )
@@ -1549,6 +1573,7 @@ def _swap_voiceover_cut(
     *,
     archetype: str,
     landscape_fit: str | None = None,
+    visuals: Sequence[PhoneVisualBinding] = (),
 ) -> EditRecipeV2:
     """KRI-290: the committed creator cut (resolved by
     `resolve_phone_voiceover_slots`) swapped into ``recipe``'s video track."""
@@ -1564,6 +1589,7 @@ def _swap_voiceover_cut(
         bindings=bindings,
         pool=pool,
         landscape_fit=landscape_fit,
+        visuals=visuals,
     )
     for slot in prep["timeline_override"]:
         # A cleared tilt was the compile's instruction; the stored row is simply upright.
@@ -1733,7 +1759,14 @@ def _compile_narrated_editor_commit(
     recipe = with_drawings(previous.recipe, None)
     if cut_active:
         bindings, pool = _voiceover_sources(staged, assembly)
-        recipe = _swap_voiceover_cut(recipe, prep, bindings, pool, archetype="narrated")
+        recipe = _swap_voiceover_cut(
+            recipe,
+            prep,
+            bindings,
+            pool,
+            archetype="narrated",
+            visuals=_assembly_visuals(assembly) + editor_visual_bindings(variant),
+        )
     title_elements: list[dict] = []
     if text_active:
         # The STAGED row: `_prepare_editor_commit` validated the Save's
@@ -1895,6 +1928,7 @@ def _compile_voiceover_montage_editor_commit(
             landscape_fit=_resolved_landscape_fit(
                 variant, previous.recipe, prep.get("landscape_fit_override")
             ),
+            visuals=_assembly_visuals(assembly) + editor_visual_bindings(variant),
         )
     fit_override = prep.get("landscape_fit_override")
     if fit_override is not None:

@@ -237,9 +237,10 @@
       "KriaUITests/SignInUITests/testExistingAccountRefusalIsReadableOnScreen",
       "KriaUITests/NativeUpdateRequiredUITests/testTyped426ReplacesEachRootRoute",
       "KriaUITests/NativeUpdateRequiredUITests/testBlockingScreenScrollsAtAccessibilitySizeAndActionsUseFixtureSeam",
-      "KriaUITests/ActivityUITests/testReadyActivityOpensItsCurrentProject",
-      "KriaUITests/ActivityUITests/testStaleActivityCannotNavigateToCachedProject",
-      "KriaUITests/ActivityUITests/testFailedReadAcknowledgementDoesNotNavigate"
+      "KriaUITests/WhatsNewUITests/testGuideOpensFromSettingsShowsNewestFirstAndTryItReachesTextPreferences",
+      "KriaUITests/WhatsNewUITests/testCardsThatNeedAFeatureAreAbsentWhenTheAccountCannotConfirmIt",
+      "KriaUITests/WhatsNewUITests/testEveryActionStaysReachableAtLargestTextSize",
+      "KriaUITests/WhatsNewUITests/testGuidePassesTheAccessibilityAudit"
     ],
     "editor": [
       "KriaUITests/EditorUITests/testNativeEditorStagesLocalEditsAndGatesUnavailableTools",
@@ -334,6 +335,8 @@
       "KriaUITests/NativeTiltUITests/testTiltFifteenDegreesWithABlurredBackgroundSavesAndSurvivesReopen",
       "KriaUITests/NativeTiltUITests/testTurnNinetyAndResetStraightenTheClipWithNothingLeftToSave",
       "KriaUITests/NativeTiltUITests/testNudgeMovesTheDialClockwiseAndCounterClockwiseByOneDegree",
+      "KriaUITests/NativeTiltUITests/testPhotoOrVideoBackgroundIsPickedShownAndResetToBlank",
+      "KriaUITests/NativeTiltUITests/testPhotoOrVideoIsOfferedOnlyWhereTheServerListsIt",
       "KriaUITests/NativeTiltUITests/testTiltIsHiddenWhereTheServerDoesNotOfferIt",
       "KriaUITests/ResearchSourcesUITests/testPreparedResearchSourcesAndPreview",
       "KriaUITests/NativeEditorInspectorUITests/testLongPressDraggingClipReordersKeepsLengthAndUndoesInOneStep",
@@ -516,6 +519,11 @@
     "src/apps/ios/Kria/Features/NativeOverlayGenerationPanel.swift": "editor",
     "src/apps/ios/Kria/Core/OverlayGeneration.swift": "editor",
     "src/apps/ios/Kria/Features/NativeBackgroundPanel.swift": "editor",
-    "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor"
+    "src/apps/ios/Tests/KriaUITests/SpeakerBackgroundUITests.swift": "editor",
+    "src/apps/ios/Kria/Core/WhatsNew.swift": "projects",
+    "src/apps/ios/Kria/Core/WhatsNewReleases.swift": "projects",
+    "src/apps/ios/Kria/Features/WhatsNewView.swift": "projects",
+    "src/apps/ios/Kria/Features/AccountUITestTransport.swift": "projects",
+    "src/apps/ios/Tests/KriaUITests/WhatsNewUITests.swift": "projects"
   }
 }

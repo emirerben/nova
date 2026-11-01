@@ -150,6 +150,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
             if let placement = clip.visualPlacement {
                 guard schemaVersion == 2, tracks.contains(where: { $0.kind == .overlay && $0.clips.contains(where: { $0.id == clip.id }) }), clip.volume == 0 else { throw RecipeError.invalidTimeline }
                 try placement.validate()
+                guard abs(clip.transform.rotationDegrees) <= 360 else { throw RecipeError.invalidTimeline }
                 guard clip.timelineStart >= placement.windowStart, clip.timelineStart + clip.duration <= placement.windowEnd + 0.000_001 else { throw RecipeError.invalidTimeline }
             }
             let values = [clip.timelineStart, clip.sourceStart, clip.sourceDuration, clip.rate, clip.volume,
@@ -166,6 +167,9 @@ public struct EditRecipe: Codable, Equatable, Sendable {
                 try backdrop.validate()
                 guard tracks.contains(where: { $0.kind == .video && $0.clips.contains(where: { $0.id == clip.id }) }),
                       clip.visualPlacement == nil else { throw RecipeError.invalidTimeline }
+                if case .media = backdrop {
+                    guard schemaVersion == 2, backdrop.mediaAsset(in: assetManifest) != nil else { throw RecipeError.missingAssetReference }
+                }
             }
             for fade in [clip.audioFadeIn, clip.audioFadeOut].compactMap({ $0 }) {
                 guard fade.isFinite, (0...60).contains(fade) else { throw RecipeError.invalidTimeline }
@@ -245,6 +249,7 @@ public struct EditRecipe: Codable, Equatable, Sendable {
         if clips.contains(where: { $0.look != nil }) { result.insert(.goldenHourLook) }
         if clips.contains(where: { $0.sourceCrop != nil }) { result.insert(.sourceCrop) }
         if clips.contains(where: { $0.transform.rotationDegrees != 0 || $0.backdrop != nil }) { result.insert(.clipTilt) }
+        if clips.contains(where: { if case .media? = $0.backdrop { true } else { false } }) { result.insert(.clipBackdropMedia) }
         if tracks.contains(where: { $0.kind == .overlay && !$0.clips.isEmpty }) { result.insert(.alphaOverlay) }
         if audio != .default || tracks.contains(where: { $0.kind == .audio && !$0.clips.isEmpty }) || clips.contains(where: { $0.volume != 1 }) {
             result.insert(.audioMix)
@@ -384,6 +389,9 @@ public struct TimelineClip: Codable, Equatable, Sendable, Identifiable {
         guard stillLayout != nil else { return transform }
         var value = transform; value.rotationDegrees = 0; return value
     }
+    /// A placed card (`visualPlacement`) positions itself, so only its `transform.rotationDegrees` is read: the card
+    /// turns about its centre, clockwise on screen (a phone Talking picture card's tilt, needs `clipTilt`).
+    var placementTiltDegrees: Double { visualPlacement == nil ? 0 : transform.rotationDegrees }
     /// Opacity from `overlayFadeIn`/`overlayFadeOut` alone across this clip's
     /// own timeline window; exactly 1 when neither is set, or when the clip is
     /// placed (it then fades through its placement, like the renderer's
@@ -519,7 +527,7 @@ public enum MediaCapability: String, Codable, Hashable, Sendable, CaseIterable {
          variableSpeed, alphaOverlay, hevcDecode, hdr, local1080Export,
          captions, customEffects, mediaCards, carouselEffects, motionPresets, narrationAudio,
          soundEffects, audioDucking, slidePosts, semanticCamera, musicBed, processedAudio, stillImages, visualVideos, sourceCrop, freehandDrawing, textBend, singleWordText, freezeFrame,
-         behindSubject, speakerBackground, clipTilt
+         behindSubject, speakerBackground, clipTilt, clipBackdropMedia
 }
 
 public struct Waveform: Codable, Equatable, Sendable { public var sampleRate: Double; public var levels: [Float]; public init(sampleRate: Double, levels: [Float]) { self.sampleRate = sampleRate; self.levels = levels } }

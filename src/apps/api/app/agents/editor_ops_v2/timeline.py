@@ -140,12 +140,18 @@ def _clean_crop(value: object) -> dict[str, float] | None:
     return {"x": x, "y": y, "width": w, "height": h}
 
 
-def _clean_tilt(value: object, state: Any) -> tuple[bool, dict[str, Any] | None]:
+def _clean_tilt(
+    value: object, state: Any, snapshot: dict | None = None
+) -> tuple[bool, dict[str, Any] | None]:
     """(valid, tilt). ``None`` is "straighten"; otherwise an angle and/or a backdrop.
 
     ``rotation_deg`` replaces the clip's angle and ``rotation_delta_deg`` adds to it. Either
     may be up to a full turn either way: an absolute angle is wrapped here, a relative one is
     wrapped against each clip's own angle when it is applied.
+
+    A ``media`` backdrop is accepted only while the snapshot opens ``tilt_backdrop_media`` and
+    only for an ``asset_id`` in its ``tilt_backdrop_pool`` (the item's ready photos and videos):
+    the model never invents an id (KRI-1139). The Save re-checks the pool and pins the file.
     """
     if value is None:
         return True, None
@@ -176,15 +182,46 @@ def _clean_tilt(value: object, state: Any) -> tuple[bool, dict[str, Any] | None]
         except ValidationError:
             state.invalid_value(
                 say(
-                    en="Behind a tilted clip I can show a plain background, a blurred copy of the "
-                    "clip, or one colour (like #112233).",
-                    tr="Eğik klibin arkasında düz bir arka plan, klibin bulanık bir kopyası veya "
-                    "tek bir renk (örneğin #112233) gösterebilirim.",
+                    en="Behind a tilted clip I can show a plain background, a blurred copy of "
+                    "the clip, one colour (like #112233), or a photo or video from this "
+                    "video's Visuals.",
+                    tr="Eğik klibin arkasında düz bir arka plan, klibin bulanık bir kopyası, "
+                    "tek bir renk (örneğin #112233) ya da bu videonun görsellerinden bir "
+                    "fotoğraf ya da video gösterebilirim.",
                 )
             )
             return False, None
+        if backdrop.kind == "media" and not _media_backdrop_offered(snapshot, backdrop.asset_id):
+            state.invalid_value(_media_backdrop_note(snapshot))
+            return False, None
         clean["backdrop"] = backdrop.model_dump(mode="json")
     return True, clean
+
+
+def _media_backdrop_offered(snapshot: dict | None, asset_id: str | None) -> bool:
+    capabilities = (snapshot or {}).get("timeline_patch_capabilities")
+    pool = (snapshot or {}).get("tilt_backdrop_pool")
+    return bool(
+        isinstance(capabilities, dict)
+        and capabilities.get("tilt_backdrop_media") is True
+        and isinstance(pool, list)
+        and any(isinstance(row, dict) and row.get("id") == asset_id for row in pool)
+    )
+
+
+def _media_backdrop_note(snapshot: dict | None) -> str:
+    capabilities = (snapshot or {}).get("timeline_patch_capabilities")
+    if not (isinstance(capabilities, dict) and capabilities.get("tilt_backdrop_media") is True):
+        return say(
+            en="I can't put a photo or video behind a clip on this edit.",
+            tr="Bu videoda bir klibin arkasına fotoğraf ya da video koyamıyorum.",
+        )
+    return say(
+        en="I can only put a photo or video from this video's Visuals behind a clip, and I "
+        "couldn't find that one there.",
+        tr="Bir klibin arkasına yalnızca bu videonun görsellerinden bir fotoğraf ya da video "
+        "koyabilirim ve onu orada bulamadım.",
+    )
 
 
 def _tilt_shape_note() -> str:
@@ -223,7 +260,7 @@ def _coerce_patch_slots(name: str, payload: dict, snapshot: dict, state: Any) ->
             cleaned = value if isinstance(value, bool) else None
         elif key == "tilt":
             # None is a valid value here ("straighten"), so it cannot ride the check below.
-            valid, tilt = _clean_tilt(value, state)
+            valid, tilt = _clean_tilt(value, state, snapshot)
             if not valid:
                 return None
             clean[key] = tilt

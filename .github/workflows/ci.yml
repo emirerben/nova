@@ -1121,7 +1121,9 @@ jobs:
             | tee ../../../test-results/kri-559/camera-roll-api-tests.log
       - name: Seal portable fixture inputs for this exact workflow attempt
         if: needs.changes.outputs.journey_needs_native == 'true'
-        run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+        env:
+          JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
+        run: python3 scripts/ci/journey-gate.py seal-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}" --journeys "$JOURNEY_IDS"
       - name: Transfer fixture inputs and offline evidence
         if: needs.changes.outputs.journey_needs_native == 'true'
         uses: actions/upload-artifact@v4
@@ -1249,7 +1251,7 @@ jobs:
         env:
           JOURNEY_IDS: ${{ needs.changes.outputs.journey_ids }}
         run: |
-          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}"
+          python3 scripts/ci/journey-gate.py verify-bundle --root test-results/kri-559 --head "${{ github.sha }}" --run "${{ github.run_id }}" --attempt "${{ github.run_attempt }}" --journeys "$JOURNEY_IDS"
           if [[ ",$JOURNEY_IDS," == *",kri-524-creation,"* ]]; then
             python3 scripts/ci/journey-gate.py verify-input --fixture test-results/kri-559/fixture --head "${{ github.sha }}"
           fi

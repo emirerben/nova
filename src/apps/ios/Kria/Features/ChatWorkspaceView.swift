@@ -11,7 +11,6 @@ struct ChatWorkspaceView: View {
     @State private var drawerMounted = false
     @State private var showsGallery = false
     @State private var showsAccount = false
-    @State private var showsActivity = false
     @State private var collectionsEnabled = false
     @State private var collectionCacheOnlyRequired = false
     /// Kept for the life of the workspace so uploads and analysis carry on while the creator is in a chat.
@@ -31,7 +30,6 @@ struct ChatWorkspaceView: View {
                 close: { setDrawerOpen(false) },
                 openGallery: { setDrawerOpen(false); Perf.begin("gallery.open"); showsGallery = true },
                 openAccount: { setDrawerOpen(false); showsAccount = true },
-                openActivity: { setDrawerOpen(false); showsActivity = true },
                 openCollections: collectionsEnabled ? { openCameraRoll() } : nil
             ),
             content: workspace
@@ -77,9 +75,6 @@ struct ChatWorkspaceView: View {
         .fullScreenCover(isPresented: $showsGallery) {
             NavigationStack { GalleryView(openProjects: { showsGallery = false; setDrawerOpen(true) }) }
                 .environmentObject(model)
-        }
-        .sheet(isPresented: $showsActivity) {
-            NavigationStack { ActivityView() }.environmentObject(model)
         }
         .sheet(isPresented: $showsAccount) {
             NavigationStack { AccountView() }

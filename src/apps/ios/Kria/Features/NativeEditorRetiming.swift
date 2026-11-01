@@ -128,6 +128,22 @@ extension NativeEditorSession {
 
     var canTiltClips: Bool { document.capabilities["clips.tilt"]?.editable == true }
 
+    /// KRI-1139: a pool photo or video behind a tilted clip. Offered only where the server lists
+    /// `clips.tilt_backdrop_media` (never inferred from `clips.tilt`) and the edit has a Visuals pool to read.
+    var canTiltBackdropMedia: Bool {
+        canTiltClips && document.capabilities["clips.tilt_backdrop_media"]?.editable == true && visualItemID != nil
+    }
+
+    /// The ready photos and videos of the item's Visuals pool a tilt backdrop can show.
+    var tiltBackdropChoices: [CreationVisual] { Self.backgroundChoices(from: visualLibrary) }
+
+    /// Whether the pool photo or video a clip's backdrop names is gone from the library (deleted, or not ready).
+    /// False while the library has not loaded yet, so a fresh editor does not flash a warning.
+    func tiltBackdropIsMissing(_ backdrop: ClipBackdrop) -> Bool {
+        guard case .media(let poolID) = backdrop, !visualLibrary.isEmpty else { return false }
+        return !tiltBackdropChoices.contains { $0.id == poolID }
+    }
+
     /// The stored tilt of a clip, or nil when it is upright with a blank backdrop.
     func clipTilt(for selection: EditorSelection) -> ClipTilt? {
         guard selection.kind == .clip,
@@ -160,7 +176,8 @@ extension NativeEditorSession {
         let straightening = tilt?.isIdentity ?? true
         guard let section = footageSection(selection), section == .timeline,
               canEditFootage(section, keys: ["footage.tilt", "tilt"], operation: "tilt", resetting: straightening),
-              straightening || tiltBlockedReason(for: selection) == nil else { return }
+              straightening || tiltBlockedReason(for: selection) == nil,
+              !Self.needsMediaBackdropGate(tilt) || canTiltBackdropMedia else { return }
         let clearValue = footageClearValue(selection, key: "tilt")
         let value = tilt?.rowValue
         transactDocument(section: section) { document in
@@ -172,12 +189,18 @@ extension NativeEditorSession {
         }
     }
 
+    private static func needsMediaBackdropGate(_ tilt: ClipTilt?) -> Bool {
+        if case .media? = tilt?.backdrop { return true }
+        return false
+    }
+
     /// Gives every clip that can tilt the same backdrop, keeping each one's angle, in one undo step. A clip that
     /// cannot tilt (it carries a look, or is a supporting card) is left exactly as it was. Returns how many
     /// clips changed hands and how many were left alone.
     @discardableResult
     func applyTiltBackdropToAllClips(_ backdrop: ClipBackdrop) -> (applied: Int, skipped: Int) {
-        guard canTiltClips, canEditFootage(.timeline, keys: ["footage.tilt", "tilt"], operation: "tilt", resetting: false) else {
+        guard canTiltClips, canEditFootage(.timeline, keys: ["footage.tilt", "tilt"], operation: "tilt", resetting: false),
+              !Self.needsMediaBackdropGate(ClipTilt(backdrop: backdrop)) || canTiltBackdropMedia else {
             return (0, document.clips.count)
         }
         var applied = 0, skipped = 0

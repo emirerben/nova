@@ -132,6 +132,51 @@ import XCTest
         #endif
     }
 
+    /// KRI-1149: a take ends only when the creator presses Stop. A one-line script ends within seconds; the take
+    /// must still be recording past the end of the script and past 60 s, then reach Review through Stop.
+    func testPhysicalTakeKeepsRecordingPastScriptEndAndSixtySeconds() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Teleprompter hardware capture requires a physical iPhone.")
+        #else
+        guard ProcessInfo.processInfo.environment["KRIA_TELEPROMPTER_HARDWARE_TEST"] == "1" else {
+            throw XCTSkip("Set KRIA_TELEPROMPTER_HARDWARE_TEST=1 in the device test runner to enable camera capture.")
+        }
+
+        let app = launchTalking()
+        let removePermissionMonitor = addUIInterruptionMonitor(withDescription: "Kria camera or microphone permission") { alert in
+            let allow = alert.buttons.matching(NSPredicate(format: "label BEGINSWITH %@ OR label == %@", "Allow", "OK")).firstMatch
+            guard allow.exists else { return false }
+            allow.tap()
+            return true
+        }
+        defer { removeUIInterruptionMonitor(removePermissionMonitor) }
+
+        app.buttons["teleprompter-open"].tap()
+        let script = app.textViews["teleprompter-script-editor"]
+        XCTAssertTrue(script.waitForExistence(timeout: 8))
+        paste("Short script.", into: script, app: app)
+        app.buttons["teleprompter-open-camera"].tap()
+        let record = app.buttons["teleprompter-record"]
+        guard triggerPermissionPrompts(in: app, untilEnabled: record), waitUntilEnabled(record, timeout: 20) else {
+            XCTFail("A physical iPhone with granted camera and microphone permission should enable Record.")
+            return
+        }
+
+        record.tap()
+        let stop = app.buttons["teleprompter-stop-recording"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        var elapsed = 0
+        for step in [20, 25, 25] {
+            wait(seconds: TimeInterval(step))
+            elapsed += step
+            XCTAssertTrue(stop.exists && stop.isHittable, "Still recording at \(elapsed) s: Stop is the only way out.")
+        }
+        stop.tap()
+        XCTAssertTrue(app.buttons["teleprompter-retake"].waitForExistence(timeout: 20), "Stop reaches Review.")
+        XCTAssertTrue(app.buttons["teleprompter-use-take"].isEnabled)
+        #endif
+    }
+
     #if !targetEnvironment(simulator)
     private func setWindowBackground(_ appearance: String, in app: XCUIApplication, fontChangesAllowed: Bool? = nil) {
         let grip = app.buttons["teleprompter-window-move"]

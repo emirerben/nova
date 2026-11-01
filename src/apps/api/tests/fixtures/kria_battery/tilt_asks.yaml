@@ -29,3 +29,11 @@ asks:
   - id: tilt-upside-down
     ask: "turn the first clip upside down"
     expect_ops: [patch_slots]
+  # Needs the media-backdrop gate too (clipBackdropMedia verified, a build at protocol 29) and photos
+  # in the item's Visuals pool; without them the ask is refused in a plain sentence.
+  - id: tilt-media-second-photo
+    ask: "put my second photo behind the tilted clip"
+    turns:
+      - {role: user, content: "tilt the second clip 10 degrees to the right"}
+      - {role: assistant, content: "Tilted clip 2 ten degrees to the right."}
+    expect_ops: [patch_slots]
